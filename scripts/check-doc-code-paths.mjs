@@ -1706,6 +1706,86 @@ function lineBoundsWarningScenarios(root) {
 }
 
 /**
+ * #4274 — `deriveGuardSelfPath` itself, and what the self-test does when it
+ * comes back `null`.
+ *
+ * The derivation is the thing that makes MOVING this guard impossible to do
+ * quietly (see `GUARD_SELF_PATH`'s header), so both of its outcomes are
+ * pinned directly rather than only through the fixtures that consume it:
+ * the DIRECTORY half is derived, not assumed (a guard living at
+ * `tools/nested/…` derives `tools/nested/…`, not a hardcoded `scripts/`),
+ * and a script with NO repository above it derives `null` instead of, say,
+ * an absolute path or a throw.
+ *
+ * The third assertion is the one with the runtime consequence: with
+ * `null` in hand, `knownIntentionalWarningScenarios` used to call
+ * `dirname(null)` and take the ENTIRE self-test down with a `TypeError` —
+ * on an environment (an unpacked tarball, a vendored copy) where nothing
+ * is actually wrong with the guard. Driven by passing `null` explicitly
+ * rather than by relocating this script at test time: the failing input is
+ * a value, so the value is what the test supplies, and the assertion stays
+ * legible without a second scratch checkout of the whole guard.
+ */
+function guardSelfPathDerivationScenarios(root) {
+  const results = []
+  const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+
+  const repoDir = join(root, 'self-path-derivation', 'repo')
+  mkdirSync(join(repoDir, '.git'), { recursive: true })
+  mkdirSync(join(repoDir, 'tools', 'nested'), { recursive: true })
+  const nested = join(repoDir, 'tools', 'nested', 'check-doc-code-paths.mjs')
+  writeFileSync(nested, '// stand-in for a MOVED copy of this guard\n')
+  record(
+    'deriveGuardSelfPath derives the DIRECTORY too — a guard moved to tools/nested/ resolves there, not to a hardcoded scripts/',
+    deriveGuardSelfPath(nested) === 'tools/nested/check-doc-code-paths.mjs',
+    `got ${JSON.stringify(deriveGuardSelfPath(nested))}`,
+  )
+
+  // No `.git` anywhere above it — unless the OS temp dir happens to sit
+  // inside a checkout, in which case the input this case needs cannot be
+  // built here and saying so is more honest than asserting something else.
+  const orphanDir = join(root, 'self-path-derivation', 'no-repo-above')
+  mkdirSync(orphanDir, { recursive: true })
+  const orphan = join(orphanDir, 'check-doc-code-paths.mjs')
+  writeFileSync(orphan, '// stand-in for a copy with no containing repository\n')
+  const derivedOrphan = deriveGuardSelfPath(orphan)
+  if (derivedOrphan === null) {
+    record(
+      'deriveGuardSelfPath returns null (not a throw, not an absolute path) when no repository contains the script',
+      true,
+    )
+  } else {
+    results.push({
+      name: 'deriveGuardSelfPath returns null when no repository contains the script',
+      ok: true,
+      skipped: true,
+      detail: `${tmpdir()} is itself inside a git checkout (derived ${derivedOrphan}), so a repo-less location cannot be constructed here`,
+    })
+  }
+
+  // The consequence: the battery that consumes it must REPORT, not crash.
+  let degraded
+  let threw = null
+  try {
+    degraded = knownIntentionalWarningScenarios(root, null)
+  } catch (err) {
+    threw = err
+  }
+  record(
+    'a null GUARD_SELF_PATH makes the known-intentional battery report itself skipped instead of throwing TypeError',
+    threw === null &&
+      Array.isArray(degraded) &&
+      degraded.length === 1 &&
+      degraded[0].skipped === true &&
+      degraded[0].ok === true &&
+      /no repository found above/.test(degraded[0].detail),
+    threw ? `threw ${threw}` : `got ${JSON.stringify(degraded)}`,
+  )
+
+  return results
+}
+
+/**
  * #4264 — the ACKNOWLEDGMENT LIST itself, not the warnings it tags. Four
  * things:
  *
@@ -1745,7 +1825,30 @@ function lineBoundsWarningScenarios(root) {
  * run under scenario 1's own check, conflating "the cap/dedupe fix works"
  * with "the staleness check fires".
  */
-function knownIntentionalWarningScenarios(root) {
+function knownIntentionalWarningScenarios(root, selfPath = GUARD_SELF_PATH) {
+  // #4274 — every fixture below writes `join(dir, selfPath)` to declare
+  // itself this guard's home repository, so a `null` derivation (no
+  // repository above this script at all — an unpacked tarball, a vendored
+  // copy) used to reach `dirname(null)` and abort the WHOLE self-test with a
+  // `TypeError` before any other scenario ran. The runtime path already says
+  // this out loud rather than degrading silently (see `check()`); the
+  // self-test must too. A guard that CRASHES in a legitimate environment
+  // tells its reader nothing about which of its properties still hold — so
+  // this reports the one battery it cannot construct, by name, and lets the
+  // rest of the suite run and be believed.
+  if (selfPath === null) {
+    return [
+      {
+        name: 'the KNOWN_INTENTIONAL_WARNINGS battery (needs this guard’s own repo-relative path)',
+        ok: true,
+        skipped: true,
+        detail:
+          `no repository found above ${import.meta.filename}, so GUARD_SELF_PATH is null and ` +
+          'no fixture can declare itself this guard’s home tree — run the self-test from a git ' +
+          'checkout to exercise it',
+      },
+    ]
+  }
   return withScrubbedProcessEnv(root, () => {
     const results = []
     const record = (name, ok, detail = '') => results.push({ name, ok, detail })
@@ -1795,9 +1898,9 @@ function knownIntentionalWarningScenarios(root) {
     const emptyDir = join(root, 'known-intentional-vacuous-scan')
     const emptyEnv = scrubbedGitEnv(root)
     const emptyGit = initScratchRepo(emptyDir, emptyEnv)
-    mkdirSync(join(emptyDir, dirname(GUARD_SELF_PATH)), { recursive: true })
+    mkdirSync(join(emptyDir, dirname(selfPath)), { recursive: true })
     writeFileSync(
-      join(emptyDir, GUARD_SELF_PATH),
+      join(emptyDir, selfPath),
       '// self-test marker: this fixture stands in for the repo this guard ships in.\n',
     )
     emptyGit('add', '-A')
@@ -1817,13 +1920,14 @@ function knownIntentionalWarningScenarios(root) {
     // guard's own path is the whole declaration — the content is never read
     // (this guard scans `.md`/`.ts`/`.tsx` only), so a marker says it as
     // honestly as a copy would and cannot drift from the real file. The path
-    // comes from `GUARD_SELF_PATH` itself, not a re-spelling of it, so
+    // comes from `GUARD_SELF_PATH` itself (via this function's `selfPath`
+    // parameter, which defaults to it), not a re-spelling of it, so
     // MOVING the guard moves the fixture's marker with it — a hand-written
     // `scripts/<basename>` here would keep passing scenario 0 and start
     // failing everything after it.
-    mkdirSync(join(dir, dirname(GUARD_SELF_PATH)), { recursive: true })
+    mkdirSync(join(dir, dirname(selfPath)), { recursive: true })
     writeFileSync(
-      join(dir, GUARD_SELF_PATH),
+      join(dir, selfPath),
       '// self-test marker: this fixture stands in for the repo this guard ships in.\n',
     )
     const citingDoc = join(dir, 'src', 'lib', '__tests__', 'platform.test.ts')
@@ -2161,12 +2265,21 @@ function selfTest() {
     results.push(...bareCitationScenarios(root))
     results.push(...partiallyRootedCitationScenarios(root))
     results.push(...lineBoundsWarningScenarios(root))
+    results.push(...guardSelfPathDerivationScenarios(root))
     results.push(...knownIntentionalWarningScenarios(root))
     results.push(...baselineScenarios(root))
     results.push(...corruptBaselineScenarios(root))
     let failures = 0
     for (const result of results) {
-      if (result.ok) {
+      if (result.skipped) {
+        // A battery that could not be CONSTRUCTED in this environment, as
+        // opposed to one that ran and passed. Printed with its reason and
+        // counted as neither pass nor failure: silently omitting it would
+        // let a self-test that exercised strictly less still print the same
+        // "self-test OK", and failing it would redden a legitimate
+        // environment over something the guard cannot ask there (#4274).
+        console.log(`  skip - ${result.name}: ${result.detail}`)
+      } else if (result.ok) {
         console.log(`  ok   - ${result.name}`)
       } else {
         failures += 1

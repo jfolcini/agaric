@@ -116,9 +116,19 @@
 // the indent before a block-quote marker), so a fence written
 // inside a blockquote — `> ` followed by the delimiter — is recognized.
 // Before this, that shape never matched at all: the "fence" never opened,
-// and a `REMOVE AFTER` marker written inside one as inert documentation
-// (the way CONTRIBUTING.md's own "Marking code with a removal deadline"
-// section does) was scanned as ordinary text and falsely reported.
+// and a `REMOVE AFTER` marker written inside one as inert documentation was
+// scanned as ordinary text and falsely reported.
+//
+// FORWARD-LOOKING, stated rather than implied: no tracked `.md` in this repo
+// carries a blockquoted fence today. CONTRIBUTING.md's own "Marking code with
+// a removal deadline" section — the obvious candidate, and the one an earlier
+// draft of this comment wrongly cited — writes its illustrations in PLAIN
+// ```` ```rust ```` fences (CONTRIBUTING.md's `### Marking code with a removal
+// deadline` section), which the 0–3-space rule already exempted before #4174.
+// So this widening changes the verdict on nothing currently in the tree; it
+// exists because the blockquoted shape is a natural way to quote an example
+// (#4174 reports it from a doc under review) and because being falsely
+// reported for it would push an author toward NOT documenting the convention.
 //
 // #4174 ALSO asked to recognize a fence nested inside a list item at 4+
 // spaces of content indent (legal CommonMark once the list item's own
@@ -175,10 +185,26 @@
 // open through end of file. At the document level that is the same "rest
 // of the document is code" reading CommonMark itself gives an unclosed
 // fence; CommonMark actually closes an unclosed fence at the end of its
-// *containing block* (e.g. a list item), so a fence opened inside a list
-// item and never closed diverges from CommonMark there — this scanner has
-// no notion of block containers, so it keeps the fence open through EOF
-// regardless. Deliberate, not a special case here.
+// *containing block*, so a fence opened inside ANY block container and
+// never closed diverges from CommonMark there — this scanner has no notion
+// of block containers, so it keeps the fence open through EOF regardless.
+// Deliberate, not a special case here.
+//
+// That divergence is stated for BOTH containers on purpose, because #4174's
+// blockquote widening made the blockquote half newly REACHABLE: before it, a
+// `> ```rust` line was not a fence open at all, so a blockquoted fence left
+// unclosed could not swallow anything. Now it can, and the swallowing is not
+// confined to the blockquote — CommonMark closes that fence at the end of
+// the quoted block, this scanner does not, so every line AFTER the
+// blockquote, back in ordinary prose, is skipped too. Verified live, not
+// reasoned about: a `CONTRIBUTING.md` whose blockquote opens `> ```rust`
+// with no `> ``` ` closer, followed by a bare `REMOVE AFTER 0.1.0` in
+// ordinary prose against a 0.9.8 manifest, exits 0 with no output; adding
+// the `> ``` ` closer makes the SAME file exit 1 naming that marker. Same
+// class as the list-item divergence, and accepted for the same reason (a
+// scanner with no container model cannot tell where a container ends) —
+// pinned by `blockContainerFenceScenarios`' own unterminated-blockquote
+// fixture below, so a future change cannot alter it silently.
 //
 // ─── The escape hatch ────────────────────────────────────────────────────
 //
@@ -1082,10 +1108,14 @@ function fenceStateMachineScenarios(root) {
  * #4174 — `MD_FENCE_RE`/`MD_FENCE_BARE_RE` widened to recognize a fence
  * inside a blockquote (`> ` prefix), which previously never matched at
  * all: the "fence" never opened, and a `REMOVE AFTER` marker written
- * inside one as inert documentation — as it did in the false-positive
- * #4174 reports, the way CONTRIBUTING.md's own "Marking code with a
- * removal deadline" section does — was scanned as ordinary text and
- * falsely reported as a live marker.
+ * inside one as inert documentation — the false positive #4174 reports —
+ * was scanned as ordinary text and falsely reported as a live marker.
+ *
+ * The blockquoted fixture below is FORWARD-LOOKING, not a copy of anything
+ * in this tree: no tracked `.md` here carries a blockquoted fence, and
+ * CONTRIBUTING.md's "Marking code with a removal deadline" section (the
+ * obvious candidate) uses plain unquoted ```` ```rust ```` fences, already
+ * exempt before #4174. It pins the shape the widening exists for.
  *
  * #4174's OTHER named shape — a fence nested in a list item at 4+ spaces
  * of content indent — was tried (widening the leading whitespace to
@@ -1156,6 +1186,65 @@ function blockContainerFenceScenarios(root) {
       'a marker inside a fence inside a blockquote is exempt (green)',
       quoteResult.status === 0,
       `expected 0, got ${quoteResult.status}: ${quoteResult.stderr}`,
+    )
+
+    // The divergence the widening made REACHABLE, pinned so a future change
+    // cannot alter it silently: a blockquoted fence left UNCLOSED. CommonMark
+    // closes it at the end of the quoted block, so the later bare marker is
+    // live text there; this scanner has no container model, keeps the fence
+    // open through EOF, and skips it. Before #4174 the opener never matched,
+    // so this shape could not swallow anything at all. Two arms, because only
+    // the pair shows the swallowing is caused by the missing closer and not
+    // by the fixture being unflaggable in the first place: unclosed → green
+    // (marker hidden), the SAME file with the `> ``` ` closer added → red.
+    const unclosedQuoteDir = join(root, 'fence-blockquoted-unterminated')
+    const unclosedQuoteEnv = scrubbedGitEnv(root)
+    const unclosedQuoteGit = initScratchRepo(unclosedQuoteDir, unclosedQuoteEnv)
+    mkdirSync(join(unclosedQuoteDir, 'src-tauri'), { recursive: true })
+    writeFileSync(join(unclosedQuoteDir, 'src-tauri', 'tauri.conf.json'), tauriConf('0.9.8'))
+    const quotedDoc = join(unclosedQuoteDir, 'CONTRIBUTING.md')
+    const afterTheQuote = [
+      '',
+      'Back in ordinary prose, outside the blockquote entirely.',
+      '',
+      'REMOVE AFTER 0.1.0 — a genuinely live, expired marker.',
+      '',
+    ]
+    writeFileSync(
+      quotedDoc,
+      [
+        '> Documenting the convention:',
+        '>',
+        '> ```rust',
+        '> // REMOVE AFTER 0.1.0. Example only, inside a blockquote fence.',
+        ...afterTheQuote,
+      ].join('\n'),
+    )
+    unclosedQuoteGit('add', '-A')
+    const unclosedQuote = run(unclosedQuoteDir, unclosedQuoteEnv, ['--worktree'])
+    record(
+      'an UNCLOSED blockquoted fence swallows every later line, including one outside the blockquote — the CommonMark divergence #4174 made reachable, accepted and locked in',
+      unclosedQuote.status === 0,
+      `expected 0 (accepted limitation), got ${unclosedQuote.status}: ${unclosedQuote.stderr}`,
+    )
+
+    writeFileSync(
+      quotedDoc,
+      [
+        '> Documenting the convention:',
+        '>',
+        '> ```rust',
+        '> // REMOVE AFTER 0.1.0. Example only, inside a blockquote fence.',
+        '> ```',
+        ...afterTheQuote,
+      ].join('\n'),
+    )
+    unclosedQuoteGit('add', '-A')
+    const closedQuote = run(unclosedQuoteDir, unclosedQuoteEnv, ['--worktree'])
+    record(
+      'the same file with the blockquoted fence CLOSED flags the marker after it — so the swallowing above is the missing closer, not an unflaggable fixture',
+      closedQuote.status === 1 && /0\.1\.0/.test(closedQuote.stderr),
+      `expected 1 naming 0.1.0, got ${closedQuote.status}: ${closedQuote.stderr}`,
     )
 
     return results
@@ -1466,6 +1555,25 @@ function extractJobBlock(text, jobName) {
 }
 
 /**
+ * The `run:` line inside a `docs-lint`-shaped job body that actually names
+ * this hook — NOT simply the first `run: prek run --all-files …` line
+ * (#4175 finding 1). `_validate.yml`'s `docs-lint` job has TWO steps whose
+ * `run:` line matches that shape: the doc-hooks step (which must name
+ * `remove-after-markers`) and a `--hook-stage pre-push lychee` step. A bare
+ * `.find()` over both would only be correct by STEP ORDER — whichever one
+ * happens to come first in the job body. Excluding the
+ * `--hook-stage`-qualified line picks the doc-hooks step regardless of
+ * which one comes first, so a future reordering of the two steps can't
+ * silently make this scenario assert against the wrong line. See
+ * `docsLintRunLineOrderScenario` below for the falsifying fixture.
+ */
+function findDocsLintRunLine(jobBody) {
+  return jobBody
+    .split('\n')
+    .find((l) => /^\s*run:\s*prek run --all-files\b/.test(l) && !/--hook-stage\b/.test(l))
+}
+
+/**
  * #4147 wiring check — NOT a fixture scenario like its siblings above. The
  * bug was that `_validate.yml`'s `docs-lint` job (the docs-only fast path)
  * omitted this hook from its explicit `prek run --all-files <ids…>` hook
@@ -1495,25 +1603,6 @@ function extractJobBlock(text, jobName) {
  * the "no local test at all" gap for THIS fix without taking on that wider,
  * separate design decision.
  */
-/**
- * The `run:` line inside a `docs-lint`-shaped job body that actually names
- * this hook — NOT simply the first `run: prek run --all-files …` line
- * (#4175 finding 1). `_validate.yml`'s `docs-lint` job has TWO steps whose
- * `run:` line matches that shape: the doc-hooks step (which must name
- * `remove-after-markers`) and a `--hook-stage pre-push lychee` step. A bare
- * `.find()` over both would only be correct by STEP ORDER — whichever one
- * happens to come first in the job body. Excluding the
- * `--hook-stage`-qualified line picks the doc-hooks step regardless of
- * which one comes first, so a future reordering of the two steps can't
- * silently make this scenario assert against the wrong line. See
- * `docsLintRunLineOrderScenario` below for the falsifying fixture.
- */
-function findDocsLintRunLine(jobBody) {
-  return jobBody
-    .split('\n')
-    .find((l) => /^\s*run:\s*prek run --all-files\b/.test(l) && !/--hook-stage\b/.test(l))
-}
-
 function docsLintWiringScenario() {
   const results = []
   const record = (name, ok, detail = '') => results.push({ name, ok, detail })

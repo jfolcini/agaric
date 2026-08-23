@@ -26,8 +26,13 @@ checking, and it is not there.
 
 Review surfaced a pre-existing fail-open path, filed as #4269: `declare` is
 matched by token adjacency with no statement-boundary check, so `let declare`
-before a genuine `namespace` block silences a real leak. Predates this change
-and affects `module`/`global` identically.
+before a genuine `namespace` block silences a real leak. The mechanism
+predates this change and affects `module`/`global` identically — but the
+reachable consequence is **new for `namespace`**, because `namespace` is the
+one lead keyword whose undeclared form emits runtime code, and before this
+widening `namespace` was not in `AMBIENT_BLOCK_LEAD` at all, so no adjacency
+trick could exempt it. Recorded on #4269 rather than fixed here: the fix is a
+statement-boundary check, not a wider lead set.
 
 ## #4264 — the line-bounds warning channel had no acknowledgment discipline
 
@@ -127,12 +132,13 @@ output), and near the top of a 200-line document it swallowed everything after
 it. "Fence nested in a list item" and "plain indented code block" are
 indistinguishable without container tracking, which this scanner does not have.
 
-Trailing whitespace is capped at 0–3, CommonMark's own per-container cap. The
-list-nested case reverts to a visible CI failure, which is the direction the
-issue itself calls "not a correctness emergency". Both rejections are pinned by
-self-test scenarios, and the list-nested fixture now asserts "still flagged"
-rather than silently no-op'ing. Re-scoped on the issue; closing it properly
-needs a real block-container model.
+The LEADING indent before a fence delimiter stays capped at 0–3 spaces,
+CommonMark's own per-container cap. The list-nested case reverts to a visible
+CI failure, which is the direction the issue itself calls "not a correctness
+emergency". Both rejections are pinned by self-test scenarios, and the
+list-nested fixture now asserts "still flagged" rather than silently
+no-op'ing. Re-scoped on the issue; closing it properly needs a real
+block-container model.
 
 ## Round-two review — the fence cap had to be re-tightened
 
@@ -178,3 +184,38 @@ migration — as readily as for an accidental deletion, so "restore or regenerat
 package-lock.json" was the wrong instruction half the time. The message now
 states the consequence and names both cases; exit code unchanged at 3, and the
 self-test asserts the deliberate case is acknowledged.
+
+## Round-three review — accuracy residuals, all non-blocking
+
+The self-test crashed where the runtime path reported. `deriveGuardSelfPath`
+returns `null` when no repository contains the script, and `check()` says so
+out loud — but every known-intentional fixture built its marker from
+`dirname(GUARD_SELF_PATH)`, so on that same environment the self-test died of a
+`TypeError` before any other scenario ran. It now reports the one battery it
+cannot construct, by name and reason, and the runner grew a `skip` line so a
+suite that exercised strictly less can no longer print the same `self-test OK`.
+Pinned by fixtures on both halves of the derivation plus the degraded call
+itself.
+
+Three comments were repaired rather than the code they describe. The
+blockquote-fence widening cited CONTRIBUTING.md's own removal-deadline section
+as its motivating example; that section uses plain unquoted fences, and no
+tracked `.md` in this repo carries a blockquoted fence at all — the widening is
+forward-looking, and both the header and the fixture docblock now say so.
+`prek.toml`'s trigger for the doc-citation guard hardcodes the guard's path,
+which the runtime derivation cannot help: a static `files` regex derives
+nothing, so moving the guard quietly stops the trigger firing on edits to it.
+Stated as the limitation it is, with the instruction to move the path alongside
+the hook's `entry`. And `docsLintWiringScenario`'s docblock had drifted one
+function too high, leaving the scenario undocumented and `findDocsLintRunLine`
+double-documented.
+
+The unclosed-fence divergence is now documented for blockquotes, not only list
+items — because the widening made that half newly reachable. A `> ` fence left
+unclosed used to open nothing; now it opens, and since CommonMark closes it at
+the end of the quoted block while this scanner has no container model, it
+swallows every later line, including ordinary prose outside the blockquote.
+Verified before it was described: the unclosed shape exits clean over a live
+expired marker, and adding the closer to the same file reports it. Accepted for
+the same reason the list-item case is, and locked in by a two-arm fixture so it
+cannot change without notice.

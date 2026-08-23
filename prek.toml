@@ -427,6 +427,20 @@ pass_filenames = false
 # reddens the check), editing it is editing a baseline — and without this, a
 # commit touching only the .mjs would run the self-test and never the
 # real-tree check that judges the list it just changed.
+#
+# LIMIT, so the runtime property is not over-read: `GUARD_SELF_PATH` is
+# derived from `import.meta.filename` at runtime precisely so RENAMING or
+# MOVING the guard cannot defang the acknowledgment gate quietly — but that
+# property stops at the script. This `files` pattern is a static regex prek
+# matches against changed paths; it cannot derive anything, so moving the
+# guard out of `scripts/check-doc-code-paths.mjs` silently stops this
+# trigger from firing on edits to it. The failure mode is milder than the
+# one the runtime derivation prevents (the check still runs on every `.md`
+# / `.ts` / `.tsx` commit and in CI's `prek run --all-files`, so a stale
+# acknowledgment surfaces on the next such commit rather than never), and
+# no pattern can fix it — a mechanically self-locating trigger is not a
+# thing prek offers. So: if this guard is ever moved, move this path with
+# it, same as the hook's own `entry` line above.
 files = '\.(md|ts|tsx)$|^scripts/(doc-code-paths-baseline\.json|check-doc-code-paths\.mjs)$'
 stages = ["pre-commit"]
 # `verbose = true` is load-bearing, same as `commit-sentinel` below: prek
