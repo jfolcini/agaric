@@ -108,7 +108,7 @@ Five issues, each demonstrated with a failing test rather than inferred:
 - **#4283** — `recent_errors` follows symlinks out of the log directory, and
   its output is embedded in a public issue body.
 
-**Files touched (this session):** 8 — see the PR's file list.
+**Files touched (this session):** 9 — see the PR's file list.
 
 **Verification:** `cargo nextest run --workspace` 6061 passed, 11 skipped;
 `SQLX_OFFLINE=true cargo check --workspace --all-targets` clean; dynamic-SQL

@@ -1333,28 +1333,53 @@ impl ReplayDiagnostics {
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
-            tracing::error!(
-                truncated = self.cascade_truncations.len(),
-                depth_cap = DESCENDANT_DEPTH_CAP,
-                sites = %sites,
-                "INCOMPLETE RECOVERY CASCADE (#4232): {} recursive walk(s) stopped at the \
-                 depth-{} runaway cap with tree still beyond it, so each answered from a \
-                 PARTIAL view; `sites` names which walk, on which seed. A merged sync tree can \
-                 legally be deeper than any locally-enforced bound, so this is reachable on a \
-                 healthy vault. Where the cut mattered, the rebuilt `blocks` table disagrees \
-                 with the live one below that depth: deep descendants left live under a \
-                 tombstoned ancestor (delete / move sweep), left tombstoned after a restore, \
-                 left present after a purge (and then promoted to a LIVE TOP-LEVEL block by \
-                 the orphan cleanup, i.e. purged data resurrected), or a move sweep that never \
-                 fired at all because the ancestor probe could not see the tombstone above the \
-                 cap. The probe is structural: it proves the walk was cut off, not that the \
-                 cut changed the answer — a deep tail that was already tombstoned, outside the \
-                 restored cohort, or under no tombstoned ancestor at all reports here despite \
-                 a correct rebuild. Verify the named subtrees against a peer or \
-                 `loro_doc_state` before trusting this rebuild below the cap.",
-                self.cascade_truncations.len(),
-                DESCENDANT_DEPTH_CAP
-            );
+            // Level is chosen by what actually truncated, not by the topic.
+            // The ancestor probe's false positive is the DOCUMENTED
+            // high-frequency one — on a merged tree deeper than the cap with
+            // no tombstone anywhere, every `move_block` under that chain
+            // reports, against a provably correct rebuild
+            // (`recover_move_ancestor_probe_reports_a_deep_live_chain_with_no_tombstone`
+            // pins exactly that). Logging ERROR for the common benign case is
+            // how a disaster-path signal gets tuned out, so a report made up
+            // ONLY of ancestor probes warns; anything touching a descendant
+            // cascade — where a cut walk more often did change the rebuilt
+            // rows — keeps ERROR.
+            let only_ancestor_probes = self
+                .cascade_truncations
+                .iter()
+                .all(|t| t.cascade == CASCADE_MOVE_SWEEP_ANCESTOR_PROBE);
+            macro_rules! emit_truncation {
+                ($level:ident) => {
+                    tracing::$level!(
+                        truncated = self.cascade_truncations.len(),
+                        depth_cap = DESCENDANT_DEPTH_CAP,
+                        sites = %sites,
+                        only_ancestor_probes = only_ancestor_probes,
+                        "INCOMPLETE RECOVERY CASCADE (#4232): {} recursive walk(s) stopped at the \
+                         depth-{} runaway cap with tree still beyond it, so each answered from a \
+                         PARTIAL view; `sites` names which walk, on which seed. A merged sync tree can \
+                         legally be deeper than any locally-enforced bound, so this is reachable on a \
+                         healthy vault. Where the cut mattered, the rebuilt `blocks` table disagrees \
+                         with the live one below that depth: deep descendants left live under a \
+                         tombstoned ancestor (delete / move sweep), left tombstoned after a restore, \
+                         left present after a purge (and then promoted to a LIVE TOP-LEVEL block by \
+                         the orphan cleanup, i.e. purged data resurrected), or a move sweep that never \
+                         fired at all because the ancestor probe could not see the tombstone above the \
+                         cap. The probe is structural: it proves the walk was cut off, not that the \
+                         cut changed the answer — a deep tail that was already tombstoned, outside the \
+                         restored cohort, or under no tombstoned ancestor at all reports here despite \
+                         a correct rebuild. Verify the named subtrees against a peer or \
+                         `loro_doc_state` before trusting this rebuild below the cap.",
+                        self.cascade_truncations.len(),
+                        DESCENDANT_DEPTH_CAP
+                    );
+                };
+            }
+            if only_ancestor_probes {
+                emit_truncation!(warn);
+            } else {
+                emit_truncation!(error);
+            }
         }
     }
 }
