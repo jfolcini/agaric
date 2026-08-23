@@ -87,6 +87,30 @@ type PagesListRef = React.RefObject<PageRow[]>
 type GenerationRef = React.RefObject<number>
 
 /**
+ * Ref to a per-list monotonic sequence counter — one for `pagesListRef`
+ * fills, a separate one for `tagsListRef` fills (`pagesRequestSeqRef` /
+ * `tagsRequestSeqRef` in `useBlockResolve`).
+ *
+ * #4270 — the generation guard above makes a fill correct with respect to
+ * *invalidations*, not with respect to *request ORDER*: two fills started in
+ * the same generation (no invalidation between them) both pass it, so
+ * whichever RESOLVES last wins, even if it was the earlier-STARTED request
+ * racing a fresher one. This ref closes that. It is bumped synchronously at
+ * DISPATCH time (before the IPC await), so it always reflects the highest
+ * sequence number ISSUED so far, regardless of resolution order. A fill's
+ * write is gated on `seqRef.current === (the value it captured at dispatch
+ * time)` — i.e. "no newer request for this same list has been issued since
+ * I started" — composed with (not replacing) the generation/space checks.
+ *
+ * Split per-list rather than shared with its sibling: an unrelated tag fill
+ * issued between two page fills would otherwise starve out an
+ * earlier-but-still-uncontested page fill, which is a needless extra
+ * over-rejection this ref has no reason to cause (contrast the generation
+ * ref, which is deliberately shared — see its comment in `useBlockResolve`).
+ */
+type RequestSeqRef = React.RefObject<number>
+
+/**
  * Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`.
  *
  * Bug 1: delegates to the shared `getPageDisplayName` formatter so
@@ -143,6 +167,7 @@ async function searchPagesViaCache(
   q: string,
   pagesListRef: PagesListRef,
   generationRef: GenerationRef,
+  requestSeqRef: RequestSeqRef,
 ): Promise<PageRow[]> {
   let source = pagesListRef.current
   if (source.length === 0) {
@@ -165,6 +190,10 @@ async function searchPagesViaCache(
     // this fetch started under — persisting `source` over it would
     // resurrect exactly the stale entries #4007 exists to remove.
     const requestGeneration = generationRef.current
+    // #4270 — capture this fill's own sequence number BEFORE the IPC, same
+    // moment as `requestGeneration`. See `RequestSeqRef`'s comment.
+    const requestSeq = requestSeqRef.current + 1
+    requestSeqRef.current = requestSeq
     const pages = unwrap(await commands.listAllPagesInSpace(requireActiveScope(spaceId), null))
     // #4138 — seed the RAW title (`''` for NULL content), matching the
     // backend's `COALESCE(b.content, '')` `ORDER BY`. The `'Untitled'`
@@ -178,25 +207,49 @@ async function searchPagesViaCache(
     // cannot see this in-flight promise).
     // #4055 — AND only while no name-change-bus event has landed since. See
     // the comment above `requestGeneration`.
+    // #4270 — AND only while no newer fill for this same list has been
+    // ISSUED since. See `RequestSeqRef`'s comment.
     if (
       (useSpaceStore.getState().currentSpaceId ?? '') === spaceId &&
-      generationRef.current === requestGeneration
+      generationRef.current === requestGeneration &&
+      requestSeqRef.current === requestSeq
     ) {
       pagesListRef.current = source
     } else {
-      // The guard rejected this fetch — a space switch or a name-change-bus
-      // event landed while it was in flight, and `pagesListRef.current`
-      // already reflects that (cleared or patched by whichever raced us).
-      // Serve THIS call's result from there instead of the discarded
-      // `source`: the caller (`searchPages`, and via
-      // `populatePageResolveCache`, the shared resolve store) would
-      // otherwise still receive the exact stale/deleted/renamed row the
-      // guard exists to keep out of the cache — just for one call instead
-      // of forever, which is still the bug #4055 exists to close.
+      // The guard rejected this fetch. Two different, both-safe reasons land
+      // here:
+      //   - A name-change-bus event (rename/removal/invalidation) landed on
+      //     THIS space while the fetch was in flight, or a newer fill for
+      //     this list was issued and this one lost the #4270 race —
+      //     `pagesListRef.current` already reflects the winning state
+      //     (cleared, patched, or overwritten by whichever raced us). Serve
+      //     THIS call's result from there instead of the discarded
+      //     `source`: the caller (`searchPages`, and via
+      //     `populatePageResolveCache`, the shared resolve store) would
+      //     otherwise still receive the exact stale/deleted/renamed row the
+      //     guard exists to keep out of the cache — just for one call
+      //     instead of forever, which is still the bug #4055 exists to
+      //     close.
+      //   - A SPACE SWITCH landed mid-flight and a fill for the NEW space has
+      //     already completed and populated `pagesListRef.current`: this
+      //     branch then hands the new space's rows back to a call issued for
+      //     the OLD space. Harmless (arguably more correct than serving
+      //     nothing), and no cross-space WRITE is reachable through it —
+      //     `populatePageResolveCache`'s `batchSet` stays gated on
+      //     `requestSpaceId` (captured by the caller before dispatch, not on
+      //     this fallback path), so a stale-space call can read the new
+      //     space's rows here but can never seed the resolve store under the
+      //     old space's key.
       source = pagesListRef.current
     }
   }
-  const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
+  // #4152 — match the DISPLAYED "Untitled" placeholder too, at FILTER time
+  // only: `untitledOr` is the same render-site substitution
+  // `makePagePickerItem` applies, reused here as the match key rather than
+  // the stored key. `source`'s rows still carry the raw `''` title (#4138's
+  // sort-key invariant — see `comparePageRows`/the seed comment above), this
+  // just changes what `matchSorter` compares the query against.
+  const filtered = q ? matchSorter(source, q, { keys: [(p) => untitledOr(p.title)] }) : source
   // Copy rather than hand back `pagesListRef.current`'s own objects — the
   // dispatcher and the cache seed both read these, and aliasing the ref's
   // entries would let a future consumer mutate the lazily-filled cache.
@@ -252,8 +305,12 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   const ftsIds = new Set(matches.map((m) => m.id))
   // Unicode-aware fold. `matchesSearchFolded`'s ASCII fast
   // path keeps this hot cache-lookup cheap when the query is ASCII.
+  //
+  // #4152 — match against `untitledOr(p.title)`, same placeholder-at-filter-
+  // time substitution as `searchPagesViaCache`'s `matchSorter` call above.
+  // `p.title` in the returned row (the `.map` below) stays raw.
   const cacheMatches = pagesListRef.current
-    .filter((p) => matchesSearchFolded(p.title, q) && !ftsIds.has(p.id))
+    .filter((p) => matchesSearchFolded(untitledOr(p.title), q) && !ftsIds.has(p.id))
     .slice(0, 10)
     .map((p) => ({ id: p.id, title: p.title }))
   return [...matches, ...cacheMatches].slice(0, 20)
@@ -540,8 +597,32 @@ export function useBlockResolve(): UseBlockResolveReturn {
   // `searchTags`'s inline fill) capture this before their IPC and refuse to
   // persist a stale response once it no longer matches — closing the
   // in-flight window the #732 space-only guard couldn't see: a bus event
-  // landing between the IPC dispatch and its resolution.
+  // landing between the IPC dispatch and its resolution. Also bumped by
+  // `onCreatePage` / `onCreateTag` (#4275 item 1 — see their comments): a
+  // create is a name-change too, and without this an in-flight fill's
+  // pre-create snapshot could win and silently hide the just-created page/tag.
+  //
+  // #4275 item 2 — deliberately ONE counter shared across both entities
+  // (page/tag) and every event kind, not split per-entity. A tag rename
+  // therefore also rejects an in-flight PAGE fill, and vice versa: safe
+  // (it over-rejects, never under-rejects — the fill just re-fetches), but
+  // it costs an avoidable `listAllPagesInSpace`/`listAllTagsInSpace` round
+  // trip and a transiently empty picker for an event that could not have
+  // affected that particular fetch. Recorded decision: left as one counter.
+  // Over-rejection is the correct bias for a correctness guard, and two
+  // counters are two things that can drift out of sync (miss bumping one on
+  // a new event kind) for a cost that is small and self-healing on the very
+  // next keystroke. Split them only if the extra round trips are ever
+  // measured to matter.
   const nameChangeGenerationRef = useRef(0)
+
+  // #4270 — per-list monotonic sequence counters gating a fill's write on
+  // being the latest ISSUED request for that list, not merely the latest
+  // RESOLVED one. See `RequestSeqRef`'s comment for the mechanism and why
+  // these stay split per-list rather than sharing one counter (contrast
+  // `nameChangeGenerationRef` just above, which is deliberately shared).
+  const pagesRequestSeqRef = useRef(0)
+  const tagsRequestSeqRef = useRef(0)
 
   // #732 — the cache holds space-scoped data in a space-agnostic
   // container, and the hook instance SURVIVES page-editor→page-editor
@@ -661,6 +742,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
         // #853 space check alone doesn't notice a rename/removal/invalidation
         // landing on THIS space while the fetch is in flight.
         const requestGeneration = nameChangeGenerationRef.current
+        // #4270 — capture this fill's own sequence number BEFORE the IPC,
+        // same guard as `searchPagesViaCache`'s `requestSeq` (see
+        // `RequestSeqRef`'s comment).
+        const requestSeq = tagsRequestSeqRef.current + 1
+        tagsRequestSeqRef.current = requestSeq
         const fetched = unwrap(
           await commands.listAllTagsInSpace(requireActiveScope(requestSpaceId)),
         )
@@ -669,9 +755,12 @@ export function useBlockResolve(): UseBlockResolveReturn {
         // from a since-abandoned space must not seed the new space's
         // cache (neither the resolve store nor `tagsListRef`).
         // #4055 — AND behind the captured-generation guard above.
+        // #4270 — AND behind the captured-sequence guard (latest ISSUED,
+        // not merely latest RESOLVED, request for `tagsListRef`).
         if (
           isRequestSpaceStillActive(requestSpaceId) &&
-          nameChangeGenerationRef.current === requestGeneration
+          nameChangeGenerationRef.current === requestGeneration &&
+          tagsRequestSeqRef.current === requestSeq
         ) {
           tagsListRef.current = fetched
           // Populate the resolve cache so tag_ref nodes can resolve the
@@ -765,7 +854,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // relevance-ranked results.
       const rows =
         q.length <= 2
-          ? await searchPagesViaCache(q, pagesListRef, nameChangeGenerationRef)
+          ? await searchPagesViaCache(q, pagesListRef, nameChangeGenerationRef, pagesRequestSeqRef)
           : await searchPagesViaFts(q, pagesListRef)
 
       // #4239 — seed from the ROWS (raw, un-split titles) and render the
@@ -906,6 +995,19 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const newId = unwrap(await commands.createPageInSpace(null, label, currentSpaceId))
       // Populate resolve cache so the link chip shows the title immediately
       useResolveStore.getState().set(newId, label, false)
+      // #4275 item 1 — bump the generation, exactly like the name-change-bus
+      // subscriber does for a rename/removal/invalidation. Without this, a
+      // create landing WHILE `pagesListRef` is empty and a fill is in flight
+      // was silently lost: the #4008 guard just below only appends into an
+      // ALREADY-filled cache, so an empty-cache create skips the append —
+      // and the racing fill's pre-create snapshot then passed both the
+      // space and generation guards in `searchPagesViaCache` and won,
+      // leaving the new page absent from the picker until something else
+      // invalidated. Bumping here makes that racing fill's snapshot fail
+      // the generation guard instead, so it is discarded (see the
+      // "guard rejected this fetch" branch) and the NEXT read re-fetches
+      // with this create included.
+      nameChangeGenerationRef.current += 1
       // #4008 review note 1 — append ONLY into an already-filled cache, the
       // same guard `onCreateTag` carries below. An EMPTY `pagesListRef` is not
       // "a space with no pages", it is the "not fetched for this space yet"
@@ -956,6 +1058,12 @@ export function useBlockResolve(): UseBlockResolveReturn {
       )
       // Populate resolve cache so the tag chip shows the name immediately
       useResolveStore.getState().set(block.id, name, false)
+      // #4275 item 1 — bump the generation. Mirrors `onCreatePage` above:
+      // an empty `tagsListRef` skips the append below (#4008 review note 6),
+      // so without this an in-flight `searchTags` fill's pre-create snapshot
+      // could win the race and hide the just-created tag until something
+      // else invalidated. See `onCreatePage`'s comment for the full mechanism.
+      nameChangeGenerationRef.current += 1
       // #3277 finding 1 — mirror `onCreatePage`'s `pagesListRef` append.
       // Without this, a tag created through the SAME `@`-picker session
       // that already lazily filled `tagsListRef` stayed unfindable by that
