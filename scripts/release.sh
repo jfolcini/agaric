@@ -13,7 +13,8 @@
 #      a full `cargo tauri build` + bundle-path probes for THIS OS, so
 #      release-only failures surface locally before a CI run is spent.
 #      Skip with --skip-verify-build.
-#   3. Bump all 5 version manifests in lockstep, commit (GPG-signed), tag
+#   3. Bump every version manifest in lockstep (bump-version.sh's own
+#      `Files updated:` header is the list), commit (GPG-signed), tag
 #      (GPG-signed), and push main + the tag (scripts/bump-version.sh).
 #      bump-version.sh refuses to commit under an identity that cannot
 #      verify, and asks GitHub to confirm the pushed commit's signature

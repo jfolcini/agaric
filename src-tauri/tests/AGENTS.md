@@ -42,8 +42,11 @@ cargo nextest run -p agaric -E 'test(op_log::)'            # by module
 cargo test -p agaric -- integration_tests --skip command_integration_tests   # OK on cargo test:
                                    # `src/integration_tests.rs` touches no process-global (each
                                    # test builds its own `LoroEngineRegistry`, and the module
-                                   # deliberately does not read `sql_only_fallback_count()` — see
-                                   # its top-of-file comment). Verified: 5 full-module runs,
+                                   # deliberately does not read `sql_only_fallback_count()` — see the
+                                   # `Engine-path helpers (#1689)` section comment in that file,
+                                   # which contrasts its engine-tree-presence guard with the
+                                   # sibling `*_convergence_tests` files' counter-delta guard).
+                                   # Verified: 5 full-module runs,
                                    # default parallel threads, 0 failures. The `--skip` is NOT
                                    # decoration: `command_integration_tests` contains
                                    # `integration_tests` as a substring, so a bare `-- integration_tests`

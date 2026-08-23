@@ -245,7 +245,7 @@ scripts/release.sh <new-version>          # e.g. scripts/release.sh 0.2.1
 
 1. **Preflight** — refuses unless the tree is clean, `HEAD` is on `main`, local `main` is in sync with `origin/main`, the required tools are present, and the tag doesn't already exist (locally or on origin).
 2. **Local build check** — runs `scripts/verify-release-build.sh` (full `cargo tauri build` + bundle-path probes for your OS) so release-only failures surface before a CI run is spent. Skip with `--skip-verify-build`.
-3. **Bump + tag + push** — runs `scripts/bump-version.sh` to bump all 5 manifests in lockstep (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`), GPG-sign the commit + annotated tag, and push `main` + the tag.
+3. **Bump + tag + push** — runs `scripts/bump-version.sh` to bump every version manifest in lockstep (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/fuzz/Cargo.lock`, `src-tauri/tauri.conf.json` — the script's `Files updated:` header is the authoritative list), GPG-sign the commit + annotated tag, and push `main` + the tag.
 4. The pushed tag triggers `.github/workflows/release.yml`, which builds every platform, attaches the artifacts to a **draft** GitHub Release, and — only if every terminal job succeeded — publishes it in a final `publish-release` job. A partial or failed release stays a draft for you to inspect on the [Releases page](https://github.com/jfolcini/agaric/releases).
 
 Useful flags (see `scripts/release.sh --help`):

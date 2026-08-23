@@ -17,9 +17,11 @@
 //
 // ─── Canonical "current version" — src-tauri/tauri.conf.json ────────────
 //
-// The repo carries FIVE version manifests
+// The repo carries several version manifests
 // (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
-// `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`) that
+// `src-tauri/Cargo.lock`, `src-tauri/fuzz/Cargo.lock`,
+// `src-tauri/tauri.conf.json` — `scripts/bump-version.sh`'s own
+// `Files updated:` header is the authoritative list) that
 // `verify-version-agreement` (`.github/workflows/_validate.yml`) already
 // keeps in mutual lockstep on every PR/push. This guard still has to pick
 // ONE to read `CURRENT_VERSION` from, and picks `src-tauri/tauri.conf.json`:
@@ -35,7 +37,7 @@
 //     `for v in "$CARGO" "$CARGO_LOCK" "$PKG" "$PKG_LOCK"; do if [ "$v" !=
 //     "$CONF" ]`. Reusing that pivot keeps this guard's notion of "current"
 //     answering the same question the existing mutual-agreement check does.
-// Since the five manifests are already enforced to agree, which one is read
+// Since those manifests are already enforced to agree, which one is read
 // matters only for defining the rule precisely — not for correctness day to
 // day; tauri.conf.json is the one with a real semantic tie to "has this
 // version shipped".
@@ -59,10 +61,10 @@
 // #4129 asks: pre-commit-only would not have caught the real incident,
 // because the version bump and the marker lived in DIFFERENT commits — a
 // hook gated on "did a file matching X change in THIS commit" never fires
-// on a bump-version commit that only touches the 5 manifests. The fix is
-// not a new CI job: it is including THOSE FIVE MANIFESTS in this hook's own
+// on a bump-version commit that only touches the version manifests. The fix
+// is not a new CI job: it is including THOSE MANIFESTS in this hook's own
 // `files` trigger (see `prek.toml`), so a commit that bumps the version — a
-// `bump-version.sh` commit touches exactly those five — also re-scans the
+// `bump-version.sh` commit touches every one of them — also re-scans the
 // WHOLE tracked tree for markers (`pass_filenames = false`), independent of
 // which files that particular commit touched. And for the case where a
 // commit skips hooks entirely (`--no-verify`), the existing CI backstop

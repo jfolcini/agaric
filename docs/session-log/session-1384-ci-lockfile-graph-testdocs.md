@@ -117,3 +117,51 @@ fixed — both files now carry an explicit "Isolation contract (#1079 → resolv
 matters because the two reasons imply different rules for new tests: a property of
 two files, versus a pattern any test reading that counter inherits. Filed as
 #4276.
+
+## Round-two review — the check would have reddened the next release
+
+Investigating a non-blocking note turned up a landmine this PR creates. Both
+lockfiles pin the path dep `agaric`, so once `verify-lockfiles` exists, a
+version bump that regenerates only `src-tauri/Cargo.lock` reds on the fuzz lock
+— from a job whose name gives no hint that a second lockfile needs regenerating.
+
+`scripts/bump-version.sh` contains **no occurrence of `fuzz`**. It regenerates
+one lock and stages five files. The consequence is not occasional: **every one
+of the last twelve releases left `src-tauri/fuzz/Cargo.lock` stale**, and none
+of them touched it. It only ever catches up inside unrelated PRs — the current
+agreement at 0.9.8 is an accident of #4139. Simulating the next release
+confirmed the red.
+
+Fixed at the source rather than documented as a chore. `bump-version.sh` now
+regenerates the fuzz lock and stages it; `verify-version-agreement` checks it as
+a sixth file and names it, with the exact regeneration command, in its error
+message — so the drift is diagnosed by the job whose name says "version
+agreement" rather than by a raw cargo `--locked` error.
+
+Ordering was measured rather than assumed: the call depends on
+`src-tauri/Cargo.toml` already carrying the new version, because `--precise`
+names the path dependency's own manifest version. It does **not** depend on the
+parent lock — the fuzz crate is its own workspace and resolves `agaric` from
+`../Cargo.toml`. Both orders were run.
+
+**The counts were replaced with names, not with "6".** A bare number is exactly
+what rotted here: "5" read plausibly for twelve releases while being wrong,
+because nothing about a number tells a reader which file is missing. A named
+list fails visibly. `bump-version.sh`'s own `Files updated:` header is now the
+one authoritative list, and the prose points at it. A grep sweep found the stale
+count in more places than the review named — `AGENTS.md`, `docs/BUILD.md`,
+`release.sh`, `prek.toml`, `check-remove-after-markers.mjs` and five separate
+spots in `_validate.yml`.
+
+Two of those were checked rather than reworded. `prek.toml`'s
+`remove-after-markers` trigger deliberately still omits the fuzz lock — a bump
+touches all five parent manifests so the scan fires anyway, and adding it would
+re-scan the whole tree on every Dependabot fuzz-group bump for no gain. That
+choice is now documented in place so it does not read as an oversight.
+
+Also fixed from the same review: the lockfile restore is now installed as a
+`trap` on `EXIT`/`INT`/`TERM` rather than running only on the paths the script
+reaches. Proven by interrupting a run between the re-resolve and the restore —
+before, the developer's lockfile was left rewritten and the temp dir leaked;
+after, it is byte-identical and nothing is left behind. That guarantee is what
+the "run this block verbatim locally" property depends on.

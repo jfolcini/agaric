@@ -11,8 +11,10 @@ name: Validate (prek-equivalent)
 # fanned out from a `detect-changes` per-category classifier that is
 # fail-closed (an unrecognized or undiffable path runs everything):
 #   - detect-changes — classifies the diff into docs_only/frontend/backend/ci.
-#   - verify-version-agreement — always-on 5-way version mutual-agreement
-#                        check (#2975); no path gating, no docs-only skip.
+#   - verify-version-agreement — always-on mutual-agreement check across
+#                        every file scripts/bump-version.sh bumps, the fuzz
+#                        crate's own lock included (#2975); no path gating,
+#                        no docs-only skip.
 #   - verify-lockfiles — asserts BOTH Cargo.lock files (src-tauri/ and
 #                        src-tauri/fuzz/) are a faithful resolution of their
 #                        manifests (#4142); no build, ~30s. Gated on backend
@@ -282,28 +284,40 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
-  # verify-version-agreement (#2975) — the 5-way version mutual-agreement
-  # check, always-on (no detect-changes gating, no docs-only fast path).
+  # verify-version-agreement (#2975) — the version mutual-agreement check over
+  # every file `scripts/bump-version.sh` bumps, always-on (no detect-changes
+  # gating, no docs-only fast path).
   # Extracted from release.yml's `verify-version` job, which only runs on a
   # tag push — so version drift between the manifests was previously caught
   # mid-release instead of at PR time. This job reuses the EXACT SAME
   # extraction expressions and runs them on every PR/push, but checks only
-  # that the five manifests agree with EACH OTHER — there is no tag yet at
+  # that the manifests agree with EACH OTHER — there is no tag yet at
   # PR time, so the tag-equality half of release.yml's check does not apply
   # here and is intentionally NOT duplicated. release.yml's `verify-version`
   # job is unchanged and still separately asserts the tag matches the
   # manifests at release time; this job does not replace it.
+  #
+  # `src-tauri/fuzz/Cargo.lock` is checked here even though release.yml's
+  # tag-time twin does not look at it. It pins `agaric` through a path
+  # dependency, so a version bump moves it too — but it sits in the fuzz
+  # crate's OWN workspace, outside every parent-workspace command, and until
+  # `bump-version.sh` learned to regenerate it EVERY release from 0.7.1 to
+  # 0.9.8 left it stale (by up to five versions). `verify-lockfiles` below
+  # already reds on that, but as a raw `cargo … --locked` error against a
+  # file whose staleness is a VERSION-BUMP omission; diagnosing it from the
+  # job whose name says "version agreement", with the regeneration command in
+  # the message, is what turns that red into an instruction.
   # ---------------------------------------------------------------------------
   verify-version-agreement:
     runs-on: ubuntu-24.04
-    # Trivial jq / grep / awk over the 5 manifests + fail-fast comparison —
+    # Trivial jq / grep / awk over the manifests + fail-fast comparison —
     # same budget as release.yml's verify-version job.
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Verify the 5 version manifests mutually agree
+      - name: Verify the version manifests mutually agree
         run: |
           set -euo pipefail
           CONF=$(jq -r .version src-tauri/tauri.conf.json)
@@ -311,13 +325,14 @@ jobs:
           PKG=$(jq -r .version package.json)
           PKG_LOCK=$(jq -r .version package-lock.json)
           CARGO_LOCK=$(awk '/^name = "agaric"$/{getline; print; exit}' src-tauri/Cargo.lock | cut -d'"' -f2)
-          echo "conf=$CONF cargo=$CARGO cargo.lock=$CARGO_LOCK pkg=$PKG pkg.lock=$PKG_LOCK"
+          FUZZ_LOCK=$(awk '/^name = "agaric"$/{getline; print; exit}' src-tauri/fuzz/Cargo.lock | cut -d'"' -f2)
+          echo "conf=$CONF cargo=$CARGO cargo.lock=$CARGO_LOCK fuzz/cargo.lock=$FUZZ_LOCK pkg=$PKG pkg.lock=$PKG_LOCK"
           fail=0
-          for v in "$CARGO" "$CARGO_LOCK" "$PKG" "$PKG_LOCK"; do
+          for v in "$CARGO" "$CARGO_LOCK" "$FUZZ_LOCK" "$PKG" "$PKG_LOCK"; do
             if [ "$v" != "$CONF" ]; then fail=1; fi
           done
           if [ "$fail" -ne 0 ]; then
-            echo "::error::Version drift — tauri.conf.json=$CONF, Cargo.toml=$CARGO, Cargo.lock=$CARGO_LOCK, package.json=$PKG, package-lock.json=$PKG_LOCK. Bump all of them in lockstep."
+            echo "::error::Version drift — tauri.conf.json=$CONF, Cargo.toml=$CARGO, Cargo.lock=$CARGO_LOCK, fuzz/Cargo.lock=$FUZZ_LOCK, package.json=$PKG, package-lock.json=$PKG_LOCK. Bump all of them in lockstep — scripts/bump-version.sh does it. If only src-tauri/fuzz/Cargo.lock disagrees, regenerate it with: cd src-tauri/fuzz && cargo update -p agaric --precise $CONF"
             exit 1
           fi
 
@@ -398,6 +413,28 @@ jobs:
           snapshots="$(mktemp -d)"
           fail=0
 
+          # The restore below is UNCONDITIONAL, not path-dependent. Step (2)
+          # rewrites each lock IN PLACE, and this block is meant to be run
+          # verbatim locally to reproduce a red (#4142's acceptance criterion),
+          # so a Ctrl-C, a job timeout, or any failure between the rewrite and
+          # the in-loop `cp` must not leave a developer's Cargo.lock rewritten.
+          # `set -e` is on (above), so an unguarded failure exits the step and
+          # fires the EXIT trap; INT/TERM need their own traps to run it at all.
+          # Restores every lock already snapshotted, then removes the snapshot
+          # dir (which mktemp -d would otherwise leak on every local run).
+          restore_locks() {
+            for restore_lock in Cargo.lock fuzz/Cargo.lock; do
+              restore_snap="$snapshots/${restore_lock//\//_}"
+              if [ -f "$restore_snap" ]; then
+                cp "$restore_snap" "$restore_lock"
+              fi
+            done
+            rm -rf "$snapshots"
+          }
+          trap restore_locks EXIT
+          trap 'trap - EXIT; restore_locks; exit 130' INT
+          trap 'trap - EXIT; restore_locks; exit 143' TERM
+
           for lock in Cargo.lock fuzz/Cargo.lock; do
             manifest="$(dirname "$lock")/Cargo.toml"
             label="src-tauri/$lock"
@@ -456,11 +493,11 @@ jobs:
             fi
             # Step (2) rewrites the lock IN PLACE. Put the committed bytes
             # back before the next iteration: it keeps the checkout clean for
-            # anything that runs after this step, makes the loop order
+            # anything that runs after this step and makes the loop order
             # irrelevant (no iteration can ever snapshot a lock a previous one
-            # rewrote), and — the reason it is not merely tidy — this block is
-            # meant to be run verbatim locally to reproduce a red, which
-            # without the restore silently edits the developer's Cargo.lock.
+            # rewrote). The `restore_locks` trap above is what makes the
+            # guarantee unconditional — this in-loop `cp` is what keeps the
+            # rest of THIS run reading committed bytes.
             cp "$snap" "$lock"
             echo "::endgroup::"
           done
