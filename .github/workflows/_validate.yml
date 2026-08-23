@@ -415,7 +415,11 @@ jobs:
     # classifier is also fail-closed, so an unrecognized path (e.g. a
     # `rust-toolchain.toml` bump, which CAN change resolution through the
     # MSRV-aware resolver) pins backend=true and runs this too.
-    if: needs.detect-changes.outputs.backend == 'true'
+    # Also OR-ed on `ci`: this job's body is ~150 lines of shell that nothing
+    # else runs, so gating on `backend` alone would leave a PR editing that
+    # shell — this file — with the job SKIPPED, and `validate-all` accepts the
+    # skip via `be_skip_ok`. OR-ing on `ci` makes it self-exercising.
+    if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ci == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

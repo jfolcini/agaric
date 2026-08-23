@@ -45,11 +45,14 @@ jobs:
     # ~90-minute build matrix spins up. The thorough six-way check — the fuzz
     # crate's own lock included — is `verify-version-agreement`, which the
     # `validate:` job below invokes via `uses: ./.github/workflows/_validate.yml`
-    # on this very tag push. That job carries no `if:` and no `needs:`, so it
+    # on this very tag push. `verify-version-agreement` — the job inside
+    # `_validate.yml`, not the `validate:` job here, which does have both —
+    # carries no `if:` and no `needs:`, so once `_validate.yml` is reached it
     # runs unconditionally on the workflow_call (no detect-changes gating, no
     # docs-only skip), and `build-and-release` requires
     # `needs.validate.result == 'success'`. So the fuzz lock IS covered at tag
-    # time — by the CALLED workflow rather than by this calling one.
+    # time — by the CALLED workflow rather than by this calling one, and
+    # conditionally on THIS job passing first, since `validate:` needs it.
     #
     # It is NOT covered by a fear of hotfix tags. An earlier version of this
     # comment claimed a six-way check here would red a hotfix tag cut from a
