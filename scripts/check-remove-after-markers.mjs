@@ -364,6 +364,16 @@ const MARKER_STRICT_RE = /REMOVE AFTER\s+`?(\d+)\.(\d+)\.(\d+)(?![\d-]|\.\d)`?/
 // `FEATURE-MAP.md` and `SESSION-LOG.md`, while `EXCLUDE_PATH_RE` here
 // excludes only `^docs/session-log/` — so those files are scanned by this
 // guard with hard tabs entirely unlinted.
+//
+// One deliberate off-by-one, in the SAFE direction. The ` {0,3}` AFTER the
+// prefix group is not CommonMark's cap when a `>` precedes it: a blockquote
+// marker consumes one following space as its separator, so `>` + four spaces
+// + a delimiter run is a legal fence whose content indent is only 3, and this
+// regex refuses it. That is a FALSE POSITIVE — loud, a marker reported that
+// is really fenced — which is the direction this guard is allowed to be wrong
+// in. Widening it to ` {0,4}` after a prefix would be correct per spec but
+// re-opens exactly the fail-open the tab and unbounded-space cases above were
+// capped to close, for one extra column of tolerance nothing in the tree uses.
 const MD_FENCE_RE = /^((?: {0,3}>)*) {0,3}(`{3,}|~{3,})/
 
 // The stricter shape a CLOSING fence must have: the same blockquote-prefix/
