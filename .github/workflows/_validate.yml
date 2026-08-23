@@ -371,11 +371,14 @@ jobs:
   # rewrites a lock cargo genuinely disagrees with. (Both verified on 1.95.0.)
   #
   # No build, no system deps (cargo metadata never runs build scripts), and
-  # deliberately NO rust-cache: the whole job is ~30-60 s wall / 1.5 GB of
-  # registry downloads from a cold CARGO_HOME (measured locally; the spread is
-  # download bandwidth), and any action that invokes cargo before the step
-  # could re-resolve and rewrite the lock ahead of the snapshot, masking the
-  # very drift being looked for. 10-min ceiling sized for slow-mirror/runner
+  # deliberately NO rust-cache: the whole job runs in comfortably under a
+  # minute even from a cold CARGO_HOME, where the cost is registry download
+  # bandwidth rather than compute. No frozen figure here on purpose — a
+  # measured number in a comment is what this PR removed from
+  # `src-tauri/tests/AGENTS.md`; the 10-minute ceiling below is the bound that
+  # matters. And any action that invokes cargo before the step could
+  # re-resolve and rewrite the lock ahead of the snapshot, masking the very
+  # drift being looked for. 10-min ceiling sized for slow-mirror/runner
   # variance over that minute, per the file's convention.
   # ---------------------------------------------------------------------------
   verify-lockfiles:
@@ -411,7 +414,6 @@ jobs:
           set -euo pipefail
 
           snapshots="$(mktemp -d)"
-          fail=0
 
           # The restore below is UNCONDITIONAL, not path-dependent. Step (2)
           # rewrites each lock IN PLACE, and this block is meant to be run
@@ -434,6 +436,8 @@ jobs:
           trap restore_locks EXIT
           trap 'trap - EXIT; restore_locks; exit 130' INT
           trap 'trap - EXIT; restore_locks; exit 143' TERM
+
+          fail=0
 
           for lock in Cargo.lock fuzz/Cargo.lock; do
             manifest="$(dirname "$lock")/Cargo.toml"
@@ -486,8 +490,11 @@ jobs:
               echo "::endgroup::"
               continue
             fi
-            if ! diff -u "$snap" "$lock" \
-                  --label "$label (committed)" --label "$label (what cargo resolves)"; then
+            # Options BEFORE the operands: GNU getopt permutes, so the other
+            # order works on ubuntu-24.04 — but this block is advertised as
+            # runnable verbatim locally and a non-GNU diff may not permute.
+            if ! diff -u --label "$label (committed)" \
+                  --label "$label (what cargo resolves)" "$snap" "$lock"; then
               echo "::error file=$label::$label is not what cargo resolves — the diff above is what cargo rewrote. Regenerate and commit the lockfile."
               fail=1
             fi

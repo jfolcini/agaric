@@ -35,8 +35,17 @@ jobs:
   # tag push (scripts/release.sh), so there is no bump job upstream of it.
   verify-version:
     runs-on: ubuntu-24.04
-    # PEND-41 R1 — no historical sample. Trivial jq / grep / awk over the 5
-    # manifests + fail-fast comparison; 5-min budget is generous.
+    # PEND-41 R1 — no historical sample. Trivial jq / grep / awk over the
+    # version manifests + fail-fast comparison; 5-min budget is generous.
+    #
+    # This job deliberately does NOT read src-tauri/fuzz/Cargo.lock, which
+    # _validate.yml's `verify-version-agreement` does (#4279). The coverage
+    # chain is transitive rather than obvious: _validate also runs on the tag
+    # push, so the fuzz lock IS checked at tag time — just by the other job.
+    # See the rationale next to `verify-version-agreement` before adding it
+    # here; #4281 tracks whether the two should be symmetric, and the reason
+    # they are not is that a six-way check here would red any hotfix tag cut
+    # from a commit predating #4279.
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

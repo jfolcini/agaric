@@ -34,9 +34,10 @@
 //   - `verify-version-agreement`'s own comparison already treats it as the
 //     pivot value (`CONF`) every other manifest is checked against
 //     (`.github/workflows/_validate.yml`'s `verify-version-agreement` job):
-//     `for v in "$CARGO" "$CARGO_LOCK" "$PKG" "$PKG_LOCK"; do if [ "$v" !=
-//     "$CONF" ]`. Reusing that pivot keeps this guard's notion of "current"
-//     answering the same question the existing mutual-agreement check does.
+//     `for v in "$CARGO" "$CARGO_LOCK" "$FUZZ_LOCK" "$PKG" "$PKG_LOCK"; do
+//     if [ "$v" != "$CONF" ]`. Reusing that pivot keeps this guard's notion
+//     of "current" answering the same question the existing mutual-agreement
+//     check does.
 // Since those manifests are already enforced to agree, which one is read
 // matters only for defining the rule precisely — not for correctness day to
 // day; tauri.conf.json is the one with a real semantic tie to "has this
