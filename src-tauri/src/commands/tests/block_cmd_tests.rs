@@ -4847,6 +4847,17 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
         parsed.fs_path, att.fs_path,
         "C-3a: op-log payload fs_path must match the original add_attachment fs_path"
     );
+    // #4262: the PERSISTED shape carries the delete-time `filename` too — this
+    // is what remote peers and the reverse read back. The post-rename case is
+    // covered end-to-end by
+    // `materializer::tests::attachments_gc::undo_of_delete_attachment_restores_the_name_the_row_held_at_delete_time_4262`;
+    // what is pinned here is that the field reaches the op log at all, rather
+    // than being defaulted to the legacy "nothing was recorded" empty string.
+    assert_eq!(
+        parsed.filename, att.filename,
+        "#4262: op-log payload filename must carry the name captured from the \
+         live row inside the delete's transaction"
+    );
 
     mat.shutdown();
 }

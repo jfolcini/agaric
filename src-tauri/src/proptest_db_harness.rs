@@ -696,9 +696,19 @@ impl ChainModel {
                 }
                 let idx = attachment_index % self.attachments.len();
                 let (attachment_id, fs_path) = self.attachments.remove(idx);
+                // #4262: the delete-time `filename`, which production reads
+                // from the live row. The chain never emits `rename_attachment`,
+                // so the live name is still the one the add wrote — the last
+                // component of the path the add derived from it.
+                let filename = fs_path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(fs_path.as_str())
+                    .to_owned();
                 Some(OpPayload::DeleteAttachment(DeleteAttachmentPayload {
                     attachment_id,
                     fs_path,
+                    filename,
                 }))
             }
         }

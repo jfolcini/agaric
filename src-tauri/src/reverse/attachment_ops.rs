@@ -13,6 +13,14 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
             // Carry forward the original `fs_path` so the reverse op can
             // unlink the file the AddAttachment created.
             fs_path: payload.fs_path,
+            // #4262: same treatment, same limitation. This SYNTHETIC delete
+            // never observed the live row, so all it can carry is the add
+            // payload's creation-time name — exactly the residual already
+            // documented for `fs_path` under "redo after undo-of-add" below.
+            // Carrying it is still strictly better than leaving it empty:
+            // an empty `filename` is the legacy sentinel, and a redo of this
+            // op would then fall back to... this same add payload anyway.
+            filename: payload.filename,
         },
     ))
 }
@@ -101,42 +109,16 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
 /// row over the reclaimed path instead of refusing), but a false refusal, not
 /// a fixed path.
 ///
-/// # Residual: `filename` is still the CREATION-time name
-///
-/// The same staleness class this function fixes for `fs_path` remains
-/// unfixed for `filename`, and for the same structural reason — every field
-/// of the reconstructed `AddAttachmentPayload` is the field the row was
-/// *born* with.
-///
-/// `rename_attachment` is a first-class op with its own forward apply and its
-/// own reverse ([`reverse_rename_attachment`]), so `add → rename → delete →
-/// undo` restores the PRE-rename filename: the user gets their attachment
-/// back under a name they had already changed. The redo of the delete then
-/// renames nothing back, because the rename op is not part of this undo at
-/// all — it sits earlier in the stack, untouched.
-///
-/// The payload-adoption trick does not apply here:
-/// [`agaric_store::op::DeleteAttachmentPayload`] carries `attachment_id` and
-/// `fs_path` and nothing else, so unlike `fs_path` there is no delete-time
-/// `filename` in the op log to adopt. Fixing it means either widening that
-/// payload (a schema-adjacent change with its own `#[serde(default)]`
-/// migration story, exactly like C-3's) or having the reverse read the live
-/// row inside the delete's transaction — both deliberately out of scope for
-/// the #3706 review, which is why this is documented rather than fixed.
-///
-/// Consequences are strictly cosmetic-plus: a wrong display name and a wrong
-/// download name. Unlike a stale `fs_path` it cannot dangle the row or trip
-/// the byte-existence guard, since `filename` is metadata and nothing
-/// resolves bytes through it.
-///
 /// # Not stale: the other reconstructed fields
 ///
 /// For completeness, the remaining `AddAttachmentPayload` fields are
 /// creation-time values that are *supposed* to be creation-time values —
 /// `mime_type` and `size_bytes` describe the bytes, which are immutable
 /// under content addressing, and `attachment_id` / `block_id` are identity.
-/// Only `fs_path` (fixed here) and `filename` (above) have first-class ops
-/// that can change them behind the reverse's back.
+/// Only `fs_path` (here) and `filename` (see
+/// [`adopt_delete_time_filename`]) have first-class ops that can change them
+/// behind the reverse's back, which is why those two and only those two are
+/// adopted from the delete payload.
 ///
 /// # Residual: redo after undo-of-add can still false-refuse
 ///
@@ -161,7 +143,7 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
 /// refusal**, not a fully-fixed path. Closing it symmetrically would mean
 /// [`reverse_add_attachment`] reading the live row instead of its own
 /// payload — a wider change, deliberately not made in the #3706 review.
-pub(super) fn adopt_delete_time_fs_path(
+fn adopt_delete_time_fs_path(
     delete_fs_path: &str,
     add_payload: &mut agaric_store::op::AddAttachmentPayload,
 ) {
@@ -176,6 +158,93 @@ pub(super) fn adopt_delete_time_fs_path(
          not the one it was created with (#3706 review)"
     );
     add_payload.fs_path = delete_fs_path.to_owned();
+}
+
+/// Point a reconstructed `add_attachment` reverse at the `filename` the row
+/// actually held **when it was deleted**, rather than the one it was created
+/// with (#4262).
+///
+/// The `fs_path` sibling above explains the shape at length; this is the
+/// second — and, per its "Not stale" section, the last — field of the
+/// reconstructed `AddAttachmentPayload` that a first-class op can change
+/// behind the reverse's back. `rename_attachment` has its own forward apply
+/// and its own reverse ([`reverse_rename_attachment`]), so without this
+/// adoption `add ("photo.png") → rename ("receipt-2024.png") → delete → undo`
+/// resurrects the row as **`photo.png`** — the name the user changed away
+/// from, possibly long ago. The redo of the delete renames nothing back
+/// either: the `rename_attachment` op is not part of this undo at all, it
+/// sits earlier in the stack, untouched.
+///
+/// `DeleteAttachmentPayload::filename` is captured by
+/// `commands::attachments::delete_attachment_inner` from the LIVE row inside
+/// the delete's own IMMEDIATE transaction, exactly as `fs_path` is, so it is
+/// the post-rename value by construction.
+///
+/// # When the delete-time name is not usable
+///
+/// Empty only, and for the same reason: `filename` is `#[serde(default)]` on
+/// [`agaric_store::op::DeleteAttachmentPayload`] for op-log rows written
+/// before #4262, which deserialize to `""`. Those keep the original add
+/// payload's name — all that was ever recorded for them, and the pre-#4262
+/// behaviour for exactly the ops that predate the fix.
+///
+/// Unlike the `fs_path` legacy case this fallback is not a *refusal* case:
+/// nothing resolves bytes through `filename`, so a stale name cannot dangle
+/// the row or trip the #3706 byte-existence guard. It is a wrong display
+/// name and a wrong download name, and it ages out with op-log retention.
+///
+/// A *peer's* delete op is unreachable here for the same #2481/#2549 reason
+/// spelled out for `fs_path`.
+fn adopt_delete_time_filename(
+    delete_filename: &str,
+    add_payload: &mut agaric_store::op::AddAttachmentPayload,
+) {
+    if delete_filename.is_empty() || delete_filename == add_payload.filename {
+        return;
+    }
+    tracing::debug!(
+        attachment_id = add_payload.attachment_id.as_str(),
+        original = %add_payload.filename,
+        at_delete = %delete_filename,
+        "restoring a deleted attachment under the name it held when it was deleted, \
+         not the one it was created with (#4262)"
+    );
+    add_payload.filename = delete_filename.to_owned();
+}
+
+/// The single entry point both `delete_attachment` reverse twins use to make a
+/// reconstructed `add_attachment` describe the row as it stood the instant
+/// before the delete, rather than the instant it was created.
+///
+/// Deliberately one call taking the whole delete payload rather than two
+/// field-level calls at each site: the per-field helpers are private, so a twin
+/// physically cannot adopt one field and forget the other. #4253's review
+/// caught the twins-must-agree hazard for `fs_path` alone; #4262 doubles the
+/// number of fields that could drift, so the parity is enforced by
+/// construction here instead of by convention at two call sites.
+///
+/// See [`adopt_delete_time_fs_path`] and [`adopt_delete_time_filename`] for
+/// why each field is stale and what the legacy fallback means.
+pub(super) fn adopt_delete_time_state(
+    delete_payload: &agaric_store::op::DeleteAttachmentPayload,
+    add_payload: &mut agaric_store::op::AddAttachmentPayload,
+) {
+    // Destructured EXHAUSTIVELY rather than read field-by-field, and that is
+    // load-bearing: private per-field helpers stop a *twin* from adopting one
+    // field and forgetting the other, but they say nothing about a third field
+    // arriving on `DeleteAttachmentPayload` later. With `delete_payload.fs_path`
+    // / `.filename` field access such a field would compile silently here and
+    // go unadopted at BOTH twins — the same "remember to stay in step" hazard,
+    // just moved one level up. The destructure turns it into a compile error at
+    // the one place that has to decide.
+    let agaric_store::op::DeleteAttachmentPayload {
+        // Identity, not state: it selects the row, it is never restored ONTO it.
+        attachment_id: _,
+        fs_path,
+        filename,
+    } = delete_payload;
+    adopt_delete_time_fs_path(fs_path, add_payload);
+    adopt_delete_time_filename(filename, add_payload);
 }
 
 /// Reverse a `delete_attachment` op by reconstructing the `add_attachment`
@@ -236,9 +305,10 @@ pub async fn reverse_delete_attachment(
         Some(row) => {
             let mut add_payload: agaric_store::op::AddAttachmentPayload =
                 serde_json::from_str(&row.payload)?;
-            // #3706 review: restore the row at the path it held AT DELETE
-            // TIME, not at creation — see `adopt_delete_time_fs_path`.
-            adopt_delete_time_fs_path(&payload.fs_path, &mut add_payload);
+            // #3706 review / #4262: restore the row at the path AND under the
+            // name it held AT DELETE TIME, not at creation — see
+            // `adopt_delete_time_state`.
+            adopt_delete_time_state(&payload, &mut add_payload);
             Ok(OpPayload::AddAttachment(add_payload))
         }
         None => Err(AppError::NonReversible {

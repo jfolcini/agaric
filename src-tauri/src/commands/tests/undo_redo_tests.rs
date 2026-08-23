@@ -1609,6 +1609,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
         OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "attachments/photo.png".into(),
+            filename: "photo.png".into(),
         }),
         del_ts,
     )
@@ -1732,6 +1733,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "attachments/photo.png".into(),
+            filename: "photo.png".into(),
         }),
         del_ts,
     )
@@ -1975,6 +1977,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
         OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "attachments/photo.png".into(),
+            filename: "photo.png".into(),
         }),
         del_ts,
     )
@@ -4296,6 +4299,7 @@ async fn apply_reverse_delete_attachment_on_nonexistent_is_idempotent() {
     let payload = OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
         attachment_id: BlockId::test_id("ATT_GHOST"),
         fs_path: "attachments/ghost.bin".into(),
+        filename: "ghost.bin".into(),
     });
     let result = apply_reverse_in_tx(
         &mut tx,
