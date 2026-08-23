@@ -2269,11 +2269,20 @@ async fn block_links_unresolved_oracle_distinguishes_all_three_target_states_424
 /// headroom on this box, not headroom on CI.
 ///
 /// If the lane starts flagging SLOW, the fix is a `[[profile.default.overrides]]`
-/// leash in `.config/nextest.toml` alongside the four already there — NOT
+/// leash in `.config/nextest.toml` alongside the ones already there — NOT
 /// shrinking the scale back, which is the one change that would stop the
 /// guard biting at all (see the 40x100 row above: only ~1.9x over the kill,
 /// inside the range where a loaded runner drags a real regression back under
 /// the line).
+///
+/// **But leash THIS test only once it is actually flagging, and with the
+/// price in view.** The 60s terminate is this test's ONLY failure mode — it
+/// asserts no wall-clock bound — so a 4x30s=120s leash would take the
+/// defective run's margin from 2.4x (142.3s / 60s) down to 1.19x. That is
+/// the reason #4282 leashed the three `..._residency_at_*_blocks_4242`
+/// measurement tests, which share this lane and this 60s window but assert
+/// nothing about time, and deliberately left this one on the default. See
+/// that override's comment in `.config/nextest.toml`.
 ///
 /// The two clean and two defective numbers are recorded above so the next
 /// person can re-derive the choice instead of re-guessing it: re-inject the
@@ -2349,11 +2358,20 @@ async fn block_links_unresolved_oracle_scale_sweep_4241() {
     // which points at that page's planted cross-space target instead — one
     // unresolvable edge per page, `PAGES` in total, the rest resolving exactly
     // like the sibling sweep's chain.
+    //
+    // The chaining arm indexes `ids[i + 1]` with no wrap-around, because there
+    // is no wrap-around edge to handle: `ids.len()` is `PAGES *
+    // BLOCKS_PER_PAGE`, so the only `i` for which `i + 1 == ids.len()` is the
+    // final one — and that `i` satisfies `(i + 1) % BLOCKS_PER_PAGE == 0` and
+    // takes the cross-space branch. The `else` arm is therefore reached only
+    // when `i + 1 < ids.len()`. (It read `ids[(i + 1) % ids.len()]` until
+    // #4282; the modulo was dead and invited the reader to reason about a
+    // wrap that cannot occur.)
     for (i, id) in ids.iter().enumerate() {
         let target = if (i + 1) % BLOCKS_PER_PAGE == 0 {
             &cross_ids[i / BLOCKS_PER_PAGE]
         } else {
-            &ids[(i + 1) % ids.len()]
+            &ids[i + 1]
         };
         bl_set_content(&pool, id, &format!("body [[{target}]]")).await;
         agaric_store::cache::reindex_block_links(&pool, id)

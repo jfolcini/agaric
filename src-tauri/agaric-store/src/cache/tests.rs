@@ -5341,9 +5341,18 @@ async fn rebuild_block_links_unresolved_on_an_empty_vault_writes_nothing_4218() 
 // invented rather than measured — it moves with the allocator, the libc, the
 // SQLite page cache and the runner — and a red weekly lane on allocator noise
 // teaches people to ignore the lane. What it DOES pin is the equivalence the
-// rewrite has to preserve: the streamed fold and the old buffered fold must
-// derive byte-identical obligations from the same vault. The residency
-// numbers are printed for a human (or a future bisect) to read.
+// rewrite has to preserve — read against the fixture it actually runs on.
+// This vault has an EMPTY `block_links` table and exactly ONE token per
+// link-bearing block, so production's `NOT EXISTS` discharge clause matches
+// nothing and its dedup step removes nothing. What the assertion shows is
+// therefore that the streamed fold and the old buffered fold agree on the
+// PLAIN path: the same sources survive the `LIKE` pre-filter, and the same
+// single token is decoded out of each. The two places the folds could
+// actually diverge — discharge against an already-existing `block_links`
+// edge, and one source naming the same target twice — are NOT exercised
+// here. They are covered by the pre-existing `_4218` tests in this file, on
+// fixtures built for them. The residency numbers are printed for a human (or
+// a future bisect) to read.
 //
 // # One variable
 //
@@ -5370,10 +5379,19 @@ async fn rebuild_block_links_unresolved_on_an_empty_vault_writes_nothing_4218() 
 // memory", which is why the arrangement is left as it is.
 //
 // 1. ARENA WARMTH. The two arms share one heap and the STREAMING arm runs
-//    first, so its peak is measured against a cold-ish arena while the
-//    BUFFERED arm runs second and can satisfy part of its demand from what
-//    the first arm just freed. Running them in the other order would flatter
-//    the change and is deliberately not what happens here.
+//    first, so the BUFFERED arm runs second and can satisfy part of its
+//    demand from what the first arm just freed. Note what that does NOT say:
+//    arm 1 is not measured against a COLD arena either. `seed_rss_vault`
+//    runs before BOTH arms and allocates and frees one id plus one
+//    `RSS_CONTENT_BYTES` content `String` per seeded block — ~42 MB of churn
+//    at the 100k point, only ~100 kB of it ever live at once — so whatever
+//    the allocator held back from that is already available to arm 1. The
+//    DIRECTION of the bias is unaffected: arm 2 is still strictly warmer
+//    than arm 1, inheriting the seeder's arena AND arm 1's, so the printed
+//    gap remains a lower bound. What is smaller than a cold-versus-warm
+//    framing implies is the SIZE of the understatement. Running the arms in
+//    the other order would flatter the change and is deliberately not what
+//    happens here.
 //
 // 2. ARM ASYMMETRY. Arm 1 is the whole production function, INCLUDING the
 //    chunked INSERT of the obligation rows; arm 2 replicates only the
@@ -5415,7 +5433,37 @@ async fn rebuild_block_links_unresolved_on_an_empty_vault_writes_nothing_4218() 
 // — but the two larger points are the ones carrying the claim. The 50k and
 // 100k gaps have been stable across runs to within a few hundred kB.
 //
-// Total weekly cost of all three: ~7s.
+// # Cost, and the margin against the lane's kill
+//
+// `bench-slo` runs `cargo nextest run --workspace --run-ignored=only` with no
+// `--profile`, so these three inherit `profile.default` from
+// `src-tauri/.config/nextest.toml`: flagged SLOW at 30s, TERMINATED at
+// 2x30s = 60s. That is the same window
+// `block_links_unresolved_oracle_scale_sweep_4241` reasons about at length,
+// and it is stated here rather than inherited silently (#4282).
+//
+// Measured with all four of the lane's block-links tests run together under
+// nextest on one 16-core dev box at load ~4, two runs: 20k 1.02s / 1.02s,
+// 50k 2.52s / 2.22s, 100k 4.51s / 4.29s. Serialised on the same box: 0.93s,
+// 2.18s, 4.14s — ~7.2s for the trio, which is where the "~7s weekly cost"
+// figure came from. So the worst point sits ~13x under the 60s kill, about
+// the headroom the sweep documents for itself; and the 100k seeding turns
+// out not to be the tightest thing in the lane — the sweep measured
+// 4.35-4.43s beside it, in the same runs.
+//
+// That is dev-box headroom, not CI headroom — the same caveat the sweep
+// states about its own numbers. At the 4-7x shared-runner slowdown it argues
+// is plausible for this lane, the 100k point lands at 18-32s: past the 30s
+// SLOW flag at the top of that range, and close enough to the 60s kill to
+// lose the measurement to runner noise. Unlike the sweep, these three have
+// nothing to GAIN from a kill — their gate is the equality assertion below,
+// the RSS figures are printed rather than bounded, and a termination can
+// therefore only destroy a diagnostic and redden the lane. So they carry an
+// explicit `[[profile.default.overrides]]` leash in `.config/nextest.toml`
+// (4x30s = 120s) and the sweep deliberately does not. The 30s SLOW flag
+// still fires under that leash, so drift stays visible in the run output;
+// only the spurious kill is removed. If these numbers stop holding, that
+// override's comment and this section are the two places to update together.
 
 /// Bytes of `content` on every seeded block — HELD FIXED across the three
 /// measurement points so block count is the only variable that moves.
@@ -5619,9 +5667,14 @@ async fn measure_unresolved_rebuild_residency(blocks: usize) {
     })
     .await;
 
-    // THE PIN: the rewrite is an allocation change, not a semantic one.
-    // `block_links` is empty in this fixture, so production's `NOT EXISTS`
-    // clause discharges nothing and the two folds must agree exactly.
+    // THE PIN: the rewrite is an allocation change, not a semantic one — on
+    // the path this fixture walks. `block_links` is empty here, so
+    // production's `NOT EXISTS` clause discharges nothing; and every seeded
+    // source carries exactly one token, so its dedup removes nothing. The two
+    // folds must therefore agree exactly, but what that agreement covers is
+    // the plain path only. Discharge against an existing edge and multi-token
+    // dedup — the two places ordering could diverge — are the `_4218` tests'
+    // job, not this one's.
     assert_eq!(
         inserted,
         u64::try_from(buffered_pairs.len()).unwrap(),
