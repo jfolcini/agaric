@@ -1,4 +1,4 @@
-# Session 1380 — The README described a rule the guard stopped enforcing (2026-08-22)
+# Session 1385 — The README described a rule the guard stopped enforcing (2026-08-22)
 
 | Metadata | Value |
 |----------|-------|
