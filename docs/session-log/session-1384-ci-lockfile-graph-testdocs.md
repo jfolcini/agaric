@@ -165,3 +165,84 @@ reaches. Proven by interrupting a run between the re-resolve and the restore —
 before, the developer's lockfile was left rewritten and the temp dir leaked;
 after, it is byte-identical and nothing is left behind. That guarantee is what
 the "run this block verbatim locally" property depends on.
+
+## Round-three review — the obligation the check creates for every backend PR
+
+The round-two fix made a *version bump* regenerate `src-tauri/fuzz/Cargo.lock`.
+The round-three review pointed at the other direction, and it is the larger
+half: step (1) of `verify-lockfiles` runs `cargo metadata --locked` against
+`fuzz/Cargo.toml`, and the fuzz crate path-depends on `agaric`, `agaric-store`,
+`agaric-sync` and `agaric-engine` — so **any** added or changed dependency
+*requirement* in any `src-tauri/**/Cargo.toml` invalidates the fuzz lock too,
+on a PR that never went near `src-tauri/fuzz`.
+
+Reproduced rather than argued. `mdns-sd` is declared `"0.20"` in both
+`src-tauri/Cargo.toml` and `agaric-sync/Cargo.toml` and 0.21.0 is the current
+release — exactly the shape Dependabot's default `increase-if-necessary`
+produces, because 0.21.0 does not satisfy `^0.20`. Editing those two
+requirements and nothing else made step (1) fail on `fuzz/Cargo.lock` with
+`cannot update the lock file … because --locked was passed`.
+
+**The remedy named in the annotation is a conservative re-resolve, not
+`cargo generate-lockfile`.** Measured on this lock: `cargo generate-lockfile`
+relocked **882 packages** and moved `loro` 1.13.6 → 1.13.9, straight through the
+deliberate #3161 hold that `.github/dependabot.yml` pins — it would turn a
+one-line fix into a silent engine bump. Any cargo command *without* `--locked`
+rewrites the lock conservatively instead; `cargo metadata --format-version 1
+>/dev/null` is the cheapest (no build). On the simulated bump it relocked
+exactly one package, a four-line diff, `loro` untouched, and step (1) then
+passed.
+
+**Dependabot cannot repair this itself, and that is the right trade.** The
+`/src-tauri` entry sets no `versioning-strategy`, so it defaults to
+`increase-if-necessary` and may edit `src-tauri/Cargo.toml`; the
+`/src-tauri/fuzz` entry is `lockfile-only`, which by definition cannot touch a
+manifest — and that is load-bearing, not incidental: #3432 shipped an `rmcp`
+`^2.0` → `^3.0` breaking major into the shared parent manifest from inside a
+PR titled as confined to `/src-tauri/fuzz`, and `lockfile-only` is what stops
+it recurring. Relaxing it to let the fuzz entry self-heal would restore that
+hazard to buy back a one-command manual step, and gating the fuzz half of step
+(1) off on dependency PRs would blind the check on exactly the PRs most likely
+to break the lock. So the manual step is kept and made loud: the failing
+annotation now carries the paste-ready `cd src-tauri/fuzz && cargo metadata …`
+command, plus a second annotation on the fuzz lock explaining why a PR that
+never touched `src-tauri/fuzz` is being asked to regenerate it. The obligation
+is documented in `AGENTS.md` § Coupled Dependency Updates, in `docs/BUILD.md`
+beside the release steps, and in the job's own header comment — including
+"do not fix this by relaxing the fuzz entry's strategy".
+
+Three smaller items from the same review:
+
+**A truncated snapshot could be written over a real lockfile.** `cp "$lock"
+"$snap"` dying partway (ENOSPC) left a short file at the snapshot name, and
+`restore_locks` decides purely on `[ -f "$restore_snap" ]` — so the trap copied
+the truncation over the committed `Cargo.lock`. Harmless on a throwaway runner,
+fatal to the "safe to run verbatim locally" property the trap exists to
+provide. The snapshot is now written to `$snap.partial` and `mv`'d into place.
+`rm -f` on the failure branch was the cheaper fix and was rejected: a SIGINT
+landing mid-`cp` runs the INT trap without ever reaching that branch, whereas a
+rename within one directory means the snapshot name only ever appears complete.
+Demonstrated with a real partial write (`ulimit -f 1`, so `cp` takes SIGXFSZ
+mid-copy): before, a 20012-byte lockfile came back as 1024 bytes; after, it is
+byte-identical.
+
+**Self-test case 15 assumed a rustup default toolchain.** It runs real `cargo`
+from a fixture outside the repo, so `rust-toolchain.toml` does not apply; a
+machine whose rustup has only directory overrides gets "rustup could not choose
+a version of cargo to run" and the case reported a hard failure — reddening an
+unrelated commit through the prek hook, the exact outcome the `command -v
+cargo` skip exists to prevent. The skip now also probes `cargo --version` from
+the fixture's own directory, under the same scrubbed `HOME`, restored
+`RUSTUP_HOME` and scratch `CARGO_HOME` as the real calls, so it cannot pass
+where they would fail. Verified both ways with an empty `RUSTUP_HOME`: before,
+`FAIL - the fuzz-lock fixture resolves offline` and exit 1; after, a named SKIP
+and exit 0.
+
+**The "authoritative sweep" grep returns 13 paths, not 12.** The extra hit is
+`src/integration_tests.rs`, which is comment-only — the `Engine-path helpers
+(#1689)` block names the counter solely to contrast it with the
+engine-tree-presence guard that file uses instead. It mattered because that is
+the very module the recipe two sections earlier declares safe under plain
+`cargo test`, so a reader following the doc's own "re-run the grep" instruction
+hit an apparent contradiction with no exception noted. Both non-hazard paths
+are now named in the parenthetical with their reasons.

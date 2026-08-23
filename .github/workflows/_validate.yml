@@ -352,6 +352,31 @@ jobs:
   # the advisory lane entirely, so a check that stopped at the first lock would
   # leave exactly the half-covered pair this job exists to avoid.
   #
+  # THE OBLIGATION THIS CREATES, stated plainly because it is not obvious from
+  # the paths a PR touches: `src-tauri/fuzz` path-depends on `agaric`,
+  # `agaric-store`, `agaric-sync` and `agaric-engine`, so its lock resolves
+  # every requirement declared in the parent manifests too. Adding or changing
+  # a dependency REQUIREMENT in ANY `src-tauri/**/Cargo.toml` therefore
+  # invalidates `src-tauri/fuzz/Cargo.lock` as well, and step (1) reds until it
+  # is regenerated — even though the diff never went near `src-tauri/fuzz`.
+  # Refreshing only `src-tauri/Cargo.lock` is not enough. The remedy is in the
+  # step's `::error::` (`cd src-tauri/fuzz && cargo metadata --format-version 1
+  # >/dev/null`, then commit the lock), and the same note is in `AGENTS.md`
+  # § Coupled Dependency Updates and `docs/BUILD.md`.
+  #
+  # This lands hardest on Dependabot, and by design cannot self-heal there.
+  # `.github/dependabot.yml`'s `/src-tauri` entry sets no
+  # `versioning-strategy`, so it defaults to `increase-if-necessary` and MAY
+  # edit `src-tauri/Cargo.toml` (a mdns-sd 0.20 -> 0.21 bump is exactly that
+  # shape); the `/src-tauri/fuzz` entry is `lockfile-only` — load-bearing, per
+  # #3432 — so it cannot regenerate the fuzz lock in response. Such a PR reds
+  # here and a human has to push the one-command fix above. That is a
+  # deliberate trade: `lockfile-only` is what stops a fuzz-scoped Dependabot PR
+  # from silently editing the SHARED parent manifest (#3432 shipped an
+  # `rmcp` ^2.0 -> ^3.0 major that way), and a loud red with the fix in the
+  # annotation is cheaper than that failure mode. Do not "fix" it by relaxing
+  # the fuzz entry's strategy.
+  #
   # NOT about checksums: cargo verifies the sha256 on download and fails hard,
   # so a bad checksum cannot reach `main` green. This is the GRAPH half —
   # package versions, `dependencies` arrays, and the resolution they imply.
@@ -425,6 +450,9 @@ jobs:
           # fires the EXIT trap; INT/TERM need their own traps to run it at all.
           # Restores every lock already snapshotted, then removes the snapshot
           # dir (which mktemp -d would otherwise leak on every local run).
+          # `[ -f ]` is the whole decision, so it leans on the loop below
+          # publishing each snapshot by rename: a name that exists here is a
+          # COMPLETE copy, never a partial one (see `snap_partial` below).
           restore_locks() {
             for restore_lock in Cargo.lock fuzz/Cargo.lock; do
               restore_snap="$snapshots/${restore_lock//\//_}"
@@ -443,7 +471,24 @@ jobs:
           for lock in Cargo.lock fuzz/Cargo.lock; do
             manifest="$(dirname "$lock")/Cargo.toml"
             label="src-tauri/$lock"
+            # Repo-root-relative directory to regenerate this lock from, so
+            # the annotations below can hand over a command that can be pasted
+            # as-is: `src-tauri` or `src-tauri/fuzz`.
+            lock_dir="$(dirname "$label")"
             snap="$snapshots/${lock//\//_}"
+            # Write to a `.partial` name and `mv` it into place, rather than
+            # `cp` straight to "$snap". `restore_locks` decides what to put
+            # back purely from `[ -f "$restore_snap" ]`, so the snapshot name
+            # must never exist holding fewer bytes than the lock: a `cp` that
+            # dies PARTWAY (ENOSPC is the realistic case) leaves a truncated
+            # file, and the trap would then copy that truncation over the
+            # committed Cargo.lock — destroying the exact "safe to run verbatim
+            # locally" property the trap exists to provide. `rm -f "$snap"` on
+            # the failure branch below would not be enough on its own: a
+            # SIGINT landing mid-`cp` runs the INT trap without ever reaching
+            # that branch. `mv` within one directory is a rename(2), so the
+            # snapshot name only ever appears complete, whatever kills us.
+            snap_partial="$snap.partial"
             # Guarded for the same reason the two `cargo metadata` calls below
             # are: an unguarded failure (lock missing, unreadable, snapshot dir
             # gone) would abort the whole step under `set -e` with NO
@@ -451,7 +496,8 @@ jobs:
             # as an unexplained code failure" mode this step exists to avoid.
             # Deliberately BEFORE `::group::`, so this annotation is emitted
             # outside any group and `continue` needs no `::endgroup::`.
-            if ! cp "$lock" "$snap"; then
+            if ! cp "$lock" "$snap_partial" || ! mv "$snap_partial" "$snap"; then
+              rm -f "$snap_partial"
               echo "::error file=$label::could not snapshot $label — see the cp error above. The file is missing or unreadable; this is an I/O problem, NOT lockfile drift, so do not regenerate the lockfile on the strength of this message."
               fail=1
               continue
@@ -465,7 +511,13 @@ jobs:
             # in the repo.
             if ! cargo metadata --locked --format-version 1 \
                   --manifest-path "$manifest" >/dev/null; then
-              echo "::error file=$label::cargo could not resolve $label with --locked. See the cargo error above: normally the lock disagrees with the manifests (regenerate and commit it), but a crates.io index/download failure surfaces here too."
+              echo "::error file=$label::cargo could not resolve $label with --locked. See the cargo error above: normally the lock disagrees with the manifests, but a crates.io index/download failure surfaces here too. To regenerate: cd $lock_dir && cargo metadata --format-version 1 >/dev/null — then commit $label. Any cargo command WITHOUT --locked rewrites the lock conservatively (it keeps every pin that still satisfies the manifests); this one is just the cheapest, since cargo metadata runs no build. Do NOT use 'cargo generate-lockfile' or a bare 'cargo update': both re-resolve the whole graph to the newest compatible versions, which would lift deliberate holds (measured in src-tauri/fuzz: 882 packages relocked, loro 1.13.6 -> 1.13.9 against the #3161 hold that .github/dependabot.yml pins)."
+              # If the FUZZ lock is the one failing, say why it can be failing
+              # on a PR that never went near src-tauri/fuzz — see this job's
+              # header comment.
+              if [ "$lock" = fuzz/Cargo.lock ]; then
+                echo "::error file=$label::note: src-tauri/fuzz is its own workspace but path-depends on agaric, agaric-store, agaric-sync and agaric-engine, so ANY added or changed dependency REQUIREMENT in any src-tauri/**/Cargo.toml invalidates this lock too, even when the PR never touches src-tauri/fuzz. Regenerating it with the command above is the whole fix."
+              fi
               fail=1
               echo "::endgroup::"
               continue
@@ -528,7 +580,7 @@ jobs:
             diff -u --label "$label (committed)" \
               --label "$label (what cargo resolves)" "$snap" "$lock" || diff_rc=$?
             if [ "$diff_rc" -eq 1 ]; then
-              echo "::error file=$label::$label is not what cargo resolves — the diff above is what cargo rewrote. Regenerate and commit the lockfile."
+              echo "::error file=$label::$label is not what cargo resolves — the diff above is what cargo rewrote. Regenerate and commit it: cd $lock_dir && cargo metadata --format-version 1 >/dev/null (NOT 'cargo generate-lockfile' — see the --locked annotation's note)."
               fail=1
             elif [ "$diff_rc" -ge 2 ]; then
               echo "::error file=$label::diff could not compare $label (exit $diff_rc — 'trouble', e.g. an operand it could not read); see the diff error above. This is an I/O problem, NOT lockfile drift — the committed lock has not been shown to be wrong, so do not regenerate it on the strength of this message."

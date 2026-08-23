@@ -779,11 +779,30 @@ u'
   #     Skipped, loudly, if cargo is absent — this hook also runs in the
   #     dco-signoff/git-scratch-guard file set, and a missing toolchain is a
   #     reason to say so rather than to red an unrelated commit.
+  #
+  #     "Absent" means UNRUNNABLE, not just off `$PATH`. On a rustup install,
+  #     `cargo` on `$PATH` is a shim that still has to CHOOSE a toolchain, and
+  #     it can fail to: the fixture lives outside this repo, so
+  #     `rust-toolchain.toml` does not apply to it, and a machine whose rustup
+  #     has no DEFAULT toolchain (directory overrides only) gets "rustup could
+  #     not choose a version of cargo to run". That is the same "unrelated
+  #     commit reddened by a toolchain this case does not test" outcome the
+  #     `command -v` skip exists to prevent, so probe for it the same way.
+  #     The probe mirrors the real calls exactly — same cwd (rustup resolves
+  #     directory overrides from it), same scrubbed `HOME`, same restored
+  #     `RUSTUP_HOME`, same scratch `CARGO_HOME` — so it cannot pass where
+  #     they would fail. `cargo --version` builds nothing and touches no
+  #     network.
+  st_fuzz="$st_tmp/fuzzshape"
+  mkdir -p "$st_fuzz/src" "$st_fuzz/nested/src" "$st_fuzz/cargo-home"
   if ! command -v cargo >/dev/null 2>&1; then
     printf '  SKIP - the fuzz-lock bump shape (cargo not on PATH)\n' >&2
+  elif ! st_cargo_probe="$( cd "$st_fuzz/nested" \
+      && RUSTUP_HOME="$st_rustup_home" CARGO_HOME="$st_fuzz/cargo-home" \
+         cargo --version 2>&1 )"; then
+    printf '  SKIP - the fuzz-lock bump shape (cargo is on PATH but cannot run here: %s)\n' \
+      "$st_cargo_probe" >&2
   else
-    st_fuzz="$st_tmp/fuzzshape"
-    mkdir -p "$st_fuzz/src" "$st_fuzz/nested/src" "$st_fuzz/cargo-home"
     printf '[package]\nname = "agaric"\nversion = "0.9.8"\nedition = "2021"\n\n[workspace]\n' \
       >"$st_fuzz/Cargo.toml"
     : >"$st_fuzz/src/lib.rs"
