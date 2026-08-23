@@ -66,12 +66,13 @@ cargo nextest run -p agaric -E 'test(command_integration_tests::)'   # REQUIRED 
                                    # depending on thread scheduling); 0 failures across 3 nextest
                                    # runs. Don't expect that 1-in-10 rate to hold — it's a race,
                                    # not a fixed frequency; treat any flake in this module under
-                                   # plain `cargo test` as confirming the bug, not as noise. (Root
-                                   # AGENTS.md's older reason — a process-global Loro engine
-                                   # registry shared by `conformance`/`undo_integration` — was
-                                   # fixed by #2249; both files' own doc comments now say their
-                                   # engine state is per-test. The counter above is what still
-                                   # makes this module nextest-only.)
+                                   # plain `cargo test` as confirming the bug, not as noise. (An
+                                   # older rationale — a process-global Loro engine registry
+                                   # shared by `conformance`/`undo_integration` — was fixed by
+                                   # #2249 and corrected out of root AGENTS.md in #4276; both
+                                   # files' own doc comments say their engine state is
+                                   # per-test. The counter above is what still makes this
+                                   # module nextest-only.)
 cargo nextest run -p agaric -E 'test(sync_net::) + test(sync_daemon::)'   # network sync
 
 cargo insta test          # snapshot tests; writes .snap.new for changed
@@ -115,7 +116,7 @@ grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src
 
 It currently spans eleven test files, not one: `command_integration_tests/conformance.rs`, all four `materializer/handlers/{tag,move,create_edit,delete_restore}_convergence_tests.rs`, `materializer/handlers/{apply_reproject_proptest,space_hydration_tests,engine_path_tests}.rs`, `materializer/tests/{apply_op,fifo_status}.rs`, and the `bulk_equivalence` arm harness. (Two more paths match — 13 in total — without being hazards. `materializer/coordinator.rs` is the PRODUCTION reader that fills `StatusInfo`: it asserts nothing. `integration_tests.rs` matches only inside a COMMENT — the `Engine-path helpers (#1689)` block names the counter solely to contrast it with the engine-tree-presence guard that file uses *instead* — which is why "Running tests" above can still call `cargo test -p agaric -- integration_tests --skip command_integration_tests` safe; there is no counter read in that module to race.) Re-run the grep rather than trusting that enumeration: it will age, the rule will not. In particular `cargo test -p agaric -- convergence` is a plain-`cargo test` run over four of them, so it hits exactly the race this section exists to warn about; use `cargo nextest run -p agaric -E 'test(convergence)'`.
 
-`command_integration_tests::conformance` carries one extra note: root [`AGENTS.md`](../../AGENTS.md) also names it nextest-only, but for an older reason (a process-global Loro engine registry) that `conformance.rs` and `undo_integration.rs` now document as fixed (#2249: each test's engine state is its own `Materializer`'s, not shared) — the counter above is the reason the module still needs nextest today. If you're adding a test of this shape, say so in a doc comment the way those do, rather than leaving the next person to rediscover it — and prefer a delta/lower-bound check over an exact one if the counter is genuinely shared with concurrently-running tests.
+Root [`AGENTS.md`](../../AGENTS.md) states the same rule in its "Running tests efficiently" bullet and defers here for the grep; keep the two agreeing. Both used to name a process-global Loro engine registry as the cause — that was fixed by #2249 (each test's engine state is its own `Materializer`'s, not shared), `conformance.rs` and `undo_integration.rs` document it as resolved in their isolation contracts, and #4276 corrected the root doc. The counter above is the reason `command_integration_tests::conformance` still needs nextest today; don't reinstate the registry rationale. If you're adding a test of this shape, say so in a doc comment the way those do, rather than leaving the next person to rediscover it — and prefer a delta/lower-bound check over an exact one if the counter is genuinely shared with concurrently-running tests.
 
 ### Database setup
 

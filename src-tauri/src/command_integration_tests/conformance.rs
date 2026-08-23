@@ -53,14 +53,28 @@
 //! backend-authored `expected`. Behavioral drift between the 3.5k-line mock and
 //! the real backend then fails CI.
 //!
-//! ## Isolation contract (#1079 → resolved by #2249)
+//! ## Isolation contract (#1079 → resolved by #2249), and what still isn't isolated
 //!
-//! Each test's engine registry is its own `Materializer`'s per-instance
-//! `LoroState` — there is no process-global registry anymore, so tests in
-//! this module are fully isolated from each other and run safely under
-//! BOTH `cargo nextest` (process-per-test) and plain `cargo test` (one
-//! process, many threads). The historical nextest-only constraint
+//! ENGINE state is isolated: each test's engine registry is its own
+//! `Materializer`'s per-instance `LoroState` — there is no process-global
+//! registry anymore, so no test in this module can observe another's engine.
+//! The historical registry-based nextest-only constraint
 //! (<https://github.com/jfolcini/agaric/issues/1079>) is gone.
+//!
+//! That does NOT make this module runner-agnostic. The
+//! `*_parity_local_matches_remote_*` / `local_delete_block_cohort_engine_fanout_*`
+//! tests below read the PROCESS-GLOBAL
+//! `crate::materializer::sql_only_fallback_count()` before and after their op
+//! and assert the DELTA is 0 ("took the engine path, not the SQL-only
+//! fallback", #891). That counter is a monotonic `AtomicU64` shared by
+//! the whole process, so under plain `cargo test` — which runs a crate's tests
+//! as threads in one process — a *sibling* test's fallback event lands inside
+//! the window and flips the delta nonzero for a test that never touched the
+//! fallback path. `cargo nextest run` gives each test its own process, which is
+//! what makes the delta honest. So: run this module under `cargo nextest`, and
+//! if you add a test of that before/after shape anywhere, say so in its doc
+//! comment. The rule and the authoritative grep for every counter reader live in
+//! `src-tauri/tests/AGENTS.md` § "Process-global state".
 
 use super::common::*;
 use agaric_core::ulid::BlockId;

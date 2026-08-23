@@ -1,9 +1,18 @@
 //! Isolation contract (#1079 → resolved by #2249): each test's engine
 //! registry is its own `Materializer`'s per-instance `LoroState` — no
-//! process-global registry — so these tests are safe under BOTH
-//! `cargo nextest` (process-per-test) and plain `cargo test` (one process,
-//! many threads). The historical nextest-only constraint
+//! process-global registry — and this file reads no process-global counter,
+//! so these tests are safe under BOTH `cargo nextest` (process-per-test) and
+//! plain `cargo test` (one process, many threads). The historical
+//! nextest-only constraint
 //! (<https://github.com/jfolcini/agaric/issues/1079>) is gone.
+//!
+//! That clean bill is for THIS file only, and does not extend to a run that
+//! selects the whole module: the sibling `conformance.rs` asserts on a
+//! before/after delta of the process-global
+//! `crate::materializer::sql_only_fallback_count()` (#891), which races under
+//! plain `cargo test`. Run `command_integration_tests::` under
+//! `cargo nextest`. See `conformance.rs`'s isolation contract and
+//! `src-tauri/tests/AGENTS.md` § "Process-global state".
 
 use super::common::*;
 

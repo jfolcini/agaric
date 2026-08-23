@@ -105,6 +105,53 @@ setup = "iroh-no-proxy-windows"
 filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
+# The weekly deep-checks lane (#4282). `scheduled-deep-checks.yml`'s `bench-slo`
+# job runs `cargo nextest run --workspace --run-ignored=only` with NO
+# `--profile`, so every `#[ignore]`d test in the workspace inherits the
+# `profile.default` window above it: flagged SLOW at 30s, TERMINATED at
+# 2x30s = 60s. For most of that lane the kill is a backstop worth having. For
+# the three `..._residency_at_*_blocks_4242` measurement tests
+# (`agaric-store`, `cache::tests`) it is pure downside: their gate is an
+# equality assertion — the post-#4242 streamed fold against a faithful copy of
+# the pre-#4242 buffered one — and the peak-RSS figures they print are not
+# bounded by anything. A termination there cannot catch a regression; it can
+# only lose the diagnostic and redden the lane on runner noise. The 100k point
+# seeds a 100,000-block vault through 400 chunked INSERTs, the most I/O-bound
+# work in the lane.
+#
+# Measured, not assumed. All four of the lane's block-links tests run together
+# under nextest on one 16-core dev box at load ~4, two runs: 20k 1.02s / 1.02s,
+# 50k 2.52s / 2.22s, 100k 4.51s / 4.29s. Serialised on the same box: 0.93s /
+# 2.18s / 4.14s, ~7.2s for the trio, reproducing the "~7s total weekly cost"
+# recorded in the tests' module comment. Against the 60s kill that is ~13x on
+# the worst point — but on a dev box, not a shared runner, and the sibling
+# sweep's doc comment argues a 4-7x shared-runner slowdown is plausible for
+# this lane. That would put the 100k point at 18-32s: over the 30s SLOW flag
+# at the top of the range and within reach of the kill. Hence the leash.
+#
+# 4x30s = 120s, the same shape as the entry above. Note what it does NOT
+# change: the 30s SLOW *flag* still fires, so a lane that starts drifting is
+# still visible in the run output. The leash removes the spurious kill, not
+# the warning.
+#
+# `block_links_unresolved_oracle_scale_sweep_4241` runs in the same lane, under
+# the same 60s window, and is deliberately NOT listed here. It asserts no
+# wall-clock bound either, but for it termination IS the assertion: the O(n^2)
+# defect it guards against was measured at 142.3s wall against a 4.1s clean
+# run, and being killed is the only way it reddens the lane. Leashing it to
+# 120s would cut that margin from 2.4x to 1.19x. See its doc comment in
+# `src/reconciliation_oracle/tests.rs`.
+#
+# `profile.default` only, on purpose: `--run-ignored=only` is passed by
+# `bench-slo` alone, and that lane passes no `--profile`. The two `--profile
+# ci` invocations (deep-checks `full-suite` and `_validate.yml`'s
+# `cargo llvm-cov nextest` shards) do not run ignored tests at all, so a
+# `profile.ci` twin of this entry would match nothing. That is the opposite of
+# the four tests above, which are not `#[ignore]`d and so need both.
+[[profile.default.overrides]]
+filter = 'test(/rebuild_block_links_unresolved_residency_at_.*_blocks_4242/)'
+slow-timeout = { period = "30s", terminate-after = 4 }
+
 [profile.ci]
 fail-fast = false
 retries = 2
