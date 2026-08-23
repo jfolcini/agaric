@@ -61,10 +61,15 @@ closed it with pairwise cross-marker exclusions across all three.
 
 **#4242 — measured before changing, and the measurement kept.** The issue said measure
 first and close unchanged if the effect did not show. It showed: at 100k blocks the
-duplicate residency is 13.9% of the restore's peak-over-baseline RSS, reproducing the
-original diagnostic's 14.64%. So `fetch_all` became a streaming `fetch`, scoped so the
-stream's borrow of `conn` ends before the INSERT reuses it — same SQL text, same error
-propagation, same behaviour on empty.
+duplicate residency is 13.9% of **the rebuild's own** peak-over-baseline RSS,
+reproducing the original diagnostic's 14.64%. Read the megabytes, not the ratio —
+the measurement arms run in a transaction of their own with no decoded `SnapshotData`
+alive, so on the restore path the denominator is larger and the same bytes are a
+smaller share. The absolute saving transfers; the percentage does not.
+
+So `fetch_all` became a streaming `fetch`, scoped so the stream's borrow of `conn` ends
+before the INSERT reuses it — same SQL text, same error propagation, same behaviour on
+empty.
 
 The diagnostic was originally **deleted**, which review flagged: numbers that can never be
 re-run are folklore. It now ships as three `#[ignore]`d tests varying **one** variable
