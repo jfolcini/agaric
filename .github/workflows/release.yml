@@ -39,13 +39,27 @@ jobs:
     # version manifests + fail-fast comparison; 5-min budget is generous.
     #
     # This job deliberately does NOT read src-tauri/fuzz/Cargo.lock, which
-    # _validate.yml's `verify-version-agreement` does (#4279). The coverage
-    # chain is transitive rather than obvious: _validate also runs on the tag
-    # push, so the fuzz lock IS checked at tag time — just by the other job.
-    # See the rationale next to `verify-version-agreement` before adding it
-    # here; #4281 tracks whether the two should be symmetric, and the reason
-    # they are not is that a six-way check here would red any hotfix tag cut
-    # from a commit predating #4279.
+    # _validate.yml's `verify-version-agreement` does (#4279). It is not a
+    # coverage gap: this job is the FAST FAIL-EARLY gate (five manifests, no
+    # toolchain, ~seconds) whose only job is to stop a mistyped tag before a
+    # ~90-minute build matrix spins up. The thorough six-way check — the fuzz
+    # crate's own lock included — is `verify-version-agreement`, which the
+    # `validate:` job below invokes via `uses: ./.github/workflows/_validate.yml`
+    # on this very tag push. That job carries no `if:` and no `needs:`, so it
+    # runs unconditionally on the workflow_call (no detect-changes gating, no
+    # docs-only skip), and `build-and-release` requires
+    # `needs.validate.result == 'success'`. So the fuzz lock IS covered at tag
+    # time — by the CALLED workflow rather than by this calling one.
+    #
+    # It is NOT covered by a fear of hotfix tags. An earlier version of this
+    # comment claimed a six-way check here would red a hotfix tag cut from a
+    # commit predating #4279; that cannot happen. A tag push runs the
+    # release.yml stored AT THE TAGGED COMMIT, and a `./`-path reusable-workflow
+    # call is resolved from that same commit — so such a tag runs the OLD
+    # release.yml and the OLD _validate.yml, neither of which looks at the fuzz
+    # lock at all. Whatever this file says today is invisible to a tag cut
+    # before it landed. #4281 tracks whether the two gates should be symmetric;
+    # that is still open, but the hotfix argument is not a reason either way.
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

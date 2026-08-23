@@ -444,7 +444,18 @@ jobs:
             manifest="$(dirname "$lock")/Cargo.toml"
             label="src-tauri/$lock"
             snap="$snapshots/${lock//\//_}"
-            cp "$lock" "$snap"
+            # Guarded for the same reason the two `cargo metadata` calls below
+            # are: an unguarded failure (lock missing, unreadable, snapshot dir
+            # gone) would abort the whole step under `set -e` with NO
+            # `::error::` annotation and no second lockfile checked — the "reds
+            # as an unexplained code failure" mode this step exists to avoid.
+            # Deliberately BEFORE `::group::`, so this annotation is emitted
+            # outside any group and `continue` needs no `::endgroup::`.
+            if ! cp "$lock" "$snap"; then
+              echo "::error file=$label::could not snapshot $label — see the cp error above. The file is missing or unreadable; this is an I/O problem, NOT lockfile drift, so do not regenerate the lockfile on the strength of this message."
+              fail=1
+              continue
+            fi
             echo "::group::$label"
 
             # (1) The lock must be a VALID resolution of the manifests as
@@ -479,6 +490,18 @@ jobs:
             # exposure, so a registry hiccup can only ever red the annotated
             # step (1) and never this one.
             #
+            # But read step (2) for what it is: `--offline` is also a REDUCTION
+            # IN SCOPE, not only in exposure. An offline resolve is confined to
+            # what is already in CARGO_HOME, so it cannot surface drift that
+            # only a networked resolve would produce — a yanked version being
+            # the obvious case (offline, cargo happily keeps resolving to the
+            # cached copy of a version crates.io would no longer hand out).
+            # Step (2) answers "is the committed lock what cargo writes given
+            # this cache", NOT "is it what cargo would write against the live
+            # index today". Catching yanks/index movement is `cargo audit`'s and
+            # Dependabot's lane, not this job's — do not read a green here as a
+            # statement about the registry.
+            #
             # NOT guard-free: an unguarded failure here would abort the whole
             # step under `set -e`, leaving `::group::` unterminated (the rest
             # of the log collapses into it), emitting no annotation, and never
@@ -494,9 +517,21 @@ jobs:
             # Options BEFORE the operands: GNU getopt permutes, so the other
             # order works on ubuntu-24.04 — but this block is advertised as
             # runnable verbatim locally and a non-GNU diff may not permute.
-            if ! diff -u --label "$label (committed)" \
-                  --label "$label (what cargo resolves)" "$snap" "$lock"; then
+            # diff's exit code is THREE-valued: 0 = identical, 1 = differences,
+            # 2+ = "trouble" (an operand it could not read, etc.). Collapsing
+            # 2 into 1 with a bare `if ! diff` would report an I/O fault as
+            # lockfile drift and tell the reader to "regenerate and commit the
+            # lockfile" — advice that cannot fix it. Capture the status instead
+            # of branching on truthiness. `|| rc=$?` keeps `set -e` from
+            # aborting on the expected non-zero.
+            diff_rc=0
+            diff -u --label "$label (committed)" \
+              --label "$label (what cargo resolves)" "$snap" "$lock" || diff_rc=$?
+            if [ "$diff_rc" -eq 1 ]; then
               echo "::error file=$label::$label is not what cargo resolves — the diff above is what cargo rewrote. Regenerate and commit the lockfile."
+              fail=1
+            elif [ "$diff_rc" -ge 2 ]; then
+              echo "::error file=$label::diff could not compare $label (exit $diff_rc — 'trouble', e.g. an operand it could not read); see the diff error above. This is an I/O problem, NOT lockfile drift — the committed lock has not been shown to be wrong, so do not regenerate it on the strength of this message."
               fail=1
             fi
             # Step (2) rewrites the lock IN PLACE. Put the committed bytes

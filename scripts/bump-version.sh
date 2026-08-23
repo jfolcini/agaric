@@ -454,6 +454,12 @@ FAKE_GH
   # rest), and GIT_CONFIG_NOSYSTEM closes /etc/gitconfig. Without both, the
   # maintainer's own `user.signingkey` leaks into the cases that assert its
   # ABSENCE and those cases pass for the wrong reason.
+  # Captured BEFORE the override: rustup resolves its toolchains under
+  # `$HOME/.rustup` unless RUSTUP_HOME says otherwise, so the fuzz-lock case
+  # below (the only one that runs a real binary rather than a fake) would get
+  # "rustup could not choose a version of cargo to run" from the scratch HOME.
+  # Only that case reads it; nothing else here may reach the real home dir.
+  st_rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
   HOME="$st_tmp/home"
   mkdir -p "$HOME"
   export HOME
@@ -751,6 +757,73 @@ u'
     st_ok 'a tag ref that resolves to no object fails closed, naming the ref lookup'
   fi
 
+  # 15. The fuzz-lock bump (#4279). This is the one production path the rest
+  #     of the suite cannot reach: it first executes at a real release. What
+  #     is untested is not the shell around it but CARGO's acceptance of
+  #     `--precise` for a dependency declared as `path = ".."` with NO
+  #     `version` field — a different shape from the parent `cargo update`
+  #     call two lines above it in production, where `agaric` is a workspace
+  #     MEMBER. Model exactly that shape: a package named `agaric`, and a
+  #     nested crate carrying its own `[workspace]` table (so it is excluded
+  #     from the parent workspace, as src-tauri/fuzz is) that depends on it
+  #     by path alone.
+  #
+  #     Hermetic: the fixture has ZERO registry dependencies, so `--offline`
+  #     against a scratch CARGO_HOME resolves the whole graph out of the two
+  #     local manifests — no crates.io, no network, and no read or write of
+  #     the developer's real cargo state. (Production deliberately does NOT
+  #     pass `--offline`; a real release may need the index. That does not
+  #     change what is asserted here, which is how cargo treats `--precise`
+  #     on a path dep.)
+  #
+  #     Skipped, loudly, if cargo is absent — this hook also runs in the
+  #     dco-signoff/git-scratch-guard file set, and a missing toolchain is a
+  #     reason to say so rather than to red an unrelated commit.
+  if ! command -v cargo >/dev/null 2>&1; then
+    printf '  SKIP - the fuzz-lock bump shape (cargo not on PATH)\n' >&2
+  else
+    st_fuzz="$st_tmp/fuzzshape"
+    mkdir -p "$st_fuzz/src" "$st_fuzz/nested/src" "$st_fuzz/cargo-home"
+    printf '[package]\nname = "agaric"\nversion = "0.9.8"\nedition = "2021"\n\n[workspace]\n' \
+      >"$st_fuzz/Cargo.toml"
+    : >"$st_fuzz/src/lib.rs"
+    printf '[package]\nname = "agaric-fuzz-fixture"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n[workspace]\n\n[dependencies.agaric]\npath = ".."\n' \
+      >"$st_fuzz/nested/Cargo.toml"
+    : >"$st_fuzz/nested/src/lib.rs"
+    st_fuzz_pin() { awk '/^name = "agaric"$/{getline; print; exit}' \
+      "$st_fuzz/nested/Cargo.lock" | cut -d'"' -f2; }
+    # Subshell: CARGO_HOME and the cd must not leak into the ratchets below.
+    if ! ( cd "$st_fuzz/nested" \
+        && RUSTUP_HOME="$st_rustup_home" CARGO_HOME="$st_fuzz/cargo-home" \
+           cargo generate-lockfile --offline ) >/dev/null 2>&1; then
+      st_bad 'the fuzz-lock fixture resolves offline' \
+        'cargo generate-lockfile failed on a fixture with no registry deps'
+    elif [ "$(st_fuzz_pin)" != '0.9.8' ]; then
+      st_bad 'the fuzz-lock fixture resolves offline' \
+        "fixture lock pinned agaric at '$(st_fuzz_pin)', expected 0.9.8"
+    else
+      st_ok 'the fuzz-lock fixture resolves offline (path dep, no registry)'
+      # The bump production performs: parent manifest already at the NEW
+      # version (bump-version.sh seds it first), then `--precise` in the
+      # nested workspace.
+      printf '[package]\nname = "agaric"\nversion = "0.9.9"\nedition = "2021"\n\n[workspace]\n' \
+        >"$st_fuzz/Cargo.toml"
+      st_fuzz_out="$( ( cd "$st_fuzz/nested" \
+        && RUSTUP_HOME="$st_rustup_home" CARGO_HOME="$st_fuzz/cargo-home" \
+           cargo update --offline -p agaric --precise 0.9.9 ) 2>&1 )" \
+        && st_fuzz_rc=0 || st_fuzz_rc=$?
+      if [ "$st_fuzz_rc" != 0 ]; then
+        st_bad 'cargo accepts --precise for a path-dependency agaric' \
+          "cargo update exited $st_fuzz_rc: $st_fuzz_out"
+      elif [ "$(st_fuzz_pin)" != '0.9.9' ]; then
+        st_bad 'cargo accepts --precise for a path-dependency agaric' \
+          "cargo update exited 0 but the lock still pins '$(st_fuzz_pin)'"
+      else
+        st_ok 'cargo accepts --precise for a path-dependency agaric (lock repinned)'
+      fi
+    fi
+  fi
+
   # ── wiring ratchets ───────────────────────────────────────────────────
   # The cases above prove the functions behave; these prove the script still
   # CALLS them, in the one order that matters. Without them the gates could
@@ -797,6 +870,18 @@ u'
     'release_require_verified_commit "' '^git push --no-verify origin "\$NEW_VERSION"$'
   st_order 'the tag push is followed by the tag verification' \
     '^git push --no-verify origin "\$NEW_VERSION"$' 'release_require_verified_tag "'
+
+  # #4279: case 15 above proves cargo ACCEPTS the call; these prove the script
+  # still MAKES it, in the only order that works. The fuzz workspace resolves
+  # `agaric` from `../Cargo.toml`, so the parent manifest must already carry
+  # the new version when `--precise` runs; and the post-bump sanity loop is
+  # worthless if it reads a lock nothing regenerated.
+  st_order 'the fuzz lock is bumped only after src-tauri/Cargo.toml carries the new version' \
+    'sed -i\.bak .*src-tauri/Cargo\.toml$' \
+    'cd src-tauri/fuzz && cargo update -p agaric --precise'
+  st_order 'the fuzz lock is bumped before the sanity check reads it back' \
+    'cd src-tauri/fuzz && cargo update -p agaric --precise' \
+    '^FUZZ_LOCK='
 
   # release.sh's preflight is only a fast-fail — the gate above is what makes
   # the release safe — but it is the difference between learning about a bad
