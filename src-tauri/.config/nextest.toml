@@ -143,9 +143,10 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 # `src/reconciliation_oracle/tests.rs`.
 #
 # `profile.default` only, on purpose: `--run-ignored=only` is passed by
-# `bench-slo` alone, and that lane passes no `--profile`. The two `--profile
-# ci` invocations (deep-checks `full-suite` and `_validate.yml`'s
-# `cargo llvm-cov nextest` shards) do not run ignored tests at all, so a
+# `bench-slo` alone, and that lane passes no `--profile`. The three
+# `--profile ci` invocations (deep-checks `full-suite`, `_validate.yml`'s
+# `cargo llvm-cov nextest` shards, and its `--features ci-smoke` UDS
+# roundtrip) do not run ignored tests at all, so a
 # `profile.ci` twin of this entry would match nothing. That is the opposite of
 # the four tests above, which are not `#[ignore]`d and so need both.
 [[profile.default.overrides]]
