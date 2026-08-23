@@ -7,12 +7,19 @@ name: Validate (prek-equivalent)
 # Invoked by ci.yml (every push/PR) and release.yml (every tag).
 #
 # PEND-39 C3 + C5 + C8 split the historical monolithic `validate` job into
-# parallel workers; later passes (PEND-86, #833) grew that into nine jobs,
+# parallel workers; later passes (PEND-86, #833) grew that into the set
+# enumerated below,
 # fanned out from a `detect-changes` per-category classifier that is
 # fail-closed (an unrecognized or undiffable path runs everything):
 #   - detect-changes — classifies the diff into docs_only/frontend/backend/ci.
-#   - verify-version-agreement — always-on 5-way version mutual-agreement
-#                        check (#2975); no path gating, no docs-only skip.
+#   - verify-version-agreement — always-on mutual-agreement check across
+#                        every file scripts/bump-version.sh bumps, the fuzz
+#                        crate's own lock included (#2975); no path gating,
+#                        no docs-only skip.
+#   - verify-lockfiles — asserts BOTH Cargo.lock files (src-tauri/ and
+#                        src-tauri/fuzz/) are a faithful resolution of their
+#                        manifests (#4142); no build. Gated on backend
+#                        changes.
 #   - lint            — the full prek hook suite (clippy, cargo-deny,
 #                        cargo-audit, zizmor, sqlx-prepare, …); skipped on a
 #                        provably docs-only diff.
@@ -278,28 +285,40 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
-  # verify-version-agreement (#2975) — the 5-way version mutual-agreement
-  # check, always-on (no detect-changes gating, no docs-only fast path).
+  # verify-version-agreement (#2975) — the version mutual-agreement check over
+  # every file `scripts/bump-version.sh` bumps, always-on (no detect-changes
+  # gating, no docs-only fast path).
   # Extracted from release.yml's `verify-version` job, which only runs on a
   # tag push — so version drift between the manifests was previously caught
   # mid-release instead of at PR time. This job reuses the EXACT SAME
   # extraction expressions and runs them on every PR/push, but checks only
-  # that the five manifests agree with EACH OTHER — there is no tag yet at
+  # that the manifests agree with EACH OTHER — there is no tag yet at
   # PR time, so the tag-equality half of release.yml's check does not apply
   # here and is intentionally NOT duplicated. release.yml's `verify-version`
   # job is unchanged and still separately asserts the tag matches the
   # manifests at release time; this job does not replace it.
+  #
+  # `src-tauri/fuzz/Cargo.lock` is checked here even though release.yml's
+  # tag-time twin does not look at it. It pins `agaric` through a path
+  # dependency, so a version bump moves it too — but it sits in the fuzz
+  # crate's OWN workspace, outside every parent-workspace command, and until
+  # `bump-version.sh` learned to regenerate it EVERY release from 0.7.1 to
+  # 0.9.8 left it stale (by up to five versions). `verify-lockfiles` below
+  # already reds on that, but as a raw `cargo … --locked` error against a
+  # file whose staleness is a VERSION-BUMP omission; diagnosing it from the
+  # job whose name says "version agreement", with the regeneration command in
+  # the message, is what turns that red into an instruction.
   # ---------------------------------------------------------------------------
   verify-version-agreement:
     runs-on: ubuntu-24.04
-    # Trivial jq / grep / awk over the 5 manifests + fail-fast comparison —
+    # Trivial jq / grep / awk over the manifests + fail-fast comparison —
     # same budget as release.yml's verify-version job.
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Verify the 5 version manifests mutually agree
+      - name: Verify the version manifests mutually agree
         run: |
           set -euo pipefail
           CONF=$(jq -r .version src-tauri/tauri.conf.json)
@@ -307,15 +326,286 @@ jobs:
           PKG=$(jq -r .version package.json)
           PKG_LOCK=$(jq -r .version package-lock.json)
           CARGO_LOCK=$(awk '/^name = "agaric"$/{getline; print; exit}' src-tauri/Cargo.lock | cut -d'"' -f2)
-          echo "conf=$CONF cargo=$CARGO cargo.lock=$CARGO_LOCK pkg=$PKG pkg.lock=$PKG_LOCK"
+          FUZZ_LOCK=$(awk '/^name = "agaric"$/{getline; print; exit}' src-tauri/fuzz/Cargo.lock | cut -d'"' -f2)
+          echo "conf=$CONF cargo=$CARGO cargo.lock=$CARGO_LOCK fuzz/cargo.lock=$FUZZ_LOCK pkg=$PKG pkg.lock=$PKG_LOCK"
           fail=0
-          for v in "$CARGO" "$CARGO_LOCK" "$PKG" "$PKG_LOCK"; do
+          for v in "$CARGO" "$CARGO_LOCK" "$FUZZ_LOCK" "$PKG" "$PKG_LOCK"; do
             if [ "$v" != "$CONF" ]; then fail=1; fi
           done
           if [ "$fail" -ne 0 ]; then
-            echo "::error::Version drift — tauri.conf.json=$CONF, Cargo.toml=$CARGO, Cargo.lock=$CARGO_LOCK, package.json=$PKG, package-lock.json=$PKG_LOCK. Bump all of them in lockstep."
+            echo "::error::Version drift — tauri.conf.json=$CONF, Cargo.toml=$CARGO, Cargo.lock=$CARGO_LOCK, fuzz/Cargo.lock=$FUZZ_LOCK, package.json=$PKG, package-lock.json=$PKG_LOCK. Bump all of them in lockstep — scripts/bump-version.sh does it. If only src-tauri/fuzz/Cargo.lock disagrees, regenerate it with: cd src-tauri/fuzz && cargo update -p agaric --precise $CONF"
             exit 1
           fi
+
+  # ---------------------------------------------------------------------------
+  # verify-lockfiles (#4142) — assert BOTH Cargo.lock files are a faithful
+  # resolution of their manifests. Nothing else in the pipeline did: no job
+  # builds with `--locked`, so cargo's default on a lock that disagrees with
+  # the dependency graph is to silently re-resolve and rewrite it. In a runner
+  # that rewrite is discarded with the workspace, the build goes green, and
+  # `main` keeps the bad lock. #4139 hand-applied a lock stanza and leaned on
+  # a LOCAL `cargo metadata --locked` as the only thing that would have caught
+  # a wrong `dependencies` array; this job is that check made repeatable.
+  #
+  # It covers `src-tauri/Cargo.lock` AND `src-tauri/fuzz/Cargo.lock` — fuzz is
+  # its own workspace with its own lock, and #4139 established it sits outside
+  # the advisory lane entirely, so a check that stopped at the first lock would
+  # leave exactly the half-covered pair this job exists to avoid.
+  #
+  # THE OBLIGATION THIS CREATES, stated plainly because it is not obvious from
+  # the paths a PR touches: `src-tauri/fuzz` path-depends on `agaric`,
+  # `agaric-store`, `agaric-sync` and `agaric-engine`, so its lock resolves
+  # every requirement declared in the parent manifests too. Adding or changing
+  # a dependency REQUIREMENT in ANY `src-tauri/**/Cargo.toml` therefore
+  # invalidates `src-tauri/fuzz/Cargo.lock` as well, and step (1) reds until it
+  # is regenerated — even though the diff never went near `src-tauri/fuzz`.
+  # Refreshing only `src-tauri/Cargo.lock` is not enough. The remedy is in the
+  # step's `::error::` (`cd src-tauri/fuzz && cargo metadata --format-version 1
+  # >/dev/null`, then commit the lock), and the same note is in `AGENTS.md`
+  # § Coupled Dependency Updates and `docs/BUILD.md`.
+  #
+  # This lands hardest on Dependabot, and by design cannot self-heal there.
+  # `.github/dependabot.yml`'s `/src-tauri` entry sets no
+  # `versioning-strategy`, so it defaults to `increase-if-necessary` and MAY
+  # edit `src-tauri/Cargo.toml` (a mdns-sd 0.20 -> 0.21 bump is exactly that
+  # shape); the `/src-tauri/fuzz` entry is `lockfile-only` — load-bearing, per
+  # #3432 — so it cannot regenerate the fuzz lock in response. Such a PR reds
+  # here and a human has to push the one-command fix above. That is a
+  # deliberate trade: `lockfile-only` is what stops a fuzz-scoped Dependabot PR
+  # from silently editing the SHARED parent manifest (#3432 shipped an
+  # `rmcp` ^2.0 -> ^3.0 major that way), and a loud red with the fix in the
+  # annotation is cheaper than that failure mode. Do not "fix" it by relaxing
+  # the fuzz entry's strategy.
+  #
+  # NOT about checksums: cargo verifies the sha256 on download and fails hard,
+  # so a bad checksum cannot reach `main` green. This is the GRAPH half —
+  # package versions, `dependencies` arrays, and the resolution they imply.
+  #
+  # TWO steps, because `--locked` alone is NOT sufficient (measured, cargo
+  # 1.95.0): a `dependencies` entry naming a package with no `[[package]]`
+  # stanza is silently DROPPED when cargo reads the lock, so
+  # `cargo metadata --locked` exits 0 with no warning on it — and so do
+  # `cargo tree/fetch/update --locked` and a full `cargo build --locked`
+  # (all re-measured on 1.95.0). The second half re-runs cargo WITHOUT
+  # `--locked` (and `--offline`, see the step body) and diffs the lock it
+  # actually writes against a snapshot, which catches that residue.
+  #
+  # NO false positive from a stale-but-valid lock: cargo's resolver is
+  # conservative, so an older locked version that still satisfies every
+  # requirement is kept rather than bumped, and an existing lockfile
+  # `version =` is preserved rather than migrated. Step (2) only ever
+  # rewrites a lock cargo genuinely disagrees with. (Both verified on 1.95.0.)
+  #
+  # No build, no system deps (cargo metadata never runs build scripts), and
+  # deliberately NO rust-cache: the whole job runs in comfortably under a
+  # minute even from a cold CARGO_HOME, where the cost is registry download
+  # bandwidth rather than compute. No frozen figure here on purpose — a
+  # measured number in a comment is what this PR removed from
+  # `src-tauri/tests/AGENTS.md`; the 10-minute ceiling below is the bound that
+  # matters. And any action that invokes cargo before the step could
+  # re-resolve and rewrite the lock ahead of the snapshot, masking the very
+  # drift being looked for. 10-min ceiling sized for slow-mirror/runner
+  # variance over that minute, per the file's convention.
+  # ---------------------------------------------------------------------------
+  verify-lockfiles:
+    needs: detect-changes
+    # Gated on the `backend` category, which is exactly right and needs no new
+    # classifier bucket: both lockfiles and all eight Cargo.toml manifests live
+    # under `src-tauri/`, which `backend_re` matches at the root anchor. The
+    # classifier is also fail-closed, so an unrecognized path (e.g. a
+    # `rust-toolchain.toml` bump, which CAN change resolution through the
+    # MSRV-aware resolver) pins backend=true and runs this too.
+    # Also OR-ed on `ci`: this job's body is ~150 lines of shell that nothing
+    # else runs, so gating on `backend` alone would leave a PR editing that
+    # shell — this file — with the job SKIPPED, and `validate-all` accepts the
+    # skip via `be_skip_ok`. OR-ing on `ci` makes it self-exercising.
+    if: needs.detect-changes.outputs.backend == 'true' || needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          # #640: exact toolchain pin — keep in lockstep with
+          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # It matters more here than elsewhere: the resolver is
+          # version-sensitive (MSRV-aware resolution), so a floating
+          # toolchain could disagree with the committed lock for reasons
+          # that have nothing to do with the diff.
+          toolchain: 1.95.0
+
+      - name: Verify both Cargo.lock files resolve their manifests
+        working-directory: src-tauri
+        run: |
+          set -euo pipefail
+
+          snapshots="$(mktemp -d)"
+
+          # The restore below is UNCONDITIONAL, not path-dependent. Step (2)
+          # rewrites each lock IN PLACE, and this block is meant to be run
+          # verbatim locally to reproduce a red (#4142's acceptance criterion),
+          # so a Ctrl-C, a job timeout, or any failure between the rewrite and
+          # the in-loop `cp` must not leave a developer's Cargo.lock rewritten.
+          # `set -e` is on (above), so an unguarded failure exits the step and
+          # fires the EXIT trap; INT/TERM need their own traps to run it at all.
+          # Restores every lock already snapshotted, then removes the snapshot
+          # dir (which mktemp -d would otherwise leak on every local run).
+          # `[ -f ]` is the whole decision, so it leans on the loop below
+          # publishing each snapshot by rename: a name that exists here is a
+          # COMPLETE copy, never a partial one (see `snap_partial` below).
+          restore_locks() {
+            for restore_lock in Cargo.lock fuzz/Cargo.lock; do
+              restore_snap="$snapshots/${restore_lock//\//_}"
+              if [ -f "$restore_snap" ]; then
+                cp "$restore_snap" "$restore_lock"
+              fi
+            done
+            rm -rf "$snapshots"
+          }
+          trap restore_locks EXIT
+          trap 'trap - EXIT; restore_locks; exit 130' INT
+          trap 'trap - EXIT; restore_locks; exit 143' TERM
+
+          fail=0
+
+          for lock in Cargo.lock fuzz/Cargo.lock; do
+            manifest="$(dirname "$lock")/Cargo.toml"
+            label="src-tauri/$lock"
+            # Repo-root-relative directory to regenerate this lock from, so
+            # the annotations below can hand over a command that can be pasted
+            # as-is: `src-tauri` or `src-tauri/fuzz`.
+            lock_dir="$(dirname "$label")"
+            snap="$snapshots/${lock//\//_}"
+            # Write to a `.partial` name and `mv` it into place, rather than
+            # `cp` straight to "$snap". `restore_locks` decides what to put
+            # back purely from `[ -f "$restore_snap" ]`, so the snapshot name
+            # must never exist holding fewer bytes than the lock: a `cp` that
+            # dies PARTWAY (ENOSPC is the realistic case) leaves a truncated
+            # file, and the trap would then copy that truncation over the
+            # committed Cargo.lock — destroying the exact "safe to run verbatim
+            # locally" property the trap exists to provide. `rm -f "$snap"` on
+            # the failure branch below would not be enough on its own: a
+            # SIGINT landing mid-`cp` runs the INT trap without ever reaching
+            # that branch. `mv` within one directory is a rename(2), so the
+            # snapshot name only ever appears complete, whatever kills us.
+            snap_partial="$snap.partial"
+            # Guarded for the same reason the two `cargo metadata` calls below
+            # are: an unguarded failure (lock missing, unreadable, snapshot dir
+            # gone) would abort the whole step under `set -e` with NO
+            # `::error::` annotation and no second lockfile checked — the "reds
+            # as an unexplained code failure" mode this step exists to avoid.
+            # Deliberately BEFORE `::group::`, so this annotation is emitted
+            # outside any group and `continue` needs no `::endgroup::`.
+            if ! cp "$lock" "$snap_partial" || ! mv "$snap_partial" "$snap"; then
+              rm -f "$snap_partial"
+              echo "::error file=$label::could not snapshot $label — see the cp error above. The file is missing or unreadable; this is an I/O problem, NOT lockfile drift, so do not regenerate the lockfile on the strength of this message."
+              fail=1
+              continue
+            fi
+            echo "::group::$label"
+
+            # (1) The lock must be a VALID resolution of the manifests as
+            # written. `--locked` forbids the silent re-resolve, so a stanza
+            # whose version no dependent can satisfy is a hard error here
+            # instead of a green build against a lock that was never the one
+            # in the repo.
+            if ! cargo metadata --locked --format-version 1 \
+                  --manifest-path "$manifest" >/dev/null; then
+              echo "::error file=$label::cargo could not resolve $label with --locked. See the cargo error above: normally the lock disagrees with the manifests, but a crates.io index/download failure surfaces here too. To regenerate: cd $lock_dir && cargo metadata --format-version 1 >/dev/null — then commit $label. Any cargo command WITHOUT --locked rewrites the lock conservatively (it keeps every pin that still satisfies the manifests); this one is just the cheapest, since cargo metadata runs no build. Do NOT use 'cargo generate-lockfile' or a bare 'cargo update': both re-resolve the whole graph to the newest compatible versions, which would lift deliberate holds (measured in src-tauri/fuzz: 882 packages relocked, loro 1.13.6 -> 1.13.9 against the #3161 hold that .github/dependabot.yml pins)."
+              # If the FUZZ lock is the one failing, say why it can be failing
+              # on a PR that never went near src-tauri/fuzz — see this job's
+              # header comment.
+              if [ "$lock" = fuzz/Cargo.lock ]; then
+                echo "::error file=$label::note: src-tauri/fuzz is its own workspace but path-depends on agaric, agaric-store, agaric-sync and agaric-engine, so ANY added or changed dependency REQUIREMENT in any src-tauri/**/Cargo.toml invalidates this lock too, even when the PR never touches src-tauri/fuzz. Regenerating it with the command above is the whole fix."
+              fi
+              fail=1
+              echo "::endgroup::"
+              continue
+            fi
+
+            # (2) `--locked` is necessary but NOT sufficient. Cargo silently
+            # DROPS a `dependencies` entry naming a package that has no
+            # `[[package]]` stanza, so a hand-applied or badly-merged edit can
+            # leave a phantom edge that step (1) accepts (measured against
+            # cargo 1.95.0: exit 0, no warning). Re-run WITHOUT `--locked` so
+            # cargo writes the lock it would actually generate, then diff
+            # against the snapshot taken above. Any output is drift the
+            # committed lock is carrying.
+            #
+            # `--offline`, not a second networked resolve. Step (1) passing
+            # means cargo needs no resolution change, so the only rewrite left
+            # for step (2) is dropping residue the lock already carries — that
+            # can never pull a package step (1) did not already download, and
+            # step (1) downloads the whole graph. Verified from an EMPTY
+            # CARGO_HOME: step (1) warms exactly what step (2) needs, and the
+            # phantom-edge diff still appears. This halves the job's crates.io
+            # exposure, so a registry hiccup can only ever red the annotated
+            # step (1) and never this one.
+            #
+            # But read step (2) for what it is: `--offline` is also a REDUCTION
+            # IN SCOPE, not only in exposure. An offline resolve is confined to
+            # what is already in CARGO_HOME, so it cannot surface drift that
+            # only a networked resolve would produce — a yanked version being
+            # the obvious case (offline, cargo happily keeps resolving to the
+            # cached copy of a version crates.io would no longer hand out).
+            # Step (2) answers "is the committed lock what cargo writes given
+            # this cache", NOT "is it what cargo would write against the live
+            # index today". Catching yanks/index movement is `cargo audit`'s and
+            # Dependabot's lane, not this job's — do not read a green here as a
+            # statement about the registry.
+            #
+            # NOT guard-free: an unguarded failure here would abort the whole
+            # step under `set -e`, leaving `::group::` unterminated (the rest
+            # of the log collapses into it), emitting no annotation, and never
+            # checking the SECOND lockfile.
+            if ! cargo metadata --offline --format-version 1 \
+                  --manifest-path "$manifest" >/dev/null; then
+              echo "::error file=$label::cargo failed to re-resolve $label offline after --locked accepted it — see the cargo error above."
+              fail=1
+              cp "$snap" "$lock"
+              echo "::endgroup::"
+              continue
+            fi
+            # Options BEFORE the operands: GNU getopt permutes, so the other
+            # order works on ubuntu-24.04 — but this block is advertised as
+            # runnable verbatim locally and a non-GNU diff may not permute.
+            # diff's exit code is THREE-valued: 0 = identical, 1 = differences,
+            # 2+ = "trouble" (an operand it could not read, etc.). Collapsing
+            # 2 into 1 with a bare `if ! diff` would report an I/O fault as
+            # lockfile drift and tell the reader to "regenerate and commit the
+            # lockfile" — advice that cannot fix it. Capture the status instead
+            # of branching on truthiness. `|| rc=$?` keeps `set -e` from
+            # aborting on the expected non-zero.
+            diff_rc=0
+            diff -u --label "$label (committed)" \
+              --label "$label (what cargo resolves)" "$snap" "$lock" || diff_rc=$?
+            if [ "$diff_rc" -eq 1 ]; then
+              echo "::error file=$label::$label is not what cargo resolves — the diff above is what cargo rewrote. Regenerate and commit it: cd $lock_dir && cargo metadata --format-version 1 >/dev/null (NOT 'cargo generate-lockfile' — see the --locked annotation's note)."
+              fail=1
+            elif [ "$diff_rc" -ge 2 ]; then
+              echo "::error file=$label::diff could not compare $label (exit $diff_rc — 'trouble', e.g. an operand it could not read); see the diff error above. This is an I/O problem, NOT lockfile drift — the committed lock has not been shown to be wrong, so do not regenerate it on the strength of this message."
+              fail=1
+            fi
+            # Step (2) rewrites the lock IN PLACE. Put the committed bytes
+            # back before the next iteration: it keeps the checkout clean for
+            # anything that runs after this step and makes the loop order
+            # irrelevant (no iteration can ever snapshot a lock a previous one
+            # rewrote). The `restore_locks` trap above is what makes the
+            # guarantee unconditional — this in-loop `cp` is what keeps the
+            # rest of THIS run reading committed bytes.
+            cp "$snap" "$lock"
+            echo "::endgroup::"
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Cargo.lock verification FAILED (see above)."
+            exit 1
+          fi
+          echo "Both Cargo.lock files are graph-consistent with their manifests."
 
   # ---------------------------------------------------------------------------
   # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
@@ -1964,7 +2254,7 @@ jobs:
   # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-changes, verify-version-agreement, lint, docs-lint, vitest, vitest-node22, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, verify-version-agreement, verify-lockfiles, lint, docs-lint, vitest, vitest-node22, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -2053,6 +2343,10 @@ jobs:
           check_job cargo-tests "$be_skip_ok"
           check_job cargo-coverage "$be_skip_ok"
           check_job mcp-tests "$be_skip_ok"
+          # #4142: the Cargo.lock graph check is gated on the same `backend`
+          # category (both lockfiles and every Cargo.toml live under
+          # src-tauri/), so it takes the same skip rule.
+          check_job verify-lockfiles "$be_skip_ok"
 
           # ---- docs-lint: the complement (runs on docs-only PRs) ------------
           # success → OK only under docs_only (it should have run)

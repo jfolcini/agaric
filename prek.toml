@@ -575,18 +575,22 @@ stages = ["pre-commit"]
 # be found mechanically is the same failure mode by another name. Escape
 # hatch: bump the marker's own version, a visible reviewable edit.
 #
-# `files` below deliberately includes the FIVE version manifests themselves,
+# `files` below deliberately includes the version manifests themselves,
 # not just marker-carrying source: the real incident's two commits (marker
 # added, version bumped) were different commits, so a hook gated only on
 # "did a marker-shaped file change" would never have fired on the bump. Any
 # commit that touches a manifest — which every `bump-version.sh` commit
-# does, to all five in lockstep — re-scans the WHOLE tracked tree
+# does, to all of them in lockstep — re-scans the WHOLE tracked tree
 # (`pass_filenames = false`), independent of what else that commit touched.
 # A commit that skips hooks entirely is still caught by the existing CI
 # backstop: `prek run --all-files` in the `lint` job
 # (`.github/workflows/_validate.yml`) runs unconditionally whenever the push
 # is not docs-only, and a version bump never is — so this needed no
-# `.github/workflows/` change. Rules, the manifest choice and the marker
+# `.github/workflows/` change. The one bumped file the pattern deliberately
+# leaves out is `src-tauri/fuzz/Cargo.lock`: a bump commit always moves the
+# other manifests too, so the scan fires regardless, while adding it would
+# also re-scan the whole tree on every Dependabot fuzz-group bump for
+# nothing. Rules, the manifest choice and the marker
 # spelling: scripts/check-remove-after-markers.mjs.
 [[repos]]
 repo = "local"
@@ -3296,8 +3300,11 @@ stages = ["pre-commit"]
 # to confirm the pushed commit before it pushes the tag. Both gates are
 # invisible until a release is cut, which is the worst possible moment to
 # discover one has been deleted, so the suite (fake gpg + fake gh, plus
-# ratchets on the call ORDER) runs at commit time instead. Fast and
-# side-effect-free: no key is read, no API is called, no manifest is touched.
+# ratchets on the call ORDER) runs at commit time instead. Fast, and it
+# touches no key, no API and no manifest in this repo. One exception since
+# #4279: case 15 runs a real `cargo` against a throwaway fixture outside the
+# repo, and is the only case that reads the developer's real `$RUSTUP_HOME`
+# (it self-skips when cargo is absent or cannot resolve a toolchain).
 [[repos]]
 repo = "local"
 [[repos.hooks]]

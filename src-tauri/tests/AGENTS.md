@@ -20,23 +20,73 @@ Plus `src/lib.rs` carries `specta_tests` for TypeScript binding verification.
 ```bash
 . "$HOME/.cargo/env"             # required once per shell on this machine
 
-cargo nextest run --workspace      # all tests (parallel, retries) — bare `cargo nextest run`
-                                   # is package-scoped to `agaric` ONLY and silently skips
-                                   # agaric-core/store/engine/sync/observability/diagnostics
-                                   # (measured: 3359 vs 5446 tests, #3212)
-cargo test --workspace             # all tests + doctests (nextest skips doctests)
+cargo nextest run --workspace      # REQUIRED runner for the suite (parallel, retries) — bare
+                                   # `cargo nextest run` is package-scoped to `agaric` ONLY and
+                                   # silently skips agaric-core/store/engine/sync/observability/
+                                   # diagnostics — compare `cargo nextest list` (agaric only) vs
+                                   # `cargo nextest list --workspace` (all 7 members) if you want
+                                   # today's counts; #3212 has the root cause (no
+                                   # `default-members`, deliberately). Required, not just preferred:
+                                   # several tests depend on nextest's
+                                   # process-per-test isolation — see "Process-global state"
+                                   # below. Under plain `cargo test` they can pass
+                                   # vacuously, fail, or flip between runs depending on thread
+                                   # scheduling (#4102).
+cargo test --doc --workspace       # doctests ONLY — nextest does not run doctests, so this
+                                   # covers the one thing it can't. It is NOT a general
+                                   # substitute for `cargo nextest run` above.
 
 cargo nextest run -p agaric create_block_returns           # by name substring
 cargo nextest run -p agaric -E 'test(op_log::)'            # by module
 
-cargo test -p agaric -- integration_tests
-cargo test -p agaric -- command_integration_tests
+cargo test -p agaric -- integration_tests --skip command_integration_tests   # OK on cargo test:
+                                   # `src/integration_tests.rs` touches no process-global (each
+                                   # test builds its own `LoroEngineRegistry`, and the module
+                                   # deliberately does not read `sql_only_fallback_count()` — see the
+                                   # `Engine-path helpers (#1689)` section comment in that file,
+                                   # which contrasts its engine-tree-presence guard with the
+                                   # sibling `*_convergence_tests` files' counter-delta guard).
+                                   # Verified: 5 full-module runs,
+                                   # default parallel threads, 0 failures. The `--skip` is NOT
+                                   # decoration: `command_integration_tests` contains
+                                   # `integration_tests` as a substring, so a bare `-- integration_tests`
+                                   # filter ALSO matches every test under `command_integration_tests::`
+                                   # (350+ extra tests, conformance included) — silently pulling in
+                                   # the exact process-global-counter tests this line claims to avoid.
+cargo nextest run -p agaric -E 'test(command_integration_tests::)'   # REQUIRED nextest, not
+                                   # `cargo test`: `conformance.rs` reads the process-global
+                                   # `sql_only_fallback_count()` as a per-test before/after
+                                   # delta and asserts it == 0, which races against every OTHER
+                                   # conformance test's concurrent fallback events once `cargo
+                                   # test` runs them as threads in one process. Reproduced: flaky,
+                                   # not deterministic — 1 failure in 10 default-parallel `cargo
+                                   # test` runs of this module (e.g.
+                                   # `local_move_block_parity_local_matches_remote_2344`; a
+                                   # DIFFERENT conformance test can fail on a different run,
+                                   # depending on thread scheduling); 0 failures across 3 nextest
+                                   # runs. Don't expect that 1-in-10 rate to hold — it's a race,
+                                   # not a fixed frequency; treat any flake in this module under
+                                   # plain `cargo test` as confirming the bug, not as noise. (Root
+                                   # AGENTS.md's older reason — a process-global Loro engine
+                                   # registry shared by `conformance`/`undo_integration` — was
+                                   # fixed by #2249; both files' own doc comments now say their
+                                   # engine state is per-test. The counter above is what still
+                                   # makes this module nextest-only.)
 cargo nextest run -p agaric -E 'test(sync_net::) + test(sync_daemon::)'   # network sync
 
 cargo insta test          # snapshot tests; writes .snap.new for changed
 cargo insta review        # interactive accept/reject
 
-cargo test -p agaric -- specta_tests --ignored   # regenerate src/lib/bindings.ts
+cargo test -p agaric -- specta_tests --ignored   # regenerate src/lib/bindings.ts — a codegen
+                                   # action (writes a file), not a correctness assertion, so
+                                   # process isolation doesn't apply here; `cargo test` is fine.
+                                   # Verified clean: running it produced no diff in
+                                   # `src/lib/bindings.ts` (already up to date). nextest
+                                   # equivalent, verified to select/run the same single test:
+                                   # `cargo nextest run -p agaric -E 'test(specta_tests::)'
+                                   # --run-ignored=only` — prefer this form; `-- --ignored` after
+                                   # the filter also works (nextest emulates it), but
+                                   # `--run-ignored=only` is the documented, canonical flag.
 
 cargo bench --bench core_bench -- hash   # local only (hash_bench is a mod of core_bench, #2879)
 ```
@@ -48,6 +98,24 @@ cargo bench --bench core_bench -- hash   # local only (hash_bench is a mod of co
 - `slow-timeout = 30s` default, `60s` CI — DB-backed tests can be slow on cold cache.
 
 ## Writing unit tests
+
+### Process-global state
+
+If a test touches something that is global to the OS process — a `tracing` global default subscriber, `log::max_level()`, mutated process env vars (`std::env::set_var`), or an `OnceLock`/registry seeded once and read everywhere — it must not assume it is alone in the process. `cargo nextest run` gives every test its own process, so this is invisible there; plain `cargo test` runs a crate's tests as threads sharing ONE process, so these tests can pass vacuously (the assertion is satisfied by a leftover from an earlier test, not by the call under test), fail on an ordering they didn't cause, or flip between runs (#4102).
+
+Concrete instances in this crate: `init_logging` (`src/lib.rs`) installs the process-wide `tracing` subscriber via `try_init().ok()` and calls `init_log_bridge`, which sets `log::max_level()` — `log_bridge_tests::init_log_bridge_makes_log_crate_records_reachable`, `boot_path_tests::init_logging_completes_the_real_boot_sequence`, and `log_dir_tests::log_dir_write_path_and_bug_report_read_path_agree` all assert on that shared state and are documented as needing a clean process.
+
+The second class is a **shape, not a module** — read it as a rule you apply, not a list you look yourself up in. Any test that reads a process-global counter, does its own work, reads the counter again, and asserts on the difference is unsafe under plain `cargo test`: a sibling test's event lands on the same counter between the two reads, and the delta stops being a statement about the code under test. In this crate that counter is `sql_only_fallback::count()` (re-exported as `crate::materializer::sql_only_fallback_count()`), a monotonic `AtomicU64`, and the assertion is nearly always `delta == 0` — proof that THIS test's op took the engine path rather than the SQL-only fallback (#891). Under `cargo nextest run` each test owns its process and the delta is honest; under `cargo test`'s one shared process another test's concurrent fallback event can flip it nonzero for a test that never touched the fallback path itself — reproduced directly (see "Running tests" above).
+
+Do not read that as a property of one module. The counter is reachable under two spellings — `sql_only_fallback::count()` and the `crate::materializer::sql_only_fallback_count()` re-export — so the authoritative sweep is:
+
+```sh
+grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src
+```
+
+It currently spans eleven test files, not one: `command_integration_tests/conformance.rs`, all four `materializer/handlers/{tag,move,create_edit,delete_restore}_convergence_tests.rs`, `materializer/handlers/{apply_reproject_proptest,space_hydration_tests,engine_path_tests}.rs`, `materializer/tests/{apply_op,fifo_status}.rs`, and the `bulk_equivalence` arm harness. (Two more paths match — 13 in total — without being hazards. `materializer/coordinator.rs` is the PRODUCTION reader that fills `StatusInfo`: it asserts nothing. `integration_tests.rs` matches only inside a COMMENT — the `Engine-path helpers (#1689)` block names the counter solely to contrast it with the engine-tree-presence guard that file uses *instead* — which is why "Running tests" above can still call `cargo test -p agaric -- integration_tests --skip command_integration_tests` safe; there is no counter read in that module to race.) Re-run the grep rather than trusting that enumeration: it will age, the rule will not. In particular `cargo test -p agaric -- convergence` is a plain-`cargo test` run over four of them, so it hits exactly the race this section exists to warn about; use `cargo nextest run -p agaric -E 'test(convergence)'`.
+
+`command_integration_tests::conformance` carries one extra note: root [`AGENTS.md`](../../AGENTS.md) also names it nextest-only, but for an older reason (a process-global Loro engine registry) that `conformance.rs` and `undo_integration.rs` now document as fixed (#2249: each test's engine state is its own `Materializer`'s, not shared) — the counter above is the reason the module still needs nextest today. If you're adding a test of this shape, say so in a doc comment the way those do, rather than leaving the next person to rediscover it — and prefer a delta/lower-bound check over an exact one if the counter is genuinely shared with concurrently-running tests.
 
 ### Database setup
 

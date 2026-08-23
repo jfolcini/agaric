@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 #
-# bump-version.sh — bump the project version in all 5 manifests in lockstep,
-# regenerate lock files, and (optionally) commit + tag + push.
+# bump-version.sh — bump the project version in every version manifest in
+# lockstep (the authoritative list is `Files updated:` below — this script IS
+# that list; anything that needs to name them should point here rather than
+# keep a count that drifts), regenerate lock files, and (optionally)
+# commit + tag + push.
 #
 # The Release workflow (`.github/workflows/release.yml`) has a
 # `verify-version` job that fails fast if the tag and the manifests
@@ -11,6 +14,9 @@
 # Files updated:
 #   - src-tauri/Cargo.toml              (`version = "X.Y.Z"`)
 #   - src-tauri/Cargo.lock              (regen via `cargo update -p agaric`)
+#   - src-tauri/fuzz/Cargo.lock         (regen via `cargo update -p agaric`,
+#                                        run from src-tauri/fuzz — its OWN
+#                                        workspace, path-depending on `agaric`)
 #   - src-tauri/tauri.conf.json         (`"version": "X.Y.Z"`)
 #   - package.json                      (`"version": "X.Y.Z"`)
 #   - package-lock.json                 (two-field `jq` edit — version-only)
@@ -23,7 +29,8 @@
 #   scripts/bump-version.sh --self-test
 #
 #   <new-version>     Semver triple, e.g. `0.1.16`. No leading `v`.
-#   --commit          Stage the 5 changed files and create a release commit.
+#   --commit          Stage the changed files (see `Files updated:` above)
+#                     and create a release commit.
 #   --tag             Create the `<new-version>` git tag (requires --commit).
 #   --push            Push main + the new tag to origin (requires --tag).
 #   --check-identity  Only check that the configured git identity can produce
@@ -447,6 +454,12 @@ FAKE_GH
   # rest), and GIT_CONFIG_NOSYSTEM closes /etc/gitconfig. Without both, the
   # maintainer's own `user.signingkey` leaks into the cases that assert its
   # ABSENCE and those cases pass for the wrong reason.
+  # Captured BEFORE the override: rustup resolves its toolchains under
+  # `$HOME/.rustup` unless RUSTUP_HOME says otherwise, so the fuzz-lock case
+  # below (the only one that runs a real binary rather than a fake) would get
+  # "rustup could not choose a version of cargo to run" from the scratch HOME.
+  # Only that case reads it; nothing else here may reach the real home dir.
+  st_rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
   HOME="$st_tmp/home"
   mkdir -p "$HOME"
   export HOME
@@ -744,6 +757,92 @@ u'
     st_ok 'a tag ref that resolves to no object fails closed, naming the ref lookup'
   fi
 
+  # 15. The fuzz-lock bump (#4279). This is the one production path the rest
+  #     of the suite cannot reach: it first executes at a real release. What
+  #     is untested is not the shell around it but CARGO's acceptance of
+  #     `--precise` for a dependency declared as `path = ".."` with NO
+  #     `version` field — a different shape from the parent `cargo update`
+  #     call two lines above it in production, where `agaric` is a workspace
+  #     MEMBER. Model exactly that shape: a package named `agaric`, and a
+  #     nested crate carrying its own `[workspace]` table (so it is excluded
+  #     from the parent workspace, as src-tauri/fuzz is) that depends on it
+  #     by path alone.
+  #
+  #     Hermetic: the fixture has ZERO registry dependencies, so `--offline`
+  #     against a scratch CARGO_HOME resolves the whole graph out of the two
+  #     local manifests — no crates.io, no network, and no read or write of
+  #     the developer's real cargo state. (Production deliberately does NOT
+  #     pass `--offline`; a real release may need the index. That does not
+  #     change what is asserted here, which is how cargo treats `--precise`
+  #     on a path dep.)
+  #
+  #     Skipped, loudly, if cargo is absent — this hook also runs in the
+  #     dco-signoff/git-scratch-guard file set, and a missing toolchain is a
+  #     reason to say so rather than to red an unrelated commit.
+  #
+  #     "Absent" means UNRUNNABLE, not just off `$PATH`. On a rustup install,
+  #     `cargo` on `$PATH` is a shim that still has to CHOOSE a toolchain, and
+  #     it can fail to: the fixture lives outside this repo, so
+  #     `rust-toolchain.toml` does not apply to it, and a machine whose rustup
+  #     has no DEFAULT toolchain (directory overrides only) gets "rustup could
+  #     not choose a version of cargo to run". That is the same "unrelated
+  #     commit reddened by a toolchain this case does not test" outcome the
+  #     `command -v` skip exists to prevent, so probe for it the same way.
+  #     The probe mirrors the real calls exactly — same cwd (rustup resolves
+  #     directory overrides from it), same scrubbed `HOME`, same restored
+  #     `RUSTUP_HOME`, same scratch `CARGO_HOME` — so it cannot pass where
+  #     they would fail. `cargo --version` builds nothing and touches no
+  #     network.
+  st_fuzz="$st_tmp/fuzzshape"
+  mkdir -p "$st_fuzz/src" "$st_fuzz/nested/src" "$st_fuzz/cargo-home"
+  if ! command -v cargo >/dev/null 2>&1; then
+    printf '  SKIP - the fuzz-lock bump shape (cargo not on PATH)\n' >&2
+  elif ! st_cargo_probe="$( cd "$st_fuzz/nested" \
+      && RUSTUP_HOME="$st_rustup_home" CARGO_HOME="$st_fuzz/cargo-home" \
+         cargo --version 2>&1 )"; then
+    printf '  SKIP - the fuzz-lock bump shape (cargo is on PATH but cannot run here: %s)\n' \
+      "$st_cargo_probe" >&2
+  else
+    printf '[package]\nname = "agaric"\nversion = "0.9.8"\nedition = "2021"\n\n[workspace]\n' \
+      >"$st_fuzz/Cargo.toml"
+    : >"$st_fuzz/src/lib.rs"
+    printf '[package]\nname = "agaric-fuzz-fixture"\nversion = "0.0.0"\nedition = "2021"\npublish = false\n\n[workspace]\n\n[dependencies.agaric]\npath = ".."\n' \
+      >"$st_fuzz/nested/Cargo.toml"
+    : >"$st_fuzz/nested/src/lib.rs"
+    st_fuzz_pin() { awk '/^name = "agaric"$/{getline; print; exit}' \
+      "$st_fuzz/nested/Cargo.lock" | cut -d'"' -f2; }
+    # Subshell: CARGO_HOME and the cd must not leak into the ratchets below.
+    if ! ( cd "$st_fuzz/nested" \
+        && RUSTUP_HOME="$st_rustup_home" CARGO_HOME="$st_fuzz/cargo-home" \
+           cargo generate-lockfile --offline ) >/dev/null 2>&1; then
+      st_bad 'the fuzz-lock fixture resolves offline' \
+        'cargo generate-lockfile failed on a fixture with no registry deps'
+    elif [ "$(st_fuzz_pin)" != '0.9.8' ]; then
+      st_bad 'the fuzz-lock fixture resolves offline' \
+        "fixture lock pinned agaric at '$(st_fuzz_pin)', expected 0.9.8"
+    else
+      st_ok 'the fuzz-lock fixture resolves offline (path dep, no registry)'
+      # The bump production performs: parent manifest already at the NEW
+      # version (bump-version.sh seds it first), then `--precise` in the
+      # nested workspace.
+      printf '[package]\nname = "agaric"\nversion = "0.9.9"\nedition = "2021"\n\n[workspace]\n' \
+        >"$st_fuzz/Cargo.toml"
+      st_fuzz_out="$( ( cd "$st_fuzz/nested" \
+        && RUSTUP_HOME="$st_rustup_home" CARGO_HOME="$st_fuzz/cargo-home" \
+           cargo update --offline -p agaric --precise 0.9.9 ) 2>&1 )" \
+        && st_fuzz_rc=0 || st_fuzz_rc=$?
+      if [ "$st_fuzz_rc" != 0 ]; then
+        st_bad 'cargo accepts --precise for a path-dependency agaric' \
+          "cargo update exited $st_fuzz_rc: $st_fuzz_out"
+      elif [ "$(st_fuzz_pin)" != '0.9.9' ]; then
+        st_bad 'cargo accepts --precise for a path-dependency agaric' \
+          "cargo update exited 0 but the lock still pins '$(st_fuzz_pin)'"
+      else
+        st_ok 'cargo accepts --precise for a path-dependency agaric (lock repinned)'
+      fi
+    fi
+  fi
+
   # ── wiring ratchets ───────────────────────────────────────────────────
   # The cases above prove the functions behave; these prove the script still
   # CALLS them, in the one order that matters. Without them the gates could
@@ -790,6 +889,18 @@ u'
     'release_require_verified_commit "' '^git push --no-verify origin "\$NEW_VERSION"$'
   st_order 'the tag push is followed by the tag verification' \
     '^git push --no-verify origin "\$NEW_VERSION"$' 'release_require_verified_tag "'
+
+  # #4279: case 15 above proves cargo ACCEPTS the call; these prove the script
+  # still MAKES it, in the only order that works. The fuzz workspace resolves
+  # `agaric` from `../Cargo.toml`, so the parent manifest must already carry
+  # the new version when `--precise` runs; and the post-bump sanity loop is
+  # worthless if it reads a lock nothing regenerated.
+  st_order 'the fuzz lock is bumped only after src-tauri/Cargo.toml carries the new version' \
+    'sed -i\.bak .*src-tauri/Cargo\.toml$' \
+    'cd src-tauri/fuzz && cargo update -p agaric --precise'
+  st_order 'the fuzz lock is bumped before the sanity check reads it back' \
+    'cd src-tauri/fuzz && cargo update -p agaric --precise' \
+    '^FUZZ_LOCK='
 
   # release.sh's preflight is only a fast-fail — the gate above is what makes
   # the release safe — but it is the difference between learning about a bad
@@ -1004,6 +1115,34 @@ mv "$TMP" package-lock.json
 # minimal-diff way to bump just the agaric workspace member.
 ( cd src-tauri && cargo update -p agaric --precise "$NEW_VERSION" >/dev/null 2>&1 )
 
+# src-tauri/fuzz/Cargo.lock — the SAME bump, in the fuzz crate's own
+# workspace. `src-tauri/fuzz` is excluded from the parent workspace (its
+# `[workspace]` table) and keeps a separate lock that pins `agaric` through a
+# path dependency on `..`, so the call above does not reach it. Left stale it
+# is not cosmetic: `cargo metadata --locked --manifest-path fuzz/Cargo.toml`
+# then fails outright, which is what `_validate.yml`'s `verify-lockfiles`
+# (#4142) and `verify-version-agreement` now assert on every backend PR.
+# Every release from 0.7.1 to 0.9.8 left this file behind (by up to five
+# versions) because nothing in the automation touched it.
+#
+# Ordering: this needs `src-tauri/Cargo.toml` to ALREADY carry the new version
+# (the sed above) — `--precise` names the path dep's own manifest version. It
+# is independent of `src-tauri/Cargo.lock`: separate workspace, resolved from
+# `../Cargo.toml`, never from the parent lock. Verified both orders.
+# stderr is NOT swallowed here, unlike the parent call above. This one runs
+# on a maintainer-only path that no test and no CI job exercises, and it
+# fires AFTER four manifests and the parent lock have already been rewritten
+# — so a failure (network down, or cargo declining --precise) would abort the
+# bump under `set -e` leaving a dirty tree and no explanation. The cost of
+# keeping stderr is a little noise on success; the cost of dropping it is a
+# silent abort mid-release.
+if ! ( cd src-tauri/fuzz && cargo update -p agaric --precise "$NEW_VERSION" >/dev/null ); then
+  echo "error: failed to bump agaric to $NEW_VERSION in src-tauri/fuzz/Cargo.lock." >&2
+  echo "  The parent manifests and src-tauri/Cargo.lock have ALREADY been rewritten," >&2
+  echo "  so the tree is dirty. Fix the cause above, then re-run this script." >&2
+  exit 1
+fi
+
 # ── Sanity: every manifest now agrees ───────────────────────────────────────
 
 CONF=$(jq -r .version src-tauri/tauri.conf.json)
@@ -1011,15 +1150,17 @@ CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
 PKG=$(jq -r .version package.json)
 PKG_LOCK=$(jq -r .version package-lock.json)
 CARGO_LOCK=$(awk '/^name = "agaric"$/{getline; print; exit}' src-tauri/Cargo.lock | cut -d'"' -f2)
+FUZZ_LOCK=$(awk '/^name = "agaric"$/{getline; print; exit}' src-tauri/fuzz/Cargo.lock | cut -d'"' -f2)
 
 echo "Versions after bump:"
 printf '  src-tauri/tauri.conf.json: %s\n' "$CONF"
 printf '  src-tauri/Cargo.toml:      %s\n' "$CARGO"
 printf '  src-tauri/Cargo.lock:      %s\n' "$CARGO_LOCK"
+printf '  src-tauri/fuzz/Cargo.lock: %s\n' "$FUZZ_LOCK"
 printf '  package.json:              %s\n' "$PKG"
 printf '  package-lock.json:         %s\n' "$PKG_LOCK"
 
-for v in "$CONF" "$CARGO" "$CARGO_LOCK" "$PKG" "$PKG_LOCK"; do
+for v in "$CONF" "$CARGO" "$CARGO_LOCK" "$FUZZ_LOCK" "$PKG" "$PKG_LOCK"; do
   if [ "$v" != "$NEW_VERSION" ]; then
     echo "ERROR: post-bump sanity check failed — at least one manifest is not $NEW_VERSION." >&2
     exit 1
@@ -1055,6 +1196,7 @@ git add \
   package-lock.json \
   src-tauri/Cargo.toml \
   src-tauri/Cargo.lock \
+  src-tauri/fuzz/Cargo.lock \
   src-tauri/tauri.conf.json
 
 # GPG-sign the bump commit so the `required_signatures` ruleset on `main`
@@ -1067,9 +1209,10 @@ git commit -S -m "$(cat <<EOF
 chore(release): bump version to $NEW_VERSION
 
 Generated by scripts/bump-version.sh. Updates the 3 source-of-truth manifests
-(package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json) and the 2
-regenerated lock files (package-lock.json, src-tauri/Cargo.lock) in lockstep
-so the Release workflow's verify-version job passes on the matching tag.
+(package.json, src-tauri/Cargo.toml, src-tauri/tauri.conf.json) and the 3
+regenerated lock files (package-lock.json, src-tauri/Cargo.lock,
+src-tauri/fuzz/Cargo.lock) in lockstep so the Release workflow's
+verify-version job passes on the matching tag.
 EOF
 )"
 
