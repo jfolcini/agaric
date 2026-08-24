@@ -7,7 +7,7 @@
  */
 
 import { useNavigationStore } from '@/stores/navigation'
-import { useTabsStore } from '@/stores/tabs'
+import { exitViewForTab, useTabsStore } from '@/stores/tabs'
 
 /**
  * Radix-rendered overlay surfaces that should swallow a back press.
@@ -72,11 +72,20 @@ export function overlayBackHandler(): boolean {
  * the start destination" convention:
  *
  *  - `page-editor` with a non-empty page stack → `useTabsStore.goBack()`
- *    (pops the stack; closes the tab / falls back to `pages` view at the
- *    stack bottom, exactly like the in-app back button).
+ *    (pops the stack; closes the tab / returns to the view the stack was
+ *    opened from at the stack bottom, exactly like the in-app back button).
+ *  - `page-editor` with an EMPTY stack (nothing left to pop) → the same exit
+ *    view `goBack` would have used: `exitViewForTab` on the active tab
+ *    (#4287). This used to hard-code `journal` while `goBack` hard-coded
+ *    `pages`, so the gesture and the button disagreed about where leaving
+ *    the editor lands; both now read the one `exitViewForTab` rule.
  *  - any non-`journal` view (settings, pages, search, …) → return to the
  *    `journal` start destination.
  *  - `journal` → not handled (`false`): true root, the caller exits.
+ *
+ * The chain still terminates: the exit view is never `page-editor`, so the
+ * next press falls into the non-`journal` → `journal` step and the one after
+ * that declines.
  */
 export function navigationBackHandler(): boolean {
   const nav = useNavigationStore.getState()
@@ -88,7 +97,7 @@ export function navigationBackHandler(): boolean {
       tabsState.goBack()
       return true
     }
-    nav.setView('journal')
+    nav.setView(exitViewForTab(activeTab))
     return true
   }
   if (nav.currentView !== 'journal') {

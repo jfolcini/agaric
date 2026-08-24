@@ -14,7 +14,8 @@
  *   - `BACK_PRIORITY_ZOOM` (200) — zoom out one level in a zoomed
  *     BlockTree (`useBlockZoom` registers this while zoomed).
  *   - `BACK_PRIORITY_NAVIGATION` (100) — pop the in-app navigation
- *     stack: page-stack `goBack()`, then non-root view → journal.
+ *     stack: page-stack `goBack()`, then the view the stack was opened
+ *     from, then non-root view → journal.
  *
  * Ties within a band resolve LIFO (most recently registered wins) so
  * that, e.g., the most recently zoomed BlockTree in a journal week view

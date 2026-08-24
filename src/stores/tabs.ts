@@ -29,8 +29,9 @@ import { parseDate } from '@/lib/parse-date'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { useJournalStore } from '@/stores/journal'
-import { useNavigationStore } from '@/stores/navigation'
+import { coerceView, useNavigationStore } from '@/stores/navigation'
 import { useRecentPagesStore } from '@/stores/recent-pages'
+import type { View } from '@/types/view'
 
 export interface PageEntry {
   pageId: string
@@ -41,6 +42,23 @@ export interface Tab {
   id: string
   pageStack: PageEntry[]
   label: string
+  /**
+   * The view that was on screen when this tab's page stack was OPENED — i.e.
+   * the route the user will be returned to once the stack is popped empty
+   * (in-page Back button, Android back gesture, delete-page, stale-page heal).
+   * Recorded by `navigateToPage` / `openInNewTab` on the push onto an empty
+   * stack and consumed (and cleared) by `goBack`.
+   *
+   * Undefined means "unknown origin" — a tab persisted before this field
+   * existed, or one opened while `page-editor` was already the current view
+   * (there is no meaningful route to return to in that case). Those fall back
+   * to `DEFAULT_PAGE_EXIT_VIEW`.
+   *
+   * This is deliberately ONE slot, not a browser-style view history: the page
+   * stack already provides multi-step back INSIDE the editor, and the only
+   * gap was the single hop out of it.
+   */
+  enteredFrom?: View | undefined
 }
 
 // FE-L-4: module-scoped counter is safe because the renderer is
@@ -59,6 +77,31 @@ let nextTabId = 1
  * realistic back-tracking while keeping the localStorage payload small.
  */
 export const MAX_PAGE_STACK_DEPTH = 50
+
+/**
+ * Where leaving the page editor lands when the tab has no recorded
+ * `enteredFrom` (see `Tab.enteredFrom`). `pages` is the page list — the
+ * structural parent of a page — and it keeps the pre-#4287 destination for
+ * unknown-origin tabs.
+ *
+ * THE single fallback: `goBack` (stack popped empty on the last tab) and
+ * `navigationBackHandler` (Android back on a page-editor whose stack is
+ * already empty) both route through `exitViewForTab` below. They used to
+ * disagree — `goBack` hard-coded `'pages'` while `navigationBackHandler`
+ * hard-coded `'journal'`, so the same "leave the editor" intent landed in two
+ * different places depending on which affordance you used.
+ */
+export const DEFAULT_PAGE_EXIT_VIEW: View = 'pages'
+
+/**
+ * The view to show when `tab`'s page stack is left behind: the route the stack
+ * was opened from, else `DEFAULT_PAGE_EXIT_VIEW`. `page-editor` is never
+ * returned — that would leave the user staring at the editor they just left.
+ */
+export function exitViewForTab(tab: Tab | undefined): View {
+  const entered = tab?.enteredFrom
+  return entered !== undefined && entered !== 'page-editor' ? entered : DEFAULT_PAGE_EXIT_VIEW
+}
 
 interface TabsStore {
   /**
@@ -228,8 +271,31 @@ function spliceTabs(state: TabsState, tabs: Tab[], activeTabIndex: number): Part
  * view) call this directly. The call is synchronous — `setState` flushes
  * before this function returns.
  */
-function setNavigationView(view: 'page-editor' | 'pages' | 'journal'): void {
+function setNavigationView(view: View): void {
   useNavigationStore.getState().setView(view)
+}
+
+/**
+ * The `enteredFrom` a tab should carry after a page is pushed onto it (#4287).
+ *
+ * Only the push onto an EMPTY stack opens a stack, so only that push records
+ * an origin; deeper pushes keep the origin of the stack's bottom entry. A push
+ * made while `page-editor` is already the current view has no meaningful
+ * origin to record (the editor is not a route to return to), so the existing
+ * value is kept.
+ */
+function nextEnteredFrom(tab: Tab): View | undefined {
+  if (tab.pageStack.length > 0) return tab.enteredFrom
+  return currentEntryView() ?? tab.enteredFrom
+}
+
+/**
+ * The current view as a recordable origin, or `undefined` when it is
+ * `page-editor` (the editor is not a route to return to).
+ */
+function currentEntryView(): View | undefined {
+  const view = useNavigationStore.getState().currentView
+  return view === 'page-editor' ? undefined : view
 }
 
 /** Cross-store coordination: forward to navigation store's setSelectedBlockId. */
@@ -257,7 +323,15 @@ function coerceTab(raw: unknown): Tab | null {
       pageStack.push({ pageId: e['pageId'], title: e['title'] })
     }
   }
-  return { id: obj['id'], pageStack, label: typeof obj['label'] === 'string' ? obj['label'] : '' }
+  // CR-PERSIST — `enteredFrom` is fed straight to `setView`, so a corrupt
+  // blob must not smuggle a non-`View` string into the navigation store.
+  const enteredFrom = coerceView(obj['enteredFrom'])
+  return {
+    id: obj['id'],
+    pageStack,
+    label: typeof obj['label'] === 'string' ? obj['label'] : '',
+    ...(enteredFrom === null ? {} : { enteredFrom }),
+  }
 }
 
 /** CR-PERSIST — coerce a persisted value into a `Tab[]`, dropping invalid tabs. */
@@ -458,6 +532,11 @@ export const useTabsStore = create<TabsStore>()(
           ...activeTab,
           pageStack: newStack,
           label: tabLabel(newStack),
+          // #4287 — remember the route this stack was opened from BEFORE the
+          // `setNavigationView('page-editor')` below overwrites `currentView`,
+          // so popping the stack empty can return there instead of always
+          // dumping the user on `pages`.
+          enteredFrom: nextEnteredFrom(activeTab),
         }
         set(spliceTabs(state, newTabs, activeTabIndex))
         setNavigationView('page-editor')
@@ -480,10 +559,14 @@ export const useTabsStore = create<TabsStore>()(
             set(spliceTabs(state, newTabs, newIndex))
             setNavigationSelectedBlockId(null)
           } else {
-            // Last tab — switch to pages view
+            // Last tab — leave the editor for the route this stack was opened
+            // from (#4287), falling back to `DEFAULT_PAGE_EXIT_VIEW`. The
+            // origin is consumed here: the emptied tab keeps no `enteredFrom`,
+            // so the next stack opened in it records its own.
+            const exitView = exitViewForTab(activeTab)
             const newTabs = [{ id: activeTab?.id ?? '0', pageStack: [], label: '' }]
             set(spliceTabs(state, newTabs, 0))
-            setNavigationView('pages')
+            setNavigationView(exitView)
             setNavigationSelectedBlockId(null)
           }
         } else {
@@ -522,7 +605,15 @@ export const useTabsStore = create<TabsStore>()(
           const newStack = tab.pageStack.map((entry) =>
             entry.pageId === pageId ? { pageId, title } : entry,
           )
-          return { id: tab.id, pageStack: newStack, label: tabLabel(newStack) }
+          // #4287 — carry `enteredFrom` across the rebuild. This literal
+          // silently dropped it (a rename anywhere in the tab reset the
+          // stack's recorded origin, so a later `goBack` fell back to the
+          // pages view); any future `Tab` field must be carried here too.
+          // Built field-by-field rather than spread because `no-map-spread`
+          // rejects spreading inside a `map`.
+          const renamed: Tab = { id: tab.id, pageStack: newStack, label: tabLabel(newStack) }
+          if (tab.enteredFrom !== undefined) renamed.enteredFrom = tab.enteredFrom
+          return renamed
         })
         if (!changed) return
         set(spliceTabs(state, newTabs, activeTabIndex))
@@ -536,6 +627,9 @@ export const useTabsStore = create<TabsStore>()(
           id: String(nextTabId++),
           pageStack: newStack,
           label: title,
+          // #4287 — a new tab opens a fresh stack, so it records its own
+          // origin (read before the `setNavigationView` below).
+          enteredFrom: currentEntryView(),
         }
         const newTabs = [...tabs, newTab]
         const newIndex = newTabs.length - 1

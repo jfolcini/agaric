@@ -100,6 +100,18 @@ vi.mock('lucide-react', () => ({
       className={props.className}
     />
   ),
+  // #216 C4 — the COLLAPSED chevron renders as a solid caret (lucide `Play`,
+  // filled) rather than the outline chevron, so collapsed/expanded is carried
+  // by glyph shape instead of the rotation alone. The `data-*` markers
+  // ChevronToggle sets are forwarded so tests can assert the swap happened.
+  Play: (props: { className?: string; 'data-slot'?: string; 'data-solid'?: string }) => (
+    <svg
+      data-testid="solid-caret-icon"
+      data-slot={props['data-slot']}
+      data-solid={props['data-solid']}
+      className={props.className}
+    />
+  ),
   Clock: (props: { size: number; className?: string }) => (
     <svg
       data-testid="clock-icon"
@@ -657,7 +669,10 @@ describe('SortableBlock collapse/expand chevron', () => {
     expect(chevron.getAttribute('class')).toContain('rotate-90')
   })
 
-  it('does not apply rotate-90 class when collapsed', () => {
+  // #216 C4 — collapsed swaps the glyph for a solid caret. It must NOT also
+  // rotate: rotation is the expanded state's cue, and a state signalled by
+  // rotation alone is the thing #216 set out to fix.
+  it('renders an unrotated solid caret when collapsed (not the outline chevron)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -669,8 +684,10 @@ describe('SortableBlock collapse/expand chevron', () => {
       />,
     )
 
-    const chevron = screen.getByTestId('chevron-right-icon')
-    expect(chevron.getAttribute('class')).not.toContain('rotate-90')
+    expect(screen.queryByTestId('chevron-right-icon')).not.toBeInTheDocument()
+    const caret = screen.getByTestId('solid-caret-icon')
+    expect(caret.getAttribute('class')).toContain('fill-current')
+    expect(caret.getAttribute('class')).not.toContain('rotate-90')
   })
 
   it('shows "Collapse children" aria-label when expanded', () => {
@@ -1542,8 +1559,14 @@ describe('SortableBlock visibility controls', () => {
 
     const collapseBtn = screen.getByRole('button', { name: /expand children/i })
     expect(collapseBtn.className).not.toContain('opacity-0')
-    // Carries the non-rotation collapsed cue (filled bg + ring).
-    expect(collapseBtn.className).toContain('ring-1')
+    // Carries the non-rotation collapsed cue — a SOLID caret glyph, not the
+    // boxed plate (`ring-1` + `bg-muted/60`) it used to draw around the caret.
+    expect(collapseBtn.querySelector('[data-testid="solid-caret-icon"]')).toHaveAttribute(
+      'data-solid',
+      'true',
+    )
+    expect(collapseBtn.className).not.toContain('ring-1')
+    expect(collapseBtn.className).not.toContain('bg-muted')
   })
 
   it('drag handle has no per-button coarse-pointer classes for touch devices', () => {

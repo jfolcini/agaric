@@ -5,6 +5,7 @@ import { selectCurrentViewForSpace, useNavigationStore } from '@/stores/navigati
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
 import {
+  DEFAULT_PAGE_EXIT_VIEW,
   resetTabIdCounter,
   selectActiveTabIndexForSpace,
   selectPageStack,
@@ -467,6 +468,103 @@ describe('useNavigationStore', () => {
       expect(selectPageStack(useTabsStore.getState())).toEqual([])
     })
 
+    // ── #4287: leaving the stack returns to the route it was opened from ──
+    //
+    // The user's report: "when deleting a page you should be redirected to the
+    // previous route you were in". Delete → `PageHeader.onDeleted` → `onBack`
+    // → this `goBack`, so the store-level pop IS the delete destination.
+    for (const origin of ['journal', 'search', 'tags', 'query'] as const) {
+      it(`returns to ${origin} after opening a page from ${origin} and popping the stack`, () => {
+        useNavigationStore.getState().setView(origin)
+        useTabsStore.getState().navigateToPage('P1', 'Page 1')
+        expect(useNavigationStore.getState().currentView).toBe('page-editor')
+
+        useTabsStore.getState().goBack()
+
+        expect(selectPageStack(useTabsStore.getState())).toEqual([])
+        expect(useNavigationStore.getState().currentView).toBe(origin)
+      })
+    }
+
+    it('records the origin once — deeper pushes keep the stack bottom’s route', () => {
+      useNavigationStore.getState().setView('tags')
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      // A second push happens from inside the editor: no new origin to record.
+      useTabsStore.getState().navigateToPage('P2', 'Page 2')
+
+      useTabsStore.getState().goBack()
+      // Still inside the stack — the intermediate pop is untouched by #4287.
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+
+      useTabsStore.getState().goBack()
+      expect(useNavigationStore.getState().currentView).toBe('tags')
+    })
+
+    it('re-entering from a different view records the NEW origin', () => {
+      useNavigationStore.getState().setView('journal')
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useTabsStore.getState().goBack()
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+
+      useNavigationStore.getState().setView('search')
+      useTabsStore.getState().navigateToPage('P2', 'Page 2')
+      useTabsStore.getState().goBack()
+      expect(useNavigationStore.getState().currentView).toBe('search')
+    })
+
+    it('falls back to the pages view for a tab with no recorded origin', () => {
+      // A tab persisted before `enteredFrom` existed (or opened while the
+      // editor was already on screen) has no origin to return to.
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' }],
+        activeTabIndex: 0,
+      })
+
+      useTabsStore.getState().goBack()
+
+      expect(useNavigationStore.getState().currentView).toBe(DEFAULT_PAGE_EXIT_VIEW)
+      expect(DEFAULT_PAGE_EXIT_VIEW).toBe('pages')
+    })
+
+    it('never returns to page-editor, even if that was somehow recorded', () => {
+      useTabsStore.setState({
+        tabs: [
+          {
+            id: '0',
+            pageStack: [{ pageId: 'P1', title: 'Page 1' }],
+            label: 'Page 1',
+            enteredFrom: 'page-editor',
+          },
+        ],
+        activeTabIndex: 0,
+      })
+      useNavigationStore.setState({ currentView: 'page-editor' })
+
+      useTabsStore.getState().goBack()
+
+      expect(useNavigationStore.getState().currentView).toBe(DEFAULT_PAGE_EXIT_VIEW)
+    })
+
+    it('consumes the origin: the emptied tab records a fresh one next time', () => {
+      useNavigationStore.getState().setView('journal')
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useTabsStore.getState().goBack()
+      expect(useTabsStore.getState().tabs[0]?.enteredFrom).toBeUndefined()
+    })
+
+    it('renaming a page does not reset the tab’s recorded origin', () => {
+      useNavigationStore.getState().setView('search')
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+
+      useTabsStore.getState().renamePage('P1', 'Renamed')
+
+      expect(useTabsStore.getState().tabs[0]?.enteredFrom).toBe('search')
+      useTabsStore.getState().goBack()
+      expect(useNavigationStore.getState().currentView).toBe('search')
+    })
+
     it('clears selectedBlockId when going back', () => {
       useNavigationStore.setState({
         currentView: 'page-editor',
@@ -866,7 +964,11 @@ describe('useNavigationStore', () => {
   // integration: multi-step navigation flows
   // ---------------------------------------------------------------------------
   describe('navigation flows', () => {
-    it('navigate → navigate → goBack → goBack returns to pages', () => {
+    // #4287 — this used to assert `'pages'`, pinning the defect: the stack was
+    // opened from JOURNAL (resetStore's default view), yet popping it empty
+    // dumped the user on the Pages list. The intermediate pop is unchanged.
+    it('navigate → navigate → goBack → goBack returns to the view the stack was opened from', () => {
+      expect(useNavigationStore.getState().currentView).toBe('journal')
       useTabsStore.getState().navigateToPage('P1', 'Page 1')
       useTabsStore.getState().navigateToPage('P2', 'Page 2')
 
@@ -878,7 +980,7 @@ describe('useNavigationStore', () => {
 
       useTabsStore.getState().goBack()
       expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
-      expect(useNavigationStore.getState().currentView).toBe('pages')
+      expect(useNavigationStore.getState().currentView).toBe('journal')
     })
 
     it('goBack on empty stack after returning to pages is a no-op', () => {

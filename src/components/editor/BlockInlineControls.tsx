@@ -266,12 +266,21 @@ export function BlockCollapseControl({
                 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
               // C4 (#216): the chevron signals collapsed/expanded by rotation
               // alone, which colour-blind users (and anyone who misses the
-              // subtle 90° turn) can't reliably perceive. Add a non-rotation
-              // cue — a faint filled background + ring — that only shows when
-              // the block is collapsed (i.e. has hidden children). A
+              // subtle 90° turn) can't reliably perceive, so the collapsed
+              // state needs a cue that is NOT the rotation. That cue now
+              // lives on the GLYPH: `solidWhenCollapsed` swaps the hairline
+              // outline chevron for a solid caret (see the ChevronToggle
+              // render below), a shape+fill difference — the strongest
+              // non-colour signal — reinforced here by the darker
+              // `text-foreground` ink. It replaces the boxed plate this line
+              // used to carry (`rounded-sm bg-muted/60 ring-1 ring-border`):
+              // on a phone the filled box around a gutter caret read as a
+              // stray button and looked like chrome bolted onto the outline,
+              // which is what the reporter objected to. Colour alone would be
+              // the weaker cue, hence the glyph swap doing the real work. A
               // collapsed block ALSO stays visible at rest (above): it is the
               // only affordance to reveal the hidden children.
-              isCollapsed && 'rounded-sm bg-muted/60 text-foreground ring-1 ring-border',
+              isCollapsed && 'text-foreground',
               // #1968: on touch the chevron is right-aligned (glyph hugs the
               // text) and is the drag activator, so it must claim the press.
               isTouch && 'flex items-center justify-end touch-none cursor-grab',
@@ -303,7 +312,7 @@ export function BlockCollapseControl({
             )}
             {...touchDragProps}
           >
-            <ChevronToggle isExpanded={!isCollapsed} size="lg" />
+            <ChevronToggle isExpanded={!isCollapsed} size="lg" solidWhenCollapsed />
           </button>
         </TooltipTrigger>
         <TooltipContent side="bottom" sideOffset={4}>

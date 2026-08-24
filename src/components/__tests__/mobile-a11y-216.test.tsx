@@ -8,7 +8,10 @@
  *      + an accessible name. (The swipe-row aria-description is covered in
  *      SortableBlock.test.tsx where the full mock surface already exists.)
  *   C4: the collapsed chevron (BlockInlineControls) carries a non-rotation
- *       (colour-blind-safe) cue.
+ *       (colour-blind-safe) cue — a SOLID caret glyph in place of the outline
+ *       chevron. It used to be a boxed plate (bg + ring) around the caret;
+ *       that read as stray chrome on a phone and was replaced by the glyph
+ *       swap, which is a shape difference rather than a colour-only one.
  *
  * C1–C3 shipped in #279; C5/C6 skipped per the maintainer decision.
  *
@@ -177,23 +180,54 @@ describe('#216 C4 — colour-blind collapse cue (BlockCollapseControl)', () => {
     onToggleCollapse: vi.fn(),
   }
 
-  it('adds a non-rotation cue when collapsed', () => {
+  /** The rendered glyph inside the toggle button. */
+  function glyphOf(toggle: HTMLElement): SVGElement {
+    const svg = toggle.querySelector('svg')
+    expect(svg).not.toBeNull()
+    return svg as SVGElement
+  }
+
+  it('carries the collapsed state on a SHAPE cue: the glyph goes solid', () => {
     renderWithTooltip(
       <BlockCollapseControl {...baseProps} isCollapsed onToggleCollapse={vi.fn()} />,
     )
     const toggle = screen.getByTestId('collapse-toggle')
     expect(toggle).toHaveAttribute('data-collapsed', 'true')
-    expect(toggle.className).toMatch(/bg-muted/)
-    expect(toggle.className).toMatch(/ring-1/)
+    // The cue is the glyph itself — a solid caret, not the outline chevron.
+    const glyph = glyphOf(toggle)
+    expect(glyph).toHaveAttribute('data-solid', 'true')
+    expect(glyph.getAttribute('class') ?? '').toContain('fill-current')
+    // …and it is NOT the rotation: the collapsed glyph never rotates.
+    expect(glyph.getAttribute('class') ?? '').not.toContain('rotate-90')
+    // Colour reinforces the shape (weaker on its own, so it is not the cue).
+    expect(toggle.className).toMatch(/text-foreground/)
   })
 
-  it('does not show the cue when expanded', () => {
+  it('does not show the cue when expanded (outline chevron, no fill)', () => {
     renderWithTooltip(
       <BlockCollapseControl {...baseProps} isCollapsed={false} onToggleCollapse={vi.fn()} />,
     )
     const toggle = screen.getByTestId('collapse-toggle')
     expect(toggle).toHaveAttribute('data-collapsed', 'false')
-    expect(toggle.className).not.toMatch(/ring-1/)
+    const glyph = glyphOf(toggle)
+    expect(glyph).not.toHaveAttribute('data-solid')
+    expect(glyph.getAttribute('class') ?? '').not.toContain('fill-current')
+  })
+
+  // The reporter's complaint (mobile): the collapsed caret grew a box. The cue
+  // must never come back as a plate — no ring, no border, no filled background
+  // on the button itself.
+  it('draws no box, border or background plate around the collapsed caret', () => {
+    renderWithTooltip(
+      <BlockCollapseControl {...baseProps} isCollapsed onToggleCollapse={vi.fn()} />,
+    )
+    const toggle = screen.getByTestId('collapse-toggle')
+    // (`focus-ring-visible` is the keyboard focus indicator, not a plate —
+    // it only paints while focus-visible, so it is deliberately allowed.)
+    expect(toggle.className).not.toMatch(/\bring-\d/)
+    expect(toggle.className).not.toMatch(/ring-border/)
+    expect(toggle.className).not.toMatch(/\bborder\b/)
+    expect(toggle.className).not.toMatch(/\bbg-/)
   })
 })
 
