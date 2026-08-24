@@ -176,4 +176,63 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
 
     await expect.poll(async () => toolbar.evaluate((el) => el.style.bottom)).toBe('0px')
   })
+
+  /**
+   * Regression (#4313) — a toolbar popover must not open into the soft keyboard.
+   *
+   * The Turn-into menu anchors to the pinned toolbar, which sits at the top edge
+   * of the keyboard, and its Code-block disclosure expands ~19 more rows in
+   * place. Radix places it against the LAYOUT viewport, which on Android does
+   * not shrink for the IME, so the popover was sized and positioned as if the
+   * keyboard were not there. Measured on a Pixel 8: it grew past the top of the
+   * screen and its upper third was clipped away, unreachable — scrolling could
+   * not recover those rows because the container itself was off-screen.
+   *
+   * `PopoverContent` now reports the keyboard as bottom collision padding, so
+   * Radix's own flip/shift routes around it and
+   * `--radix-popover-content-available-height` (the popover's max-height)
+   * shrinks to match.
+   */
+  test('a toolbar popover stays clear of the soft keyboard', async ({ page }) => {
+    await focusBlock(page, 0)
+
+    await page.getByRole('button', { name: 'Turn into', exact: true }).first().click()
+    // Expand the tallest disclosure — the language list is what overflowed.
+    await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
+
+    const popover = page.locator('[data-slot="popover-content"]')
+    await expect(popover).toBeVisible()
+
+    // Same simulation as the test above: Playwright cannot raise a real IME, so
+    // shrink the visual viewport and fire the `resize` the hook listens for.
+    const KEYBOARD = 300
+    await page.evaluate((kbd) => {
+      const vv = window.visualViewport
+      if (!vv) throw new Error('visualViewport unavailable in test env')
+      Object.defineProperty(vv, 'height', {
+        configurable: true,
+        get: () => window.innerHeight - kbd,
+      })
+      Object.defineProperty(vv, 'offsetTop', { configurable: true, get: () => 0 })
+      vv.dispatchEvent(new Event('resize'))
+    }, KEYBOARD)
+
+    // The whole popover must sit inside the area the keyboard leaves visible.
+    await expect
+      .poll(
+        async () => {
+          const box = await popover.boundingBox()
+          const innerHeight = await page.evaluate(() => window.innerHeight)
+          if (!box) return 'no box'
+          const withinTop = box.y >= 0
+          const withinBottom = box.y + box.height <= innerHeight - KEYBOARD + SLACK
+          return withinTop && withinBottom
+        },
+        {
+          message:
+            'popover must be fully inside the keyboard-free area (not clipped off the top, not under the keyboard)',
+        },
+      )
+      .toBe(true)
+  })
 })

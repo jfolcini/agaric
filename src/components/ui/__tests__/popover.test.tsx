@@ -61,7 +61,12 @@ describe('PopoverContent', () => {
     expect(content.closest('[data-slot="popover-content"]')).toBeInTheDocument()
   })
 
-  it('caps height to dynamic viewport', async () => {
+  // #4313 — the cap is Radix's collision-aware available height, with the old
+  // `100dvh` expression demoted to a fallback for when that var is unset
+  // (jsdom, `avoidCollisions={false}`). It cannot be `100dvh` alone: on Android
+  // the soft keyboard does not shrink the layout viewport, so a `dvh` cap let
+  // popovers extend under the keyboard and past the top of the screen.
+  it('caps height to the collision-aware available height, falling back to the dynamic viewport', async () => {
     render(
       <Popover defaultOpen>
         <PopoverTrigger>Open</PopoverTrigger>
@@ -71,7 +76,9 @@ describe('PopoverContent', () => {
     const content = await screen.findByText('Content')
     const root = content.closest('[data-slot="popover-content"]')
     expect(root).not.toBeNull()
-    expect(root?.className).toContain('max-h-[calc(100dvh-4rem)]')
+    expect(root?.className).toContain(
+      'max-h-[var(--radix-popover-content-available-height,calc(100dvh-4rem))]',
+    )
   })
 
   it('has no a11y violations', async () => {
