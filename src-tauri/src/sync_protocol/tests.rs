@@ -5210,6 +5210,42 @@ fn device_names_are_stripped_of_control_and_bidi_characters_4298() {
         Some("Javier's MacBook Pro — 字 — Ünïcödé"),
         "an ordinary name, in any script, passes through unchanged"
     );
+
+    // General_Category=Cf (Format) code points the earlier by-name list did not
+    // enumerate, but which are exactly the same invisible-format class as the
+    // zero-width characters above.
+    assert_eq!(
+        clamp_device_name("word\u{2060}joiner").as_deref(),
+        Some("wordjoiner"),
+        "U+2060 WORD JOINER is zero-width and General_Category=Cf"
+    );
+    assert_eq!(
+        clamp_device_name("soft\u{00AD}hyphen").as_deref(),
+        Some("softhyphen"),
+        "U+00AD SOFT HYPHEN is General_Category=Cf: it renders as nothing unless a \
+         line break lands on it"
+    );
+    assert_eq!(
+        clamp_device_name("tag\u{E0001}\u{E0020}space\u{E007F}end").as_deref(),
+        Some("tagspaceend"),
+        "the Tags block (U+E0001 LANGUAGE TAG, U+E0020..U+E007F TAG characters) is \
+         General_Category=Cf and renders nothing in a font without Tags support"
+    );
+
+    // Blank-rendering code points that fall OUTSIDE Cf, so a wholesale
+    // General_Category=Cf strip does not catch them by itself.
+    assert_eq!(
+        clamp_device_name("laptop\u{3164}filler").as_deref(),
+        Some("laptopfiller"),
+        "U+3164 HANGUL FILLER renders blank but is General_Category=Lo \
+         (Other_Letter), not Cf — it must be stripped by name"
+    );
+    assert_eq!(
+        clamp_device_name("reserved\u{E0000}tag").as_deref(),
+        Some("reservedtag"),
+        "U+E0000 is the unassigned (Cn) member of the Tags block — stripped by \
+         name alongside its Cf siblings so the whole named block is covered"
+    );
 }
 
 /// The sending half of the clamp: `SyncOrchestrator::start` advertises what

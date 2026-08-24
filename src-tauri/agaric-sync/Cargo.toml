@@ -97,6 +97,14 @@ zstd = "0.13"
 ciborium = "0.2"
 # Crypto-quality random for pairing tokens + key material.
 rand = "0.10"
+# Unicode General_Category lookup, for `is_display_hostile` (#4298 review) to
+# strip the Cf (Format) class wholesale instead of an incomplete by-name list.
+# Not a new addition to the dependency graph: `iroh` already resolves this
+# exact version transitively (iroh -> hickory-net -> idna -> idna_adapter),
+# with its default `compiled_data` feature (the baked property tables), so
+# this only promotes an already-compiled, already-linked crate to a direct
+# dependency rather than adding new supply-chain surface or binary weight.
+icu_properties = "2.2.0"
 # `Stream`/`Sink` adapters on the attachment-transfer path (sync_files.rs).
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 # The mTLS stack this crate used to carry (rustls, tokio-rustls,

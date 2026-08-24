@@ -70,10 +70,19 @@ pub fn decode_persisted_loro_vvs(bytes: &[u8]) -> Vec<SpaceVersionVector> {
 /// name to a fraction of that (or, worse, mid-scalar).
 pub const MAX_DEVICE_NAME_CHARS: usize = 64;
 
+/// Borrowed handle onto Unicode's General_Category property table, used only
+/// to test membership in `Cf` (Format) below. `new()` is `const` and the
+/// handle is `Copy` (a pointer into the data `icu_properties` bakes into the
+/// binary at compile time), so building it once here costs nothing per call.
+const GENERAL_CATEGORY: icu_properties::CodePointMapDataBorrowed<
+    'static,
+    icu_properties::props::GeneralCategory,
+> = icu_properties::CodePointMapData::<icu_properties::props::GeneralCategory>::new();
+
 /// True for a character that must never survive into a stored device name
 /// (#4298).
 ///
-/// Two families, both of which make a name *render* as something other than
+/// Three families, all of which make a name *render* as something other than
 /// what it says:
 ///
 /// * [`char::is_control`] — C0/C1. A newline or a carriage return in a name
@@ -81,14 +90,28 @@ pub const MAX_DEVICE_NAME_CHARS: usize = 64;
 ///   row, the sync-failure toast, the unpair dialog, the `aria-label` on
 ///   rename and address); a `NUL` or a `BEL` renders as nothing or as a
 ///   replacement box.
-/// * The Unicode bidi and zero-width **format** characters. `U+202E`
-///   RIGHT-TO-LEFT OVERRIDE is the classic one: it reverses the display order
-///   of everything after it, so a peer can name itself such that the row reads
-///   as another device entirely, and the isolates (`U+2066`..`U+2069`) do the
-///   same with a scope. The zero-width ones (`U+200B`..`U+200D`, `U+FEFF`)
-///   have no width at all, so two peers can hold names that are visually
-///   identical and textually distinct — the device list's whole job is to tell
-///   devices apart.
+/// * Unicode General_Category=`Cf` (Format) — the whole category, not a
+///   by-name list of the characters we happened to think of. `U+202E`
+///   RIGHT-TO-LEFT OVERRIDE is the classic member: it reverses the display
+///   order of everything after it, so a peer can name itself such that the
+///   row reads as another device entirely, and the isolates
+///   (`U+2066`..`U+2069`) do the same with a scope. The zero-width ones
+///   (`U+200B`..`U+200D`, `U+FEFF`, `U+00AD` SOFT HYPHEN, `U+2060` WORD
+///   JOINER, …) have no width at all, so two peers can hold names that are
+///   visually identical and textually distinct — the device list's whole job
+///   is to tell devices apart. `Cf` also covers `U+E0001` and
+///   `U+E0020`..`U+E007F`, the "Tags" block. Querying the category (via
+///   `icu_properties`, already resolved in this workspace's dependency graph
+///   — see the `Cargo.toml` comment on the dependency) means this list tracks
+///   Unicode's own definition of the class instead of a hand-copied subset of
+///   it that silently goes stale.
+/// * Two blank-rendering code points Unicode does **not** classify as `Cf`,
+///   named individually because category membership does not catch them:
+///   `U+3164` HANGUL FILLER (`General_Category=Lo`, Other_Letter — renders as
+///   a blank filler glyph in Hangul-aware fonts) and `U+E0000` (unassigned,
+///   `Cn` — the one reserved code point inside the otherwise-`Cf` Tags block,
+///   included so the whole named block is covered rather than leaving a
+///   single gap in it).
 ///
 /// This is not an XSS defence: React escapes what it renders and the name
 /// never reaches `dangerouslySetInnerHTML`. It is a *spoofing* defence, on the
@@ -100,22 +123,23 @@ pub const MAX_DEVICE_NAME_CHARS: usize = 64;
 /// an emoji hostname is a rarity, and a joiner that lets one device impersonate
 /// another is not a rarity worth preserving it for.
 ///
-/// The ranges, spelled out once: `U+061C` ARABIC LETTER MARK;
-/// `U+200B`..`U+200F` (ZWSP, ZWNJ, ZWJ, LRM, RLM); `U+202A`..`U+202E` (LRE,
-/// RLE, PDF, LRO, RLO); `U+2066`..`U+2069` (LRI, RLI, FSI, PDI); and `U+FEFF`
-/// ZWNBSP/BOM.
+/// **Known gap, stated plainly rather than left implicit:** this covers `Cc`,
+/// `Cf`, and the two named exceptions above — it does not cover every
+/// Unicode code point that can render blank or near-blank. `U+115F` HANGUL
+/// CHOSEONG FILLER and `U+1160` HANGUL JUNGSEONG FILLER are the same
+/// `Lo`-not-`Cf` shape as `U+3164` and are *not* stripped; nor are variation
+/// selectors or other members of the broader `Default_Ignorable_Code_Point`
+/// property, which also includes characters that are load-bearing where they
+/// legitimately appear (emoji presentation selectors). Widening further is a
+/// deliberate follow-up, not an oversight of this pass.
 fn is_display_hostile(c: char) -> bool {
     if c.is_control() {
         return true;
     }
-    matches!(
-        c,
-        '\u{061C}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{FEFF}'
-    )
+    if matches!(c, '\u{3164}' | '\u{E0000}') {
+        return true;
+    }
+    GENERAL_CATEGORY.get(c) == icu_properties::props::GeneralCategory::Format
 }
 
 /// Normalise a device name for the wire (#4298): strip the characters that
@@ -455,6 +479,18 @@ pub enum SyncMessage {
         /// responder simply learns no name (keeping whatever it already had),
         /// and a peer predating it that *receives* it ignores the unknown field
         /// — this enum carries no `deny_unknown_fields`.
+        ///
+        /// **Privacy note.** `HeadExchange` is the opening frame of a session,
+        /// and during the pairing window a joiner dials *every* mDNS-discovered
+        /// device on the LAN, not only the one it means to pair with — so this
+        /// (an OS hostname, which often embeds the user's real name) reaches
+        /// devices that go on to reject the session. This is a real but
+        /// marginal exposure, not a new one: `pairing_proof` already travels
+        /// the same opening frame to the same over-broad audience, and
+        /// anything on a LAN a device chooses to dial is discoverable by
+        /// mDNS/hostname lookups regardless of this field. Recorded here
+        /// rather than left to be rediscovered; no behaviour change is implied
+        /// by writing this down.
         ///
         /// Initiator-only, because `HeadExchange` is. The responder has no
         /// equivalent one-shot frame, so it does not answer with its own name

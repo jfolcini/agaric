@@ -228,6 +228,7 @@ dependencies = [
  "ciborium",
  "data-encoding",
  "futures-util",
+ "icu_properties",
  "if-addrs",
  "insta",
  "iroh",

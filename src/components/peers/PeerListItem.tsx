@@ -328,7 +328,7 @@ export function PeerListItem({
           onClick={() => onSyncNow(peer.peer_id)}
           disabled={syncingPeerId === peer.peer_id || syncingAll}
           aria-label={t('device.syncNowLabel', {
-            id: truncateId(peer.peer_id),
+            name: displayName,
           })}
         >
           {syncingPeerId === peer.peer_id ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />}
@@ -340,7 +340,7 @@ export function PeerListItem({
           className="device-unpair-btn w-full sm:w-auto"
           onClick={() => onUnpair(peer.peer_id)}
           aria-label={t('device.unpairDeviceLabel', {
-            id: truncateId(peer.peer_id),
+            name: displayName,
           })}
         >
           <Unplug className="h-3.5 w-3.5" />

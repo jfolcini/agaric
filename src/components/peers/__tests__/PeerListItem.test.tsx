@@ -88,7 +88,7 @@ describe('PeerListItem', () => {
     render(<PeerListItem peer={peer} {...defaultProps} />)
 
     expect(screen.getByText('javier-thinkpad')).toBeInTheDocument()
-    expect(screen.queryByText('peer-abc-123...')).not.toBeNull()
+    expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Rename.*javier-thinkpad/i })).toBeInTheDocument()
   })
 
