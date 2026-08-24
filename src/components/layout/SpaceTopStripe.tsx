@@ -16,13 +16,18 @@
  * (`<SpaceName> · Agaric`). The stripe is a *visual* anchor only.
  *
  * Android safe-area: the body has `padding-top:
- * env(safe-area-inset-top)`, but `position: fixed` is relative to
+ * var(--safe-area-top)`, but `position: fixed` is relative to
  * the viewport — not the body — so a bare `top-0` would render
- * behind the OS status bar on devices with a notch. Pinning to
- * `env(safe-area-inset-top)` (which resolves to `0` on desktop)
- * lets the stripe clear the inset everywhere. Mirrors the pattern
- * already used by App.tsx for the bottom inset
- * (`pb-[calc(1rem+env(safe-area-inset-bottom))]`).
+ * behind the OS status bar. Pinning to `var(--safe-area-top)`
+ * (which resolves to `0` on desktop) lets the stripe clear the inset
+ * everywhere. Mirrors the pattern already used by App.tsx for the
+ * bottom inset (`pb-[calc(1rem+var(--safe-area-bottom))]`).
+ *
+ * Read the VARIABLE, not `env(safe-area-inset-top)` directly: Android's
+ * WebView reports `env()` for display cutouts only and never for the status
+ * bar, so `index.css` declares these variables with `env()` as their fallback
+ * and `MainActivity.kt` overrides them with the real insets (#4301). Using
+ * `env()` here would opt this element back out of that fix.
  */
 
 import type React from 'react'
@@ -46,7 +51,7 @@ export function SpaceTopStripe(): React.JSX.Element | null {
       data-testid="space-top-stripe"
       data-space-id={active.id}
       aria-hidden="true"
-      className="fixed top-[env(safe-area-inset-top)] left-0 right-0 h-[3px] z-40 pointer-events-none"
+      className="fixed top-[var(--safe-area-top)] left-0 right-0 h-[3px] z-40 pointer-events-none"
       style={{ backgroundColor }}
     />
   )
