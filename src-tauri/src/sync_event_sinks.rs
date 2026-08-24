@@ -167,6 +167,11 @@ impl SyncEventSink for ChannelEventSink {
                 // dual-emit above clones the full SyncEvent, page ids and
                 // all), so the channel deliberately ignores this field.
                 changed_page_ids: _,
+                // #4305: same reasoning — the channel envelope is the
+                // per-transition progress stream. The honest change count
+                // rides the inner-sink `sync:complete` event, which is where
+                // the toast decision is taken.
+                changed_blocks: _,
             } => {
                 let _ = self.channel.send(SyncProgressUpdate::Sync {
                     state: "complete".to_string(),
@@ -488,6 +493,7 @@ mod tests {
             ops_received: 12,
             ops_sent: 4,
             changed_page_ids: vec!["PAGE_X".into()],
+            changed_blocks: Some(9),
         });
 
         // Inner sink sees the original Complete variant (semantics

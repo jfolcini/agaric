@@ -53,6 +53,26 @@ export interface SyncCompletePayload {
    * only, so this hand-written shape is the single source of truth for it.
    */
   changed_page_ids?: string[]
+  /**
+   * #4305 — how many blocks this sync session actually changed or purged.
+   * The ONLY honest "did anything happen" signal on this event, and the only
+   * field a "N changes" string may be built from.
+   *
+   * `ops_received` / `ops_sent` are protocol *message* counts — one per
+   * registered space, sent whether or not that space had a delta. On a
+   * converged pair with two spaces they are `2` on every 60 s resync tick,
+   * forever, which is how "Synced 2 changes from device" came to fire once a
+   * minute on an idle, fully-converged pair with no edits on either side.
+   *
+   * - `0` — the session completed and moved nothing. Stay silent AND skip the
+   *   reload: there is nothing to say and nothing to reload.
+   * - `> 0` — exactly that many blocks changed. Safe to count.
+   * - `null` / absent — content changed but the count is not enumerable (the
+   *   whole-space snapshot catch-up, which reimports an entire space). Falls
+   *   back to a countless message plus a full reload. Deliberately NOT
+   *   silence: a producer that forgets this field must be loud, not mute.
+   */
+  changed_blocks?: number | null
 }
 
 export interface SyncErrorPayload {
@@ -178,30 +198,52 @@ export function useSyncEvents(): void {
     'sync:complete',
     (event) => {
       try {
-        const { ops_received, ops_sent, changed_page_ids } = event.payload
+        const { ops_received, ops_sent, changed_page_ids, changed_blocks } = event.payload
         const store = useSyncStore.getState()
+        // The store writes are unconditional: `ops_*` feed the status panel's
+        // honestly-labelled sync-message counters, and `lastSynced` is the
+        // liveness signal that makes silence safe. A converged no-op tick still
+        // moved the "last synced" clock and still lit the sidebar status dot —
+        // the user is not being kept in the dark, they are being kept quiet.
         store.setState('idle')
         store.setOpsReceived(ops_received)
         store.setOpsSent(ops_sent)
         store.updateLastSynced(new Date().toISOString())
 
-        // Show toast notification
-        if (ops_received > 0) {
-          notify.success(i18n.t('sync.opsReceived', { count: ops_received }))
-          announce(i18n.t('announce.syncOpsReceived', { count: ops_received }))
+        // #4305 — a converged sync that moved nothing says nothing and reloads
+        // nothing. `changed_blocks === 0` is the backend stating exactly that;
+        // `ops_received > 0` (the old gate) is true on every tick of a
+        // perfectly healthy pair, because it counts one message per space.
+        //
+        // The pre-#4305 gate cost more than a toast: an empty `changed_page_ids`
+        // fell through to `reloadChangedPageStores`'s FULL-reload branch, so an
+        // idle pair reloaded every mounted page store and re-ran the resolve
+        // preload once a minute, forever, for nothing.
+        if (changed_blocks === 0) return
+
+        // Something changed. Count it if the backend could count it; say so
+        // without a number if it could not (whole-space snapshot catch-up).
+        if (typeof changed_blocks === 'number') {
+          notify.success(i18n.t('sync.changesApplied', { count: changed_blocks }))
+          announce(i18n.t('announce.syncChangesApplied', { count: changed_blocks }))
+        } else {
+          notify.success(i18n.t('sync.changesAppliedUnknownCount'))
+          announce(i18n.t('announce.syncChangesAppliedUnknownCount'))
         }
 
-        // Reload blocks if we received ops (data changed).
-        //
         // #1071 — TARGETED invalidation via the shared `reloadChangedPageStores`
         // helper: when `changed_page_ids` is present and non-empty, reload +
         // re-anchor ONLY the mounted page stores in the set; otherwise fall
         // back to reloading every mounted store. The same helper backs the
         // #2505 `blocks:changed` (MCP-write) listener, so both out-of-band
         // write sources share one reconciliation path.
-        if (ops_received > 0) {
-          reloadChangedPageStores(changed_page_ids)
-        }
+        //
+        // #4305: reached whenever anything changed — including the snapshot
+        // catch-up path, whose `changed_blocks: null` + empty page-id set is
+        // precisely the full-reload case. Before #4305 that path emitted
+        // `ops_received: 0` and so reloaded nothing at all, despite its own
+        // comment promising the frontend would fall back to a full reload.
+        reloadChangedPageStores(changed_page_ids)
       } catch (err: unknown) {
         logger.error('useSyncEvents', 'sync:complete handler failed', undefined, err)
       }

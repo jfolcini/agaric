@@ -194,8 +194,13 @@ export const common: Record<string, string> = {
   'announce.syncStarted': 'Sync started',
   'announce.syncCompleted': 'Sync completed',
   'announce.syncFailed': 'Sync failed',
-  'announce.syncOpsReceived_one': '{{count}} operation received from sync',
-  'announce.syncOpsReceived_other': '{{count}} operations received from sync',
+  // #4305 — "operations" was never what the number counted; it was sync
+  // protocol messages, one per space. These are announced for the block counts
+  // the toast now shows, and are only reached when something actually changed.
+  'announce.syncChangesApplied_one': '{{count}} change received from sync',
+  'announce.syncChangesApplied_other': '{{count}} changes received from sync',
+  // #4305 — the countless twin, for a whole-space snapshot catch-up.
+  'announce.syncChangesAppliedUnknownCount': 'Changes received from sync',
   'announce.taskRescheduled': 'Task rescheduled to {{date}}',
   'announce.rescheduleFailed': 'Reschedule failed',
   'announce.dateUpdated': 'Date updated to {{date}}',

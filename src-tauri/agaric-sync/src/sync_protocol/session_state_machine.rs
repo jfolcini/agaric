@@ -237,6 +237,7 @@ impl SyncOrchestrator {
                 ops_received: 0,
                 ops_sent: 0,
                 changed_page_ids: Vec::new(),
+                changed_blocks: 0,
             },
             pool,
             device_id,
@@ -835,6 +836,23 @@ impl SyncOrchestrator {
                                 // match this semantics.
                                 self.session.ops_received =
                                     self.session.ops_received.saturating_add(1);
+                                // #4305: and this is the honest count beside
+                                // it — the blocks the import actually moved.
+                                // `ops_received` is incremented once per
+                                // inbound message even when that message's
+                                // delta was empty, which is the steady state
+                                // of a converged pair, so it can never answer
+                                // "did anything change". Both id sets are
+                                // already computed above for the projection
+                                // and the fan-out; they are disjoint (#2264 —
+                                // `changed_blocks` enumerates live blocks
+                                // only), so summing them double-counts
+                                // nothing.
+                                self.session.changed_blocks = self
+                                    .session
+                                    .changed_blocks
+                                    .saturating_add(changed_blocks.len())
+                                    .saturating_add(purged_blocks.len());
                                 // #4: `apply_remote` wrote the
                                 // per-block SQL projection (core columns,
                                 // properties incl. reserved hot-path columns,
@@ -986,6 +1004,12 @@ impl SyncOrchestrator {
                     // #1071: deduped page ids accumulated from this session's
                     // applied ops (empty when no Imported outcome occurred).
                     changed_page_ids: self.session.changed_page_ids.clone(),
+                    // #4305: the honest change count. `Some(0)` here is a
+                    // converged no-op session and is what keeps the frontend
+                    // silent; `ops_received` beside it is the per-space
+                    // message count and is a non-zero constant on exactly
+                    // that session.
+                    changed_blocks: Some(self.session.changed_blocks),
                 });
                 Ok(None)
             }
@@ -1591,6 +1615,10 @@ impl SyncOrchestrator {
             // accumulated set is empty — read it from the session uniformly
             // with the other Complete sites.
             changed_page_ids: self.session.changed_page_ids.clone(),
+            // #4305: likewise zero — this arm applied nothing by construction.
+            // Read from the session rather than hardcoded so the field cannot
+            // drift from the accumulator the other sites report.
+            changed_blocks: Some(self.session.changed_blocks),
         });
         Ok(Some(SyncMessage::SyncComplete { last_hash }))
     }
@@ -1757,6 +1785,9 @@ impl SyncOrchestrator {
             // #1071: deduped page ids accumulated from this session's applied
             // ops (empty when no Imported outcome occurred).
             changed_page_ids: self.session.changed_page_ids.clone(),
+            // #4305: blocks this pull actually moved. A pull that imported
+            // only empty per-space deltas reports `Some(0)` and is silent.
+            changed_blocks: Some(self.session.changed_blocks),
         });
         Ok(Some(SyncMessage::SyncComplete { last_hash }))
     }
@@ -1896,6 +1927,168 @@ mod tests {
              same as peer_is_bound_to_another_key's own tests pin for an injected \
              Err — a closed pool is this crate's established way to force a real \
              read failure"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // #4305 — the honest change count
+    // -----------------------------------------------------------------------
+
+    /// Two space ids, because two is the number the reporting user had and the
+    /// number their toast said, once a minute, forever.
+    const TWO_SPACES: [&str; 2] = ["01ARZ3NDEKTSV4RRFFQ69G5FA1", "01ARZ3NDEKTSV4RRFFQ69G5FA2"];
+
+    /// Register (and thereby instantiate) every space in `TWO_SPACES` on a
+    /// registry. Instantiating them is load-bearing: an orchestrator with an
+    /// *empty* registry takes the empty-stream short-circuit and never streams
+    /// at all, which is not the case under test.
+    fn seed_spaces(state: &agaric_engine::loro::shared::LoroState, device_id: &str) {
+        for sid in TWO_SPACES {
+            let space = agaric_store::space::SpaceId::from_trusted(sid);
+            drop(
+                state
+                    .registry
+                    .for_space(&space, device_id)
+                    .expect("engine for space"),
+            );
+        }
+    }
+
+    /// Drive one pull session against a peer engine and return the terminal
+    /// `Complete` event's `(ops_received, changed_blocks)`.
+    ///
+    /// This is a real session over the real state machine: we `start()` as the
+    /// puller, the peer answers with one `LoroSync` per registered space built
+    /// against the version vectors we just advertised, and the last of them
+    /// completes the session. Exactly the wire traffic of one resync tick.
+    async fn pull_from(
+        pool: &SqlitePool,
+        local_state: &Arc<agaric_engine::loro::shared::LoroState>,
+        peer_state: &agaric_engine::loro::shared::LoroState,
+    ) -> (usize, Option<usize>) {
+        use crate::sync_events::{RecordingEventSink, SyncEvent};
+        use crate::sync_protocol::loro_sync;
+
+        let sink = Arc::new(RecordingEventSink::new());
+        let host: Arc<dyn ApplyHost> = Arc::new(
+            crate::apply_host::test_support::RecordingApplyHost::with_loro_state(Arc::clone(
+                local_state,
+            )),
+        );
+        let mut orch = SyncOrchestrator::new(pool.clone(), "DEV_LOCAL".to_owned(), host)
+            .with_expected_remote_id("DEV_PEER".to_owned())
+            .with_event_sink(Box::new(Arc::clone(&sink)));
+
+        let SyncMessage::HeadExchange { loro_vvs, .. } =
+            orch.start().await.expect("start the pull session")
+        else {
+            panic!("the puller opens with a HeadExchange");
+        };
+
+        let sql_deleted = std::collections::HashSet::new();
+        let mut payloads = Vec::new();
+        for sid in TWO_SPACES {
+            let space = agaric_store::space::SpaceId::from_trusted(sid);
+            let peer_vv = loro_vvs
+                .iter()
+                .find(|v| v.space_id == space)
+                .map(|v| v.vv.as_slice());
+            payloads.push(
+                loro_sync::prepare_outgoing(
+                    &peer_state.registry,
+                    &space,
+                    "DEV_PEER",
+                    peer_vv,
+                    &sql_deleted,
+                )
+                .await
+                .expect("prepare_outgoing")
+                .expect("a registered space always yields a payload"),
+            );
+        }
+
+        let last = payloads.len() - 1;
+        for (i, msg) in payloads.into_iter().enumerate() {
+            orch.handle_message(SyncMessage::LoroSync {
+                msg,
+                is_last: i == last,
+            })
+            .await
+            .expect("import the peer's per-space payload");
+        }
+
+        sink.events()
+            .into_iter()
+            .find_map(|e| match e {
+                SyncEvent::Complete {
+                    ops_received,
+                    changed_blocks,
+                    ..
+                } => Some((ops_received, changed_blocks)),
+                _ => None,
+            })
+            .expect("the session must reach Complete")
+    }
+
+    /// #4305: a converged, idle pair still exchanges one `LoroSync` per space
+    /// every resync tick, so `ops_received` is a non-zero constant on a session
+    /// in which nothing whatsoever happened. The event must carry a second,
+    /// honest number that says so — otherwise the only count available to a
+    /// toast is the space count, which is what put "Synced 2 changes from
+    /// device" on the user's screen every sixty seconds on a pair with no
+    /// edits on either side.
+    ///
+    /// The second half of the test is not decoration: without it, hardcoding
+    /// `changed_blocks: Some(0)` at the emission site would pass.
+    #[tokio::test]
+    async fn a_converged_no_op_pull_reports_zero_changes_while_ops_received_counts_spaces_4305() {
+        use agaric_engine::loro::shared::LoroState;
+
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let local_state = Arc::new(LoroState::new());
+        let peer_state = LoroState::new();
+        seed_spaces(&local_state, "DEV_LOCAL");
+        seed_spaces(&peer_state, "DEV_PEER");
+
+        // ---- Converged: both sides hold the same (empty) state.
+        let (ops_received, changed_blocks) = pull_from(&pool, &local_state, &peer_state).await;
+        assert_eq!(
+            ops_received, 2,
+            "the protocol counter is the number of SPACES — one LoroSync each, \
+             delta or no delta. This is the number the toast was built from, and \
+             it is 2 on a session that did nothing at all"
+        );
+        assert_eq!(
+            changed_blocks,
+            Some(0),
+            "#4305: …and the honest counter must say the truth about that same \
+             session — nothing changed. `Some(0)` is what keeps the frontend silent"
+        );
+
+        // ---- Not converged: the peer wrote a block since we last pulled.
+        let block = "01HZ00000000000000000CHG01";
+        {
+            let space = agaric_store::space::SpaceId::from_trusted(TWO_SPACES[0]);
+            let mut guard = peer_state
+                .registry
+                .for_space(&space, "DEV_PEER")
+                .expect("peer engine");
+            guard
+                .engine_mut()
+                .apply_create_block(block, "content", "a real edit", None, 0)
+                .expect("the peer writes a block");
+        }
+
+        let (ops_received, changed_blocks) = pull_from(&pool, &local_state, &peer_state).await;
+        assert_eq!(
+            ops_received, 2,
+            "the protocol counter is unmoved by the edit — it never was a change \
+             count, which is the whole point"
+        );
+        assert_eq!(
+            changed_blocks,
+            Some(1),
+            "…while the honest counter tracks the one block that actually arrived"
         );
     }
 }

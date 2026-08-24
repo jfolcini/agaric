@@ -1149,6 +1149,11 @@ pub async fn try_receive_snapshot_catchup(
         // empty set — the frontend falls back to a full reload + preload,
         // which is exactly the right response to a whole-space catch-up.
         changed_page_ids: Vec::new(),
+        // #4305: `None`, not `Some(0)`. A whole-space reimport is the loudest
+        // change there is; it simply has no meaningful block count. `Some(0)`
+        // is reserved for "nothing moved" and would make the frontend skip
+        // both the message and the reload this path depends on.
+        changed_blocks: None,
     });
 
     Ok(CatchupOutcome::Applied {
@@ -1345,6 +1350,10 @@ async fn receive_loro_snapshot_catchup(
         ops_received: 0,
         ops_sent: 0,
         changed_page_ids,
+        // #4305: as above — the loro-snapshot catch-up merges a whole peer
+        // state. It resolved page ids, but not a block count, and `None` is
+        // the value that means "changed, count unknown".
+        changed_blocks: None,
     });
 
     Ok(CatchupOutcome::Applied {

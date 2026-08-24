@@ -77,8 +77,36 @@ export function computeNextSyncDelay(current: number, hadFailure: boolean): numb
 }
 
 /**
- * Syncs a single peer with a timeout guard. Shows a toast on failure.
- * Returns `true` on success, `false` on failure.
+ * #4305 — peers whose failure the user has already been told about in the
+ * current streak.
+ *
+ * This trigger re-runs every `BASE_INTERVAL_MS` (60 s, backing off to 10 min),
+ * and `syncOnePeerWithToast`'s failure text does not vary with the cause: it is
+ * `sync.failedForDevice` with the peer id. So a peer that is simply switched
+ * off produced a red toast on every tick for as long as the app ran — the same
+ * shape `record_initiator_failure` fixes on the Rust side, reached by a second
+ * route, and one that would have survived that fix untouched.
+ *
+ * Membership is dropped the moment that peer syncs successfully, so a failure
+ * that resolves and later recurs is reported again. It is module-scoped rather
+ * than a ref because `syncOnePeerWithToast` is a module function shared by the
+ * scheduled chain and the manual button, and both must consult one memory.
+ */
+const peersWithReportedFailure = new Set<string>()
+
+/**
+ * Test seam: forget every reported-failure marker.
+ *
+ * The set outlives a component, which is what makes it correct in production
+ * and leaky across tests in one module registry.
+ */
+export function resetReportedSyncFailures(): void {
+  peersWithReportedFailure.clear()
+}
+
+/**
+ * Syncs a single peer with a timeout guard. Shows a toast on the FIRST failure
+ * of a streak. Returns `true` on success, `false` on failure.
  *
  * Per-peer failures are transient (network, peer-offline, timeout)
  * so the failure toast carries a Retry action that re-runs `startSync`
@@ -137,11 +165,19 @@ async function syncOnePeerWithToast(
       SYNC_TIMEOUT_MS,
       new Error('Sync timeout'),
     )
+    // #4305 — a peer that just worked is news again if it later stops.
+    peersWithReportedFailure.delete(peerId)
     return true
   } catch {
     // #748: a superseded (resume-invalidated) run swallows its toast but
     // still reports failure so the caller's backoff bookkeeping is honest.
     if (!shouldToast()) return false
+    // #4305 — and so does a peer whose unchanged failure the user has already
+    // seen. The sidebar status dot and the peer row carry the ongoing state;
+    // this toast's job is to announce the transition into it, once. Marked
+    // before the `notify.error` so a throwing notifier cannot re-arm the toast.
+    if (peersWithReportedFailure.has(peerId)) return false
+    peersWithReportedFailure.add(peerId)
     notify.error(i18n.t('sync.failedForDevice', { deviceId: peerId.slice(0, 12) }), {
       // Per-peer dedup: a single failing peer should not stack multiple
       // toasts on retry-loop iterations. Different peers still surface
@@ -214,64 +250,85 @@ export function useSyncTrigger() {
   const syncGenerationRef = useRef(0)
   const setState = useSyncStore((s) => s.setState)
 
-  const syncAll = useCallback(async () => {
-    // Skip sync when offline — set state so UI can reflect it (#429, #667)
-    if (isOffline()) {
-      setState('offline')
-      return
-    }
-    if (syncInProgressRef.current) return
-    syncInProgressRef.current = true
-    setSyncing(true)
-    setState('syncing')
-    announce(i18n.t('announce.syncStarted'))
-
-    // #748: snapshot this run's generation. If a resume bumps the counter
-    // while we're mid-flight (background-suspended), a late timeout from
-    // this run must not surface a toast — the resume already kicked a
-    // fresh sync that supersedes it.
-    const myGeneration = syncGenerationRef.current
-    const shouldToast = () => syncGenerationRef.current === myGeneration
-
-    let hadFailure = false
-
-    try {
-      const peers = await listPeerRefs()
-      // #1076: reflect the authoritative backend peer list into the store
-      // so `StatusPanel`'s Sync panel and `AppSidebar`'s status dot (both
-      // gated on `useSyncStore.peers`) become correct. Runs for the empty
-      // case too, clearing any stale peers when the last device unpairs.
-      useSyncStore.getState().setPeers(peers.map(mapPeerRefToInfo))
-      if (peers.length === 0) {
-        setState('idle')
+  // #4305 — `syncAll` is BOTH the 60 s scheduled tick and the user pressing
+  // "Sync now" / "Sync All". Only the second one is a question that deserves an
+  // answer: a scheduled tick that succeeded changes nothing the user asked
+  // about, and answering it anyway put a second "Sync complete" toast on screen
+  // every minute alongside the "Synced 2 changes from device" one. The status
+  // dot and "last synced" already say the tick happened.
+  const syncAll = useCallback(
+    async (options?: { userInitiated?: boolean }) => {
+      const userInitiated = options?.userInitiated === true
+      // Skip sync when offline — set state so UI can reflect it (#429, #667)
+      if (isOffline()) {
+        setState('offline')
         return
       }
-      hadFailure = await syncAllPeersSequentially(peers, () => mountedRef.current, shouldToast)
-      if (!mountedRef.current) return
-      intervalRef.current = computeNextSyncDelay(intervalRef.current, hadFailure)
-      if (!hadFailure) {
-        setState('idle')
-        notify.success(i18n.t('device.syncComplete'))
-        announce(i18n.t('announce.syncCompleted'))
-      }
-    } catch {
-      if (mountedRef.current) {
-        intervalRef.current = computeNextSyncDelay(intervalRef.current, true)
-        // #748: a resume-invalidated run stays silent — the superseding
-        // run owns the user-facing state/toast.
-        if (shouldToast()) {
-          setState('error', 'Sync failed')
-          notify.error(i18n.t('device.syncFailed'), { id: 'sync-error' })
-          announce(i18n.t('announce.syncFailed'))
+      if (syncInProgressRef.current) return
+      syncInProgressRef.current = true
+      setSyncing(true)
+      setState('syncing')
+      // #4305 — same reasoning as the completion announcement below.
+      if (userInitiated) announce(i18n.t('announce.syncStarted'))
+
+      // #748: snapshot this run's generation. If a resume bumps the counter
+      // while we're mid-flight (background-suspended), a late timeout from
+      // this run must not surface a toast — the resume already kicked a
+      // fresh sync that supersedes it.
+      const myGeneration = syncGenerationRef.current
+      const shouldToast = () => syncGenerationRef.current === myGeneration
+
+      let hadFailure = false
+
+      try {
+        const peers = await listPeerRefs()
+        // #1076: reflect the authoritative backend peer list into the store
+        // so `StatusPanel`'s Sync panel and `AppSidebar`'s status dot (both
+        // gated on `useSyncStore.peers`) become correct. Runs for the empty
+        // case too, clearing any stale peers when the last device unpairs.
+        useSyncStore.getState().setPeers(peers.map(mapPeerRefToInfo))
+        if (peers.length === 0) {
+          setState('idle')
+          return
+        }
+        hadFailure = await syncAllPeersSequentially(peers, () => mountedRef.current, shouldToast)
+        if (!mountedRef.current) return
+        intervalRef.current = computeNextSyncDelay(intervalRef.current, hadFailure)
+        if (!hadFailure) {
+          setState('idle')
+          // #4305 — the confirmation belongs to the button press, not to the
+          // clock. `announce` is likewise gated: a screen-reader user does not
+          // want "Sync completed" read out once a minute either.
+          if (userInitiated) {
+            notify.success(i18n.t('device.syncComplete'))
+            announce(i18n.t('announce.syncCompleted'))
+          }
+        }
+      } catch {
+        if (mountedRef.current) {
+          intervalRef.current = computeNextSyncDelay(intervalRef.current, true)
+          // #748: a resume-invalidated run stays silent — the superseding
+          // run owns the user-facing state/toast.
+          if (shouldToast()) {
+            setState('error', 'Sync failed')
+            // This arm is the run-level throw (`listPeerRefs` failed), not a
+            // per-peer failure — those are handled, and #4305-deduped, inside
+            // `syncOnePeerWithToast`. It keeps its toast because a run that could
+            // not even enumerate peers is a different, rarer fault; the shared
+            // `id` collapses concurrent duplicates.
+            notify.error(i18n.t('device.syncFailed'), { id: 'sync-error' })
+            announce(i18n.t('announce.syncFailed'))
+          }
+        }
+      } finally {
+        syncInProgressRef.current = false
+        if (mountedRef.current) {
+          setSyncing(false)
         }
       }
-    } finally {
-      syncInProgressRef.current = false
-      if (mountedRef.current) {
-        setSyncing(false)
-      }
-    }
-  }, [setState])
+    },
+    [setState],
+  )
 
   const scheduleNext = useCallback(() => {
     if (!mountedRef.current) return

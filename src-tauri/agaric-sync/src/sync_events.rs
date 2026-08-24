@@ -91,6 +91,32 @@ pub enum SyncEvent {
         /// old protocol and the snapshot-catch-up path (which sends empty).
         #[serde(default)]
         changed_page_ids: Vec<String>,
+        /// #4305: how many blocks this session actually changed or purged —
+        /// the **only** field on this event that answers "did anything
+        /// happen", and the only one a "N changes" string may be built from.
+        ///
+        /// `ops_received` / `ops_sent` above are *protocol message* counts,
+        /// one per registered space regardless of whether that space had a
+        /// delta (see [`crate::sync_protocol::SyncSession::changed_blocks`]).
+        /// On a converged pair with two spaces they are `2` on every resync
+        /// tick, forever; a toast built from them said "Synced 2 changes from
+        /// device" once a minute on an idle, fully-converged pair. They stay
+        /// on the event because the status panel labels them honestly, as
+        /// sync messages.
+        ///
+        /// * `Some(0)` — the session completed and moved nothing. The
+        ///   frontend **must** stay silent and skip the page-store reload:
+        ///   there is nothing to tell and nothing to reload.
+        /// * `Some(n > 0)` — exactly `n` blocks changed. Safe to count.
+        /// * `None` — content changed but the count is not enumerable. Only
+        ///   the whole-space snapshot catch-up
+        ///   (`sync_daemon::snapshot_transfer`) sends this: it reimports an
+        ///   entire space, so every block may have changed and counting them
+        ///   is neither cheap nor meaningful. The frontend falls back to a
+        ///   countless message plus a full reload — never to silence, so a
+        ///   producer that forgets this field is loud, not mute.
+        #[serde(default)]
+        changed_blocks: Option<usize>,
     },
     Error {
         message: String,
@@ -486,6 +512,7 @@ mod tests {
             ops_received: 5,
             ops_sent: 2,
             changed_page_ids: vec!["PAGE01".into(), "PAGE02".into()],
+            changed_blocks: Some(7),
         };
         let json = serde_json::to_value(&event).expect("serialize Complete");
         assert_eq!(
@@ -501,6 +528,53 @@ mod tests {
         assert_eq!(pages.len(), 2, "both changed page ids should be present");
         assert_eq!(pages[0], "PAGE01");
         assert_eq!(pages[1], "PAGE02");
+        // #4305: the honest change count rides the same event, distinct from
+        // the per-space message counters above.
+        assert_eq!(
+            json["changed_blocks"], 7,
+            "changed_blocks should serialize as the block count"
+        );
+    }
+
+    /// #4305: `Some(0)` and `None` are different answers and must stay
+    /// distinguishable across the wire — `Some(0)` is "nothing changed, be
+    /// silent", `None` is "changed, count unknown, be loud". A serialization
+    /// that collapsed either into the other would turn a whole-space snapshot
+    /// catch-up silent or an idle tick chatty.
+    #[test]
+    fn sync_event_complete_distinguishes_no_change_from_unknown_change_4305() {
+        let converged = SyncEvent::Complete {
+            remote_device_id: "DEV_B".into(),
+            ops_received: 2,
+            ops_sent: 0,
+            changed_page_ids: Vec::new(),
+            changed_blocks: Some(0),
+        };
+        let json = serde_json::to_value(&converged).expect("serialize converged Complete");
+        assert_eq!(
+            json["changed_blocks"], 0,
+            "a converged no-op must serialize changed_blocks as 0, not null"
+        );
+        assert_eq!(
+            json["ops_received"], 2,
+            "the per-space message count is unchanged by #4305 — it is still 2 \
+             on a two-space converged pair, which is exactly why the toast may \
+             not be built from it"
+        );
+
+        let catch_up = SyncEvent::Complete {
+            remote_device_id: "DEV_B".into(),
+            ops_received: 0,
+            ops_sent: 0,
+            changed_page_ids: Vec::new(),
+            changed_blocks: None,
+        };
+        let json = serde_json::to_value(&catch_up).expect("serialize catch-up Complete");
+        assert!(
+            json["changed_blocks"].is_null(),
+            "an unenumerable whole-space catch-up must serialize changed_blocks \
+             as null so the frontend falls back to loud + full reload"
+        );
     }
 
     #[test]
@@ -563,6 +637,7 @@ mod tests {
             ops_received: 5,
             ops_sent: 3,
             changed_page_ids: Vec::new(),
+            changed_blocks: Some(0),
         });
 
         let events = sink.events();

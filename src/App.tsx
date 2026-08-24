@@ -417,14 +417,17 @@ function App() {
         undefined,
         err,
       )
-      void syncAll()
+      void syncAll({ userInitiated: true })
       return
     }
     if (peers.length === 0) {
       setShowNoPeersDialog(true)
       return
     }
-    void syncAll()
+    // #4305 — a button press is a question, so it gets an answer. The hook's
+    // own 60 s tick calls `syncAll()` with no options and stays silent on
+    // success; only this path may raise the "Sync complete" toast.
+    void syncAll({ userInitiated: true })
   }, [syncAll, setShowNoPeersDialog])
 
   // CTA handler for the NoPeersDialog. Pre-selects the Sync tab so

@@ -149,7 +149,46 @@ struct BackoffState {
     /// that, and does it without widening what a *repeat* means: the key is
     /// still the exact text, so a cause the user has never been shown is
     /// still news.
-    reported_errors: Vec<String>,
+    ///
+    /// # Why the entries are keyed on more than the text (#4305)
+    ///
+    /// Up to #4305 the *gate* was `already_reported && still_serving`, with
+    /// `still_serving` supplied per call and never stored. A peer that has
+    /// genuinely gone away stops streaming to us immediately, so within about
+    /// two resync intervals `still_serving` goes false, suppression stops
+    /// engaging entirely, and the same unchanged `Sync failed: …` toast fires
+    /// every sixty seconds for as long as the app runs — the #4084 shape once
+    /// more, now on the *worst* peer rather than the healthiest one.
+    ///
+    /// The information "and now the peer is not talking to us in either
+    /// direction" is real, so it is not discarded: it is folded into the key
+    /// instead of the gate. A streak therefore reports each distinct text at
+    /// most twice — once while the peer was still serving us, once after it
+    /// went dark — and then stops. Everything after that lives on the peer row
+    /// and the sync status dot, which are durable surfaces; a toast is
+    /// transient, and transient has to mean *once*.
+    reported_errors: Vec<ReportedFailure>,
+}
+
+/// One entry of a streak's report memory: what the user was told, and what was
+/// true about the pair when they were told it (#4305).
+///
+/// Deriving `PartialEq` is what makes "have we already reported this?" a
+/// lookup rather than a policy — the two fields together *are* the suppression
+/// key, so a change to either is, by construction, news.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReportedFailure {
+    /// The exact user-facing text that was emitted.
+    message: String,
+    /// Whether the peer was still pulling from us when this was reported —
+    /// `session_supervisor::peer_pulled_from_us_recently`'s answer at that
+    /// moment.
+    ///
+    /// Part of the key because the same sentence means two different things
+    /// on either side of it: "our pull keeps failing while the pair otherwise
+    /// works" and "the pair has gone dark". The user is entitled to hear the
+    /// second one even after hearing the first — once.
+    peer_still_serving: bool,
 }
 
 /// What one call to [`SyncScheduler::record_failure_and_take_report`] decided.
@@ -197,22 +236,22 @@ fn book_failure<'a>(
     state
 }
 
-/// Push `message` onto a streak's report memory, evicting the oldest entry once
-/// the set is full.
+/// Push a reported failure onto a streak's report memory, evicting the oldest
+/// entry once the set is full.
 ///
-/// Callers must have established that `message` is not already present —
-/// re-pushing a text already remembered would consume a slot and evict a
+/// Callers must have established that `entry` is not already present —
+/// re-pushing an entry already remembered would consume a slot and evict a
 /// *different* cause the user has been told about, which is the one direction
 /// of eviction that loses information rather than adding noise.
-fn remember(state: &mut BackoffState, message: &str) {
+fn remember(state: &mut BackoffState, entry: ReportedFailure) {
     debug_assert!(
-        !state.reported_errors.iter().any(|m| m == message),
+        !state.reported_errors.contains(&entry),
         "remember() is push-only; a duplicate would evict a distinct cause"
     );
     if state.reported_errors.len() >= MAX_REMEMBERED_REPORTS {
         state.reported_errors.remove(0);
     }
-    state.reported_errors.push(message.to_string());
+    state.reported_errors.push(entry);
 }
 
 /// Initial seed for the per-peer backoff state.
@@ -501,27 +540,31 @@ impl SyncScheduler {
     /// * `message` — the exact user-facing text the caller would emit. It is
     ///   the suppression key, so "repeat" means *this peer, this text, this
     ///   streak*; a failure whose cause changes mid-streak is never a repeat.
-    /// * `suppress_repeats` — the caller's policy input. `session_supervisor`
-    ///   passes "this peer is demonstrably still pulling from us", so a peer
-    ///   that has gone dark in both directions keeps reporting every cycle.
-    ///   Passing `false` books the failure and always reports, while still
-    ///   remembering the text for a later cycle that does pass `true`.
+    /// * `peer_still_serving` — whether this peer is demonstrably still
+    ///   pulling from *us* right now
+    ///   (`session_supervisor::peer_pulled_from_us_recently`). Since #4305
+    ///   this is half of the **key**, not a policy flag: the same text
+    ///   reported first while the pair was working and again once the peer
+    ///   went dark is two different pieces of news, and the second one lands.
+    ///   What it is no longer able to do is *disable* suppression, which is
+    ///   what made an unchanged failure against a departed peer toast once a
+    ///   minute forever.
     ///
     /// # What it can and cannot suppress
     ///
-    /// It can withhold a text byte-equal to one of the last
-    /// [`MAX_REMEMBERED_REPORTS`] texts reported for this peer in this streak,
-    /// and only when the caller also says repeats are suppressible. It cannot
-    /// withhold a first report, a text whose bytes differ by so much as a
-    /// character, anything after [`record_success`](Self::record_success) or
-    /// [`clear_backoff`](Self::clear_backoff), or a text evicted by the cap.
+    /// It can withhold a `(text, peer_still_serving)` pair equal to one of the
+    /// last [`MAX_REMEMBERED_REPORTS`] pairs reported for this peer in this
+    /// streak. It cannot withhold a first report, a text whose bytes differ by
+    /// so much as a character, the first report after the pair goes dark (or
+    /// comes back), anything after [`record_success`](Self::record_success) or
+    /// [`clear_backoff`](Self::clear_backoff), or an entry evicted by the cap.
     /// The backoff booking and the caller's tracing are unconditional either
     /// way.
     pub fn record_failure_and_take_report(
         &self,
         peer_id: &str,
         message: &str,
-        suppress_repeats: bool,
+        peer_still_serving: bool,
     ) -> FailureBooking {
         let mut backoff = self
             .backoff
@@ -529,20 +572,20 @@ impl SyncScheduler {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let state = book_failure(&mut backoff, peer_id);
         let consecutive_failures = state.consecutive_failures;
-        let already_reported = state.reported_errors.iter().any(|m| m == message);
-        if already_reported && suppress_repeats {
+        let entry = ReportedFailure {
+            message: message.to_string(),
+            peer_still_serving,
+        };
+        if state.reported_errors.contains(&entry) {
             return FailureBooking {
                 report: false,
                 consecutive_failures,
             };
         }
         // Recorded only when the caller is about to tell the user, so the
-        // stored texts always answer "what has this user been shown about this
-        // peer?". A text already in the set (reported again because the peer
-        // is dark) must not be pushed twice or it would consume the cap.
-        if !already_reported {
-            remember(state, message);
-        }
+        // stored entries always answer "what has this user been shown about
+        // this peer?".
+        remember(state, entry);
         FailureBooking {
             report: true,
             consecutive_failures,
@@ -571,15 +614,24 @@ impl SyncScheduler {
     /// `[dev-dependencies]`, so its test target still sees it.
     #[cfg(any(test, feature = "test-util"))]
     #[doc(hidden)]
-    pub fn remember_reported_failure(&self, peer_id: &str, message: &str) {
+    pub fn remember_reported_failure(
+        &self,
+        peer_id: &str,
+        message: &str,
+        peer_still_serving: bool,
+    ) {
         let mut backoff = self
             .backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = ReportedFailure {
+            message: message.to_string(),
+            peer_still_serving,
+        };
         if let Some(state) = backoff.get_mut(peer_id)
-            && !state.reported_errors.iter().any(|m| m == message)
+            && !state.reported_errors.contains(&entry)
         {
-            remember(state, message);
+            remember(state, entry);
         }
     }
 
@@ -1474,36 +1526,80 @@ mod tests {
         );
     }
 
-    /// `suppress_repeats = false` is the caller saying "this peer has gone dark
-    /// in both directions", and it must report every cycle — while still
-    /// remembering the text, so the streak goes quiet again the moment the peer
-    /// starts pulling from us and the caller starts passing `true`.
+    /// #4305: `peer_still_serving = false` — "this peer has gone dark in both
+    /// directions" — is part of the suppression **key**, not a switch that
+    /// turns suppression off.
+    ///
+    /// It used to be the latter, and that is what made the second forever-toast:
+    /// a peer that has genuinely gone away stops streaming immediately, so
+    /// `false` was the permanent state of exactly the peer whose failure never
+    /// changes, and `already_reported && still_serving` could never close. The
+    /// user got `Sync failed: sync ended in terminal state: …` once every resync
+    /// interval for as long as the app ran.
     #[test]
-    fn a_report_taken_with_suppression_off_is_still_remembered_4202() {
-        const PEER: &str = "peer-4202-dark";
+    fn a_dark_peers_unchanged_failure_reports_once_not_every_cycle_4305() {
+        const PEER: &str = "peer-4305-dark";
         let sched = SyncScheduler::new();
 
-        for _ in 0..3 {
+        assert!(
+            sched
+                .record_failure_and_take_report(PEER, "cause A", false)
+                .report,
+            "the first report of a failure always lands, dark or not"
+        );
+        for cycle in 0..5 {
             assert!(
-                sched
+                !sched
                     .record_failure_and_take_report(PEER, "cause A", false)
                     .report,
-                "with suppression off every cycle is reported"
+                "#4305: cycle {cycle} of an unchanged failure against an unchanged \
+                 dark peer must be silent — the durable surfaces are the peer row \
+                 and the status dot, not a toast once a minute"
             );
         }
         assert_eq!(
             sched.reported_failure_count(PEER),
             1,
-            "…and the text is remembered exactly once, not re-pushed on every \
-             unsuppressed report — re-pushing would consume the cap and evict a \
-             genuinely distinct cause"
+            "…and the entry is remembered exactly once, not re-pushed per cycle — \
+             re-pushing would consume the cap and evict a genuinely distinct cause"
         );
+    }
+
+    /// #4305: …and the fact the old `still_serving` term protected survives.
+    ///
+    /// "Our pull fails while the peer is otherwise serving us" and "the pair has
+    /// stopped exchanging in both directions" are different statements about the
+    /// user's devices, so the same text crossing that boundary is news exactly
+    /// once more. Two reports per distinct text per streak is the bound; a
+    /// `streamed_at` flapping across the freshness window cannot exceed it.
+    #[test]
+    fn the_pair_going_dark_is_news_once_more_and_then_never_again_4305() {
+        const PEER: &str = "peer-4305-transition";
+        let sched = SyncScheduler::new();
+        let take = |serving: bool| {
+            sched
+                .record_failure_and_take_report(PEER, "cause A", serving)
+                .report
+        };
+
+        assert!(take(true), "first report while the peer still serves us");
+        assert!(!take(true), "…then silent while nothing has changed");
         assert!(
-            !sched
-                .record_failure_and_take_report(PEER, "cause A", true)
-                .report,
-            "so when the peer starts pulling from us again, the text the user has \
-             already been shown is a repeat"
+            take(false),
+            "the pair going dark is a different fact and must surface"
+        );
+        assert!(!take(false), "…then silent again");
+        // Flapping across the freshness window adds nothing: both values of the
+        // flag are already remembered.
+        for _ in 0..4 {
+            assert!(!take(true), "a flap back to serving is not new information");
+            assert!(!take(false), "nor is a flap back to dark");
+        }
+        assert_eq!(
+            sched.reported_failure_count(PEER),
+            2,
+            "one text, two states, two remembered entries — and the cap is per \
+             streak, so a flapping peer cannot grow the memory"
         );
     }
 
