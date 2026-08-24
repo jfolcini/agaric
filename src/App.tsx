@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, type ReactElement, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
@@ -16,7 +16,7 @@ import { SearchSheetTrigger } from '@/components/mobile/SearchSheetTrigger'
 import { BootGate } from '@/components/pages/BootGate'
 import { shellOwnsHeading, useHeaderLabel, ViewDispatcher } from '@/components/pages/ViewDispatcher'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
+import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { useAndroidBackButton } from '@/hooks/useAndroidBackButton'
 import { useAppBootRecovery } from '@/hooks/useAppBootRecovery'
@@ -119,6 +119,38 @@ const SearchSheet = lazy(() =>
 // so they no longer carry it. (`journal` itself renders `JournalControls`, not
 // this control, so it is intentionally absent here.)
 const DATE_CONTROL_VIEWS: ReadonlySet<View> = new Set<View>(['pages', 'search', 'tags', 'query'])
+
+/**
+ * The mobile entry point to the nav sidebar.
+ *
+ * Below the 768px `useIsMobile` breakpoint the sidebar is a Sheet with NO
+ * persistent rail (see `Sidebar`'s mobile branch), so this button is the
+ * primary way in; the left-edge swipe and Ctrl+B remain as secondaries.
+ * Gated on exactly the same `useIsMobile()` predicate the Sheet branch uses —
+ * not the wider `useShouldShowMobileChrome()` — so the affordance can never be
+ * absent while the rail is, and can never appear next to the desktop sidebar.
+ *
+ * Self-gating in its own component rather than an inline `isMobile && …` in
+ * App: App is already at its cyclomatic-complexity ceiling, and a render
+ * condition is not what that budget is for.
+ */
+function MobileSidebarTrigger(): ReactElement | null {
+  const { t } = useTranslation()
+  const isMobile = useIsMobile()
+  if (!isMobile) return null
+  return (
+    <SidebarTrigger
+      data-testid="mobile-sidebar-trigger"
+      aria-label={t('sidebar.openMenu')}
+      aria-haspopup="dialog"
+      // `self-start` keeps the 44px target pinned to the top of a header
+      // whose content stacks (the journal's two control rows) instead of
+      // floating to its vertical middle; the header's content wrapper
+      // re-centres a single-row header against it.
+      className="-ml-2 shrink-0 self-start sm:self-center"
+    />
+  )
+}
 
 function App() {
   const { t } = useTranslation()
@@ -449,38 +481,60 @@ function App() {
         />
         <SidebarInset>
           <ViewHeaderOutletProvider>
-            <header className="flex min-h-14 shrink-0 flex-col sm:flex-row sm:items-center gap-2 border-b bg-background px-4 py-2 sm:py-0">
-              {currentView === 'journal' ? (
-                <JournalControls />
-              ) : (
-                <>
-                  {/* #3308 — the shell label is the `<h1>` for every view that
-                      does not render one of its own (pages / tags / history /
-                      query / search previously had NO heading at all, so
-                      screen-reader heading navigation had nothing to land on).
-                      Views that own an `<h1>` via `FeaturePageHeader` keep a
-                      plain `<span>` here so the same title is not announced as
-                      two separate level-1 headings. `VIEW_HEADING_OWNER` in
-                      ViewDispatcher is the single, exhaustive owner map. */}
-                  <HeaderLabelTag className="font-medium" data-testid="header-label">
-                    {headerLabel}
-                  </HeaderLabelTag>
-                  <div className="flex-1" />
-                  {DATE_CONTROL_VIEWS.has(currentView) && <GlobalDateControls />}
-                </>
-              )}
-              {/* Sole touch entry point for the unified search sheet.
-                  Desktop hides the trigger entirely — keyboard users
-                  open the underlying surfaces via Ctrl+F / Cmd+K /
-                  Ctrl+Shift+F. Gating at this JSX level keeps the
-                  component from re-rendering / re-subscribing on every
-                  navigation change for desktop sessions.
-                  `useShouldShowMobileChrome()` widens the
-                  gate from `< 768 px` to "phone OR (tablet AND no
-                  hardware keyboard)" so iPad-portrait touch users get
-                  the trigger while iPad-with-keyboard sessions still
-                  get the desktop UI + Cmd+K. */}
-              {shouldShowMobileChrome && <SearchSheetTrigger />}
+            <header className="flex min-h-14 shrink-0 sm:items-center gap-2 border-b bg-background px-4 py-2 sm:py-0">
+              {/* Leads the header row, before the view title, because that
+                  is where a navigation-drawer trigger is looked for. Renders
+                  nothing on desktop. */}
+              <MobileSidebarTrigger />
+              {/* The header's own content stacks below `sm` (the journal
+                  controls need two rows on a phone). That stacking is scoped
+                  to this wrapper so the hamburger stays on the leading edge
+                  of the row instead of becoming a row of its own.
+                  `justify-center` matters only in the single-row case: the
+                  wrapper stretches to the hamburger's 44px height, and
+                  centring inside it lines a short view title up with the
+                  button rather than leaving it riding 20px high. */}
+              <div className="flex min-w-0 flex-1 flex-col justify-center sm:flex-row sm:items-center gap-2">
+                {currentView === 'journal' ? (
+                  <JournalControls />
+                ) : (
+                  <>
+                    {/* #3308 — the shell label is the `<h1>` for every view that
+                        does not render one of its own (pages / tags / history /
+                        query / search previously had NO heading at all, so
+                        screen-reader heading navigation had nothing to land on).
+                        Views that own an `<h1>` via `FeaturePageHeader` keep a
+                        plain `<span>` here so the same title is not announced as
+                        two separate level-1 headings. `VIEW_HEADING_OWNER` in
+                        ViewDispatcher is the single, exhaustive owner map. */}
+                    {/* `max-sm:` block sizing so the title's optical centre
+                        lines up with the 44px hamburger beside it. Without it
+                        the ~20px text row top-aligns against a 44px button and
+                        sits visibly high. Scoped below `sm` because the
+                        desktop header is a single centred row already. */}
+                    <HeaderLabelTag
+                      className="font-medium max-sm:flex max-sm:min-h-11 max-sm:items-center"
+                      data-testid="header-label"
+                    >
+                      {headerLabel}
+                    </HeaderLabelTag>
+                    <div className="flex-1" />
+                    {DATE_CONTROL_VIEWS.has(currentView) && <GlobalDateControls />}
+                  </>
+                )}
+                {/* Sole touch entry point for the unified search sheet.
+                    Desktop hides the trigger entirely — keyboard users
+                    open the underlying surfaces via Ctrl+F / Cmd+K /
+                    Ctrl+Shift+F. Gating at this JSX level keeps the
+                    component from re-rendering / re-subscribing on every
+                    navigation change for desktop sessions.
+                    `useShouldShowMobileChrome()` widens the
+                    gate from `< 768 px` to "phone OR (tablet AND no
+                    hardware keyboard)" so iPad-portrait touch users get
+                    the trigger while iPad-with-keyboard sessions still
+                    get the desktop UI + Cmd+K. */}
+                {shouldShowMobileChrome && <SearchSheetTrigger />}
+              </div>
             </header>
             {/*
              * TabBar is hoisted out of the page-editor view router

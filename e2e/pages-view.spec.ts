@@ -6,6 +6,7 @@ import {
   activeAlertDialog,
   activePopover,
   expect,
+  navigateToView,
   openAddFilter,
   test,
   waitForBoot,
@@ -51,10 +52,9 @@ interface BootOpts {
 }
 
 async function openPagesView(page: Page): Promise<void> {
-  await page
-    .locator('[data-slot="sidebar"]')
-    .getByRole('button', { name: 'Pages', exact: true })
-    .click()
+  // Width-aware: the `responsive` describe below boots at 420px, where the
+  // sidebar is a Sheet behind the header hamburger rather than a pinned rail.
+  await navigateToView(page, 'Pages')
   await expect(page.getByRole('grid')).toBeVisible()
 }
 

@@ -523,10 +523,71 @@ export function activeSuggestionList(page: Page): Locator {
   return page.locator('[data-testid="suggestion-list"]').last()
 }
 
-/** Wait for the app to fully boot (BootGate resolved, sidebar visible). */
+/**
+ * Wait for the app to fully boot (BootGate resolved, app shell painted).
+ *
+ * The signal differs by viewport. On desktop the sidebar is pinned and its
+ * "Journal" nav button is the shell's first reliably-visible control. On
+ * mobile there is NO persistent sidebar at all — the 48px icon rail was
+ * retired in favour of the header hamburger, and a closed Sheet mounts
+ * nothing — so the hamburger is the mobile equivalent. Accept either, so one
+ * helper serves both profiles.
+ */
 export async function waitForBoot(page: Page) {
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
+  const desktopNav = page.getByRole('button', { name: 'Journal', exact: true })
+  const mobileTrigger = page.getByTestId('mobile-sidebar-trigger')
+  await expect(desktopNav.or(mobileTrigger).first()).toBeVisible()
+}
+
+/**
+ * Open the mobile navigation drawer and return the Sheet locator.
+ *
+ * Below the 768px breakpoint the sidebar only exists while this Sheet is
+ * open. Every mobile spec that needs a sidebar control goes through here.
+ */
+export async function openMobileSidebar(page: Page): Promise<Locator> {
+  const trigger = page.getByTestId('mobile-sidebar-trigger')
+  await expect(trigger).toBeVisible()
+  await trigger.click()
+  const sheet = page.locator('[data-mobile="true"]')
+  await expect(sheet).toBeVisible()
+  return sheet
+}
+
+/**
+ * Navigate to a top-level view at mobile widths: hamburger → drawer → tap the
+ * destination → wait for the drawer to dismiss itself.
+ *
+ * Waiting for the dismissal matters twice over: the drawer covers most of the
+ * viewport, so any measurement taken before it closes measures the drawer; and
+ * the auto-close IS the contract (`AppSidebar`'s `dismissOnMobile`), so a
+ * regression that leaves it open fails here rather than silently downstream.
+ */
+export async function navigateMobile(page: Page, view: string) {
+  const sheet = await openMobileSidebar(page)
+  await sheet.getByRole('button', { name: view, exact: true }).click()
+  await expect(sheet).toHaveCount(0)
+}
+
+/**
+ * Navigate to a top-level view at whatever width the page currently is.
+ *
+ * Desktop clicks the pinned sidebar; mobile goes through the hamburger. Use
+ * this in specs that change viewport size mid-test, or that run at a width
+ * near the 768px breakpoint — a hardcoded `[data-slot="sidebar"]` click is
+ * simply unreachable below it now that the icon rail is gone.
+ */
+export async function navigateToView(page: Page, view: string) {
+  const hamburger = page.getByTestId('mobile-sidebar-trigger')
+  if (await hamburger.isVisible()) {
+    await navigateMobile(page, view)
+    return
+  }
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: view, exact: true })
+    .click()
 }
 
 /** Navigate to the page editor for a given page title. */

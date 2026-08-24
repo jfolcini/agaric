@@ -10,11 +10,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { AppSidebar, type AppSidebarProps } from '@/components/layout/AppSidebar'
-import { SidebarProvider } from '@/components/ui/sidebar'
+import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { t } from '@/lib/i18n'
 import { NAV_GROUPS, NAV_ITEMS } from '@/lib/nav-items'
 import { useSpaceStore } from '@/stores/space'
@@ -351,5 +351,128 @@ describe('AppSidebar', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('5 items in trash')).toBeInTheDocument()
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mobile drawer dismissal
+// ---------------------------------------------------------------------------
+//
+// On mobile the sidebar is a Sheet that covers the content (there is no
+// persistent rail any more), so acting on an item has to close it. Before the
+// hamburger change the rail was the nav surface and the Sheet was incidental,
+// so nothing dismissed it — docs/UI-MAP.md claimed "Sheet auto-closes on
+// nav-item tap" while the code never did it.
+describe('AppSidebar — mobile Sheet dismissal', () => {
+  /**
+   * Pin `useIsMobile()` to true: viewport under the 768px breakpoint AND
+   * `matchMedia` reporting a match (the hook reads both).
+   */
+  function mockMobileViewport() {
+    Object.defineProperty(window, 'innerWidth', { value: 375, configurable: true, writable: true })
+    vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: true,
+      media: '',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as unknown as MediaQueryList)
+  }
+
+  afterEach(() => {
+    // `mockMobileViewport` spies on `matchMedia`; without an explicit restore
+    // the spy leaks into the desktop test below and it silently measures a
+    // mobile render.
+    vi.restoreAllMocks()
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1024,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  async function openMobileSheet(overrides: Partial<AppSidebarProps> = {}) {
+    const props = defaultProps(overrides)
+    const user = userEvent.setup()
+    render(
+      <SidebarProvider>
+        <AppSidebar {...props} />
+        <SidebarTrigger />
+      </SidebarProvider>,
+    )
+    await user.click(document.querySelector('[data-sidebar="trigger"]') as HTMLElement)
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).not.toBeNull()
+    })
+    return { user, props }
+  }
+
+  it('closes the Sheet when a nav destination is chosen', async () => {
+    mockMobileViewport()
+    const { user, props } = await openMobileSheet()
+
+    await user.click(screen.getByRole('button', { name: t('sidebar.pages') }))
+
+    expect(props.onSelectView).toHaveBeenCalledWith('pages')
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).toBeNull()
+    })
+  })
+
+  it('closes the Sheet when "New Page" is chosen', async () => {
+    mockMobileViewport()
+    const { user, props } = await openMobileSheet()
+
+    await user.click(screen.getByRole('button', { name: t('sidebar.newPage') }))
+
+    expect(props.onNewPage).toHaveBeenCalled()
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).toBeNull()
+    })
+  })
+
+  it('closes the Sheet when "Shortcuts" opens its dialog', async () => {
+    mockMobileViewport()
+    const { user, props } = await openMobileSheet()
+
+    // Otherwise the shortcuts dialog stacks on top of the still-open drawer.
+    await user.click(screen.getByRole('button', { name: t('sidebar.shortcuts') }))
+
+    expect(props.onShowShortcuts).toHaveBeenCalled()
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).toBeNull()
+    })
+  })
+
+  it('keeps the Sheet open for in-place toggles (theme)', async () => {
+    mockMobileViewport()
+    const { user, props } = await openMobileSheet()
+
+    await user.click(screen.getByTestId('theme-toggle'))
+
+    expect(props.onToggleTheme).toHaveBeenCalled()
+    // The theme change is visible in the sidebar itself; dismissing would
+    // throw the user out of the drawer for a setting they may cycle again.
+    expect(document.querySelector('[data-mobile="true"]')).not.toBeNull()
+  })
+
+  it('does not close on desktop, where the sidebar is pinned beside the content', async () => {
+    const user = userEvent.setup()
+    const props = defaultProps()
+    render(
+      <SidebarProvider>
+        <AppSidebar {...props} />
+      </SidebarProvider>,
+    )
+
+    await user.click(screen.getByRole('button', { name: t('sidebar.pages') }))
+
+    expect(props.onSelectView).toHaveBeenCalledWith('pages')
+    // Desktop renders the pinned sidebar, not a Sheet — nothing to dismiss.
+    expect(document.querySelector('[data-mobile="true"]')).toBeNull()
+    expect(document.querySelector('[data-slot="sidebar"]')).toBeInTheDocument()
   })
 })

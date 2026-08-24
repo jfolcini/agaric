@@ -130,6 +130,22 @@ function AppSidebarInner({
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const trashCount = useTrashCount()
+  const { isMobile, setOpenMobile } = useSidebar()
+
+  /**
+   * On mobile the sidebar is a Sheet that overlays the content, so acting on
+   * an item has to dismiss it — otherwise the user arrives at the new view
+   * with the drawer still covering it, or opens a dialog underneath a second
+   * overlay. Desktop keeps the sidebar pinned beside the content, where
+   * dismissing would be wrong, so this is a no-op there.
+   *
+   * Applied to navigation and to the actions that take the user elsewhere
+   * (new page, shortcuts). Deliberately NOT applied to sync and theme, which
+   * are in-place toggles whose result is visible in the sidebar itself.
+   */
+  const dismissOnMobile = (): void => {
+    if (isMobile) setOpenMobile(false)
+  }
 
   /**
    * Render a single nav destination. Shared between the grouped main-nav
@@ -145,7 +161,10 @@ function AppSidebarInner({
           isActive={currentView === item.id}
           aria-current={currentView === item.id ? 'page' : undefined}
           tooltip={label}
-          onClick={() => onSelectView(item.id)}
+          onClick={() => {
+            onSelectView(item.id)
+            dismissOnMobile()
+          }}
         >
           <item.icon />
           <span>{label}</span>
@@ -170,10 +189,12 @@ function AppSidebarInner({
 
   return (
     /*
-     * "icon" collapses the sidebar to a 48px icon-only rail rather than
-     * fully off-canvas. Chosen over "offcanvas" so that on desktop the
-     * primary nav stays one click away (vs. requiring a swipe/click to
-     * re-open). See docs/UX.md § Mobile Sidebar.
+     * "icon" is a DESKTOP-only choice: it collapses the sidebar to a 48px
+     * icon-only rail rather than fully off-canvas, so the primary nav stays
+     * one click away instead of needing a swipe/click to re-open. Below the
+     * 768px mobile breakpoint the `collapsible` prop has no effect — the
+     * sidebar is always a Sheet, opened from the header hamburger, and 48px
+     * of a phone's width goes to content. See docs/UX.md § Mobile Sidebar.
      */
     <Sidebar collapsible="icon">
       <SidebarHeader className="p-4 pb-2">
@@ -242,7 +263,13 @@ function AppSidebarInner({
               footer with the other utility actions. */}
           {renderNavItem(SETTINGS_NAV_ITEM)}
           <SidebarMenuItem>
-            <SidebarMenuButton tooltip={t('sidebar.newPageTooltip')} onClick={onNewPage}>
+            <SidebarMenuButton
+              tooltip={t('sidebar.newPageTooltip')}
+              onClick={() => {
+                onNewPage()
+                dismissOnMobile()
+              }}
+            >
               <Plus />
               <span>{t('sidebar.newPage')}</span>
             </SidebarMenuButton>
@@ -331,7 +358,13 @@ function AppSidebarInner({
                 ? `${t('sidebar.shortcuts')} (${shortcutKeys})`
                 : t('sidebar.shortcuts')
               return (
-                <SidebarMenuButton tooltip={tooltip} onClick={onShowShortcuts}>
+                <SidebarMenuButton
+                  tooltip={tooltip}
+                  onClick={() => {
+                    onShowShortcuts()
+                    dismissOnMobile()
+                  }}
+                >
                   <Keyboard />
                   <span>{t('sidebar.shortcuts')}</span>
                 </SidebarMenuButton>

@@ -42,6 +42,11 @@ export const common: Record<string, string> = {
   'sidebar.query': 'Advanced Query',
   'sidebar.collapse': 'Collapse',
   'sidebar.toggleSidebar': 'Toggle Sidebar',
+  // Accessible name for the mobile header hamburger. Deliberately NOT
+  // `sidebar.toggleSidebar` ("Toggle Sidebar"): on a phone there is no
+  // visible sidebar to "toggle", the control opens a navigation drawer, and
+  // "menu" is the word touch users are scanning the header for.
+  'sidebar.openMenu': 'Open navigation menu',
   'sidebar.newPageTooltip': 'New Page (Ctrl+N)',
   'sidebar.offline': 'Offline',
   'sidebar.syncTooltip': 'Sync all devices',
@@ -360,7 +365,8 @@ export const common: Record<string, string> = {
   'gestures.longPress.title': 'Long-press a block',
   'gestures.longPress.desc': 'Hold a block to open its menu — indent, dedent, move, and more.',
   'gestures.edgeSwipe.title': 'Swipe from the left edge',
-  'gestures.edgeSwipe.desc': 'Drag in from the left edge of the screen to open the sidebar.',
+  'gestures.edgeSwipe.desc':
+    'Drag in from the left edge of the screen to open the navigation menu. The menu button at the top left opens it too.',
   'gestures.quickCapture.title': 'Quick-capture button',
   'gestures.quickCapture.desc': 'Tap the floating pen button to jot a note into your journal.',
   'dialog.cancel': 'Cancel',

@@ -14,7 +14,7 @@
 
 import { devices } from '@playwright/test'
 
-import { expect, test, waitForBoot } from './helpers'
+import { expect, navigateMobile, test, waitForBoot } from './helpers'
 
 // Per search-sheet-mobile: spread only the per-context fields — including
 // `defaultBrowserType` forces a new worker and Playwright rejects it inside a
@@ -34,10 +34,9 @@ test.describe('Search view — full panel at mobile viewport (E2E-A9)', () => {
   async function escalateToSearchView(page: import('@playwright/test').Page) {
     await waitForBoot(page)
     // Land on a non-page view so the sheet defaults to 'all-pages' (palette).
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Pages', exact: true })
-      .click()
+    // Mobile has no persistent sidebar (the icon rail was retired for the
+    // header hamburger), so navigation goes through the drawer.
+    await navigateMobile(page, 'Pages')
     await expect(page.locator('[data-testid="header-label"]')).toContainText('Pages')
     await page.getByTestId('search-sheet-trigger').click()
     await expect(page.getByTestId('search-sheet')).toBeVisible()

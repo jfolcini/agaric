@@ -187,9 +187,21 @@ const Sidebar = ({
   }
 
   if (isMobile) {
-    // The expanded-state Sheet — opened via hamburger trigger, left-edge
-    // swipe, or Ctrl+B. Rendered for every `collapsible` variant on mobile.
-    const sheet = (
+    // Mobile is offcanvas for EVERY `collapsible` variant: no persistent
+    // rail, no layout gap, nothing pinned to the edge. The whole viewport
+    // width belongs to content, and navigation lives behind the header
+    // hamburger (`SidebarTrigger`, rendered on mobile by App.tsx), the
+    // left-edge swipe (`useSidebarEdgeSwipe`), or Ctrl+B.
+    //
+    // `collapsible="icon"` used to render a persistent 48-px icon rail here
+    // *in addition* to this Sheet (UX-231). That rail existed because the
+    // app header shipped no hamburger at all, making it the only mobile nav
+    // affordance. The header now renders one, which retires the rail's
+    // reason to exist: at a 360-px viewport it was charging 48 px — 13% of
+    // the screen — for a strictly worse copy of what the Sheet offers. The
+    // `collapsible` prop still selects the DESKTOP collapsed state (icon
+    // rail vs. fully off-canvas); it no longer has a mobile meaning.
+    return (
       <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
         <SheetContent
           data-sidebar="sidebar"
@@ -210,61 +222,6 @@ const Sidebar = ({
           <div className="flex h-full w-full flex-col">{children}</div>
         </SheetContent>
       </Sheet>
-    )
-
-    // `collapsible="offcanvas"` keeps the original Sheet-only
-    // behaviour so other consumers of this shadcn primitive are unaffected.
-    if (collapsible === 'offcanvas') {
-      return sheet
-    }
-
-    // `collapsible="icon"` on mobile renders a persistent 48-px
-    // icon rail AND the Sheet. The rail is always visible; the Sheet slides
-    // in on top when `openMobile` becomes true. The rail's ancestor carries
-    // `data-collapsible="icon"` so `SidebarMenuButton` (and every other
-    // descendant that reacts to `group-data-[collapsible=icon]`) renders as
-    // icon-only inside the rail.
-    return (
-      <>
-        <nav
-          ref={ref as React.Ref<HTMLElement>}
-          className="group peer text-sidebar-foreground"
-          data-state="collapsed"
-          data-collapsible="icon"
-          data-variant={variant}
-          data-side={side}
-          data-slot="sidebar"
-          data-mobile-rail="true"
-          aria-label={t('sidebar.label')}
-        >
-          {/* Spacer — reserves layout space so SidebarInset starts after the rail. */}
-          <div
-            data-slot="sidebar-gap"
-            className={cn(
-              'relative h-svh w-(--sidebar-width-icon) bg-transparent',
-              'group-data-[side=right]:rotate-180',
-            )}
-          />
-          {/* Fixed rail container, anchored to the viewport edge. */}
-          <div
-            data-slot="sidebar-container"
-            className={cn(
-              'fixed inset-y-0 z-10 flex h-svh w-(--sidebar-width-icon) overflow-hidden',
-              side === 'left' ? 'left-0 border-r' : 'right-0 border-l',
-              className,
-            )}
-          >
-            <div
-              data-sidebar="sidebar"
-              data-slot="sidebar-inner"
-              className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-sidebar"
-            >
-              {children}
-            </div>
-          </div>
-        </nav>
-        {sheet}
-      </>
     )
   }
 
@@ -498,15 +455,7 @@ const SidebarGroup = ({ ref, className, ...props }: React.ComponentProps<'div'>)
     ref={ref}
     data-slot="sidebar-group"
     data-sidebar="group"
-    className={cn(
-      'relative flex w-full min-w-0 flex-col p-2',
-      // Inside the mobile icon rail the 48-px rail width is
-      // reserved for 44-px touch targets, so strip horizontal padding via
-      // the ancestor `data-mobile-rail="true"` attribute (set on the
-      // unnamed-`group` rail wrapper). Vertical padding is preserved.
-      'group-data-[mobile-rail=true]:px-0',
-      className,
-    )}
+    className={cn('relative flex w-full min-w-0 flex-col p-2', className)}
     {...props}
   />
 )
@@ -612,11 +561,9 @@ const sidebarMenuButtonVariants = cva(
   // On touch / coarse-pointer devices, enforce the 44-px WCAG
   // Target Size minimum when the sidebar is collapsed to icon-only mode via
   // `[@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11!`. The
-  // desktop default stays at `size-8` (32 px) because pointer precision is
-  // higher. Works in tandem with `SidebarGroup` stripping horizontal padding
-  // inside the mobile rail (`group-data-[mobile-rail=true]:px-0`) so the
-  // 44-px button fits fully inside the 48-px rail without any overflow /
-  // paint-vs-hit-area trade-off.
+  // pointer-fine default stays at `size-8` (32 px) because pointer precision
+  // is higher. Only the desktop icon-collapsed rail reaches this now — below
+  // the mobile breakpoint the sidebar is a Sheet with full-width rows.
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! group-data-[collapsible=icon]:justify-center [@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-ring-visible active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:rounded-l-none data-[active=true]:border-l-[3px] data-[active=true]:border-l-primary data-[active=true]:dark:border-l-4 group-data-[collapsible=icon]:data-[active=true]:rounded-md! group-data-[collapsible=icon]:data-[active=true]:border-l-0! data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:[&>span]:sr-only [&>span:last-child]:truncate [&>svg]:size-[1.2em] [&>svg]:shrink-0',
   {
     variants: {

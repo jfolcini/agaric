@@ -382,7 +382,7 @@ describe('swipe-to-open gesture', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Persistent icon rail on mobile when collapsible="icon"
+// Mobile is offcanvas for every `collapsible` variant — a Sheet, never a rail
 // ---------------------------------------------------------------------------
 
 /**
@@ -408,7 +408,7 @@ function restoreDesktopViewport() {
   vi.restoreAllMocks()
 }
 
-describe('persistent mobile icon rail (collapsible="icon")', () => {
+describe('mobile offcanvas Sheet (collapsible="icon")', () => {
   beforeEach(() => {
     mockMobileViewport()
   })
@@ -417,56 +417,36 @@ describe('persistent mobile icon rail (collapsible="icon")', () => {
     restoreDesktopViewport()
   })
 
-  it('renders a persistent 48-px icon rail below the mobile breakpoint', () => {
+  it('renders no persistent rail and reserves no layout width below the breakpoint', () => {
     renderSidebar()
 
-    const rail = document.querySelector('[data-mobile-rail="true"]') as HTMLElement | null
-    expect(rail).not.toBeNull()
-    // Rail is rendered in the collapsed/icon state so descendant CSS
-    // (`group-data-[collapsible=icon]`) reduces menu buttons to icon-only.
-    expect(rail).toHaveAttribute('data-collapsible', 'icon')
-    expect(rail).toHaveAttribute('data-state', 'collapsed')
-    expect(rail).toHaveAttribute('data-slot', 'sidebar')
+    // The 48-px icon rail that used to render here alongside the Sheet
+    // (UX-231) is gone: `collapsible` now only selects the DESKTOP collapsed
+    // state. On a phone the sidebar is offcanvas, whatever the prop says.
+    expect(document.querySelector('[data-mobile-rail="true"]')).not.toBeInTheDocument()
 
-    // A11y: the rail is a navigation landmark so assistive tech
-    // announces it. A `<nav>` element (implicit role=navigation) + a
-    // non-empty `aria-label` are both required for the landmark to be
-    // meaningful. We use `tagName` instead of `toHaveAttribute('role', …)`
-    // because `<nav>`'s role is implicit — there is no `role` attribute
-    // on the DOM node.
-    expect(rail?.tagName.toLowerCase()).toBe('nav')
-    expect(rail).toHaveAttribute('aria-label', t('sidebar.label'))
-    expect(rail?.getAttribute('aria-label') ?? '').not.toBe('')
-
-    // The rail has a fixed-position container pinned to the viewport's left
-    // edge, with width driven by the --sidebar-width-icon token (3rem/48px).
-    const container = rail?.querySelector('[data-slot="sidebar-container"]') as HTMLElement
-    expect(container).not.toBeNull()
-    expect(container.className).toContain('w-(--sidebar-width-icon)')
-    expect(container.className).toContain('fixed')
-    expect(container.className).toContain('left-0')
-
-    // The spacer reserves layout space beside the rail so SidebarInset's
-    // flex-1 content area starts after the 48-px edge, not underneath it.
-    const gap = rail?.querySelector('[data-slot="sidebar-gap"]') as HTMLElement
-    expect(gap).not.toBeNull()
-    expect(gap.className).toContain('w-(--sidebar-width-icon)')
+    // The two elements that cost horizontal space are the ones that must be
+    // absent — the spacer that reserved `--sidebar-width-icon` in the flex
+    // row, and the fixed container pinned to the viewport edge. Asserting
+    // their absence (rather than only the rail marker's) is what pins the
+    // "the width actually goes to content" half of the change.
+    expect(document.querySelector('[data-slot="sidebar-gap"]')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-slot="sidebar-container"]')).not.toBeInTheDocument()
   })
 
-  it('Sheet is closed by default — only the rail is visible', () => {
+  it('Sheet is closed by default — nothing of the sidebar is mounted', () => {
     renderSidebar()
 
-    // Rail always in DOM.
-    expect(document.querySelector('[data-mobile-rail="true"]')).toBeInTheDocument()
-    // Sheet content (data-mobile="true") only mounts when the Sheet opens.
+    // Sheet content (data-mobile="true") only mounts when the Sheet opens,
+    // and there is no longer anything else to fall back to.
     expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-sidebar="menu-button"]')).not.toBeInTheDocument()
   })
 
-  it('tapping the SidebarTrigger opens the Sheet while the rail persists', async () => {
+  it('tapping the SidebarTrigger opens the Sheet', async () => {
     const user = userEvent.setup()
     renderSidebar()
 
-    expect(document.querySelector('[data-mobile-rail="true"]')).toBeInTheDocument()
     expect(document.querySelector('[data-mobile="true"]')).not.toBeInTheDocument()
 
     await user.click(getTriggerButton())
@@ -475,47 +455,49 @@ describe('persistent mobile icon rail (collapsible="icon")', () => {
       expect(document.querySelector('[data-mobile="true"]')).toBeInTheDocument()
     })
 
-    // Rail stays mounted while the Sheet overlays it.
-    expect(document.querySelector('[data-mobile-rail="true"]')).toBeInTheDocument()
+    // Opening it does not bring a rail back with it.
+    expect(document.querySelector('[data-mobile-rail="true"]')).not.toBeInTheDocument()
   })
 
-  it('rail nav items render in icon-collapsed mode (data-collapsible=icon inherited)', () => {
+  it('Sheet rows render expanded, not icon-collapsed', async () => {
+    const user = userEvent.setup()
     renderSidebar()
+    await user.click(getTriggerButton())
 
-    const rail = document.querySelector('[data-mobile-rail="true"]') as HTMLElement
-    const buttons = rail.querySelectorAll('[data-sidebar="menu-button"]')
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).toBeInTheDocument()
+    })
+
+    const sheet = document.querySelector('[data-mobile="true"]') as HTMLElement
+    const buttons = sheet.querySelectorAll('[data-sidebar="menu-button"]')
     expect(buttons.length).toBe(2)
-    // Every button must be a descendant of the rail's [data-collapsible=icon]
-    // group so the CSS cascade collapses labels. We prove the ancestry rather
-    // than computing layout (jsdom doesn't lay out CSS).
+    // No `data-collapsible="icon"` ancestor, so the cascade that reduced rail
+    // rows to icon-only (`group-data-[collapsible=icon]:[&>span]:sr-only`)
+    // never applies inside the Sheet — labels are visible text.
     for (const btn of buttons) {
-      const group = btn.closest('[data-collapsible="icon"]')
-      expect(group).toBe(rail)
+      expect(btn.closest('[data-collapsible="icon"]')).toBeNull()
     }
+    expect(buttons[0]).toHaveTextContent('Home')
+    expect(buttons[1]).toHaveTextContent('Settings')
   })
 
-  it('SidebarGroup inside the rail strips horizontal padding so 44-px buttons fit the 48-px rail', () => {
+  it('has no a11y violations with the Sheet open', async () => {
+    const user = userEvent.setup()
     renderSidebar()
+    await user.click(getTriggerButton())
 
-    const rail = document.querySelector('[data-mobile-rail="true"]') as HTMLElement
-    const group = rail.querySelector('[data-slot="sidebar-group"]') as HTMLElement
-    expect(group).not.toBeNull()
-    // The Tailwind selector `group-data-[mobile-rail=true]:px-0` is what
-    // reclaims the 16 px of horizontal padding the default `p-2` applied,
-    // giving the 44-px coarse-pointer button the full 48-px rail width.
-    // jsdom doesn't compute CSS, so we assert the class is present on the
-    // element (not that `getBoundingClientRect` is 48 px).
-    expect(group.className).toContain('group-data-[mobile-rail=true]:px-0')
-    // Sanity: vertical padding is preserved — we only strip horizontal.
-    expect(group.className).toContain('p-2')
-  })
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).toBeInTheDocument()
+    })
 
-  it('has no a11y violations on the persistent rail + trigger layout', async () => {
-    const { container } = renderSidebar()
-
+    // Scope the audit to the Sheet itself — Radix marks everything outside an
+    // open modal `aria-hidden`, and its body-level focus guards trip axe's
+    // aria-hidden-focus rule. Both are framework-owned, not ours (same
+    // scoping as `opened mobile Sheet passes axe` in ui/__tests__).
+    const dialog = await screen.findByRole('dialog')
     await waitFor(
       async () => {
-        const results = await axe(container)
+        const results = await axe(dialog)
         expect(results).toHaveNoViolations()
       },
       { timeout: 5000 },

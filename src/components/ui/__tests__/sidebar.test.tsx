@@ -425,7 +425,7 @@ describe('#759 mobile Sheet a11y description', () => {
     expect(dialog).toHaveAccessibleDescription(t('sidebar.mobileDescription'))
   })
 
-  it('clips the collapsed icon rail so labels cannot bleed past it (#1967)', () => {
+  it('renders no icon rail on mobile, so nothing can bleed past one (#1967)', () => {
     render(
       <SidebarProvider>
         <Sidebar collapsible="icon">
@@ -434,17 +434,15 @@ describe('#759 mobile Sheet a11y description', () => {
       </SidebarProvider>,
     )
 
-    // The fixed 48px icon rail must hard-clip its content; without
-    // `overflow-hidden` a menu label can paint a few pixels past the rail edge.
-    const container = document.querySelector(
-      '[data-mobile-rail="true"] [data-slot="sidebar-container"]',
-    )
-    expect(container).not.toBeNull()
-    expect(container).toHaveClass('overflow-hidden')
-
-    const inner = container?.querySelector('[data-slot="sidebar-inner"]')
-    expect(inner).toHaveClass('overflow-hidden')
-    expect(inner).toHaveClass('min-w-0')
+    // #1967 was "a menu label paints a few pixels past the 48px mobile rail
+    // edge", fixed at the time with `overflow-hidden` on the rail container.
+    // The rail itself is now retired below the mobile breakpoint (the header
+    // hamburger replaced it), which removes the bug's surface entirely rather
+    // than clipping it — so the regression guard is the rail's absence.
+    expect(document.querySelector('[data-mobile-rail="true"]')).toBeNull()
+    expect(document.querySelector('[data-slot="sidebar-container"]')).toBeNull()
+    // …and no layout spacer reserving width beside the content.
+    expect(document.querySelector('[data-slot="sidebar-gap"]')).toBeNull()
   })
 
   it('opened mobile Sheet passes axe', async () => {

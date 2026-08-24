@@ -35,6 +35,8 @@ import {
   activeSheet,
   expect,
   expectNoHorizontalOverflow,
+  navigateMobile,
+  openMobileSidebar,
   test,
   waitForBoot,
 } from './helpers'
@@ -42,7 +44,7 @@ import {
 // Two narrow profiles: the existing iPhone-13 baseline (390px) and a narrower
 // 360px Android width (small Pixel / Galaxy) that exposes overflow the 390px
 // case misses. Both are below the 768px `useIsMobile` breakpoint, so the app
-// renders its mobile chrome (icon rail + sheets).
+// renders its mobile chrome (header hamburger + sheets, no persistent rail).
 const iPhone13 = devices['iPhone 13']
 const PROFILES = [
   { name: 'iPhone 13 · 390px', use: { ...pick(iPhone13), viewport: { width: 390, height: 844 } } },
@@ -64,8 +66,9 @@ function pick(device: (typeof devices)[string]) {
   }
 }
 
-// Top-level views, keyed by the accessible name of their rail nav button
-// (the i18n `sidebar.*` label). `query`'s label is "Advanced Query".
+// Top-level views, keyed by the accessible name of their nav button inside
+// the sidebar drawer (the i18n `sidebar.*` label). `query`'s label is
+// "Advanced Query".
 const VIEWS = [
   'Journal',
   'Pages',
@@ -88,14 +91,12 @@ for (const profile of PROFILES) {
       test(`${view} view has no horizontal overflow`, async ({ page }) => {
         await waitForBoot(page)
 
-        // Navigate via the persistent mobile icon rail (the desktop sidebar is
-        // not rendered below `md`). Scope to the rail so the name is unambiguous.
-        const rail = page.locator('[data-mobile-rail="true"]')
-        const navButton = rail.getByRole('button', { name: view, exact: true })
-        await navButton.click()
-        // The active nav item flips `aria-current="page"` synchronously; wait
-        // for it so we measure the new view, not the previous one.
-        await expect(navButton).toHaveAttribute('aria-current', 'page')
+        // Navigate via the header hamburger + sidebar drawer. The persistent
+        // 48px icon rail this file used to drive is gone — mobile has no
+        // sidebar in the layout at all, which is the width this sweep is now
+        // measuring. `navigateMobile` waits for the drawer to dismiss itself,
+        // so the measurement below runs against the view, not the overlay.
+        await navigateMobile(page, view)
         // Let the lazy view chunk resolve and layout settle before measuring.
         await page.waitForLoadState('networkidle')
         await page.waitForTimeout(250)
@@ -104,38 +105,95 @@ for (const profile of PROFILES) {
       })
     }
 
-    test('collapsed sidebar rail clips its content (no text bleed)', async ({ page }) => {
+    // Replaces "collapsed sidebar rail clips its content (no text bleed)".
+    // That test pinned the rail at 48px and asserted it clipped its own
+    // labels. The rail is retired: nothing is pinned to the edge, so instead
+    // of measuring the rail we measure what replaced it — content occupying
+    // the full viewport width. This is the assertion that fails if the rail
+    // (or any other fixed left-edge chrome) comes back.
+    test('no persistent sidebar chrome — content owns the full viewport width', async ({
+      page,
+    }) => {
       await waitForBoot(page)
-      const container = page.locator('[data-mobile-rail="true"] [data-slot="sidebar-container"]')
-      await expect(container).toBeVisible()
 
-      // The rail is a fixed 48px column; its content must be hard-clipped so a
-      // menu label can never bleed past the edge (#1967). Assert the clip is in
-      // place AND the rail itself does not scroll horizontally.
-      const overflowX = await container.evaluate((el) => getComputedStyle(el).overflowX)
-      expect(overflowX, 'rail container must clip horizontally').toBe('hidden')
+      await expect(page.locator('[data-mobile-rail="true"]')).toHaveCount(0)
+      // The layout spacer is the element that actually cost the width; the
+      // rail could be removed while a stray gap kept reserving it.
+      await expect(page.locator('[data-slot="sidebar-gap"]')).toHaveCount(0)
+      // With the Sheet closed, no part of the sidebar is mounted at all.
+      await expect(page.locator('[data-mobile="true"]')).toHaveCount(0)
 
-      const railWidth = await container.evaluate((el) =>
-        Math.round(el.getBoundingClientRect().width),
+      const viewportWidth = page.viewportSize()?.width ?? 0
+      expect(viewportWidth).toBeGreaterThan(0)
+
+      const inset = page.locator('[data-slot="sidebar-inset"]')
+      await expect(inset).toBeVisible()
+      const box = await inset.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { left: Math.round(r.left), width: Math.round(r.width) }
+      })
+      expect(box.left, 'content column must start at the viewport edge').toBe(0)
+      expect(box.width, `content column is ${box.width}px of a ${viewportWidth}px viewport`).toBe(
+        viewportWidth,
       )
-      expect(railWidth, 'icon rail should be the 48px icon width').toBeLessThanOrEqual(56)
+    })
+
+    // The rail was the only mobile nav affordance before the hamburger
+    // existed; removing it without a replacement would strand the user. Pin
+    // that the replacement is reachable, opens the drawer, and marks the
+    // destination the user is on.
+    test('the header hamburger opens a navigation drawer', async ({ page }) => {
+      await waitForBoot(page)
+
+      const trigger = page.getByTestId('mobile-sidebar-trigger')
+      await expect(trigger).toBeVisible()
+      // Coarse-pointer sizing: the trigger must meet the 44px WCAG target.
+      const size = await trigger.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { w: Math.round(r.width), h: Math.round(r.height) }
+      })
+      expect(size.w, 'hamburger width').toBeGreaterThanOrEqual(44)
+      expect(size.h, 'hamburger height').toBeGreaterThanOrEqual(44)
+
+      const sheet = await openMobileSidebar(page)
+      // Every top-level destination is reachable from inside the drawer.
+      for (const view of VIEWS) {
+        await expect(sheet.getByRole('button', { name: view, exact: true })).toBeVisible()
+      }
+      // Journal is the boot view and must be marked as current.
+      await expect(sheet.getByRole('button', { name: 'Journal', exact: true })).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
+
+      // Tapping a destination navigates AND dismisses the drawer.
+      await sheet.getByRole('button', { name: 'Tags', exact: true }).click()
+      await expect(sheet).toHaveCount(0)
+      const reopened = await openMobileSidebar(page)
+      await expect(reopened.getByRole('button', { name: 'Tags', exact: true })).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
     })
 
     test('Keyboard Shortcuts dialog has no horizontal overflow', async ({ page }) => {
       await waitForBoot(page)
-      const rail = page.locator('[data-mobile-rail="true"]')
-      const shortcutsBtn = rail.getByRole('button', { name: 'Shortcuts', exact: true })
+      const sheet = await openMobileSidebar(page)
+      const shortcutsBtn = sheet.getByRole('button', { name: 'Shortcuts', exact: true })
       // Best-effort: if the trigger isn't reachable in this build, skip cleanly
       // rather than fail the sweep on an unrelated gap.
       if ((await shortcutsBtn.count()) === 0) {
         test.skip(true, 'Shortcuts trigger not present')
       }
+      // The sidebar drawer dismisses itself before the dialog opens, so the
+      // two overlays never stack (`AppSidebar`'s `dismissOnMobile`).
       await shortcutsBtn.click()
+      await expect(sheet).toHaveCount(0)
 
       // useDialogOrSheet renders a Sheet on mobile; fall back to a role=dialog
       // if a plain dialog is used instead.
-      const sheet = activeSheet(page)
-      const surface = (await sheet.count()) > 0 ? sheet : activeRoleDialog(page)
+      const shortcutsSheet = activeSheet(page)
+      const surface = (await shortcutsSheet.count()) > 0 ? shortcutsSheet : activeRoleDialog(page)
       await expect(surface).toBeVisible()
       await page.waitForTimeout(150)
       await expectNoHorizontalOverflow(page, surface, `Shortcuts dialog @ ${profile.name}`)
@@ -143,8 +201,7 @@ for (const profile of PROFILES) {
 
     test('Pairing dialog (Settings → Sync) has no horizontal overflow', async ({ page }) => {
       await waitForBoot(page)
-      const rail = page.locator('[data-mobile-rail="true"]')
-      await rail.getByRole('button', { name: 'Settings', exact: true }).click()
+      await navigateMobile(page, 'Settings')
 
       // Open the "Sync & Devices" settings tab, which hosts DeviceManagement
       // (mono device-id row, peers list, "Pair New Device").
@@ -198,17 +255,18 @@ for (const profile of PROFILES) {
     // own layout was never measured — which is exactly how it shipped with
     // three `whitespace-nowrap` buttons needing 264px inside a 196px row.
     //
-    // Measured, not eyeballed: the card is ~230px wide at a 360px viewport
-    // (the 48px mobile rail plus panel and card padding take the rest), so
+    // Measured, not eyeballed: the card used to be ~230px wide at a 360px
+    // viewport (the 48px mobile rail plus panel and card padding took the
+    // rest). The rail is gone, so the card is ~48px wider — the assertions
+    // below hold with more headroom, not less, and are deliberately kept as
+    // relative checks (fits its own box / name column above a floor) rather
+    // than absolute pixel counts that would drift with layout changes.
     // `expectNoHorizontalOverflow(page)` alone is NOT sufficient here — a row
     // can overflow its own card without the document scrolling. The scrollWidth
     // assertion below is the one that fails on a regression.
     test('paired device row fits its card and does not overflow', async ({ page }) => {
       await waitForBoot(page)
-      await page
-        .locator('[data-mobile-rail="true"]')
-        .getByRole('button', { name: 'Settings', exact: true })
-        .click()
+      await navigateMobile(page, 'Settings')
       await page.getByRole('tab', { name: 'Sync & Devices', exact: true }).click()
       await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
       const pairBtn = page.locator('.device-pair-btn')
