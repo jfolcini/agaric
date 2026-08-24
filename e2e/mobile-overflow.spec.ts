@@ -6,24 +6,23 @@
  * mode behind the pairing-dialog report (buttons bleeding off a narrow screen)
  * and the class of bug the user asked to sweep for across the whole UI.
  *
- * NOT run in CI (re-evaluated for #3501, still skipped — but not for the
- * original "low marginal protection" reason below, which is now false: the
- * element-root guard in `helpers.ts` was strengthened for #3501 and, once
- * strengthened, immediately caught a real defect (KeyboardShortcuts.tsx
- * clipping ~32px off the Action column at 360px), so this file has
- * demonstrated real signal. The blocker to re-enabling it wholesale is a
- * SEPARATE, pre-existing, unrelated bug discovered while verifying #3501:
- * the "Pairing dialog" tests below query `activeDialog(page)`
- * (`[data-slot="dialog-content"]`), but `PairingDialog` calls
- * `useDialogOrSheet('dialog')`, whose mobile path always renders a `Sheet`
- * (`data-slot="sheet-content"`) regardless of `kind` (see
- * `src/hooks/useDialogOrSheet.ts`) — so those two tests fail on the selector
- * before the overflow assertion ever runs, on both viewport profiles. Fixing
- * that selector mismatch touches `PairingDialog`/test dialog-detection logic,
- * outside #3501's scope (`e2e/helpers.ts` + `KeyboardShortcuts.tsx` only), so
- * it isn't fixed here. Once that pre-existing bug is fixed (tracked
- * separately), this file should go back into the sharded CI run — flip this
- * `test.skip(!!process.env.CI, …)` at that point.
+ * RUNS IN CI (#4300). This file was skipped in CI for two successive reasons,
+ * both now retired. The first — "low marginal protection" — was already false:
+ * the strengthened element-root guard in `helpers.ts` (#3501) immediately
+ * caught a real defect (KeyboardShortcuts.tsx clipping ~32px off the Action
+ * column at 360px). The second was a SEPARATE pre-existing bug: the pairing
+ * tests below queried `activeDialog(page)` (`[data-slot="dialog-content"]`)
+ * while `PairingDialog` renders a Sheet on phones, so they failed on the
+ * selector before any overflow assertion ran. That was fixed for #3468 — the
+ * pairing tests now use `activeSheet(page)` — and the whole file passes at both
+ * profiles, so the skip was outliving its own stated condition.
+ *
+ * Leaving it skipped had a cost, and it was paid: the paired-device row
+ * (`PeerListItem`) shipped with its action buttons overflowing the card at both
+ * phone widths, and this is the suite that would have caught it. The regression
+ * is now pinned by `paired device row` below, which is the only test here that
+ * MATERIALIZES a peer — every other sync assertion in this file runs against an
+ * empty device list, which is why an overflowing peer row was invisible to it.
  *
  * Run locally:
  *   npx playwright test e2e/mobile-overflow.spec.ts --workers=1
@@ -39,11 +38,6 @@ import {
   test,
   waitForBoot,
 } from './helpers'
-
-// `process` is provided by the Playwright (node) runtime; e2e files are not in
-// any tsconfig `include`, so declare the minimal surface we use to keep the
-// editor/LSP happy without pulling in @types/node.
-declare const process: { env: Record<string, string | undefined> }
 
 // Two narrow profiles: the existing iPhone-13 baseline (390px) and a narrower
 // 360px Android width (small Pixel / Galaxy) that exposes overflow the 390px
@@ -88,7 +82,6 @@ const VIEWS = [
 
 for (const profile of PROFILES) {
   test.describe(`mobile overflow sweep — ${profile.name}`, () => {
-    test.skip(!!process.env['CI'], 'mobile layout sweep runs locally only')
     test.use(profile.use)
 
     for (const view of VIEWS) {
@@ -198,6 +191,66 @@ for (const profile of PROFILES) {
       ).toBeVisible()
       await page.waitForTimeout(150)
       await expectNoHorizontalOverflow(page, dialog, `Pairing dialog · joiner @ ${profile.name}`)
+    })
+
+    // The only test in this file that materializes a PEER. Every other sync
+    // assertion above runs against an empty device list, so `PeerListItem`'s
+    // own layout was never measured — which is exactly how it shipped with
+    // three `whitespace-nowrap` buttons needing 264px inside a 196px row.
+    //
+    // Measured, not eyeballed: the card is ~230px wide at a 360px viewport
+    // (the 48px mobile rail plus panel and card padding take the rest), so
+    // `expectNoHorizontalOverflow(page)` alone is NOT sufficient here — a row
+    // can overflow its own card without the document scrolling. The scrollWidth
+    // assertion below is the one that fails on a regression.
+    test('paired device row fits its card and does not overflow', async ({ page }) => {
+      await waitForBoot(page)
+      await page
+        .locator('[data-mobile-rail="true"]')
+        .getByRole('button', { name: 'Settings', exact: true })
+        .click()
+      await page.getByRole('tab', { name: 'Sync & Devices', exact: true }).click()
+      await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
+      const pairBtn = page.locator('.device-pair-btn')
+      await expect(pairBtn).toBeVisible()
+
+      // Drive the joiner path; the mock reveals the pinned peer after a couple
+      // of `list_peer_refs` polls (PAIRING_PEER_POLL_INTERVAL_MS = 2000).
+      await pairBtn.click()
+      const sheet = activeSheet(page)
+      await sheet.getByRole('button', { name: /have a code from the other device/i }).click()
+      await sheet.getByRole('button', { name: 'Type Passphrase', exact: true }).click()
+      const words = ['alpha', 'bravo', 'charlie', 'delta']
+      const inputs = sheet.locator('input')
+      for (const [i, word] of words.entries()) await inputs.nth(i).fill(word)
+      await sheet.getByRole('button', { name: /^pair$/i }).click()
+
+      const row = page.locator('[data-testid="settings-panel-sync"] .device-peer-item')
+      await expect(row).toHaveCount(1, { timeout: 20000 })
+
+      // The action cluster must not be wider than the space it is given.
+      const actions = await page
+        .locator('.device-peer-actions')
+        .evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }))
+      expect(
+        actions.scrollWidth,
+        `peer action buttons overflow their row at ${profile.name} ` +
+          `(${actions.scrollWidth}px of content in ${actions.clientWidth}px)`,
+      ).toBeLessThanOrEqual(actions.clientWidth)
+
+      // The device name is the field the old layout starved to a few characters.
+      const name = page.locator('.device-peer-name')
+      await expect(name).toBeVisible()
+      const nameBox = await name.evaluate((el) => ({
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+      }))
+      expect(
+        nameBox.clientWidth,
+        `device name column collapsed to ${nameBox.clientWidth}px at ${profile.name}`,
+      ).toBeGreaterThan(80)
+
+      await expectNoHorizontalOverflow(page, undefined, `Sync panel · paired @ ${profile.name}`)
     })
   })
 }

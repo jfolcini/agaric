@@ -583,6 +583,42 @@ describe('DeviceManagement', () => {
     expect(syncBtn?.parentElement?.className).not.toContain('gap-1')
   })
 
+  // The peer row used to be a single never-stacking flex row. On a 360px
+  // phone the three `whitespace-nowrap` action buttons claimed their width
+  // first, squeezing the device name to a few characters and wrapping the
+  // "Last: …" line over three lines. The row now stacks below `sm` and only
+  // becomes a row at `sm:` and up — the same idiom as `TrashRowItem`.
+  it('peer row stacks vertically below the sm breakpoint', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: mockPeers,
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('peer-abc-123...')
+
+    const row = container.querySelector('.device-peer-item')
+    expect(row).toBeTruthy()
+    expect(row?.className).toContain('flex-col')
+    expect(row?.className).toContain('sm:flex-row')
+  })
+
+  it('keeps the "Last synced" line on a single line', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: mockPeers,
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('peer-abc-123...')
+    const lastSynced = screen.getAllByText(/^Last:/)
+    expect(lastSynced.length).toBeGreaterThan(0)
+    for (const line of lastSynced) expect(line.className).toContain('truncate')
+    expect(container.querySelector('.device-peer-name')?.className).toContain('truncate')
+  })
+
   it('preserves backend error message on sync failure', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -1545,7 +1581,10 @@ describe('DeviceManagement', () => {
     })
   })
 
-  it('edit address button uses icon-xs size for touch sizing', async () => {
+  // The pencil inflates to 44×44 under `pointer:coarse`. It must live on the
+  // address line, NOT inside the device-name column, or that width comes
+  // straight out of the (truncating) device name on a phone.
+  it('edit address button sits on the address line, not in the name column', async () => {
     mockInvokeByCommand({
       get_device_id: mockDeviceId,
       list_peer_refs: [{ ...mockPeers[0], last_address: null }],
@@ -1556,10 +1595,22 @@ describe('DeviceManagement', () => {
     await screen.findByText('peer-abc-123...')
     const editBtn = container.querySelector('.peer-address-edit')
     expect(editBtn).toBeTruthy()
-    expect(editBtn?.className).toContain('peer-address-edit')
+    expect(editBtn?.getAttribute('data-size')).toBe('icon-xs')
+    expect(editBtn?.closest('.peer-address')).toBeTruthy()
+
+    // The address line is a sibling of the name column, not a descendant.
+    const addressLine = container.querySelector('.peer-address')
+    const nameEl = container.querySelector('.device-peer-name')
+    expect(addressLine?.contains(nameEl as Node)).toBe(false)
+    expect(nameEl?.parentElement?.contains(addressLine as Node)).toBe(false)
   })
 
-  it('peer action buttons container has flex-wrap', async () => {
+  // Replaces the old `flex-wrap` contract: three nowrap buttons wrapping into
+  // a tall stack was the bug, not the fix. Measured in a real browser, the
+  // card is only ~230px wide at a 360px viewport (~196px of action area) while
+  // `Sync Now` + `Unpair` need 264px side by side — so they stack full-width
+  // on mobile and become a row at `sm:`.
+  it('peer action buttons stack full-width on mobile and become a row at sm', async () => {
     mockInvokeByCommand({
       get_device_id: mockDeviceId,
       list_peer_refs: mockPeers,
@@ -1568,8 +1619,48 @@ describe('DeviceManagement', () => {
     const { container } = render(<DeviceManagement />)
 
     await screen.findByText('peer-abc-123...')
-    const syncBtn = container.querySelector('.device-sync-btn')
-    expect(syncBtn?.parentElement?.className).toContain('flex-wrap')
+    const actions = container.querySelector('.device-peer-actions')
+    expect(actions).toBeTruthy()
+    expect(actions?.className).toContain('w-full')
+    expect(actions?.className).toContain('flex-col')
+    expect(actions?.className).toContain('sm:w-auto')
+    expect(actions?.className).toContain('sm:flex-row')
+    expect(actions?.className).not.toContain('flex-wrap')
+
+    // Sync / Unpair own the full mobile width instead of overflowing the card.
+    for (const sel of ['.device-sync-btn', '.device-unpair-btn']) {
+      const btn = container.querySelector(sel)
+      expect(btn?.parentElement).toBe(actions)
+      expect(btn?.className).toContain('w-full')
+      expect(btn?.className).toContain('sm:w-auto')
+      expect(btn?.className).not.toContain('flex-1')
+      // `touch-target`'s min-width:44px would replace the flex item's implicit
+      // min-width:auto and let the button shrink below its nowrap label.
+      expect(btn?.className).not.toContain('touch-target')
+    }
+  })
+
+  // The rename pencil renames *this device*, and a full-width icon-only
+  // button in a stacked action column looks wrong — it belongs on the name
+  // line, right-aligned, keeping its 44px touch target.
+  it('rename button sits on the name line, not in the action stack', async () => {
+    mockInvokeByCommand({
+      get_device_id: mockDeviceId,
+      list_peer_refs: mockPeers,
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('peer-abc-123...')
+    const renameBtn = container.querySelector('.device-rename-btn')
+    expect(renameBtn).toBeTruthy()
+    expect(renameBtn?.closest('.device-peer-actions')).toBeNull()
+    expect(renameBtn?.className).toContain('touch-target')
+    expect(renameBtn?.className).toContain('shrink-0')
+
+    // Same flex row as the device name.
+    const nameEl = container.querySelector('.device-peer-name')
+    expect(renameBtn?.parentElement).toBe(nameEl?.parentElement)
   })
 
   // #2058: recovery-path copy must come from i18n (t()), not hardcoded
