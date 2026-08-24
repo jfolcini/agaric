@@ -62,10 +62,13 @@ describe('PopoverContent', () => {
   })
 
   // #4313 — the cap is Radix's collision-aware available height, with the old
-  // `100dvh` expression demoted to a fallback for when that var is unset
-  // (jsdom, `avoidCollisions={false}`). It cannot be `100dvh` alone: on Android
-  // the soft keyboard does not shrink the layout viewport, so a `dvh` cap let
-  // popovers extend under the keyboard and past the top of the screen.
+  // `100dvh` expression demoted to a fallback for when that var is unset — in
+  // practice, jsdom/happy-dom, where nothing ever lays the popper out enough
+  // to run the `size()` middleware's `apply`. It's not `avoidCollisions={false}`:
+  // that only gates `shift`/`flip` in `@radix-ui/react-popper`, not `size()`.
+  // It cannot be `100dvh` alone: on Android the soft keyboard does not shrink
+  // the layout viewport, so a `dvh` cap let popovers extend under the
+  // keyboard and past the top of the screen.
   it('caps height to the collision-aware available height, falling back to the dynamic viewport', async () => {
     render(
       <Popover defaultOpen>

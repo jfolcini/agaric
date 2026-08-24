@@ -200,7 +200,7 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
     // Expand the tallest disclosure — the language list is what overflowed.
     await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
 
-    const popover = page.locator('[data-slot="popover-content"]')
+    const popover = page.locator('[data-slot="popover-content"]').first()
     await expect(popover).toBeVisible()
 
     // Same simulation as the test above: Playwright cannot raise a real IME, so
