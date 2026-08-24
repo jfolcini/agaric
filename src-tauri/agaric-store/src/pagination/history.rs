@@ -152,6 +152,26 @@ pub async fn list_block_history(
 /// page, which is why the second probe resolves the owner instead of
 /// guessing one.
 ///
+/// A second shape of the SAME caveat, and on a synced vault likely the
+/// COMMONER one: deleting, on this device, an attachment that was ADDED on
+/// a peer device. Nothing reclaimed the paired `add_attachment` — it is
+/// still sitting in `op_log` — but it got there via replication, so it
+/// carries `is_replicated = 1` here. `src_add.is_replicated = 0` in probe 2
+/// is then false for it, and probe 1 has no row to find either, because the
+/// local `delete_attachment` already removed it. Both probes false, row
+/// omitted, same degrade-to-invisible outcome — but reachable on the FIRST
+/// local delete of a peer-added attachment, with no `compact_op_log` sweep
+/// (a maintenance operation, not a routine one) required first.
+///
+/// This is deliberate, not a second gap to close: `src_add.is_replicated =
+/// 0` is the same filter the three undo queries carry (see above), and
+/// widening this probe by dropping it would break the byte-identity the
+/// `undoDeleteOfImpl` index mapping depends on — reintroducing the exact
+/// mis-targeted-undo bug this predicate exists to prevent. Omitting the row
+/// from history is the price paid to keep swipe-delete undo pointed at the
+/// right op; letting it through and mismatching the undo query would be
+/// worse than that trade.
+///
 /// Residual divergence NOT closed here (out of scope, positional mapping
 /// unchanged): this query has no `is_undo = 0` / `is_replicated = 0`
 /// filter while the three undo queries do, so reverse ops and foreign

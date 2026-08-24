@@ -1649,6 +1649,30 @@ async fn revert_ops_in_tx(
 /// `add_attachment` is gone) are skipped uniformly. The restore completes and
 /// reverses everything that CAN be reversed.
 ///
+/// # Attachment ops in the ops-to-revert SELECT
+///
+/// Correcting the #4277 commit message's framing (`restore_page_to_op_inner
+/// is exempt by construction`): the page-scoped branch below DOES carry an
+/// attachment disjunct — `o.op_type IN ('delete_attachment',
+/// 'rename_attachment') AND EXISTS (...)` — just a narrower one than the
+/// two-probe idiom `list_page_history` and the three undo queries share
+/// (`#4278`). Only the live-`attachments` probe is here; there is no second,
+/// paired-`add_attachment` probe for an already-deleted row. That is fine,
+/// not a residual bug: every row this SELECT returns is filtered again a
+/// few lines below, by op-type, through
+/// `reverse::is_statically_non_reversible` — and `delete_attachment` is
+/// STATICALLY on that list. So whether or not the missing second probe
+/// admits a given `delete_attachment` row changes only whether that row
+/// gets counted into `static_non_reversible_skipped`; it never changes
+/// whether the op is reverted, because the static filter throws every
+/// admitted `delete_attachment` away regardless.
+/// `rename_attachment` is what the single probe actually needs to resolve,
+/// and its owning block IS the live `attachments` row (a rename never
+/// deletes it), so one probe suffices. Ops here are addressed by
+/// `(device_id, seq)`, never by list position, so — unlike
+/// `list_page_history`'s `#4278` fix — there is no positional-mapping
+/// invariant this disjunct's exact shape could get wrong.
+///
 /// # Snapshot semantics — atomic read+revert (#1551)
 ///
 /// The ops-to-revert membership SELECT runs **inside** the same

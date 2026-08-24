@@ -31,6 +31,7 @@ import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '@/hooks/useHistorySelection'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
+import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { categorizeHistoryError, type HistoryErrorCategory } from '@/lib/categorize-history-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
@@ -263,6 +264,16 @@ export function HistoryView(): React.ReactElement {
   const reloadAfterMutation = useCallback(() => {
     clearSelection()
     void queryClient.resetQueries({ queryKey })
+    // #4335 review — a revert (`HistoryRevertDialog`) or restore
+    // (`HistoryRestoreDialog`) can mutate `attachments` directly
+    // (`rename_attachment` is now revertible; `restore_page_to_op_inner`
+    // carries its own attachment disjunct). `AttachmentList` has no
+    // TanStack Query cache keyed off this view's `queryKey` to reset — it
+    // is local state owned by `useBlockAttachments` /
+    // `BatchAttachmentsProvider` elsewhere in the tree — so a concurrently
+    // mounted instance needs this separate signal or it keeps showing
+    // pre-mutation filenames. See `@/lib/attachment-invalidation`.
+    recordAttachmentInvalidation()
   }, [clearSelection, queryKey])
 
   // ── Render ───────────────────────────────────────────────────────

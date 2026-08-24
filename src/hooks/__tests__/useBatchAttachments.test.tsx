@@ -9,6 +9,8 @@
  *  - Re-fetches when blockIds membership changes
  *  - Does NOT re-fetch when blockIds reference changes but membership is identical
  *  - `invalidate(blockId)` triggers a refetch of the whole batch
+ *  - the cross-tree `attachment-invalidation` bus (an out-of-band mutation,
+ *    e.g. a History-view revert) also triggers a whole-batch refetch
  *  - `loading` (via `useBatchAttachmentsLoading`) flips during initial fetch
  *    and after invalidation
  * `getCount(blockId)` returns `rows.length` (or 0 when
@@ -40,6 +42,10 @@ import {
   useBatchAttachments,
   useBatchAttachmentsLoading,
 } from '@/hooks/useBatchAttachments'
+import {
+  _resetAttachmentInvalidationForTest,
+  recordAttachmentInvalidation,
+} from '@/lib/attachment-invalidation'
 import type { AttachmentRow } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -79,6 +85,7 @@ function makeAttachment(overrides: Partial<AttachmentRow> = {}): AttachmentRow {
 beforeEach(() => {
   vi.clearAllMocks()
   mockedInvoke.mockResolvedValue({})
+  _resetAttachmentInvalidationForTest()
 })
 
 describe('useBatchAttachments', () => {
@@ -264,6 +271,43 @@ describe('useBatchAttachments', () => {
 
     await waitFor(() => {
       expect(result.current?.get('A')?.length).toBe(2)
+    })
+
+    const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments_batch')
+    expect(batchCalls).toHaveLength(2)
+  })
+
+  // #4335 review — a History-view revert/restore mutates `attachments`
+  // directly, outside this provider's own `invalidate(blockId)` call sites.
+  // `recordAttachmentInvalidation()` is the cross-tree signal for that; the
+  // provider must react to it exactly like a local `invalidate()` call.
+  it('refetches the whole window when the cross-tree attachment-invalidation bus fires', async () => {
+    const att1 = makeAttachment({ id: 'a1', block_id: 'A' })
+    const renamed = makeAttachment({ id: 'a1', block_id: 'A', filename: 'renamed.png' })
+
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_attachments_batch') {
+        callCount += 1
+        return callCount === 1 ? { A: [att1] } : { A: [renamed] }
+      }
+      return undefined
+    })
+
+    const { result } = renderHook(() => useBatchAttachments(), {
+      wrapper: makeWrapper(['A']),
+    })
+
+    await waitFor(() => {
+      expect(result.current?.get('A')?.[0]?.filename).toBe('photo.png')
+    })
+
+    act(() => {
+      recordAttachmentInvalidation()
+    })
+
+    await waitFor(() => {
+      expect(result.current?.get('A')?.[0]?.filename).toBe('renamed.png')
     })
 
     const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments_batch')

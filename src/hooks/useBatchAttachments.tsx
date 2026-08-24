@@ -45,6 +45,7 @@ import type { ReactElement, ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
+import { subscribeToAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import type { AttachmentRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -252,6 +253,20 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
     // The `_blockId` arg is reserved for a future surgical-update API
     // (only refetch one block); for now it is unused.
     setInvalidationToken((prev) => prev + 1)
+  }, [])
+
+  // #4335 review — a revert/restore issued from the History view mutates
+  // `attachments` directly (bypassing `invalidate` above, which only
+  // `useBlockAttachments`'s own delete/rename handlers call). Subscribe to
+  // the cross-tree invalidation bus and force the SAME whole-batch refetch
+  // `invalidate` triggers, so every windowed block picks up the change —
+  // this provider has no way to know which block(s) an out-of-band mutation
+  // touched.
+  useEffect(() => {
+    const unsubscribe = subscribeToAttachmentInvalidation(() => {
+      setInvalidationToken((prev) => prev + 1)
+    })
+    return unsubscribe
   }, [])
 
   // `loading` is deliberately NOT in this memoized value (#2701) — see
