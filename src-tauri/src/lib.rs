@@ -1827,6 +1827,55 @@ struct SyncDaemonWiring {
     cancel_flag: Arc<AtomicBool>,
 }
 
+/// Publish this device's own name — its OS hostname — into `app_settings`, so
+/// the sync layer can advertise it to peers in `HeadExchange` (#4298).
+///
+/// # Why the app crate writes it and the sync crate reads it back off the pool
+///
+/// `tauri_plugin_os::hostname()` is the only cross-platform hostname source
+/// this app has, and it lives behind a Tauri plugin. `agaric-sync` must not
+/// gain a `tauri` dependency for one string, so the value travels through the
+/// database the two already share — the same seam the pending-pairing marker
+/// uses (`peer_refs::set_local_device_name` / `get_local_device_name`).
+///
+/// # Why every boot, and why best-effort
+///
+/// A hostname is user-editable and does change; pinning it at first run would
+/// leave every renamed device advertising a stale name with nothing to ever
+/// correct it. Re-reading it each launch costs one UPSERT and makes a rename
+/// propagate on the next sync.
+///
+/// It is spawned rather than awaited, and swallows its failure: the name is a
+/// display nicety, not a precondition for syncing. Losing the race with the
+/// first outbound session — the daemon spawns immediately after this — costs
+/// that one session's advertisement, and the peer keeps whatever name it
+/// already had until the next dial. Blocking boot on it would be the wrong
+/// trade in the other direction.
+///
+/// A hostname the OS reports as empty is written as nothing at all:
+/// `get_local_device_name` treats an empty value as absent, so a blank name
+/// never reaches the wire and never blanks a peer's device list row.
+fn spawn_local_device_name_refresh(pool: sqlx::SqlitePool) {
+    tauri::async_runtime::spawn(async move {
+        let hostname = tauri_plugin_os::hostname();
+        if hostname.trim().is_empty() {
+            tracing::debug!("the OS reported no hostname; advertising no device name (#4298)");
+            return;
+        }
+        match agaric_store::peer_refs::set_local_device_name(&pool, &hostname).await {
+            Ok(()) => tracing::debug!(
+                device_name = %hostname,
+                "published this device's own name for peers to display (#4298)"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "could not publish this device's own name; peers will keep rendering \
+                 this device by whatever name they already have (#4298)"
+            ),
+        }
+    });
+}
+
 /// Boot-phase 13 — install the rustls CryptoProvider and spawn the
 /// [`SyncDaemon`](agaric_sync::sync_daemon::SyncDaemon).
 ///
@@ -2471,6 +2520,12 @@ pub fn run() {
                 // runs BEFORE `wire_sync_daemon` below starts accepting inbound
                 // connections, so no snapshot receive can be in flight yet.
                 agaric_sync::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
+
+                // #4298 — publish this device's hostname before the daemon
+                // spawns, so the first session that reaches `HeadExchange` has
+                // a name to advertise and the peer stops rendering this device
+                // as a truncated UUID.
+                spawn_local_device_name_refresh(daemon_wiring.pool.clone());
 
                 // Install rustls + spawn the SyncDaemon (#382/#383/#278).
                 let daemon_wiring = SyncDaemonWiring {

@@ -114,7 +114,13 @@ export const syncHandlers = {
           reset_count: 0,
           last_reset_at: null,
           cert_hash: 'mock-cert-hash',
-          device_name: 'Paired Device',
+          // #4298: the mock's local override is unset, exactly as a real
+          // freshly-paired row's is — the name below is the one the peer
+          // supplied over the wire, which is what the device list now renders
+          // instead of a truncated UUID. Keeping the override null is what
+          // makes the mock exercise the interesting half of the precedence.
+          device_name: null,
+          remote_device_name: 'Paired Device',
           last_address: null,
         })
       }

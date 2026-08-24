@@ -1029,6 +1029,7 @@ mod tests {
             last_reset_at: None,
             cert_hash: None,
             device_name: None,
+            remote_device_name: None,
             last_address: None,
             endpoint_id: None,
             unpaired_by_peer_at_ms: None,

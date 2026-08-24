@@ -1,4 +1,5 @@
 import type { PeerRef } from '@/lib/bindings'
+import { peerName } from '@/lib/peer-display-name'
 
 /**
  * The last time anything synced between us and a peer, in backend epoch-ms,
@@ -42,8 +43,9 @@ export function lastSyncActivityAt(peer: PeerRef): number | null {
  * stable across engines.
  *
  * Keys, in priority order:
- *  1. has-name  (named before unnamed)
- *  2. device_name, localeCompare (named only — both unnamed skip this)
+ *  1. has-name  (named before unnamed) — #4298: `peerName`, so a peer-supplied
+ *     name counts as named
+ *  2. display name, localeCompare (named only — both unnamed skip this)
  *  3. last sync activity desc (never => -Infinity, sorts last)
  *  4. peer_id, localeCompare (stable, deterministic final tiebreak)
  *
@@ -72,15 +74,21 @@ export function lastSyncActivityAt(peer: PeerRef): number | null {
  * offline `.sqlx` caches for no behavioural gain.
  */
 export function comparePeers(a: PeerRef, b: PeerRef): number {
-  const aHasName = a.device_name != null && a.device_name !== ''
-  const bHasName = b.device_name != null && b.device_name !== ''
+  // #4298: "has a name" is the DISPLAY precedence, not the `device_name`
+  // column. A peer that told us its hostname is a named device — it renders as
+  // "javier-thinkpad", not as hex — so sorting it with the anonymous rows would
+  // put a legible name at the bottom of the list under the UUIDs. Sorting on
+  // the same string the row renders is what keeps this key meaning what the
+  // user sees.
+  const aName = peerName(a)
+  const bName = peerName(b)
 
   // 1. named devices before unnamed
-  if (aHasName !== bHasName) return aHasName ? -1 : 1
+  if ((aName != null) !== (bName != null)) return aName != null ? -1 : 1
 
   // 2. both named: alphabetical by name
-  if (aHasName && bHasName) {
-    const byName = (a.device_name as string).localeCompare(b.device_name as string)
+  if (aName != null && bName != null) {
+    const byName = aName.localeCompare(bName)
     if (byName !== 0) return byName
   }
 

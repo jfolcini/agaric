@@ -133,6 +133,7 @@ const mockPeers = [
     last_reset_at: null,
     cert_hash: null,
     device_name: null,
+    remote_device_name: null,
     last_address: null,
   },
   {
@@ -145,6 +146,7 @@ const mockPeers = [
     last_reset_at: 1735689600000, // 2025-01-01T00:00:00Z
     cert_hash: null,
     device_name: null,
+    remote_device_name: null,
     last_address: null,
   },
 ]
@@ -669,6 +671,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
         ]
       return null
@@ -696,6 +699,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
           {
             peer_id: 'peer-2',
@@ -707,6 +711,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
         ]
       if (cmd === 'start_sync') {
@@ -749,6 +754,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: "Javier's Phone",
+          remote_device_name: null,
         },
       ],
     })
@@ -776,6 +782,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
           {
             peer_id: 'peer-2',
@@ -787,6 +794,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
         ]
       if (cmd === 'start_sync') {
@@ -908,6 +916,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: 'Work Laptop',
+          remote_device_name: null,
         },
       ],
       delete_peer_ref: undefined,
@@ -944,6 +953,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: null,
+          remote_device_name: null,
         },
         {
           peer_id: 'peer-1',
@@ -955,6 +965,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: 'Zebra',
+          remote_device_name: null,
         },
         {
           peer_id: 'peer-2',
@@ -966,6 +977,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: 'Apple',
+          remote_device_name: null,
         },
       ],
     })
@@ -993,6 +1005,7 @@ describe('DeviceManagement', () => {
       last_reset_at: null,
       cert_hash: null,
       device_name: null,
+      remote_device_name: null,
       last_address: null,
       endpoint_id: null,
       unpaired_by_peer_at_ms: null,
@@ -1245,6 +1258,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: null,
+          remote_device_name: null,
           last_address: null,
         },
       ],

@@ -606,6 +606,15 @@ pub async fn delete_peer_ref(pool: State<'_, WritePool>, peer_id: String) -> Res
 /// Tauri command: rename a paired sync peer's display name (or clear
 /// it back to the device-supplied value when `device_name` is `None`).
 /// Delegates to [`update_peer_name_inner`].
+///
+/// #4298 made the parenthesis above true. It described the intent from the
+/// start, but no device ever supplied a name — `device_name` was never on the
+/// wire — so clearing the override left the row empty and the device list fell
+/// back to a truncated peer id. The peer's own name now arrives in
+/// `HeadExchange` and lands in the separate `peer_refs.remote_device_name`
+/// column, which this command deliberately does not touch: it writes only the
+/// user's override, and clearing that override is what reveals the name
+/// underneath.
 #[tauri::command]
 #[specta::specta]
 pub async fn update_peer_name(

@@ -5971,3 +5971,163 @@ async fn peer_refs_0113_unpaired_by_peer_at_add_preserves_existing_rows_4297() {
          established for the sibling nullable timestamps"
     );
 }
+
+/// #4298 / migration 0114 — `peer_refs.remote_device_name` is a nullable
+/// `ADD COLUMN` that must leave every existing peer row exactly as it found it.
+///
+/// The column holds what a peer told us, on the wire, that it is called. Two
+/// things about it are worth pinning rather than assuming:
+///
+/// * **It is a SECOND column, not a rewrite of the first.** `device_name` is
+///   the user's local override and the migration must not touch it — a rename
+///   the user performed before upgrading has to survive, because the whole
+///   reason for two columns is that a peer's claim may never overwrite it.
+/// * **No backfill and no DEFAULT.** Nothing in an existing row says what the
+///   peer calls itself; there has never been a wire field to learn it from. A
+///   `DEFAULT ''` would be worse than NULL, because the display precedence
+///   tests for a *non-empty* name and an empty string would render a peer as a
+///   blank row rather than falling through to its truncated id.
+#[tokio::test]
+async fn peer_refs_0114_remote_device_name_add_preserves_existing_rows_4298() {
+    let (pool, _dir) = unmigrated_pool().await;
+    // 0113 is the last migration before this column arrives.
+    apply_migrations_through(&pool, 0, 113).await;
+
+    let vv: Vec<u8> = vec![0x0a, 0x0b, 0x0c];
+    let endpoint_id = "e".repeat(64);
+    // Single-quoted with a doubled apostrophe: a double-quoted token is an
+    // *identifier* in SQL, and relying on SQLite's DQS fallback makes the seed
+    // depend on the schema never growing a column of that name (see #4197).
+    sqlx::query(
+        "INSERT INTO peer_refs \
+             (peer_id, last_hash, last_sent_hash, synced_at, streamed_at, reset_count, \
+              last_reset_at, cert_hash, device_name, last_address, loro_vv_bytes, \
+              endpoint_id, unpaired_by_peer_at_ms) \
+             VALUES ('PEER4298A', 'h-recv', 'h-sent', 1700000000000, 1700000002000, 2, \
+                     1700000001000, ?, 'Javier''s Phone', '192.168.1.9:7777', ?, ?, \
+                     1700000003000)",
+    )
+    .bind("b".repeat(64))
+    .bind(&vv)
+    .bind(&endpoint_id)
+    .execute(&pool)
+    .await
+    .expect("seed a fully-populated pre-0114 peer row");
+
+    // The NULL-everywhere shape an ADD COLUMN is most likely to get wrong by
+    // supplying a default.
+    sqlx::query("INSERT INTO peer_refs (peer_id) VALUES ('PEER4298B')")
+        .execute(&pool)
+        .await
+        .expect("seed a bare pre-0114 peer row");
+
+    apply_migrations_to_head(&pool, 113).await;
+
+    let surviving: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM peer_refs WHERE peer_id LIKE 'PEER4298%'")
+            .fetch_one(&pool)
+            .await
+            .expect("count peer_refs after 0114");
+    assert_eq!(
+        surviving, 2,
+        "0114 is an ADD COLUMN — every pre-existing peer_refs row must survive it"
+    );
+
+    #[allow(clippy::type_complexity)]
+    let row: (
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Vec<u8>>,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT last_hash, last_sent_hash, synced_at, streamed_at, reset_count, \
+                last_reset_at, cert_hash, device_name, last_address, loro_vv_bytes, \
+                endpoint_id, unpaired_by_peer_at_ms, remote_device_name \
+           FROM peer_refs WHERE peer_id = 'PEER4298A'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read the populated peer row back after 0114");
+
+    assert_eq!(
+        row.0.as_deref(),
+        Some("h-recv"),
+        "last_hash must survive 0114"
+    );
+    assert_eq!(
+        row.1.as_deref(),
+        Some("h-sent"),
+        "last_sent_hash must survive 0114"
+    );
+    assert_eq!(
+        row.2,
+        Some(1_700_000_000_000),
+        "synced_at must survive 0114"
+    );
+    assert_eq!(
+        row.3,
+        Some(1_700_000_002_000),
+        "streamed_at must survive 0114"
+    );
+    assert_eq!(row.4, 2, "reset_count must survive 0114");
+    assert_eq!(
+        row.5,
+        Some(1_700_000_001_000),
+        "last_reset_at must survive 0114"
+    );
+    assert_eq!(
+        row.6.as_deref(),
+        Some("b".repeat(64).as_str()),
+        "cert_hash must survive 0114"
+    );
+    assert_eq!(
+        row.7.as_deref(),
+        Some("Javier's Phone"),
+        "the USER'S override must survive 0114 untouched — 0114 adds the peer-supplied \
+         name beside it, and a rename performed before the upgrade outranks anything a \
+         peer later claims"
+    );
+    assert_eq!(
+        row.8.as_deref(),
+        Some("192.168.1.9:7777"),
+        "last_address must survive 0114"
+    );
+    assert_eq!(row.9, Some(vv), "loro_vv_bytes must survive 0114 verbatim");
+    assert_eq!(
+        row.10.as_deref(),
+        Some(endpoint_id.as_str()),
+        "endpoint_id must survive 0114"
+    );
+    assert_eq!(
+        row.11,
+        Some(1_700_000_003_000),
+        "0113's unpaired_by_peer_at_ms must survive 0114"
+    );
+    assert_eq!(
+        row.12, None,
+        "0114 must NOT backfill remote_device_name — no existing column says what the \
+         peer calls itself, and there has never been a wire field to learn it from"
+    );
+
+    let bare: Option<String> =
+        sqlx::query_scalar("SELECT remote_device_name FROM peer_refs WHERE peer_id = 'PEER4298B'")
+            .fetch_one(&pool)
+            .await
+            .expect("read the bare peer row back after 0114");
+    assert_eq!(
+        bare, None,
+        "0114 adds the column with no DEFAULT — it must read NULL, not ''. The display \
+         precedence tests for a non-empty name, so a defaulted empty string would render \
+         every pre-existing peer as a blank row instead of falling through to its \
+         truncated id"
+    );
+}

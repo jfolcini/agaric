@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE peer_refs SET remote_device_name = ? WHERE peer_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "c4e555063f76a2d52d2cf4772295715c07ccd5b288631e1d9272ca4da8eaadac"
+}

@@ -499,8 +499,44 @@ export const commands = {
 	 *  Used for certificate pinning on reconnection.
 	 */
 	cert_hash: string | null,
-	/**  Human-readable name/label for this peer (e.g. "Javier's Phone"). */
+	/**
+	 *  The USER'S name for this peer (e.g. "Javier's Phone") — a local display
+	 *  override, typed into the rename dialog on THIS device and authoritative
+	 *  nowhere else.
+	 * 
+	 *  Written only by the `update_peer_name` command
+	 *  ([`update_device_name`]). Nothing on the wire may touch it: a peer that
+	 *  could overwrite it would silently undo a rename the user performed,
+	 *  which is the one outcome a rename feature must never produce. The name
+	 *  the peer supplies lands in [`Self::remote_device_name`] instead.
+	 * 
+	 *  `None` means the user has not renamed this peer — NOT that the peer has
+	 *  no name. Read it through the display precedence
+	 *  (`device_name` → `remote_device_name` → truncated `peer_id`), never on
+	 *  its own.
+	 */
 	device_name: string | null,
+	/**
+	 *  The name the peer told us it is called, over the wire (migration 0114,
+	 *  #4298) — a CLAIM by an untrusted remote, not a fact about it.
+	 * 
+	 *  Carried in `HeadExchange` and refreshed on every session in which this
+	 *  device is the responder, so a peer that is renamed on its own machine
+	 *  propagates that name here on its next dial. It is clamped to 64
+	 *  characters on send AND again on receive, and empty/whitespace-only is
+	 *  normalised to `None`; a peer can put anything in this field, so the
+	 *  receiving side re-applies every bound rather than trusting the sender to
+	 *  have applied it.
+	 * 
+	 *  Strictly lower precedence than [`Self::device_name`]: it is what the UI
+	 *  falls back to when the user has set no override, which is what makes
+	 *  clearing an override fall back to the peer's own name rather than to a
+	 *  truncated UUID.
+	 * 
+	 *  `None` is normal — a peer on a build predating #4298 sends no name, and
+	 *  a device whose hostname could not be read sends none either.
+	 */
+	remote_device_name: string | null,
 	/**
 	 *  Last known network address (host:port) for direct connection.
 	 *  Updated after each successful sync. Used when mDNS is unavailable.
@@ -545,6 +581,15 @@ export const commands = {
 	 *  Tauri command: rename a paired sync peer's display name (or clear
 	 *  it back to the device-supplied value when `device_name` is `None`).
 	 *  Delegates to [`update_peer_name_inner`].
+	 * 
+	 *  #4298 made the parenthesis above true. It described the intent from the
+	 *  start, but no device ever supplied a name — `device_name` was never on the
+	 *  wire — so clearing the override left the row empty and the device list fell
+	 *  back to a truncated peer id. The peer's own name now arrives in
+	 *  `HeadExchange` and lands in the separate `peer_refs.remote_device_name`
+	 *  column, which this command deliberately does not touch: it writes only the
+	 *  user's override, and clearing that override is what reveals the name
+	 *  underneath.
 	 */
 	updatePeerName: (peerId: string, deviceName: string | null) => typedError<null, AppError>(__TAURI_INVOKE("update_peer_name", { peerId, deviceName })),
 	/**  Tauri command: set a peer's last-known network address for direct connection. */
@@ -2992,8 +3037,44 @@ export type PeerRef = {
 	 *  Used for certificate pinning on reconnection.
 	 */
 	cert_hash: string | null,
-	/**  Human-readable name/label for this peer (e.g. "Javier's Phone"). */
+	/**
+	 *  The USER'S name for this peer (e.g. "Javier's Phone") — a local display
+	 *  override, typed into the rename dialog on THIS device and authoritative
+	 *  nowhere else.
+	 * 
+	 *  Written only by the `update_peer_name` command
+	 *  ([`update_device_name`]). Nothing on the wire may touch it: a peer that
+	 *  could overwrite it would silently undo a rename the user performed,
+	 *  which is the one outcome a rename feature must never produce. The name
+	 *  the peer supplies lands in [`Self::remote_device_name`] instead.
+	 * 
+	 *  `None` means the user has not renamed this peer — NOT that the peer has
+	 *  no name. Read it through the display precedence
+	 *  (`device_name` → `remote_device_name` → truncated `peer_id`), never on
+	 *  its own.
+	 */
 	device_name: string | null,
+	/**
+	 *  The name the peer told us it is called, over the wire (migration 0114,
+	 *  #4298) — a CLAIM by an untrusted remote, not a fact about it.
+	 * 
+	 *  Carried in `HeadExchange` and refreshed on every session in which this
+	 *  device is the responder, so a peer that is renamed on its own machine
+	 *  propagates that name here on its next dial. It is clamped to 64
+	 *  characters on send AND again on receive, and empty/whitespace-only is
+	 *  normalised to `None`; a peer can put anything in this field, so the
+	 *  receiving side re-applies every bound rather than trusting the sender to
+	 *  have applied it.
+	 * 
+	 *  Strictly lower precedence than [`Self::device_name`]: it is what the UI
+	 *  falls back to when the user has set no override, which is what makes
+	 *  clearing an override fall back to the peer's own name rather than to a
+	 *  truncated UUID.
+	 * 
+	 *  `None` is normal — a peer on a build predating #4298 sends no name, and
+	 *  a device whose hostname could not be read sends none either.
+	 */
+	remote_device_name: string | null,
 	/**
 	 *  Last known network address (host:port) for direct connection.
 	 *  Updated after each successful sync. Used when mDNS is unavailable.

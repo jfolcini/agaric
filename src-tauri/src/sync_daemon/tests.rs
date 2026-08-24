@@ -105,6 +105,7 @@ fn head_exchange(heads: Vec<DeviceHead>, pairing_proof: Option<String>) -> SyncM
         op_log_replication: false,
         op_log_batch_chunked: false,
         pairing_proof,
+        device_name: None,
     }
 }
 
@@ -539,6 +540,7 @@ fn make_peer_ref(peer_id: &str) -> PeerRef {
         last_reset_at: None,
         cert_hash: None,
         device_name: None,
+        remote_device_name: None,
         last_address: None,
         endpoint_id: None,
         unpaired_by_peer_at_ms: None,
@@ -3102,6 +3104,7 @@ fn make_peer_ref_with_cert(peer_id: &str, cert_hash: Option<&str>) -> PeerRef {
         last_reset_at: None,
         cert_hash: cert_hash.map(String::from),
         device_name: None,
+        remote_device_name: None,
         last_address: None,
         endpoint_id: None,
         unpaired_by_peer_at_ms: None,
@@ -5067,6 +5070,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         },
     )
     .await
@@ -7571,6 +7575,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .expect("responder handle_message")
@@ -7626,6 +7631,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .expect("responder handle_message")
@@ -11446,4 +11452,98 @@ async fn the_bound_branch_keys_bookkeeping_on_the_authenticated_row_4230() {
 
     // The head it advertised named the victim; `expected_remote_id` outranked it.
     assert_victim_untouched_4230(&out);
+}
+
+/// #4298 — the responder records the name the initiator advertised, clamps it,
+/// and does not touch the name the user set by hand.
+///
+/// This is the whole user-visible fix driven through the real admission path.
+/// Before it, `device_name` appeared nowhere in the wire protocol, so a freshly
+/// paired peer rendered as `truncateId(peer_id)` — `e3d48f0a-45a…` — on both
+/// devices until the user renamed it separately on each.
+///
+/// Three things are pinned here that the store-level tests cannot reach:
+///
+/// * the name survives the frame boundary and reaches `peer_refs` at all;
+/// * it is re-clamped **on receive**. The sender clamps too, but the sender is
+///   an untrusted remote and a hostile one simply would not — so the bound has
+///   to be re-applied by the side that has to render it;
+/// * `device_name` is untouched. A peer whose next sync could overwrite the
+///   user's rename would silently undo it, which is the outcome the two-column
+///   design exists to prevent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn handle_incoming_sync_records_the_peer_supplied_device_name_4298() {
+    const REMOTE: &str = "REMOTE4298";
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let harness = ServiceHarness::new().await;
+    bind_client_as(&pool, REMOTE, &harness).await;
+    // The user has already renamed this peer on THIS device. That override must
+    // outrank whatever the peer calls itself.
+    peer_refs::update_device_name(&pool, REMOTE, Some("Javier's Phone"))
+        .await
+        .unwrap();
+
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler,
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &SyncMessage::HeadExchange {
+            heads: vec![fake_head(REMOTE)],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            // Deliberately over-long: a peer can put anything in this field.
+            device_name: Some("p".repeat(200)),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Empty registry on both sides, so the responder short-circuits straight to
+    // `SyncComplete` with nothing to stream.
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert!(
+        matches!(response, SyncMessage::SyncComplete { .. }),
+        "an empty-registry session must short-circuit to SyncComplete, got {response:?}"
+    );
+
+    close_and_join_ok(client, handle).await;
+
+    let peer = peer_refs::get_peer_ref(&pool, REMOTE)
+        .await
+        .unwrap()
+        .expect("the peer row must survive the session");
+    let recorded = peer
+        .remote_device_name
+        .expect("#4298: the responder must record the name the peer advertised");
+    assert_eq!(
+        recorded.chars().count(),
+        64,
+        "the receiving side must re-clamp — the sender's clamp is not a bound this \
+         device may rely on"
+    );
+    assert_eq!(recorded, "p".repeat(64));
+    assert_eq!(
+        peer.device_name.as_deref(),
+        Some("Javier's Phone"),
+        "a peer-supplied name must never overwrite the user's own rename"
+    );
+
+    materializer.shutdown();
 }

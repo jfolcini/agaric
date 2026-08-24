@@ -5,6 +5,11 @@
  * Shows device name (or truncated ID), last-synced time, reset count badge,
  * address info, and action buttons (rename, sync, unpair).
  *
+ * #4298: "device name" is now a precedence, not a column — the user's local
+ * override, then the name the peer advertised over the wire, then the truncated
+ * id. It is resolved once through `peerDisplayName` so the heading and every
+ * aria-label in this card name the same device the same way.
+ *
  * #4297: a peer that has unpaired US takes the place of the last-synced time
  * with a destructive "pairing lost" state, because that timestamp counts from
  * the last session that succeeded and would otherwise render a permanently
@@ -28,6 +33,7 @@ import { truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { peerDisplayName, peerName } from '@/lib/peer-display-name'
 import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
 
 export interface PeerListItemProps {
@@ -57,6 +63,11 @@ export function PeerListItem({
 
   // #4084 — see the comment at the render site.
   const lastActivityAt = lastSyncActivityAt(peer)
+
+  // #4298 — what to call this device: the user's override, then the name the
+  // peer supplied over the wire, then its truncated id. Resolved once so the
+  // heading, the rename label and the address-edit label cannot disagree.
+  const displayName = peerDisplayName(peer)
 
   // #4297 — non-null means this peer has told us, on the wire, that it holds
   // no pairing with this device: it was unpaired from the other end and this
@@ -122,9 +133,7 @@ export function PeerListItem({
                 button in a stacked action column looks wrong. `ml-auto`
                 right-aligns it against the card edge. */}
             <div className="flex min-w-0 items-center gap-2">
-              <p className="device-peer-name min-w-0 text-sm font-medium truncate">
-                {peer.device_name || truncateId(peer.peer_id)}
-              </p>
+              <p className="device-peer-name min-w-0 text-sm font-medium truncate">{displayName}</p>
               <Button
                 variant="ghost"
                 size="sm"
@@ -132,13 +141,21 @@ export function PeerListItem({
                 onClick={() => onRename(peer.peer_id)}
                 disabled={renamingPeerId === peer.peer_id}
                 aria-label={t('device.renameDeviceLabel', {
-                  name: peer.device_name || truncateId(peer.peer_id),
+                  name: displayName,
                 })}
               >
                 {renamingPeerId === peer.peer_id ? <Spinner /> : <Pencil />}
               </Button>
             </div>
-            {peer.device_name && (
+            {/* #4298: the id line is the SUBTITLE under a name, so it is shown
+              whenever the row has a name to be the subtitle of — the user's
+              override or, since #4298, the one the peer supplied. Keying it on
+              `device_name` alone would drop the id from every peer-named row,
+              which is the one place a user needs it to tell two identically
+              named devices apart. Gating on a name at all is what stops it
+              rendering twice on an unnamed row, where the name line IS the
+              truncated id. */}
+            {peerName(peer) != null && (
               <p
                 className="device-peer-id text-xs font-mono
                 text-muted-foreground truncate"
@@ -226,7 +243,7 @@ export function PeerListItem({
                 size="icon-xs"
                 className="peer-address-edit"
                 aria-label={t('device.editAddressLabel', {
-                  name: peer.device_name || truncateId(peer.peer_id),
+                  name: displayName,
                 })}
               >
                 <Pencil />

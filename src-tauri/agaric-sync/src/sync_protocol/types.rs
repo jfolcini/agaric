@@ -55,6 +55,45 @@ pub fn decode_persisted_loro_vvs(bytes: &[u8]) -> Vec<SpaceVersionVector> {
     serde_json::from_slice(bytes).unwrap_or_default()
 }
 
+/// The maximum length, in Unicode scalar values, of a device name on the wire
+/// (#4298).
+///
+/// 64, matching `MAX_RENAME_LENGTH` in
+/// `src/components/dialogs/RenameDialog.tsx` — the cap the user's own rename
+/// already enforces. Picking the same number means a peer-supplied name and a
+/// user-typed one occupy the same space in the device list, so neither can
+/// blow out a layout the other fits in.
+///
+/// Counted in **characters**, not bytes, so the bound is on what is rendered
+/// rather than on the encoding: a 64-character name is 64 columns of text
+/// whether it is ASCII or CJK, and a byte cap would truncate a multi-byte
+/// name to a fraction of that (or, worse, mid-scalar).
+pub const MAX_DEVICE_NAME_CHARS: usize = 64;
+
+/// Normalise a device name for the wire (#4298): trim it, treat
+/// empty/whitespace-only as absent, and clamp it to
+/// [`MAX_DEVICE_NAME_CHARS`].
+///
+/// Applied on **send** (the initiator advertising its own hostname) and again
+/// on **receive** (the responder persisting what a peer claimed). The
+/// receive-side application is the load-bearing one: the sender is an untrusted
+/// remote and there is nothing about a well-behaved sender that a hostile one
+/// cannot omit. Doing it on send too keeps this device from being the one that
+/// puts an unreasonable value on the wire, and keeps the two sides' notion of a
+/// valid name identical by construction — one function, called twice.
+///
+/// Returns `None` for anything that is not a name, so the caller never has to
+/// distinguish "sent nothing" from "sent whitespace": both mean *no name*, and
+/// a stored `NULL` is what makes the display fall through to the next
+/// precedence level rather than rendering a blank row.
+pub fn clamp_device_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.chars().take(MAX_DEVICE_NAME_CHARS).collect())
+}
+
 /// Wire-format mirror of `OpRecord` for sync transfer.
 ///
 /// **I-Sync-4 — deliberate boundary, not duplication.** Today every field
@@ -336,6 +375,42 @@ pub enum SyncMessage {
         /// responder only consults it on the unpaired-pending-pairing path).
         #[serde(default)]
         pairing_proof: Option<String>,
+        /// #4298 — what the initiator calls itself: its OS hostname, so the
+        /// responder can render a paired device as "javier-thinkpad" instead of
+        /// `e3d48f0a-45a…`. Persisted by the responder as
+        /// `peer_refs.remote_device_name` (migration 0114) — **never** as
+        /// `peer_refs.device_name`, which is the local user's override and
+        /// outranks this.
+        ///
+        /// Re-sent on every session rather than once at pairing: a device can
+        /// be renamed at any time, there is no other frame that would carry the
+        /// update, and the write is conditional on a change
+        /// (`peer_refs::update_remote_device_name`) so a steady-state session
+        /// costs one read and no write.
+        ///
+        /// Untrusted display text. It is clamped to
+        /// [`MAX_DEVICE_NAME_CHARS`] and normalised (empty/whitespace-only →
+        /// `None`) by [`clamp_device_name`] on send AND again on receive — a
+        /// peer can put anything here, so every bound is re-applied by the side
+        /// that has to render it rather than assumed of the sender.
+        ///
+        /// `#[serde(default)]` (→ `None`) for wire back-compat, exactly as
+        /// `pairing_proof` above: a peer predating this field omits it and the
+        /// responder simply learns no name (keeping whatever it already had),
+        /// and a peer predating it that *receives* it ignores the unknown field
+        /// — this enum carries no `deny_unknown_fields`.
+        ///
+        /// Initiator-only, because `HeadExchange` is. The responder has no
+        /// equivalent one-shot frame, so it does not answer with its own name
+        /// in this session; it learns nothing here and the initiator learns
+        /// nothing about it. That direction closes on its own, because the roles
+        /// are not fixed — every device runs the resync scheduler and dials its
+        /// peers, so each side is the initiator of some session and the pair
+        /// converges on both names within a resync interval. Adding a
+        /// responder→initiator name frame would buy only the gap between the
+        /// first pair and the peer's first outbound dial.
+        #[serde(default)]
+        device_name: Option<String>,
     },
     /// Loro-CRDT-based sync wire envelope.
     ///

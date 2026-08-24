@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT remote_device_name FROM peer_refs WHERE peer_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "remote_device_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "remote_device_name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "35299a1fd4b984c3f8468b7d2d8bc875a8c10bf47e37b93dd4035b773aa0ec05"
+}

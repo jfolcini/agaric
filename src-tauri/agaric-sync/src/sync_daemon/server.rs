@@ -82,7 +82,7 @@ use std::sync::atomic::AtomicBool;
 use crate::apply_host::ApplyHost;
 use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_protocol::{SyncMessage, SyncOrchestrator};
+use crate::sync_protocol::{SyncMessage, SyncOrchestrator, clamp_device_name};
 use crate::sync_scheduler::SyncScheduler;
 use crate::transport::driver::{Role, SessionLimits, finish_session, run_session};
 use crate::transport::service::InboundSession;
@@ -490,18 +490,28 @@ async fn handle_incoming_sync_inner(
     // here says that once, rather than leaving it to be re-derived from the shape of
     // the `Option` below.
     //
-    // Both fields are copied out of the frame here rather than borrowed from it,
+    // All three fields are copied out of the frame here rather than borrowed from it,
     // because `opening` is moved into the driver below and everything between now and
     // then needs `&mut session`.
+    //
+    // #4298: `device_name` is clamped as it is copied out, at the boundary rather than
+    // at the write site further down. It is the first thing this process does with an
+    // untrusted string from the wire, so there is no window in which an unbounded value
+    // exists in a variable something else could pick up.
     let opening_parts = match &opening {
         SyncMessage::HeadExchange {
             heads,
             pairing_proof,
+            device_name,
             ..
-        } => Some((heads.clone(), pairing_proof.clone())),
+        } => Some((
+            heads.clone(),
+            pairing_proof.clone(),
+            device_name.as_deref().and_then(clamp_device_name),
+        )),
         _ => None,
     };
-    let Some((heads, offered_proof)) = opening_parts else {
+    let Some((heads, offered_proof, offered_device_name)) = opening_parts else {
         // Log the variant only (`discriminant`, the convention in
         // `session_state_machine::handle_message`) — never the payload.
         tracing::warn!(
@@ -884,6 +894,43 @@ async fn handle_incoming_sync_inner(
         );
     }
 
+    // ── Record what the peer calls itself (#4298) ─────────────────────────────
+    //
+    // Here, and not earlier, for the same reason the bind is here: this is the first
+    // point at which the authoritative peer id is known. A name is worthless without an
+    // id to hang it on, and the id an unpaired device advertises up front is not one
+    // (an empty op log advertises no head of its own).
+    //
+    // Deliberately outside the bind branches above. `update_remote_device_name` is a
+    // `WHERE peer_id = ?` that touches a row or touches nothing, so a stranger with no
+    // row records nothing, and a peer whose bind was refused (`already_bound_elsewhere`)
+    // or was a no-op still gets its name refreshed if we already hold a row for it —
+    // a device that changed keys is still the device whose name we display. The value
+    // was clamped at the frame boundary; the store write is unconditional on change, so
+    // a steady-state session costs one read and no write.
+    //
+    // Best-effort: a failure here loses a display nicety for one session and the next
+    // one re-sends the name. It must not fail a session that has already moved data.
+    if !settled_remote_id.is_empty()
+        && settled_remote_id != device_id
+        && let Some(name) = offered_device_name.as_deref()
+    {
+        match peer_refs::update_remote_device_name(&pool_ref, &settled_remote_id, Some(name)).await
+        {
+            Ok(true) => tracing::info!(
+                peer_id = %settled_remote_id,
+                "recorded the name this peer advertises for itself (#4298)"
+            ),
+            Ok(false) => {}
+            Err(e) => tracing::warn!(
+                peer_id = %settled_remote_id,
+                error = %e,
+                "failed to record the peer's advertised device name (#4298); the device \
+                 list keeps whatever name it already had"
+            ),
+        }
+    }
+
     let session_state = orch.session();
     tracing::info!(
         ops_rx = session_state.ops_received,
@@ -924,6 +971,7 @@ mod tests {
             last_reset_at: None,
             cert_hash: None,
             device_name: None,
+            remote_device_name: None,
             last_address: None,
             endpoint_id: endpoint_id.map(str::to_owned),
             unpaired_by_peer_at_ms: None,
