@@ -209,6 +209,7 @@ devdb_migration_gap() {
     # hard block with a headline and a blank body.
     out="$(python3 - "$src_tauri" "$migrations_dir" 2>&1 <<'PYEOF'
 import os
+import pathlib
 import re
 import sqlite3
 import sys
@@ -263,7 +264,13 @@ def main():
                         continue
                     m = key_re.match(line)
                     if not m:
-                        if "DATABASE_URL" in line:
+                        # A word-boundary match, not a plain substring test:
+                        # "POSTGRES_DATABASE_URL=" or "DATABASE_URL_REPLICA="
+                        # both contain "DATABASE_URL" as a substring but name
+                        # a DIFFERENT key entirely, so they must not set the
+                        # ambiguous flag and force the rc=2 "could not
+                        # resolve" banner on every push (#4330 review).
+                        if re.search(r"\bDATABASE_URL\b", line):
                             # Mentions the key in a form this parser
                             # doesn't recognise (e.g. a YAML-style
                             # "DATABASE_URL:", or some other unhandled
@@ -299,7 +306,25 @@ def main():
         print("  Set it to a plain sqlite: URL so this preflight can check it, e.g.:")
         print("    DATABASE_URL=sqlite:dev.db")
         sys.exit(2)
-    if val and val.startswith("sqlite:"):
+    if val is not None and not val.startswith("sqlite:"):
+        # A DATABASE_URL that actually resolved (exported, or a clean .env
+        # assignment — not the env_ambiguous cases above) to something that
+        # isn't a sqlite: URL at all: empty ("DATABASE_URL=" with no value),
+        # or another engine entirely (e.g. "postgres://..."). This preflight
+        # only understands sqlite:, and checking dev.db against a database
+        # the developer isn't even using would silently hard-block (rc=1)
+        # with a remedy aimed at the wrong database — this file's own stated
+        # policy is that "cannot tell" is a warn (rc=2), not a block (#4330
+        # review). Not reachable in this repo today (sqlite-only,
+        # .env.example pins "sqlite:dev.db") but exit 1 here would violate
+        # that policy the moment it became reachable.
+        print("DATABASE_URL is set but is not a sqlite: URL: %r" % val)
+        print("  This preflight only understands sqlite: URLs and cannot tell")
+        print("  whether your actual database is caught up with migrations/.")
+        print("  If you are using sqlite, set it to a plain sqlite: URL, e.g.:")
+        print("    DATABASE_URL=sqlite:dev.db")
+        sys.exit(2)
+    if val is not None:
         db_rel = resolve_sqlite_path(val)
     db_file = db_rel if os.path.isabs(db_rel) else os.path.join(src_tauri, db_rel)
 
@@ -330,7 +355,15 @@ def main():
                 expected[int(m.group(1))] = fn
 
     try:
-        con = sqlite3.connect("file:%s?mode=ro" % db_file, uri=True)
+        # `"file:%s?mode=ro" % db_file` is not a real URI construction — a
+        # checkout path containing "#", "?", or "%" (e.g. a directory named
+        # "work#2") gets misparsed by sqlite3's own URI handling (the "#"
+        # starts a fragment, truncating the path) rather than raising, so
+        # this silently opened the wrong (nonexistent) file and fell through
+        # to the same could-not-inspect rc=2 warn path as any other open
+        # failure — safe, but silently inert for such a checkout (#4330
+        # review). `Path.as_uri()` percent-escapes the path correctly.
+        con = sqlite3.connect(pathlib.Path(db_file).as_uri() + "?mode=ro", uri=True)
         cur = con.cursor()
         cur.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'"
@@ -1039,7 +1072,7 @@ con.commit()
     # review — an ambient DATABASE_URL used to make this and the other
     # fixture-default cases below go red, invisibly, since no CI workflow
     # exports it).
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_devdb_root/missing-db/src-tauri" "$st_devdb_root/missing-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/missing-db/src-tauri" "$st_devdb_root/missing-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
         && st_devdb_names_remedy "$st_out"; then
         st_ok "a missing dev.db fails, naming the file and the exact remedy"
@@ -1051,7 +1084,7 @@ con.commit()
     #     `cargo sqlx database create` ran, `migrate run` never did): fails,
     #     names the missing table and the remedy.
     st_devdb_seed never-migrated "0001_initial.sql" NOTABLE
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_devdb_root/never-migrated/src-tauri" "$st_devdb_root/never-migrated/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/never-migrated/src-tauri" "$st_devdb_root/never-migrated/src-tauri/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q '_sqlx_migrations' \
         && st_devdb_names_remedy "$st_out"; then
         st_ok "a never-migrated dev.db fails, naming the missing table and the remedy"
@@ -1063,7 +1096,7 @@ con.commit()
     #     0002, migration 0003 is on disk and pending. Fails, names exactly
     #     that file and the exact remedy command.
     st_devdb_seed behind-tail "0001_initial.sql 0002_second.sql 0003_third.sql" "1 2"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_devdb_root/behind-tail/src-tauri" "$st_devdb_root/behind-tail/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/behind-tail/src-tauri" "$st_devdb_root/behind-tail/src-tauri/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0003_third.sql' \
         && st_devdb_names_remedy "$st_out"; then
         st_ok "a dev.db behind by one migration fails, naming it and the exact remedy"
@@ -1076,7 +1109,7 @@ con.commit()
     #     this caught up; the set comparison this check does must not.
     #     Names ONLY the missing one, not the two already applied.
     st_devdb_seed middle-gap "0001_initial.sql 0002_second.sql 0003_third.sql" "1 3"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_devdb_root/middle-gap/src-tauri" "$st_devdb_root/middle-gap/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/middle-gap/src-tauri" "$st_devdb_root/middle-gap/src-tauri/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0002_second.sql' \
         && ! printf '%s' "$st_out" | grep -qF '0001_initial.sql' \
         && ! printf '%s' "$st_out" | grep -qF '0003_third.sql'; then
@@ -1088,7 +1121,7 @@ con.commit()
     # 30. The healthy shape must pass SILENTLY — a preflight that fires on a
     #     caught-up dev.db is worse than none (mirrors case 13 above).
     st_devdb_seed up-to-date "0001_initial.sql 0002_second.sql" "1 2"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_devdb_root/up-to-date/src-tauri" "$st_devdb_root/up-to-date/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/up-to-date/src-tauri" "$st_devdb_root/up-to-date/src-tauri/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "a dev.db caught up with migrations/ passes silently"
     else
@@ -1109,7 +1142,7 @@ con.commit()
     st_devdb_seed dburl-dblslash "0001_initial.sql" "1" custom-a.db
     st_dir="$st_devdb_root/dburl-dblslash/src-tauri"
     printf 'DATABASE_URL=sqlite://custom-a.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "DATABASE_URL=sqlite://<file> resolves the file, not a bogus absolute path"
     else
@@ -1120,7 +1153,7 @@ con.commit()
     st_devdb_seed dburl-abspath "0001_initial.sql" "1" custom-b.db
     st_dir="$st_devdb_root/dburl-abspath/src-tauri"
     printf 'DATABASE_URL=sqlite://%s/custom-b.db\n' "$st_dir" >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "DATABASE_URL=sqlite:///<abs path> resolves the absolute file"
     else
@@ -1132,7 +1165,7 @@ con.commit()
     st_devdb_seed dburl-query "0001_initial.sql" "1" custom-c.db
     st_dir="$st_devdb_root/dburl-query/src-tauri"
     printf 'DATABASE_URL=sqlite:custom-c.db?mode=rwc\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "a trailing ?query string on DATABASE_URL is stripped, not treated as part of the filename"
     else
@@ -1145,7 +1178,7 @@ con.commit()
     st_devdb_seed dburl-first-wins "0001_initial.sql" "1" good.db
     st_dir="$st_devdb_root/dburl-first-wins/src-tauri"
     printf 'DATABASE_URL=sqlite:good.db\nDATABASE_URL=sqlite:does-not-exist.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "the FIRST DATABASE_URL= line in .env wins, matching dotenvy"
     else
@@ -1158,7 +1191,7 @@ con.commit()
     st_devdb_seed dburl-exported-wins "0001_initial.sql" "1" good2.db
     st_dir="$st_devdb_root/dburl-exported-wins/src-tauri"
     printf 'DATABASE_URL=sqlite:does-not-exist2.db\n' >"$st_dir/.env"
-    st_out="$(DATABASE_URL="sqlite:good2.db" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset SQLX_OFFLINE; DATABASE_URL="sqlite:good2.db" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "an exported DATABASE_URL wins over a stale .env entry"
     else
@@ -1175,7 +1208,7 @@ con.commit()
     mkdir -p "$st_devdb_root/corrupt-db/src-tauri/migrations"
     touch "$st_devdb_root/corrupt-db/src-tauri/migrations/0001_initial.sql"
     printf 'not a sqlite database\n' >"$st_devdb_root/corrupt-db/src-tauri/dev.db"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_devdb_root/corrupt-db/src-tauri" "$st_devdb_root/corrupt-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/corrupt-db/src-tauri" "$st_devdb_root/corrupt-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not inspect'; then
         st_ok "a corrupt (non-sqlite) dev.db is reported as could-not-inspect (rc=2), not a confirmed gap"
     else
@@ -1186,7 +1219,7 @@ con.commit()
     #     stdout (not lose it to the terminal as bare stderr) and return 2.
     st_devdb_seed no-python "0001_initial.sql" "1"
     st_dir="$st_devdb_root/no-python/src-tauri"
-    st_out="$(PATH="$st_devdb_root/empty-bin-$$" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset SQLX_OFFLINE; PATH="$st_devdb_root/empty-bin-$$" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'python3 not found'; then
         st_ok "a missing python3 is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body"
     else
@@ -1210,12 +1243,31 @@ con.commit()
     st_dir="$st_devdb_root/ambient-hostile/src-tauri"
     DATABASE_URL="sqlite:/nonexistent-hostile-path/ambient.db"
     export DATABASE_URL
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     unset DATABASE_URL
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "a hostile ambient exported DATABASE_URL does not leak into an isolated fixture invocation"
     else
         st_bad "a hostile ambient exported DATABASE_URL does not leak into an isolated fixture invocation" "rc=$st_rc out=$st_out"
+    fi
+
+    # 38b. Same property, for SQLX_OFFLINE: a hostile ambient exported
+    #      SQLX_OFFLINE=true (as a developer's `export SQLX_OFFLINE=true`
+    #      for `cargo check` would be) must not leak into an isolated
+    #      fixture invocation and mask a confirmed gap as a silent pass —
+    #      the missing-db fixture from case 26 must still hard-block. Before
+    #      the fix this case's own assertion (a non-zero rc) goes RED under
+    #      such an ambient value, while every case above asserting rc=0
+    #      passes VACUOUSLY (short-circuited, not actually exercised) — the
+    #      same failure shape case 38 exists to prevent for DATABASE_URL.
+    SQLX_OFFLINE=true
+    export SQLX_OFFLINE
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/missing-db/src-tauri" "$st_devdb_root/missing-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    unset SQLX_OFFLINE
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist'; then
+        st_ok "a hostile ambient exported SQLX_OFFLINE=true does not leak into an isolated fixture invocation"
+    else
+        st_bad "a hostile ambient exported SQLX_OFFLINE=true does not leak into an isolated fixture invocation" "rc=$st_rc out=$st_out"
     fi
 
     # ── SQLX_OFFLINE (#4330 review) ────────────────────────────────────
@@ -1256,7 +1308,7 @@ con.commit()
     mkdir -p "$st_weird_bin"
     printf '#!/bin/sh\nexit 126\n' >"$st_weird_bin/python3"
     chmod +x "$st_weird_bin/python3"
-    st_out="$(PATH="$st_weird_bin" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset SQLX_OFFLINE; PATH="$st_weird_bin" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not inspect' \
         && printf '%s' "$st_out" | grep -q '126'; then
         st_ok "an unexpected python3 exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op"
@@ -1274,7 +1326,7 @@ con.commit()
     st_devdb_seed dburl-export-spaces-comment "0001_initial.sql" "1" combo.db
     st_dir="$st_devdb_root/dburl-export-spaces-comment/src-tauri"
     printf 'export DATABASE_URL = sqlite:combo.db   # dev db, see README\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "an 'export', spaced '=', and trailing comment on DATABASE_URL all resolve correctly together"
     else
@@ -1291,7 +1343,7 @@ con.commit()
     st_devdb_seed dburl-quote-pair "0001_initial.sql" "1" nested.db
     st_dir="$st_devdb_root/dburl-quote-pair/src-tauri"
     printf 'DATABASE_URL="sqlite:nested.db"trailer\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "quotes are stripped as a single matched pair, not repeated stripping"
     else
@@ -1304,7 +1356,7 @@ con.commit()
     st_devdb_seed dburl-var-ref "0001_initial.sql" "1"
     st_dir="$st_devdb_root/dburl-var-ref/src-tauri"
     printf 'DATABASE_URL=sqlite:${DB_DIR}/dev.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not resolve DATABASE_URL'; then
         st_ok "an unresolved \${VAR}-style DATABASE_URL warns (rc=2) instead of a wrong-diagnosis hard block"
     else
@@ -1318,7 +1370,7 @@ con.commit()
     st_devdb_seed dburl-unparseable-mention "0001_initial.sql" "1"
     st_dir="$st_devdb_root/dburl-unparseable-mention/src-tauri"
     printf 'DATABASE_URL points at sqlite:dev.db, see setup-dev-db.sh\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not resolve DATABASE_URL'; then
         st_ok "a .env line that mentions DATABASE_URL but parses as neither an assignment nor a comment warns (rc=2)"
     else
@@ -1332,11 +1384,74 @@ con.commit()
     st_devdb_seed dburl-commented-out "0001_initial.sql 0002_second.sql" "1 2"
     st_dir="$st_devdb_root/dburl-commented-out/src-tauri"
     printf '# DATABASE_URL=sqlite:somewhere-else.db\n' >"$st_dir/.env"
-    st_out="$(unset DATABASE_URL; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
         st_ok "a commented-out DATABASE_URL= line in .env is ignored, falling through to the dev.db default"
     else
         st_bad "a commented-out DATABASE_URL= line in .env is ignored, falling through to the dev.db default" "rc=$st_rc out=$st_out"
+    fi
+
+    # 47. .env names a DIFFERENT key that merely CONTAINS "DATABASE_URL" as a
+    #     substring ("POSTGRES_DATABASE_URL=", "DATABASE_URL_REPLICA=") —
+    #     a plain `"DATABASE_URL" in line` test would set the ambiguous flag
+    #     and force the rc=2 banner even though the real DATABASE_URL is
+    #     unmentioned and the dev.db default resolves fine. Must pass
+    #     silently, exactly like case 46.
+    st_devdb_seed dburl-substring-neighbor "0001_initial.sql 0002_second.sql" "1 2"
+    st_dir="$st_devdb_root/dburl-substring-neighbor/src-tauri"
+    printf 'POSTGRES_DATABASE_URL=sqlite:should-be-ignored.db\nDATABASE_URL_REPLICA=sqlite:also-ignored.db\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+        st_ok "a .env key that merely contains DATABASE_URL as a substring is not treated as an ambiguous mention"
+    else
+        st_bad "a .env key that merely contains DATABASE_URL as a substring is not treated as an ambiguous mention" "rc=$st_rc out=$st_out"
+    fi
+
+    # ── resolved-but-not-sqlite DATABASE_URL (#4330 review) ────────────
+    # A DATABASE_URL that actually resolved to something this preflight
+    # cannot check at all — empty, or a different engine's URL — used to
+    # fall through to the "dev.db" default silently, then hard-block (rc=1)
+    # with a migrate-run remedy aimed at a database the developer isn't
+    # using. This file's own stated policy is "cannot tell" -> warn (rc=2),
+    # not block.
+
+    # 48. A non-sqlite DATABASE_URL (e.g. postgres://) must warn (rc=2), not
+    #     silently check dev.db and hard-block against the wrong database.
+    st_devdb_seed dburl-postgres "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/dburl-postgres/src-tauri"
+    printf 'DATABASE_URL=postgres://user@localhost/agaric\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'not a sqlite: URL'; then
+        st_ok "a non-sqlite DATABASE_URL (e.g. postgres://) warns (rc=2) instead of checking the wrong database"
+    else
+        st_bad "a non-sqlite DATABASE_URL (e.g. postgres://) warns (rc=2) instead of checking the wrong database" "rc=$st_rc out=$st_out"
+    fi
+
+    # 49. An explicit but EMPTY "DATABASE_URL=" in .env must also warn
+    #     (rc=2), not silently fall back to the dev.db default.
+    st_devdb_seed dburl-empty "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/dburl-empty/src-tauri"
+    printf 'DATABASE_URL=\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'not a sqlite: URL'; then
+        st_ok "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db"
+    else
+        st_bad "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db" "rc=$st_rc out=$st_out"
+    fi
+
+    # ── sqlite URI construction (#4330 review) ─────────────────────────
+    # 50. A checkout path containing "#", "?", or "%" — a naive
+    #     `"file:%s?mode=ro" % db_file` misparses these (e.g. "#" starts a
+    #     URI fragment, truncating the path at it), degrading to the rc=2
+    #     could-not-inspect warn path instead of actually inspecting dev.db.
+    #     Must resolve correctly and pass SILENTLY, same shape as case 30.
+    st_devdb_seed 'weird#dir?with%chars' "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/weird#dir?with%chars/src-tauri"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+        st_ok "a checkout path containing #, ?, or % is percent-escaped correctly, not misparsed into could-not-inspect"
+    else
+        st_bad "a checkout path containing #, ?, or % is percent-escaped correctly, not misparsed into could-not-inspect" "rc=$st_rc out=$st_out"
     fi
 
     rm -rf "$st_devdb_root"
