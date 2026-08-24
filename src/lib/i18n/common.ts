@@ -243,6 +243,17 @@ export const common: Record<string, string> = {
   'contextMenu.blockRefCopied': 'Block reference copied to clipboard',
   'contextMenu.pageRefCopied': 'Page reference copied to clipboard',
   'contextMenu.copyRefFailed': 'Failed to copy reference',
+  // Copy the block's markdown CONTENT (not a reference to it) to the system
+  // clipboard — shallow (this block only), the whole subtree, or the whole
+  // multi-block selection. Same serializer + humanized refs as the
+  // `copyBlocks` keyboard chord.
+  'contextMenu.copyBlockContent': 'Copy block content',
+  'contextMenu.copySubtreeContent': 'Copy subtree content',
+  'contextMenu.copySelectionContent': 'Copy selection',
+  'contextMenu.blockContentCopied': 'Block content copied to clipboard',
+  'contextMenu.subtreeContentCopied': 'Subtree content copied to clipboard',
+  'contextMenu.selectionContentCopied': 'Selection copied to clipboard',
+  'contextMenu.copyContentFailed': 'Failed to copy content',
   'contextMenu.actionFailed': 'Action failed',
   'contextMenu.turnInto': 'Turn into',
   'contextMenu.turnIntoType.paragraph': 'Text',

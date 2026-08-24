@@ -2002,7 +2002,7 @@ describe('SortableBlock long-press and context menu', () => {
       touches: [{ clientX: 100, clientY: 100 }],
     })
 
-    // Move beyond threshold (LONG_PRESS_MOVE_THRESHOLD = 10px)
+    // Move beyond threshold (LONG_PRESS_MOVE_THRESHOLD = 5px)
     fireEvent.touchMove(wrapper, {
       touches: [{ clientX: 115, clientY: 100 }], // 15px away
     })

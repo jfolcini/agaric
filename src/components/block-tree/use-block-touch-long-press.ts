@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 export const LONG_PRESS_DELAY = 400
-export const LONG_PRESS_MOVE_THRESHOLD = 10
+/**
+ * Finger drift (px) past which a pending long-press is abandoned.
+ *
+ * MUST stay equal to `TOUCH_DRAG_TOLERANCE` (the @dnd-kit PointerSensor's
+ * activation tolerance in `use-block-dnd.ts`) — see precedence note 3 below.
+ * A drift-guard unit test asserts the two constants agree.
+ */
+export const LONG_PRESS_MOVE_THRESHOLD = 5
 
 /**
  * #926 f2 — DOCUMENTED gesture precedence: long-press (this hook, 400 ms) vs
@@ -21,9 +28,28 @@ export const LONG_PRESS_MOVE_THRESHOLD = 10
  *      uncontested and opens the context menu (which itself offers Indent /
  *      Dedent / Move so touch users still get reorder + nesting — #926 f4).
  *
+ *   3. THRESHOLDS MUST AGREE. The sensor cancels a pending drag once the finger
+ *      drifts past its `tolerance` (`TOUCH_DRAG_TOLERANCE`, 5 px); this hook
+ *      abandons a pending long-press once the finger drifts past
+ *      `LONG_PRESS_MOVE_THRESHOLD`. While the latter was the looser 10 px, a
+ *      6–9 px drift inside the first 250 ms fell in the gap: it killed the drag
+ *      but not the long-press, so the menu popped on a gesture the user had
+ *      performed as a drag. The two constants are now equal (5 px) and a unit
+ *      test holds them there — deliberately tightening the long-press rather
+ *      than loosening the sensor, since a looser sensor makes accidental
+ *      reorders easier.
+ *
+ *   4. THE NATIVE `contextmenu` OBEYS THE SAME PRECEDENCE. Android WebView
+ *      fires a native `contextmenu` at ~500 ms on a held element (wired via
+ *      `SortableBlock`'s `onContextMenu`). By then the drag has activated
+ *      (250 ms) and `clearLongPress()` has killed our own timer — but the
+ *      native event arrives on its own path, so `handleContextMenu` re-checks
+ *      `isDraggingRef` exactly like the timer callback does and bails.
+ *
  * The single source of truth for "a drag is in progress" is `isDraggingRef`,
  * read both eagerly (cancel-on-drag-start via `clearLongPress`) and lazily (the
- * timer-callback guard). This is a pragmatic guard, not a full gesture arbiter.
+ * timer-callback guard and the native-`contextmenu` guard). This is a pragmatic
+ * guard, not a full gesture arbiter.
  */
 
 export interface UseBlockTouchLongPressOptions {
@@ -135,12 +161,14 @@ export function useBlockTouchLongPress({
       const dx = touch.clientX - touchStartPos.current.x
       const dy = touch.clientY - touchStartPos.current.y
       // #927 f5: scroll intent wins over long-press. If the finger travels
-      // past LONG_PRESS_MOVE_THRESHOLD (10 px) in ANY direction before the
-      // 400 ms timer fires, the user is dragging — almost always a vertical
-      // scroll — not holding a stationary press. Cancel the timer so the
-      // scroll isn't hijacked into a context menu. The radial (Euclidean)
-      // check covers vertical, horizontal, and diagonal drags alike; a
-      // near-stationary press (jitter < 10 px) still opens the menu at 400 ms.
+      // past LONG_PRESS_MOVE_THRESHOLD (5 px) in ANY direction before the
+      // 400 ms timer fires, the user is dragging — a vertical scroll or a
+      // press-and-hold reorder — not holding a stationary press. Cancel the
+      // timer so the gesture isn't hijacked into a context menu. The radial
+      // (Euclidean) check covers vertical, horizontal, and diagonal drags
+      // alike; a near-stationary press (jitter ≤ 5 px) still opens the menu at
+      // 400 ms. 5 px mirrors the drag sensor's tolerance (precedence note 3),
+      // so no drift can cancel the drag while sparing the long-press.
       if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_THRESHOLD) {
         clearLongPress()
       }
@@ -150,7 +178,15 @@ export function useBlockTouchLongPress({
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
+      // Always suppress the browser's own menu — even mid-drag, where letting
+      // the native menu through would be strictly worse than showing nothing.
       e.preventDefault()
+      // #926 f2 (precedence guard, native path): Android WebView fires a native
+      // `contextmenu` at ~500 ms on a held element. The drag activated at
+      // 250 ms and `clearLongPress()` already killed our 400 ms timer, but this
+      // event rides a separate path — so it needs the SAME `isDraggingRef`
+      // check as the timer callback, or dragging a block also opens the menu.
+      if (isDraggingRef.current) return
       const linkEl = (e.target as HTMLElement).closest('.external-link') as
         | HTMLAnchorElement
         | HTMLSpanElement
@@ -160,7 +196,7 @@ export function useBlockTouchLongPress({
         : undefined
       openContextMenu(e.clientX, e.clientY, linkUrl)
     },
-    [openContextMenu],
+    [openContextMenu, isDraggingRef],
   )
 
   // Cleanup timer on unmount to prevent memory leak

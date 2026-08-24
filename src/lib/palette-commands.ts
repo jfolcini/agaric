@@ -31,13 +31,13 @@ import {
   FilePlus2,
   FileSearch,
   FileText,
+  Funnel,
   Keyboard,
   LayoutTemplate,
   type LucideIcon,
   Network,
   PanelLeftIcon,
   Settings as SettingsIcon,
-  SlidersHorizontal,
   Tag as TagIcon,
   Trash2,
 } from 'lucide-react'
@@ -139,7 +139,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     id: 'go-query',
     labelKey: 'palette.cmdGoQuery',
     category: 'navigate',
-    icon: SlidersHorizontal,
+    icon: Funnel,
     run: ({ onClose }) => {
       useNavigationStore.getState().setView('query')
       onClose()

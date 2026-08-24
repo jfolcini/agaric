@@ -38,6 +38,29 @@ import {
 } from '@/lib/tree-utils'
 import type { MountedBlocks } from '@/lib/zoom-scope'
 
+/**
+ * Press-and-hold delay (ms) before a COARSE-pointer drag activates.
+ * Deliberately shorter than `LONG_PRESS_DELAY` (400 ms) so the drag wins the
+ * arbitration on the handle — see the precedence block in
+ * `use-block-touch-long-press.ts`.
+ */
+export const TOUCH_DRAG_ACTIVATION_DELAY = 250
+
+/**
+ * Finger drift (px) tolerated during `TOUCH_DRAG_ACTIVATION_DELAY` before the
+ * PointerSensor CANCELS the pending drag.
+ *
+ * MUST stay equal to `LONG_PRESS_MOVE_THRESHOLD` (`use-block-touch-long-press.ts`).
+ * When the long-press threshold was the looser 10 px, a 6–9 px drift in the
+ * first 250 ms cancelled the drag (tolerance exceeded) yet SURVIVED the
+ * long-press move check — so the context menu opened on a gesture the user had
+ * performed as a drag. A drift-guard unit test asserts the two agree.
+ */
+export const TOUCH_DRAG_TOLERANCE = 5
+
+/** Pointer travel (px) that activates a FINE-pointer drag (so a click still clicks). */
+export const MOUSE_DRAG_ACTIVATION_DISTANCE = 8
+
 interface UseBlockDnDParams {
   blocks: FlatBlock[]
   /**
@@ -285,7 +308,9 @@ export function useBlockDnD({
   const isTouch = useIsTouch()
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: isTouch ? { delay: 250, tolerance: 5 } : { distance: 8 },
+      activationConstraint: isTouch
+        ? { delay: TOUCH_DRAG_ACTIVATION_DELAY, tolerance: TOUCH_DRAG_TOLERANCE }
+        : { distance: MOUSE_DRAG_ACTIVATION_DISTANCE },
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
