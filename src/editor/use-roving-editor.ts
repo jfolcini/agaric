@@ -31,6 +31,7 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import { type Editor, Extension, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
@@ -227,10 +228,31 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   // `HTMLAttributes` are in play). Lowlight's highlighting is applied as
   // decorations inside `contentDOM` and is unaffected.
   addNodeView() {
-    const renderReact = ReactNodeViewRenderer(MermaidCodeBlockView)
     const prefix = this.options.languageClassPrefix ?? 'language-'
-    const isMermaid = (node: { attrs: Record<string, unknown> }): boolean =>
-      node.attrs['language'] === 'mermaid'
+    const isMermaid = (node: PMNode): boolean => node.attrs['language'] === 'mermaid'
+
+    // The mirror image of the plain view's `update` below: tiptap's default
+    // `NodeView.update` only refuses when the node TYPE changes, and switching
+    // `language` off `mermaid` is an attribute-only change on the SAME type.
+    // Without this guard the React view survived mermaid→javascript and then
+    // re-rendered into MermaidCodeBlockView's non-mermaid branch — a React node
+    // view around a `<pre><code>`, i.e. exactly the DOMObserver flush loop this
+    // whole node view exists to avoid. Returning false makes prosemirror
+    // destroy it and rebuild the plain DOM view.
+    const renderReact = ReactNodeViewRenderer(MermaidCodeBlockView, {
+      update: ({ oldNode, newNode, updateProps }) => {
+        if (!isMermaid(newNode)) return false
+        // Mirror the default's `nodeChanged` short-circuit. Supplying `update`
+        // REPLACES tiptap's own body, and that body re-renders the React
+        // component only when the node identity actually changed. Calling
+        // `updateProps()` unconditionally re-renders on every transaction
+        // (selection moves, decoration changes), each render rewrites the
+        // contentDOM, and the DOMObserver flushes it straight back — the same
+        // never-terminating cycle, just confined to mermaid blocks.
+        if (oldNode !== newNode) updateProps()
+        return true
+      },
+    })
 
     return (props) => {
       if (isMermaid(props.node)) return renderReact(props)
@@ -239,9 +261,13 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
       const contentDOM = document.createElement('code')
       dom.append(contentDOM)
 
-      const applyLanguage = (node: typeof props.node): void => {
+      const applyLanguage = (node: PMNode): void => {
         const language = node.attrs['language'] as string | null
-        contentDOM.className = language ? `${prefix}${language}` : ''
+        // `renderHTML` passes `class: null` for a language-less block, which
+        // emits NO class attribute — setting `className = ''` would emit
+        // `<code class="">` instead, so remove the attribute to match exactly.
+        if (language) contentDOM.className = `${prefix}${language}`
+        else contentDOM.removeAttribute('class')
       }
       applyLanguage(props.node)
 
