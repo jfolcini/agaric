@@ -1167,6 +1167,44 @@ describe('searchPages — long query (>2 chars)', () => {
     expect(nonCreateIds).not.toContain('C_OTHER')
   })
 
+  // Regression for the #4152 fix's own side effect: `untitledOr(p.title)`
+  // turns EVERY NULL-content page's placeholder into "Untitled", and a
+  // plain folded-substring test (`matchesSearchFolded`) matches "Untitled"
+  // against any of its substrings — not just "untitled" itself, but also
+  // "unt", "tit", "itl", "led", "title", etc. A realistic query like
+  // "title" is one of those substrings. Because NULL-content pages sort
+  // first (#4138 — empty title sorts before any real one), a run of them
+  // fills the `.slice(0, 10)` supplement budget before a genuine cache-only
+  // match ever gets a look-in. This must still surface the genuine match.
+  it('does not let "Untitled"-placeholder substring noise crowd out a genuine cache-only match (item 1 regression)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Ten NULL-content ("Untitled") pages, sorted first as #4138 dictates,
+    // followed by one genuine page whose real title contains "title".
+    const placeholders = Array.from({ length: 10 }, (_, i) => ({ id: `NULL${i}`, title: '' }))
+    act(() => {
+      result.current.pagesListRef.current = [
+        ...placeholders,
+        { id: 'GENUINE', title: 'My Title Page' },
+      ]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('title')
+    })
+
+    const nonCreateIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(nonCreateIds).toContain('GENUINE')
+  })
+
   it('does NOT supplement from cache when FTS returns >= 5 results', async () => {
     const ftsPages = Array.from({ length: 6 }, (_, i) => ({
       id: `FTS${i}`,

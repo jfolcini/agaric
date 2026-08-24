@@ -7,7 +7,6 @@
 | **Items closed** | `#4270`, `#4152` |
 | **Items modified** | `#4275` (items 1 and 4 fixed; item 2 decided and documented; item 3 deliberately not built) |
 | **Tests added** | +4 (frontend) / +0 (backend) |
-| **Files touched** | 2 |
 
 **Summary:** Closed the two remaining ordering holes in the `[[` / `#` picker's resolve
 cache and restored the ability to find a NULL-content page by typing its displayed label.
@@ -18,6 +17,7 @@ latest-issued-wins. Both are now closed by guards that compose rather than repla
 **Files touched (this session):**
 - `src/components/block-tree/use-block-resolve.ts`
 - `src/components/block-tree/__tests__/use-block-resolve.test.ts`
+- `docs/session-log/session-1388-picker-cache-races.md` (this log)
 
 **What changed, per issue:**
 

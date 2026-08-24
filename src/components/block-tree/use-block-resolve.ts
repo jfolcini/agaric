@@ -221,8 +221,13 @@ async function searchPagesViaCache(
       //   - A name-change-bus event (rename/removal/invalidation) landed on
       //     THIS space while the fetch was in flight, or a newer fill for
       //     this list was issued and this one lost the #4270 race —
-      //     `pagesListRef.current` already reflects the winning state
-      //     (cleared, patched, or overwritten by whichever raced us). Serve
+      //     `pagesListRef.current` is cleared, patched, overwritten, or
+      //     superseded by a still-in-flight newer request (the #4270 loser
+      //     can resolve BEFORE its winner: `pagesListRef.current` then
+      //     hasn't been touched by the winning fill yet either — that fill
+      //     has only been ISSUED, not resolved — so this is not always
+      //     "the winning state" at the moment this branch reads it, just
+      //     never the losing fetch's own now-discarded `source`). Serve
       //     THIS call's result from there instead of the discarded
       //     `source`: the caller (`searchPages`, and via
       //     `populatePageResolveCache`, the shared resolve store) would
@@ -249,11 +254,48 @@ async function searchPagesViaCache(
   // the stored key. `source`'s rows still carry the raw `''` title (#4138's
   // sort-key invariant — see `comparePageRows`/the seed comment above), this
   // just changes what `matchSorter` compares the query against.
+  //
+  // Unlike `searchPagesViaFts`'s cache supplement (`matchesPageRowFolded`,
+  // above), this path does NOT need the placeholder narrowed to a prefix
+  // test: `matchSorter` RANKS before it truncates — a same-value CONTAINS
+  // hit against every "Untitled" row sits at a fixed, low rank, so it only
+  // outranks a genuine match that scores no better than CONTAINS itself
+  // (ordinary fuzzy-search ambiguity, not this bug). The FTS path's
+  // `.slice(0, 10)` budget, by contrast, is taken straight off
+  // `pagesListRef`'s title-sorted array ORDER with no ranking in between —
+  // that is what let an unranked run of placeholder rows crowd out a real
+  // match entirely.
   const filtered = q ? matchSorter(source, q, { keys: [(p) => untitledOr(p.title)] }) : source
   // Copy rather than hand back `pagesListRef.current`'s own objects — the
   // dispatcher and the cache seed both read these, and aliasing the ref's
   // entries would let a future consumer mutate the lazily-filled cache.
   return filtered.slice(0, 20).map((p) => ({ id: p.id, title: p.title }))
+}
+
+/**
+ * #4152's placeholder-match intent, minus the substring noise it regressed
+ * (PR #4295 review, item 1): a NULL-content row's only searchable text is
+ * the DISPLAYED "Untitled" placeholder, but matching that placeholder by
+ * plain folded SUBSTRING (`matchesSearchFolded`) means every one of
+ * "Untitled"'s own substrings — "unt", "tit", "itl", "led", "title", not
+ * just "untitled" itself — matches EVERY NULL-content row. `title` is a
+ * realistic query and one of those substrings; because empty titles sort
+ * first (#4138), a run of them can fill `searchPagesViaFts`'s
+ * `.slice(0, 10)` supplement budget before a genuine cache match is ever
+ * considered.
+ *
+ * A row with real content is unaffected — it keeps the existing substring
+ * test. Only the placeholder text itself switches to a fold-aware PREFIX
+ * test: "does the query start typing the word 'Untitled'?" still finds the
+ * page (#4152's own case: `'un'`, `'untitled'`, …), but an unrelated
+ * substring embedded inside that one placeholder word no longer matches
+ * every blank page in the space.
+ */
+function matchesPageRowFolded(title: string, q: string): boolean {
+  if (title.trim() === '') {
+    return foldForSearch(untitledOr(title)).startsWith(foldForSearch(q))
+  }
+  return matchesSearchFolded(title, q)
 }
 
 /**
@@ -306,11 +348,13 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   // Unicode-aware fold. `matchesSearchFolded`'s ASCII fast
   // path keeps this hot cache-lookup cheap when the query is ASCII.
   //
-  // #4152 — match against `untitledOr(p.title)`, same placeholder-at-filter-
-  // time substitution as `searchPagesViaCache`'s `matchSorter` call above.
-  // `p.title` in the returned row (the `.map` below) stays raw.
+  // #4152 / item 1 of #4295's review — `matchesPageRowFolded` matches the
+  // DISPLAYED "Untitled" placeholder for a NULL-content row (prefix-only,
+  // see its own docstring for why substring is too noisy here) and the raw
+  // title otherwise. `p.title` in the returned row (the `.map` below) stays
+  // raw either way.
   const cacheMatches = pagesListRef.current
-    .filter((p) => matchesSearchFolded(untitledOr(p.title), q) && !ftsIds.has(p.id))
+    .filter((p) => matchesPageRowFolded(p.title, q) && !ftsIds.has(p.id))
     .slice(0, 10)
     .map((p) => ({ id: p.id, title: p.title }))
   return [...matches, ...cacheMatches].slice(0, 20)
@@ -782,9 +826,14 @@ export function useBlockResolve(): UseBlockResolveReturn {
             )
           }
         } else {
-          // The guard rejected this fetch — a space switch or a
-          // name-change-bus event landed while it was in flight, and
-          // `tagsListRef.current` already reflects that. Serve this call's
+          // The guard rejected this fetch — a space switch, a
+          // name-change-bus event, or the #4270 sequence guard just above
+          // (a newer fill for `tagsListRef` was issued and this one lost
+          // the race) landed while it was in flight. `tagsListRef.current`
+          // is cleared, patched, overwritten, or superseded by a
+          // still-in-flight newer request (the #4270 loser can resolve
+          // BEFORE its winner, in which case `tagsListRef.current` hasn't
+          // been touched by the winning fill yet either). Serve this call's
           // result from there instead of the discarded `fetched`: otherwise
           // this one call still returns the exact stale/deleted/renamed tag
           // the guard exists to keep out of the cache. Mirrors the
