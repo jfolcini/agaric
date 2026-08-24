@@ -560,6 +560,21 @@ pub struct SyncSession {
     /// Empty when nothing changed (or nothing resolved) — the frontend then
     /// falls back to its full-reload behaviour.
     pub changed_page_ids: Vec<String>,
+    /// #4305: how many blocks this session's inbound imports actually changed
+    /// or hard-purged, accumulated across the session's `LoroSync` messages.
+    ///
+    /// This is the session's only **honest** measure of "did anything happen".
+    /// [`ops_received`](Self::ops_received) and [`ops_sent`](Self::ops_sent)
+    /// are protocol-message counts — one per registered space, whether or not
+    /// that space's delta was empty — so on a converged idle pair they are a
+    /// constant equal to the number of spaces, forever. A user-facing surface
+    /// that says "N changes" must read *this* field; `ops_*` may only be
+    /// labelled as the sync messages they are.
+    ///
+    /// `0` therefore means the strongest thing the sync layer can say: the
+    /// session ran to completion and moved no content. Callers use it to stay
+    /// silent.
+    pub changed_blocks: usize,
 }
 
 // The Loro-side push/apply path (`sync_protocol::loro_sync`) does not

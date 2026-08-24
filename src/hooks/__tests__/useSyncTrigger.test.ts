@@ -25,7 +25,7 @@ vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
-import { mapPeerRefToInfo, useSyncTrigger } from '@/hooks/useSyncTrigger'
+import { mapPeerRefToInfo, resetReportedSyncFailures, useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
 import type { PeerRef, SyncSessionInfo } from '@/lib/tauri'
 import { flushAllDrafts, listPeerRefs, startSync } from '@/lib/tauri'
@@ -92,6 +92,10 @@ describe('useSyncTrigger', () => {
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
     Object.defineProperty(document, 'hidden', { value: false, configurable: true })
     useSyncStore.getState().reset()
+    // #4305 — the per-peer reported-failure memory is module-scoped (it must
+    // outlive a component, which is the whole point), so it also outlives a
+    // test in this module registry.
+    resetReportedSyncFailures()
   })
 
   afterEach(() => {
@@ -383,10 +387,45 @@ describe('useSyncTrigger', () => {
     const { result } = renderHook(() => useSyncTrigger())
 
     await act(async () => {
-      await result.current.syncAll()
+      await result.current.syncAll({ userInitiated: true })
     })
 
     expect(toast.success).toHaveBeenCalledWith('Sync complete')
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  // #4305 — the same successful run, reached the way the hook itself reaches it
+  // every 60 s. A tick that succeeded answers a question nobody asked; the
+  // sidebar status dot and "last synced" already say it happened. Before this,
+  // a user with an idle pair got "Sync complete" once a minute, forever, on top
+  // of the "Synced 2 changes from device" the backend was feeding them.
+  it('is silent on a successful scheduled tick (#4305)', async () => {
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER1',
+        last_hash: null,
+        last_sent_hash: null,
+        streamed_at: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+        last_address: null,
+        endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
+      },
+    ])
+
+    const { result } = renderHook(() => useSyncTrigger())
+
+    for (let tick = 0; tick < 5; tick++) {
+      await act(async () => {
+        await result.current.syncAll()
+      })
+    }
+
+    expect(toast.success).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
   })
 
@@ -429,6 +468,61 @@ describe('useSyncTrigger', () => {
         }),
       }),
     )
+  })
+
+  // #4305 — the same failing peer on every scheduled tick. The failure text
+  // does not vary with the cause (it is the peer id), so before this a device
+  // that was simply switched off produced a red toast once a minute for as long
+  // as the app ran. Sonner's `id` collapses *concurrent* duplicates; it does
+  // nothing about a toast raised again 60 s after the last one expired.
+  it('reports an unchanged per-peer failure once per streak (#4305)', async () => {
+    mockListPeerRefs.mockResolvedValue([
+      {
+        peer_id: 'PEER_DOWN_98765',
+        last_hash: null,
+        last_sent_hash: null,
+        streamed_at: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+        last_address: null,
+        endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
+      },
+    ])
+    mockStartSync.mockRejectedValue(new Error('connection refused'))
+
+    const { result } = renderHook(() => useSyncTrigger())
+
+    for (let tick = 0; tick < 6; tick++) {
+      await act(async () => {
+        await result.current.syncAll()
+      })
+    }
+
+    expect(toast.error).toHaveBeenCalledTimes(1)
+
+    // …and it is news again once the peer recovers and fails anew: the marker
+    // is dropped on the successful run, so a failure that resolves and later
+    // recurs still reaches the user.
+    mockStartSync.mockResolvedValue({
+      state: 'complete',
+      local_device_id: 'LOCAL',
+      remote_device_id: 'REMOTE',
+      ops_received: 0,
+      ops_sent: 0,
+    })
+    await act(async () => {
+      await result.current.syncAll()
+    })
+    mockStartSync.mockRejectedValue(new Error('connection refused'))
+    await act(async () => {
+      await result.current.syncAll()
+    })
+
+    expect(toast.error).toHaveBeenCalledTimes(2)
   })
 
   // Retry action on transient per-peer sync failure
@@ -790,11 +884,41 @@ describe('useSyncTrigger', () => {
       const { result } = renderHook(() => useSyncTrigger())
 
       await act(async () => {
-        await result.current.syncAll()
+        await result.current.syncAll({ userInitiated: true })
       })
 
       expect(mockedAnnounce).toHaveBeenCalledWith('Sync started')
       expect(mockedAnnounce).toHaveBeenCalledWith('Sync completed')
+    })
+
+    // #4305 — and a scheduled tick announces neither, for the same reason it
+    // raises no toast: a screen-reader user should not hear "Sync started /
+    // Sync completed" every minute of an idle session.
+    it('announces nothing on a successful scheduled tick (#4305)', async () => {
+      mockListPeerRefs.mockResolvedValue([
+        {
+          peer_id: 'PEER1',
+          last_hash: null,
+          last_sent_hash: null,
+          streamed_at: null,
+          synced_at: null,
+          reset_count: 0,
+          last_reset_at: null,
+          cert_hash: null,
+          device_name: null,
+          last_address: null,
+          endpoint_id: null,
+          unpaired_by_peer_at_ms: null,
+        },
+      ])
+
+      const { result } = renderHook(() => useSyncTrigger())
+
+      await act(async () => {
+        await result.current.syncAll()
+      })
+
+      expect(mockedAnnounce).not.toHaveBeenCalled()
     })
 
     it('announces sync failed when listPeerRefs rejects', async () => {

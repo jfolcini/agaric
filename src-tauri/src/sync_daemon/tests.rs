@@ -966,13 +966,21 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
 /// failure is what gets seeded — arm A produces it, arm B feeds it back.
 /// Nothing here hardcodes the message.
 ///
-/// Two arms, because one alone is vacuous:
+/// Four arms, because no one of them alone is enough:
 ///
-/// * **A — a dark peer still reports.** It also supplies the failure text and
-///   proves the run reaches `record_initiator_failure` at all.
+/// * **A — a failure the user has not been shown reports.** It also supplies
+///   the failure text and proves the run reaches `record_initiator_failure` at
+///   all.
 /// * **B — the same failure against a peer that is still pulling from us is
 ///   silent**, and the `connecting` progress event proves the run got past the
 ///   backoff gate and really dialled rather than returning early.
+/// * **C (#4305) — the same failure against a peer that has gone dark, already
+///   reported while dark, is also silent.** This is the arm the pre-#4305 gate
+///   fails: `already_reported && still_serving` could never close for a peer
+///   that had stopped streaming, so this text re-toasted every 60 s forever.
+/// * **D (#4305) — a peer that goes dark after being told while it was still
+///   serving reports once more.** The signal the old `still_serving` term
+///   existed to protect survives; only its unbounded repetition does not.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
     const PEER: &str = "PEER_RESPONDER_ONLY_4120";
@@ -982,7 +990,13 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
     /// already shown to the user, backoff expired.
     ///
     /// Returns every event the sink saw plus the peer's failure count.
-    async fn cycle(streamed_at: Option<i64>, already_reported: &str) -> (Vec<SyncEvent>, u32) {
+    async fn cycle(
+        streamed_at: Option<i64>,
+        already_reported: &str,
+        // #4305: the suppression key is `(text, still-serving)`, so seeding
+        // "already shown" now has to say which of the two the user was shown.
+        reported_while_serving: bool,
+    ) -> (Vec<SyncEvent>, u32) {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
         let scheduler = Arc::new(SyncScheduler::new());
@@ -994,7 +1008,7 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
         // `remember_reported_failure` is a no-op without a backoff entry, so
         // the booking has to come first — which is also the real ordering.
         scheduler.record_failure(PEER);
-        scheduler.remember_reported_failure(PEER, already_reported);
+        scheduler.remember_reported_failure(PEER, already_reported, reported_while_serving);
         // …and that booking arms the backoff gate (~2 s for the first
         // failure). Waiting it out is what makes this a *second cycle* rather
         // than an early return at step 1.
@@ -1046,16 +1060,16 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
             .collect()
     }
 
-    // ---- Arm A: a peer that is not pulling from us either. Reports, and
+    // ---- Arm A: a failure text the user has never been shown. Reports, and
     // hands us the exact text a real failure produces.
     let (dark_events, dark_failures) =
-        cycle(None, "a failure text nothing will ever produce").await;
+        cycle(None, "a failure text nothing will ever produce", false).await;
     let reported = error_texts(&dark_events);
     assert_eq!(
         reported.len(),
         1,
-        "a peer that is not pulling from us in either direction is a total sync \
-         outage and must keep saying so; got {dark_events:?}"
+        "the first report of a given failure is news and must always land — a peer \
+         going from healthy to unreachable may never fail in silence; got {dark_events:?}"
     );
     assert!(
         reported[0].starts_with("Connection failed"),
@@ -1075,7 +1089,7 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
     // the call site passes a `peer_id` the scheduler's memory is not keyed on,
     // or a `peer_refs` slice this peer is not in.
     let (fresh_events, fresh_failures) =
-        cycle(Some(agaric_store::db::now_ms()), &reported[0]).await;
+        cycle(Some(agaric_store::db::now_ms()), &reported[0], true).await;
     assert!(
         error_texts(&fresh_events).is_empty(),
         "#4084/#4120: the SAME failure against a peer that is still streaming to us \
@@ -1097,6 +1111,40 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
         "suppressing the report must not suppress the booking — the backoff is what \
          paces the retry (#4120)"
     );
+
+    // ---- Arm C (#4305): the same failure against a peer that has gone dark,
+    // already reported *while dark*. Silent.
+    //
+    // This is the arm that was red before #4305. `still_serving` is false here
+    // and stays false — a peer that has genuinely gone away stops streaming
+    // immediately — so the old `already_reported && still_serving` gate could
+    // never close and this text fired once every resync interval, forever, with
+    // nothing about it having changed since the first time.
+    let (dark_repeat_events, dark_repeat_failures) = cycle(None, &reported[0], false).await;
+    assert!(
+        error_texts(&dark_repeat_events).is_empty(),
+        "#4305: an unchanged failure against a peer the user has already been told \
+         about must not re-raise the toast just because the peer is no longer \
+         streaming to us. The peer row and the status dot are the durable \
+         surfaces; a toast is transient and transient means once. Got \
+         {dark_repeat_events:?}"
+    );
+    assert_eq!(
+        dark_repeat_failures, 2,
+        "…and the backoff is still booked on the suppressed cycle"
+    );
+
+    // ---- Arm D (#4305): the peer has gone dark, but what the user was told
+    // was told while it was still serving us. That is a different fact about
+    // the pair — "we cannot pull" became "we are not exchanging at all" — so it
+    // reports once more.
+    let (went_dark_events, _) = cycle(None, &reported[0], true).await;
+    assert_eq!(
+        error_texts(&went_dark_events),
+        vec![reported[0].clone()],
+        "#4305: folding still-serving into the key rather than deleting it is what \
+         keeps a pair going dark audible — exactly once. Got {went_dark_events:?}"
+    );
 }
 
 /// #4203, through the real initiator path: the pinned-identity refusal now
@@ -1109,9 +1157,10 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
 /// shape), if it passes a `peer_id` the scheduler's memory is not keyed on, or
 /// if it passes a `peer_refs` slice this peer is not in.
 ///
-/// Both arms are driven because the suppression is `already_reported &&
-/// still_serving`, and the second condition is the one that keeps a
-/// security-relevant refusal loud when the peer has genuinely gone dark.
+/// Three arms are driven because since #4305 the suppression key is
+/// `(text, still_serving)`: the pair going dark is still news, but it is news
+/// once — not once per cycle, which is what the pre-#4305 gate produced for a
+/// security-relevant refusal that by its nature never resolves on its own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
     const PEER: &str = "PEER_IDENTITY_4203";
@@ -1119,7 +1168,7 @@ async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
 
     /// Two consecutive refusal cycles against the same peer, with the backoff
     /// the first one arms waited out in between.
-    async fn two_cycles(streamed_at: Option<i64>) -> (Vec<SyncEvent>, u32) {
+    async fn two_cycles(streamed_at: [Option<i64>; 2]) -> (Vec<SyncEvent>, u32) {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
         let scheduler = Arc::new(SyncScheduler::new());
@@ -1134,18 +1183,22 @@ async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
         let peer = unreachable_peer(PEER);
         let mut peer_ref = make_peer_ref(PEER);
         peer_ref.endpoint_id = Some(mdns::test_endpoint_id("A_DIFFERENT_DEVICE").to_string());
-        peer_ref.streamed_at = streamed_at;
         assert_ne!(
             peer_ref.endpoint_id.as_deref(),
             peer.endpoint_id.map(|k| k.to_string()).as_deref(),
             "precondition: the pinned key and the announced key must differ, or this \
              test would exercise the ordinary dial path"
         );
-        let refs = vec![peer_ref];
 
         let apply_host: Arc<dyn agaric_sync::apply_host::ApplyHost> =
             Arc::new(materializer.clone());
-        for cycle in 0..2 {
+        for (cycle, streamed) in streamed_at.iter().enumerate() {
+            // #4305: per-cycle, so an arm can move the peer from "still
+            // pulling from us" to "gone dark" between the two refusals — the
+            // transition the key exists to keep audible.
+            let mut peer_ref = peer_ref.clone();
+            peer_ref.streamed_at = *streamed;
+            let refs = vec![peer_ref];
             if cycle > 0 {
                 // The first refusal booked a failure, which arms the ~2 s
                 // backoff gate at step 1. Waiting it out is what makes the
@@ -1188,7 +1241,8 @@ async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
     }
 
     // ---- Arm A: the pair is visibly working in the other direction.
-    let (fresh_events, fresh_failures) = two_cycles(Some(agaric_store::db::now_ms())).await;
+    let now = agaric_store::db::now_ms();
+    let (fresh_events, fresh_failures) = two_cycles([Some(now), Some(now)]).await;
     assert_eq!(
         refusals(&fresh_events),
         vec![REFUSAL.to_string()],
@@ -1208,16 +1262,32 @@ async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
          quieten the scheduler"
     );
 
-    // ---- Arm B: nothing is pulling from us either, so the refusal is the whole
-    // story of a peer we have lost. It keeps saying so.
-    let (dark_events, dark_failures) = two_cycles(None).await;
+    // ---- Arm B: nothing is pulling from us either. The refusal is the whole
+    // story of a peer we have lost, so it is told — and, since #4305, told
+    // once. The condition does not resolve by itself, so repeating it every
+    // cycle taught the user to dismiss red toasts unread, which costs them the
+    // *next* one. The peer row carries it from here.
+    let (dark_events, dark_failures) = two_cycles([None, None]).await;
     assert_eq!(
         refusals(&dark_events),
-        vec![REFUSAL.to_string(), REFUSAL.to_string()],
-        "#4203: with no inbound sessions either, a key that is not the paired one is \
-         the only signal the user has; got {dark_events:?}"
+        vec![REFUSAL.to_string()],
+        "#4305: an unchanged refusal against an unchanged peer is one toast per \
+         streak, not one per resync interval; got {dark_events:?}"
     );
     assert_eq!(dark_failures, 2);
+
+    // ---- Arm C (#4305): the peer was still pulling from us when we told the
+    // user, and has since gone dark. That is new information — a key mismatch
+    // while the pair still works is a nuisance, a key mismatch on a pair that
+    // has stopped exchanging is the loss of the device — so it reports again.
+    let (went_dark_events, went_dark_failures) = two_cycles([Some(now), None]).await;
+    assert_eq!(
+        refusals(&went_dark_events),
+        vec![REFUSAL.to_string(), REFUSAL.to_string()],
+        "#4305: still-serving lives in the suppression KEY, so a pair going dark \
+         mid-streak surfaces the refusal a second time; got {went_dark_events:?}"
+    );
+    assert_eq!(went_dark_failures, 2);
 }
 
 // The old `handle_incoming_sync_rejects_sync_with_self` lived here. It was the

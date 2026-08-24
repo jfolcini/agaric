@@ -350,7 +350,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('shows success toast when ops_received > 0', async () => {
+    it('shows success toast counting the blocks that actually changed (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -364,6 +364,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 3,
           ops_sent: 0,
+          changed_blocks: 3,
         },
       })
 
@@ -372,7 +373,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('shows singular "change" for ops_received === 1', async () => {
+    it('shows singular "change" for changed_blocks === 1 (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -386,6 +387,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 1,
           ops_sent: 0,
+          changed_blocks: 1,
         },
       })
 
@@ -394,7 +396,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('does NOT show toast when ops_received === 0', async () => {
+    it('does NOT show toast on a converged no-op sync (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -408,6 +410,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 0,
           ops_sent: 5,
+          changed_blocks: 0,
         },
       })
 
@@ -416,7 +419,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('reloads block store when ops_received > 0', async () => {
+    it('reloads block store when blocks actually changed (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -430,6 +433,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 5,
           ops_sent: 0,
+          changed_blocks: 5,
         },
       })
 
@@ -438,7 +442,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('re-anchors undo state for each reloaded page when ops_received > 0 (#731)', async () => {
+    it('re-anchors undo state for each reloaded page when blocks changed (#731)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -452,6 +456,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 5,
           ops_sent: 0,
+          changed_blocks: 5,
         },
       })
 
@@ -463,7 +468,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('does NOT re-anchor undo state when ops_received === 0 (#731)', async () => {
+    it('does NOT re-anchor undo state on a converged no-op sync (#731/#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -477,6 +482,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 0,
           ops_sent: 3,
+          changed_blocks: 0,
         },
       })
 
@@ -485,7 +491,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('does NOT reload block store when ops_received === 0', async () => {
+    it('does NOT reload block store on a converged no-op sync (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -499,6 +505,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 0,
           ops_sent: 3,
+          changed_blocks: 0,
         },
       })
 
@@ -507,7 +514,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('preloads resolve cache with forceRefresh=true when ops_received > 0 (B-7)', async () => {
+    it('preloads resolve cache with forceRefresh=true when blocks changed (B-7)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -521,6 +528,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 5,
           ops_sent: 0,
+          changed_blocks: 5,
         },
       })
 
@@ -537,7 +545,7 @@ describe('useSyncEvents', () => {
     // #4007 — a peer's rename/delete arrives here, not through any local
     // surface, so without this the `[[` / `#` pickers keep offering the old
     // name for the rest of the session.
-    it('invalidates the picker name caches when ops_received > 0 (#4007)', async () => {
+    it('invalidates the picker name caches when blocks changed (#4007)', async () => {
       const changes: NameChange[] = []
       const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
       const { unmount } = renderHook(() => useSyncEvents())
@@ -553,6 +561,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 5,
           ops_sent: 0,
+          changed_blocks: 5,
           changed_page_ids: ['PAGE_1'],
         },
       })
@@ -563,7 +572,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('does NOT invalidate the picker name caches when ops_received === 0 (#4007)', async () => {
+    it('does NOT invalidate the picker name caches on a converged no-op sync (#4007/#4305)', async () => {
       const changes: NameChange[] = []
       const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
       const { unmount } = renderHook(() => useSyncEvents())
@@ -578,6 +587,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 0,
           ops_sent: 3,
+          changed_blocks: 0,
         },
       })
 
@@ -589,7 +599,7 @@ describe('useSyncEvents', () => {
       unmount()
     })
 
-    it('does NOT preload resolve cache when ops_received === 0', async () => {
+    it('does NOT preload resolve cache on a converged no-op sync (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -603,10 +613,116 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 0,
           ops_sent: 3,
+          changed_blocks: 0,
         },
       })
 
       expect(mockPreload).not.toHaveBeenCalled()
+
+      unmount()
+    })
+
+    // ---- #4305 -----------------------------------------------------------
+
+    /// The exact event a healthy, idle, fully-converged two-space pair emits on
+    /// every 60 s resync tick, taken from the device the bug was reported on.
+    /// `ops_received` is 2 because the peer ships one LoroSync message per
+    /// registered space whether or not it has a delta — it is a message count,
+    /// not a change count — and the old gate (`ops_received > 0`) read it as
+    /// "2 changes" forever.
+    it('is completely silent on the converged tick that toasted "Synced 2 changes" (#4305)', async () => {
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      // Ten ticks — a converged pair left alone for ten minutes.
+      for (let tick = 0; tick < 10; tick++) {
+        callback({
+          payload: {
+            type: 'complete',
+            remote_device_id: 'device-42',
+            ops_received: 2,
+            ops_sent: 2,
+            changed_page_ids: [],
+            changed_blocks: 0,
+          },
+        })
+      }
+
+      expect(mockedToastSuccess).not.toHaveBeenCalled()
+      // …and the tick is not merely quiet, it is free: the pre-#4305 handler
+      // fell through to reloadChangedPageStores' FULL-reload branch on the
+      // empty page-id set, reloading every mounted store and re-running the
+      // resolve preload once a minute for nothing.
+      expect(mockLoad).not.toHaveBeenCalled()
+      expect(mockPreload).not.toHaveBeenCalled()
+      expect(mockReanchorUndo).not.toHaveBeenCalled()
+      expect(changes).toEqual([])
+
+      // The liveness signals still fire — silence is not the same as the app
+      // pretending no sync happened.
+      expect(mockUpdateLastSynced).toHaveBeenCalledTimes(10)
+      expect(mockSetOpsReceived).toHaveBeenCalledWith(2)
+
+      unsubscribe()
+      unmount()
+    })
+
+    // #4305 — the whole-space snapshot catch-up cannot enumerate a block count,
+    // and `null` must NOT be read as "nothing changed". It is the loudest
+    // change there is: it says so without claiming a number, and it takes the
+    // full-reload path its empty `changed_page_ids` selects.
+    it('reports a countless change and reloads everything when changed_blocks is null (#4305)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('sync:complete')({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 0,
+          ops_sent: 0,
+          changed_page_ids: [],
+          changed_blocks: null,
+        },
+      })
+
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced changes from device')
+      expect(mockLoad).toHaveBeenCalled()
+      expect(mockPreload).toHaveBeenCalledWith('SPACE_TEST', true, undefined)
+
+      unmount()
+    })
+
+    // #4305 — a producer that forgets the field must be LOUD, not mute. Silence
+    // is reserved for an explicit `0`, so a missing field can never silently
+    // swallow a real sync.
+    it('falls back to loud when changed_blocks is absent entirely (#4305)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('sync:complete')({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 4,
+          ops_sent: 0,
+        },
+      })
+
+      expect(mockedToastSuccess).toHaveBeenCalledWith('Synced changes from device')
+      expect(mockLoad).toHaveBeenCalled()
 
       unmount()
     })
@@ -631,6 +747,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 5,
           ops_sent: 0,
+          changed_blocks: 5,
           changed_page_ids: ['PAGE_1'],
         },
       })
@@ -660,6 +777,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 5,
           ops_sent: 0,
+          changed_blocks: 5,
         },
       })
 
@@ -738,6 +856,7 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 5,
           ops_sent: 0,
+          changed_blocks: 5,
           changed_page_ids: ['PAGE_1'],
         },
       })
@@ -967,7 +1086,7 @@ describe('useSyncEvents', () => {
 
   // Screen-reader announcements paired with sync toast feedback
   describe('screen reader announcements', () => {
-    it('announces ops received when sync:complete carries ops', async () => {
+    it('announces the changes a sync:complete actually applied (#4305)', async () => {
       const { unmount } = renderHook(() => useSyncEvents())
 
       await vi.waitFor(() => {
@@ -981,10 +1100,36 @@ describe('useSyncEvents', () => {
           remote_device_id: 'device-42',
           ops_received: 3,
           ops_sent: 0,
+          changed_blocks: 3,
         },
       })
 
-      expect(mockedAnnounce).toHaveBeenCalledWith('3 operations received from sync')
+      expect(mockedAnnounce).toHaveBeenCalledWith('3 changes received from sync')
+
+      unmount()
+    })
+
+    // #4305 — the assistive-technology twin of the silent no-op sync. A screen
+    // reader user must not be read "changes received from sync" once a minute
+    // on a converged pair any more than a sighted user should see the toast.
+    it('announces nothing on a converged no-op sync (#4305)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      getListenerCallback('sync:complete')({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 2,
+          ops_sent: 0,
+          changed_blocks: 0,
+        },
+      })
+
+      expect(mockedAnnounce).not.toHaveBeenCalled()
 
       unmount()
     })

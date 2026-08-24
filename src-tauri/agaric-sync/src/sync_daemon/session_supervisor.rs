@@ -1275,8 +1275,9 @@ const IDENTITY_MISMATCH_MESSAGE: &str =
 
 /// Book an initiator-side failure: **always** the backoff, **always** the
 /// log, but the user-facing `Sync failed: …` / `Connection failed: …` /
-/// identity-mismatch event only once per *distinct failure text* per streak,
-/// and then only while the peer is demonstrably still pulling from us.
+/// identity-mismatch event only once per *distinct failure text* per streak —
+/// twice at most, if the pair goes dark mid-streak and the text is the same
+/// on both sides of that transition (#4305).
 ///
 /// # The shape this exists for (#4084 → #4103 → #4120)
 ///
@@ -1309,17 +1310,42 @@ const IDENTITY_MISMATCH_MESSAGE: &str =
 /// cannot act on again is a toast they learn to dismiss unread — including on
 /// the sessions that really did just fail.
 ///
-/// # Why both conditions, and not either
+/// # Where freshness went (#4305)
 ///
-/// *Freshness alone* is not enough. The first report of a given failure is news
-/// and must always land, or a peer going from healthy to unreachable would fail
-/// in silence — the one transition a user does need to see.
-///
-/// *Repetition alone* is not enough either. A peer with no recent
-/// `streamed_at` is not exchanging with us in **either** direction, so a
-/// repeated "Sync failed" is the literal truth about a device that has gone
-/// dark, and suppressing it would hide a total sync outage behind a single
+/// #4120 built this as a two-term gate: `already_reported && still_serving`,
+/// where `still_serving` is
+/// [`peer_pulled_from_us_recently`] — has this peer streamed to us inside two
+/// resync intervals. The second term was there to protect a real signal: a peer
+/// with no recent `streamed_at` is not exchanging with us in **either**
+/// direction, and staying quiet about that would hide a total outage behind one
 /// toast the user may have missed.
+///
+/// But a peer that has genuinely gone away stops streaming *immediately*, so
+/// `still_serving` goes false within about two minutes and then stays false —
+/// at which point the gate can never close again and the same unchanged
+/// `Sync failed: sync ended in terminal state: …` fires every sixty seconds for
+/// as long as the app runs. That is #4084's own complaint, arrived at from the
+/// opposite end: #4084 was the toast that would not stop about a pair that was
+/// working, and this was the toast that would not stop about a pair that was
+/// not.
+///
+/// The signal `still_serving` carries is preserved by moving it out of the gate
+/// and into the **key** (see [`SyncScheduler::record_failure_and_take_report`]).
+/// The suppression key is `(text, still_serving)`, so:
+///
+/// * the first failure of a given text always reports — a peer going from
+///   healthy to unreachable is never silent, which is the transition a user
+///   does need to see;
+/// * when the pair later goes dark, that same text reports once more, because
+///   "our pull fails while the peer still serves us" and "the peer has stopped
+///   talking to us entirely" are different facts;
+/// * and then it stops. What remains true after that is durable, so it belongs
+///   on durable surfaces — the peer row and the sync status dot — not on a
+///   transient one. This is the same call #4300 made for `unpaired_by_peer_at_ms`.
+///
+/// The bound is therefore two reports per distinct text per streak, and a
+/// `streamed_at` flapping across the window boundary cannot exceed it: both
+/// values of the flag are remembered the first time each is seen.
 ///
 /// # What counts as a repeat, and where the memory resets
 ///
@@ -1352,17 +1378,17 @@ const IDENTITY_MISMATCH_MESSAGE: &str =
 /// forever is the #4084 shape with a different string, and it teaches the user
 /// to dismiss toasts unread — including the ones that are new.
 ///
-/// Routing it here is a narrower change than it looks, because the gate is
-/// `already_reported && still_serving`, not repetition alone:
+/// Routing it here is a narrower change than it looks:
 ///
 /// * Its text is [`IDENTITY_MISMATCH_MESSAGE`], a **constant** — so the
 ///   suppression key for this one site is exactly stable, with no `Display`
 ///   dependency at all.
-/// * It is withheld only while the *real* peer is still pulling from us inside
-///   the freshness window. If the impostor announcement is the only thing on
-///   the wire, our `streamed_at` goes stale within two resync intervals and the
-///   refusal is reported every cycle again — the case where a user who has lost
-///   their peer to something announcing its name most needs to hear it.
+/// * It is reported once while the *real* peer is still pulling from us, and
+///   again if our `streamed_at` for that peer later goes stale — the case where
+///   a user who has lost their peer to something announcing its name most needs
+///   to hear it. #4305 bounded that second report at one instead of one per
+///   cycle; the condition itself is not transient, so past the second telling
+///   it is the peer row's to render, not a toast's to repeat.
 /// * That gate is not fooled by the impostor, and this is what makes routing a
 ///   *security-relevant* refusal through it safe at all. `streamed_at` is
 ///   stamped by `session_state_machine`'s responder path, and the responder
@@ -1397,9 +1423,9 @@ const IDENTITY_MISMATCH_MESSAGE: &str =
 ///   read as the whole function's: a proof-bearing device that claims an
 ///   **unbound** id still freshens that id's `streamed_at`, and so can withhold
 ///   its *repeat* connect/session-failure reports. Bounded twice over — the
-///   first report of any text always lands (the gate is `already_reported &&
-///   still_serving`), and the freshness window goes false two intervals after
-///   the last stamp. #4230 leaves that half open deliberately: deferring the
+///   first report of any `(text, still_serving)` pair always lands, and the
+///   freshness window goes false two intervals after the last stamp — which,
+///   since #4305, itself produces one further report rather than none. #4230 leaves that half open deliberately: deferring the
 ///   writes until after the bind — the alternative the issue suggested — closes
 ///   none of it, since `peer_is_bound_to_another_key` permits an unbound row
 ///   and the bind would then hand the row itself to the claimant.
@@ -1423,16 +1449,19 @@ fn record_initiator_failure(
     // Computed before the scheduler call because it reads `peer_refs` and the
     // clock, not the scheduler's map — keeping it outside means the one
     // acquisition below covers exactly the check-and-record and nothing else.
+    //
+    // #4305: this is now part of the suppression *key* rather than a switch
+    // that turns suppression off. See `record_failure_and_take_report`.
     let still_serving_this_peer = peer_pulled_from_us_recently(scheduler, peer_refs, peer_id);
 
     // ONE acquisition books the failure and decides the report together
-    // (#4202). "Already reported" is per `(peer, message)`, NOT per peer: a
-    // failure whose *cause changes* mid-streak is news the user has not been
-    // told, and a streak count cannot express that. The count is also the wrong
-    // key for any route that books a failure without reporting through here —
-    // `SyncScheduler::record_failure` is still public, and #4203 removed the
-    // last in-tree caller of it (the pinned-identity refusal, which now routes
-    // here) rather than making the count safe to key on.
+    // (#4202). "Already reported" is per `(peer, message, still-serving)`, NOT
+    // per peer: a failure whose *cause changes* mid-streak is news the user has
+    // not been told, and a streak count cannot express that. The count is also
+    // the wrong key for any route that books a failure without reporting
+    // through here — `SyncScheduler::record_failure` is still public, and #4203
+    // removed the last in-tree caller of it (the pinned-identity refusal, which
+    // now routes here) rather than making the count safe to key on.
     //
     // The failure mode of the message key is bounded in the safe direction: a
     // failure text that churns (an error string carrying a varying detail)
@@ -1449,8 +1478,9 @@ fn record_initiator_failure(
             peer_id,
             reason = %message,
             failures = booking.consecutive_failures,
-            "sync failed again against a peer that is still pulling from us; backoff \
-             recorded, repeat report suppressed (#4084/#4120/#4203)"
+            still_serving = still_serving_this_peer,
+            "sync failed against this peer with a cause the user has already been shown; \
+             backoff recorded, repeat report suppressed (#4084/#4120/#4203/#4305)"
         );
         return;
     }
@@ -2872,16 +2902,24 @@ mod tests {
         );
     }
 
-    /// The other arm of "why both conditions": a peer with no recent
-    /// `streamed_at` is not exchanging with us in EITHER direction. That is a
-    /// total sync outage for that device, and it keeps saying so.
+    /// A peer with no recent `streamed_at` is not exchanging with us in EITHER
+    /// direction. That is a total sync outage for that device, and the user is
+    /// told — **once** (#4305).
+    ///
+    /// Before #4305 this test asserted three reports for three cycles, which is
+    /// what a dark peer produced forever: `still_serving` is false the moment a
+    /// peer goes away and never becomes true again, so `already_reported &&
+    /// still_serving` could not close and the daemon toasted the same unchanged
+    /// sentence once per resync interval for as long as the app ran. The
+    /// outage is real and durable, so it belongs on the durable surfaces (the
+    /// peer row, the status dot); the toast's job is to say it once.
     ///
     /// Pinned with two shapes, because the two ways to get the predicate wrong
     /// fail differently: `None` is the never-streamed peer (a fresh pair that
     /// has never worked), and a stale `Some` is the peer that used to stream
     /// and went dark — a "has it ever streamed?" check would pass the second.
     #[test]
-    fn a_repeat_pull_failure_against_a_dark_peer_is_still_reported_4120() {
+    fn a_repeat_pull_failure_against_a_dark_peer_is_reported_exactly_once_4305() {
         for (label, streamed_at) in [
             ("never streamed to us at all", None),
             (
@@ -2906,25 +2944,41 @@ mod tests {
 
             assert_eq!(
                 error_messages(&typed).len(),
-                3,
-                "a peer that is not pulling from us either ({label}) has a real, total \
-                 sync outage; suppressing the repeat would hide it behind one toast the \
-                 user may never have seen. Got {:?}",
+                1,
+                "#4305: the outage against a peer that is not pulling from us either \
+                 ({label}) is news the first time and unchanged every time after. Got \
+                 {:?}",
                 typed.events()
+            );
+            assert_eq!(
+                scheduler.failure_count(RESPONDER_ONLY_PEER),
+                3,
+                "…and quieting the toast must not quieten the scheduler: every cycle \
+                 is still booked, so the retry pacing is untouched"
             );
         }
     }
 
     /// A peer that is not in `peer_refs` at all cannot be shown to be pulling
-    /// from us, so it gets the unsuppressed report — the conservative
-    /// direction, and the one a `find(...).map_or(true, …)` slip would invert.
+    /// from us, so it is classified dark — the conservative direction, and the
+    /// one a `find(...).map_or(true, …)` slip would invert.
+    ///
+    /// Since #4305 the classification is not directly observable from a single
+    /// report (every first report lands either way), so it is observed through
+    /// the suppression key instead: report against the unknown peer, then
+    /// report the SAME text against the same peer now present and freshly
+    /// streamed. A second report proves the first was classified dark. If the
+    /// lookup had read the wrong row, the first would have been classified
+    /// still-serving and the second would be swallowed as a repeat — which is
+    /// exactly the slip this test exists to catch, now caught by silence rather
+    /// than by a count.
     #[test]
-    fn a_pull_failure_against_an_unknown_peer_is_always_reported_4120() {
+    fn a_pull_failure_against_an_unknown_peer_is_classified_dark_4305() {
         let typed = Arc::new(RecordingEventSink::new());
         let sink: Arc<dyn SyncEventSink> = typed.clone();
         let scheduler = SyncScheduler::new();
         // A row for a DIFFERENT peer, freshly streamed — the wrong-peer lookup
-        // this guards against would read it and suppress.
+        // this guards against would read it and classify ours as serving.
         let mut other = responder_only_ref(Some(agaric_store::db::now_ms()));
         other.peer_id = "some-other-peer".into();
 
@@ -2937,11 +2991,28 @@ mod tests {
                 "Sync failed: connection lost".into(),
             );
         }
-
         assert_eq!(
             error_messages(&typed).len(),
-            3,
-            "the freshness check must read THIS peer's row; got {:?}",
+            1,
+            "three identical failures against one unchanged peer are one report; got {:?}",
+            typed.events()
+        );
+
+        // Now the peer IS in the slice, freshly streamed. If the three calls
+        // above were (correctly) keyed dark, this is a different key and lands.
+        record_initiator_failure(
+            &scheduler,
+            &sink,
+            &[responder_only_ref(Some(agaric_store::db::now_ms()))],
+            RESPONDER_ONLY_PEER,
+            "Sync failed: connection lost".into(),
+        );
+        assert_eq!(
+            error_messages(&typed).len(),
+            2,
+            "the freshness check must read THIS peer's row: an absent row is dark, so \
+             the same text against a demonstrably-serving row is a different fact and \
+             must surface. Got {:?}",
             typed.events()
         );
     }
@@ -3123,15 +3194,23 @@ mod tests {
     /// Both edges are pinned because both are wrong in a way the other would
     /// not catch: one interval would go false on a healthy pair (a peer becomes
     /// due after one interval and is noticed up to one 30 s tick later, so its
-    /// real period runs to 90 s), and an unbounded window would never let a
-    /// peer that went dark start reporting again.
+    /// real period runs to 90 s), and an unbounded window would never let the
+    /// "and now it has gone dark" report through at all.
+    ///
+    /// #4305 changed how the boundary is *observed*, not where it is. The
+    /// classification is no longer visible as a report count — a repeated
+    /// identical failure is one report on either side of the window now — so
+    /// each arm reports once at the given age and then once more against a
+    /// demonstrably-fresh row. That second report lands only if the first was
+    /// classified dark, which makes the assertion a direct read of the
+    /// predicate's answer at that age.
     #[test]
     fn the_freshness_window_is_two_resync_intervals_4120() {
         let interval = std::time::Duration::from_secs(60);
-        for (label, age_ms, expected_reports) in [
-            ("one interval — well inside the window", 60_000, 1),
-            ("exactly two intervals — the inclusive edge", 120_000, 1),
-            ("a second past two intervals — outside", 121_000, 3),
+        for (label, age_ms, inside_window) in [
+            ("one interval — well inside the window", 60_000, true),
+            ("exactly two intervals — the inclusive edge", 120_000, true),
+            ("a second past two intervals — outside", 121_000, false),
         ] {
             let typed = Arc::new(RecordingEventSink::new());
             let sink: Arc<dyn SyncEventSink> = typed.clone();
@@ -3150,13 +3229,32 @@ mod tests {
                     "Sync failed: connection lost".into(),
                 );
             }
-
             assert_eq!(
                 error_messages(&typed).len(),
-                expected_reports,
-                "{label}: with a {}s resync interval the window is {}s",
+                1,
+                "{label}: an unchanged failure against an unchanged peer is one \
+                 report whatever the age (#4305); got {:?}",
+                typed.events()
+            );
+
+            // The probe: the same text, against a row streamed just now.
+            record_initiator_failure(
+                &scheduler,
+                &sink,
+                &[responder_only_ref(Some(agaric_store::db::now_ms()))],
+                RESPONDER_ONLY_PEER,
+                "Sync failed: connection lost".into(),
+            );
+            let expected = if inside_window { 1 } else { 2 };
+            assert_eq!(
+                error_messages(&typed).len(),
+                expected,
+                "{label}: with a {}s resync interval the window is {}s, so a \
+                 {age_ms}ms-old stamp must classify as {}. Got {:?}",
                 interval.as_secs(),
-                interval.as_secs() * 2
+                interval.as_secs() * 2,
+                if inside_window { "serving" } else { "dark" },
+                typed.events()
             );
         }
     }
@@ -3476,16 +3574,25 @@ mod tests {
         );
     }
 
-    /// The half of #4203 that keeps the refusal loud where it matters, pinned
-    /// against the same two shapes the pull-failure arm uses.
+    /// The half of #4203 that keeps the refusal audible where it matters,
+    /// pinned against the same two shapes the pull-failure arm uses.
     ///
     /// If a different key answering to a paired peer's name is the ONLY thing
-    /// on the wire, our `streamed_at` for that peer goes stale and nothing is
-    /// suppressed. That is the case a user who has lost their peer to an
-    /// impostor most needs to see, and it is the argument the refusal's old
-    /// doc comment made — preserved here rather than discarded.
+    /// on the wire, our `streamed_at` for that peer goes stale — and *that
+    /// transition* is what the user who has lost their peer to an impostor
+    /// needs to see. The argument the refusal's doc comment made is preserved;
+    /// #4305 bounded the number of times it is made.
+    ///
+    /// Two arms per shape, because "loud once" and "loud forever" are only
+    /// distinguishable across cycles:
+    ///
+    /// * a dark peer is told once, not once per resync interval — the security
+    ///   relevance of the condition is an argument for it being *heard*, and a
+    ///   red toast a minute is how a user learns to dismiss red toasts unread;
+    /// * but a peer that goes dark *after* the user was told while the pair was
+    ///   still working is told again, because that is a different loss.
     #[test]
-    fn the_pinned_identity_refusal_keeps_shouting_while_the_peer_is_dark_4203() {
+    fn the_pinned_identity_refusal_is_reported_once_per_state_of_the_pair_4305() {
         for (label, streamed_at) in [
             ("never streamed to us at all", None),
             (
@@ -3510,13 +3617,46 @@ mod tests {
 
             assert_eq!(
                 error_messages(&typed).len(),
-                4,
-                "#4203 ({label}): with nothing pulling from us either, the refusal is \
-                 the whole story of a peer we have lost — it must keep saying so. \
-                 Got {:?}",
+                1,
+                "#4305 ({label}): the refusal against a peer we have lost is the whole \
+                 story, and it does not change between cycles — telling it four times \
+                 adds nothing the peer row does not already carry. Got {:?}",
                 typed.events()
             );
+            assert_eq!(
+                scheduler.failure_count(RESPONDER_ONLY_PEER),
+                4,
+                "…and every cycle still books the backoff and still refuses the session"
+            );
         }
+
+        // The transition arm: told while the pair was visibly working, then the
+        // peer goes dark. The second state is a different fact and surfaces.
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        for refs in [
+            vec![responder_only_ref(Some(agaric_store::db::now_ms()))],
+            vec![responder_only_ref(None)],
+        ] {
+            for _ in 0..3 {
+                record_initiator_failure(
+                    &scheduler,
+                    &sink,
+                    &refs,
+                    RESPONDER_ONLY_PEER,
+                    IDENTITY_MISMATCH_MESSAGE.to_string(),
+                );
+            }
+        }
+        assert_eq!(
+            error_messages(&typed).len(),
+            2,
+            "#4305: a mismatched key on a pair that still works and a mismatched key on \
+             a pair that has stopped exchanging are two different things to be told, \
+             and each is told once. Got {:?}",
+            typed.events()
+        );
     }
 
     /// A pairing act is the user answering the refusal, so the refusal is news
