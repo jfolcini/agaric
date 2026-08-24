@@ -1,6 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { TOUCH_DRAG_TOLERANCE } from '@/components/block-tree/use-block-dnd'
 import {
   LONG_PRESS_DELAY,
   LONG_PRESS_MOVE_THRESHOLD,
@@ -21,7 +22,50 @@ describe('useBlockTouchLongPress', () => {
   })
 
   it('exports correct LONG_PRESS_MOVE_THRESHOLD constant', () => {
-    expect(LONG_PRESS_MOVE_THRESHOLD).toBe(10)
+    expect(LONG_PRESS_MOVE_THRESHOLD).toBe(5)
+  })
+
+  // Drift guard. While the long-press threshold was the looser 10 px, a 6-9 px
+  // finger drift inside the sensor's 250 ms delay CANCELLED the drag (tolerance
+  // exceeded) yet SURVIVED the long-press move check — so the context menu
+  // opened on a gesture the user had performed as a drag. Keep them equal.
+  it('LONG_PRESS_MOVE_THRESHOLD matches the drag sensor tolerance', () => {
+    expect(LONG_PRESS_MOVE_THRESHOLD).toBe(TOUCH_DRAG_TOLERANCE)
+  })
+
+  it('aborts the long-press at the same drift that cancels a pending drag', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: false }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const div = document.createElement('div')
+    document.body.append(div)
+
+    act(() => {
+      result.current.handleTouchStart({
+        touches: [{ clientX: 100, clientY: 100 }],
+        target: div,
+      } as unknown as React.TouchEvent)
+    })
+
+    // A 6 px drift: past the sensor's tolerance, so the drag is already dead.
+    act(() => {
+      result.current.handleTouchMove({
+        touches: [{ clientX: 106, clientY: 100 }],
+      } as unknown as React.TouchEvent)
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY)
+    })
+
+    expect(openContextMenu).not.toHaveBeenCalled()
+
+    document.body.removeChild(div)
+    unmount()
   })
 
   it('returns all expected handler functions', () => {
@@ -228,9 +272,11 @@ describe('useBlockTouchLongPress', () => {
       } as unknown as React.TouchEvent)
     })
 
+    // hypot(3, 2) ≈ 3.6 px — jitter inside LONG_PRESS_MOVE_THRESHOLD (5 px),
+    // and inside the drag sensor's identical tolerance.
     act(() => {
       result.current.handleTouchMove({
-        touches: [{ clientX: 105, clientY: 103 }],
+        touches: [{ clientX: 103, clientY: 102 }],
       } as unknown as React.TouchEvent)
     })
 
@@ -821,6 +867,75 @@ describe('useBlockTouchLongPress', () => {
     }).not.toThrow()
 
     expect(openContextMenu).toHaveBeenCalledOnce()
+
+    document.body.removeChild(div)
+    unmount()
+  })
+  // BUG: dragging a block also opened the long-press menu. Android WebView
+  // fires a NATIVE `contextmenu` at ~500 ms on a held element; by then the
+  // drag activated (250 ms) and `clearLongPress()` killed our own timer, but
+  // the native event rides a separate path and used to open the menu ungated.
+  it('handleContextMenu does NOT open the menu while a drag is active', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: true }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const div = document.createElement('div')
+    document.body.append(div)
+
+    const preventDefault = vi.fn()
+    act(() => {
+      result.current.handleContextMenu({
+        preventDefault,
+        clientX: 300,
+        clientY: 400,
+        target: div,
+      } as unknown as React.MouseEvent)
+    })
+
+    // The browser's own menu is still suppressed…
+    expect(preventDefault).toHaveBeenCalledOnce()
+    // …but ours must not open behind the lift.
+    expect(openContextMenu).not.toHaveBeenCalled()
+
+    document.body.removeChild(div)
+    unmount()
+  })
+
+  it('handleContextMenu opens again once the drag has ended', () => {
+    const openContextMenu = vi.fn()
+    const isDraggingRef = { current: true }
+
+    const { result, unmount } = renderHook(() =>
+      useBlockTouchLongPress({ openContextMenu, isDraggingRef }),
+    )
+
+    const div = document.createElement('div')
+    document.body.append(div)
+
+    act(() => {
+      result.current.handleContextMenu({
+        preventDefault: vi.fn(),
+        clientX: 10,
+        clientY: 20,
+        target: div,
+      } as unknown as React.MouseEvent)
+    })
+    expect(openContextMenu).not.toHaveBeenCalled()
+
+    isDraggingRef.current = false
+    act(() => {
+      result.current.handleContextMenu({
+        preventDefault: vi.fn(),
+        clientX: 10,
+        clientY: 20,
+        target: div,
+      } as unknown as React.MouseEvent)
+    })
+    expect(openContextMenu).toHaveBeenCalledWith(10, 20, undefined)
 
     document.body.removeChild(div)
     unmount()

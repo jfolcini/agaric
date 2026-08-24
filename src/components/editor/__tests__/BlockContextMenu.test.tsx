@@ -38,6 +38,7 @@ import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
 import { __resetPlatformCacheForTests, isMac } from '@/lib/platform'
 import { useBlockStore } from '@/stores/blocks'
+import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 
 vi.mock('@floating-ui/dom', () => ({
   // Base impl resolves anchor coords AND runs any size() middleware's `apply`
@@ -130,7 +131,15 @@ type MenuOverrides = { [K in keyof StructuralOverrides]?: StructuralOverrides[K]
   [K in keyof ActionOverrides]?: ActionOverrides[K]
 } & { actions?: BlockActions | undefined }
 
-function renderMenu(overrides: MenuOverrides = {}) {
+/**
+ * `wrap` (optional) — wraps the menu in extra providers. Used by the
+ * content-copy suite to supply a `PageBlockContext`; every other call site
+ * renders the menu bare, exactly as before.
+ */
+function renderMenu(
+  overrides: MenuOverrides = {},
+  wrap: (children: React.ReactElement) => React.ReactElement = (c) => c,
+) {
   const structuralDefaults = {
     blockId: 'BLOCK_01' as string,
     position: { x: 100, y: 200 },
@@ -185,7 +194,7 @@ function renderMenu(overrides: MenuOverrides = {}) {
   }
 
   const finalProps = { ...structural, actions } as BlockContextMenuProps
-  const result = render(<BlockContextMenu {...finalProps} />)
+  const result = render(wrap(<BlockContextMenu {...finalProps} />))
   // Re-expose the action callbacks flat on `props` so existing assertions
   // (`props.onDelete`, `props.onMerge`, …) keep working unchanged.
   return { ...result, props: { ...finalProps, ...actions } }
@@ -1960,5 +1969,113 @@ describe('BlockContextMenu store-driven bulk mode (#1018)', () => {
 
     await user.click(screen.getByText(t('contextMenu.deleteSelected', { count: 3 })))
     expect(props.onBatchDelete).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── Content copy (block / subtree / selection) ───────────────────────────────
+// The three rows serialize real markdown through `serializeBlockSubtree`, so
+// they need the containing page's flat blocks — i.e. a `PageBlockContext`.
+// Without one the menu falls back to the empty page store and the rows are
+// absent (asserted below), which is why the rest of this suite is unaffected.
+describe('BlockContextMenu — copy content', () => {
+  // ROOT
+  //   └─ BLOCK_01 ("parent")
+  //        ├─ CHILD_1 ("child one")
+  //        └─ CHILD_2 ("child two")
+  //   SIBLING ("sibling")
+  const PAGE_BLOCKS = [
+    { id: 'BLOCK_01', content: 'parent', parent_id: null, position: 0, depth: 0 },
+    { id: 'CHILD_1', content: 'child one', parent_id: 'BLOCK_01', position: 0, depth: 1 },
+    { id: 'CHILD_2', content: 'child two', parent_id: 'BLOCK_01', position: 1, depth: 1 },
+    { id: 'SIBLING', content: 'sibling', parent_id: null, position: 1, depth: 0 },
+  ]
+
+  function renderWithBlocks(
+    overrides: MenuOverrides = {},
+    blocks: unknown[] = PAGE_BLOCKS,
+  ): ReturnType<typeof renderMenu> {
+    const store = createPageBlockStore('PAGE_1')
+    store.setState({ blocks: blocks as never })
+    return renderMenu(overrides, (children) => (
+      <PageBlockContext.Provider value={store}>{children}</PageBlockContext.Provider>
+    ))
+  }
+
+  it('omits the content-copy rows with no page store above the menu', () => {
+    renderMenu()
+    expect(screen.queryByText(t('contextMenu.copyBlockContent'))).not.toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.copySubtreeContent'))).not.toBeInTheDocument()
+  })
+
+  it('copies ONLY the block\'s own markdown for "Copy block content"', async () => {
+    const user = userEvent.setup()
+    renderWithBlocks()
+
+    await user.click(screen.getByText(t('contextMenu.copyBlockContent')))
+
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith('parent'))
+    expect(toast.success).toHaveBeenCalledWith(t('contextMenu.blockContentCopied'))
+  })
+
+  it('copies the block AND its descendants, indented, for "Copy subtree content"', async () => {
+    const user = userEvent.setup()
+    renderWithBlocks()
+
+    await user.click(screen.getByText(t('contextMenu.copySubtreeContent')))
+
+    await waitFor(() =>
+      expect(mockedWriteText).toHaveBeenCalledWith('parent\n  child one\n  child two'),
+    )
+    expect(toast.success).toHaveBeenCalledWith(t('contextMenu.subtreeContentCopied'))
+  })
+
+  it('hides "Copy subtree content" for a childless block (it would duplicate the shallow row)', () => {
+    renderWithBlocks({ blockId: 'SIBLING', hasChildren: false })
+
+    expect(screen.getByText(t('contextMenu.copyBlockContent'))).toBeInTheDocument()
+    expect(screen.queryByText(t('contextMenu.copySubtreeContent'))).not.toBeInTheDocument()
+  })
+
+  it('hides "Copy selection" without a multi-block selection', () => {
+    renderWithBlocks()
+    expect(screen.queryByText(t('contextMenu.copySelectionContent'))).not.toBeInTheDocument()
+  })
+
+  it('copies every selected root for "Copy selection"', async () => {
+    const user = userEvent.setup()
+    renderWithBlocks({ selectedBlockIds: ['BLOCK_01', 'SIBLING'] })
+
+    await user.click(screen.getByText(t('contextMenu.copySelectionContent')))
+
+    // BLOCK_01 travels with its subtree; SIBLING follows in document order.
+    await waitFor(() =>
+      expect(mockedWriteText).toHaveBeenCalledWith('parent\n  child one\n  child two\nsibling'),
+    )
+    expect(toast.success).toHaveBeenCalledWith(t('contextMenu.selectionContentCopied'))
+  })
+
+  it('de-duplicates a selection that nests a descendant under a selected ancestor', async () => {
+    const user = userEvent.setup()
+    // CHILD_1 is inside BLOCK_01: `computeSelectionRoots` collapses it, so the
+    // subtree is emitted exactly once rather than twice.
+    renderWithBlocks({ selectedBlockIds: ['BLOCK_01', 'CHILD_1'] })
+
+    await user.click(screen.getByText(t('contextMenu.copySelectionContent')))
+
+    await waitFor(() =>
+      expect(mockedWriteText).toHaveBeenCalledWith('parent\n  child one\n  child two'),
+    )
+  })
+
+  it('toasts an error when the clipboard write rejects', async () => {
+    const user = userEvent.setup()
+    mockedWriteText.mockRejectedValueOnce(new Error('clipboard unavailable'))
+    renderWithBlocks()
+
+    await user.click(screen.getByText(t('contextMenu.copyBlockContent')))
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(t('contextMenu.copyContentFailed')),
+    )
   })
 })

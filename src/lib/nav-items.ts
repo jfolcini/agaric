@@ -27,12 +27,12 @@ import {
   Activity,
   Calendar,
   FileText,
+  Funnel,
   History,
   LayoutTemplate,
   Network,
   Search,
   Settings,
-  SlidersHorizontal,
   Tag,
   Trash2,
 } from 'lucide-react'
@@ -70,7 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'tags', icon: Tag, labelKey: 'sidebar.tags' },
       { id: 'graph', icon: Network, labelKey: 'sidebar.graph' },
       { id: 'templates', icon: LayoutTemplate, labelKey: 'sidebar.templates' },
-      { id: 'query', icon: SlidersHorizontal, labelKey: 'sidebar.query' },
+      { id: 'query', icon: Funnel, labelKey: 'sidebar.query' },
     ],
   },
   {

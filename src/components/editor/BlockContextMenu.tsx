@@ -18,9 +18,11 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  CopyCheck,
   CopyPlus,
   ExternalLink,
   Link2,
+  ListTree,
   Merge,
   MoveDown,
   MoveUp,
@@ -44,15 +46,20 @@ import {
 import { renderItem as renderMenuItem } from '@/components/editor/block-context-menu/menu-row'
 import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-context-menu/types'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { type RefResolver, serializeBlockSubtree } from '@/lib/block-clipboard'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
+import type { FlatBlock } from '@/lib/tree-utils'
 import { isAllowedUrl } from '@/lib/url-validation'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
+import { usePageBlockStoreOptional } from '@/stores/page-blocks'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 // Re-export the public type from its leaf module so external code keeps
 // importing it from `@/components/editor/BlockContextMenu` unchanged.
@@ -86,6 +93,12 @@ interface MenuGroupContext {
   priority: (string | null) | undefined
   linkUrl: string | undefined
   pageRefId: string | undefined
+  /**
+   * The containing page's flat block list — the serialization source for the
+   * content-copy items. Empty when the menu renders outside a
+   * `PageBlockStoreProvider` (isolated tests), which gates those items off.
+   */
+  blocks: FlatBlock[]
   activeBlockType: BlockTypeToken | undefined
   turnIntoOpen: boolean
   setTurnIntoOpen: React.Dispatch<React.SetStateAction<boolean>>
@@ -412,9 +425,130 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
       }
     : null
 
-  return [openLinkItem, copyUrlItem, copyBlockRefItem, copyPageRefItem].filter(
-    (item): item is MenuItem => item !== null,
-  )
+  return [openLinkItem, copyUrlItem, copyBlockRefItem, copyPageRefItem]
+    .filter((item): item is MenuItem => item !== null)
+    .concat(buildContentCopyItems(ctx))
+}
+
+/**
+ * The SYSTEM-clipboard reference renderer (#1440), rebuilt at click time so it
+ * reads the freshest resolve cache. Rewrites opaque-ULID tokens to their
+ * human-readable names (`[[Page Name]]` / `#tag` / `((Name))`), exactly as the
+ * `copyBlocks` chord (`use-block-tree-keyboard-shortcuts`) and page-export do.
+ * A cache miss returns `undefined`, so a dangling ULID falls back to its
+ * verbatim token rather than a `[[xxxx…]]` placeholder.
+ *
+ * INTERNAL copy→paste paths (duplicate, context-menu paste) must NOT use this:
+ * their content stays ULID-canonical so it can be re-imported losslessly.
+ */
+function humanizingResolver(): RefResolver {
+  const resolveCache = useResolveStore.getState().cache
+  const spaceId = useSpaceStore.getState().currentSpaceId
+  return (ulid) => resolveCache.get(keyFor(spaceId, ulid))?.title
+}
+
+/**
+ * Write serialized markdown to the system clipboard, toasting either way.
+ * Empty markdown (nothing resolved) is reported as a failure rather than
+ * silently "succeeding" with an empty clipboard.
+ */
+async function copyMarkdown(
+  markdown: string,
+  t: TFn,
+  successKey: string,
+  context: Record<string, unknown>,
+): Promise<void> {
+  if (markdown.length === 0) {
+    logger.warn('BlockContextMenu', 'Nothing to copy — serialized to empty', context)
+    notify.error(t('contextMenu.copyContentFailed'))
+    return
+  }
+  try {
+    await writeText(markdown)
+    notify.success(t(successKey))
+  } catch (err) {
+    logger.error('BlockContextMenu', 'Failed to copy content to clipboard', context, err)
+    notify.error(t('contextMenu.copyContentFailed'))
+  }
+}
+
+/**
+ * The content-copy rows: block / subtree / selection markdown → clipboard.
+ *
+ * All three reuse `serializeBlockSubtree`, which ALWAYS emits a root plus its
+ * descendants. "Copy block content" therefore scopes the item list to the block
+ * ITSELF (a one-element list has no descendants to walk), which is also what
+ * makes its relative-indent baseline land at 0.
+ *
+ * Gated on the block being present in `blocks`: with no `PageBlockStoreProvider`
+ * above the menu there is nothing to serialize, so the rows are omitted rather
+ * than offered as no-ops.
+ */
+function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
+  const { t, blockId, blocks, bulkIds, onClose } = ctx
+  const self = blocks.find((b) => b.id === blockId)
+  if (!self) return []
+
+  const items: MenuItem[] = [
+    {
+      label: t('contextMenu.copyBlockContent'),
+      icon: <Copy className="h-3.5 w-3.5" />,
+      action: async () => {
+        await copyMarkdown(
+          serializeBlockSubtree([self], [blockId], humanizingResolver()),
+          t,
+          'contextMenu.blockContentCopied',
+          { blockId },
+        )
+        onClose()
+      },
+    },
+  ]
+
+  // Only worth offering when the subtree is actually bigger than the block —
+  // with no children it would duplicate "Copy block content" verbatim.
+  if (blocks.some((b) => b.parent_id === blockId)) {
+    items.push({
+      label: t('contextMenu.copySubtreeContent'),
+      icon: <ListTree className="h-3.5 w-3.5" />,
+      action: async () => {
+        await copyMarkdown(
+          serializeBlockSubtree(blocks, [blockId], humanizingResolver()),
+          t,
+          'contextMenu.subtreeContentCopied',
+          { blockId },
+        )
+        onClose()
+      },
+    })
+  }
+
+  // Multi-select only (`bulkIds` — >1 selected AND this block among them),
+  // matching the rest of the menu's bulk rows. Restricted to ids this page
+  // owns, the same ownership gate the `copyBlocks` chord applies;
+  // `serializeBlockSubtree` de-duplicates nested selections via
+  // `computeSelectionRoots`, so a selected descendant travels with its ancestor
+  // instead of being emitted twice.
+  if (bulkIds) {
+    const owned = bulkIds.filter((id) => blocks.some((b) => b.id === id))
+    if (owned.length > 1) {
+      items.push({
+        label: t('contextMenu.copySelectionContent'),
+        icon: <CopyCheck className="h-3.5 w-3.5" />,
+        action: async () => {
+          await copyMarkdown(
+            serializeBlockSubtree(blocks, owned, humanizingResolver()),
+            t,
+            'contextMenu.selectionContentCopied',
+            { count: owned.length },
+          )
+          onClose()
+        },
+      })
+    }
+  }
+
+  return items
 }
 
 /** #264 — "Turn into" disclosure group. */
@@ -521,6 +655,11 @@ export function BlockContextMenu({
   // explicit prop (tests) overrides the store read.
   const selectedBlockIdsFromStore = useBlockStore((s) => s.selectedBlockIds)
   const selectedBlockIds = selectedBlockIdsProp ?? selectedBlockIdsFromStore
+  // The containing page's flat blocks — the serialization source for the
+  // content-copy rows. `…Optional` because the menu is also rendered in
+  // isolation by tests, with no `PageBlockStoreProvider` above it: there the
+  // fallback store reports an empty page and those rows gate themselves off.
+  const blocks = usePageBlockStoreOptional((s) => s.blocks)
   const menuRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   // #264 — the "Turn into" group is collapsed by default; expanding reveals
@@ -751,6 +890,7 @@ export function BlockContextMenu({
     priority,
     linkUrl,
     pageRefId,
+    blocks,
     activeBlockType,
     turnIntoOpen,
     setTurnIntoOpen,
