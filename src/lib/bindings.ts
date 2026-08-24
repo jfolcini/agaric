@@ -521,10 +521,14 @@ export const commands = {
 	 *  #4298) — a CLAIM by an untrusted remote, not a fact about it.
 	 * 
 	 *  Carried in `HeadExchange` and refreshed on every session in which this
-	 *  device is the responder, so a peer that is renamed on its own machine
-	 *  propagates that name here on its next dial. It is clamped to 64
-	 *  characters on send AND again on receive, and empty/whitespace-only is
-	 *  normalised to `None`; a peer can put anything in this field, so the
+	 *  device is the responder AND authenticated the peer as this row's id — a
+	 *  bound peer resolved through the key its handshake proved, or a joiner the
+	 *  TOFU bind just accepted. So a peer renamed on its own machine propagates
+	 *  that name here on its next dial, and a session keyed on a device id it
+	 *  merely *claimed* writes nothing here (see the responder's name block and
+	 *  #4230). It is stripped of control and bidi-format characters and clamped
+	 *  to 64 characters on send AND again on receive, and empty/whitespace-only
+	 *  is normalised to `None`; a peer can put anything in this field, so the
 	 *  receiving side re-applies every bound rather than trusting the sender to
 	 *  have applied it.
 	 * 
@@ -533,8 +537,16 @@ export const commands = {
 	 *  clearing an override fall back to the peer's own name rather than to a
 	 *  truncated UUID.
 	 * 
-	 *  `None` is normal — a peer on a build predating #4298 sends no name, and
-	 *  a device whose hostname could not be read sends none either.
+	 *  `None` is normal *as a starting state* — a peer on a build predating
+	 *  #4298 sends no name, and a device whose hostname could not be read sends
+	 *  none either. It is not a state a row goes back to: the responder
+	 *  short-circuits on a missing name rather than recording its absence (`if
+	 *  let Some(name) = offered_device_name`), so once a name has been recorded
+	 *  the row keeps it until the peer supplies a different one. That is the
+	 *  wanted behaviour — a peer that downgrades, or boots once without a
+	 *  readable hostname, must not blank a device list back to hex — and it
+	 *  means [`update_remote_device_name`]'s `None` arm has no production
+	 *  caller.
 	 */
 	remote_device_name: string | null,
 	/**
@@ -3059,10 +3071,14 @@ export type PeerRef = {
 	 *  #4298) — a CLAIM by an untrusted remote, not a fact about it.
 	 * 
 	 *  Carried in `HeadExchange` and refreshed on every session in which this
-	 *  device is the responder, so a peer that is renamed on its own machine
-	 *  propagates that name here on its next dial. It is clamped to 64
-	 *  characters on send AND again on receive, and empty/whitespace-only is
-	 *  normalised to `None`; a peer can put anything in this field, so the
+	 *  device is the responder AND authenticated the peer as this row's id — a
+	 *  bound peer resolved through the key its handshake proved, or a joiner the
+	 *  TOFU bind just accepted. So a peer renamed on its own machine propagates
+	 *  that name here on its next dial, and a session keyed on a device id it
+	 *  merely *claimed* writes nothing here (see the responder's name block and
+	 *  #4230). It is stripped of control and bidi-format characters and clamped
+	 *  to 64 characters on send AND again on receive, and empty/whitespace-only
+	 *  is normalised to `None`; a peer can put anything in this field, so the
 	 *  receiving side re-applies every bound rather than trusting the sender to
 	 *  have applied it.
 	 * 
@@ -3071,8 +3087,16 @@ export type PeerRef = {
 	 *  clearing an override fall back to the peer's own name rather than to a
 	 *  truncated UUID.
 	 * 
-	 *  `None` is normal — a peer on a build predating #4298 sends no name, and
-	 *  a device whose hostname could not be read sends none either.
+	 *  `None` is normal *as a starting state* — a peer on a build predating
+	 *  #4298 sends no name, and a device whose hostname could not be read sends
+	 *  none either. It is not a state a row goes back to: the responder
+	 *  short-circuits on a missing name rather than recording its absence (`if
+	 *  let Some(name) = offered_device_name`), so once a name has been recorded
+	 *  the row keeps it until the peer supplies a different one. That is the
+	 *  wanted behaviour — a peer that downgrades, or boots once without a
+	 *  readable hostname, must not blank a device list back to hex — and it
+	 *  means [`update_remote_device_name`]'s `None` arm has no production
+	 *  caller.
 	 */
 	remote_device_name: string | null,
 	/**
