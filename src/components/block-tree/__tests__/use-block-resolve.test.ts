@@ -1242,6 +1242,43 @@ describe('searchPages — long query (>2 chars)', () => {
     expect(nonCreateIds).toContain('GENUINE')
   })
 
+  // PR #4295 review, finding 1 — the test above (`item 1 regression`) queries
+  // "title", which the prefix-only `matchesPageRowFolded` now excludes from
+  // matching a blank row at all, so it no longer exercises the crowd-out it
+  // was written for. A genuine PREFIX of "Untitled" — "unt" here — still
+  // matches every blank row (prefix test), and `searchPagesViaFts` never got
+  // the same real-content-first partition `searchPagesViaCache` did: it
+  // hands the unpartitioned, pagesListRef-ordered (blanks-first, #4138) list
+  // straight to `.slice(0, 10)`, so ten blank rows fill the entire supplement
+  // budget before the genuine cache-only match is ever considered.
+  it('does not let "Untitled"-prefix blank rows crowd out a genuine cache-only match for a prefix query (#4295 review, finding 1)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Ten NULL-content ("Untitled") pages, sorted first as #4138 dictates,
+    // followed by one genuine page whose real title contains "unt" as a
+    // substring (not itself a prefix match, so it only ever surfaces via
+    // the substring branch of `matchesPageRowFolded`).
+    const placeholders = Array.from({ length: 10 }, (_, i) => ({ id: `NULL${i}`, title: '' }))
+    act(() => {
+      result.current.pagesListRef.current = [...placeholders, { id: 'GENUINE', title: 'Countdown' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('unt')
+    })
+
+    const nonCreateIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(nonCreateIds).toContain('GENUINE')
+  })
+
   it('does NOT supplement from cache when FTS returns >= 5 results', async () => {
     const ftsPages = Array.from({ length: 6 }, (_, i) => ({
       id: `FTS${i}`,

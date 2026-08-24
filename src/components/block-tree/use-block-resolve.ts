@@ -290,14 +290,28 @@ async function searchPagesViaCache(
   // unconditionally would silently reorder that empty-query listing to
   // "content, then blanks", which is a real behaviour change nothing asked
   // for and no bug requires.
+  // PR #4295 review, note 4 — hoisted OUT of the per-row `matchesPageRowFolded`
+  // call below: computed once per `searchPagesViaCache` invocation (i.e. once
+  // per keystroke) rather than once per blank row. Recomputed on every call
+  // rather than cached at module scope, deliberately: `untitledOr` reads the
+  // live i18next instance (#4153), and the active locale can change at
+  // runtime via `i18next.changeLanguage` without a remount, so a module-scope
+  // cache would keep serving a stale placeholder after such a switch.
+  const foldedPlaceholder = q ? foldedUntitledPlaceholder() : ''
   const filtered = q
     ? [
+        // PR #4295 review, note 6 — `untitledOr` no longer lives in `keys`
+        // (the placeholder crowd-out this whole file is about was fixed by
+        // routing blank rows through `matchesPageRowFolded` below instead),
+        // so `keys: [(p) => p.title]` is equivalent to plain `'title'` again.
         ...matchSorter(
           source.filter((p) => p.title.trim() !== ''),
           q,
-          { keys: [(p) => p.title] },
+          { keys: ['title'] },
         ),
-        ...source.filter((p) => p.title.trim() === '' && matchesPageRowFolded(p.title, q)),
+        ...source.filter(
+          (p) => p.title.trim() === '' && matchesPageRowFolded(p.title, q, foldedPlaceholder),
+        ),
       ]
     : source
   // Copy rather than hand back `pagesListRef.current`'s own objects — the
@@ -351,8 +365,15 @@ async function searchPagesViaCache(
  * active locale. A multi-word localised placeholder (e.g. fr "Sans titre")
  * would make a query like "titre" find nothing here, where a substring test
  * would have. Only `en` ships today, so this doesn't reach a real user yet.
+ *
+ * `foldedPlaceholder` is `foldForSearch(untitledOr(''))` — PR #4295 review,
+ * note 4: this used to call `untitledOr` (an `i18next.t` lookup) and
+ * `foldForSearch` itself, once per BLANK ROW per keystroke in both filter
+ * paths. It's the same value for every blank row in a given call (a blank
+ * row has no title of its own to fold), so callers now compute it once per
+ * call — see `foldedUntitledPlaceholder` — and pass it in here instead.
  */
-function matchesPageRowFolded(title: string, q: string): boolean {
+function matchesPageRowFolded(title: string, q: string, foldedPlaceholder: string): boolean {
   if (title.trim() === '') {
     // A non-empty RAW query that folds down to `''` (e.g. one made entirely
     // of combining marks, which `foldForSearch` strips) must NOT fall back
@@ -363,9 +384,24 @@ function matchesPageRowFolded(title: string, q: string): boolean {
     // (`searchPagesViaCache`), which now calls this function directly and
     // is guarded to only do so for a truthy `q`.
     const foldedQuery = foldForSearch(q)
-    return foldedQuery !== '' && foldForSearch(untitledOr(title)).startsWith(foldedQuery)
+    return foldedQuery !== '' && foldedPlaceholder.startsWith(foldedQuery)
   }
   return matchesSearchFolded(title, q)
+}
+
+/**
+ * PR #4295 review, note 4 — the once-per-call value `matchesPageRowFolded`
+ * needs for every blank row it's asked about. Recomputed on every call
+ * (never cached at module scope): `untitledOr` resolves through the live
+ * i18next instance (#4153's "routes the placeholder through the live i18n
+ * instance, not a hardcoded literal"), and the active locale can change at
+ * runtime via `i18next.changeLanguage` with no remount in between, so a
+ * module-scope cache would keep serving a placeholder folded under the OLD
+ * locale after such a switch. Once per `searchPages` call is still a large
+ * win over once per blank row — the fix this note is about.
+ */
+function foldedUntitledPlaceholder(): string {
+  return foldForSearch(untitledOr(''))
 }
 
 /**
@@ -422,8 +458,35 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   // folded-SUBSTRING test — including its Unicode-aware fold and ASCII fast
   // path, which keeps this hot cache-lookup cheap when the query is ASCII.
   // `p.title` in the returned row (the `.map` below) stays raw either way.
-  const cacheMatches = pagesListRef.current
-    .filter((p) => matchesPageRowFolded(p.title, q) && !ftsIds.has(p.id))
+  //
+  // PR #4295 review, finding 1 — the first review round partitioned
+  // `searchPagesViaCache`'s ranking (real-content rows first, blank rows
+  // only filling what's left) but left THIS supplement as a flat filter +
+  // `.slice(0, 10)` over `pagesListRef.current`'s own order, which is
+  // blanks-first (#4138: an empty title sorts before any real one). A
+  // prefix of "Untitled" (`unt` and longer) matches every blank row via the
+  // prefix branch above, so ten of them fill the entire supplement budget
+  // before a genuine cache-only match is ever considered — the exact
+  // crowd-out `matchesPageRowFolded` was narrowed to fix, just reached
+  // through this path's unranked slice instead of `matchSorter`'s ranking.
+  // Partitioned the same way as `searchPagesViaCache`, so the two paths
+  // can't diverge on the rule: real-content matches first, blank rows only
+  // fill the slots real matches don't use.
+  //
+  // PR #4295 review, note 4 — `foldedPlaceholder` is computed once here,
+  // not once per blank row inside `matchesPageRowFolded`. See
+  // `foldedUntitledPlaceholder`'s comment for why it's recomputed per call
+  // rather than cached at module scope.
+  const foldedPlaceholder = foldedUntitledPlaceholder()
+  const candidates = pagesListRef.current.filter((p) => !ftsIds.has(p.id))
+  const cacheMatches = [
+    ...candidates.filter(
+      (p) => p.title.trim() !== '' && matchesPageRowFolded(p.title, q, foldedPlaceholder),
+    ),
+    ...candidates.filter(
+      (p) => p.title.trim() === '' && matchesPageRowFolded(p.title, q, foldedPlaceholder),
+    ),
+  ]
     .slice(0, 10)
     .map((p) => ({ id: p.id, title: p.title }))
   return [...matches, ...cacheMatches].slice(0, 20)
