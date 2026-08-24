@@ -271,10 +271,10 @@ export function AddFilterPopover({
         align="start"
         // The facet list can exceed the viewport on short windows (each menu
         // item carries a two-line description). The base PopoverContent caps
-        // height at `100dvh-4rem` but does not scroll, so overflowing facets
-        // (e.g. the last "No inbound links" item) render below the fold with no
-        // way to reach them. Make this popover its own scroll container.
-        className="w-72 overflow-y-auto p-2"
+        // height at the collision-aware available height and scrolls its own
+        // overflow (#1960, #4313), so nothing here has to arrange that — this
+        // only narrows the width and tightens the padding for a menu of rows.
+        className="w-72 p-2"
         aria-label={t('pageBrowser.filter.addFilterDialogLabel')}
       >
         {warnManyFilters && (

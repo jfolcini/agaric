@@ -168,12 +168,37 @@ height as `innerHeight - (vv.height + vv.offsetTop)`, which would be zero if
 `dvh` shrank — so the comment and the helper contradicted each other and the
 helper was right.
 
-Fixed at the primitive, not the call site: the private `useSoftKeyboardInset` in
-`ui/sheet.tsx` became a shared hook, the popover reports the keyboard as bottom
-collision padding so Radix's own flip/shift routes around it, and the cap became
-`--radix-popover-content-available-height` (which `AddFilterPopover` already
-used directly) with the old `100dvh` expression demoted to a fallback for jsdom
-and `avoidCollisions={false}`.
+Fixed at the primitive, not the call site: the cap became
+`--radix-popover-content-available-height`, with the old `100dvh` expression
+demoted to a fallback that in practice only fires in jsdom.
+
+**The first attempt at this was wrong in an instructive way, and the review
+caught it.** It also added the keyboard inset to the bottom `collisionPadding`,
+on the premise that "the soft keyboard is not part of any collision boundary the
+browser knows about". That premise is false. Radix positions with a fixed
+strategy and an empty collision boundary, so floating-ui's clipping rect is the
+viewport rect, and `getViewportRect` reads `visualViewport` — the same
+keyboard-free band `computeKeyboardInset` is derived from. The boundary already
+excluded the keyboard, so the padding subtracted it a second time: `size()`
+telescopes to `clippingHeight - paddingTop - paddingBottom`, and Radix's
+`shift({mainAxis: true})` makes that the cap outright on vertical placements.
+Measured at an iPhone-13 viewport with a 300px keyboard, available height came
+out at **56px** — one row of padding — against 311px without it. A taller
+keyboard drives the expression negative, the `max-height` is discarded as
+invalid, and the cap vanishes altogether.
+
+So the reasoning that produced this section's opening paragraph was right about
+`dvh` and wrong about Radix, and being right about the first made the second
+feel settled. The lesson is narrower than "verify assumptions": the helper that
+proved `dvh` does not track the keyboard is the *same* helper floating-ui
+effectively reimplements, so the very evidence that convicted `dvh` should have
+exonerated Radix. Two consumers of `visualViewport`, and I read one of them as
+proof the other was blind.
+
+The test carries the correction: it asserts the popover is tall enough to be
+usable, not merely that it clears the keyboard. "Clears the keyboard" is
+satisfied by a 56px box, which is exactly how the double subtraction survived
+the first round.
 
 ## Operational notes
 
