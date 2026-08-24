@@ -960,6 +960,43 @@ describe('searchPages — short query (<=2 chars)', () => {
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P30', title: '' }])
   })
 
+  // PR #4295 review, finding 1 — this is the FTS path's "item 1 regression"
+  // test (below, in the long-query describe block) mirrored for the
+  // SHORT-query cache path, which the PR's last commit deliberately left
+  // untouched on the claim that `matchSorter`'s own ranking of the
+  // "Untitled" placeholder text lands at "a fixed, low rank" that can only
+  // crowd out a match no better than CONTAINS. That claim is wrong for
+  // exactly the queries #4152 targets: verified against the installed
+  // `match-sorter` (8.3.0), `matchSorter("Untitled", "un")` ranks
+  // `STARTS_WITH` (5), the SAME tier a genuine `Unusual Page`-style match
+  // gets, and same-tier ties fall back to `localeCompare` of the ranked
+  // value — "Untitled" sorts before "Unusual", so it wins the tie too. A
+  // genuine CONTAINS-tier match (e.g. "My Fun Page") loses outright, never
+  // even tying. Past `.slice(0, 20)`, a run of blank pages crowds a genuine
+  // match out entirely — the exact bug `matchesPageRowFolded` was narrowed
+  // to fix on the FTS path, just reached through this path's own ranking
+  // instead of an unranked array slice.
+  it('does not let "Untitled"-placeholder ranking crowd out a genuine cache match (#4295 review, finding 1)', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    // 25 NULL-content ("Untitled") pages, plus one genuine page whose real
+    // title merely CONTAINS "un" ("f-UN"), not starts with it — the tier
+    // `matchSorter` ranks it at loses outright to every blank row's
+    // STARTS_WITH hit against "Untitled".
+    const blanks = Array.from({ length: 25 }, (_, i) => ({ id: `BLANK${i}`, title: '' }))
+    act(() => {
+      result.current.pagesListRef.current = [...blanks, { id: 'GENUINE', title: 'My Fun Page' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('un')
+    })
+
+    const nonCreateIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(nonCreateIds).toContain('GENUINE')
+  })
+
   it('returns all pages (up to 20) for empty query string', async () => {
     const { result } = renderHook(() => useBlockResolve())
 
@@ -4356,6 +4393,76 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     // later-started request's (fresher) rows.
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P_NEWER', title: 'Newer Page' }])
   })
+
+  // PR #4295 review, finding 6 — the test above pins `pagesRequestSeqRef`;
+  // `tagsRequestSeqRef` (the mirror-image counter `searchTags` uses to fill
+  // `tagsListRef`, per `RequestSeqRef`'s own comment: "a separate one for
+  // `tagsListRef` fills") had no equivalent coverage. Same scenario, tags
+  // side: two overlapping fills with no invalidation between them, later
+  // one resolves first.
+  //
+  // `tagsListRef` isn't exposed on the hook's return value the way
+  // `pagesListRef` is (see `UseBlockResolveReturn`), so this asserts
+  // indirectly: a THIRD call must be served from cache (no new IPC call)
+  // and must return the later-started fill's rows, not the earlier one's —
+  // which is only true if the sequence guard rejected the earlier-started,
+  // later-resolving write.
+  it('tagsListRef: two concurrent fills — the later-STARTED one wins, even if it resolves first', async () => {
+    // `tagRow` here is this describe block's own helper (defined above,
+    // `{ tag_id, name, usage_count: 1, ... }`) — not a redeclaration.
+    let resolveFirst: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    let resolveSecond: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Both `@` keystrokes land while the cache is still empty, so BOTH take
+    // the lazy-fill branch and dispatch their own `listAllTagsInSpace` call.
+    let inFlight1: Promise<unknown> = Promise.resolve()
+    let inFlight2: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight1 = result.current.searchTags('')
+    })
+    act(() => {
+      inFlight2 = result.current.searchTags('')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+
+    // The SECOND (later-started) request resolves FIRST, with the FRESHER
+    // data — then the FIRST (earlier-started) request resolves LAST, with
+    // OLDER data, and no bus event ever fired to distinguish them.
+    await act(async () => {
+      resolveSecond([tagRow('T_NEWER', 'newer')])
+      await inFlight2
+    })
+    await act(async () => {
+      resolveFirst([tagRow('T_OLDER', 'older')])
+      await inFlight1
+    })
+
+    // A third call is served from cache — no new IPC — and must see the
+    // later-started fill's rows.
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(ids).toContain('T_NEWER')
+    expect(ids).not.toContain('T_OLDER')
+  })
 })
 
 // ── onCreatePage/onCreateTag bump the generation counter (#4275 item 1) ──
@@ -4383,9 +4490,33 @@ describe('onCreatePage / onCreateTag bump the generation counter (#4275 item 1)'
     }
   }
 
+  function tagRow(id: string, name: string) {
+    return { tag_id: id, name, usage_count: 0, updated_at: '2024-01-01' }
+  }
+
+  function tagBlock(id: string, content: string) {
+    return {
+      id,
+      block_type: 'tag' as const,
+      content,
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      page_id: null,
+      // #2468 — createBlock resolves WithOps<BlockRow>.
+      op_refs: [],
+    }
+  }
+
   afterEach(() => {
     mockedListAllPagesInSpace.mockReset()
     mockedCreatePageInSpace.mockReset()
+    mockedListAllTagsInSpace.mockReset()
+    mockedCreateBlock.mockReset()
   })
 
   it('a create landing mid-flight is not lost: the racing fill is rejected and the NEXT read shows the created page', async () => {
@@ -4443,5 +4574,70 @@ describe('onCreatePage / onCreateTag bump the generation counter (#4275 item 1)'
 
     expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
     expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('NEW_PAGE_MIDFLIGHT')
+  })
+
+  // PR #4295 review, finding 6 — this describe block's title names BOTH
+  // `onCreatePage` and `onCreateTag`, but only `onCreatePage`'s generation
+  // bump had a test above; `onCreateTag`'s (`nameChangeGenerationRef.current
+  // += 1` in `onCreateTag`, mirroring `onCreatePage`'s own — see its
+  // comment) was unexercised. Same scenario, tags side.
+  //
+  // `tagsListRef` isn't exposed on the hook's return value the way
+  // `pagesListRef` is, so this asserts indirectly through `searchTags`'s
+  // observable behaviour instead of reading the ref directly — same
+  // adaptation as the `tagsRequestSeqRef` test above.
+  it('a tag create landing mid-flight is not lost: the racing fill is rejected and the NEXT read shows the created tag', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+    mockedCreateBlock.mockResolvedValueOnce(tagBlock('NEW_TAG_MIDFLIGHT', 'urgent'))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Start the short-query fill — the cache is empty, so this dispatches
+    // `listAllTagsInSpace` and leaves it in flight.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchTags('')
+    })
+
+    // A tag is created WHILE that fill is still in flight — the #4008
+    // review note 6 guard skips the append (tagsListRef is still empty at
+    // this point).
+    await act(async () => {
+      await result.current.onCreateTag('urgent')
+    })
+
+    // …THEN the pre-create fetch resolves, with rows that do NOT include
+    // the just-created tag (it started before the create).
+    let staleItems: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      resolveFetch([tagRow('T_PRE_EXISTING', 'pre-existing')])
+      staleItems = (await inFlight) as typeof staleItems
+    })
+
+    // The generation bump must have rejected this write: the racing fill's
+    // rejected branch serves `tagsListRef.current` (still empty) instead of
+    // the discarded pre-create snapshot, so the caller sees no rows here —
+    // without the fix this would instead contain 'T_PRE_EXISTING'.
+    expect(staleItems.filter((i) => !i.isCreate).map((i) => i.id)).toEqual([])
+
+    // The picker's NEXT read re-fetches (cache still empty) — the backend
+    // has already committed the create, so this response includes it.
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_PRE_EXISTING', 'pre-existing'),
+      tagRow('NEW_TAG_MIDFLIGHT', 'urgent'),
+    ])
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('NEW_TAG_MIDFLIGHT')
   })
 })
