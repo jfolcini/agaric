@@ -156,18 +156,110 @@ Confirmed non-vacuous: it fails at both profiles against `origin/main`'s
 - `npx playwright test e2e/mobile-overflow.spec.ts` → 30 passed at both phone profiles
 - `oxlint` + `oxfmt --check` on changed files → clean
 
+## Everything else that shipped
+
+Nine PRs in total. The rest, after the peer row:
+
+- **#4302** — three independent phone reports. A native `contextmenu` handler
+  that called `openContextMenu` unconditionally while the timer path beside it
+  correctly guarded on `isDraggingRef`, so Android's ~500ms native event opened
+  the menu mid-drag; and a threshold gap where a 6-9px drift killed the drag
+  (sensor tolerance 5) but survived the long-press check (10), so the menu
+  popped on a gesture performed as a drag. Plus the Advanced Query icon
+  (`SlidersHorizontal` → `Funnel`, in both the sidebar and the palette or they
+  disagree) and copy block / subtree / selection wired into the context menu's
+  copy group, which could copy references but not content.
+- **#4303** — the Android status bar (#4301). `env(safe-area-inset-*)` is
+  reported by Android's WebView for display CUTOUTS only, never for system
+  bars, so every value is `0px` on a handset without a notch and the app paints
+  its header under the clock. Deleting `enableEdgeToEdge()` fixes nothing —
+  `targetSdk = 36` enforces edge-to-edge anyway. The insets are now pushed in
+  from `MainActivity` as an inline style on `documentElement`, over CSS
+  variables that fall back to `env()` everywhere else.
+- **#4304** — one-sided unpair (#4297).
+- **#4305** — the collapse caret's box replaced by a solid-vs-outline glyph
+  (shape+fill, so the #216 non-rotation contract survives without the plate),
+  and `Tab.enteredFrom` so deleting a page returns you where you came from
+  instead of always `pages`. The two fallbacks — `tabs.ts` said `pages`, the
+  Android back chain said `journal` — now agree by construction.
+- **#4306** — the mobile rail replaced by a hamburger. +48px, measured.
+- **#4308** — the empty-block placeholder (#4307).
+- **#4309** — the journal header, three rows to one.
+- **#4310** — four sync toasts that fired every 60 seconds.
+
+## Three things that were wrong on the way in, and cost real time
+
+**The iroh Router hypothesis.** Already recorded above, but worth repeating as a
+pattern: the premise named a mechanism that does not exist in this repo. Checking
+that first would have saved an hour.
+
+**The placeholder's axis.** The triage said the placeholder overflowed
+horizontally. It does not. A float is shrink-to-fit, so the box was exactly the
+paragraph's content width and the hint wrapped to three lines INSIDE it;
+`height: 0` meant the block stayed one line tall while two lines painted down
+over the content below. Every horizontal-overflow assertion stayed green through
+the bug, and the first draft of the new test passed against the unfixed CSS. The
+agent caught it by measuring before changing anything.
+
+**"The hamburger's +48px will make the journal header fit."** It does not. At
+360px the header wrapper gets 284px and the controls needed 518px — a 234px gap
+no tightening closes. Two sub-premises were also wrong: `MMMM yyyy` is the
+NARROWEST date string rather than the widest (weekly was already wrapping to
+three lines), and `max-sm:` overrides silently do nothing against the size
+variants' `[@media(pointer:coarse)]:` classes, because the coarse variant wins on
+source order — measured as a 0px difference.
+
+The common thread: every one of these was caught by measuring in a real browser
+rather than reasoning from the CSS. Three of the four fixes in this session
+changed shape once the numbers arrived.
+
+## Operational notes for the next session
+
+- **A stale worktree base bites in three different places.** A branch built
+  while a sibling PR merges fails on (1) TypeScript, when a shared struct gains
+  a required field; (2) **sqlx**, whose compile-time query check validates
+  against that worktree's own `dev.db` — and `seed-worktree.sh` is idempotent,
+  so it SKIPS an existing DB and does not self-heal. The fix is
+  `cargo sqlx migrate run` in the worktree; and (3) semantic conflicts in files
+  two branches both touched.
+- **`push.sh`'s gate does not cover clippy or `cargo fmt --check`.** The script
+  says so at the top. A `needless_range_loop` in a new test got through the full
+  gate and was rejected by the pre-push hook afterwards.
+- **Port 5173 is a singleton across worktrees.** `playwright.config.ts` pins it
+  with `--strictPort`, so two worktrees cannot run e2e concurrently — and
+  `reuseExistingServer: true` locally means a run *can* silently test another
+  worktree's build. Serialise e2e, or use an isolated port.
+- **Two tests flake under load**, both unrelated to what was being changed:
+  `TrashView.test.tsx` (partial-progress toast) and
+  `PageBrowser.multiselect.test.tsx`. Both pass in isolation. Worth a look if
+  they recur.
+
 ## Still open from this session
 
-The remaining 12 bug reports filed from the phone are triaged with `path:line`
-locations and sizes. Four need a design decision that has now been taken (subtler
-collapse cue; drag from the block itself rather than a grip; hamburger before the
-header work; "always-on controls" means the journal header). Two — the code-block
-language picker and the status-bar inset — cannot be validated in jsdom or
-Playwright and need a device or emulator; the second is Kotlin
-(`MainActivity.kt:8` `enableEdgeToEdge()`, whose inset Android's WebView never
-reports as `env(safe-area-inset-*)` without a notch).
+Of the thirteen reports, twelve are resolved: eleven fixed, and the drag-handle
+one closed as no-change — asked how the well-made outliners do it, the user
+confirmed the existing arrangement (the chevron doubles as the drag activator
+where a chevron exists, the grip only where it does not) is what they want, which
+is already how the code behaves. That is also what Workflowy, Logseq and Roam do;
+the apps that drag from the row body are the ones where tapping a row does not
+start inline editing.
+
+**The code-block language picker is the one still open**, and it needs a device.
+The high-confidence hypothesis is placement: the picker anchors to a toolbar
+pinned at the top edge of the soft keyboard and opens downward into it, and
+`100dvh` does not shrink for the keyboard on Android, so Radix's collision
+detection has nothing to flip against. `CalloutTypeSelector` shares every code
+path and fits only because it has a handful of rows.
+
+Two sync gaps are filed and unfixed: **#4298** (a device name is never exchanged
+— `device_name` appears nowhere in the sync protocol, so every peer renders as a
+raw UUID until renamed by hand on each device) and **#4299** (a captured LAN is
+indistinguishable from a sleeping peer; the multicast-in/unicast-out asymmetry is
+a distinctive signature and nothing reads it).
 
 Worth noting for whoever picks up the rest: the user's install is 0.9.8 and main
-is **87 commits ahead**, so several rough edges observed on-device are already
-fixed here — the responder-only "Never synced" row (`streamed_at`, migration 0111)
-and the `remote_device_id was empty` WARN (now `debug!`) among them.
+is now ~95 commits ahead, so several rough edges observed on-device are already
+fixed here — the responder-only "Never synced" row (`streamed_at`, migration
+0111) and the `remote_device_id was empty` WARN (now `debug!`) among them. None
+of this session's mobile work is verifiable on the phone until an APK is built;
+the user declined to spend the CPU on that during the session.
