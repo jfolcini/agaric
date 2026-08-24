@@ -144,11 +144,36 @@ function MobileSidebarTrigger(): ReactElement | null {
       aria-label={t('sidebar.openMenu')}
       aria-haspopup="dialog"
       // `self-start` keeps the 44px target pinned to the top of a header
-      // whose content stacks (the journal's two control rows) instead of
-      // floating to its vertical middle; the header's content wrapper
-      // re-centres a single-row header against it.
+      // whose content stacks (a long view title above its date controls)
+      // instead of floating to its vertical middle; the header's content
+      // wrapper re-centres a single-row header against it.
       className="-ml-2 shrink-0 self-start sm:self-center"
     />
+  )
+}
+
+/**
+ * Layout classes for the header's content wrapper (everything right of the
+ * hamburger).
+ *
+ * The journal branch never stacks: its controls (mode tabs, date stepper,
+ * calendar) plus the search trigger are all "always on", and they belong on
+ * ONE line on a phone rather than the three rows the stack produced. The
+ * fitting is done inside `JournalControls` (compact tab/step widths + a
+ * truncating date chip); this wrapper just has to stop wrapping.
+ *
+ * Every other view keeps the below-sm stack — a long view title ("Advanced
+ * Query") beside `GlobalDateControls` does NOT fit a 360px row, and forcing
+ * it into one would trade a stacked header for a horizontal-overflow bug.
+ *
+ * Module-level rather than an inline ternary in `App`: that function sits at
+ * the repo's cyclomatic-complexity ceiling, and a layout choice is not what
+ * that budget is for (same reasoning as `MobileSidebarTrigger` above).
+ */
+function headerContentClass(isJournalView: boolean): string {
+  return cn(
+    'flex min-w-0 flex-1 gap-2 sm:flex-row sm:items-center',
+    isJournalView ? 'flex-row items-center max-sm:gap-0.5' : 'flex-col justify-center',
   )
 }
 
@@ -486,15 +511,16 @@ function App() {
                   is where a navigation-drawer trigger is looked for. Renders
                   nothing on desktop. */}
               <MobileSidebarTrigger />
-              {/* The header's own content stacks below `sm` (the journal
-                  controls need two rows on a phone). That stacking is scoped
+              {/* The header's own content stacks below `sm` for the non-journal
+                  views (title above its date controls). That stacking is scoped
                   to this wrapper so the hamburger stays on the leading edge
                   of the row instead of becoming a row of its own.
                   `justify-center` matters only in the single-row case: the
                   wrapper stretches to the hamburger's 44px height, and
                   centring inside it lines a short view title up with the
-                  button rather than leaving it riding 20px high. */}
-              <div className="flex min-w-0 flex-1 flex-col justify-center sm:flex-row sm:items-center gap-2">
+                  button rather than leaving it riding 20px high.
+                  See `headerContentClass` for why journal is the exception. */}
+              <div className={headerContentClass(currentView === 'journal')}>
                 {currentView === 'journal' ? (
                   <JournalControls />
                 ) : (

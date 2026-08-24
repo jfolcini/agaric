@@ -4,6 +4,7 @@ import { type ButtonHTMLAttributes, useEffect, useMemo, useRef, useState } from 
 import type { CalendarDay, Modifiers } from 'react-day-picker'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
@@ -105,6 +106,15 @@ export interface JournalCalendarDropdownProps {
   onSelectDate: (day: Date) => void
   onSelectWeek: (dates: Date[]) => void
   onSelectMonth: (month: Date) => void
+  /**
+   * Optional "jump to today" action, rendered under the grid at PHONE widths
+   * only (`sm:hidden`). The journal header's own Today button cannot fit the
+   * 360px single-row header (#9), so it is offered here instead — the surface
+   * a phone user already opens to change dates. Omit it (or pass `undefined`)
+   * when Today would be a no-op; callers that keep a Today button of their
+   * own (`GlobalDateControls`) simply never pass it.
+   */
+  onToday?: (() => void) | undefined
   onClose: () => void
 }
 
@@ -113,6 +123,7 @@ export function JournalCalendarDropdown({
   onSelectDate,
   onSelectWeek,
   onSelectMonth,
+  onToday,
   onClose,
 }: JournalCalendarDropdownProps): React.ReactElement {
   const { t } = useTranslation()
@@ -285,6 +296,16 @@ export function JournalCalendarDropdown({
             {t('journal.legendProperty')}
           </li>
         </ul>
+        {/* Phone-only Today action — see `onToday` on the props type. Hidden
+            from `sm` up, where the header still shows its own Today button
+            and a second one here would be redundant. */}
+        {onToday && (
+          <div className="flex justify-center border-t pt-2 sm:hidden">
+            <Button variant="outline" size="xs" onClick={onToday}>
+              {t('journal.today')}
+            </Button>
+          </div>
+        )}
       </div>
     </>
   )

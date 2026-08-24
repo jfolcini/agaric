@@ -9,7 +9,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { format } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -269,18 +269,104 @@ describe('JournalControls', () => {
     expect(dailyTab).toHaveAttribute('aria-label', expect.stringMatching(/daily view/i))
   })
 
-  // PEND journal-header-responsive: the header root container stacks vertically
-  // on phones and inlines on sm:+, so the four mode tabs and the date-nav row
-  // each get their own row on narrow viewports instead of being clipped by
-  // the 56 px header height. Assertion is on the className flags (the test
-  // env doesn't apply media queries, so we verify the responsive utilities
-  // are present rather than computing the rendered layout).
-  it('journal-header root uses flex-col sm:flex-row for the two-row mobile stack', () => {
+  // The header root used to be `flex-col sm:flex-row`, which — nested inside
+  // the App header's own below-sm stack — gave a phone THREE rows: mode tabs,
+  // date stepper, then the search trigger alone. It is now a single row at
+  // every width (measured at 360px: 44px tall, down from 96-112px, with the
+  // search trigger on the same row). Assertions are on the className flags —
+  // jsdom applies no media queries, so the responsive utilities are the
+  // observable contract here; `e2e/mobile-overflow.spec.ts` is what proves the
+  // row actually fits.
+  it('journal-header root is a single row at every width', () => {
     render(<JournalControls />)
 
     const root = screen.getByTestId('journal-header')
-    expect(root.className).toContain('flex-col')
-    expect(root.className).toContain('sm:flex-row')
+    // No `flex-col` in any form — a stacked variant is the bug being pinned.
+    expect(root.className).not.toMatch(/(?:^|:)flex-col/)
+    expect(root.className).toContain('items-center')
+    // `min-w-0` is what lets the date chip shrink instead of pushing the row
+    // wider than the viewport.
+    expect(root.className).toContain('min-w-0')
+  })
+
+  // The row fits at 360px only because every control except the date is a
+  // fixed, phone-sized width. Pin the three levers that buy the space; losing
+  // any one of them re-overflows the row (and fails the e2e overflow sweep).
+  it('phone width shrinks the tabs and the date stepper to fixed compact widths', () => {
+    render(<JournalControls />)
+
+    // Mode tabs: 24px wide below sm (the `xs` size's coarse-pointer `px-3`
+    // made them 31-35px, i.e. 174px for the five of them).
+    const dailyTab = screen.getByRole('tab', { name: /daily view/i })
+    expect(dailyTab.className).toContain('max-sm:w-6!')
+    expect(dailyTab.className).toContain('max-sm:px-0!')
+
+    // Prev/next: 24px wide below sm, 44px tall as before.
+    for (const name of [/previous day/i, /next day/i]) {
+      expect(screen.getByRole('button', { name }).className).toContain('max-sm:w-6!')
+    }
+
+    // The date chip is the ONE elastic item: `shrink` (the Button base is
+    // `shrink-0`) + `min-w-0` + a truncating label, so a long date can never
+    // push the row past the viewport.
+    const chip = screen.getByRole('button', { name: /open calendar picker/i })
+    const chipClasses = chip.className.split(/\s+/)
+    expect(chipClasses).toContain('shrink')
+    // twMerge must have dropped the Button base's own `shrink-0` (the
+    // `[&_svg]:shrink-0` arbitrary variant is a different, unrelated class).
+    expect(chipClasses).not.toContain('shrink-0')
+    expect(chipClasses).toContain('min-w-0')
+  })
+
+  // The date readout is also the calendar trigger — the standalone calendar
+  // IconButton it replaced cost another 44px on the phone row, and the date is
+  // what a user taps at anyway. Its accessible name keeps BOTH the full date
+  // and the picker verb, so every `/open calendar picker/i` query still
+  // resolves and a SR user still hears the unabbreviated date.
+  it('the date display is the calendar trigger and carries full + compact labels', () => {
+    render(<JournalControls />)
+
+    const chip = screen.getByRole('button', { name: /open calendar picker/i })
+    expect(chip).toHaveAttribute('aria-haspopup', 'dialog')
+
+    const full = screen.getByTestId('date-display')
+    expect(chip).toContainElement(full)
+    // Full string above sm, compact string below — mutually exclusive, same
+    // pattern as the mode-tab labels above.
+    expect(full.className).toContain('max-sm:hidden')
+    const compact = chip.querySelector('span.sm\\:hidden')
+    expect(compact).not.toBeNull()
+    expect(compact?.textContent).not.toBe(full.textContent)
+    // The compact label is decorative: the button's aria-label carries the
+    // full date, so it must not join the accessible name.
+    expect(compact).toHaveAttribute('aria-hidden', 'true')
+    expect(chip.getAttribute('aria-label')).toContain(full.textContent ?? '')
+  })
+
+  // #7 — on a phone Today was the only bordered control on its row (its
+  // `outline` partner, the Agenda button, is `hidden sm:inline-flex`). It is
+  // also the one control the 360px row cannot afford. Rather than restyle the
+  // desktop pair, the phone row drops it and the calendar dropdown re-offers
+  // it — so the odd-one-out is gone AND the action is still reachable.
+  it('Today is desktop-only on the header row and is re-offered in the dropdown', async () => {
+    const user = userEvent.setup()
+    // Weekly mode: Today is meaningful (daily-on-today hides it entirely).
+    useJournalStore.setState({ mode: 'weekly', currentDate: new Date(2025, 5, 15) })
+    render(<JournalControls />)
+
+    const today = screen.getByRole('button', { name: /go to today/i })
+    expect(today.className).toContain('max-sm:hidden')
+
+    await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
+    const dialog = await screen.findByRole('dialog', { name: /date picker/i })
+    const dropdownToday = within(dialog).getByRole('button', { name: /^today$/i })
+    // Phone-only: the header already shows Today from sm up.
+    expect(dropdownToday.parentElement?.className).toContain('sm:hidden')
+
+    await user.click(dropdownToday)
+    // Weekly mode scrolls to today rather than switching mode — same handler
+    // the header button uses, which is the point of sharing `goToToday`.
+    expect(useJournalStore.getState().scrollToDate).toBe(format(new Date(), 'yyyy-MM-dd'))
   })
 
   it('hides the prev/next nav in agenda mode', () => {
