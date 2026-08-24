@@ -1265,9 +1265,55 @@
   @apply bg-highlight rounded px-0.5;
 }
 
-/* Placeholder text (via TipTap Placeholder extension) */
+/* Placeholder text (via TipTap Placeholder extension).
+
+   The stock TipTap recipe for this pseudo-element is `float: left; height: 0`,
+   which is what shipped here until #4307 — and it cannot contain its own text.
+   MEASURED at a 360px viewport, before the fix: the paragraph's content column
+   is 204px wide, a float is shrink-to-fit so the placeholder box was also
+   204px, and the 88-character `editor.emptyBlockPlaceholder` WRAPPED to three
+   lines inside it — but `height: 0` meant that box contributed no height, so
+   the block stayed one line (24px) tall while the other two lines of
+   placeholder painted straight down over the content below. The spill is
+   VERTICAL, which is why the horizontal-overflow sweep never saw it. On desktop
+   the hint fits one line, so the defect was invisible until the phone report
+   (user, 2026-08-24: "the placeholder overflows the box instead of the box
+   growing to fit the placeholder").
+
+   Shortening the strings for narrow viewports would only hide it: the rule
+   itself cannot contain ANY string that needs a second line, so the next longer
+   translation — or the next narrower device — re-breaks it. The structural fix
+   is to take the placeholder out of flow with `position: absolute` instead of
+   `float` + `height: 0`, and bound it to one clipped line:
+
+     - It still contributes nothing to layout, so the empty paragraph keeps
+       exactly its natural single-line height (unchanged on every surface).
+     - It still does not shorten the paragraph's line box, so the caret stays
+       at x = 0 on an empty block (a float with `height: 0` never shortened a
+       line box either — that is why the stock recipe zeroes the height).
+     - Unlike the float it is BOUNDED by the paragraph (`max-w-full` against the
+       `relative` parent below) and `nowrap` + `overflow-hidden` + ellipsis keep
+       it to a single line, so no string can ever paint outside the block box.
+
+   The box deliberately does NOT grow to fit, which is the other half of what
+   the report asked for. An empty block that renders three lines tall and
+   collapses to one on the first keystroke moves the caret on every Enter; the
+   hint is truncated instead. If the truncation proves too aggressive on
+   phones, the follow-up is a SHORTER `max-sm` placeholder string
+   (`i18n/editor.ts` + `BlockTree`'s `editorPlaceholder` memo) — which is safe
+   to add now precisely because the layout can no longer break underneath it.
+
+   `start-0` (not `left-0`) so RTL locales anchor on the correct edge.
+
+   e2e: `mobile-overflow.spec.ts` → "an empty block placeholder stays inside
+   its block box" measures the `::before` box itself (non-degenerate, and
+   fitting the paragraph in both axes), the empty-vs-filled row height, and the
+   caret offset, at both 390px and 360px. */
+.ProseMirror p.is-editor-empty:first-child {
+  @apply relative;
+}
 .ProseMirror p.is-editor-empty:first-child::before {
-  @apply text-muted-foreground pointer-events-none float-left h-0;
+  @apply text-muted-foreground pointer-events-none absolute start-0 top-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap;
   content: attr(data-placeholder);
 }
 
