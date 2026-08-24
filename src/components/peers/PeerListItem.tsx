@@ -4,6 +4,11 @@
  * Extracted from DeviceManagement to reduce component size.
  * Shows device name (or truncated ID), last-synced time, reset count badge,
  * address info, and action buttons (rename, sync, unpair).
+ *
+ * #4297: a peer that has unpaired US takes the place of the last-synced time
+ * with a destructive "pairing lost" state, because that timestamp counts from
+ * the last session that succeeded and would otherwise render a permanently
+ * dead pairing as a healthy one.
  */
 
 import { Globe, Pencil, RefreshCw, Smartphone, Unplug } from 'lucide-react'
@@ -52,6 +57,11 @@ export function PeerListItem({
 
   // #4084 — see the comment at the render site.
   const lastActivityAt = lastSyncActivityAt(peer)
+
+  // #4297 — non-null means this peer has told us, on the wire, that it holds
+  // no pairing with this device: it was unpaired from the other end and this
+  // side was never notified. See the render site.
+  const unpairedByPeerAt = peer.unpaired_by_peer_at_ms
 
   // Real-time format validation for the address popover.
   // Empty input returns null so the freshly-opened popover stays quiet;
@@ -136,24 +146,56 @@ export function PeerListItem({
                 {truncateId(peer.peer_id)}
               </p>
             )}
-            {/* `truncate` (not plain wrapping): in a narrow column the
-                relative-time string used to break over three lines and make
-                the card twice as tall as its own content. */}
-            <p className="text-xs text-muted-foreground truncate">
-              {/*
-                #4084 — the later of `synced_at` (we pulled) and `streamed_at`
-                (they pulled from us), not `synced_at` alone. A session is
-                one-directional and #610 forbids the streamer advancing
-                `synced_at`, so a device that only ever succeeds as responder
-                used to render "never synced" while syncing perfectly.
-              */}
-              {t('device.lastSyncedAt', {
-                time:
-                  lastActivityAt != null
-                    ? formatRelativeTime(lastActivityAt, t)
-                    : t('sidebar.lastSyncedNever'),
-              })}
-            </p>
+            {unpairedByPeerAt != null ? (
+              /*
+                #4297 — the device on the other end unpaired, and unpairing
+                sends nothing over the wire: the local row is simply deleted
+                there. The only evidence this side ever gets is that every dial
+                it makes is refused, which the daemon now records on the row.
+
+                The `Last:` line is REPLACED rather than kept alongside,
+                because it is the thing actively lying. It renders
+                MAX(synced_at, streamed_at) — the last session that *worked* —
+                so it keeps counting up and a pairing dead for a week still
+                reads "Last: 6 days ago" next to a device that will never sync
+                again. The timestamp shown instead is when we found out, which
+                is the one instant on this row that stays true.
+              */
+              <div className="device-peer-unpaired space-y-0.5">
+                <Badge tone="destructive" className="mt-0.5 text-xs">
+                  <Unplug className="h-3 w-3" />
+                  {t('device.unpairedByPeerBadge')}
+                </Badge>
+                <p className="text-xs text-destructive" role="alert">
+                  {t('device.unpairedByPeerDescription')}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('device.unpairedByPeerSince', {
+                    time: formatRelativeTime(unpairedByPeerAt, t),
+                  })}
+                </p>
+              </div>
+            ) : (
+              /* `truncate` (not plain wrapping): in a narrow column the
+                 relative-time string used to break over three lines and make
+                 the card twice as tall as its own content. */
+              <p className="text-xs text-muted-foreground truncate">
+                {/*
+                  #4084 — the later of `synced_at` (we pulled) and
+                  `streamed_at` (they pulled from us), not `synced_at` alone. A
+                  session is one-directional and #610 forbids the streamer
+                  advancing `synced_at`, so a device that only ever succeeds as
+                  responder used to render "never synced" while syncing
+                  perfectly.
+                */}
+                {t('device.lastSyncedAt', {
+                  time:
+                    lastActivityAt != null
+                      ? formatRelativeTime(lastActivityAt, t)
+                      : t('sidebar.lastSyncedNever'),
+                })}
+              </p>
+            )}
             {peer.reset_count > 0 && (
               <Badge tone="outline" className="mt-0.5 text-xs">
                 {t('device.resetCount', { count: peer.reset_count })}

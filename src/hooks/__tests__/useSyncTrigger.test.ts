@@ -62,6 +62,7 @@ function makePeerRow(overrides: Partial<PeerRef> = {}): PeerRef {
     device_name: null,
     last_address: null,
     endpoint_id: null,
+    unpaired_by_peer_at_ms: null,
     ...overrides,
   }
 }
@@ -119,6 +120,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
 
@@ -153,6 +155,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
 
@@ -182,6 +185,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
 
@@ -285,6 +289,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection failed'))
@@ -314,6 +319,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
     mockStartSync.mockImplementation(
@@ -370,6 +376,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
 
@@ -397,6 +404,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection refused'))
@@ -438,6 +446,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection refused'))
@@ -498,6 +507,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
 
@@ -530,6 +540,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
 
@@ -573,6 +584,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('fail'))
@@ -611,6 +623,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
     // First sync fails
@@ -661,6 +674,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
 
@@ -701,6 +715,7 @@ describe('useSyncTrigger', () => {
         device_name: null,
         last_address: null,
         endpoint_id: null,
+        unpaired_by_peer_at_ms: null,
       },
     ])
 
@@ -768,6 +783,7 @@ describe('useSyncTrigger', () => {
           device_name: null,
           last_address: null,
           endpoint_id: null,
+          unpaired_by_peer_at_ms: null,
         },
       ])
 

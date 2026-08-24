@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE peer_refs SET unpaired_by_peer_at_ms = NULL\n         WHERE unpaired_by_peer_at_ms IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "a379c335fdb555c56f8dec07937f2f8cf5309526df9ca86587b01d0d997dad17"
+}

@@ -23,6 +23,7 @@ function makePeer(overrides: Partial<PeerRef> = {}): PeerRef {
     device_name: null,
     last_address: null,
     endpoint_id: null,
+    unpaired_by_peer_at_ms: null,
     ...overrides,
   }
 }

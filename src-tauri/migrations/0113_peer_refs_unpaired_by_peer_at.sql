@@ -1,0 +1,107 @@
+-- #4297 — `unpaired_by_peer_at_ms`: when this peer last told us, on the wire,
+-- that it holds no pairing with this device.
+--
+-- ## The gap this closes
+--
+-- Unpairing is one-sided. `delete_peer_ref` (commands/sync_cmds.rs) is a purely
+-- local row delete: no wire message, no tombstone, nothing that reaches the
+-- device on the other end. So the abandoned device keeps its `peer_refs` row,
+-- keeps dialling on every resync tick, and is refused every time with
+-- `Rejection::Unpaired` — forever.
+--
+-- The refusal is not lost. The initiator receives it, `Rejection::from_peer_message`
+-- classifies it correctly, and `run_sync_session` reports it as the terminal
+-- state `"peer not paired with this device"`. It simply never became state:
+--
+--   * `Rejection::Unpaired::user_facing_message()` returns `None` **by design**
+--     (`sync_daemon/server.rs`) — every stranger's probe on a healthy LAN is an
+--     `Unpaired` refusal, and surfacing those would make the error banner
+--     permanent background noise. That reasoning is right for a stranger and
+--     exactly wrong for a peer we still hold a row for.
+--   * `record_initiator_failure` (#4084/#4120) then books the backoff and logs
+--     at `info!` without an event once the failure text repeats.
+--
+-- The result is the failure mode this column exists to end: a device list that
+-- renders a healthy, "Last: 1m ago" peer which can never sync again. The
+-- timestamp is the actively misleading part — `MAX(synced_at, streamed_at)`
+-- keeps counting from the last *successful* session, so a pairing that died a
+-- week ago still reads as recently synced.
+--
+-- ## Why a column and not an event
+--
+-- The condition is permanent until a user acts (re-pair, or unpair this side
+-- too), and it must survive the restart that drops every in-memory scheduler
+-- entry and every un-shown toast. A `SyncEvent::Error` is a transient
+-- notification about a moment; this is durable state about a relationship, and
+-- the device list is where the user goes to ask about it.
+--
+-- Deliberately NOT a wire message. Nothing needs to be *sent*: the information
+-- already arrives, on every dial, from the peer that no longer knows us. A
+-- best-effort "I am unpairing you" notice would additionally be unreliable in
+-- the exact case that matters (the peer offline at unpair time) and would need
+-- the receiving side to trust an unauthenticated claim to drop a pairing.
+--
+-- ## Why only the side that still holds a row
+--
+-- The asymmetry is the point, and it is enforced by the shape of the write: the
+-- `UPDATE … WHERE peer_id = ?` in `mark_unpaired_by_peer` touches a row or
+-- touches nothing, and `session_supervisor` additionally checks the peer
+-- against the loaded `peer_refs` list before writing. A stranger — including a
+-- joiner mid-pairing dialling every discovered device (#3502/#3505) — has no
+-- row, so nothing is recorded and nothing is shown. The device that *did* the
+-- unpairing stays correctly silent: it has no relationship left to report on.
+--
+-- ## Shape
+--
+-- Milliseconds since the UNIX epoch (UTC), written via `agaric_store::db::now_ms()`
+-- — the canonical timestamp encoding (#109 Phase 2 / migrations/AGENTS.md). The
+-- `CHECK (col IS NULL OR col >= 0)` shape is copied verbatim from the sibling
+-- nullable timestamps `synced_at`, `last_reset_at` (0075) and `streamed_at`
+-- (0111).
+--
+-- The `_ms` suffix IS taken here, unlike `streamed_at`. That exception is
+-- documented in migrations/AGENTS.md as applying to a column that is one half
+-- of an existing unsuffixed pair (`streamed_at` is always read next to
+-- `synced_at`, and suffixing one half would imply the encodings differ). This
+-- column is not half of a pair — it is read on its own, as a presence test —
+-- so the general rule applies.
+--
+-- The value is the FIRST refusal of a streak, not the latest: `mark_unpaired_by_peer`
+-- writes only `WHERE unpaired_by_peer_at_ms IS NULL`. "Since when" is the
+-- useful fact, and re-stamping it every 60 s would be a write per tick, per
+-- peer, forever, that told the user nothing new.
+--
+-- NULL is the correct and expected value for every existing row, and the state
+-- every peer starts in: no device has ever recorded this refusal, and there is
+-- nothing to derive it from. It is also the state a row RETURNS to — the column
+-- is cleared by the same statements that stamp `synced_at` and `streamed_at`
+-- (`update_on_sync{,_in_tx}`, `update_on_stream_in_tx`), so any session that
+-- actually moves data in either direction disproves the claim and erases it,
+-- and a pairing act clears it across every row (mirroring
+-- `SyncScheduler::clear_backoff`, #3547).
+--
+-- `peer_refs` has been STRICT since 0075; INTEGER is a STRICT-permitted type
+-- and a nullable ADD COLUMN needs no default, so this is an append-only
+-- ALTER with no table rebuild and no backfill.
+--
+-- mock-unaffected, but NOT for the reason 0107 and 0111 give. Those headers say
+-- the JS Tauri mock answers `list_peer_refs` with a literal `[]` and models no
+-- peer rows at all. That stopped being true at #3469, which gave the mock a real
+-- `peerRefs` store (`src/lib/tauri-mock/seed.ts`) that `confirm_pairing`
+-- populates and `list_peer_refs` / `get_peer_ref` / `delete_peer_ref` read
+-- (`src/lib/tauri-mock/handlers/sync.ts`). The claim is repeated here in its
+-- corrected form rather than copied forward.
+--
+-- Nothing to change there regardless. The store is typed `Map<string,
+-- Record<string, unknown>>` and its seeded row is already a partial fixture — it
+-- omits `endpoint_id` (0107) too — so an absent key is the mock's normal way of
+-- saying "this column has no value". The frontend's test is `!= null`, which
+-- `undefined` fails, so a mock peer reads as healthy, which is exactly right:
+-- the mock has no peer transport, so no refusal can be received for it to
+-- record. `peer_refs` is correspondingly absent from the CONTRACT map in
+-- `scripts/check-migration-mock-contract.py`.
+
+ALTER TABLE peer_refs
+    ADD COLUMN unpaired_by_peer_at_ms INTEGER CHECK (
+        unpaired_by_peer_at_ms IS NULL OR unpaired_by_peer_at_ms >= 0
+    );

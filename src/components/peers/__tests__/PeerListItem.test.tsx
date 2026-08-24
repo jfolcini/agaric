@@ -34,6 +34,7 @@ function makePeer(overrides: Partial<PeerRef> = {}): PeerRef {
     device_name: null,
     last_address: null,
     endpoint_id: null,
+    unpaired_by_peer_at_ms: null,
     ...overrides,
   }
 }
@@ -141,6 +142,82 @@ describe('PeerListItem', () => {
 
     // t('device.lastSyncedAt', { time: '5m ago' }) === 'Last: 5m ago'
     expect(screen.getByText(/Last: 5m ago/)).toBeInTheDocument()
+  })
+
+  // #4297 — the other device unpaired, which sends nothing over the wire, so
+  // the only evidence is that every dial is now refused. The row must stop
+  // reading as healthy, and the `Last:` line must go: it counts from the last
+  // session that WORKED, so a pairing dead for a week still reads "Last: 6
+  // days ago" beside a device that will never sync again.
+  describe('a peer that has unpaired us (#4297)', () => {
+    const FIVE_MINUTES_AGO = Date.now() - 5 * 60 * 1000
+    const TWO_MINUTES_AGO = Date.now() - 2 * 60 * 1000
+
+    it('replaces the stale last-synced line with a destructive pairing-lost state', () => {
+      const peer = makePeer({
+        device_name: 'Work Laptop',
+        synced_at: FIVE_MINUTES_AGO,
+        unpaired_by_peer_at_ms: TWO_MINUTES_AGO,
+      })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      expect(screen.getByText('Pairing lost')).toBeInTheDocument()
+      expect(
+        screen.getByText('The other device unpaired from this one. Pair again to resume syncing.'),
+      ).toBeInTheDocument()
+
+      // The lie is gone: no 'Last: 5m ago' anywhere on the row.
+      expect(screen.queryByText(/Last:/)).not.toBeInTheDocument()
+
+      // …and the timestamp that IS shown is the one that stays true — when we
+      // found out, not when we last succeeded.
+      expect(screen.getByText('Stopped syncing 2m ago')).toBeInTheDocument()
+    })
+
+    it('announces the dead pairing to assistive technology', () => {
+      const peer = makePeer({
+        device_name: 'Work Laptop',
+        synced_at: FIVE_MINUTES_AGO,
+        unpaired_by_peer_at_ms: TWO_MINUTES_AGO,
+      })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'The other device unpaired from this one. Pair again to resume syncing.',
+      )
+    })
+
+    // The asymmetry the backend enforces has to survive to the UI: a healthy
+    // peer must be untouched by this, or every row would carry the warning.
+    it('leaves a healthy peer rendering its last-synced time', () => {
+      const peer = makePeer({
+        device_name: 'Work Laptop',
+        synced_at: FIVE_MINUTES_AGO,
+        unpaired_by_peer_at_ms: null,
+      })
+
+      render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      expect(screen.getByText(/Last: 5m ago/)).toBeInTheDocument()
+      expect(screen.queryByText('Pairing lost')).not.toBeInTheDocument()
+    })
+
+    it('has no a11y violations in the pairing-lost state', async () => {
+      const peer = makePeer({
+        device_name: 'Work Laptop',
+        synced_at: FIVE_MINUTES_AGO,
+        unpaired_by_peer_at_ms: TWO_MINUTES_AGO,
+      })
+
+      const { container } = render(<PeerListItem peer={peer} {...defaultProps} />)
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
   })
 
   it('has no a11y violations', async () => {

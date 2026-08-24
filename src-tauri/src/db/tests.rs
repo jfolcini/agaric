@@ -5804,3 +5804,170 @@ async fn block_links_unresolved_0112_target_has_no_fk_and_source_cascades_4118()
          repair, and a surviving row would keep re-driving one for a block that is gone"
     );
 }
+
+/// #4297 / migration 0113 — `peer_refs.unpaired_by_peer_at_ms` is a nullable
+/// `ADD COLUMN` that must leave every existing peer row exactly as it found it,
+/// and must read NULL rather than being invented.
+///
+/// The column records that a peer has told us, on the wire, that it holds no
+/// pairing with this device — the only evidence the abandoned side of a
+/// one-sided unpair ever gets. The UI treats non-NULL as "this pairing is dead,
+/// pair again" and *replaces* the last-synced line with it, which is what makes
+/// the two things below worth pinning rather than assuming:
+///
+/// * **No backfill, and nothing to backfill from.** A row's existing columns
+///   say when we last synced, never whether the peer still knows us. Seeding
+///   this from, say, a stale `synced_at` would put "Pairing lost — pair again"
+///   on every device that merely went quiet over a weekend.
+/// * **No DEFAULT.** It must read NULL, not 0. `0` is a real epoch-ms instant,
+///   and the frontend's test is `!= null`, so a `DEFAULT 0` would declare every
+///   pre-existing pairing in the vault dead on the next launch.
+#[tokio::test]
+async fn peer_refs_0113_unpaired_by_peer_at_add_preserves_existing_rows_4297() {
+    let (pool, _dir) = unmigrated_pool().await;
+    // 0112 is the last migration before this column arrives.
+    apply_migrations_through(&pool, 0, 112).await;
+
+    let vv: Vec<u8> = vec![0x01, 0x02, 0xfe, 0xff];
+    let endpoint_id = "d".repeat(64);
+    // Single-quoted with a doubled apostrophe: a double-quoted token is an
+    // *identifier* in SQL, and relying on SQLite's DQS fallback makes the seed
+    // depend on the schema never growing a column of that name (see #4197).
+    sqlx::query(
+        "INSERT INTO peer_refs \
+             (peer_id, last_hash, last_sent_hash, synced_at, streamed_at, reset_count, \
+              last_reset_at, cert_hash, device_name, last_address, loro_vv_bytes, \
+              endpoint_id) \
+             VALUES ('PEER4297A', 'h-recv', 'h-sent', 1700000000000, 1700000002000, 3, \
+                     1700000001000, ?, 'Javier''s Phone', '192.168.1.9:7777', ?, ?)",
+    )
+    .bind("a".repeat(64))
+    .bind(&vv)
+    .bind(&endpoint_id)
+    .execute(&pool)
+    .await
+    .expect("seed a fully-populated pre-0113 peer row");
+
+    // The NULL-everywhere shape an ADD COLUMN is most likely to get wrong by
+    // supplying a default.
+    sqlx::query("INSERT INTO peer_refs (peer_id) VALUES ('PEER4297B')")
+        .execute(&pool)
+        .await
+        .expect("seed a bare pre-0113 peer row");
+
+    apply_migrations_to_head(&pool, 112).await;
+
+    let surviving: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM peer_refs WHERE peer_id LIKE 'PEER4297%'")
+            .fetch_one(&pool)
+            .await
+            .expect("count peer_refs after 0113");
+    assert_eq!(
+        surviving, 2,
+        "0113 is an ADD COLUMN — every pre-existing peer_refs row must survive it"
+    );
+
+    #[allow(clippy::type_complexity)]
+    let row: (
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Vec<u8>>,
+        Option<String>,
+        Option<i64>,
+    ) = sqlx::query_as(
+        "SELECT last_hash, last_sent_hash, synced_at, streamed_at, reset_count, \
+                last_reset_at, cert_hash, device_name, last_address, loro_vv_bytes, \
+                endpoint_id, unpaired_by_peer_at_ms \
+           FROM peer_refs WHERE peer_id = 'PEER4297A'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read the populated peer row back after 0113");
+
+    assert_eq!(
+        row.0.as_deref(),
+        Some("h-recv"),
+        "last_hash must survive 0113"
+    );
+    assert_eq!(
+        row.1.as_deref(),
+        Some("h-sent"),
+        "last_sent_hash must survive 0113"
+    );
+    assert_eq!(
+        row.2,
+        Some(1_700_000_000_000),
+        "synced_at must survive 0113"
+    );
+    assert_eq!(
+        row.3,
+        Some(1_700_000_002_000),
+        "streamed_at must survive 0113 — 0111's column is the other half of the \
+         display fold this one overrides, not something it replaces"
+    );
+    assert_eq!(row.4, 3, "reset_count must survive 0113");
+    assert_eq!(
+        row.5,
+        Some(1_700_000_001_000),
+        "last_reset_at must survive 0113"
+    );
+    assert_eq!(
+        row.6.as_deref(),
+        Some("a".repeat(64).as_str()),
+        "cert_hash must survive 0113"
+    );
+    assert_eq!(
+        row.7.as_deref(),
+        Some("Javier's Phone"),
+        "device_name must survive 0113"
+    );
+    assert_eq!(
+        row.8.as_deref(),
+        Some("192.168.1.9:7777"),
+        "last_address must survive 0113"
+    );
+    assert_eq!(row.9, Some(vv), "loro_vv_bytes must survive 0113 verbatim");
+    assert_eq!(
+        row.10.as_deref(),
+        Some(endpoint_id.as_str()),
+        "endpoint_id must survive 0113"
+    );
+    assert_eq!(
+        row.11, None,
+        "0113 must NOT backfill unpaired_by_peer_at_ms — no existing column says \
+         whether the peer still knows us, and a fabricated value renders as \
+         'Pairing lost — pair again' on a device that is syncing fine"
+    );
+
+    let bare: Option<i64> = sqlx::query_scalar(
+        "SELECT unpaired_by_peer_at_ms FROM peer_refs WHERE peer_id = 'PEER4297B'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read the bare peer row back after 0113");
+    assert_eq!(
+        bare, None,
+        "0113 adds the column with no DEFAULT — it must read NULL, not 0. `0` is a \
+         real epoch-ms instant and the UI's test is `!= null`, so a defaulted row \
+         would declare every pre-existing pairing in the vault dead"
+    );
+
+    // The CHECK is the only guard the schema can offer against a caller passing
+    // something that is not an epoch-ms instant.
+    let negative =
+        sqlx::query("UPDATE peer_refs SET unpaired_by_peer_at_ms = -1 WHERE peer_id = 'PEER4297B'")
+            .execute(&pool)
+            .await;
+    assert!(
+        negative.is_err(),
+        "0113's CHECK must reject a pre-epoch value, matching the shape 0075/0111 \
+         established for the sibling nullable timestamps"
+    );
+}

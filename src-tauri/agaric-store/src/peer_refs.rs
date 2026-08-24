@@ -68,6 +68,22 @@ pub struct PeerRef {
     /// over the pre-iroh transport has no iroh identity, and nothing writes
     /// this column yet (the write path arrives with the transport cutover).
     pub endpoint_id: Option<String>,
+    /// When this peer first told us, on the wire, that it holds no pairing
+    /// with this device — milliseconds since the UNIX epoch (UTC), or `None`
+    /// when it has not (migration 0113, #4297).
+    ///
+    /// Set only for a peer we still hold a row for: the other device unpaired
+    /// us and there is no wire message that says so, so the only evidence is
+    /// its `Rejection::Unpaired` refusal of every dial we make. Non-`None`
+    /// therefore means "this pairing is dead and only a re-pair will revive
+    /// it", and the device list must stop rendering the row as healthy —
+    /// in particular it must stop showing a `MAX(synced_at, streamed_at)`
+    /// relative time that keeps counting from the last session that worked.
+    ///
+    /// It is the FIRST refusal of the streak, not the latest, and any session
+    /// that actually moves data in either direction clears it (see
+    /// [`mark_unpaired_by_peer`] and [`update_on_sync_in_tx`]).
+    pub unpaired_by_peer_at_ms: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +98,7 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address, endpoint_id
+                  device_name, last_address, endpoint_id, unpaired_by_peer_at_ms
            FROM peer_refs WHERE peer_id = ?"#,
         peer_id,
     )
@@ -223,7 +239,7 @@ pub async fn get_peer_ref_by_endpoint_id(
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address, endpoint_id
+                  device_name, last_address, endpoint_id, unpaired_by_peer_at_ms
            FROM peer_refs WHERE endpoint_id = ? AND peer_id != ''"#,
         endpoint_id,
     )
@@ -319,7 +335,7 @@ pub async fn list_peer_refs(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError>
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address, endpoint_id
+                  device_name, last_address, endpoint_id, unpaired_by_peer_at_ms
            FROM peer_refs
            WHERE peer_id != ''
            ORDER BY synced_at DESC"#,
@@ -449,7 +465,13 @@ pub async fn update_on_sync(
 ) -> Result<(), AppError> {
     let now = crate::db::now_ms();
     let result = sqlx::query!(
-        "UPDATE peer_refs SET last_hash = ?, last_sent_hash = ?, synced_at = ?
+        // #4297: a session that pulled from this peer is proof it still holds
+        // a pairing with us, so it disproves any recorded `Unpaired` refusal.
+        // Cleared in the SAME statement rather than a second one so the
+        // "we synced" and "we are still paired" facts cannot disagree after a
+        // crash between two writes.
+        "UPDATE peer_refs SET last_hash = ?, last_sent_hash = ?, synced_at = ?,
+                unpaired_by_peer_at_ms = NULL
          WHERE peer_id = ?",
         last_hash,
         last_sent_hash,
@@ -484,7 +506,13 @@ pub async fn update_on_sync_in_tx(
 ) -> Result<(), AppError> {
     let now = crate::db::now_ms();
     let result = sqlx::query!(
-        "UPDATE peer_refs SET last_hash = ?, last_sent_hash = ?, synced_at = ?
+        // #4297: a session that pulled from this peer is proof it still holds
+        // a pairing with us, so it disproves any recorded `Unpaired` refusal.
+        // Cleared in the SAME statement rather than a second one so the
+        // "we synced" and "we are still paired" facts cannot disagree after a
+        // crash between two writes.
+        "UPDATE peer_refs SET last_hash = ?, last_sent_hash = ?, synced_at = ?,
+                unpaired_by_peer_at_ms = NULL
          WHERE peer_id = ?",
         last_hash,
         last_sent_hash,
@@ -521,7 +549,11 @@ pub async fn update_on_stream_in_tx(
 ) -> Result<(), AppError> {
     let now = crate::db::now_ms();
     let result = sqlx::query!(
-        "UPDATE peer_refs SET streamed_at = ? WHERE peer_id = ?",
+        // #4297: cleared here for the same reason as in `update_on_sync_in_tx`
+        // — a peer that just pulled from us demonstrably still holds a pairing
+        // with this device, in the one direction `synced_at` cannot record.
+        "UPDATE peer_refs SET streamed_at = ?, unpaired_by_peer_at_ms = NULL
+         WHERE peer_id = ?",
         now,
         peer_id,
     )
@@ -532,6 +564,75 @@ pub async fn update_on_stream_in_tx(
         return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
     }
     Ok(())
+}
+
+/// Record that this peer refused our dial because **it** holds no pairing with
+/// this device (#4297) — the durable half of an unpair the other side
+/// performed and never told us about.
+///
+/// Returns `true` when the row moved from "not flagged" to "flagged", i.e. this
+/// is the first refusal of a streak, and `false` when the row was already
+/// flagged **or does not exist**.
+///
+/// # Why `WHERE … IS NULL` and not a plain stamp
+///
+/// The refusal repeats on every resync tick, forever, and the useful fact is
+/// *since when*, not *most recently* — those are the same fact once the streak
+/// starts, and re-stamping would be one write per peer per tick that told the
+/// user nothing new. Making the write conditional also makes the return value
+/// meaningful: the caller can log the transition once instead of every cycle.
+///
+/// # Why a missing row is `false` and not [`AppError::NotFound`]
+///
+/// This is the sibling of the sync-progress writers, but its precondition is
+/// the opposite of theirs. They run after a session that has already proved the
+/// row exists, so a missing row there is a bug worth an error. This runs on a
+/// *refusal*, and the refusal a stranger sends is indistinguishable on the wire
+/// from the one an ex-partner sends — the whole difference is whether we hold a
+/// row. `WHERE peer_id = ?` is therefore the discriminator, not a lookup that
+/// can fail: a joiner mid-pairing dials every discovered device (#3502/#3505)
+/// and is refused by each, and none of that is an error, an event, or anything
+/// a user should see. The caller checks the loaded peer list as well, so this
+/// is the second of two agreeing guards rather than the only one.
+pub async fn mark_unpaired_by_peer(pool: &SqlitePool, peer_id: &str) -> Result<bool, AppError> {
+    let now = crate::db::now_ms();
+    let result = sqlx::query!(
+        "UPDATE peer_refs SET unpaired_by_peer_at_ms = ?
+         WHERE peer_id = ? AND unpaired_by_peer_at_ms IS NULL",
+        now,
+        peer_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Clear the #4297 "this peer says we are not paired" flag from **every** row.
+///
+/// The pairing-act counterpart to the per-session clears folded into
+/// [`update_on_sync_in_tx`] and [`update_on_stream_in_tx`], and it clears every
+/// peer for the same reason `SyncScheduler::clear_backoff` does (#3547): the
+/// user performing a pairing act is new information about the whole device
+/// list, and the frontend has no peer id to scope it by anyway — the pairing
+/// flow carries a passphrase, and which peer it resolves to is only known once
+/// the first authenticated connection lands.
+///
+/// The failure direction is safe. Clearing a flag that was still true costs one
+/// resync tick: the peer refuses the next dial and
+/// [`mark_unpaired_by_peer`] records it again, with a fresh — and now honest —
+/// timestamp. Leaving a stale flag standing after a successful re-pair would
+/// instead tell the user to fix something they just fixed.
+///
+/// Returns the number of rows actually cleared, so the caller can log the act
+/// only when it changed something.
+pub async fn clear_unpaired_by_peer_all(pool: &SqlitePool) -> Result<u64, AppError> {
+    let result = sqlx::query!(
+        "UPDATE peer_refs SET unpaired_by_peer_at_ms = NULL
+         WHERE unpaired_by_peer_at_ms IS NOT NULL",
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 /// Increment the reset counter for a peer and record the reset timestamp.
@@ -2137,6 +2238,237 @@ mod tests {
             Some(not_a_point.as_str()),
             "the device list must still show a peer whose stored key is corrupt — \
              hiding it would be how a user loses the ability to unpair it"
+        );
+    }
+
+    // ── unpaired_by_peer_at_ms (#4297) ──────────────────────────────────
+
+    /// A fresh row starts unflagged, and the first refusal flags it with an
+    /// epoch-ms instant taken during the call.
+    #[tokio::test]
+    async fn mark_unpaired_by_peer_flags_a_bound_peer_4297() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-gone").await.unwrap();
+
+        assert!(
+            get_peer_ref(&pool, "peer-gone")
+                .await
+                .unwrap()
+                .expect("peer-gone must exist")
+                .unpaired_by_peer_at_ms
+                .is_none(),
+            "a peer that has never refused us must start unflagged"
+        );
+
+        let before = crate::db::now_ms();
+        let marked = mark_unpaired_by_peer(&pool, "peer-gone").await.unwrap();
+        let after = crate::db::now_ms();
+        assert!(
+            marked,
+            "the first refusal of a streak must report the transition"
+        );
+
+        let at = get_peer_ref(&pool, "peer-gone")
+            .await
+            .unwrap()
+            .expect("peer-gone must exist")
+            .unpaired_by_peer_at_ms
+            .expect("the refusal must be recorded on the row");
+        assert!(
+            (before..=after).contains(&at),
+            "unpaired_by_peer_at_ms must be epoch-ms taken during the call: \
+             {at} not in {before}..={after}"
+        );
+    }
+
+    /// The refusal repeats every resync tick forever. The flag must record the
+    /// FIRST one — "since when" — and must not report the transition again, so
+    /// the caller can log once instead of once a minute.
+    #[tokio::test]
+    async fn marking_an_already_flagged_peer_is_a_no_op_and_keeps_the_first_instant_4297() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-gone").await.unwrap();
+
+        assert!(mark_unpaired_by_peer(&pool, "peer-gone").await.unwrap());
+        let first = get_peer_ref(&pool, "peer-gone")
+            .await
+            .unwrap()
+            .unwrap()
+            .unpaired_by_peer_at_ms
+            .expect("first refusal must be recorded");
+
+        // Push the clock forward past ms resolution so a re-stamp would be visible.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        assert!(
+            !mark_unpaired_by_peer(&pool, "peer-gone").await.unwrap(),
+            "a repeat refusal must not report a transition"
+        );
+        assert_eq!(
+            get_peer_ref(&pool, "peer-gone")
+                .await
+                .unwrap()
+                .unwrap()
+                .unpaired_by_peer_at_ms,
+            Some(first),
+            "the recorded instant is the FIRST refusal, not the latest — re-stamping \
+             would be a write per tick that tells the user nothing new"
+        );
+    }
+
+    /// The guard that keeps this off strangers: an `Unpaired` refusal from a
+    /// device we hold no row for writes nothing and creates nothing. A joiner
+    /// mid-pairing dials every discovered device and is refused by each
+    /// (#3502/#3505); none of that is a dead pairing.
+    #[tokio::test]
+    async fn marking_a_peer_we_hold_no_row_for_writes_nothing_4297() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-bound").await.unwrap();
+
+        assert!(
+            !mark_unpaired_by_peer(&pool, "some-stranger").await.unwrap(),
+            "a stranger's refusal must report no transition"
+        );
+        assert!(
+            get_peer_ref(&pool, "some-stranger")
+                .await
+                .unwrap()
+                .is_none(),
+            "marking must never CREATE a row — that would put a device the user \
+             never paired with into their device list"
+        );
+        assert!(
+            get_peer_ref(&pool, "peer-bound")
+                .await
+                .unwrap()
+                .unwrap()
+                .unpaired_by_peer_at_ms
+                .is_none(),
+            "a stranger's refusal must not splash onto a real peer's row"
+        );
+    }
+
+    /// A pull disproves the claim: the peer that answered us demonstrably still
+    /// holds a pairing, so the flag is cleared in the same statement that
+    /// stamps `synced_at`.
+    #[tokio::test]
+    async fn a_successful_pull_clears_the_unpaired_flag_4297() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-back").await.unwrap();
+        assert!(mark_unpaired_by_peer(&pool, "peer-back").await.unwrap());
+
+        update_on_sync(&pool, "peer-back", "hash-in", "")
+            .await
+            .unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-back").await.unwrap().unwrap();
+        assert!(
+            peer.unpaired_by_peer_at_ms.is_none(),
+            "a session that pulled from the peer proves the pairing is alive"
+        );
+        assert!(
+            peer.synced_at.is_some(),
+            "the clear must ride on the real progress write, not replace it"
+        );
+
+        // …and the in-transaction variant the orchestrator actually uses.
+        assert!(mark_unpaired_by_peer(&pool, "peer-back").await.unwrap());
+        let mut tx = pool.begin().await.unwrap();
+        update_on_sync_in_tx(&mut tx, "peer-back", "hash-in-2", "")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert!(
+            get_peer_ref(&pool, "peer-back")
+                .await
+                .unwrap()
+                .unwrap()
+                .unpaired_by_peer_at_ms
+                .is_none(),
+            "update_on_sync_in_tx must clear the flag exactly as the pool variant does"
+        );
+    }
+
+    /// The other direction (#4084): a peer that pulled from US also proves the
+    /// pairing is alive, and `synced_at` deliberately cannot record that.
+    #[tokio::test]
+    async fn a_successful_stream_clears_the_unpaired_flag_4297() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-streamer").await.unwrap();
+        assert!(mark_unpaired_by_peer(&pool, "peer-streamer").await.unwrap());
+
+        let mut tx = pool.begin().await.unwrap();
+        update_on_stream_in_tx(&mut tx, "peer-streamer")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-streamer").await.unwrap().unwrap();
+        assert!(
+            peer.unpaired_by_peer_at_ms.is_none(),
+            "an inbound session the peer initiated proves it still holds our pairing"
+        );
+        assert!(
+            peer.streamed_at.is_some(),
+            "the clear must ride on the stream stamp, not replace it"
+        );
+        assert!(
+            peer.synced_at.is_none(),
+            "#610 still holds: the streamer must not advance synced_at"
+        );
+    }
+
+    /// The pairing-act clear is list-wide (mirroring `clear_backoff`, #3547)
+    /// and reports how many rows it actually changed.
+    #[tokio::test]
+    async fn a_pairing_act_clears_the_flag_on_every_peer_4297() {
+        let (pool, _dir) = test_pool().await;
+        for id in ["peer-a", "peer-b", "peer-c"] {
+            upsert_peer_ref(&pool, id).await.unwrap();
+        }
+        assert!(mark_unpaired_by_peer(&pool, "peer-a").await.unwrap());
+        assert!(mark_unpaired_by_peer(&pool, "peer-b").await.unwrap());
+
+        assert_eq!(
+            clear_unpaired_by_peer_all(&pool).await.unwrap(),
+            2,
+            "only the flagged rows count as cleared"
+        );
+        for id in ["peer-a", "peer-b", "peer-c"] {
+            assert!(
+                get_peer_ref(&pool, id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unpaired_by_peer_at_ms
+                    .is_none(),
+                "{id} must be unflagged after a pairing act"
+            );
+        }
+        assert_eq!(
+            clear_unpaired_by_peer_all(&pool).await.unwrap(),
+            0,
+            "a second pairing act with nothing to clear must report no change"
+        );
+    }
+
+    /// The column survives a restart, which is the whole reason it is a column
+    /// and not an event: `list_peer_refs` is what the device list reads.
+    #[tokio::test]
+    async fn the_unpaired_flag_is_visible_through_list_peer_refs_4297() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "peer-gone").await.unwrap();
+        mark_unpaired_by_peer(&pool, "peer-gone").await.unwrap();
+
+        let listed = list_peer_refs(&pool).await.unwrap();
+        assert!(
+            listed
+                .iter()
+                .find(|p| p.peer_id == "peer-gone")
+                .expect("peer-gone must be listed")
+                .unpaired_by_peer_at_ms
+                .is_some(),
+            "the device list's own query must carry the flag, or the UI cannot render it"
         );
     }
 }

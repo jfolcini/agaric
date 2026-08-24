@@ -71,14 +71,38 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                           <p className="text-sm font-mono truncate" title={peer.peer_id}>
                             {truncateId(peer.peer_id)}
                           </p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {t('device.lastSyncedAt', {
-                              time:
-                                lastActivity != null
-                                  ? formatRelativeTime(lastActivity, t)
-                                  : t('sidebar.lastSyncedNever'),
-                            })}
-                          </p>
+                          {peer.unpaired_by_peer_at_ms != null ? (
+                            /*
+                              #4297 — mirrors `PeerListItem`. This list must not
+                              disagree with the device list about the same peer,
+                              and this is the surface the user is looking at
+                              when they re-pair, so it is the one place the
+                              "pair again" instruction can be acted on
+                              immediately.
+                            */
+                            <div className="pairing-peer-unpaired space-y-0.5">
+                              <Badge tone="destructive" className="mt-0.5 text-xs">
+                                {t('device.unpairedByPeerBadge')}
+                              </Badge>
+                              <p className="text-xs text-destructive">
+                                {t('device.unpairedByPeerDescription')}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {t('device.unpairedByPeerSince', {
+                                  time: formatRelativeTime(peer.unpaired_by_peer_at_ms, t),
+                                })}
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground truncate">
+                              {t('device.lastSyncedAt', {
+                                time:
+                                  lastActivity != null
+                                    ? formatRelativeTime(lastActivity, t)
+                                    : t('sidebar.lastSyncedNever'),
+                              })}
+                            </p>
+                          )}
                           {peer.reset_count > 0 && (
                             <Badge tone="outline" className="mt-0.5 text-xs">
                               {t('device.resetCount', { count: peer.reset_count })}

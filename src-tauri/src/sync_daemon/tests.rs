@@ -541,6 +541,7 @@ fn make_peer_ref(peer_id: &str) -> PeerRef {
         device_name: None,
         last_address: None,
         endpoint_id: None,
+        unpaired_by_peer_at_ms: None,
     }
 }
 
@@ -3033,6 +3034,7 @@ fn make_peer_ref_with_cert(peer_id: &str, cert_hash: Option<&str>) -> PeerRef {
         device_name: None,
         last_address: None,
         endpoint_id: None,
+        unpaired_by_peer_at_ms: None,
     }
 }
 

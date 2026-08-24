@@ -926,6 +926,7 @@ mod tests {
             device_name: None,
             last_address: None,
             endpoint_id: endpoint_id.map(str::to_owned),
+            unpaired_by_peer_at_ms: None,
         }
     }
 

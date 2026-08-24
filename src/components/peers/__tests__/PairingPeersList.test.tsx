@@ -39,6 +39,7 @@ const mockPeers = [
     device_name: null,
     last_address: null,
     endpoint_id: null,
+    unpaired_by_peer_at_ms: null,
   },
   {
     peer_id: 'peer-def-0987654321',
@@ -52,6 +53,7 @@ const mockPeers = [
     device_name: null,
     last_address: null,
     endpoint_id: null,
+    unpaired_by_peer_at_ms: null,
   },
 ]
 
@@ -193,6 +195,7 @@ describe('PairingPeersList — last-sync activity (#4084)', () => {
       device_name: null,
       last_address: null,
       endpoint_id: null,
+      unpaired_by_peer_at_ms: null,
     },
   ]
 
@@ -247,6 +250,7 @@ describe('PairingPeersList — order matches the last-sync activity it displays 
     device_name: null,
     last_address: null,
     endpoint_id: null,
+    unpaired_by_peer_at_ms: null,
     ...over,
   })
 
