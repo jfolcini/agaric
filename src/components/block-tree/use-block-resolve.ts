@@ -359,12 +359,14 @@ async function searchPagesViaCache(
  * comment's "search text and displayed label cannot diverge" note is
  * about).
  *
- * Latent, not fixed here (PR #4295 review, finding 4): the prefix test
- * bakes in an English-specific assumption — it checks against the literal
- * word "Untitled", not against whatever `untitledOr` would render under the
- * active locale. A multi-word localised placeholder (e.g. fr "Sans titre")
- * would make a query like "titre" find nothing here, where a substring test
- * would have. Only `en` ships today, so this doesn't reach a real user yet.
+ * Latent, not fixed here (PR #4295 review, finding 4): the test is
+ * PREFIX-only. It does match the live localised placeholder — that is what
+ * `foldedPlaceholder` is — but a multi-word one (e.g. fr "Sans titre") is
+ * then unreachable by its second word: "titre" finds nothing here where a
+ * substring test would have. Only `en` ships today, so no real user reaches
+ * it yet. (An earlier revision of this comment claimed the test compared
+ * against a hardcoded English "Untitled". It does not, and chasing that
+ * would have been a wild goose.)
  *
  * `foldedPlaceholder` is `foldForSearch(untitledOr(''))` — PR #4295 review,
  * note 4: this used to call `untitledOr` (an `i18next.t` lookup) and
