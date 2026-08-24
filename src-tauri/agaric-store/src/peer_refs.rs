@@ -70,10 +70,14 @@ pub struct PeerRef {
     /// #4298) — a CLAIM by an untrusted remote, not a fact about it.
     ///
     /// Carried in `HeadExchange` and refreshed on every session in which this
-    /// device is the responder, so a peer that is renamed on its own machine
-    /// propagates that name here on its next dial. It is clamped to 64
-    /// characters on send AND again on receive, and empty/whitespace-only is
-    /// normalised to `None`; a peer can put anything in this field, so the
+    /// device is the responder AND authenticated the peer as this row's id — a
+    /// bound peer resolved through the key its handshake proved, or a joiner the
+    /// TOFU bind just accepted. So a peer renamed on its own machine propagates
+    /// that name here on its next dial, and a session keyed on a device id it
+    /// merely *claimed* writes nothing here (see the responder's name block and
+    /// #4230). It is stripped of control and bidi-format characters and clamped
+    /// to 64 characters on send AND again on receive, and empty/whitespace-only
+    /// is normalised to `None`; a peer can put anything in this field, so the
     /// receiving side re-applies every bound rather than trusting the sender to
     /// have applied it.
     ///
@@ -82,8 +86,16 @@ pub struct PeerRef {
     /// clearing an override fall back to the peer's own name rather than to a
     /// truncated UUID.
     ///
-    /// `None` is normal — a peer on a build predating #4298 sends no name, and
-    /// a device whose hostname could not be read sends none either.
+    /// `None` is normal *as a starting state* — a peer on a build predating
+    /// #4298 sends no name, and a device whose hostname could not be read sends
+    /// none either. It is not a state a row goes back to: the responder
+    /// short-circuits on a missing name rather than recording its absence (`if
+    /// let Some(name) = offered_device_name`), so once a name has been recorded
+    /// the row keeps it until the peer supplies a different one. That is the
+    /// wanted behaviour — a peer that downgrades, or boots once without a
+    /// readable hostname, must not blank a device list back to hex — and it
+    /// means [`update_remote_device_name`]'s `None` arm has no production
+    /// caller.
     pub remote_device_name: Option<String>,
     /// Last known network address (host:port) for direct connection.
     /// Updated after each successful sync. Used when mDNS is unavailable.
@@ -777,6 +789,22 @@ pub async fn update_device_name(
 ///
 /// Returns `true` when the stored value actually changed, `false` when it was
 /// already exactly this — or when no row exists for `peer_id`.
+///
+/// # `None` is expressible here and unreachable from production
+///
+/// The parameter is `Option<&str>` because that is the column's type and a
+/// setter that could not express the column's full range would be the odd one
+/// out among its neighbours. But the sole production caller — the responder's
+/// post-bind name block — reaches this only inside `if let Some(name) =
+/// offered_device_name`, so it never passes `None`. A peer that stops sending a
+/// name (an older build, or a boot where the hostname could not be read) leaves
+/// whatever it last said standing.
+///
+/// That is deliberate, not an oversight to be closed: the alternative is that
+/// one downgraded session blanks a device list back to truncated UUIDs, and a
+/// name that is a session stale is worth more to a user than no name at all.
+/// The `None` arm stays exercised by the store tests below, which is where the
+/// clearing behaviour is pinned in case a caller ever wants it.
 ///
 /// # Why unchanged is a no-op rather than an idempotent write
 ///
@@ -2703,11 +2731,17 @@ mod tests {
                 .unwrap(),
             "a peer renamed on its own machine must propagate on its next session"
         );
+        // `None` clears the column — a property of this setter, NOT a transition
+        // production performs. The responder short-circuits on a missing name
+        // (`if let Some(name) = offered_device_name`) precisely so a peer that
+        // downgrades, or boots once without a readable hostname, cannot blank a
+        // device list back to truncated UUIDs. Pinned here so the arm has a
+        // defined meaning if a caller ever does want it.
         assert!(
             update_remote_device_name(&pool, "PEER4298B", None)
                 .await
                 .unwrap(),
-            "a peer that stops supplying a name clears the column back to NULL"
+            "passing None must clear the column back to NULL"
         );
         assert!(
             !update_remote_device_name(&pool, "PEER4298B", None)

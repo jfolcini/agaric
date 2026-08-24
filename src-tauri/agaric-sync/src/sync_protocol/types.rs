@@ -70,9 +70,58 @@ pub fn decode_persisted_loro_vvs(bytes: &[u8]) -> Vec<SpaceVersionVector> {
 /// name to a fraction of that (or, worse, mid-scalar).
 pub const MAX_DEVICE_NAME_CHARS: usize = 64;
 
-/// Normalise a device name for the wire (#4298): trim it, treat
-/// empty/whitespace-only as absent, and clamp it to
-/// [`MAX_DEVICE_NAME_CHARS`].
+/// True for a character that must never survive into a stored device name
+/// (#4298).
+///
+/// Two families, both of which make a name *render* as something other than
+/// what it says:
+///
+/// * [`char::is_control`] — C0/C1. A newline or a carriage return in a name
+///   breaks it across lines in every surface that renders it (the device list
+///   row, the sync-failure toast, the unpair dialog, the `aria-label` on
+///   rename and address); a `NUL` or a `BEL` renders as nothing or as a
+///   replacement box.
+/// * The Unicode bidi and zero-width **format** characters. `U+202E`
+///   RIGHT-TO-LEFT OVERRIDE is the classic one: it reverses the display order
+///   of everything after it, so a peer can name itself such that the row reads
+///   as another device entirely, and the isolates (`U+2066`..`U+2069`) do the
+///   same with a scope. The zero-width ones (`U+200B`..`U+200D`, `U+FEFF`)
+///   have no width at all, so two peers can hold names that are visually
+///   identical and textually distinct — the device list's whole job is to tell
+///   devices apart.
+///
+/// This is not an XSS defence: React escapes what it renders and the name
+/// never reaches `dangerouslySetInnerHTML`. It is a *spoofing* defence, on the
+/// one string in this app that arrives from an untrusted remote and is
+/// displayed verbatim.
+///
+/// Stripping `U+200D` costs the ZWJ in a name made of emoji sequences (a
+/// `👨‍💻` degrades to two adjacent glyphs). That is the accepted price:
+/// an emoji hostname is a rarity, and a joiner that lets one device impersonate
+/// another is not a rarity worth preserving it for.
+///
+/// The ranges, spelled out once: `U+061C` ARABIC LETTER MARK;
+/// `U+200B`..`U+200F` (ZWSP, ZWNJ, ZWJ, LRM, RLM); `U+202A`..`U+202E` (LRE,
+/// RLE, PDF, LRO, RLO); `U+2066`..`U+2069` (LRI, RLI, FSI, PDI); and `U+FEFF`
+/// ZWNBSP/BOM.
+fn is_display_hostile(c: char) -> bool {
+    if c.is_control() {
+        return true;
+    }
+    matches!(
+        c,
+        '\u{061C}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{FEFF}'
+    )
+}
+
+/// Normalise a device name for the wire (#4298): strip the characters that
+/// would let it render as something other than itself (see
+/// `is_display_hostile`), trim it, treat empty/whitespace-only as absent, and
+/// clamp it to [`MAX_DEVICE_NAME_CHARS`].
 ///
 /// Applied on **send** (the initiator advertising its own hostname) and again
 /// on **receive** (the responder persisting what a peer claimed). The
@@ -85,9 +134,16 @@ pub const MAX_DEVICE_NAME_CHARS: usize = 64;
 /// Returns `None` for anything that is not a name, so the caller never has to
 /// distinguish "sent nothing" from "sent whitespace": both mean *no name*, and
 /// a stored `NULL` is what makes the display fall through to the next
-/// precedence level rather than rendering a blank row.
+/// precedence level rather than rendering a blank row. A name that is *only*
+/// hostile characters reduces to nothing and is therefore no name either.
+///
+/// The strip runs before the trim, so a name whose visible content is fenced
+/// by format characters (`"\u{202E} laptop"`) still has its now-exposed
+/// whitespace removed, and before the cap, so the 64 scalars that survive are
+/// 64 scalars of actual name rather than of invisible padding.
 pub fn clamp_device_name(name: &str) -> Option<String> {
-    let trimmed = name.trim();
+    let stripped: String = name.chars().filter(|c| !is_display_hostile(*c)).collect();
+    let trimmed = stripped.trim();
     if trimmed.is_empty() {
         return None;
     }

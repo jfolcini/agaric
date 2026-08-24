@@ -5119,6 +5119,99 @@ fn blank_device_names_normalise_to_none_4298() {
     );
 }
 
+/// A device name is the one string in this app that arrives from an untrusted
+/// remote and is rendered verbatim — in the device-list row, the sync-failure
+/// toast, the unpair dialog and the rename/address `aria-label`s. React escapes
+/// it, so this is not an XSS question; it is a SPOOFING one. `U+202E`
+/// RIGHT-TO-LEFT OVERRIDE reverses the display order of everything after it,
+/// the isolates do the same with a scope, and a newline breaks the name across
+/// the row it is supposed to occupy. All of them let a peer name itself such
+/// that the row reads as some other device.
+///
+/// Stripped in `clamp_device_name`, which is the shared clamp: one change
+/// covers both the send side and the load-bearing receive side.
+#[test]
+fn device_names_are_stripped_of_control_and_bidi_characters_4298() {
+    assert_eq!(
+        clamp_device_name("Javier\u{202E} desk").as_deref(),
+        Some("Javier desk"),
+        "RIGHT-TO-LEFT OVERRIDE must not survive: it reverses the display order of \
+         everything after it, so the row can be made to read as another device"
+    );
+    assert_eq!(
+        clamp_device_name("\u{2066}Javier\u{2069} laptop").as_deref(),
+        Some("Javier laptop"),
+        "the bidi isolates are the same attack with a scope"
+    );
+    assert_eq!(
+        clamp_device_name("left\u{200E}right\u{200F}mark").as_deref(),
+        Some("leftrightmark"),
+        "LRM/RLM are invisible and reorder what surrounds them"
+    );
+    assert_eq!(
+        clamp_device_name("laptop\u{061C}arabic").as_deref(),
+        Some("laptoparabic"),
+        "ARABIC LETTER MARK is the same class of invisible directional control"
+    );
+
+    assert_eq!(
+        clamp_device_name("Javier's\nLaptop").as_deref(),
+        Some("Javier'sLaptop"),
+        "a newline breaks the name across the single row it is rendered in"
+    );
+    assert_eq!(
+        clamp_device_name("bell\u{7}tab\tnul\u{0}").as_deref(),
+        Some("belltabnul"),
+        "C0 controls render as nothing or as a replacement box"
+    );
+    assert_eq!(
+        clamp_device_name("c1\u{85}next-line").as_deref(),
+        Some("c1next-line"),
+        "`char::is_control` covers C1 as well, and so must this"
+    );
+
+    assert_eq!(
+        clamp_device_name("laptop\u{200B}\u{200C}\u{200D}\u{FEFF}").as_deref(),
+        Some("laptop"),
+        "the zero-width characters have no width, so two peers could otherwise hold \
+         names that are visually identical and textually distinct"
+    );
+
+    // The strip runs BEFORE the trim, so whitespace the format characters were
+    // fencing is still removed rather than persisted as a leading space.
+    assert_eq!(
+        clamp_device_name("\u{202E}  Javier's Laptop  \u{202C}").as_deref(),
+        Some("Javier's Laptop"),
+        "stripping must expose the surrounding whitespace to the trim"
+    );
+
+    // …and a name that is ONLY hostile characters is not a name at all, which
+    // must fall through to `None` rather than persisting an empty string: the
+    // display precedence keys on NULL, and an empty string renders a blank row.
+    assert_eq!(
+        clamp_device_name("\u{202E}\u{200B}\n\t\u{FEFF}"),
+        None,
+        "a name with nothing visible left in it is no name"
+    );
+
+    // The cap counts what survives the strip: 64 scalars of actual name, not 64
+    // scalars of invisible padding.
+    let padded_over_the_cap: String = "\u{200B}".repeat(100) + &"n".repeat(80);
+    assert_eq!(
+        clamp_device_name(&padded_over_the_cap).as_deref(),
+        Some("n".repeat(64).as_str()),
+        "invisible characters must not consume the budget a visible name is owed"
+    );
+
+    // A name that needs no stripping is untouched, including non-ASCII: this is
+    // a filter on format/control characters, not on scripts.
+    assert_eq!(
+        clamp_device_name("Javier's MacBook Pro — 字 — Ünïcödé").as_deref(),
+        Some("Javier's MacBook Pro — 字 — Ünïcödé"),
+        "an ordinary name, in any script, passes through unchanged"
+    );
+}
+
 /// The sending half of the clamp: `SyncOrchestrator::start` advertises what
 /// `app_settings` holds, bounded — this device must not be the one that puts an
 /// unreasonable value on the wire, even though the receiver re-clamps anyway.
