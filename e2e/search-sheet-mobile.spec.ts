@@ -18,7 +18,7 @@
 
 import { devices } from '@playwright/test'
 
-import { expect, test, waitForBoot } from './helpers'
+import { expect, navigateMobile, test, waitForBoot } from './helpers'
 
 // Spreading `devices['iPhone 13']` wholesale inside `test.use()` includes
 // the `defaultBrowserType` field, which Playwright rejects in a `describe`
@@ -44,10 +44,9 @@ test.describe('Search sheet (mobile viewport)', () => {
     // 'all-pages'. It also has no `useInPageFindStore.container`
     // registered, so the 'in-page' segment shows the empty-state CTA
     // instead of the toolbar — verified below.
-    await page
-      .locator('[data-slot="sidebar"]')
-      .getByRole('button', { name: 'Pages', exact: true })
-      .click()
+    // Mobile has no persistent sidebar (the icon rail was retired for the
+    // header hamburger), so navigation goes through the drawer.
+    await navigateMobile(page, 'Pages')
     await expect(page.locator('[data-testid="header-label"]')).toContainText('Pages')
 
     // Trigger — mobile-only icon button mounted next to the header.

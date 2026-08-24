@@ -45,7 +45,7 @@ Reference the token, don't reinvent the value. The tokens themselves are defined
 - **DnD sensors split by pointer type.** Desktop = distance threshold (start drag immediately on a few pixels of movement). Touch = delay threshold (250 ms hold) — otherwise every scroll gesture would start a drag.
 - **Long-press** for mobile context menus is owned by `useBlockTouchLongPress` (`src/components/block-tree/use-block-touch-long-press.ts`). The delay + move-tolerance constants are there.
 - **`onPointerDown`, never `onMouse*`.** Mouse events don't fire on touch. Toolbar/popover handlers must also `e.preventDefault()` so focus stays in the editor.
-- **Mobile sidebar** = persistent 48 px icon rail + Sheet overlay. Distinct from desktop's `SidebarRail` (resize handle). Sheet auto-closes on nav-item tap.
+- **Mobile sidebar** = Sheet overlay only, no persistent rail — the full viewport width is content. Opened from the header hamburger (`SidebarTrigger`), the left-edge swipe, or `Ctrl+B`. Distinct from desktop's `SidebarRail` (resize handle). Sheet auto-closes on nav-item tap.
 
 ## Accessibility
 

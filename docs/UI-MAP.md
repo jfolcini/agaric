@@ -11,7 +11,7 @@ Names below are how we refer to each surface in conversation. They mostly match 
 | --- | --- | --- |
 | **AppShell** | Persistent chrome (sidebar + header + tab bar + scroll area) around the active view. | `App.tsx` |
 | **BootGate** | Loading / error overlay shown until the DB pool + materializer are ready. | `BootGate.tsx` |
-| **Sidebar** | Left-rail nav. Desktop = persistent collapsible. Mobile = persistent icon rail + Sheet overlay. | `AppSidebar.tsx` |
+| **Sidebar** | Left-rail nav. Desktop = persistent collapsible (collapses to a 48 px icon rail). Mobile = Sheet overlay only, opened from the header hamburger. | `AppSidebar.tsx` |
 | **TabBar** | Hoisted tab strip above the view. Hidden on mobile and when only one tab. | `TabBar.tsx` |
 | **PageHeader** | Sticky title bar for the page-editor view (title, breadcrumb, aliases, tags, properties, kebab menu). | `PageHeader.tsx` |
 | **ViewDispatcher** | Single source of truth for which view renders. Store-driven (no router). | `ViewDispatcher.tsx` |
@@ -145,7 +145,7 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 ## Mobile / a11y posture
 
 - **44 px touch floor** via `[@media(pointer:coarse)]` classes (`min-h-11`, etc.). Enforced in `Button` variants and overflow menu rows. Inline indicators (collapse chevron, task marker, priority badge) intentionally use the `max-sm:` viewport breakpoint instead — they compete with content for space and are not touch-primary affordances. Don't unify the two — tests assert both.
-- **Sidebar mobile model**: persistent 48 px icon rail + Sheet overlay (left-edge swipe or hamburger toggle). Sheet auto-closes on nav-item tap.
+- **Sidebar mobile model**: Sheet overlay only — no persistent rail (retired so the 48 px it reserved goes to content). Opened by the header hamburger, the left-edge swipe, or `Ctrl+B`. Sheet auto-closes on nav-item tap.
 - **No Sheet ↔ Popover viewport swaps**. Radix Popover works on touch; Sheet is only for off-canvas navigation.
 - **ARIA, focus, announcer, reduced motion** — see `docs/UX.md` § Accessibility for the canonical rules. Notable here: roving tabindex (exactly one `tabindex=0` per group, arrows move it) is used in list-like chrome such as `RecentPagesStrip` and `TabBar`; the block editor's mount/unmount-by-focus is a different pattern, the "roving editor".
 

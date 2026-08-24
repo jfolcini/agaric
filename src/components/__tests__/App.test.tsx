@@ -19,6 +19,7 @@ import { axe } from 'vitest-axe'
 import { App } from '@/App'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { announce } from '@/lib/announcer'
+import { markGestureCoachMarkSeen } from '@/lib/gesture-coachmark'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
@@ -2027,9 +2028,12 @@ describe('App', () => {
       })
 
       render(<App />)
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
+      // Boot signal for the MOBILE shell. The old signal here was the
+      // SpaceSwitcher combobox, which lives inside the sidebar — reachable on
+      // mobile only while the persistent icon rail existed. The rail is gone,
+      // and a closed Sheet mounts nothing, so wait on a chrome element that
+      // mobile actually renders: the header hamburger.
+      await screen.findByTestId('mobile-sidebar-trigger')
 
       expect(screen.getByTestId('quick-access-bar')).toBeInTheDocument()
     })
@@ -2732,5 +2736,67 @@ describe('App shell heading ownership', () => {
     const headerLabel = screen.getByTestId('header-label')
     expect(headerLabel.textContent).toBe('')
     expect(headerLabel.tagName).toBe('SPAN')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mobile navigation entry point (hamburger)
+// ---------------------------------------------------------------------------
+//
+// Below the 768px breakpoint the sidebar is a Sheet with no persistent icon
+// rail — the 48px that rail reserved now goes to content. That trade is only
+// safe if the header carries a visible way back into navigation, so these
+// tests pin the hamburger's presence on mobile and its absence on desktop.
+// Without them, a regression that drops the trigger leaves phone users with
+// no nav affordance at all except an undiscoverable edge swipe.
+describe('App — mobile sidebar trigger', () => {
+  it('renders a labelled hamburger in the header on mobile', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+
+    render(<App />)
+
+    const trigger = await screen.findByTestId('mobile-sidebar-trigger')
+    // Accessible name is the drawer-specific string, not "Toggle Sidebar":
+    // there is no visible sidebar on a phone to toggle.
+    expect(trigger).toHaveAccessibleName(t('sidebar.openMenu'))
+    expect(trigger.tagName).toBe('BUTTON')
+    // It leads the header row, before the view title / journal controls.
+    const header = trigger.closest('header')
+    expect(header).not.toBeNull()
+    expect(header?.firstElementChild).toBe(trigger)
+  })
+
+  it('opens the sidebar Sheet when tapped', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    // A first-run mobile session opens the gesture coach-mark, a modal that
+    // (correctly) blocks the header until dismissed. Mark it seen so this
+    // test exercises the steady-state header rather than the overlay.
+    markGestureCoachMarkSeen()
+    const user = userEvent.setup()
+
+    render(<App />)
+    const trigger = await screen.findByTestId('mobile-sidebar-trigger')
+
+    // Closed Sheet mounts nothing — there is no rail fallback any more.
+    expect(document.querySelector('[data-mobile="true"]')).toBeNull()
+
+    await user.click(trigger)
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-mobile="true"]')).not.toBeNull()
+    })
+    // The nav is now reachable: the sidebar destinations render inside it.
+    expect(screen.getByRole('button', { name: t('sidebar.pages') })).toBeInTheDocument()
+  })
+
+  it('does not render the hamburger on desktop (sidebar is already visible)', async () => {
+    mockedUseIsMobile.mockReturnValue(false)
+
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+
+    expect(screen.queryByTestId('mobile-sidebar-trigger')).toBeNull()
   })
 })
