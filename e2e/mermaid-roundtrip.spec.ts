@@ -17,9 +17,66 @@
  * picker ("Use «mermaid»" custom-language row) — the typed-fence input rule is
  * not how the roving editor authors code blocks.
  */
+import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
 import { focusBlock, openPage, waitForBoot } from './helpers'
+
+/** The plain DOM node view — a bare `<pre><code>`, no React wrapper around it. */
+function plainCodeView(page: Page) {
+  return page.locator('[data-testid="block-editor"] pre > code')
+}
+
+/**
+ * Any React node view mounted inside the live editor. `NodeViewWrapper` and the
+ * `ReactNodeView`'s own content host both carry this attribute; the plain DOM
+ * node view has no React renderer at all, so a count of 0 means "this block is
+ * NOT rendering through React".
+ */
+function reactNodeView(page: Page) {
+  return page.locator('[data-testid="block-editor"] [data-node-view-wrapper]')
+}
+
+/**
+ * Re-pick the focused CODE BLOCK's language through Turn into → Code block.
+ * The block must already BE a code block, so `TurnIntoMenu` opens with
+ * `CodeLanguageSelector` already expanded (#3001) and this is one interaction.
+ *
+ * Every row this can hit runs `updateAttributes('codeBlock', …)`, which keeps the
+ * SAME node type — the attribute-only transition the node views have to police
+ * themselves. Pass `''` for the language-clearing "Plain text" row.
+ */
+async function pickCodeLanguage(page: Page, language: string): Promise<void> {
+  const trigger = page
+    .locator('[data-testid="block-editor"]')
+    .getByRole('button', { name: 'Turn into', exact: true })
+  const filter = page.getByRole('textbox', { name: 'Code block language' })
+
+  // Retry the OPEN, not the pick: the popover's own dismissable layer can eat a
+  // pointerdown that lands while a previous pick is still closing it, leaving
+  // the trigger toggled back shut. Re-tapping until the picker is actually up
+  // keeps that Radix race out of the assertions below.
+  await expect(async () => {
+    if (!(await filter.isVisible())) await trigger.click()
+    await expect(filter).toBeVisible({ timeout: 2_000 })
+  }).toPass({ timeout: 15_000 })
+
+  if (language === '') {
+    // "Plain text" clears the language attr; it is a row of its own rather than
+    // a filter match, so it is picked directly (and the picker is freshly open
+    // here, so the row is settled).
+    await page.getByRole('button', { name: 'Plain text', exact: true }).click()
+  } else {
+    await filter.fill(language)
+    // Enter applies the highlighted row — index 0, which is the built-in match
+    // when there is one and the "Use «typed»" custom-language row otherwise.
+    // Keyboard rather than a click: a REOPENED Radix popover is still settling
+    // into position, and Playwright refuses to click a moving target.
+    await filter.press('Enter')
+  }
+
+  await expect(filter).toHaveCount(0)
+}
 
 test.describe('Mermaid diagram round-trip (#1438)', () => {
   test.beforeEach(async ({ page }) => {
@@ -90,5 +147,76 @@ test.describe('Mermaid diagram round-trip (#1438)', () => {
       .first()
       .locator('[data-testid="mermaid-diagram"] svg')
     await expect(staticDiagram).toBeVisible({ timeout: 10_000 })
+  })
+
+  /**
+   * The mermaid boundary is a NODE VIEW SWAP, and both directions have to be
+   * refused by the node view being left behind (#4312 review).
+   *
+   * Only `language === 'mermaid'` may render through a React node view; every
+   * other language renders through `CodeBlockWithShortcut`'s plain DOM one,
+   * because a React node view rewrites its contentDOM on re-render and
+   * prosemirror-view's DOMObserver turns that into a flush loop that froze the
+   * whole app on mobile (see `mobile-editor.spec.ts`). Switching the language is
+   * an ATTRIBUTE-only edit — the node TYPE is identical on both sides — so
+   * neither view's default `update()` refuses it: each must detect the mermaid
+   * boundary itself and return `false` so ProseMirror rebuilds the other one.
+   *
+   * mermaid → non-mermaid is the dangerous direction: a surviving React node
+   * view re-renders into `MermaidCodeBlockView`'s non-mermaid branch
+   * (`NodeViewWrapper > pre > NodeViewContent`), which is precisely the
+   * configuration the mobile freeze was made of.
+   *
+   * These run on the DESKTOP user agent (this file's default). The freeze itself
+   * is UA-gated, but the node-view identity asserted here is not — and the
+   * mermaid React node view does not render at all under Playwright's mobile UA
+   * (it hits prosemirror-view's `browser.ios` rebuild path and never paints), so
+   * the mermaid halves of this seam are only observable here.
+   */
+  test('switching a code block to mermaid and back swaps the node view each way', async ({
+    page,
+  }) => {
+    const editor = await focusBlock(page)
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Delete')
+
+    // Turn into → Code block → javascript: starts on the plain DOM node view.
+    await page
+      .locator('[data-testid="block-editor"]')
+      .getByRole('button', { name: 'Turn into', exact: true })
+      .click()
+    await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
+    const langInput = page.getByRole('textbox', { name: 'Code block language' })
+    await expect(langInput).toBeVisible()
+    await langInput.fill('javascript')
+    await page.getByRole('button', { name: 'javascript', exact: true }).click()
+
+    await expect(page.locator('[data-testid="block-editor"] pre')).toBeVisible()
+    await expect(plainCodeView(page)).toHaveClass('language-javascript')
+    await expect(reactNodeView(page)).toHaveCount(0)
+    await expect(page.getByTestId('mermaid-node-view')).toHaveCount(0)
+
+    // javascript → mermaid: the plain view refuses the update and ProseMirror
+    // rebuilds the block as the React one.
+    await pickCodeLanguage(page, 'mermaid')
+    await expect(page.getByTestId('mermaid-node-view')).toBeVisible()
+
+    // …and the editor still takes input (a wedged main thread would not).
+    await editor.pressSequentially('graph TD')
+    await expect.poll(async () => (await editor.textContent()) ?? '').toContain('graph TD')
+
+    // mermaid → javascript: the REACT view must refuse it symmetrically. Without
+    // that guard the React node view survives the attribute-only change and
+    // re-renders into the non-mermaid branch — a React node view wrapped around
+    // a <pre><code>, i.e. the freeze configuration — so `reactNodeView` stays
+    // mounted and this is the assertion that goes red.
+    await pickCodeLanguage(page, 'javascript')
+    await expect(page.getByTestId('mermaid-node-view')).toHaveCount(0)
+    await expect(reactNodeView(page)).toHaveCount(0)
+    await expect(page.locator('[data-testid="block-editor"] pre')).toBeVisible()
+    await expect(plainCodeView(page)).toHaveClass('language-javascript')
+
+    await editor.pressSequentially('; const ok = 1')
+    await expect.poll(async () => (await editor.textContent()) ?? '').toContain('const ok = 1')
   })
 })
