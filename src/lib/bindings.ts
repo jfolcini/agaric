@@ -520,6 +520,24 @@ export const commands = {
 	 *  this column yet (the write path arrives with the transport cutover).
 	 */
 	endpoint_id: string | null,
+	/**
+	 *  When this peer first told us, on the wire, that it holds no pairing
+	 *  with this device — milliseconds since the UNIX epoch (UTC), or `None`
+	 *  when it has not (migration 0113, #4297).
+	 * 
+	 *  Set only for a peer we still hold a row for: the other device unpaired
+	 *  us and there is no wire message that says so, so the only evidence is
+	 *  its `Rejection::Unpaired` refusal of every dial we make. Non-`None`
+	 *  therefore means "this pairing is dead and only a re-pair will revive
+	 *  it", and the device list must stop rendering the row as healthy —
+	 *  in particular it must stop showing a `MAX(synced_at, streamed_at)`
+	 *  relative time that keeps counting from the last session that worked.
+	 * 
+	 *  It is the FIRST refusal of the streak, not the latest, and any session
+	 *  that actually moves data in either direction clears it (see
+	 *  [`mark_unpaired_by_peer`] and [`update_on_sync_in_tx`]).
+	 */
+	unpaired_by_peer_at_ms: number | null,
 } | null, AppError>(__TAURI_INVOKE("get_peer_ref", { peerId })),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
 	deletePeerRef: (peerId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_peer_ref", { peerId })),
@@ -2995,6 +3013,24 @@ export type PeerRef = {
 	 *  this column yet (the write path arrives with the transport cutover).
 	 */
 	endpoint_id: string | null,
+	/**
+	 *  When this peer first told us, on the wire, that it holds no pairing
+	 *  with this device — milliseconds since the UNIX epoch (UTC), or `None`
+	 *  when it has not (migration 0113, #4297).
+	 * 
+	 *  Set only for a peer we still hold a row for: the other device unpaired
+	 *  us and there is no wire message that says so, so the only evidence is
+	 *  its `Rejection::Unpaired` refusal of every dial we make. Non-`None`
+	 *  therefore means "this pairing is dead and only a re-pair will revive
+	 *  it", and the device list must stop rendering the row as healthy —
+	 *  in particular it must stop showing a `MAX(synced_at, streamed_at)`
+	 *  relative time that keeps counting from the last session that worked.
+	 * 
+	 *  It is the FIRST refusal of the streak, not the latest, and any session
+	 *  that actually moves data in either direction clears it (see
+	 *  [`mark_unpaired_by_peer`] and [`update_on_sync_in_tx`]).
+	 */
+	unpaired_by_peer_at_ms: number | null,
 };
 
 /**  A property definition from the schema registry. */

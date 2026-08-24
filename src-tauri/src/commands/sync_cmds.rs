@@ -33,6 +33,36 @@ fn lock_pairing_state(
         .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))
 }
 
+/// Clear the #4297 "this peer says we are not paired" flag from every peer row,
+/// on a user-initiated pairing act.
+///
+/// The companion to [`SyncScheduler::clear_backoff`] at the same two call sites,
+/// and clears every peer for the same #3547 reason: a pairing act is new
+/// information about the whole device list, and neither pairing role has a peer
+/// id at this point — the flow carries a passphrase, and which peer it resolves
+/// to is only known once the first authenticated connection lands.
+///
+/// A failure is logged and swallowed rather than propagated. The flag is a
+/// display hint; refusing to start a pairing because a display hint could not be
+/// cleared would turn a cosmetic problem into the loss of the one action that
+/// fixes the underlying one. The stale flag also self-corrects: any session that
+/// then moves data clears it, and if the pairing did not take, the next refusal
+/// re-records it.
+async fn clear_unpaired_flags_on_pairing_act(pool: &SqlitePool) {
+    match peer_refs::clear_unpaired_by_peer_all(pool).await {
+        Ok(0) => {}
+        Ok(cleared) => tracing::info!(
+            cleared,
+            "cleared the 'peer has unpaired us' flag on a pairing act (#4297)"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "could not clear the 'peer has unpaired us' flag on a pairing act (#4297); a \
+             stale re-pair prompt may linger until the next successful sync"
+        ),
+    }
+}
+
 /// List all known sync peers, ordered by most-recently-synced first.
 #[instrument(skip(pool), err)]
 pub async fn list_peer_refs_inner(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError> {
@@ -198,6 +228,8 @@ pub async fn start_pairing_armed_inner(
     // scheduled round. See `SyncScheduler::clear_backoff` for why a user-initiated
     // pairing act is new information, and why it clears every peer.
     scheduler.clear_backoff();
+    // #4297: same act, same reasoning — see `clear_unpaired_flags_on_pairing_act`.
+    clear_unpaired_flags_on_pairing_act(pool).await;
     scheduler.notify_change();
     Ok(info)
 }
@@ -316,6 +348,8 @@ pub async fn confirm_pairing_inner(
     // left behind is not evidence about *this* dial; it would just make the one
     // that matters probabilistic. See `SyncScheduler::clear_backoff`.
     scheduler.clear_backoff();
+    // #4297: same act, same reasoning — see `clear_unpaired_flags_on_pairing_act`.
+    clear_unpaired_flags_on_pairing_act(pool).await;
 
     // Wake a dormant daemon (if any). Harmless if the daemon is
     // already active — `notify_change` is debounced by

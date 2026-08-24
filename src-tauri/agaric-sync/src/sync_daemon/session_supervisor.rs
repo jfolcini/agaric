@@ -1078,6 +1078,88 @@ impl Drop for CancelGuard<'_> {
     }
 }
 
+/// Did this session end because the peer *turned it away*, and with which
+/// refusal?
+///
+/// The verbatim text the responder sent, taken from the orchestrator rather
+/// than from the `AppError` the caller holds: `run_sync_session` wraps a
+/// terminal state as `"sync ended in terminal state: {reason:?}"`, and
+/// re-parsing prose out of that wrapper would be a third copy of the rejection
+/// strings. `Rejection::from_peer_message` compares against the same `match`
+/// that produced the text, so the recognition cannot drift from the emission.
+///
+/// `None` for a session that failed for any other reason (a torn stream, a
+/// timeout) and for one that did not fail at all.
+fn session_rejection(orch: &SyncOrchestrator) -> Option<Rejection> {
+    let SyncState::Failed(ref reason) = orch.session().state else {
+        return None;
+    };
+    Rejection::from_peer_message(reason)
+}
+
+/// Persist the #4297 evidence that the device on the other end has unpaired us.
+///
+/// # What this is reacting to
+///
+/// Unpairing is one-sided: `delete_peer_ref` drops a local row and sends
+/// nothing. The abandoned device therefore keeps its row, keeps dialling on
+/// every resync tick, and is refused every time with [`Rejection::Unpaired`] —
+/// which [`Rejection::user_facing_message`] deliberately declines to surface,
+/// because on a healthy LAN that refusal is what every *stranger's* probe
+/// answers with. Nothing was wrong with that decision; what was missing is that
+/// a refusal from a peer **we still hold a row for** is not a stranger's probe.
+/// It is the only notice we will ever get that the pairing is dead.
+///
+/// Nothing new is detected here. The initiator already received the refusal and
+/// already classified it correctly; this is the last hop — turning a terminal
+/// state that was becoming a log line into row state the device list can
+/// render.
+///
+/// # The two guards, and why both
+///
+/// The peer must be in `peer_refs` (the list this round was planned from) *and*
+/// the store's `UPDATE … WHERE peer_id = ?` must match a row. The first keeps
+/// the write off the path entirely for the case that produces most of these
+/// refusals — a joiner mid-pairing dials every discovered device and is turned
+/// away by each (#3502/#3505) — and gives the log line something true to say.
+/// The second is what makes the rule hold even if a caller is later wired up
+/// with a stale list, since `delete_peer_ref` can land between the plan and the
+/// refusal.
+///
+/// # What it deliberately does not do
+///
+/// It does not emit a [`SyncEvent`] and it does not change what
+/// `record_initiator_failure` books or reports. The condition is permanent
+/// until the user acts and must survive a restart, which is precisely what a
+/// toast is not; the row is the durable surface, and the caller still books the
+/// backoff on the ordinary path immediately after this returns.
+async fn record_peer_unpaired_us(pool: &SqlitePool, peer_refs: &[PeerRef], peer_id: &str) {
+    if !peer_refs.iter().any(|p| p.peer_id == peer_id) {
+        // A refusal from a device we hold no row for is a stranger turning us
+        // away, which is the protocol working. Not an error, not an event, and
+        // explicitly not a row to mark — there is none.
+        return;
+    }
+    match peer_refs::mark_unpaired_by_peer(pool, peer_id).await {
+        // Only the transition is logged. The refusal itself repeats every
+        // resync tick for as long as the user leaves the pairing half-dead, and
+        // `run_sync_session`'s own `warn!` already covers every cycle.
+        Ok(true) => tracing::warn!(
+            peer_id,
+            "peer refused our sync because it holds no pairing with this device; it has \
+             unpaired us and we were never told. Marking the peer row so the device list \
+             stops reporting it as healthy (#4297)"
+        ),
+        Ok(false) => {}
+        Err(e) => tracing::warn!(
+            peer_id,
+            error = %e,
+            "could not record that this peer has unpaired us (#4297); the device list will \
+             keep rendering the peer as healthy until a later attempt records it"
+        ),
+    }
+}
+
 /// Did this session end because the peer *turned it away while this device was
 /// mid-pairing*?
 ///
@@ -1122,15 +1204,7 @@ async fn peer_rejection_during_pairing_window(
     pool: &SqlitePool,
     orch: &SyncOrchestrator,
 ) -> Option<Rejection> {
-    // The verbatim text the responder sent, taken from the orchestrator rather
-    // than from the `AppError` the caller holds: `run_sync_session` wraps a
-    // terminal state as `"sync ended in terminal state: {reason:?}"`, and
-    // re-parsing prose out of that wrapper would be a third copy of the
-    // rejection strings.
-    let SyncState::Failed(ref reason) = orch.session().state else {
-        return None;
-    };
-    let rejection = Rejection::from_peer_message(reason)?;
+    let rejection = session_rejection(orch)?;
     match peer_refs::is_pending_pairing(pool).await {
         Ok(true) => Some(rejection),
         Ok(false) => None,
@@ -1878,6 +1952,19 @@ pub async fn try_sync_with_peer(
                      recording it as a sync failure (#3505)"
                 );
             } else {
+                // #4297: the one refusal that is durable state rather than an
+                // event. Checked BEFORE the failure is booked because the two
+                // are independent and both correct: the backoff and the log
+                // below are about *this attempt*, the row mark is about the
+                // relationship, and it must be recorded even on the ticks
+                // whose report `record_initiator_failure` suppresses.
+                //
+                // Guarded on the variant, not on "any rejection": only
+                // `Unpaired` means the peer holds no row for us. See
+                // `record_peer_unpaired_us`.
+                if matches!(session_rejection(&orch), Some(Rejection::Unpaired)) {
+                    record_peer_unpaired_us(ctx.pool, peer_refs, peer_id).await;
+                }
                 // #4120: books the backoff unconditionally; emits the generic
                 // wrapper only on the first failure of a streak while the peer
                 // is still pulling from us. See `record_initiator_failure`.
@@ -2674,6 +2761,7 @@ mod tests {
             device_name: Some("Pixel 8".into()),
             last_address: None,
             endpoint_id: Some("c".repeat(64)),
+            unpaired_by_peer_at_ms: None,
         }
     }
 
@@ -3500,5 +3588,139 @@ mod tests {
             "each is news once, and neither suppresses the other. Got {:?}",
             typed.events()
         );
+    }
+
+    // ======================================================================
+    // #4297 — the abandoned side of a one-sided unpair
+    // ======================================================================
+
+    const UNPAIRED_PEER: &str = "peer-4297";
+
+    /// A peer row shaped like the one on the abandoned device: healthy, synced
+    /// minutes ago, and about to be refused forever.
+    fn healthy_ref(peer_id: &str) -> PeerRef {
+        PeerRef {
+            peer_id: peer_id.to_string(),
+            last_hash: None,
+            last_sent_hash: None,
+            synced_at: Some(agaric_store::db::now_ms()),
+            streamed_at: None,
+            reset_count: 0,
+            last_reset_at: None,
+            cert_hash: None,
+            device_name: Some("Pixel 8".into()),
+            last_address: None,
+            endpoint_id: None,
+            unpaired_by_peer_at_ms: None,
+        }
+    }
+
+    async fn unpaired_flag(pool: &sqlx::SqlitePool, peer_id: &str) -> Option<i64> {
+        peer_refs::get_peer_ref(pool, peer_id)
+            .await
+            .expect("reading the peer row must succeed")
+            .and_then(|p| p.unpaired_by_peer_at_ms)
+    }
+
+    /// The fix itself: an `Unpaired` refusal from a peer we still hold a row
+    /// for is the only notice we will ever get that the other device unpaired
+    /// us, and it must land on the row.
+    #[tokio::test]
+    async fn an_unpaired_refusal_from_a_bound_peer_marks_its_row_4297() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        peer_refs::upsert_peer_ref(&pool, UNPAIRED_PEER)
+            .await
+            .unwrap();
+        let refs = vec![healthy_ref(UNPAIRED_PEER)];
+
+        record_peer_unpaired_us(&pool, &refs, UNPAIRED_PEER).await;
+
+        assert!(
+            unpaired_flag(&pool, UNPAIRED_PEER).await.is_some(),
+            "the peer's refusal must become durable row state, or the device list \
+             keeps rendering a peer that can never sync again as healthy (#4297)"
+        );
+    }
+
+    /// The asymmetry the fix is built around. `Rejection::Unpaired` is the
+    /// ordinary answer to every stranger's probe — a joiner mid-pairing dials
+    /// every discovered device and is refused by each (#3502/#3505) — so a
+    /// refusal from a device we hold NO row for must write nothing at all.
+    #[tokio::test]
+    async fn an_unpaired_refusal_from_a_stranger_marks_nothing_4297() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        peer_refs::upsert_peer_ref(&pool, UNPAIRED_PEER)
+            .await
+            .unwrap();
+        // The row exists in the DB but the peer is NOT in the list this round
+        // was planned from — the strongest form of the case, because it also
+        // proves the guard is the list membership and not merely the UPDATE's
+        // `WHERE peer_id = ?`.
+        let refs: Vec<PeerRef> = vec![];
+
+        record_peer_unpaired_us(&pool, &refs, UNPAIRED_PEER).await;
+        assert!(
+            unpaired_flag(&pool, UNPAIRED_PEER).await.is_none(),
+            "a refusal from a device outside the paired list must never be recorded"
+        );
+
+        // …and a peer with no row at all is a no-op that creates nothing.
+        record_peer_unpaired_us(&pool, &[healthy_ref("total-stranger")], "total-stranger").await;
+        assert!(
+            peer_refs::get_peer_ref(&pool, "total-stranger")
+                .await
+                .unwrap()
+                .is_none(),
+            "recording a refusal must never conjure a peer row"
+        );
+    }
+
+    /// The flag is not a one-way door: the pairing coming back to life erases
+    /// it, through the store writes every successful session already performs.
+    #[tokio::test]
+    async fn a_later_successful_sync_clears_the_unpaired_mark_4297() {
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        peer_refs::upsert_peer_ref(&pool, UNPAIRED_PEER)
+            .await
+            .unwrap();
+        let refs = vec![healthy_ref(UNPAIRED_PEER)];
+
+        record_peer_unpaired_us(&pool, &refs, UNPAIRED_PEER).await;
+        assert!(unpaired_flag(&pool, UNPAIRED_PEER).await.is_some());
+
+        peer_refs::update_on_sync(&pool, UNPAIRED_PEER, "hash", "")
+            .await
+            .unwrap();
+
+        assert!(
+            unpaired_flag(&pool, UNPAIRED_PEER).await.is_none(),
+            "a session that actually pulled from the peer disproves the refusal; \
+             leaving the mark would tell the user to re-pair a working device"
+        );
+    }
+
+    /// `session_rejection` is what gates the write, and it must recognise the
+    /// refusal from the SAME text the responder puts on the wire — including
+    /// distinguishing `Unpaired` from every other rejection, since only
+    /// `Unpaired` means the peer holds no row for us.
+    #[test]
+    fn only_the_unpaired_rejection_gates_the_mark_4297() {
+        assert_eq!(
+            Rejection::from_peer_message(Rejection::Unpaired.peer_message()),
+            Some(Rejection::Unpaired),
+            "the refusal the abandoned device receives must round-trip"
+        );
+        for other in Rejection::all() {
+            if matches!(other, Rejection::Unpaired) {
+                continue;
+            }
+            assert!(
+                !matches!(
+                    Rejection::from_peer_message(other.peer_message()),
+                    Some(Rejection::Unpaired)
+                ),
+                "{other:?} must not be mistaken for the dead-pairing refusal"
+            );
+        }
     }
 }

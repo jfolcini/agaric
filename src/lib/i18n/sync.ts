@@ -158,6 +158,17 @@ export const sync: Record<string, string> = {
   'device.syncFailedForList': 'Sync failed for: {{devices}}',
   'device.renameFailed': 'Failed to rename',
   'device.lastSyncedAt': 'Last: {{time}}',
+  // #4297 — the other device unpaired, and unpairing sends nothing over the
+  // wire, so the only evidence is that every dial we make is now refused.
+  // These three replace the `device.lastSyncedAt` line on such a row: that
+  // relative time keeps counting from the last *successful* session, so a
+  // pairing that died a week ago reads as recently synced.
+  'device.unpairedByPeerBadge': 'Pairing lost',
+  'device.unpairedByPeerDescription':
+    'The other device unpaired from this one. Pair again to resume syncing.',
+  // Deliberately the moment we FOUND OUT rather than the last successful sync:
+  // it is the one timestamp on this row that is not misleading.
+  'device.unpairedByPeerSince': 'Stopped syncing {{time}}',
   'device.resetCount_one': '{{count}} reset',
   'device.resetCount_other': '{{count}} resets',
   'qrScanner.viewportLabel': 'QR code scanner viewport',

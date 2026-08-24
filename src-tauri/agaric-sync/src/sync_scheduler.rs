@@ -979,6 +979,7 @@ mod tests {
             device_name: None,
             last_address: None,
             endpoint_id: None,
+            unpaired_by_peer_at_ms: None,
         }
     }
 
