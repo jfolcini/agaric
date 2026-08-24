@@ -17,7 +17,9 @@
  *      the touch floor;
  *   4. the pinned toolbar's bottom inset tracks the soft-keyboard height when
  *      `visualViewport` reports the viewport shrinking (keyboard shown) and
- *      resets when it grows back (keyboard hidden).
+ *      resets when it grows back (keyboard hidden);
+ *   5. a popover opened from that bar with the keyboard up is fully on screen
+ *      AND still tall enough to use (#4313).
  */
 
 import { devices } from '@playwright/test'
@@ -178,34 +180,56 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
   })
 
   /**
-   * Regression (#4313) — a toolbar popover must not open into the soft keyboard.
+   * Regression (#4313) — a toolbar popover opened with the IME up must be both
+   * fully visible AND usable.
    *
    * The Turn-into menu anchors to the pinned toolbar, which sits at the top edge
    * of the keyboard, and its Code-block disclosure expands ~19 more rows in
-   * place. Radix places it against the LAYOUT viewport, which on Android does
-   * not shrink for the IME, so the popover was sized and positioned as if the
-   * keyboard were not there. Measured on a Pixel 8: it grew past the top of the
+   * place. The old cap was `max-h-[calc(100dvh-4rem)]`, and `dvh` does NOT
+   * shrink for the IME on Android (edge-to-edge / targetSdk 36 leaves the LAYOUT
+   * viewport at full height), so the menu was capped against a screen a third of
+   * which was keyboard. Measured on a Pixel 8: it grew past the top of the
    * screen and its upper third was clipped away, unreachable — scrolling could
    * not recover those rows because the container itself was off-screen.
    *
-   * `PopoverContent` now reports the keyboard as bottom collision padding, so
-   * Radix's own flip/shift routes around it and
-   * `--radix-popover-content-available-height` (the popover's max-height)
-   * shrinks to match.
+   * The cap is now `--radix-popover-content-available-height`, which floating-ui
+   * derives from `window.visualViewport` (its default `rootBoundary: 'viewport'`
+   * → `getViewportRect`), i.e. from a boundary that ALREADY excludes the
+   * keyboard.
+   *
+   * Two failure modes, two assertions:
+   *   - too tall  → the popover runs off the top / under the keyboard (the
+   *     original bug);
+   *   - too short → the keyboard subtracted twice (once by the boundary, once
+   *     as bottom `collisionPadding`) collapses the cap to ~one row, which is
+   *     just as unusable. Hence the MIN_USABLE_POPOVER_HEIGHT floor.
+   *
+   * The keyboard is raised BEFORE the popover opens — that is the real sequence
+   * (the user is typing, the IME is up, then they tap the toolbar) and it makes
+   * the assertion independent of whether anything re-runs the popper on a
+   * `visualViewport` resize.
    */
-  test('a toolbar popover stays clear of the soft keyboard', async ({ page }) => {
+  const KEYBOARD = 300
+  // A menu capped to a single row is as broken as one drawn under the keyboard.
+  // Two coarse-pointer rows (44 px each, see TOUCH_FLOOR) plus the content's
+  // `p-4` (16 px top + bottom) is the smallest thing worth calling a menu.
+  // Measured on this viewport: 311 px as it stands; 56 px when the keyboard was
+  // also passed as bottom `collisionPadding` (664 − 300 clipping band, minus
+  // 4 px top and 4 + 300 px bottom padding). The floor sits between the two.
+  const MIN_USABLE_POPOVER_HEIGHT = 2 * TOUCH_FLOOR + 32
+
+  test('a toolbar popover opened with the keyboard up is fully visible and usable', async ({
+    page,
+  }) => {
     await focusBlock(page, 0)
 
-    await page.getByRole('button', { name: 'Turn into', exact: true }).first().click()
-    // Expand the tallest disclosure — the language list is what overflowed.
-    await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
+    const toolbar = page.getByTestId('formatting-toolbar')
+    await expect(toolbar).toBeVisible()
 
-    const popover = page.locator('[data-slot="popover-content"]').first()
-    await expect(popover).toBeVisible()
-
-    // Same simulation as the test above: Playwright cannot raise a real IME, so
-    // shrink the visual viewport and fire the `resize` the hook listens for.
-    const KEYBOARD = 300
+    // Playwright cannot raise a real IME, so simulate it exactly as the test
+    // above does: shrink the visual viewport (the layout viewport, and hence
+    // `innerHeight`/`dvh`, deliberately stay at full height — that asymmetry IS
+    // the bug) and fire the `resize` the app listens for.
     await page.evaluate((kbd) => {
       const vv = window.visualViewport
       if (!vv) throw new Error('visualViewport unavailable in test env')
@@ -217,22 +241,33 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
       vv.dispatchEvent(new Event('resize'))
     }, KEYBOARD)
 
-    // The whole popover must sit inside the area the keyboard leaves visible.
+    // The bar has lifted above the "keyboard": the popover's anchor is now at
+    // the very top edge of it, which is the geometry that produced the bug.
     await expect
-      .poll(
-        async () => {
-          const box = await popover.boundingBox()
-          const innerHeight = await page.evaluate(() => window.innerHeight)
-          if (!box) return 'no box'
-          const withinTop = box.y >= 0
-          const withinBottom = box.y + box.height <= innerHeight - KEYBOARD + SLACK
-          return withinTop && withinBottom
-        },
-        {
-          message:
-            'popover must be fully inside the keyboard-free area (not clipped off the top, not under the keyboard)',
-        },
+      .poll(async () => toolbar.evaluate((el) => Number.parseInt(el.style.bottom || '0', 10)))
+      .toBe(KEYBOARD)
+
+    await page.getByRole('button', { name: 'Turn into', exact: true }).first().click()
+    // Expand the tallest disclosure — the language list is what overflowed.
+    await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
+
+    const popover = page.locator('[data-slot="popover-content"]').first()
+    await expect(popover).toBeVisible()
+
+    // Single DOM pass per attempt, retried until the open animation settles.
+    await expect(async () => {
+      const geometry = await popover.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { top: r.top, bottom: r.bottom, height: r.height, innerHeight: window.innerHeight }
+      })
+      // Not clipped off the top of the screen.
+      expect(geometry.top, 'popover top').toBeGreaterThanOrEqual(-SLACK)
+      // Not drawn under the keyboard.
+      expect(geometry.bottom, 'popover bottom').toBeLessThanOrEqual(
+        geometry.innerHeight - KEYBOARD + SLACK,
       )
-      .toBe(true)
+      // Not collapsed to an unusable sliver by double-counting the keyboard.
+      expect(geometry.height, 'popover height').toBeGreaterThanOrEqual(MIN_USABLE_POPOVER_HEIGHT)
+    }).toPass({ timeout: 5000 })
   })
 })

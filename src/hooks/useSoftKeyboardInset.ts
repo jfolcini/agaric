@@ -2,9 +2,17 @@
  * useSoftKeyboardInset — how many pixels of the layout viewport the on-screen
  * keyboard is currently covering.
  *
- * Extracted from `ui/sheet.tsx` (#760) when the popover primitive needed the
- * same number (#4313). `computeKeyboardInset`'s own doc comment already named
- * three consumers; a fourth made the private copy the wrong shape.
+ * Extracted from `ui/sheet.tsx` (#760) in #4313. `computeKeyboardInset`'s own
+ * doc comment already named three consumers of the underlying math; keeping the
+ * subscribe/state half of it private to `Sheet` was the wrong shape for the
+ * next consumer that needs it.
+ *
+ * NOT for sizing or placing a floating element against the keyboard: anything
+ * positioned by floating-ui (Radix popper — `Popover`, `Select`, `Tooltip`, …)
+ * is ALREADY measured against `window.visualViewport`, so feeding this number
+ * back in as collision padding subtracts the keyboard twice (#4313). This is
+ * for elements the app positions itself, like the pinned toolbar and the bottom
+ * `Sheet`.
  *
  * WHY THIS EXISTS AT ALL: on Android (edge-to-edge / targetSdk 36) the
  * theme-level `adjustResize` is largely neutered — the LAYOUT viewport does not

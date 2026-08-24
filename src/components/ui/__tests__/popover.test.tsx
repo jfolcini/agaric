@@ -68,7 +68,12 @@ describe('PopoverContent', () => {
   // that only gates `shift`/`flip` in `@radix-ui/react-popper`, not `size()`.
   // It cannot be `100dvh` alone: on Android the soft keyboard does not shrink
   // the layout viewport, so a `dvh` cap let popovers extend under the
-  // keyboard and past the top of the screen.
+  // keyboard and past the top of the screen. The Radix var, by contrast, IS
+  // keyboard-aware on its own — floating-ui measures the collision boundary
+  // with `window.visualViewport` — which is why the popover does not (and must
+  // not) also add the keyboard height as bottom `collisionPadding`; that would
+  // subtract it twice. The geometry itself is covered end-to-end in
+  // `e2e/formatting-toolbar-mobile.spec.ts`.
   it('caps height to the collision-aware available height, falling back to the dynamic viewport', async () => {
     render(
       <Popover defaultOpen>

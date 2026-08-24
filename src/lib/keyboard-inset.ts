@@ -1,8 +1,8 @@
 /**
  * computeKeyboardInset — single source of truth for the soft-keyboard overlap
  * math shared by `useScrollCaretAboveKeyboard`, `useSoftKeyboardInset`
- * (src/hooks/useSoftKeyboardInset.ts — used by `Sheet` and `Popover`), and the
- * pinned (touch) `FormattingToolbar` (#1515).
+ * (src/hooks/useSoftKeyboardInset.ts — used by `Sheet`), and the pinned (touch)
+ * `FormattingToolbar` (#1515).
  *
  * `window.visualViewport` is the layout viewport MINUS the soft keyboard. Its
  * `height + offsetTop` is the y of the visible-viewport bottom in layout-viewport
