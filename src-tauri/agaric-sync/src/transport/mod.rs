@@ -46,6 +46,13 @@ pub mod driver;
 /// drive them — see [`driver`] for that.
 pub mod service;
 
+/// Would traffic to a given peer leave by the interface this endpoint bound?
+///
+/// A connected-UDP-socket route probe — no packets, two syscalls — that
+/// distinguishes "the peer is asleep" from "a tunnel is swallowing the LAN", the
+/// two states that produce byte-identical dial timeouts today (#4299).
+pub mod egress_probe;
+
 /// This device's long-lived iroh secret key, and its persistence.
 ///
 /// Separate from [`endpoint`] because the key outlives any one endpoint and, unlike
@@ -63,6 +70,7 @@ pub mod test_support;
 
 pub use bulk::{BULK_COPY_BYTES, recv_bulk, send_bulk};
 pub use driver::{Role, SessionEnd, SessionLimits, Shutdown, finish_session, run_session};
+pub use egress_probe::{EgressReport, EgressVerdict, probe_peer_egress};
 pub use endpoint::{RecordingResolver, is_publicly_routable, lan_only};
 pub use identity::get_or_create_endpoint_secret;
 /// This device's iroh secret key type, re-exported so the app crate can thread one

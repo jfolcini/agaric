@@ -64,13 +64,15 @@ use iroh_dns::dns::DnsResolver;
 use crate::sync_protocol::{SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 use crate::transport::driver::{Role, SessionLimits, finish_session, run_session};
+use crate::transport::egress_probe::{EgressReport, EgressVerdict, probe_peer_egress};
 use crate::transport::service::{SYNC_ALPN, SyncService};
 use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
 
 use super::SharedEventSink;
 use super::discovery::{
-    DiscoveredPeers, peers_for_change_round, process_discovery_event, resolve_peer_address,
+    DiscoveredPeers, MDNS_STALE_AFTER, mdns_is_reaching_us, mdns_last_seen, peers_for_change_round,
+    process_discovery_event, resolve_peer_address,
 };
 use super::server::{Rejection, handle_incoming_sync};
 use super::snapshot_transfer;
@@ -494,7 +496,12 @@ pub(crate) async fn daemon_loop(
                     // Branch A is single-shot (one peer per discovery
                     // event), so the bool return is informational only — no
                     // for-loop to break out of. Discard explicitly.
-                    let _cancelled = try_sync_with_peer(&ctx, &peer, &refs).await;
+                    // Branch A only fires on a live mDNS resolve, so the
+                    // stamp `process_discovery_event` just wrote is this
+                    // peer's — read it back rather than assuming "now", so
+                    // the freshness the probe gates on has exactly one source.
+                    let seen_at = mdns_last_seen(&discovered, &peer.device_id);
+                    let _cancelled = try_sync_with_peer(&ctx, &peer, &refs, seen_at).await;
                 }
             }
 
@@ -538,6 +545,11 @@ pub(crate) async fn daemon_loop(
                     let cancel = cancel.clone();
                     let task_endpoint = service.endpoint().clone();
                     let refs_for_task = refs.clone();
+                    // Read before the spawn: `discovered` is the loop's, and the
+                    // task takes ownership of `peer`. A round member resolved
+                    // from `peer_refs.last_address` rather than from mDNS has no
+                    // stamp, which is the correct `None`.
+                    let seen_at = mdns_last_seen(&discovered, &peer.device_id);
                     join_set.spawn(async move {
                         let ctx = SyncSessionContext {
                             pool: &pool,
@@ -549,7 +561,7 @@ pub(crate) async fn daemon_loop(
                             endpoint: &task_endpoint,
                         };
                         let was_cancelled =
-                            try_sync_with_peer(&ctx, &peer, &refs_for_task).await;
+                            try_sync_with_peer(&ctx, &peer, &refs_for_task, seen_at).await;
                         (peer.device_id, was_cancelled)
                     });
                 }
@@ -601,8 +613,11 @@ pub(crate) async fn daemon_loop(
                 // `peer_locks` map on a coarse (~hourly) cadence.
                 maybe_gc_peer_locks(&scheduler, &mut resync_ticks_since_gc);
 
-                // Evict stale mDNS peers not seen in last 5 minutes
-                let stale_threshold = tokio::time::Instant::now() - std::time::Duration::from_secs(300);
+                // Evict stale mDNS peers not seen for `MDNS_STALE_AFTER`. The
+                // constant is shared with `mdns_is_reaching_us`, which gates
+                // #4299's egress probe on "still in the map" meaning "still
+                // announcing"; the two must not drift apart.
+                let stale_threshold = tokio::time::Instant::now() - MDNS_STALE_AFTER;
                 discovered.retain(|_, (_, last_seen)| *last_seen > stale_threshold);
 
                 let refs = list_peer_refs_or_empty(&pool, "periodic_resync").await;
@@ -645,7 +660,9 @@ pub(crate) async fn daemon_loop(
                         if let Some(peer) =
                             resolve_peer_address(&pid, last_addr, bound_key, discovered)
                         {
-                            let cancelled = try_sync_with_peer(ctx, &peer, refs).await;
+                            let seen_at = mdns_last_seen(discovered, &pid);
+                            let cancelled =
+                                try_sync_with_peer(ctx, &peer, refs, seen_at).await;
                             if cancelled {
                                 tracing::info!(
                                     peer_id = %pid,
@@ -1269,6 +1286,116 @@ fn session_failure_message(e: &impl std::fmt::Display) -> String {
 const IDENTITY_MISMATCH_MESSAGE: &str =
     "peer identity does not match the one paired with this device";
 
+/// The dial that ran out of budget against a peer mDNS is still announcing,
+/// *and* whose egress probe found the system would route it somewhere other than
+/// the address this endpoint bound (#4299).
+///
+/// A constant — no interface name, no source address, no candidate — and that is
+/// not an oversight. This text is a suppression key exactly as the four above
+/// are, so interpolating the probe's findings would make every cycle a fresh key
+/// and re-raise #4084's forever-toast. The varying detail is a `tracing::warn!`
+/// field on the same failure, where it costs nothing and can be read off a bug
+/// report; see [`diagnose_dial_timeout`].
+///
+/// Because it is a different constant from [`connect_timeout_message`]'s text, a
+/// peer that goes from "asleep" to "captured" reports exactly once on the
+/// transition and is then silent again — which is the whole behaviour asked for:
+/// a diagnosis the user is told once, not a new toast every sixty seconds.
+///
+/// # What the wording is allowed to claim
+///
+/// The probe proves that traffic to this peer would leave by a different
+/// interface than the one we bound. It does **not** prove a VPN: a split-tunnel
+/// client, a corporate agent, a multi-homed host and a mis-scoped default route
+/// all produce it. So the sentence states the measurement flatly and names the
+/// likely cause as a hedge, not a finding.
+const ROUTED_ELSEWHERE_MESSAGE: &str = "Connection failed: discovered on the network, but traffic to this device is being \
+     routed elsewhere - a VPN or firewall may be capturing your LAN";
+
+/// Did this dial time out because the LAN is captured, rather than because the
+/// peer is asleep? (#4299)
+///
+/// Returns the probe's report only when it is a *diagnosis*; `None` means "say
+/// what we said before", which is the timeout.
+///
+/// # The gate, and why both terms
+///
+/// Two things must hold. The dial has already failed — this is only ever called
+/// from the timeout arm. And mDNS must currently be reaching us from this peer,
+/// which is [`mdns_is_reaching_us`] over the discovered map's own last-seen
+/// stamp.
+///
+/// The mDNS term is what keeps the probe off the common path. Multicast arriving
+/// while unicast dies is the distinctive shape of a tunnel that swallowed the LAN
+/// — link-local multicast escapes a tunnel and unicast does not — and a peer we
+/// have heard nothing from is simply a peer that is not there, which a timeout
+/// already describes correctly. Without this term every sleeping peer on the
+/// network would be probed for a condition it cannot have.
+///
+/// Neither term alone is a diagnosis and the pair still is not: mDNS freshness
+/// says the peer is on the link, the probe says our packets would not reach it
+/// from where we are speaking. Only both together, plus a `RoutedElsewhere`
+/// verdict, produce [`ROUTED_ELSEWHERE_MESSAGE`]. Every other outcome —
+/// `SameEgress`, `Inconclusive`, a stale peer, an endpoint with no usable bound
+/// address — falls through to the unchanged timeout text.
+///
+/// Synchronous inside an async fn on purpose: the probe is two non-blocking
+/// syscalls that send nothing (see [`crate::transport::egress_probe`]), so there
+/// is nothing here to await and no reason to pay a `spawn_blocking`.
+fn diagnose_dial_timeout(
+    endpoint: &Endpoint,
+    peer: &DiscoveredPeer,
+    mdns_seen_at: Option<tokio::time::Instant>,
+) -> Option<EgressReport> {
+    if !mdns_is_reaching_us(mdns_seen_at) {
+        return None;
+    }
+    let candidates: Vec<std::net::SocketAddr> = peer
+        .addresses
+        .iter()
+        .map(|ip| std::net::SocketAddr::new(*ip, peer.port))
+        .collect();
+    let report = probe_peer_egress(&endpoint.bound_sockets(), &candidates);
+    (report.verdict == EgressVerdict::RoutedElsewhere).then_some(report)
+}
+
+/// The text the dial-timeout arm reports: [`ROUTED_ELSEWHERE_MESSAGE`] when the
+/// egress probe diagnosed a captured LAN, and the unchanged
+/// [`connect_timeout_message`] in every other case (#4299).
+///
+/// Named rather than inlined at its one call site for the same reason the four
+/// message builders above it are: this function decides which suppression key a
+/// dial timeout carries, and "a peer we have heard no announcement from still
+/// gets the ordinary timeout text" is a property worth a test rather than a
+/// property worth a comment.
+///
+/// It also owns the single `tracing::warn!` that names the hypothesis. That line
+/// carries every varying detail the message deliberately does not — the bound
+/// address, the source address the system selected, and the candidate it selected
+/// it for — so a bug report has the numbers while the user-facing text stays
+/// byte-stable across cycles.
+fn dial_timeout_message(
+    peer_id: &str,
+    endpoint: &Endpoint,
+    peer: &DiscoveredPeer,
+    mdns_seen_at: Option<tokio::time::Instant>,
+) -> String {
+    let Some(report) = diagnose_dial_timeout(endpoint, peer, mdns_seen_at) else {
+        return connect_timeout_message();
+    };
+    tracing::warn!(
+        peer_id,
+        bound = ?report.bound,
+        probe_source = ?report.probed,
+        candidate = ?report.candidate,
+        "mDNS still reaches this peer, but the system would send unicast traffic to it \
+         from a different source address than the one this endpoint bound: our packets \
+         are leaving by another interface and dying there. A VPN or firewall may be \
+         capturing the LAN — see docs/features/sync.md (#4299)"
+    );
+    ROUTED_ELSEWHERE_MESSAGE.to_string()
+}
+
 // ---------------------------------------------------------------------------
 // record_initiator_failure — book the failure, report it once per streak (#4120)
 // ---------------------------------------------------------------------------
@@ -1587,6 +1714,21 @@ fn peer_pulled_from_us_recently(
 /// actually executed and the cancel flag was observed (typically because
 /// `run_sync_session` returned `Err("[transport::driver] session cancelled")`).
 ///
+/// # `mdns_seen_at`
+///
+/// When mDNS last resolved this peer, taken from the daemon's discovered map
+/// ([`mdns_last_seen`]). `None` means "no announcement on record" — a peer
+/// resolved from a stored `peer_refs.last_address` rather than from the network,
+/// and every direct caller in the tests.
+///
+/// It is used for exactly one thing: gating #4299's egress probe on the dial-
+/// timeout path, where a peer that is *still announcing itself* while every
+/// unicast dial dies is the distinctive shape of a captured LAN. It is a
+/// parameter rather than state read off `ctx` because it is per-peer and
+/// per-cycle, like `peer` and `peer_refs`, and because a `None` at a call site
+/// should read as "this path knows nothing about mDNS" rather than silently
+/// meaning it. See [`diagnose_dial_timeout`].
+///
 /// The `_cancel_guard` (a Drop scope guard, S-11) clears the flag on
 /// Drop — but only when this task actually ran a real session and thus
 /// *owns* the cancel (#637). Early-exit paths (backoff / lock / no-address /
@@ -1614,6 +1756,7 @@ pub async fn try_sync_with_peer(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
     peer_refs: &[PeerRef],
+    mdns_seen_at: Option<tokio::time::Instant>,
 ) -> bool {
     let peer_id = &peer.device_id;
 
@@ -1781,12 +1924,15 @@ pub async fn try_sync_with_peer(
                 timeout_s = CONNECT_TIMEOUT.as_secs(),
                 "peer did not answer the dial within the connect budget"
             );
+            // #4299: a timeout here is ambiguous by construction — a sleeping
+            // peer and a LAN swallowed by a tunnel produce the same silence.
+            // `dial_timeout_message` is the one thing that tells them apart.
             record_initiator_failure(
                 ctx.scheduler,
                 ctx.event_sink,
                 peer_refs,
                 peer_id,
-                connect_timeout_message(),
+                dial_timeout_message(peer_id, ctx.endpoint, peer, mdns_seen_at),
             );
             return false;
         }
@@ -3528,6 +3674,190 @@ mod tests {
             "…and the wrapped error must actually contribute words, or this test \
              would be green because iroh's Display is empty rather than because it \
              is stable; got {first:?}"
+        );
+    }
+
+    // ======================================================================
+    // #4299 — naming a captured LAN instead of reporting a bare timeout
+    // ======================================================================
+
+    /// The freshness predicate the probe is gated on, at both edges of its
+    /// window, and its `None` case.
+    ///
+    /// `None` is the one that matters most: it is what every peer resolved from
+    /// a stored `peer_refs.last_address` carries, and what every direct caller
+    /// of `try_sync_with_peer` in the test suites carries. It must never open
+    /// the gate.
+    #[tokio::test]
+    async fn the_probe_gate_only_opens_for_a_peer_mdns_is_still_announcing_4299() {
+        let now = tokio::time::Instant::now();
+
+        assert!(
+            !mdns_is_reaching_us(None),
+            "a peer with no announcement on record is not reaching us; a dial \
+             timeout against it means exactly what it says"
+        );
+        assert!(mdns_is_reaching_us(Some(now)));
+        assert!(
+            mdns_is_reaching_us(Some(
+                now - (MDNS_STALE_AFTER - std::time::Duration::from_secs(1))
+            )),
+            "inside the window the daemon itself keeps the entry in the map"
+        );
+        assert!(
+            !mdns_is_reaching_us(Some(
+                now - (MDNS_STALE_AFTER + std::time::Duration::from_secs(1))
+            )),
+            "outside it, the periodic-resync sweep would have evicted the entry — \
+             the predicate and the sweep must agree"
+        );
+    }
+
+    /// A loopback endpoint (every harness in this tree) plus a peer with an
+    /// address: the gate must decide the outcome, not the endpoint.
+    ///
+    /// Deliberately makes no claim about the machine's routes. The `None`
+    /// arms are gate decisions taken before a socket is opened at all, and
+    /// the fresh-mDNS arm is `None` by the `compare` rule that a loopback bind
+    /// names no interface — so this passes identically in CI and behind
+    /// whatever a laptop is behind.
+    #[tokio::test]
+    async fn a_dial_timeout_against_an_unannounced_peer_stays_a_plain_timeout_4299() {
+        let endpoint = crate::transport::endpoint::lan_only(
+            "127.0.0.1:0".parse().unwrap(),
+            32,
+            iroh::dns::DnsResolver::custom(crate::transport::endpoint::RecordingResolver::new()),
+        )
+        .expect("a loopback /32 is a legal LAN-only bind")
+        .bind()
+        .await
+        .expect("binding an ephemeral loopback port must succeed");
+
+        let peer = DiscoveredPeer {
+            device_id: "PEER_4299".to_string(),
+            endpoint_id: Some(crate::mdns::test_endpoint_id("PEER_4299")),
+            addresses: vec!["192.160.160.80".parse().unwrap()],
+            port: 9999,
+        };
+
+        let stale =
+            tokio::time::Instant::now() - (MDNS_STALE_AFTER + std::time::Duration::from_secs(1));
+
+        assert!(
+            diagnose_dial_timeout(&endpoint, &peer, None).is_none(),
+            "no mDNS recency: the probe must not run at all"
+        );
+        assert_eq!(
+            dial_timeout_message(&peer.device_id, &endpoint, &peer, None),
+            connect_timeout_message(),
+            "…and the text the user sees must be byte-identical to the one this arm \
+             reported before #4299 existed — the ordinary sleeping-peer path is \
+             exactly what must not change"
+        );
+
+        assert!(
+            diagnose_dial_timeout(&endpoint, &peer, Some(stale)).is_none(),
+            "a stale announcement is not 'mDNS is reaching us'"
+        );
+        assert_eq!(
+            dial_timeout_message(&peer.device_id, &endpoint, &peer, Some(stale)),
+            connect_timeout_message()
+        );
+
+        assert!(
+            diagnose_dial_timeout(&endpoint, &peer, Some(tokio::time::Instant::now())).is_none(),
+            "even with the gate open, a loopback-bound endpoint names no interface \
+             to disagree with, so the probe is inconclusive and says nothing"
+        );
+        assert_eq!(
+            dial_timeout_message(
+                &peer.device_id,
+                &endpoint,
+                &peer,
+                Some(tokio::time::Instant::now())
+            ),
+            connect_timeout_message(),
+            "an inconclusive probe is never a diagnosis"
+        );
+
+        endpoint.close().await;
+    }
+
+    /// The suppression-key property, for the one text #4299 adds.
+    ///
+    /// Same intent as
+    /// `a_real_iroh_connect_error_formats_identically_on_two_independent_dials_4201`:
+    /// `record_initiator_failure` withholds a repeat only when the incoming bytes
+    /// equal a text already reported this streak, so a diagnosis that embedded
+    /// the interface name, the probe's source address or the candidate would
+    /// churn its own key and re-raise a toast every sixty seconds — the exact
+    /// #4084 failure the gate exists to prevent.
+    ///
+    /// Two "invocations" against two different probe results, because that is
+    /// the shape the churn would take: the tunnel's source address is precisely
+    /// the detail that varies between cycles.
+    #[test]
+    fn the_routed_elsewhere_text_is_identical_on_two_independent_diagnoses_4299() {
+        let first = ROUTED_ELSEWHERE_MESSAGE.to_string();
+        let second = ROUTED_ELSEWHERE_MESSAGE.to_string();
+        assert_eq!(
+            first, second,
+            "#4299: the diagnosis is the suppression key for its arm; two cycles of \
+             the same condition must produce the same bytes"
+        );
+        assert_eq!(
+            first,
+            "Connection failed: discovered on the network, but traffic to this device \
+             is being routed elsewhere - a VPN or firewall may be capturing your LAN",
+            "the text is pinned so a well-meaning edit that interpolates the bound \
+             address, the probe's source address or the candidate fails here"
+        );
+        for varying in ["100.64.0.1", "tun0", "192.160.160.80", "9999"] {
+            assert!(
+                !first.contains(varying),
+                "the diagnosis must carry no detail that can differ between two \
+                 cycles of the same condition; found {varying:?}"
+            );
+        }
+    }
+
+    /// …and it must be a *different* text from the plain timeout, or the peer
+    /// that transitions from "asleep" to "captured" would be suppressed as a
+    /// repeat and the user would never be told.
+    #[test]
+    fn the_transition_from_timeout_to_diagnosis_is_reported_once_4299() {
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![responder_only_ref(Some(agaric_store::db::now_ms()))];
+        let fail = |msg: String| {
+            record_initiator_failure(&scheduler, &sink, &refs, RESPONDER_ONLY_PEER, msg);
+        };
+
+        assert_ne!(
+            connect_timeout_message(),
+            ROUTED_ELSEWHERE_MESSAGE,
+            "a diagnosis that read identically to the timeout it replaces would be \
+             swallowed by the repeat-report gate"
+        );
+
+        // Three cycles of a bare timeout, then the probe starts firing.
+        for _ in 0..3 {
+            fail(connect_timeout_message());
+        }
+        for _ in 0..3 {
+            fail(ROUTED_ELSEWHERE_MESSAGE.to_string());
+        }
+
+        assert_eq!(
+            error_messages(&typed),
+            vec![
+                connect_timeout_message(),
+                ROUTED_ELSEWHERE_MESSAGE.to_string()
+            ],
+            "#4299: exactly one new notification on the transition, then silence \
+             again. Got {:?}",
+            typed.events()
         );
     }
 
