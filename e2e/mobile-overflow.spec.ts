@@ -35,6 +35,7 @@ import {
   activeSheet,
   expect,
   expectNoHorizontalOverflow,
+  focusBlock,
   navigateMobile,
   openMobileSidebar,
   test,
@@ -309,6 +310,123 @@ for (const profile of PROFILES) {
       ).toBeGreaterThan(80)
 
       await expectNoHorizontalOverflow(page, undefined, `Sync panel · paired @ ${profile.name}`)
+    })
+
+    // #4307 — the EMPTY-BLOCK PLACEHOLDER, the one piece of overflowing text in
+    // this sweep that no other test could ever reach: it is a `::before`
+    // pseudo-element, so the DOM walk in `expectNoHorizontalOverflow` (which
+    // enumerates real ELEMENTS) can never enumerate it. It has to be measured
+    // through `getComputedStyle(p, '::before')`, which is what this test does.
+    //
+    // The regression, MEASURED at 360px rather than assumed: the rule carried
+    // TipTap's stock `float: left; height: 0`. A float is shrink-to-fit, so the
+    // placeholder box was 204px — exactly the paragraph's content width — and
+    // the 88-character hint WRAPPED to three lines inside it. But `height: 0`
+    // meant that box contributed no height at all, so the block stayed one line
+    // (24px) tall while the other two lines of placeholder painted straight
+    // down over whatever followed. The spill is VERTICAL, not horizontal, which
+    // is why every existing horizontal-overflow assertion in this file stayed
+    // green through the bug.
+    //
+    // Hence the shape of the assertions: the placeholder's own box must be
+    // NON-DEGENERATE (a zero-height box that still paints text IS the bug) and
+    // must FIT INSIDE the paragraph in both axes. Measured values with the fix
+    // in place: `::before` is 204×24 inside a 204×24 paragraph whose
+    // line-height is 24px. Before it: 204×0.
+    //
+    // Two guards against over-correcting:
+    //   - the empty row must not be TALLER than the very same row holding one
+    //     line of text (putting the placeholder back in flow to let the box
+    //     "grow to fit" would triple every empty block's height on a phone and
+    //     make the caret jump a line every time you press Enter), and
+    //   - the caret must still sit at the paragraph's content-box start.
+    //     ProseMirror marks that position with `<br>`, so its left edge is a
+    //     stable, measurable proxy for where the caret renders. `float`+`h-0`
+    //     kept the caret at x=0 by never shortening the line box; `position:
+    //     absolute` keeps it there by being out of flow entirely. A naive fix
+    //     that drops the float without replacing it fails here.
+    test('an empty block placeholder stays inside its block box', async ({ page }) => {
+      await waitForBoot(page)
+      await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
+
+      const editor = await focusBlock(page, 0)
+      const row = page
+        .locator('[data-testid="sortable-block"]:has([data-testid="block-editor"])')
+        .first()
+      const rowHeight = () =>
+        row.evaluate((el) => Math.round(el.getBoundingClientRect().height * 100) / 100)
+
+      // Baseline: one short line of real text — the height a single-line block
+      // is SUPPOSED to have at this width.
+      await editor.fill('x')
+      await expect(editor).toHaveText('x')
+      const filledHeight = await rowHeight()
+
+      // Empty it: TipTap's Placeholder extension flags the paragraph and the
+      // long `editor.emptyBlockPlaceholder` hint renders through `::before`.
+      await editor.fill('')
+      const para = page
+        .locator('[data-testid="block-editor"] .ProseMirror p.is-editor-empty')
+        .first()
+      await expect(para).toBeVisible()
+      // Guard the guard: an empty `data-placeholder` would make every
+      // measurement below trivially pass.
+      await expect(para).toHaveAttribute('data-placeholder', /.{40,}/)
+
+      const box = await para.evaluate((el) => {
+        const before = getComputedStyle(el, '::before')
+        return {
+          beforeWidth: Number.parseFloat(before.width),
+          beforeHeight: Number.parseFloat(before.height),
+          clientWidth: el.clientWidth,
+          clientHeight: el.clientHeight,
+        }
+      })
+
+      expect(
+        box.beforeHeight,
+        `the empty-block placeholder has a ZERO-height box at ${profile.name} — ` +
+          `it paints ${box.beforeWidth}px of wrapped text out of a 0px-tall box, ` +
+          `straight over the content below`,
+      ).toBeGreaterThan(0)
+      expect(
+        box.beforeHeight,
+        `the empty-block placeholder is taller than its paragraph at ` +
+          `${profile.name} (${box.beforeHeight}px in ${box.clientHeight}px)`,
+      ).toBeLessThanOrEqual(box.clientHeight + 1)
+      expect(
+        box.beforeWidth,
+        `the empty-block placeholder is wider than its paragraph at ` +
+          `${profile.name} (${box.beforeWidth}px in ${box.clientWidth}px)`,
+      ).toBeLessThanOrEqual(box.clientWidth + 1)
+
+      const emptyHeight = await rowHeight()
+      expect(
+        emptyHeight,
+        `an EMPTY block is taller than the same block holding one line of text ` +
+          `at ${profile.name} (${emptyHeight}px vs ${filledHeight}px) — the ` +
+          `placeholder is back in flow`,
+      ).toBeLessThanOrEqual(filledHeight + 1)
+
+      // Caret stays at the start of the empty block (placeholder out of flow).
+      const caretOffset = await para.evaluate((el) => {
+        const br = el.querySelector('br')
+        if (!br) return null
+        const style = getComputedStyle(el)
+        const contentLeft = el.getBoundingClientRect().left + Number.parseFloat(style.paddingLeft)
+        return br.getBoundingClientRect().left - contentLeft
+      })
+      expect(
+        caretOffset,
+        'no ProseMirror trailing break found in the empty paragraph',
+      ).not.toBeNull()
+      expect(
+        Math.abs(caretOffset ?? 0),
+        `caret shifted off the start of an empty block at ${profile.name} ` +
+          `(${caretOffset}px) — the placeholder is shortening the line box`,
+      ).toBeLessThanOrEqual(1)
+
+      await expectNoHorizontalOverflow(page, undefined, `empty block @ ${profile.name}`)
     })
   })
 }
