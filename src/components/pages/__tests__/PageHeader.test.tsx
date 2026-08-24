@@ -2358,6 +2358,41 @@ describe('PageHeader dedicated delete button (Part A)', () => {
     expect(onBack).toHaveBeenCalledTimes(1)
   })
 
+  // #4287 — the reported bug, end to end: "when deleting a page you should be
+  // redirected to the previous route you were in". `ViewDispatcher` wires
+  // `onBack={goBack}`, so wire the REAL action here rather than a spy and
+  // assert the view the user actually lands on. Before the fix every one of
+  // these landed on `pages`, whatever route the page was opened from.
+  it.each(['journal', 'search', 'tags'] as const)(
+    'deleting a page opened from %s returns to that view, not the pages list',
+    async (origin) => {
+      const user = userEvent.setup()
+
+      // Open the page the way the app does: from `origin`, via navigateToPage.
+      useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
+      useNavigationStore.setState({ currentView: origin })
+      useTabsStore.getState().navigateToPage('PAGE_1', 'My Page')
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+
+      renderPageHeader(
+        <PageHeader
+          pageId="PAGE_1"
+          title="My Page"
+          onBack={() => {
+            useTabsStore.getState().goBack()
+          }}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+      await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
+
+      await waitFor(() => {
+        expect(useNavigationStore.getState().currentView).toBe(origin)
+      })
+    },
+  )
+
   it('Undo toast action restores the just-deleted page via restore_blocks_by_ids', async () => {
     const user = userEvent.setup()
 

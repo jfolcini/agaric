@@ -118,8 +118,12 @@ const ALL_VIEWS = Object.keys({
  * or `null` if it isn't one. `localStorage` can hold anything (manual edits,
  * a corrupt write, a future-shape downgrade); hydrating a bare cast lets a
  * malformed blob reach `ViewDispatcher` as `currentView`.
+ *
+ * Exported because `useTabsStore` persists a `View` too — each tab's
+ * `enteredFrom` (the view its page stack was opened from, #4287) — and must
+ * coerce it through the same single source of truth for "is this a view id".
  */
-function coerceView(raw: unknown): View | null {
+export function coerceView(raw: unknown): View | null {
   return typeof raw === 'string' && (ALL_VIEWS as readonly string[]).includes(raw)
     ? (raw as View)
     : null

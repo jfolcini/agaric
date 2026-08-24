@@ -4,6 +4,7 @@
  * Validates:
  *  - Renders ChevronRight icon when collapsed
  *  - Applies rotate-90 when expanded
+ *  - Swaps the collapsed glyph for a solid caret under `solidWhenCollapsed`
  *  - Renders Spinner when loading=true
  *  - Supports sm and md size variants
  *  - Has no a11y violations
@@ -89,6 +90,54 @@ describe('ChevronToggle', () => {
     const svg = container.querySelector('svg')
     const classes = svg?.getAttribute('class') ?? ''
     expect(classes).toContain('my-custom')
+  })
+
+  // -- solidWhenCollapsed (#216 C4) -------------------------------------------
+
+  it('renders a solid (filled) caret when collapsed and solidWhenCollapsed is set', () => {
+    const { container } = render(<ChevronToggle isExpanded={false} solidWhenCollapsed />)
+
+    const svg = container.querySelector('svg') as SVGElement
+    expect(svg).toHaveAttribute('data-solid', 'true')
+    const classes = svg.getAttribute('class') ?? ''
+    expect(classes).toContain('fill-current')
+    // The solid state is a SHAPE cue, never a rotation.
+    expect(classes).not.toContain('rotate-90')
+  })
+
+  it('keeps the outline chevron when expanded, even with solidWhenCollapsed', () => {
+    const { container } = render(<ChevronToggle isExpanded solidWhenCollapsed />)
+
+    const svg = container.querySelector('svg') as SVGElement
+    expect(svg).not.toHaveAttribute('data-solid')
+    const classes = svg.getAttribute('class') ?? ''
+    expect(classes).not.toContain('fill-current')
+    expect(classes).toContain('rotate-90')
+  })
+
+  it('leaves the collapsed glyph unfilled when solidWhenCollapsed is absent', () => {
+    const { container } = render(<ChevronToggle isExpanded={false} />)
+
+    const svg = container.querySelector('svg') as SVGElement
+    expect(svg).not.toHaveAttribute('data-solid')
+    expect(svg.getAttribute('class') ?? '').not.toContain('fill-current')
+  })
+
+  it('the spinner wins over solidWhenCollapsed while loading', () => {
+    const { container } = render(<ChevronToggle isExpanded={false} loading solidWhenCollapsed />)
+
+    const svg = container.querySelector('svg') as SVGElement
+    expect(svg).not.toHaveAttribute('data-solid')
+    expect(svg.getAttribute('class') ?? '').toContain('animate-spin')
+  })
+
+  it('has no a11y violations with the solid collapsed caret', async () => {
+    const { container } = render(
+      <button type="button" aria-label="Toggle">
+        <ChevronToggle isExpanded={false} solidWhenCollapsed />
+      </button>,
+    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   // -- Prop forwarding (#1091) ------------------------------------------------

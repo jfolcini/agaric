@@ -69,12 +69,26 @@ vi.mock('lucide-react', () => ({
 }))
 
 vi.mock('@/components/ui/chevron-toggle', () => ({
+  // `solidWhenCollapsed` is destructured OUT (and re-surfaced as a data-*
+  // attribute) rather than left in `...rest`: React would warn about an
+  // unknown attribute if a camelCase boolean were spread onto a raw <svg>.
   ChevronToggle: ({
     isExpanded,
+    solidWhenCollapsed,
     className,
     ...rest
-  }: { isExpanded: boolean; className?: string } & Record<string, unknown>) => (
-    <svg data-testid="chevron-toggle" data-expanded={isExpanded} className={className} {...rest} />
+  }: {
+    isExpanded: boolean
+    solidWhenCollapsed?: boolean
+    className?: string
+  } & Record<string, unknown>) => (
+    <svg
+      data-testid="chevron-toggle"
+      data-expanded={isExpanded}
+      data-solid-when-collapsed={solidWhenCollapsed ? 'true' : undefined}
+      className={className}
+      {...rest}
+    />
   ),
 }))
 
@@ -479,6 +493,17 @@ describe('BlockCollapseControl (#1968)', () => {
     expect(screen.getByTestId('collapse-toggle')).toHaveAttribute(
       'aria-keyshortcuts',
       t('block.collapseKeyshortcuts'),
+    )
+  })
+
+  // #216 C4: the collapsed cue is the GLYPH (a solid caret), so the control
+  // must opt the shared ChevronToggle into that swap. The real glyph swap is
+  // asserted in mobile-a11y-216.test.tsx, which renders the unmocked icon.
+  it('opts the chevron into the solid-when-collapsed glyph swap', () => {
+    renderCollapse(makeCollapseProps({ hasChildren: true, isCollapsed: true }))
+    expect(screen.getByTestId('chevron-toggle')).toHaveAttribute(
+      'data-solid-when-collapsed',
+      'true',
     )
   })
 

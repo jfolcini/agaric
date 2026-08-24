@@ -391,8 +391,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // handler): drop the page from the active space's recent-pages MRU
         // (the click itself just re-recorded it via `recordVisit`) and, when
         // this page sits on top of the active tab's stack, pop it via the
-        // existing `goBack()` — which also closes the tab / falls back to the
-        // pages view when the stack empties, exactly like delete. There is
+        // existing `goBack()` — which also closes the tab / returns to the
+        // view the stack was opened from when it empties (#4287; `pages` when
+        // that origin is unknown), exactly like delete. There is
         // deliberately NO eager purge sweep across the old space's tab stacks
         // at move time: page deletion doesn't purge tabs/recent-pages either,
         // so stale refs heal lazily here at the rejection point. The active

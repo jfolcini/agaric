@@ -9,7 +9,9 @@
  *
  * navigationBackHandler:
  * - page-editor with a page stack → `useTabsStore.goBack()`
- * - page-editor with an empty stack → return to journal
+ * - page-editor with an empty stack → the SAME exit view `goBack` would use
+ *   (#4287: the tab's recorded origin, else `DEFAULT_PAGE_EXIT_VIEW`). This
+ *   used to hard-code `journal` while `goBack` hard-coded `pages`.
  * - any non-journal view → return to journal
  * - journal (true root) → declines
  */
@@ -18,7 +20,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { navigationBackHandler, overlayBackHandler } from '@/lib/back-handlers'
 import { useNavigationStore } from '@/stores/navigation'
-import { resetTabIdCounter, useTabsStore } from '@/stores/tabs'
+import { DEFAULT_PAGE_EXIT_VIEW, resetTabIdCounter, useTabsStore } from '@/stores/tabs'
 
 function resetStores() {
   resetTabIdCounter()
@@ -156,12 +158,62 @@ describe('navigationBackHandler', () => {
     expect(useNavigationStore.getState().currentView).toBe('page-editor')
   })
 
-  it('returns to journal when in page-editor with an empty stack', () => {
+  // #4287 — was `'journal'`, which disagreed with `goBack`'s hard-coded
+  // `'pages'` for the same "leave the editor" intent. Both now resolve through
+  // `exitViewForTab`, so the gesture and the in-page Back button agree.
+  it('leaves the editor for the shared fallback when the stack is already empty', () => {
     useNavigationStore.setState({ currentView: 'page-editor' })
 
     expect(navigationBackHandler()).toBe(true)
-    expect(useNavigationStore.getState().currentView).toBe('journal')
+    expect(useNavigationStore.getState().currentView).toBe(DEFAULT_PAGE_EXIT_VIEW)
   })
+
+  it('honours the tab’s recorded origin when the stack is already empty', () => {
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [], label: '', enteredFrom: 'tags' }],
+      activeTabIndex: 0,
+    })
+    useNavigationStore.setState({ currentView: 'page-editor' })
+
+    expect(navigationBackHandler()).toBe(true)
+    expect(useNavigationStore.getState().currentView).toBe('tags')
+  })
+
+  // The two fallbacks agree: the Android gesture and `goBack` (the in-page
+  // Back button / delete-page / stale-page heal) land on the SAME view for the
+  // same tab — both for a recorded origin and for an unknown one.
+  it.each([
+    { origin: 'journal' as const, expected: 'journal' },
+    { origin: undefined, expected: DEFAULT_PAGE_EXIT_VIEW },
+  ])(
+    'gesture and goBack agree on the exit view (origin: $origin)',
+    ({ origin, expected }: { origin: 'journal' | undefined; expected: string }) => {
+      const tabWith = (stack: { pageId: string; title: string }[]) => [
+        { id: '0', pageStack: stack, label: '', ...(origin ? { enteredFrom: origin } : {}) },
+      ]
+
+      // Path A — the Android gesture on a one-page stack (delegates to goBack).
+      useTabsStore.setState({
+        tabs: tabWith([{ pageId: 'P1', title: 'One' }]),
+        activeTabIndex: 0,
+      })
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      expect(navigationBackHandler()).toBe(true)
+      const viaGesture = useNavigationStore.getState().currentView
+
+      // Path B — the in-page Back button / delete flow calling goBack directly.
+      useTabsStore.setState({
+        tabs: tabWith([{ pageId: 'P1', title: 'One' }]),
+        activeTabIndex: 0,
+      })
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.getState().goBack()
+      const viaButton = useNavigationStore.getState().currentView
+
+      expect(viaGesture).toBe(expected)
+      expect(viaButton).toBe(expected)
+    },
+  )
 
   it('returns to journal from any non-journal view', () => {
     useNavigationStore.setState({ currentView: 'settings' })
