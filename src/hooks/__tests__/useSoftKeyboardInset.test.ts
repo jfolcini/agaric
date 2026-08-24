@@ -1,6 +1,10 @@
 /**
  * Tests for useSoftKeyboardInset (#4313) — extracted from `ui/sheet.tsx`
- * (#760) so `Popover` could share the same soft-keyboard math.
+ * (#760), which is still its only caller. The extraction was made for
+ * `Popover`, and then #4313's review established that a floating-ui-positioned
+ * element must NOT use this (it already measures against `visualViewport`), so
+ * the hook kept the move and lost the second consumer. What it gained is these
+ * tests, which the private copy never had.
  *
  * Validates:
  *  - the ordinary case: a `resize` that shrinks the visual viewport produces

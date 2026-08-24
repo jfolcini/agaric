@@ -40,9 +40,12 @@ import { cn } from '@/lib/utils'
 // as an overflow ancestor and listens to its `resize`/`scroll`, so a popover
 // that is already open when the IME rises re-runs `size()` too.
 //
-// The `calc(100dvh-4rem)` fallback keeps a sane cap where the var is unset — in
-// practice that's jsdom/happy-dom, where nothing ever lays the popper out
-// enough to run `size()`'s `apply`. It is NOT `avoidCollisions={false}`: in
+// The `calc(100dvh-4rem)` fallback keeps a sane cap where the var has no value
+// yet. That is jsdom/happy-dom, where nothing ever lays the popper out enough
+// to run `size()`'s `apply` — and also the FIRST paint of every popover in a
+// real browser, since Radix sets the var as an inline alias of
+// `var(--radix-popper-available-height)`, which is unresolvable until `size()`
+// has run once. It is NOT `avoidCollisions={false}`: in
 // `@radix-ui/react-popper`, `avoidCollisions` only gates the `shift`/`flip`
 // middleware, while the `size()` middleware that sets this var runs
 // unconditionally.
@@ -60,11 +63,20 @@ const POPOVER_CONTENT_BASE =
  * `maximumClippingHeight = height - overflow.top - overflow.bottom`, which
  * telescopes to `clippingHeight - paddingTop - paddingBottom`
  * (`@floating-ui/core`, `size`; `detectOverflow` folds `paddingObject` into
- * both overflows). Adding the keyboard here therefore subtracted it twice:
- * on an iPhone-13 viewport with a 300px keyboard the cap collapsed from 356px
- * to 56px — one row — for EVERY popover opened with the IME up, and where the
- * keyboard covers more than half the visible band the value goes negative and
- * the browser drops the `max-height` declaration entirely.
+ * both overflows). `availableHeight` is then
+ * `min(height - overflow[heightSide], maximumClippingHeight)` — the `min()`
+ * is what picks the doubly-subtracted term up. (Not, as an earlier revision of
+ * this comment claimed, because `shift` forces `maximumClippingHeight` outright
+ * on vertical placements: for `top`/`bottom` the main shift axis is x, so
+ * `shift.enabled.y` is false. The measurement settles it — at the geometry
+ * below the "outright" reading predicts 356px and the `min()` reading 310px,
+ * against 311px measured.)
+ *
+ * Adding the keyboard here therefore subtracted it twice: on an iPhone-13
+ * viewport with a 300px keyboard the cap collapsed to 56px — one row — for
+ * EVERY popover opened with the IME up, and where the keyboard covers more
+ * than half the visible band the value goes negative and the browser drops the
+ * `max-height` declaration entirely.
  */
 const EDGE_PADDING_PX = 4
 

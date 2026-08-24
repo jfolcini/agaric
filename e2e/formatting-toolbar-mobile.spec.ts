@@ -211,8 +211,10 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
    */
   const KEYBOARD = 300
   // A menu capped to a single row is as broken as one drawn under the keyboard.
-  // Two coarse-pointer rows (44 px each, see TOUCH_FLOOR) plus the content's
-  // `p-4` (16 px top + bottom) is the smallest thing worth calling a menu.
+  // Two coarse-pointer rows (44 px each, see TOUCH_FLOOR) plus a little padding
+  // is the smallest thing worth calling a menu. (The addend is deliberately
+  // round: this popover overrides the primitive's `p-4` to `p-1`, so it is a
+  // margin, not a derivation.)
   // Measured on this viewport: 311 px as it stands; 56 px when the keyboard was
   // also passed as bottom `collisionPadding` (664 − 300 clipping band, minus
   // 4 px top and 4 + 300 px bottom padding). The floor sits between the two.
