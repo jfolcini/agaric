@@ -70,7 +70,7 @@ pub mod test_support;
 
 pub use bulk::{BULK_COPY_BYTES, recv_bulk, send_bulk};
 pub use driver::{Role, SessionEnd, SessionLimits, Shutdown, finish_session, run_session};
-pub use egress_probe::{EgressReport, EgressVerdict, probe_peer_egress};
+pub use egress_probe::{BoundSocket, EgressReport, EgressVerdict, probe_peer_egress};
 pub use endpoint::{RecordingResolver, is_publicly_routable, lan_only};
 pub use identity::get_or_create_endpoint_secret;
 /// This device's iroh secret key type, re-exported so the app crate can thread one

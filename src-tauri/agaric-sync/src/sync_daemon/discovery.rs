@@ -57,6 +57,16 @@ pub fn mdns_last_seen(discovered: &DiscoveredPeers, peer_id: &str) -> Option<tok
 /// a false diagnosis on its own — it only decides whether two syscalls run. A
 /// peer that fell asleep four minutes ago still gets probed, and the probe then
 /// finds its routing perfectly healthy and says nothing.
+///
+/// That last sentence used to hold only on a single-homed host (#4299 review).
+/// While [`crate::transport::egress_probe::compare`] tested the probed source for
+/// *equality* with the bound address, an ordinary WiFi-plus-`br0` machine could
+/// answer `RoutedElsewhere` for a peer that was merely asleep: the kernel's route
+/// for that peer named the bridge's `prefsrc` while the endpoint was bound to the
+/// WiFi address — two addresses on the same LAN, both of which reach the peer.
+/// `compare` now asks whether the selected source falls inside the bound
+/// interface's own prefix, so benign multi-homing answers `SameEgress` and the
+/// sentence above is true on any host, not just an incidentally lucky one.
 #[must_use]
 pub fn mdns_is_reaching_us(seen_at: Option<tokio::time::Instant>) -> bool {
     seen_at.is_some_and(|at| at.elapsed() <= MDNS_STALE_AFTER)
