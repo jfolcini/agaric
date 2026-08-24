@@ -74,8 +74,12 @@ describe('PairingPeersList', () => {
   it('renders peer IDs in the list', () => {
     render(<PairingPeersList peers={mockPeers} onUnpair={vi.fn()} />)
 
-    expect(screen.getByText('peer-abc-1234567890')).toBeInTheDocument()
-    expect(screen.getByText('peer-def-0987654321')).toBeInTheDocument()
+    // Rendered truncated (a real peer_id is a 36-char UUID; the full string
+    // pushed Unpair off a 360px screen). The full id stays on `title`.
+    expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
+    expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
+    expect(screen.getByTitle('peer-abc-1234567890')).toBeInTheDocument()
+    expect(screen.getByTitle('peer-def-0987654321')).toBeInTheDocument()
   })
 
   it('shows "Never synced" for peers with null synced_at', () => {
@@ -249,7 +253,8 @@ describe('PairingPeersList — order matches the last-sync activity it displays 
   /** The rendered peer ids, top to bottom. */
   const renderedOrder = (container: HTMLElement): string[] =>
     Array.from(container.querySelectorAll('.pairing-peer-item p.font-mono')).map(
-      (el) => el.textContent ?? '',
+      // `title` carries the full id; the visible text is truncated.
+      (el) => el.getAttribute('title') ?? '',
     )
 
   it('lifts a responder-only peer above the genuinely-never-synced ones', () => {

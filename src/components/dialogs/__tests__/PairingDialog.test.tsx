@@ -543,8 +543,8 @@ describe('PairingDialog', () => {
     await screen.findByText('Paired Devices')
 
     // Check peer IDs are shown
-    expect(await screen.findByText('peer-abc-1234567890')).toBeInTheDocument()
-    expect(screen.getByText('peer-def-0987654321')).toBeInTheDocument()
+    expect(await screen.findByText('peer-abc-123...')).toBeInTheDocument()
+    expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
 
     // "Never synced" for the second peer (inside "Last: Never synced")
     expect(screen.getByText(/Never synced/)).toBeInTheDocument()
@@ -575,7 +575,7 @@ describe('PairingDialog', () => {
     await selectHostRole(user)
 
     // Wait for peers to show
-    await screen.findByText('peer-abc-1234567890')
+    await screen.findByText('peer-abc-123...')
 
     // Click first Unpair button
     const unpairBtns = screen.getAllByRole('button', { name: /Unpair/i })
@@ -596,7 +596,7 @@ describe('PairingDialog', () => {
 
     // Peer should be removed from list
     await waitFor(() => {
-      expect(screen.queryByText('peer-abc-1234567890')).not.toBeInTheDocument()
+      expect(screen.queryByText('peer-abc-123...')).not.toBeInTheDocument()
     })
   })
 
@@ -1240,7 +1240,7 @@ describe('PairingDialog', () => {
 
     render(<PairingDialog open onOpenChange={vi.fn()} />)
     await selectHostRole(user)
-    await screen.findByText('peer-abc-1234567890')
+    await screen.findByText('peer-abc-123...')
 
     const unpairBtns = screen.getAllByRole('button', { name: /Unpair/i })
     await user.click(unpairBtns[0] as HTMLElement)
@@ -1255,7 +1255,7 @@ describe('PairingDialog', () => {
     expect(errorEl).toHaveTextContent(/Failed to unpair device:.*peer not found/i)
 
     // Peer should still be in the list (not removed on failure)
-    expect(screen.getByText('peer-abc-1234567890')).toBeInTheDocument()
+    expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
   })
 
   // #3469 — `executePair`'s `call` no longer fetches `list_peer_refs`
@@ -1664,14 +1664,14 @@ describe('PairingDialog', () => {
         expect(screen.getByText('alpha bravo charlie delta')).toBeInTheDocument()
 
         // 3. Unpair the device through the dialog's own list.
-        expect(screen.getByText('peer-first-attempt-1')).toBeInTheDocument()
+        expect(screen.getByText('peer-first-a...')).toBeInTheDocument()
         fireEvent.click(screen.getAllByRole('button', { name: /Unpair/i })[0] as HTMLElement)
         fireEvent.click(screen.getByRole('button', { name: /Yes, unpair/i }))
         await flushMicrotasks()
         expect(mockedInvoke).toHaveBeenCalledWith('delete_peer_ref', {
           peerId: 'peer-first-attempt-1',
         })
-        expect(screen.queryByText('peer-first-attempt-1')).not.toBeInTheDocument()
+        expect(screen.queryByText('peer-first-a...')).not.toBeInTheDocument()
 
         // 4. Pair again on that same mount. Everything below must be
         //    attributable to THIS attempt, so clear the first one's traces.
@@ -2998,7 +2998,7 @@ describe('PairingDialog', () => {
 
       render(<PairingDialog open onOpenChange={vi.fn()} />)
       await selectHostRole(user)
-      await screen.findByText('peer-abc-1234567890')
+      await screen.findByText('peer-abc-123...')
 
       await user.click(screen.getAllByRole('button', { name: /Unpair/i })[0] as HTMLElement)
       await user.click(screen.getByRole('button', { name: /Yes, unpair/i }))
