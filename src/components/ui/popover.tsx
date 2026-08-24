@@ -49,8 +49,36 @@ import { cn } from '@/lib/utils'
 // `@radix-ui/react-popper`, `avoidCollisions` only gates the `shift`/`flip`
 // middleware, while the `size()` middleware that sets this var runs
 // unconditionally.
+//
+// The outer `max(…, 8rem)` closes two related gaps found in review of the fix
+// above:
+//
+// - A negative available height is not "unset" for CSS var-fallback
+//   purposes: `var(--x, fallback)` only substitutes `fallback` when `--x` is
+//   guaranteed-invalid, not when it holds a valid-but-negative length.
+//   floating-ui's `size()` does not clamp `availableHeight` to zero, so once
+//   the anchor has scrolled far enough past the visible viewport that
+//   `height - overflow.bottom` goes negative, Radix writes something like
+//   `--radix-popper-available-height: -40px`, and `max-height: -40px` is
+//   invalid at *computed-value* time — the whole declaration drops, and the
+//   popover renders with no cap at all (worse off than the `100dvh-4rem`
+//   fallback it would otherwise get). `max(negative, 8rem)` always resolves
+//   to `8rem` in that case, so a cap always survives.
+// - Even in the ordinary, non-negative case, nothing floors how small
+//   `size()` is allowed to shrink the cap near a viewport edge. `max()` puts
+//   a floor under it: the popover never renders shorter than that floor, it
+//   just becomes scrollable (`overflow-y-auto`, already set below) instead of
+//   shrinking further — it can still overflow a genuinely short viewport, and
+//   that's fine, `avoidCollisions`/`shift` still keep it on-screen; it's the
+//   height that stops shrinking, not the position.
+//
+// 8rem (128px) is picked against `e2e/formatting-toolbar-mobile.spec.ts`'s own
+// `MIN_USABLE_POPOVER_HEIGHT` (2 coarse-pointer rows of 44px + 32px margin =
+// 120px): 128px clears that with an 8px margin, while staying small enough
+// that it doesn't defeat the cap on a genuinely short viewport (it still
+// leaves most of even a compact landscape-phone viewport free).
 const POPOVER_CONTENT_BASE =
-  'bg-popover text-popover-foreground z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[var(--radix-popover-content-available-height,calc(100dvh-4rem))] overflow-y-auto overscroll-contain rounded-md border p-4 shadow-(--shadow-floating) outline-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2'
+  'bg-popover text-popover-foreground z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[max(var(--radix-popover-content-available-height,calc(100dvh-4rem)),8rem)] overflow-y-auto overscroll-contain rounded-md border p-4 shadow-(--shadow-floating) outline-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2'
 
 /**
  * Default collision padding: 4px, so a popover never sits flush against an edge

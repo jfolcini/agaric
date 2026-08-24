@@ -85,7 +85,7 @@ describe('PopoverContent', () => {
     const root = content.closest('[data-slot="popover-content"]')
     expect(root).not.toBeNull()
     expect(root?.className).toContain(
-      'max-h-[var(--radix-popover-content-available-height,calc(100dvh-4rem))]',
+      'max-h-[max(var(--radix-popover-content-available-height,calc(100dvh-4rem)),8rem)]',
     )
   })
 

@@ -45,6 +45,7 @@ function installVisualViewport(height: number): FakeVisualViewport {
 }
 
 const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight')
+const originalVisualViewport = Object.getOwnPropertyDescriptor(window, 'visualViewport')
 
 function setInnerHeight(value: number): void {
   Object.defineProperty(window, 'innerHeight', {
@@ -62,6 +63,9 @@ afterEach(() => {
   vi.restoreAllMocks()
   if (originalInnerHeight) {
     Object.defineProperty(window, 'innerHeight', originalInnerHeight)
+  }
+  if (originalVisualViewport) {
+    Object.defineProperty(window, 'visualViewport', originalVisualViewport)
   }
 })
 
