@@ -13,6 +13,7 @@ import {
   isAfter,
   isBefore,
   isSameDay,
+  isSameMonth,
   subDays,
   subMonths,
   subWeeks,
@@ -33,6 +34,7 @@ import {
   formatDateDisplay,
   formatWeekRange,
   getMaxJournalDate,
+  getWeekRange,
   MIN_JOURNAL_DATE,
 } from '@/lib/date-utils'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
@@ -98,6 +100,20 @@ export function JournalControls(): React.ReactElement {
     else setCurrentDate(addMonths(currentDate, 1))
   }
 
+  // Shared by the header's Today button and the phone-width Today action
+  // inside the calendar dropdown, so the two can never drift apart.
+  function goToToday() {
+    const today = new Date()
+    if (mode === 'agenda') {
+      setMode('daily')
+      setCurrentDate(today)
+    } else if (mode === 'weekly' || mode === 'monthly') {
+      goToDateAndScroll(today, formatDate(today))
+    } else {
+      setCurrentDate(today)
+    }
+  }
+
   // WAI-ARIA tabs: horizontal roving tabindex with MANUAL activation (APG).
   // Arrow{Left,Right}/Home/End move DOM focus only (they update `rovingMode`,
   // not `mode`), so arrow-keying across the tablist never mounts intermediate
@@ -153,6 +169,34 @@ export function JournalControls(): React.ReactElement {
     return format(currentDate, 'MMMM yyyy')
   }
 
+  /**
+   * Phone-width variant of {@link getDateDisplay}.
+   *
+   * The full strings are the widest thing in the header by a wide margin —
+   * measured at 360px: daily "Mon, Aug 24, 2026" is 123px and weekly
+   * "Aug 24 - Aug 30, 2026" needs ~150px (it was being squeezed to 77px and
+   * WRAPPING to three lines, which is what pushed the header to 112px tall).
+   * The compact forms drop the weekday and the year — both are redundant
+   * next to a calendar the user just navigated with — and cost ~46-60px.
+   *
+   * Rendered as a second span with mutually exclusive visibility classes
+   * (same trick as the mode-tab labels below), so the accessible name and
+   * every `data-testid="date-display"` assertion keep seeing the full string.
+   */
+  function getCompactDateDisplay(): string {
+    if (mode === 'agenda') return t('journal.tasks')
+    if (mode === 'daily') return format(currentDate, 'MMM d')
+    if (mode === 'weekly') {
+      const { start, end } = getWeekRange(currentDate)
+      // Same-month weeks collapse to "Aug 24–30"; only a week that straddles
+      // two months pays for the second month name.
+      return isSameMonth(start, end)
+        ? `${format(start, 'MMM d')}–${format(end, 'd')}`
+        : `${format(start, 'MMM d')}–${format(end, 'MMM d')}`
+    }
+    return format(currentDate, 'MMM yyyy')
+  }
+
   const navLabels = {
     prev:
       mode === 'daily'
@@ -186,13 +230,21 @@ export function JournalControls(): React.ReactElement {
   const todayShortcut = getShortcutKeys('goToToday')
 
   return (
+    // ONE row at every width. Below `sm` this used to be `flex-col`, which —
+    // nested inside the App header's own `flex-col` — put the mode tabs, the
+    // date stepper and the search trigger on three separate rows on a phone
+    // (measured: a 148px-tall header at 360px). The row now fits by shrinking
+    // the fixed chrome (see the `max-sm:*!` widths below) and letting the date
+    // chip absorb whatever is left, so overflow is structurally impossible
+    // rather than budgeted: every other child is fixed-width, and the chip
+    // truncates.
     <div
-      className="flex flex-1 flex-col sm:flex-row sm:items-center gap-2"
+      className="flex min-w-0 flex-1 items-center gap-2 max-sm:gap-0.5"
       data-testid="journal-header"
     >
       {/* Mode switcher */}
       <div
-        className="flex items-center gap-0.5"
+        className="flex shrink-0 items-center gap-0.5 max-sm:gap-0"
         role="tablist"
         aria-label={t('journal.viewModeLabel')}
         tabIndex={-1}
@@ -221,6 +273,14 @@ export function JournalControls(): React.ReactElement {
               }}
               variant={mode === m ? 'secondary' : 'ghost'}
               size="xs"
+              // Phone width: a fixed 24px-wide square-ish tab around the
+              // single glyph below. The `xs` size's coarse-pointer override
+              // (`px-3`) made each tab 31-35px, so the five tabs alone ate
+              // 174px of the 284px the header gets at 360px. 24×44 clears the
+              // 24px WCAG 2.5.8 target floor and only the WIDTH shrinks — the
+              // 44px touch height is untouched. `!` because the coarse-pointer
+              // padding otherwise wins on source order (measured).
+              className="max-sm:w-6! max-sm:px-0!"
               role="tab"
               id={journalTabId(m)}
               aria-selected={mode === m}
@@ -255,8 +315,13 @@ export function JournalControls(): React.ReactElement {
 
       {/* Date navigation — prev/next/date-display hidden in agenda mode (no
           date context), but Today + Agenda + calendar stay visible so the
-          user can jump back into dated views. */}
-      <div className="flex items-center gap-1">
+          user can jump back into dated views.
+          `relative` anchors the calendar dropdown to the whole cluster: the
+          trigger is the date chip in dated modes and the standalone icon in
+          agenda/stream, and anchoring the popover to their shared parent lets
+          both use ONE dropdown instance (right-aligned to the cluster, which
+          is where it already sat when the icon was the only trigger). */}
+      <div className="relative flex min-w-0 items-center gap-1 max-sm:gap-0.5">
         {/* Surface the current configurable bindings so users discover the
             shortcuts without opening the KeyboardShortcuts sheet. */}
         {!hidesDateNav && (
@@ -264,6 +329,9 @@ export function JournalControls(): React.ReactElement {
             <IconButton
               variant="ghost"
               size="icon-xs"
+              // 28×44 on a phone — see the tab comment above for why the
+              // coarse-pointer 44px WIDTH cannot be afforded on this row.
+              className="max-sm:w-6!"
               ariaLabel={navLabels.prev}
               aria-keyshortcuts={toAriaKeyshortcuts(previousShortcut)}
               tooltip={
@@ -279,15 +347,45 @@ export function JournalControls(): React.ReactElement {
             >
               <ChevronLeft className="h-4 w-4" />
             </IconButton>
-            <span
-              className="sm:min-w-[100px] text-center text-sm font-medium"
-              data-testid="date-display"
+            {/* The date IS the calendar trigger. It used to be inert text
+                with a separate calendar IconButton pinned to the end of the
+                row; that button cost a further 44px on a phone, and the date
+                was already the thing a user taps at. Merging them is what
+                buys the row its last control. In agenda/stream (no date
+                chip) the standalone icon below takes over. */}
+            <Button
+              variant="ghost"
+              size="xs"
+              // `shrink` (the Button base is `shrink-0`) makes the chip the
+              // ONE elastic item on the row: every other control is a fixed
+              // width, so whatever the viewport cannot afford comes out of
+              // the date text, which truncates. That is what makes "no
+              // horizontal overflow" structural instead of a pixel budget
+              // that a longer locale string could blow.
+              className="min-w-0 shrink gap-1 text-sm font-medium max-sm:px-0.5!"
+              aria-label={`${getDateDisplay()} · ${t('journal.openCalendar')}`}
+              aria-expanded={calendarOpen}
+              aria-haspopup="dialog"
+              onClick={() => setCalendarOpen((o) => !o)}
             >
-              {getDateDisplay()}
-            </span>
+              <CalendarIcon className="h-4 w-4 max-sm:hidden" aria-hidden="true" />
+              <span
+                className="truncate max-sm:hidden sm:min-w-[100px] text-center"
+                data-testid="date-display"
+              >
+                {getDateDisplay()}
+              </span>
+              {/* Phone-width label. `aria-hidden` keeps it out of the
+                  accessible name (the `aria-label` above already carries the
+                  full date) and out of axe's label-in-name comparison. */}
+              <span className="truncate sm:hidden" aria-hidden="true">
+                {getCompactDateDisplay()}
+              </span>
+            </Button>
             <IconButton
               variant="ghost"
               size="icon-xs"
+              className="max-sm:w-6!"
               ariaLabel={navLabels.next}
               aria-keyshortcuts={toAriaKeyshortcuts(nextShortcut)}
               tooltip={
@@ -309,19 +407,20 @@ export function JournalControls(): React.ReactElement {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
+                // `outline` stays: on desktop Today sits next to the Agenda
+                // button, which is also `outline`, so the pair reads as the
+                // row's two word-buttons against the ghost icons. The report
+                // that Today was "the only one with a border" was a PHONE
+                // observation — Agenda is `hidden sm:inline-flex`, so the
+                // border had no partner there. Rather than flatten the
+                // desktop pair, the phone row drops the button entirely
+                // (`max-sm:hidden`): it is the one control the 360px row has
+                // no room for, and the dropdown below re-offers it one tap
+                // deeper, where a phone user already goes to change dates.
                 variant="outline"
                 size="xs"
-                onClick={() => {
-                  const today = new Date()
-                  if (mode === 'agenda') {
-                    setMode('daily')
-                    setCurrentDate(today)
-                  } else if (mode === 'weekly' || mode === 'monthly') {
-                    goToDateAndScroll(today, formatDate(today))
-                  } else {
-                    setCurrentDate(today)
-                  }
-                }}
+                className="max-sm:hidden"
+                onClick={goToToday}
                 aria-label={t('journal.goToToday')}
                 aria-keyshortcuts={toAriaKeyshortcuts(todayShortcut)}
               >
@@ -349,10 +448,14 @@ export function JournalControls(): React.ReactElement {
             {t('journal.agenda')}
           </Button>
         )}
-        <div className="relative">
+        {/* Agenda / stream have no date chip to hang the picker on, so they
+            keep the standalone calendar icon. Every other mode reaches the
+            same dropdown through the date chip above. */}
+        {hidesDateNav && (
           <IconButton
             variant="ghost"
             size="icon-xs"
+            className="max-sm:w-6!"
             ariaLabel={t('journal.openCalendar')}
             tooltip={t('journal.openCalendar')}
             aria-expanded={calendarOpen}
@@ -361,27 +464,38 @@ export function JournalControls(): React.ReactElement {
           >
             <CalendarIcon className="h-4 w-4" />
           </IconButton>
-          {calendarOpen && (
-            <JournalCalendarDropdown
-              currentDate={currentDate}
-              onSelectDate={(day) => {
-                navigateToDate(day, 'daily')
+        )}
+        {calendarOpen && (
+          <JournalCalendarDropdown
+            currentDate={currentDate}
+            onSelectDate={(day) => {
+              navigateToDate(day, 'daily')
+              setCalendarOpen(false)
+            }}
+            onSelectWeek={(dates) => {
+              if (dates.length > 0) {
+                navigateToDate(dates[0] as Date, 'weekly')
                 setCalendarOpen(false)
-              }}
-              onSelectWeek={(dates) => {
-                if (dates.length > 0) {
-                  navigateToDate(dates[0] as Date, 'weekly')
-                  setCalendarOpen(false)
-                }
-              }}
-              onSelectMonth={(month) => {
-                navigateToDate(month, 'monthly')
-                setCalendarOpen(false)
-              }}
-              onClose={() => setCalendarOpen(false)}
-            />
-          )}
-        </div>
+              }
+            }}
+            onSelectMonth={(month) => {
+              navigateToDate(month, 'monthly')
+              setCalendarOpen(false)
+            }}
+            // Phone-only replacement for the header Today button hidden
+            // above. `undefined` when Today would be a no-op anyway, so the
+            // dropdown never offers a dead action.
+            onToday={
+              todayButtonHidden
+                ? undefined
+                : () => {
+                    goToToday()
+                    setCalendarOpen(false)
+                  }
+            }
+            onClose={() => setCalendarOpen(false)}
+          />
+        )}
       </div>
 
       {/* Agenda mode: show title in place of date nav */}

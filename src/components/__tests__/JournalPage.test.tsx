@@ -2924,12 +2924,13 @@ describe('JournalPage', () => {
   // ── Mobile responsiveness ───────────────────────────────────────────
 
   describe('mobile responsiveness', () => {
-    it('journal header stacks vertically on mobile via flex-col sm:flex-row', async () => {
-      // PEND journal-header-responsive: the previous shape relied on
-      // `flex-wrap` to keep controls reachable on narrow screens, but the
-      // 56 px header height clipped anything that wrapped past the first
-      // row. The new shape stacks the mode tabs and the date-nav row on
-      // their own rows under sm:, and inlines them at sm:+.
+    it('journal header is a single row on mobile, never a stack', async () => {
+      // History: this started as `flex-wrap` (clipped by the 56px header),
+      // then became `flex-col sm:flex-row` — a two-row stack that, nested in
+      // the App header's own below-sm stack, actually rendered THREE rows on
+      // a phone (tabs / date stepper / search trigger), 148px tall at 360px.
+      // The row now stays a row at every width and fits by shrinking its
+      // controls; `e2e/mobile-overflow.spec.ts` is the proof it fits.
       mockEmptyResponses()
 
       renderJournal()
@@ -2940,8 +2941,8 @@ describe('JournalPage', () => {
 
       const tablist = screen.getByRole('tablist')
       const parent = tablist.parentElement as HTMLElement
-      expect(parent.className).toContain('flex-col')
-      expect(parent.className).toContain('sm:flex-row')
+      expect(parent.className).not.toMatch(/(?:^|:)flex-col/)
+      expect(parent.className).toContain('items-center')
     })
 
     // The previous shape (`min-w-[100px] sm:min-w-[140px]`)

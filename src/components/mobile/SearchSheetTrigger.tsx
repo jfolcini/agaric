@@ -26,6 +26,17 @@ export function SearchSheetTrigger(): React.ReactElement {
     <Button
       variant="ghost"
       size="icon-xs"
+      // The trigger shares the header row with the journal's always-on
+      // controls, and at 360px that row has no 44px to spare (see
+      // `JournalControls`). 32×44 keeps a comfortable tap target — the full
+      // 44px HEIGHT is untouched, only the width narrows, and 32px is well
+      // clear of the 24px WCAG 2.5.8 floor.
+      //
+      // The `!` is load-bearing: the `icon-xs` size variant carries its own
+      // `[@media(pointer:coarse)]:size-11`, and a plain `max-sm:w-8` loses to
+      // it on source order (measured — it had no effect at all). Importance,
+      // unlike order, is a cascade guarantee.
+      className="max-sm:w-8!"
       aria-label={t('searchSheet.openButton')}
       data-testid="search-sheet-trigger"
       onClick={() => {
