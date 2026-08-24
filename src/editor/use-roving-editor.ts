@@ -208,12 +208,55 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   },
   // #1438 — render a code block via a React node view. For language `mermaid`
   // it shows the rendered diagram (reusing MermaidDiagram) with a raw-source
-  // toggle; every other language renders the standard editable code block, so
-  // non-mermaid code-block behaviour is unchanged. The block is still a plain
-  // `codeBlock(language=mermaid)`, so it round-trips to a ```mermaid fence via
-  // the existing markdown serializer.
+  // toggle. The block is still a plain `codeBlock(language=mermaid)`, so it
+  // round-trips to a ```mermaid fence via the existing markdown serializer.
+  //
+  // ONLY mermaid gets the React node view. Routing every language through it
+  // froze the editor permanently on mobile: a React node view rewrites its
+  // contentDOM subtree on re-render, prosemirror-view's DOMObserver records
+  // those mutations and flushes, the flush re-renders the node view, and the
+  // cycle never terminates (`DOMObserver.observer → flush → updateState →
+  // selectionToDOM → …`). It is UA-gated because `browser.android`/`browser.ios`
+  // select different selection-handling paths in prosemirror-view, so desktop
+  // never spins. Any code block — typed as ```␣, inserted from the slash menu,
+  // or picked in the language selector — locked the app until it was killed.
+  //
+  // Non-mermaid therefore uses a plain DOM node view that reproduces
+  // `CodeBlockLowlight`'s own `renderHTML` (`<pre><code class="language-x">`,
+  // the extension is configured with `lowlight` only, so no extra
+  // `HTMLAttributes` are in play). Lowlight's highlighting is applied as
+  // decorations inside `contentDOM` and is unaffected.
   addNodeView() {
-    return ReactNodeViewRenderer(MermaidCodeBlockView)
+    const renderReact = ReactNodeViewRenderer(MermaidCodeBlockView)
+    const prefix = this.options.languageClassPrefix ?? 'language-'
+    const isMermaid = (node: { attrs: Record<string, unknown> }): boolean =>
+      node.attrs['language'] === 'mermaid'
+
+    return (props) => {
+      if (isMermaid(props.node)) return renderReact(props)
+
+      const dom = document.createElement('pre')
+      const contentDOM = document.createElement('code')
+      dom.append(contentDOM)
+
+      const applyLanguage = (node: typeof props.node): void => {
+        const language = node.attrs['language'] as string | null
+        contentDOM.className = language ? `${prefix}${language}` : ''
+      }
+      applyLanguage(props.node)
+
+      return {
+        dom,
+        contentDOM,
+        update: (node) => {
+          // A switch to/from mermaid needs the other node view: refuse the
+          // update so prosemirror rebuilds this one.
+          if (node.type !== props.node.type || isMermaid(node)) return false
+          applyLanguage(node)
+          return true
+        },
+      }
+    }
   },
 })
 

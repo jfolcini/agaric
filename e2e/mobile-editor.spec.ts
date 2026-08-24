@@ -79,4 +79,36 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
 
     await expect.poll(async () => liveEditorBlockId(page)).not.toBe(startId)
   })
+
+  /**
+   * Regression: a code block used to freeze the editor PERMANENTLY on mobile.
+   *
+   * `CodeBlockWithShortcut` rendered every language through a React node view.
+   * A React node view rewrites its contentDOM on re-render; prosemirror-view's
+   * DOMObserver recorded those mutations and flushed, the flush re-rendered the
+   * node view, and the cycle never terminated. It only bit mobile because
+   * `browser.android`/`browser.ios` pick different selection-handling paths in
+   * prosemirror-view — desktop created the same block in ~80 ms.
+   *
+   * The block never appeared and the whole app stopped responding (still dead
+   * after three minutes), so this asserts the `<pre>` actually materialises.
+   * Runs on the mobile user-agent above, which is what gates the bug — a small
+   * viewport or touch alone does NOT reproduce it.
+   */
+  test('a code block renders instead of freezing the editor', async ({ page }) => {
+    const editor = await focusBlock(page, 0)
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Delete')
+
+    // The ```␣ input rule is the shortest path to a code block and involves no
+    // toolbar or popover, so a failure here is unambiguously the editor.
+    await editor.pressSequentially('```')
+    await page.keyboard.press('Space')
+
+    await expect(page.locator('[data-testid="block-editor"] pre')).toBeVisible()
+
+    // The editor must still accept input — a frozen main thread swallows this.
+    await editor.pressSequentially('ok')
+    await expect.poll(async () => (await editor.textContent()) ?? '').toContain('ok')
+  })
 })
