@@ -38,7 +38,9 @@ pub async fn compute_reverse(
         OpType::RemoveTag => tag_ops::reverse_remove_tag(&record),
         OpType::SetProperty => property_ops::reverse_set_property(pool, &record).await,
         OpType::DeleteProperty => property_ops::reverse_delete_property(pool, &record).await,
-        OpType::AddAttachment => attachment_ops::reverse_add_attachment(&record),
+        // #4259: needs the pool — the minted `delete_attachment` describes the
+        // LIVE `attachments` row, not the add payload's creation-time values.
+        OpType::AddAttachment => attachment_ops::reverse_add_attachment(pool, &record).await,
         OpType::RestoreBlock => block_ops::reverse_restore_block(&record),
         OpType::DeleteAttachment => attachment_ops::reverse_delete_attachment(pool, &record).await,
         OpType::RenameAttachment => attachment_ops::reverse_rename_attachment(&record),

@@ -261,6 +261,13 @@
     "test": "compute_reverse_batch_matches_per_op_fold"
   },
   {
+    "fn": "src-tauri/src/reverse/batch.rs::fetch_live_attachment_state_batch",
+    "kind": "read-only",
+    "status": "covered",
+    "test": "compute_reverse_batch_matches_per_op_fold",
+    "pin": "#4259's batch-side live-row fetch, sibling to the five fetch_*_batch kernels above and covered by the same property. Worth noting WHY the coverage is real here and was not before: until #4259 both kernels ignored the live row identically, so the parity oracle agreed perfectly on the wrong answer and would not have caught a divergence in this fetch at all. Its fixture now seeds live attachments rows whose fs_path and filename BOTH differ from the add payload's, and pins the absolute value rather than only batch-vs-loop agreement, so a fetch that returned the wrong row (or dropped a duplicate attachment_id within one chunk) reddens it"
+  },
+  {
     "fn": "src-tauri/src/reverse/batch.rs::fetch_prev_edit_rows_batch",
     "kind": "read-only",
     "status": "covered",

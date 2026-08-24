@@ -113,6 +113,11 @@ use agaric_store::op_log::OpRecord;
 //   * property:        idx, block_id, key, created_at, created_at, seq, seq, device_id → 8
 //   * attachment:      idx, attachment_id, created_at, created_at, seq, seq, device_id → 7
 //   * op-record fetch: idx, device_id, seq                                             → 3
+// #4259's live-row fetch is the one helper that is NOT a per-op UNION-ALL of
+// `LIMIT 1` subqueries: it is a single PRIMARY-KEY `IN (...)` over
+// `attachments`, so it binds exactly ONE parameter per op and maps rows back
+// by `id` rather than by a bound input index.
+const LIVE_ATTACHMENT_BINDS_PER_OP: usize = 1;
 // `MAX_SQL_PARAMS` is the crate-wide 999 bound from `crate::db` (the
 // same conservative `SQLITE_MAX_VARIABLE_NUMBER` floor the snapshot
 // `batch_insert_snapshot_rows!` chunker uses) — well under the real
@@ -223,14 +228,17 @@ pub async fn compute_reverse_batch(
 
     // Bucket op indices by the prior-context query they need. Op
     // types whose reverse is a pure payload transform (CreateBlock,
-    // DeleteBlock, AddTag, RemoveTag, AddAttachment, RestoreBlock,
-    // PurgeBlock) do not appear in any bucket — they are handled by
-    // the synchronous fallback at the bottom.
+    // DeleteBlock, AddTag, RemoveTag, RestoreBlock, PurgeBlock) do not
+    // appear in any bucket — they are handled by the synchronous
+    // fallback at the bottom. #4259 moved `AddAttachment` OFF that list:
+    // its reverse now describes the LIVE `attachments` row, so it needs
+    // a DB read like the context-bearing types do.
     let mut edit_idxs: Vec<usize> = Vec::new();
     let mut move_idxs: Vec<usize> = Vec::new();
     let mut set_prop_idxs: Vec<usize> = Vec::new();
     let mut del_prop_idxs: Vec<usize> = Vec::new();
     let mut del_att_idxs: Vec<usize> = Vec::new();
+    let mut add_att_idxs: Vec<usize> = Vec::new();
 
     for (idx, ty) in parsed_types.iter().enumerate() {
         match ty {
@@ -239,6 +247,7 @@ pub async fn compute_reverse_batch(
             OpType::SetProperty => set_prop_idxs.push(idx),
             OpType::DeleteProperty => del_prop_idxs.push(idx),
             OpType::DeleteAttachment => del_att_idxs.push(idx),
+            OpType::AddAttachment => add_att_idxs.push(idx),
             _ => {}
         }
     }
@@ -271,6 +280,12 @@ pub async fn compute_reverse_batch(
         fetch_prior_property_batch(pool, ops, &del_prop_idxs).await?;
     let att_prior: Vec<Option<String>> =
         fetch_prior_attachment_batch(pool, ops, &del_att_idxs).await?;
+    // #4259: the LIVE `attachments` row behind each `add_attachment`, so the
+    // batch twin mints the same synthetic `delete_attachment` the single-op
+    // kernel does. Both go through `attachment_ops::build_reverse_add_attachment`,
+    // so there is one implementation to keep correct rather than two.
+    let add_att_live: Vec<Option<attachment_ops::LiveAttachmentState>> =
+        fetch_live_attachment_state_batch(pool, ops, &add_att_idxs).await?;
 
     // ----- assemble per-op reverse payloads in input order ------------
     //
@@ -287,6 +302,7 @@ pub async fn compute_reverse_batch(
     let mut set_cursor = 0usize;
     let mut del_cursor = 0usize;
     let mut att_cursor = 0usize;
+    let mut add_att_cursor = 0usize;
 
     for (idx, ty) in parsed_types.iter().enumerate() {
         let record = &ops[idx];
@@ -316,7 +332,11 @@ pub async fn compute_reverse_batch(
                 del_cursor += 1;
                 build_reverse_delete_property(record, prior)
             }
-            OpType::AddAttachment => attachment_ops::reverse_add_attachment(record),
+            OpType::AddAttachment => {
+                let live = add_att_live[add_att_cursor].as_ref();
+                add_att_cursor += 1;
+                attachment_ops::build_reverse_add_attachment(record, live)
+            }
             OpType::RestoreBlock => block_ops::reverse_restore_block(record),
             OpType::DeleteAttachment => {
                 let prior = att_prior[att_cursor].as_deref();
@@ -745,6 +765,73 @@ async fn fetch_prior_attachment_batch(
         }
     }
     Ok(out)
+}
+
+/// Batched live-row read for `reverse_add_attachment` (#4259): the current
+/// `attachments.fs_path` / `.filename` of every `add_attachment` in the batch.
+///
+/// Unlike its siblings this is NOT a UNION-ALL of `LIMIT 1` prior-context
+/// subqueries — there is no history to walk, only the row as it stands right
+/// now — so it is one PRIMARY-KEY `IN (...)` per chunk, mapped back by `id`.
+/// Mapping by `id` rather than by a bound input index is also what makes a
+/// batch containing the SAME `attachment_id` twice (an add, undone and redone,
+/// reverted again in one sweep) resolve every occurrence to the same row
+/// instead of only the first.
+///
+/// An entry is `None` when no row with that id exists — a legitimate,
+/// reachable state, not an error; see
+/// [`attachment_ops::build_reverse_add_attachment`] for the fallback it takes.
+///
+/// Deliberately NOT filtered on `deleted_at IS NULL`: nothing in production
+/// writes `attachments.deleted_at` today, and the single-op kernel's
+/// `SELECT ... WHERE id = ?` does not filter either. The two must observe the
+/// same row or the B-3 parity oracle is comparing different questions.
+async fn fetch_live_attachment_state_batch(
+    pool: &SqlitePool,
+    ops: &[OpRecord],
+    idxs: &[usize],
+) -> Result<Vec<Option<attachment_ops::LiveAttachmentState>>, AppError> {
+    if idxs.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Parse each op's attachment id once, in input order.
+    let mut att_ids: Vec<String> = Vec::with_capacity(idxs.len());
+    for &op_idx in idxs {
+        let payload: agaric_store::op::AddAttachmentPayload =
+            serde_json::from_str(&ops[op_idx].payload)?;
+        att_ids.push(payload.attachment_id.as_str().to_string());
+    }
+
+    // C5 (#344): chunked like every other batch helper, at this helper's own
+    // (narrower) per-op bind width.
+    let chunk_size = MAX_SQL_PARAMS / LIVE_ATTACHMENT_BINDS_PER_OP;
+    let mut by_id: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+    for chunk in att_ids.chunks(chunk_size) {
+        let mut qb: QueryBuilder<Sqlite> =
+            QueryBuilder::new("SELECT id, fs_path, filename FROM attachments WHERE id IN (");
+        let mut separated = qb.separated(", ");
+        for id in chunk {
+            separated.push_bind(id.clone());
+        }
+        qb.push(")");
+        let rows: Vec<(String, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        for (id, fs_path, filename) in rows {
+            by_id.insert(id, (fs_path, filename));
+        }
+    }
+
+    Ok(att_ids
+        .iter()
+        .map(|id| {
+            by_id
+                .get(id)
+                .map(|(fs_path, filename)| attachment_ops::LiveAttachmentState {
+                    fs_path: fs_path.clone(),
+                    filename: filename.clone(),
+                })
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------

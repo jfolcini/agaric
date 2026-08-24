@@ -651,6 +651,11 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
 /// producer of a `DeleteAttachmentPayload` that is not
 /// `commands::attachments::delete_attachment_inner`.
 ///
+/// This fixture seeds no `attachments` row, so it exercises #4259's
+/// ROW-IS-GONE arm — the fallback where the add payload's own values are all
+/// there is to carry. The live-row arm is
+/// `reverse_add_attachment_describes_the_live_row_and_falls_back_when_it_is_gone_4259`.
+///
 /// Every field it carries is asserted, not just the variant and the id. Both
 /// of the other two are forwarded from the add payload so the minted op is a
 /// complete `DeleteAttachmentPayload` rather than a defaulted one:
@@ -695,6 +700,124 @@ async fn reverse_add_attachment_produces_delete_attachment() {
         other => panic!("expected DeleteAttachment, got {other:?}"),
     }
 }
+/// #4259 — BOTH arms of the live-row read `reverse_add_attachment` gained.
+///
+/// The bug this closes is an asymmetry: `delete_attachment_inner` captures
+/// `fs_path`/`filename` from the LIVE row, so a real `delete_attachment`
+/// reflects a repoint or a rename, while the SYNTHETIC one minted by
+/// `reverse_add_attachment` carried the add payload's creation-time values.
+/// After a repoint onto a shared blob the original path is unreferenced, the
+/// orphan GC reclaims it, and the redo of an undone add then hands the #3706
+/// byte-existence guard a path that is gone — a false refusal over bytes that
+/// are alive under the blob.
+///
+/// Both arms are asserted in one test on purpose. #4259 IS a half-covered
+/// symmetry; pinning the adopt arm and leaving the fallback arm open would
+/// reproduce the very shape of the bug in its own test.
+///
+///  * **Row present** — the minted delete must describe the row as it stands
+///    NOW (the blob path, the renamed name), not as it was born. This half is
+///    RED before the fix.
+///  * **Row gone** — a legitimate, reachable state (undo of an add whose row a
+///    later op already removed), and the defined fallback is the add payload's
+///    own values, i.e. exactly the pre-#4259 behaviour for exactly the case
+///    where nothing better exists. Refusing there instead would break undo of
+///    an already-deleted attachment, which works today.
+#[tokio::test]
+async fn reverse_add_attachment_describes_the_live_row_and_falls_back_when_it_is_gone_4259() {
+    let (pool, _dir) = test_pool().await;
+
+    const ORIGINAL_PATH: &str = "attachments/ATT4259-original.png";
+    const BLOB_PATH: &str = "attachments/ATT4259-blob.png";
+    const ORIGINAL_NAME: &str = "photo.png";
+    const RENAMED: &str = "receipt-2024.png";
+
+    let block_id = BlockId::test_id("BLK4259");
+    let att_id = BlockId::test_id("ATT4259");
+
+    let rec = append_op(
+        &pool,
+        OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: att_id.clone(),
+            block_id: block_id.clone(),
+            mime_type: "image/png".into(),
+            filename: ORIGINAL_NAME.into(),
+            size_bytes: 1024,
+            fs_path: ORIGINAL_PATH.into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+
+    // -- arm 1: the live row exists, repointed AND renamed --------------
+    //
+    // `attachments.block_id` is a FK to `blocks` and `init_pool` runs with
+    // `foreign_keys = ON`, so the holder block has to be real.
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'holder')")
+        .bind(block_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, 'image/png', ?, 1024, ?, 0)",
+    )
+    .bind(att_id.as_str())
+    .bind(block_id.as_str())
+    .bind(RENAMED)
+    .bind(BLOB_PATH)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
+        OpPayload::DeleteAttachment(p) => {
+            assert_eq!(p.attachment_id, att_id.as_str());
+            assert_eq!(
+                p.fs_path, BLOB_PATH,
+                "#4259: the synthetic delete must name the path the LIVE row \
+                 holds. Carrying {ORIGINAL_PATH} forward is what makes the redo \
+                 of this undo stat a path the GC has reclaimed and refuse over \
+                 bytes that are alive under the blob"
+            );
+            assert_eq!(
+                p.filename, RENAMED,
+                "#4259/#4262: the live row is read for BOTH fields \
+                 `delete_attachment_inner` captures, or a synthetic delete still \
+                 resurrects the name the user renamed away from"
+            );
+        }
+        other => panic!("expected DeleteAttachment, got {other:?}"),
+    }
+
+    // -- arm 2: the row is gone (a later op removed it) -----------------
+    sqlx::query("DELETE FROM attachments WHERE id = ?")
+        .bind(att_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
+        OpPayload::DeleteAttachment(p) => {
+            assert_eq!(
+                p.fs_path, ORIGINAL_PATH,
+                "#4259: with no row to read, the fallback is the add payload's \
+                 own path — the pre-#4259 behaviour, kept deliberately. A reverse \
+                 that failed or emitted an empty path here would break undo of an \
+                 add whose attachment a later op already deleted"
+            );
+            assert_eq!(
+                p.filename, ORIGINAL_NAME,
+                "#4262: the fallback name must be the add payload's, never empty \
+                 — an empty `filename` is the legacy sentinel \
+                 `adopt_delete_time_state` reads, so minting one would make this \
+                 fresh op look like a pre-#4262 record"
+            );
+        }
+        other => panic!("expected DeleteAttachment, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn reverse_purge_block_returns_non_reversible_error() {
     let (pool, _dir) = test_pool().await;
@@ -2533,6 +2656,27 @@ async fn compute_reverse_batch_matches_per_op_loop() {
         });
     }
     // 4 × add_attachment — record so we can target the matching delete.
+    //
+    // #4259: the reverse of an `add_attachment` is no longer a pure payload
+    // transform — it mints a `delete_attachment` describing the LIVE
+    // `attachments` row — so the batch kernel gained a prefetch
+    // (`fetch_live_attachment_state_batch`) that the single-op kernel does not
+    // share. Seeding a live row per attachment whose `fs_path` AND `filename`
+    // both DIFFER from the add payload's is what makes this oracle able to see
+    // that prefetch drift: with no rows seeded, both kernels take the
+    // row-is-gone fallback and agree whether or not either reads the DB at all.
+    //
+    // `attachments.block_id` is a FK to `blocks` under `foreign_keys = ON`, so
+    // the holder blocks — which until now existed only as op_log rows — have to
+    // be real.
+    for bid in &blocks[..4] {
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'holder')")
+            .bind(BlockId::test_id(bid).as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let add_att_base = op_refs.len();
     let mut att_ids: Vec<String> = Vec::new();
     for (i, bid) in blocks[..4].iter().enumerate() {
         let att_id = format!("B3_ATT_{i:02}");
@@ -2553,6 +2697,19 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             device_id: rec.device_id,
             seq: rec.seq,
         });
+        // #4259: the live row, repointed onto a shared blob AND renamed —
+        // both fields differ from the add payload above.
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, 'image/png', ?, 1024, ?, 0)",
+        )
+        .bind(BlockId::test_id(&att_id).as_str())
+        .bind(BlockId::test_id(bid).as_str())
+        .bind(format!("live_{att_id}.png"))
+        .bind(format!("attachments/live_blob_{att_id}.png"))
+        .execute(&pool)
+        .await
+        .unwrap();
         att_ids.push(att_id);
     }
     // #3706 review (B-3 parity): the delete's `fs_path` deliberately DIFFERS
@@ -2815,6 +2972,39 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             }
             other => panic!(
                 "expected AddAttachment for the delete_attachment reverse at idx {idx}, got {other:?}"
+            ),
+        }
+    }
+
+    // #4259: the same absolute pin for the OTHER attachment twin — the
+    // `add_attachment` reverses at `add_att_base ..`. Parity alone cannot see
+    // a regression shared by both kernels (they call one
+    // `build_reverse_add_attachment`), and parity alone could not see the bug
+    // #4259 fixed either: before it, both kernels ignored the live row
+    // IDENTICALLY and agreed perfectly on the wrong answer. Only an absolute
+    // assertion that the minted delete names the LIVE row's values catches
+    // that.
+    for (i, att_id) in att_ids.iter().enumerate() {
+        let idx = add_att_base + i;
+        match &batched[idx] {
+            OpPayload::DeleteAttachment(p) => {
+                assert_eq!(
+                    p.fs_path,
+                    format!("attachments/live_blob_{att_id}.png"),
+                    "#4259: the synthetic delete must name the path the LIVE row \
+                     holds, not the add payload's creation-time /tmp/{att_id}.png \
+                     — carrying the latter is what makes a redo of this undo stat \
+                     a reclaimed path and refuse over bytes that are still there"
+                );
+                assert_eq!(
+                    p.filename,
+                    format!("live_{att_id}.png"),
+                    "#4259/#4262: the live row is read for BOTH fields \
+                     `delete_attachment_inner` captures for a real delete"
+                );
+            }
+            other => panic!(
+                "expected DeleteAttachment for the add_attachment reverse at idx {idx}, got {other:?}"
             ),
         }
     }

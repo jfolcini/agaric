@@ -1413,6 +1413,107 @@ async fn redo_of_an_undone_add_attachment_after_a_gc_pass_refuses_3706() {
     f.mat.shutdown();
 }
 
+/// #4259 — the same sequence, but the row was REPOINTED before the sweep ran,
+/// and the redo must now SUCCEED.
+///
+/// The test above is the honest refusal: nothing repointed anything, so the
+/// path the redo reconstructs really is the path the GC reclaimed and the bytes
+/// really are gone. This one is its twin with one production step inserted, and
+/// the outcome must invert.
+///
+/// The sequence, which is the issue's acceptance verbatim:
+///
+/// 1. Add an attachment. The `add_attachment` op payload records the per-add
+///    path.
+/// 2. A repointer moves the LIVE row onto a shared blob —
+///    `recovery::attachment_blob_backfill`, `sync_files::maybe_link_local_blob`
+///    or the `FileOffer` skip path, all of which issue the `UPDATE` in
+///    [`UndoGcFixture::repoint`]. `persist_attachment`'s own dedup reuse
+///    reaches the same state at add time.
+/// 3. The ordinary sweep reclaims the now-orphaned per-add path. That is
+///    CORRECT — no row references it — and the bytes stay alive under the blob,
+///    which the row itself still names.
+/// 4. Undo the add. The synthetic `delete_attachment` this mints used to carry
+///    the ORIGINAL path, because `reverse_add_attachment` never read the row.
+/// 5. Redo. The reverse of that op reconstructs an `add_attachment` from the
+///    carried path and #3706's guard stats it — finding nothing, and refusing
+///    over bytes that are right there.
+///
+/// Step 4 now reads the live row, so the minted delete names the blob and the
+/// redo restores the row over bytes that exist. Before #3706 this same sequence
+/// committed a row pointing at reclaimed bytes; the refusal it was replaced with
+/// was strictly better but still wrong, and this is the fixed path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redo_of_an_undone_add_attachment_repointed_onto_a_shared_blob_succeeds_4259() {
+    let f = UndoGcFixture::new().await;
+    let add_ref = f.latest_op_ref("add_attachment").await;
+
+    // The shared blob: the same bytes under a content-addressed name, which is
+    // what every one of the three repointers moves a row onto.
+    const BLOB_PATH: &str = "attachments/blob-4259-shared.png";
+    let blob_full = f.app_data_dir.join(BLOB_PATH);
+    tokio::fs::write(&blob_full, UNDO_GC_BYTES).await.unwrap();
+    f.repoint(BLOB_PATH).await;
+
+    // The sweep reclaims the per-add path (nothing references it any more) and
+    // KEEPS the blob (the repointed row names it). `run_gc` asserts the first
+    // half; the second is what makes this the false-refusal case rather than
+    // the genuine one the test above pins.
+    f.run_gc().await;
+    assert!(
+        blob_full.exists(),
+        "the fixture depends on the sweep keeping the blob the live row names; \
+         without that this is just the ordinary bytes-are-gone case"
+    );
+
+    let undo = crate::commands::undo_op_inner(&f.pool, DEV, &f.mat, add_ref)
+        .await
+        .expect("undo of add_attachment must succeed");
+    f.mat.flush_background().await.unwrap();
+    assert_eq!(
+        f.live_row_fs_path().await,
+        None,
+        "the undo of an add hard-deletes the row; without that there is nothing \
+         for the redo to put back"
+    );
+
+    crate::commands::redo_page_op_inner(
+        &f.pool,
+        DEV,
+        &f.mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .expect(
+        "#4259: redoing an undone add_attachment whose row had been repointed \
+         onto a shared blob must SUCCEED — the bytes are alive under the blob, \
+         and refusing here is a false refusal caused by the synthetic \
+         delete_attachment carrying the add payload's creation-time path",
+    );
+    f.mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        f.live_row_fs_path().await.as_deref(),
+        Some(BLOB_PATH),
+        "#4259: the restored row must name the BLOB — the path the row held \
+         when it was undone — not the per-add path the sweep reclaimed"
+    );
+    let bytes = crate::commands::read_attachment_inner(
+        &f.pool,
+        &f.app_data_dir,
+        BlockId::from_trusted(&f.attachment_id),
+    )
+    .await
+    .expect("the restored row must resolve to a file that can actually be read");
+    assert_eq!(
+        bytes, UNDO_GC_BYTES,
+        "the redo must hand the user back the bytes their attachment always had"
+    );
+
+    f.mat.shutdown();
+}
+
 /// Batch blast radius (#3706 review): one byte-less `delete_attachment` in an
 /// `undo_ops` / `undo_page_group` / `revert_ops` batch aborts the WHOLE batch,
 /// and the reverses already applied ahead of it are rolled back with it.
@@ -1706,6 +1807,15 @@ impl UndoGcFixture {
 /// only fail `EISDIR` on — the same "live row over bytes that are not there"
 /// state #3706 exists to prevent, reached without the GC being involved at
 /// all. `metadata(..).is_file()` is what closes it.
+///
+/// #4268 pins the CLASS as well as the refusal. `NotFound` is the only shape
+/// that is genuinely "the orphan GC did its job" — the ordinary, expected
+/// outcome the skippable class exists to describe. A directory at an
+/// `fs_path` is not the GC; it is the vault in a state nothing in this system
+/// produces. Since a skippable class is a licence for a caller to DROP the op
+/// (the `skip_non_reversible = true` restore path), classifying corruption as
+/// skippable would license dropping an op BECAUSE the vault is corrupt. So
+/// this refusal is fatal, exactly like the non-`NotFound` stat failure below.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_of_delete_attachment_whose_fs_path_names_a_directory_refuses_3706() {
     let f = UndoGcFixture::new().await;
@@ -1732,9 +1842,19 @@ async fn undo_of_delete_attachment_whose_fs_path_names_a_directory_refuses_3706(
              answers EISDIR, so the restored row is unreadable (#3706 review)",
         );
     assert!(
-        matches!(err, AppError::NonReversible { .. }),
-        "a non-regular file is a persistent property of today's vault, not a \
-         transient fault, so it keeps the skippable non-reversible class; got {err:?}"
+        matches!(err, AppError::Io(ref e) if e.kind() == std::io::ErrorKind::InvalidData),
+        "#4268: a directory at an fs_path is vault CORRUPTION, not GC \
+         reclamation, so it must refuse with the fatal Io class carrying the \
+         kind that is true of every non-regular shape (InvalidData — a fifo or \
+         a socket lands in this same arm and IsADirectory would misreport it); \
+         got {err:?}"
+    );
+    assert!(
+        !crate::reverse::is_skippable_non_reversible(&err),
+        "#4268: the classification is the whole point — a skippable class is a \
+         licence for the skip_non_reversible restore path to DROP this op, and \
+         dropping an op because the vault is corrupt is the wrong response to \
+         corruption; got {err:?}"
     );
     assert_eq!(
         f.live_row_fs_path().await,
