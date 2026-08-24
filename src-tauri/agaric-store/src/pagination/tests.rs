@@ -4304,6 +4304,372 @@ async fn test_list_page_history_includes_nested_children() {
 }
 
 // ====================================================================
+// #4277 — attachment ops in list_page_history
+// ====================================================================
+//
+// `delete_attachment` and `rename_attachment` carry NO `block_id` in their
+// payload (`OpPayload::block_id()` returns `None` for both), so the indexed
+// `op_log.block_id` column is NULL on those rows and the page-subtree
+// predicate `ol.block_id IN (page_blocks)` can never match them. Before
+// #4277 `list_page_history` had no fallback at all, so those ops were
+// simply absent from every History view — and, because `undoDeleteOfImpl`
+// feeds a `list_page_history` index straight into `undo_page_op`'s
+// `undo_depth`, absent rows shifted that positional mapping by one each.
+
+/// Insert an op_log row that also stamps the indexed `attachment_id`
+/// column (migration 0064).
+///
+/// `insert_op_log_entry` only stamps `block_id` from the payload; for
+/// `add_attachment` that is the owning block, and for
+/// `delete_attachment` / `rename_attachment` it is NULL — exactly the
+/// production shape this fix has to cope with.
+async fn insert_attachment_op_log_entry(
+    pool: &SqlitePool,
+    device_id: &str,
+    seq: i64,
+    op_type: &str,
+    payload: &str,
+    created_at: &str,
+    attachment_id: &str,
+) {
+    let created_at_ms = chrono::DateTime::parse_from_rfc3339(created_at)
+        .unwrap()
+        .timestamp_millis();
+    sqlx::query(
+        "INSERT INTO op_log \
+             (device_id, seq, hash, op_type, payload, created_at, block_id, attachment_id) \
+         VALUES (?, ?, ?, ?, ?, ?, json_extract(?, '$.block_id'), ?)",
+    )
+    .bind(device_id)
+    .bind(seq)
+    .bind("test-hash-placeholder")
+    .bind(op_type)
+    .bind(payload)
+    .bind(created_at_ms)
+    .bind(payload)
+    .bind(attachment_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Insert a live `attachments` row (the probe `rename_attachment` relies on).
+async fn insert_attachment_row(pool: &SqlitePool, id: &str, block_id: &str, filename: &str) {
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, 'image/png', ?, 1, ?, 0)",
+    )
+    .bind(id)
+    .bind(block_id)
+    .bind(filename)
+    .bind(format!("attachments/{id}.png"))
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// #4277 acceptance: a page whose history contains a `delete_attachment`
+/// and a `rename_attachment` lists BOTH, in the right position relative to
+/// the page's other ops.
+///
+/// RED against the pre-#4277 query, which returns 5 of the 7 ops — the two
+/// attachment ops are silently dropped and every op older than them shifts
+/// up by two positions.
+#[tokio::test]
+async fn test_list_page_history_includes_attachment_ops_4277() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PH_ATT_PG", "page", "attachment page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "PH_ATT_CH",
+        "content",
+        "child",
+        Some("PH_ATT_PG"),
+        Some(1),
+    )
+    .await;
+
+    // The renamed attachment still has its live row; the deleted one does
+    // NOT (`delete_attachment_inner` hard-DELETEs it in the same
+    // transaction that appends the op), so only the paired `add_attachment`
+    // op-log row can resolve its owning block.
+    insert_attachment_row(&pool, "PH_ATT_REN", "PH_ATT_CH", "renamed.png").await;
+
+    let create = r#"{"block_id":"PH_ATT_CH","block_type":"content","content":"child"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        create,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+
+    let add_del = r#"{"attachment_id":"PH_ATT_DEL","block_id":"PH_ATT_CH","mime_type":"image/png","filename":"gone.png","size_bytes":1,"fs_path":"attachments/gone.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "add_attachment",
+        add_del,
+        "2025-01-02T00:00:00Z",
+        "PH_ATT_DEL",
+    )
+    .await;
+
+    let add_ren = r#"{"attachment_id":"PH_ATT_REN","block_id":"PH_ATT_CH","mime_type":"image/png","filename":"before.png","size_bytes":1,"fs_path":"attachments/PH_ATT_REN.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "add_attachment",
+        add_ren,
+        "2025-01-03T00:00:00Z",
+        "PH_ATT_REN",
+    )
+    .await;
+
+    let edit = r#"{"block_id":"PH_ATT_CH","to_text":"child v2"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        4,
+        "edit_block",
+        edit,
+        "2025-01-04T00:00:00Z",
+    )
+    .await;
+
+    // block_id absent from BOTH payloads — the production shape.
+    let rename = r#"{"attachment_id":"PH_ATT_REN","old_filename":"before.png","new_filename":"renamed.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        5,
+        "rename_attachment",
+        rename,
+        "2025-01-05T00:00:00Z",
+        "PH_ATT_REN",
+    )
+    .await;
+
+    let delete =
+        r#"{"attachment_id":"PH_ATT_DEL","fs_path":"attachments/gone.png","filename":"gone.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        6,
+        "delete_attachment",
+        delete,
+        "2025-01-06T00:00:00Z",
+        "PH_ATT_DEL",
+    )
+    .await;
+
+    let edit2 = r#"{"block_id":"PH_ATT_CH","to_text":"child v3"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        7,
+        "edit_block",
+        edit2,
+        "2025-01-07T00:00:00Z",
+    )
+    .await;
+
+    // Premise guards: the two attachment ops have a NULL indexed block_id,
+    // and the deleted attachment has no live row.
+    let null_block_ids: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE block_id IS NULL \
+         AND op_type IN ('delete_attachment', 'rename_attachment')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        null_block_ids, 2,
+        "premise: both attachment ops must carry a NULL op_log.block_id"
+    );
+    let live_deleted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
+        .bind("PH_ATT_DEL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        live_deleted, 0,
+        "premise: the deleted attachment must have no live row"
+    );
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = list_page_history(&pool, "PH_ATT_PG", None, None, &page)
+        .await
+        .unwrap();
+
+    let seqs: Vec<i64> = resp.items.iter().map(|e| e.seq).collect();
+    let op_types: Vec<&str> = resp.items.iter().map(|e| e.op_type.as_str()).collect();
+    assert_eq!(
+        seqs,
+        vec![7, 6, 5, 4, 3, 2, 1],
+        "every op on the page must be listed newest-first, attachment ops included; \
+         got op_types {op_types:?}"
+    );
+    assert_eq!(
+        op_types[1], "delete_attachment",
+        "the delete_attachment must sit between the newest edit and the rename"
+    );
+    assert_eq!(
+        op_types[2], "rename_attachment",
+        "the rename_attachment must sit directly below the delete_attachment"
+    );
+}
+
+/// #4277 op-type filter: `list_page_history(..., Some("delete_attachment"))`
+/// must return the delete — the History view's filter dropdown offers this
+/// op type, and before the fix it always yielded an empty list.
+#[tokio::test]
+async fn test_list_page_history_op_type_filter_reaches_attachment_ops_4277() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PH_AF_PG", "page", "filter page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "PH_AF_CH",
+        "content",
+        "child",
+        Some("PH_AF_PG"),
+        Some(1),
+    )
+    .await;
+    insert_attachment_row(&pool, "PH_AF_REN", "PH_AF_CH", "after.png").await;
+
+    let add = r#"{"attachment_id":"PH_AF_DEL","block_id":"PH_AF_CH","mime_type":"image/png","filename":"d.png","size_bytes":1,"fs_path":"attachments/d.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "add_attachment",
+        add,
+        "2025-01-01T00:00:00Z",
+        "PH_AF_DEL",
+    )
+    .await;
+    let delete =
+        r#"{"attachment_id":"PH_AF_DEL","fs_path":"attachments/d.png","filename":"d.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "delete_attachment",
+        delete,
+        "2025-01-02T00:00:00Z",
+        "PH_AF_DEL",
+    )
+    .await;
+    let rename =
+        r#"{"attachment_id":"PH_AF_REN","old_filename":"b.png","new_filename":"after.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "rename_attachment",
+        rename,
+        "2025-01-03T00:00:00Z",
+        "PH_AF_REN",
+    )
+    .await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let deletes = list_page_history(&pool, "PH_AF_PG", Some("delete_attachment"), None, &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        deletes.items.len(),
+        1,
+        "filtering by delete_attachment must return the delete"
+    );
+    let renames = list_page_history(&pool, "PH_AF_PG", Some("rename_attachment"), None, &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        renames.items.len(),
+        1,
+        "filtering by rename_attachment must return the rename"
+    );
+}
+
+/// #4277 known caveat (option 1 in #4247/#4278): when `compact_op_log` has
+/// reclaimed the paired `add_attachment`, the owning page is NOT
+/// recoverable from the delete alone — `DeleteAttachmentPayload` carries no
+/// `block_id`. The query must degrade gracefully: the row is omitted, and
+/// crucially it is NOT mis-attributed to some other page.
+#[tokio::test]
+async fn test_list_page_history_omits_orphaned_attachment_ops_4277() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "PH_ORPH_A", "page", "page A", None, Some(1)).await;
+    insert_block(&pool, "PH_ORPH_B", "page", "page B", None, Some(2)).await;
+    let create_a = r#"{"block_id":"PH_ORPH_A","block_type":"page","content":"page A"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        create_a,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+
+    // No paired add_attachment survives, and no live attachments row —
+    // both probes are false.
+    let delete =
+        r#"{"attachment_id":"PH_ORPH_AT","fs_path":"attachments/o.png","filename":"o.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "delete_attachment",
+        delete,
+        "2025-01-02T00:00:00Z",
+        "PH_ORPH_AT",
+    )
+    .await;
+    // An orphaned rename has the same shape (#4278 narrowed the paired-add
+    // probe to `delete_attachment` only, so a rename never uses it).
+    let rename = r#"{"attachment_id":"PH_ORPH_AT","old_filename":"o.png","new_filename":"o2.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "rename_attachment",
+        rename,
+        "2025-01-03T00:00:00Z",
+        "PH_ORPH_AT",
+    )
+    .await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp_a = list_page_history(&pool, "PH_ORPH_A", None, None, &page)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_a.items.len(),
+        1,
+        "an orphaned attachment op has no resolvable owner — it must be omitted, not guessed"
+    );
+    assert_eq!(resp_a.items[0].seq, 1);
+
+    let resp_b = list_page_history(&pool, "PH_ORPH_B", None, None, &page)
+        .await
+        .unwrap();
+    assert!(
+        resp_b.items.is_empty(),
+        "an unresolvable attachment op must never be mis-attributed to an unrelated page"
+    );
+}
+
+// ====================================================================
 // #476 L2 — list_page_history device_id tiebreaker
 // ====================================================================
 
@@ -4913,6 +5279,98 @@ mod tests_p8 {
             payload["block_id"].as_str().unwrap(),
             "PG_AA",
             "per-page mode returns the page's own op even with a foreign space_id"
+        );
+    }
+
+    /// #4277 — the History VIEW is the `__all__` + `space_id` consumer
+    /// (`HistoryView.tsx` always passes `pageId: '__all__'` plus the
+    /// effective space), so the space-scoped global branch needs the same
+    /// paired-`add_attachment` probe as the per-page branch. Without it the
+    /// space-scoped "History" screen omits every attachment delete/rename
+    /// exactly as the per-page query did.
+    ///
+    /// RED against the pre-#4277 query: `filtered` returns only the
+    /// `create_block` + `add_attachment` ops.
+    #[tokio::test]
+    async fn list_page_history_space_scope_includes_attachment_ops_4277() {
+        use super::{insert_attachment_op_log_entry, insert_attachment_row};
+
+        let (pool, _dir) = test_pool().await;
+        seed_two_spaces(&pool).await;
+
+        insert_block(
+            &pool,
+            "PG_AA_CH",
+            "content",
+            "child",
+            Some("PG_AA"),
+            Some(1),
+        )
+        .await;
+        assign_to_space(&pool, "PG_AA", SPACE_A_ID).await;
+        insert_attachment_row(&pool, "SP_A_REN", "PG_AA_CH", "after.png").await;
+
+        let add = r#"{"attachment_id":"SP_A_DEL","block_id":"PG_AA_CH","mime_type":"image/png","filename":"d.png","size_bytes":1,"fs_path":"attachments/d.png"}"#;
+        insert_attachment_op_log_entry(
+            &pool,
+            "device-1",
+            10,
+            "add_attachment",
+            add,
+            "2025-02-01T00:00:00Z",
+            "SP_A_DEL",
+        )
+        .await;
+        let rename =
+            r#"{"attachment_id":"SP_A_REN","old_filename":"b.png","new_filename":"after.png"}"#;
+        insert_attachment_op_log_entry(
+            &pool,
+            "device-1",
+            11,
+            "rename_attachment",
+            rename,
+            "2025-02-02T00:00:00Z",
+            "SP_A_REN",
+        )
+        .await;
+        let delete =
+            r#"{"attachment_id":"SP_A_DEL","fs_path":"attachments/d.png","filename":"d.png"}"#;
+        insert_attachment_op_log_entry(
+            &pool,
+            "device-1",
+            12,
+            "delete_attachment",
+            delete,
+            "2025-02-03T00:00:00Z",
+            "SP_A_DEL",
+        )
+        .await;
+
+        let page = PageRequest::new(None, Some(50)).unwrap();
+        let filtered = list_page_history(&pool, "__all__", None, Some(SPACE_A_ID), &page)
+            .await
+            .unwrap();
+        let op_types: Vec<&str> = filtered.items.iter().map(|e| e.op_type.as_str()).collect();
+        assert_eq!(
+            op_types,
+            vec![
+                "delete_attachment",
+                "rename_attachment",
+                "add_attachment",
+                "create_block",
+            ],
+            "the space-scoped global history must list the attachment delete and rename"
+        );
+
+        // And the foreign space must not inherit them.
+        let foreign = list_page_history(&pool, "__all__", None, Some(SPACE_B_ID), &page)
+            .await
+            .unwrap();
+        let foreign_types: Vec<&str> = foreign.items.iter().map(|e| e.op_type.as_str()).collect();
+        assert_eq!(
+            foreign_types,
+            vec!["create_block"],
+            "SPACE_B must not pick up SPACE_A's attachment ops"
         );
     }
 }

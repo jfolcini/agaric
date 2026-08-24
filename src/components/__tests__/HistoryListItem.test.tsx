@@ -581,6 +581,10 @@ describe('HistoryListItem', () => {
       ['delete_property', Settings],
       ['add_attachment', Paperclip],
       ['delete_attachment', Paperclip],
+      // #4277 — rename_attachment reaches the History list for the first
+      // time now that `list_page_history` admits it; before, it fell
+      // through to the generic Circle.
+      ['rename_attachment', Paperclip],
       ['unknown_op', Circle],
     ])('returns correct icon for %s', (opType, expectedIcon) => {
       expect(opIcon(opType)).toBe(expectedIcon)
@@ -610,6 +614,7 @@ describe('HistoryListItem', () => {
       ['delete_property', { key: 'k' }],
       ['add_attachment', { name: 'f.txt' }],
       ['delete_attachment', { name: 'f.txt' }],
+      ['rename_attachment', { attachment_id: 'A1', new_filename: 'g.txt' }],
       ['unknown_op', {}],
     ] as const)('renders an icon in badge for %s', (opType, payload) => {
       renderInListbox(

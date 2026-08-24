@@ -68,7 +68,17 @@ function opBadgeClasses(opType: string): string {
   ) {
     return 'bg-op-tag text-op-tag-foreground'
   }
-  if (opType.startsWith('attachment') || opType === 'add_attachment') {
+  // #4277 — `rename_attachment` reaches the History list for the first
+  // time now that `list_page_history` admits it, so it needs a tone of its
+  // own; without one it fell through to the generic `bg-secondary`.
+  // `delete_attachment` deliberately does NOT land here: the
+  // `startsWith('delete')` branch above claims it first and the destructive
+  // tone is the right read for a removal.
+  if (
+    opType.startsWith('attachment') ||
+    opType === 'add_attachment' ||
+    opType === 'rename_attachment'
+  ) {
     return 'bg-muted text-muted-foreground'
   }
   return 'bg-secondary text-secondary-foreground'
@@ -85,7 +95,16 @@ export function opIcon(opType: string): LucideIcon {
   if (opType.startsWith('move')) return ArrowRight
   if (opType === 'add_tag' || opType === 'remove_tag') return Tag
   if (opType === 'set_property' || opType === 'delete_property') return Settings
-  if (opType === 'add_attachment' || opType === 'delete_attachment') return Paperclip
+  // #4277 — all three attachment ops share the paperclip so the family is
+  // recognisable in a mixed list; the badge text carries the verb. Listed
+  // before the `startsWith('delete')` branch so `delete_attachment` keeps
+  // the paperclip rather than the generic trash can.
+  if (
+    opType === 'add_attachment' ||
+    opType === 'delete_attachment' ||
+    opType === 'rename_attachment'
+  )
+    return Paperclip
   if (opType.startsWith('delete') || opType.startsWith('purge')) return Trash2
   return Circle
 }

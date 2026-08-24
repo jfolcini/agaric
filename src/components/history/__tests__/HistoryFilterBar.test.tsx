@@ -135,12 +135,17 @@ describe('HistoryFilterBar', () => {
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     const options = select.querySelectorAll('option')
 
-    // __all__ + 12 op types = 13 options
-    expect(options).toHaveLength(13)
+    // __all__ + 13 op types = 14 options
+    expect(options).toHaveLength(14)
     expect(options[0]).toHaveTextContent('All types')
     expect(options[1]).toHaveTextContent('Edit')
     expect(options[2]).toHaveTextContent('Create')
     expect(options[3]).toHaveTextContent('Delete')
+    // #4277 — rename_attachment was absent from this list because the op
+    // could never appear in the list the filter narrows.
+    const values = Array.from(options).map((o) => o.getAttribute('value'))
+    expect(values).toContain('rename_attachment')
+    expect(values).toContain('delete_attachment')
   })
 
   it('calls onFilterChange(null) when "All types" is selected', async () => {
@@ -360,7 +365,7 @@ describe('HistoryFilterBar', () => {
       // Title.
       expect(content).toHaveTextContent('What do these mean?')
 
-      // Spot-check a handful of descriptions across the 12 op types — these
+      // Spot-check a handful of descriptions across the 13 op types — these
       // are the values supplied by the i18n keys
       // `history.opTypeDescription.<op_type>`.
       expect(content).toHaveTextContent('A new block was created')
@@ -369,9 +374,14 @@ describe('HistoryFilterBar', () => {
       expect(content).toHaveTextContent('A soft-deleted block was restored')
       expect(content).toHaveTextContent('Block content was edited')
 
-      // All 12 op types render as <dt>/<dd> rows inside the legend's <dl>.
+      // #4277 — the two attachment ops `list_page_history` now admits must
+      // both carry a legend entry rather than a raw key echo.
+      expect(content).toHaveTextContent('An attachment was removed from a block')
+      expect(content).toHaveTextContent('An attachment was renamed')
+
+      // All 13 op types render as <dt>/<dd> rows inside the legend's <dl>.
       const rows = content.querySelectorAll('dl > div')
-      expect(rows).toHaveLength(12)
+      expect(rows).toHaveLength(13)
     })
   })
 })

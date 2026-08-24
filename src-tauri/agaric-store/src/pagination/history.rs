@@ -104,6 +104,59 @@ pub async fn list_block_history(
 /// to before — every op in `op_log` is returned. When `page_id` is a real
 /// ULID (per-page mode), `space_id` is ignored: a page is itself
 /// space-bound, so the existing recursive CTE already scopes correctly.
+///
+/// # Attachment ops (#4277)
+///
+/// `delete_attachment` and `rename_attachment` carry no `block_id` in
+/// their payload (`OpPayload::block_id()` returns `None` for both), so the
+/// indexed `op_log.block_id` column is NULL on those rows and neither the
+/// per-page `page_blocks` predicate nor the space-scoped `blocks.space_id`
+/// predicate can ever match them. Before this fix both branches simply
+/// omitted every attachment delete/rename from the History view.
+///
+/// Both branches therefore carry the SAME two-probe disjunct #4278 added
+/// to the three positional-undo queries (`undo_page_op_inner`,
+/// `find_undo_group_inner`, `undo_page_group_inner`), scoped to whichever
+/// block set that branch already uses:
+///
+///   1. the live-`attachments` probe, which resolves a
+///      `rename_attachment`'s owning block from the row it renamed;
+///   2. the paired-`add_attachment` probe over the indexed
+///      `op_log.attachment_id` column (migration 0064), which resolves a
+///      `delete_attachment`'s owning block WITHOUT the row — the delete
+///      hard-DELETEs it inside the transaction that appends the op.
+///
+/// The idiom is deliberately identical, including the
+/// `ol.op_type = 'delete_attachment'` gate INSIDE the outer
+/// `op_type IN (...)` predicate and the `src_add.is_replicated = 0`
+/// filter. Both matter:
+///
+///   * the inner gate keeps an ORPHANED rename (`add → rename → delete`,
+///     row already gone) out — #4278 narrowed the probe for exactly that
+///     reason and the same reasoning holds here: the rename's live-row
+///     probe is correct whenever the row exists, and the orphan self-heals
+///     the moment the delete is undone;
+///   * keeping the predicate byte-identical to the undo sites is what
+///     makes the two admitted sets agree. `undoDeleteOfImpl`
+///     (`src/stores/undo.ts`) feeds an index from THIS list straight into
+///     `undo_page_op`'s `undo_depth`, so any row one query admits and the
+///     other does not shifts that positional mapping by one. Divergence
+///     here is not cosmetic — it makes swipe-delete undo mis-target.
+///
+/// Known caveat, tracked as option 1 in #4247/#4278: if `compact_op_log`
+/// has reclaimed the paired `add_attachment`, the owning page is NOT
+/// recoverable from the delete alone — `DeleteAttachmentPayload` carries
+/// no `block_id` to fall back on. Both probes are then false and the row
+/// is simply omitted. That degradation is deliberate and safe: the op
+/// disappears from the list rather than being attributed to an arbitrary
+/// page, which is why the second probe resolves the owner instead of
+/// guessing one.
+///
+/// Residual divergence NOT closed here (out of scope, positional mapping
+/// unchanged): this query has no `is_undo = 0` / `is_replicated = 0`
+/// filter while the three undo queries do, so reverse ops and foreign
+/// audit rows (migration 0099) are listed but not undoable. That skew
+/// predates #4277 and is independent of attachments.
 pub async fn list_page_history(
     pool: &SqlitePool,
     page_id: &str,
@@ -175,8 +228,29 @@ pub async fn list_page_history(
                     ol.created_at < ?3 \
                     OR (ol.created_at = ?3 AND ol.seq < ?4) \
                     OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
-               AND (?7 IS NULL OR ol.block_id IN ( \
-                    SELECT id FROM blocks WHERE space_id = ?7)) \
+               AND (?7 IS NULL OR ( \
+                    ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                    OR ( \
+                        ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                        AND ( \
+                            EXISTS ( \
+                                SELECT 1 FROM attachments a \
+                                WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                                AND a.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                            ) \
+                            OR ( \
+                                ol.op_type = 'delete_attachment' \
+                                AND EXISTS ( \
+                                    SELECT 1 FROM op_log src_add \
+                                    WHERE src_add.op_type = 'add_attachment' \
+                                    AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                                    AND src_add.is_replicated = 0 \
+                                    AND src_add.block_id IN (SELECT id FROM blocks WHERE space_id = ?7) \
+                                ) \
+                            ) \
+                        ) \
+                    ) \
+                )) \
              ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
              LIMIT ?5",
             op_type_filter,    // ?1
@@ -213,7 +287,29 @@ pub async fn list_page_history(
          SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
                 ol.is_replicated AS \"is_replicated!: bool\" \
          FROM op_log ol \
-         WHERE ol.block_id IN (SELECT id FROM page_blocks) \
+         WHERE ( \
+             ol.block_id IN (SELECT id FROM page_blocks) \
+             OR ( \
+                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                 AND ( \
+                     EXISTS ( \
+                         SELECT 1 FROM attachments a \
+                         WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                         AND a.block_id IN (SELECT id FROM page_blocks) \
+                     ) \
+                     OR ( \
+                         ol.op_type = 'delete_attachment' \
+                         AND EXISTS ( \
+                             SELECT 1 FROM op_log src_add \
+                             WHERE src_add.op_type = 'add_attachment' \
+                             AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                             AND src_add.is_replicated = 0 \
+                             AND src_add.block_id IN (SELECT id FROM page_blocks) \
+                         ) \
+                     ) \
+                 ) \
+             ) \
+         ) \
            AND (?2 IS NULL OR ol.op_type = ?2) \
            AND (?3 IS NULL OR ( \
                 ol.created_at < ?4 \

@@ -50,6 +50,10 @@ const OP_TYPES = [
   { value: 'delete_property', labelKey: 'history.opTypeDeleteProperty' },
   { value: 'add_attachment', labelKey: 'history.opTypeAddAttachment' },
   { value: 'delete_attachment', labelKey: 'history.opTypeRemoveAttachment' },
+  // #4277 — `rename_attachment` was missing here because the op could never
+  // appear in the list this filter narrows: `list_page_history` had no
+  // attachment disjunct, so selecting it would have returned nothing.
+  { value: 'rename_attachment', labelKey: 'history.opTypeRenameAttachment' },
   { value: 'restore_block', labelKey: 'history.opTypeRestore' },
   { value: 'purge_block', labelKey: 'history.opTypePurge' },
 ] as const
