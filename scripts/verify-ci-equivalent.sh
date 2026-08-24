@@ -146,6 +146,116 @@ node_deps_remedy() {
     fi
 }
 
+# ── dev.db migration gap check (#4266) ─────────────────────────────
+# `scripts/seed-worktree.sh` migrates a fresh `dev.db` when a worktree is
+# born (via `scripts/setup-dev-db.sh`) — deliberately, since copying a
+# snapshot `dev.db` from the main checkout goes stale as soon as the
+# next migration merges. The MAIN checkout is never re-seeded, so ITS
+# `dev.db` drifts a little further behind with every migration that
+# lands, until a push from it hits Phase D/D2's online `sqlx::query!`
+# macros compiling against a schema missing a table/column they expect —
+# surfacing as e.g. `no such table: block_links_unresolved` from a crate
+# the diff never touched (observed live, #4266).
+#
+# Detect it HERE, before any phase that actually runs cargo against
+# dev.db, comparing the SET of applied `_sqlx_migrations` versions
+# against the SET of `.sql` files on disk (not just the max of each) so
+# a gap in the middle — not only a missing tail — is caught too.
+#
+# Option 1 from the issue: detect and instruct, not option 2's
+# auto-migrate-behind-the-developer's-back — this gate is otherwise
+# read-only, and a check that mutates local state during it is a
+# surprise. The sqlite read goes through `python3`'s stdlib sqlite3
+# module (already a build dependency for the `check-*.py` prek hooks) in
+# read-only URI mode, so this function never creates, migrates, or
+# otherwise writes dev.db itself.
+#
+# Pure: takes the two directories as arguments (no implicit `cd`, no
+# global state) so the self-test below can drive it against fixture
+# trees instead of this repo's own dev.db. Prints a diagnosis + the
+# exact remedy command on stdout and returns 1 when dev.db is missing,
+# never-migrated, or behind; prints nothing and returns 0 when it is
+# caught up.
+devdb_migration_gap() {
+    local src_tauri="$1" migrations_dir="$2"
+    python3 - "$src_tauri" "$migrations_dir" <<'PYEOF'
+import os
+import re
+import sqlite3
+import sys
+
+src_tauri, migrations_dir = sys.argv[1], sys.argv[2]
+
+# Resolve DATABASE_URL from src-tauri/.env the way sqlx-cli does; default
+# to "dev.db" (sqlx-cli's own default) when .env or the var are absent.
+db_rel = "dev.db"
+env_file = os.path.join(src_tauri, ".env")
+if os.path.isfile(env_file):
+    with open(env_file, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("DATABASE_URL="):
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if val.startswith("sqlite:"):
+                    db_rel = val[len("sqlite:"):]
+db_file = db_rel if os.path.isabs(db_rel) else os.path.join(src_tauri, db_rel)
+
+# Printed as two lines rather than one "cd src-tauri && cargo sqlx migrate
+# run" string: the self-test's #3361 root-lane ratchet greps THIS FILE for
+# "cd src-tauri" followed within 40 chars by "cargo sqlx (migrate run|
+# prepare)" to catch a real Phase E invocation that forgot the DATABASE_URL
+# override — a message string with the same two substrings on one line
+# would be indistinguishable from that to a plain grep.
+def print_remedy():
+    print("    cd src-tauri")
+    print("    cargo sqlx migrate run")
+
+if not os.path.isfile(db_file):
+    print("dev.db does not exist: %s" % db_file)
+    print("  Provision it (idempotent):")
+    print("    bash scripts/setup-dev-db.sh")
+    print("  or apply migrations directly:")
+    print_remedy()
+    sys.exit(1)
+
+expected = {}
+pat = re.compile(r"^(\d+)_.+\.sql$")
+if os.path.isdir(migrations_dir):
+    for fn in sorted(os.listdir(migrations_dir)):
+        m = pat.match(fn)
+        if m:
+            expected[int(m.group(1))] = fn
+
+try:
+    con = sqlite3.connect("file:%s?mode=ro" % db_file, uri=True)
+    cur = con.cursor()
+    cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'"
+    )
+    if cur.fetchone() is None:
+        print("dev.db exists but has never been migrated (no _sqlx_migrations table): %s" % db_file)
+        print("  Apply all migrations:")
+        print_remedy()
+        sys.exit(1)
+    cur.execute("SELECT version FROM _sqlx_migrations")
+    applied = {row[0] for row in cur.fetchall()}
+except sqlite3.Error as e:
+    print("could not inspect dev.db (%s): %s" % (db_file, e))
+    sys.exit(1)
+
+pending = sorted(v for v in expected if v not in applied)
+if pending:
+    print("dev.db is behind src-tauri/migrations/ — pending migration(s):")
+    for v in pending:
+        print("    %s" % expected[v])
+    print("  Apply them:")
+    print_remedy()
+    sys.exit(1)
+
+sys.exit(0)
+PYEOF
+}
+
 # ── caller-supplied SKIP (#3968) ───────────────────────────────────
 # Phase A runs prek with a SKIP list this script computes from the
 # changed-file categories. It used to build that list and then run
@@ -714,6 +824,144 @@ typos")"
 
     rm -rf "$st_fixture_root"
 
+    # ── dev.db migration gap (#4266) ─────────────────────────────────
+    # The property: a dev.db genuinely behind (or missing, or never
+    # migrated) is caught and named, with the exact remedy command; a
+    # dev.db that is caught up is left alone. Own fixture root, cleaned
+    # at the end of this section.
+    st_devdb_root="$(mktemp -d -t pre-push-devdb.XXXXXX)"
+
+    st_devdb_seed() {
+        # $1 name, $2 = space-separated list of "VERSION FILENAME" pairs for
+        # migrations/ on disk, $3 = space-separated applied version numbers (or ""
+        # for none, or "NOTABLE" for a dev.db with no _sqlx_migrations table
+        # at all, or "NODB" for no dev.db file).
+        local name="$1" disk="$2" applied="$3"
+        local dir="$st_devdb_root/$name/src-tauri"
+        mkdir -p "$dir/migrations"
+        local pair fn
+        for pair in $disk; do
+            fn="${pair#*:}"
+            touch "$dir/migrations/$fn"
+        done
+        case "$applied" in
+            NODB) ;;
+            NOTABLE)
+                python3 -c "
+import sqlite3
+con = sqlite3.connect('$dir/dev.db')
+con.execute('CREATE TABLE not_a_migrations_table (id INTEGER)')
+con.commit()
+"
+                ;;
+            *)
+                python3 -c "
+import sqlite3
+con = sqlite3.connect('$dir/dev.db')
+con.execute('''CREATE TABLE _sqlx_migrations (
+    version BIGINT PRIMARY KEY, description TEXT NOT NULL,
+    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN NOT NULL, checksum BLOB NOT NULL, execution_time BIGINT NOT NULL
+)''')
+for v in '$applied'.split():
+    con.execute(
+        'INSERT INTO _sqlx_migrations VALUES (?,?,CURRENT_TIMESTAMP,1,?,0)',
+        (int(v), 'seed', b'\x00'),
+    )
+con.commit()
+"
+                ;;
+        esac
+    }
+
+    # The remedy is printed as two lines (see print_remedy() above — kept
+    # off one line so this very file doesn't reproduce the #3361 ratchet's
+    # forbidden "cd src-tauri" + "cargo sqlx migrate run" adjacency). Assert
+    # both lines rather than one contiguous string for the same reason.
+    st_devdb_names_remedy() {
+        printf '%s' "$1" | grep -qF 'cd src-tauri' \
+            && printf '%s' "$1" | grep -qF 'cargo sqlx migrate run'
+    }
+
+    # 26. dev.db does not exist at all: fails, names the file and the exact
+    #     `sqlx migrate run` remedy.
+    st_devdb_seed missing-db "1:0001_initial.sql" NODB
+    st_out="$(devdb_migration_gap "$st_devdb_root/missing-db/src-tauri" "$st_devdb_root/missing-db/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
+        && st_devdb_names_remedy "$st_out"; then
+        st_ok "a missing dev.db fails, naming the file and the exact remedy"
+    else
+        st_bad "a missing dev.db fails, naming the file and the exact remedy" "rc=$st_rc out=$st_out"
+    fi
+
+    # 27. dev.db exists but was never migrated (no _sqlx_migrations table —
+    #     `cargo sqlx database create` ran, `migrate run` never did): fails,
+    #     names the missing table and the remedy.
+    st_devdb_seed never-migrated "1:0001_initial.sql" NOTABLE
+    st_out="$(devdb_migration_gap "$st_devdb_root/never-migrated/src-tauri" "$st_devdb_root/never-migrated/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -q '_sqlx_migrations' \
+        && st_devdb_names_remedy "$st_out"; then
+        st_ok "a never-migrated dev.db fails, naming the missing table and the remedy"
+    else
+        st_bad "a never-migrated dev.db fails, naming the missing table and the remedy" "rc=$st_rc out=$st_out"
+    fi
+
+    # 28. The live #4266 shape: dev.db genuinely behind — applied up through
+    #     0002, migration 0003 is on disk and pending. Fails, names exactly
+    #     that file and the exact remedy command.
+    st_devdb_seed behind-tail "1:0001_initial.sql 2:0002_second.sql 3:0003_third.sql" "1 2"
+    st_out="$(devdb_migration_gap "$st_devdb_root/behind-tail/src-tauri" "$st_devdb_root/behind-tail/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0003_third.sql' \
+        && st_devdb_names_remedy "$st_out"; then
+        st_ok "a dev.db behind by one migration fails, naming it and the exact remedy"
+    else
+        st_bad "a dev.db behind by one migration fails, naming it and the exact remedy" "rc=$st_rc out=$st_out"
+    fi
+
+    # 29. A GAP, not just a stale tail: 0001 and 0003 applied, 0002 pending.
+    #     A max()-only comparison (applied max = 3 = disk max) would call
+    #     this caught up; the set comparison this check does must not.
+    #     Names ONLY the missing one, not the two already applied.
+    st_devdb_seed middle-gap "1:0001_initial.sql 2:0002_second.sql 3:0003_third.sql" "1 3"
+    st_out="$(devdb_migration_gap "$st_devdb_root/middle-gap/src-tauri" "$st_devdb_root/middle-gap/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0002_second.sql' \
+        && ! printf '%s' "$st_out" | grep -qF '0001_initial.sql' \
+        && ! printf '%s' "$st_out" | grep -qF '0003_third.sql'; then
+        st_ok "a mid-sequence gap is caught by set comparison, not just a stale max"
+    else
+        st_bad "a mid-sequence gap is caught by set comparison, not just a stale max" "rc=$st_rc out=$st_out"
+    fi
+
+    # 30. The healthy shape must pass SILENTLY — a preflight that fires on a
+    #     caught-up dev.db is worse than none (mirrors case 13 above).
+    st_devdb_seed up-to-date "1:0001_initial.sql 2:0002_second.sql" "1 2"
+    st_out="$(devdb_migration_gap "$st_devdb_root/up-to-date/src-tauri" "$st_devdb_root/up-to-date/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+        st_ok "a dev.db caught up with migrations/ passes silently"
+    else
+        st_bad "a dev.db caught up with migrations/ passes silently" "rc=$st_rc out=$st_out"
+    fi
+
+    rm -rf "$st_devdb_root"
+
+    # 31. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A —
+    #     same failure shape as case 14 (diagnosing after the fact is the
+    #     state being fixed). Reuses ST_PHASE_A_ANCHOR and st_order_check
+    #     from the node-deps section above.
+    # NOTE: st_line_of/st_order_check use plain `grep -n`, whose patterns are
+    # basic regular expressions, not extended ones. Bare "(" "/" ")" are
+    # LITERAL there, so they must NOT be backslash-escaped here (the
+    # extended-flavoured anchors above happen to contain no parens, so this
+    # gotcha never showed up until now).
+    ST_DEVDB_ANCHOR='^    if ! devdb_gap_out="\$(devdb_migration_gap '
+    st_rc=0
+    st_out="$(st_order_check "${BASH_SOURCE[0]}" "$ST_DEVDB_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
+    if [ "$st_rc" -eq 0 ]; then
+        st_ok "the dev.db migration-gap preflight runs before Phase A — $st_out"
+    else
+        st_bad "the dev.db migration-gap preflight runs before Phase A" "$st_out"
+    fi
+
     if [ "$st_fail" != 0 ]; then
         echo "verify-ci-equivalent self-test FAILED" >&2
         exit 2
@@ -884,6 +1132,27 @@ else
         HAS_CI=1
         break
     done <<< "$CHANGED"
+fi
+
+# ── Preflight: dev.db migration gap (#4266) ─────────────────────────
+# Before Phase A, and gated the same as Phase D/D2 below (HAS_RS) — those
+# are the phases that actually compile `sqlx::query!` macros against
+# dev.db, so this is exactly the condition under which drift would
+# otherwise surface there, seconds from now, as a "no such table" error
+# from a crate the diff never touched. A doc-only or frontend-only push
+# never reaches those phases, so it is not made to pay for a check whose
+# failure it could not have caused.
+if [ "$HAS_RS" = "1" ]; then
+    if ! devdb_gap_out="$(devdb_migration_gap "$REPO_ROOT/src-tauri" "$REPO_ROOT/src-tauri/migrations")"; then
+        echo "✗ Pre-push verification cannot run: dev.db is behind src-tauri/migrations/ (#4266)" >&2
+        echo "" >&2
+        echo "$devdb_gap_out" | sed 's/^/  /' >&2
+        echo "" >&2
+        echo "  Without this, Phase D/D2's online sqlx::query! macros compile" >&2
+        echo "  against a stale schema and fail with a confusing error (e.g. 'no" >&2
+        echo "  such table') from a crate this push never touched." >&2
+        exit 1
+    fi
 fi
 
 # ── Phase A: prek run --all-files (pre-commit hooks against whole tree) ──
