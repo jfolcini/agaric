@@ -27,6 +27,7 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { logger } from '@/lib/logger'
+import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { createBlock, createPageInSpace } from '@/lib/tauri'
 import {
@@ -97,6 +98,15 @@ export function useJournalBlockCreation({
           if (typeof newId !== 'string' || newId.length === 0) {
             throw new Error('createPageInSpace returned no page ULID')
           }
+          // #4358 / #4338 — the date page now exists and displays as
+          // `dateStr`. This hook never calls `useBlockResolve()`, so the bus
+          // is its only route to the picker caches; without it a warm
+          // `pagesListRef` cannot offer the journal day the user is looking
+          // at. Published here rather than at the bottom of the `isNewPage`
+          // branch on purpose: this is a cache notification, not a render
+          // notification, so it does not re-render `JournalPage` and cannot
+          // race `autoCreateFirstBlock` the way the deferred group below can.
+          notifyPageAdded(newId, dateStr)
           pageId = newId
           // Page-render notification (`setCreatedPages` /
           // `onPageCreated` / `useResolveStore.set`) is deferred to the

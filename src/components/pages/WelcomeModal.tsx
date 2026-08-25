@@ -8,6 +8,7 @@ import { DialogBody } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { logger } from '@/lib/logger'
+import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 // #754 — the onboarding flag helpers live in `@/lib/onboarding` (outside
 // this lazy chunk) so the App shell can gate-mount the modal without
@@ -84,7 +85,18 @@ async function ensureSamplePage(
   const title = t(titleKey)
   const existing = existingPages.find((page) => page.content === title)
 
-  const pageId = existing ? existing.id : await createPageInSpace({ content: title, spaceId })
+  let pageId: string
+  if (existing) {
+    pageId = existing.id
+  } else {
+    pageId = await createPageInSpace({ content: title, spaceId })
+    // #4338 — only on the CREATE branch: the reuse branch found the page in
+    // `existingPages`, so any warm cache filled after that page was created
+    // already has it. Usually there is no warm cache here at all (first
+    // boot), but Settings → "Show the welcome tour again" re-runs this flow
+    // mid-session with `BlockTree`s mounted behind the modal.
+    notifyPageAdded(pageId, title)
+  }
 
   // A brand-new page has no children; a reused one may already carry some
   // of the bodies from an interrupted earlier attempt.

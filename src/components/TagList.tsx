@@ -23,7 +23,7 @@ import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { isConflict } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
-import { notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
+import { notifyTagAdded, notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import {
   clearTagColor,
@@ -135,6 +135,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       setNewTagName('')
       // Update resolve cache so tag_ref nodes display the name, not ULID
       useResolveStore.getState().set(resp.id, name, false)
+      // #4338 — this view already publishes renames and deletes to the bus
+      // (see `handleDeleteTag` / the rename handler below); the CREATE was
+      // the one mutation it made silently, so a warm `#`-picker cache kept
+      // missing a tag created here for the rest of the session.
+      notifyTagAdded(resp.id, newTag.name)
     } catch (error) {
       logger.error('TagList', 'failed to create tag', { name }, error)
       // Issue #106 — surface unique-constraint violations distinctly so

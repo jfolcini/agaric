@@ -24,6 +24,8 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { useSpaceStore } from '@/stores/space'
 
@@ -132,6 +134,48 @@ describe('useJournalBlockCreation', () => {
     expect(pageCreatedCalls).toEqual([{ dateStr: '2025-06-15', pageId: 'PNEW' }])
     // createdPages map updated
     expect(result.current.createdPages.get('2025-06-15')).toBe('PNEW')
+  })
+
+  // #4358 / #4338 — this hook creates a date page in exactly the way the
+  // date picker's `handleDateMode` does, but it never calls
+  // `useBlockResolve()`, so it cannot use `registerCreatedPage`. Before the
+  // bus emission it did not reach the picker's cache at all: a journal day
+  // the user is looking at was unfindable by the name it displays.
+  it("publishes an 'added' event for the date page it creates", async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_page_in_space') return 'PNEW'
+      return null
+    })
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      const { result } = setup()
+      await act(async () => {
+        await result.current.handleAddBlock('2025-06-15')
+      })
+    } finally {
+      unsubscribe()
+    }
+
+    expect(changes).toEqual([{ kind: 'added', entity: 'page', id: 'PNEW', name: '2025-06-15' }])
+  })
+
+  it('publishes nothing when the day already has a page', async () => {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+      await act(async () => {
+        await result.current.handleAddBlock('2025-06-15')
+      })
+    } finally {
+      unsubscribe()
+    }
+
+    // No page came into existence, so nothing to announce — and a spurious
+    // event would bump every picker's generation and abort in-flight fills.
+    expect(changes).toEqual([])
   })
 
   it('does not create a new page when one already exists in pageMap', async () => {

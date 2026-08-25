@@ -114,16 +114,23 @@ export interface UseBlockResolveReturn {
    *     name-change event bumps the generation BEFORE it applies, so a
    *     bump-without-append can only cost an extra refetch, never a lost
    *     row.
-   *  5. IF A SITE EVER DOES NEED TO REGISTER, the route is an `'added'`
-   *     event on the name-change bus — not this return value (unreachable
-   *     for all eight) and not a React context (module-level call sites
-   *     cannot consume one, and it would still fan out to N instances).
-   *     `name-change-bus.ts`'s docblock currently states there is
-   *     deliberately no "added" event because inserting one row would latch
-   *     a one-row list as the whole space; `recordCreatedRow`'s
-   *     append-only-into-a-non-empty-cache guard now answers that
-   *     objection, so whoever implements it must AMEND that paragraph
-   *     rather than silently contradict it.
+   *  5. A SITE THAT DOES NEED TO REGISTER USES THE BUS, NOT THIS RETURN
+   *     VALUE. #4338 implemented that route: `notifyPageAdded` /
+   *     `notifyTagAdded` on the name-change bus, applied through the same
+   *     append-only-into-a-non-empty-cache guard as `recordCreatedRow`, so
+   *     it reaches EVERY mounted instance rather than just this one. That
+   *     is why it beats both alternatives: this return value is unreachable
+   *     for all eight sites above, and a React context cannot be consumed by
+   *     the module-level ones. `name-change-bus.ts` used to state there was
+   *     deliberately no "added" event; #4338 amended that paragraph rather
+   *     than silently contradicting it, and it now carries the enumeration
+   *     of which sites publish and why — so a reader landing here while
+   *     adding a TENTH creation site should start there.
+   *
+   *     The residual #4338 left open, recorded so it is not rediscovered:
+   *     the three IN-HOOK paths still update only their own instance, so a
+   *     page created via Monday's `[[`-picker is invisible to Tuesday's
+   *     cache in the journal's per-day-panel mounts.
    */
   registerCreatedPage: (row: { id: string; title: string }) => void
   /** Ref to the pages list cache for search. Lazily filled by
@@ -929,6 +936,35 @@ function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
   return compareUtf8Bytes(a.tag_id, b.tag_id)
 }
 
+/**
+ * The 'added' arm shared by both apply functions below (#4338) — the exact
+ * decision `recordCreatedRow` makes for an in-hook create, restated for a
+ * create announced on the bus so the two can never drift:
+ *
+ *  - `'skip'` when the list is EMPTY. An empty cache is not "a space with no
+ *    rows", it is "not fetched for this space yet", and appending the one row
+ *    the event describes would latch it as the whole space (#4008 review
+ *    notes 1 / 6). This is the objection the bus docblock used to raise
+ *    against having an 'added' event at all; it is answered by honouring it
+ *    here, not by refusing the event. The subscriber's unconditional
+ *    generation bump has already fired by this point, so the skipped row is
+ *    not lost — the next picker read re-fetches and sees it.
+ *  - `'skip'` when the row is ALREADY present. Reachable without any double
+ *    emit: a fill dispatched before the create can resolve AFTER the backend
+ *    commit and BEFORE the emit (the create's `await` and the emit are the
+ *    same microtask continuation, but the fill's resolution is not ordered
+ *    against the backend write), so its response already contains the new
+ *    row. Without this, that interleaving leaves a duplicate id in the cache.
+ *  - `'append'` otherwise, at the END and unsorted — deliberately identical
+ *    to `recordCreatedRow`. The 'renamed' arms re-sort because a row already
+ *    in position had its SORT KEY changed under it; a create has no position
+ *    to preserve, and matching the in-hook create path matters more than
+ *    matching the backend's ORDER BY.
+ */
+function addedRowDisposition(isEmpty: boolean, alreadyPresent: boolean): 'skip' | 'append' {
+  return isEmpty || alreadyPresent ? 'skip' : 'append'
+}
+
 /** Applies one page-scoped change to the `pagesListRef` list. */
 function applyPageNameChange(
   list: Array<{ id: string; title: string }>,
@@ -939,7 +975,12 @@ function applyPageNameChange(
   // Bind before the closure: TypeScript's narrowing of `change` does not
   // survive into the callback below.
   const { id, name } = change
-  if (!list.some((p) => p.id === id)) return list
+  const present = list.some((p) => p.id === id)
+  if (change.kind === 'added') {
+    if (addedRowDisposition(list.length === 0, present) === 'skip') return list
+    return [...list, { id, title: name }]
+  }
+  if (!present) return list
   return list.map((p) => (p.id === id ? { ...p, title: name } : p)).toSorted(comparePageRows)
 }
 
@@ -948,7 +989,14 @@ function applyTagNameChange(list: TagCacheRow[], change: NameChange): TagCacheRo
   if (change.kind === 'invalidated') return []
   if (change.kind === 'removed') return list.filter((t) => t.tag_id !== change.id)
   const { id, name } = change
-  if (!list.some((t) => t.tag_id === id)) return list
+  const present = list.some((t) => t.tag_id === id)
+  if (change.kind === 'added') {
+    if (addedRowDisposition(list.length === 0, present) === 'skip') return list
+    // `usage_count: 0` is correct — a just-created tag is not yet applied to
+    // any block. Mirrors the row `onCreateTag` appends for its own create.
+    return [...list, { tag_id: id, name, usage_count: 0, updated_at: new Date().toISOString() }]
+  }
+  if (!present) return list
   return list.map((t) => (t.tag_id === id ? { ...t, name } : t)).toSorted(compareTagRows)
 }
 
@@ -990,6 +1038,15 @@ function applyTagNameChange(list: TagCacheRow[], change: NameChange): TagCacheRo
  * creation site does not inherit the invariants the existing ones learned"
  * — so the pair is one function now, and the out-of-hook site reaches it
  * only through `registerCreatedPage`, never through a raw ref.
+ *
+ * #4338 — the SAME pair, for a creation site that cannot reach this hook at
+ * all, is `notifyPageAdded` / `notifyTagAdded`: the subscriber below bumps
+ * the generation unconditionally before applying, and `applyPageNameChange`
+ * / `applyTagNameChange`'s 'added' arms make the identical append-only-into-
+ * a-filled-list decision (see `addedRowDisposition`). Nine of the ten page
+ * creation sites in the app are outside this hook; `notifyPageAdded`'s
+ * docblock carries the per-site enumeration and the reason the three in-hook
+ * paths stay on `recordCreatedRow`.
  */
 function recordCreatedRow<Row>(
   listRef: React.RefObject<Row[]>,

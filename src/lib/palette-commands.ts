@@ -46,6 +46,7 @@ import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { SHOW_SHORTCUTS_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
 import { createPageInSpace, exportPageMarkdown } from '@/lib/tauri'
@@ -220,6 +221,8 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
       createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
         .then((newId) => {
           useResolveStore.getState().set(newId, 'Untitled', false)
+          // #4338 — publish the create so warm picker caches stay right.
+          notifyPageAdded(newId, 'Untitled')
           useTabsStore.getState().navigateToPage(newId, 'Untitled')
           announce(t('announce.newPageCreated'))
         })

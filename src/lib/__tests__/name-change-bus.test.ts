@@ -14,8 +14,10 @@ import { describe, expect, it } from 'vitest'
 import type { NameChange } from '@/lib/name-change-bus'
 import {
   invalidateNameCaches,
+  notifyPageAdded,
   notifyPageRemoved,
   notifyPageRenamed,
+  notifyTagAdded,
   notifyTagRemoved,
   notifyTagRenamed,
   subscribeToNameChanges,
@@ -47,6 +49,25 @@ describe('name-change bus (#4007)', () => {
     ]
     expect(a).toEqual(expected)
     expect(b).toEqual(expected)
+  })
+
+  // #4338 — the create half of the bus. Kept as its own case rather than
+  // folded into the shape sweep above so a regression names itself: the
+  // sweep would report "expected 5 events, got 7" for anything at all.
+  it("delivers the 'added' shapes for both entities", () => {
+    const seen: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => seen.push(c))
+    try {
+      notifyPageAdded('P_NEW', 'Quarterly Review')
+      notifyTagAdded('T_NEW', 'urgent')
+    } finally {
+      unsubscribe()
+    }
+
+    expect(seen).toEqual([
+      { kind: 'added', entity: 'page', id: 'P_NEW', name: 'Quarterly Review' },
+      { kind: 'added', entity: 'tag', id: 'T_NEW', name: 'urgent' },
+    ])
   })
 
   it('stops delivering after unsubscribe', () => {
