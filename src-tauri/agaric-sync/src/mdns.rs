@@ -494,7 +494,8 @@ pub enum MdnsDaemonSignal {
 ///
 /// # How little `Error` proves — and why it maps to `Degraded`, not "mDNS is off"
 ///
-/// Audited against the locked `mdns-sd` 0.20.3:
+/// Audited against the locked `mdns-sd` 0.21.0 (re-verified at the 0.20.3 → 0.21.0
+/// bump; 0.21.0's cache-flush refactor did not move any of these):
 ///
 /// * `DaemonEvent::Error` has exactly **one** emission site in the whole crate
 ///   (`service_daemon.rs`, `register_service` → `check_service_name_length`). It is not a
