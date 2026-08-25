@@ -59,8 +59,9 @@ const mockPeers = [
   },
 ]
 
-const [firstPeer] = mockPeers
+const [firstPeer, secondPeer] = mockPeers
 if (firstPeer === undefined) throw new Error('mockPeers fixture must have at least one peer')
+if (secondPeer === undefined) throw new Error('mockPeers fixture must have at least two peers')
 
 describe('PairingPeersList', () => {
   it('shows "Paired Devices" heading', () => {
@@ -84,6 +85,33 @@ describe('PairingPeersList', () => {
     expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
     expect(screen.getByTitle('peer-abc-1234567890')).toBeInTheDocument()
     expect(screen.getByTitle('peer-def-0987654321')).toBeInTheDocument()
+  })
+
+  // #4298 — the pairing dialog's peer list must resolve a name the same way
+  // the device list does (device_name, then remote_device_name, then a
+  // truncated id) instead of rendering the id unconditionally.
+  it('shows the device name instead of the truncated id when one is set (#4298)', () => {
+    const namedPeers = [
+      { ...firstPeer, device_name: 'Pixel 8' },
+      { ...secondPeer, remote_device_name: 'Wire Hostname' },
+    ]
+
+    render(<PairingPeersList peers={namedPeers} onUnpair={vi.fn()} />)
+
+    expect(screen.getByText('Pixel 8')).toBeInTheDocument()
+    expect(screen.getByText('Wire Hostname')).toBeInTheDocument()
+    expect(screen.queryByText('peer-abc-123...')).not.toBeInTheDocument()
+    expect(screen.queryByText('peer-def-098...')).not.toBeInTheDocument()
+    // The full id stays available on `title` regardless of which name is shown.
+    expect(screen.getByTitle('peer-abc-1234567890')).toBeInTheDocument()
+    expect(screen.getByTitle('peer-def-0987654321')).toBeInTheDocument()
+  })
+
+  it('still falls back to the truncated id when no name is supplied (#4298)', () => {
+    render(<PairingPeersList peers={mockPeers} onUnpair={vi.fn()} />)
+
+    expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
+    expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
   })
 
   it('shows "Never synced" for peers with null synced_at', () => {

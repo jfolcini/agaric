@@ -18,8 +18,8 @@ import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import type { PeerRef } from '@/lib/bindings'
-import { truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
+import { peerDisplayName } from '@/lib/peer-display-name'
 import { comparePeers, lastSyncActivityAt } from '@/lib/peer-sync-activity'
 
 export interface PairingPeersListProps {
@@ -63,13 +63,19 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                       <div className="flex items-center gap-2 min-w-0">
                         <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
                         <div className="min-w-0">
-                          {/* A raw peer_id is a 36-char UUID; at 360px the
-                              untruncated string pushed Unpair off the screen
-                              edge. `truncateId` is the same shortening the
-                              device list uses; `title` keeps the full id
-                              available on hover / to assistive tech. */}
+                          {/* #4298: name precedence — the user's override,
+                              then the name the peer supplied over the wire,
+                              then its truncated id, via the same
+                              `peerDisplayName` the device list resolves
+                              through, so the two never disagree about what to
+                              call the same peer. A raw peer_id is a 36-char
+                              UUID; at 360px the untruncated string pushed
+                              Unpair off the screen edge, which is why the
+                              fallback is truncated. `title` keeps the full id
+                              available on hover / to assistive tech
+                              regardless of which name is shown. */}
                           <p className="text-sm font-mono truncate" title={peer.peer_id}>
-                            {truncateId(peer.peer_id)}
+                            {peerDisplayName(peer)}
                           </p>
                           {peer.unpaired_by_peer_at_ms != null ? (
                             /*

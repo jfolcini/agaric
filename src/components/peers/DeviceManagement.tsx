@@ -415,7 +415,13 @@ export function DeviceManagement(): React.ReactElement {
           {/* Screen reader status announcements */}
           <div aria-live="polite" className="sr-only">
             {loading && !deviceId && t('device.loadingMessage')}
-            {syncingPeerId && t('device.syncingMessage', { id: syncingPeerId })}
+            {syncingPeerId &&
+              t('device.syncingMessage', {
+                id: peerDisplayNameOrId(
+                  peers.find((p) => p.peer_id === syncingPeerId),
+                  syncingPeerId,
+                ),
+              })}
             {syncingAll && t('device.syncingAllMessage')}
             {error && t('device.syncErrorMessage', { error })}
           </div>

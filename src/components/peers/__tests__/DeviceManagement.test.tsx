@@ -439,6 +439,43 @@ describe('DeviceManagement', () => {
     expect(srOnly?.textContent).toContain('Sync error: Connection refused by peer')
   })
 
+  // #4298 — the sr-only "Syncing with device …" announcement must name the
+  // device the same way the sighted row does (device_name, then
+  // remote_device_name, then a truncated id) instead of reading a raw
+  // 36-char peer_id aloud. `start_sync` is held pending so the assertion can
+  // land while `syncingPeerId` is still set.
+  it('announces sync progress using the device name, not the raw peer id', async () => {
+    const user = userEvent.setup()
+    let resolveStartSync: (() => void) | undefined
+    const namedPeers = [{ ...mockPeers[0], device_name: 'Pixel 8' }, mockPeers[1]]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return mockDeviceId
+      if (cmd === 'list_peer_refs') return namedPeers
+      if (cmd === 'start_sync') {
+        return new Promise((resolve) => {
+          resolveStartSync = () => resolve(undefined)
+        })
+      }
+      return undefined
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('Pixel 8')
+
+    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    await user.click(syncBtns[0] as HTMLElement)
+
+    await waitFor(() => {
+      const srRegions = container.querySelectorAll('[aria-live="polite"]')
+      const srOnly = Array.from(srRegions).find((el) => el.classList.contains('sr-only'))
+      expect(srOnly?.textContent).toContain('Syncing with device Pixel 8...')
+      expect(srOnly?.textContent).not.toContain('peer-abc-1234567890')
+    })
+
+    resolveStartSync?.()
+  })
+
   // --- New tests ---
 
   it('refreshes peer list when PairingDialog closes', async () => {

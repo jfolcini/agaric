@@ -171,7 +171,14 @@ pub fn clamp_device_name(name: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    Some(trimmed.chars().take(MAX_DEVICE_NAME_CHARS).collect())
+    // The cap can land on whitespace even though `trimmed` has none at its
+    // own ends: a name whose 64th surviving scalar is a space (the 65th+
+    // scalars sliced off by `.take` were the non-whitespace rest of a word)
+    // would otherwise keep that trailing space. A second `trim_end` after
+    // the take closes it; a scalar-boundary split of a combining sequence is
+    // accepted and intentionally not chased here.
+    let clamped: String = trimmed.chars().take(MAX_DEVICE_NAME_CHARS).collect();
+    Some(clamped.trim_end().to_string())
 }
 
 /// Wire-format mirror of `OpRecord` for sync transfer.

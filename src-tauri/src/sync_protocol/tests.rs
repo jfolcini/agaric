@@ -5078,7 +5078,8 @@ fn device_name_is_clamped_to_sixty_four_chars_4298() {
     );
     assert_eq!(clamped, "n".repeat(64));
 
-    // Exactly at the bound is untouched: the clamp is `> 64`, not `>= 64`.
+    // Exactly at the bound is untouched: `.chars().take(64)` on a 64-char
+    // name takes every character, so nothing is actually truncated.
     let exact = "x".repeat(64);
     assert_eq!(
         clamp_device_name(&exact).as_deref(),
@@ -5095,6 +5096,23 @@ fn device_name_is_clamped_to_sixty_four_chars_4298() {
         64,
         "the cap counts Unicode scalar values, so the bound is on what is rendered \
          rather than on the encoding"
+    );
+}
+
+/// The trim happens before the take, so a name whose 64th surviving scalar
+/// lands on whitespace (the rest of that word is sliced off by the cap) must
+/// not keep a trailing space — that space would otherwise ride along into
+/// storage and the wire on every clamped-length name.
+#[test]
+fn clamp_device_name_has_no_trailing_space_when_the_cap_lands_on_whitespace_4298() {
+    // 63 non-space chars, then a space at index 63 (the 64th surviving
+    // scalar), then more name that the cap slices off entirely.
+    let name: String = "n".repeat(63) + " " + &"m".repeat(20);
+    let clamped = clamp_device_name(&name).expect("a long name is still a name");
+    assert_eq!(
+        clamped,
+        "n".repeat(63),
+        "the trailing space `.take(64)` lands on must not survive into the clamped name"
     );
 }
 

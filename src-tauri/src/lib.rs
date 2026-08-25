@@ -1864,7 +1864,13 @@ fn spawn_local_device_name_refresh(pool: sqlx::SqlitePool) {
         }
         match agaric_store::peer_refs::set_local_device_name(&pool, &hostname).await {
             Ok(()) => tracing::debug!(
-                device_name = %hostname,
+                // A hostname frequently embeds a real name (a person's given
+                // name, a work laptop's asset tag); this codebase otherwise
+                // logs discriminants and ids, not payloads, so log the
+                // length only — enough to tell whether an unusually
+                // long/short name is being clamped downstream, without
+                // writing the name itself into the log.
+                device_name_len = hostname.chars().count(),
                 "published this device's own name for peers to display (#4298)"
             ),
             Err(e) => tracing::warn!(
