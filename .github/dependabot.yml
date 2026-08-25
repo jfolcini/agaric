@@ -132,6 +132,24 @@ updates:
           - 'typescript'
           - 'vite'
           - 'tslib'
+      # `@stryker-mutator/core` and `@stryker-mutator/vitest-runner` pin each
+      # other at an EXACT peer version, not a range. A split bump therefore
+      # produces a dependency set that cannot install at all: each PR alone
+      # fails `npm ci` with ERESOLVE before a single test, lint rule or
+      # Playwright spec runs, so eight unrelated-looking checks went red on
+      # each (#4332 / #4333). Merging them independently would have broken
+      # `npm ci` on main at whichever landed first, in either order.
+      #
+      # Majors are included on purpose, and are the case that needs it:
+      # `minor-and-patch` below already groups the lesser bumps via its `*`
+      # pattern, so 9.6.1 -> 10.0.0 was the one that escaped and split.
+      stryker:
+        patterns:
+          - '@stryker-mutator/*'
+        update-types:
+          - major
+          - minor
+          - patch
       minor-and-patch:
         patterns:
           - '*'
