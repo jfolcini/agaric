@@ -227,15 +227,31 @@ function patchClassTokens(el: Element, prev: string | undefined, next: string | 
   // `classList.remove` leaves `class=""` behind where the spec render would
   // have emitted no attribute at all; drop it so the live DOM still matches
   // what `getHTML()` serializes (the `class: null` parity #4316 pinned).
+  //
+  // This fires unconditionally, so it can't distinguish that case from a spec
+  // that legitimately renders `class: ''` (as opposed to `class: null`): the
+  // live `<pre>` would lose the attribute while `renderSpec` still emits
+  // `class=""`, the same live-vs-`getHTML()` divergence this line exists to
+  // prevent, just in the other direction. Only reachable on a non-empty→empty
+  // transition, no in-tree writer produces `''` today, and the sibling sweep
+  // in `syncContentAttributes` (which sets any non-`null` value, `class=""`
+  // included) would disagree with this one if it ever became reachable. Not
+  // fixed here — the right fix direction isn't obvious and it's unreachable.
   if (el.getAttribute('class') === '') el.removeAttribute('class')
 }
+
+// Reused across every `styleProperties` call instead of allocating a fresh
+// `<div>` each time: it is never attached to the document (so it never
+// affects layout/paint or is observable from outside this module), and each
+// call immediately overwrites `cssText` in full before reading it back — no
+// state survives between calls for a second caller to see.
+const styleProbe = document.createElement('div')
 
 /** The CSS property names set by a `style` attribute value. */
 function styleProperties(value: string | undefined): string[] {
   if (!value) return []
-  const probe = document.createElement('div')
-  probe.style.cssText = value
-  return Array.from(probe.style)
+  styleProbe.style.cssText = value
+  return Array.from(styleProbe.style)
 }
 
 /**
@@ -255,6 +271,11 @@ function patchStyleProperties(
     if (!nextProps.includes(prop)) el.style.removeProperty(prop)
   }
   if (next) el.style.cssText += `;${next}`
+  // Same unconditional cleanup as `patchClassTokens`, with the same latent
+  // hole: a spec legitimately rendering `style: ''` (vs. `style: null`) would
+  // lose the attribute here while `renderSpec` still emits `style=""`. Only
+  // reachable on a non-empty→empty transition, no in-tree writer produces
+  // `''` today. Left as-is — see the comment in `patchClassTokens`.
   if (el.getAttribute('style') === '') el.removeAttribute('style')
 }
 
@@ -408,8 +429,7 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
       // after mount without discarding the ProseMirror-managed children and the
       // selection inside them. So the throwaway render is used as the source of
       // truth for attributes only.
-      const syncContentAttributes = (node: PMNode): void => {
-        const fresh = renderFromSpec(node).contentDOM
+      const syncContentAttributes = (fresh: HTMLElement): void => {
         for (const name of contentDOM.getAttributeNames()) {
           if (!fresh.hasAttribute(name)) contentDOM.removeAttribute(name)
         }
@@ -456,8 +476,8 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
       // has the identical hole in the other direction; sharing a namespace
       // without a refcount cannot do better, and no writer here shares a name.
       let specAttrs = attributeMap(dom)
-      const syncOuterAttributes = (node: PMNode): void => {
-        const next = attributeMap(renderFromSpec(node).dom)
+      const syncOuterAttributes = (fresh: HTMLElement): void => {
+        const next = attributeMap(fresh)
         for (const [name, value] of Object.entries(next)) {
           if (name === 'class' || name === 'style') continue
           if (dom.getAttribute(name) !== value) dom.setAttribute(name, value)
@@ -485,8 +505,14 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
           // A switch to/from mermaid needs the other node view: refuse the
           // update so prosemirror rebuilds this one.
           if (node.type !== props.node.type || isMermaid(node)) return false
-          syncContentAttributes(node)
-          syncOuterAttributes(node)
+          // One render serves both syncs: `contentDOM` is the content hole
+          // INSIDE `dom` from this same `renderFromSpec` call, and both
+          // helpers only read attribute names/values off the fresh tree —
+          // neither mutates it — so there's nothing for a second render to
+          // provide that this one doesn't already have.
+          const fresh = renderFromSpec(node)
+          syncContentAttributes(fresh.contentDOM)
+          syncOuterAttributes(fresh.dom)
           return true
         },
       }

@@ -98,5 +98,7 @@ Flagged so the #4377 triage does not record it as already-handled.
 
 ## Verification
 
-`src/editor/__tests__/` — 46 files, 1960 passed (was 1958). `tsc -b`, `oxlint` and
-`oxfmt --check` clean on all changed files.
+`src/editor/__tests__/` — 46 files, 1960 passed (was 1952 at the `main` merge base — this diff
+adds eight `it()` blocks and removes none, a +8 delta, not the +2 an earlier "was 1958" figure
+implied; that number was an intermediate state of this branch, not the merge base). `tsc -b`,
+`oxlint` and `oxfmt --check` clean on all changed files.
