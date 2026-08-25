@@ -28,6 +28,15 @@
 //! fail per-item are expected to be poison-tolerant internally (see
 //! [`tombstone_purge`]) rather than to rely on the daemon backing off.
 //!
+//! #4018/#4020 — that expectation has a limit worth stating, because
+//! internal poison-tolerance and this next-tick retry pull against each
+//! other: a body that swallows EVERY failure into `Ok` also opts itself out
+//! of the retry described above, and its next attempt is then gated by its
+//! own 24 h interval. [`tombstone_purge`] therefore draws the line at the
+//! failure shape named here — a busy writer stays an `Err`, precisely so it
+//! keeps the 60 s retry this paragraph promises, while genuinely poison
+//! per-item failures are still absorbed internally.
+//!
 //! Jobs run sequentially within a
 //! single tick rather than in parallel because (a) most jobs touch the
 //! same DB pool and serialisation kills lock contention, (b) the
@@ -256,6 +265,53 @@ const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 50;
 #[cfg(test)]
 const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 4;
 
+/// #4018 — is `err` the single SQLite writer being BUSY/LOCKED, rather than
+/// a root that cannot be purged?
+///
+/// The #3311 per-root fallback in [`tombstone_purge`] exists to isolate a
+/// POISON root: one whose own rows trip a constraint or a trigger, so
+/// retrying it alone costs one root and lets the rest of the batch drain.
+/// Lock contention falsifies that premise outright — nothing about any
+/// individual root is wrong, and every per-root retry simply re-queues
+/// behind the same writer that just refused the batch.
+///
+/// The cost of getting this wrong is not a wasted branch. At production
+/// scale one transient `SQLITE_BUSY` sends the fallback through
+/// [`TOMBSTONE_PURGE_BATCH_LIMIT`] (1000) further `BEGIN IMMEDIATE`
+/// attempts, and the drain loop then opens the next batch into the same
+/// contention, up to `× TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN` (50). Each of
+/// those attempts does not fail fast either: the pool sets a 5 s
+/// `busy_timeout` (`agaric_store::db::base_connect_options`), so they are
+/// SERIALISED multi-second waits against the one writer the foreground UI
+/// also needs — hours of self-inflicted contention in response to a
+/// condition that would have cleared in seconds.
+///
+/// Classified on the SQLite PRIMARY result code (`extended & 0xFF`), so
+/// every extended `SQLITE_BUSY_*` / `SQLITE_LOCKED_*` variant (261, 262,
+/// 517, 518, 773, …) is covered without enumerating a list that a future
+/// SQLite release can extend. [`AppError::PoolTimedOut`] is the same signal
+/// one layer out — every write connection in the pool is already occupied,
+/// so the batch never even reached SQLite.
+///
+/// Deliberately NOT matched: constraint/trigger failures (the #3311 poison
+/// shape, which `tombstone_purge_skips_poison_root_and_drains_the_rest_3311`
+/// drives through `RAISE(ABORT)` → `SQLITE_CONSTRAINT_TRIGGER`), which keep
+/// the per-root fallback they were written for.
+fn is_write_contention(err: &AppError) -> bool {
+    /// SQLite primary result code `SQLITE_BUSY`.
+    const SQLITE_BUSY: i32 = 5;
+    /// SQLite primary result code `SQLITE_LOCKED`.
+    const SQLITE_LOCKED: i32 = 6;
+    match err {
+        AppError::PoolTimedOut => true,
+        AppError::Database(sqlx::Error::Database(db_err)) => db_err
+            .code()
+            .and_then(|code| code.parse::<i32>().ok())
+            .is_some_and(|code| matches!(code & 0xFF, SQLITE_BUSY | SQLITE_LOCKED)),
+        _ => false,
+    }
+}
+
 /// Issue #157 sub-item E — hard-purge soft-deleted blocks whose
 /// `deleted_at` is older than [`TOMBSTONE_RETENTION_DAYS`]. Delegates
 /// to `purge_blocks_by_ids_inner` so the cascade order, FK-defer,
@@ -285,6 +341,19 @@ const TOMBSTONE_PURGE_MAX_BATCHES_PER_RUN: usize = 4;
 /// of the run (which is what keeps the drain loop from re-selecting them
 /// forever). Skipped roots stay eligible and are retried on the next run,
 /// because the exclusion list is per-invocation and holds nothing durable.
+///
+/// **Contention is not poison (#4018):** the per-root fallback above is
+/// entered ONLY for a failure that could plausibly belong to one root. A
+/// busy/locked writer is the one failure shape that provably does not (see
+/// [`is_write_contention`]), and it is the shape these jobs actually hit —
+/// so it abandons the run with `Err` instead of re-queueing every root
+/// behind the same lock. Returning `Err` rather than `Ok` is load-bearing
+/// twice over: it is what stops the drain loop from opening the NEXT
+/// batch into the same contention, and it is what re-arms `run_tick`'s
+/// retry-on-failure (this module's header) so the retry lands on the next
+/// 60 s tick instead of 24 h from now — the cadence a transient
+/// `SQLITE_BUSY` deserves. Rows purged before the contention stay purged:
+/// every batch commits in its own transaction.
 pub async fn tombstone_purge(
     pool: &SqlitePool,
     device_id: &str,
@@ -349,6 +418,27 @@ pub async fn tombstone_purge(
         .await
         {
             Ok(_resp) => total_purged += batch_count,
+            // #4018 — the writer is busy, not the batch. Bail out BEFORE the
+            // per-root fallback: see [`is_write_contention`] for why retrying
+            // each root would be up to `batch_limit` serialised `busy_timeout`
+            // waits against the writer that just refused the whole batch, and
+            // why the run must end with `Err` (next-tick retry) rather than
+            // `Ok` (24 h).
+            Err(e) if is_write_contention(&e) => {
+                tracing::warn!(
+                    error = %e,
+                    batch_count,
+                    batches,
+                    purged = total_purged,
+                    skipped = poisoned.len(),
+                    "tombstone_purge: the SQLite writer is busy/locked — abandoning this \
+                     run instead of retrying the batch one root at a time (#4018). \
+                     Contention is not a poison root, so per-root isolation buys nothing \
+                     and costs one serialised busy_timeout wait per root. Already-purged \
+                     batches are committed; the daemon retries on the next tick"
+                );
+                return Err(e);
+            }
             Err(e) => {
                 // #3311 — the whole batch rolled back. Retry it one root at
                 // a time so a single poison root costs only itself, and
@@ -360,27 +450,15 @@ pub async fn tombstone_purge(
                     last = ids.last().map_or("", String::as_str),
                     "tombstone_purge: batch purge failed; falling back to one root at a time"
                 );
-                for id in ids {
-                    match crate::commands::blocks::crud::purge_blocks_by_ids_inner(
-                        pool,
-                        device_id,
-                        materializer,
-                        vec![id.clone().into()],
-                    )
-                    .await
-                    {
-                        Ok(_resp) => total_purged += 1,
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                block_id = %id,
-                                "tombstone_purge: root could not be purged; skipping it for the \
-                                 rest of this run (it stays eligible for the next run)"
-                            );
-                            poisoned.insert(id);
-                        }
-                    }
-                }
+                purge_roots_one_at_a_time(
+                    pool,
+                    device_id,
+                    materializer,
+                    ids,
+                    &mut poisoned,
+                    &mut total_purged,
+                )
+                .await?;
             }
         }
 
@@ -427,6 +505,70 @@ pub async fn tombstone_purge(
             cutoff = %cutoff_ms,
             "tombstone_purge: hard-deleted soft-tombstones past the retention window"
         );
+    }
+    Ok(())
+}
+
+/// #3311 — the per-root fallback for a batch that rolled back. Retries each
+/// root on its own so a single poison root costs only itself: roots that
+/// still fail go into `poisoned` (excluded from the rest of the run), roots
+/// that succeed are added to `total_purged`.
+///
+/// Split out of [`tombstone_purge`] (#4018) so the contention bail-out can be
+/// driven by a test. Reaching it through `tombstone_purge` would need the
+/// writer to go busy BETWEEN two per-root retries, which nothing in-process
+/// can schedule deterministically — hold the write lock from the start and
+/// the BATCH fails busy, which is handled by the caller's own arm and never
+/// enters this loop at all.
+///
+/// # Errors
+///
+/// The writer going busy/locked part-way through a fallback that started for
+/// a genuine poison root (see [`is_write_contention`]). Every remaining root
+/// would pay a full `busy_timeout` for a failure that belongs to none of
+/// them, so the error is returned and the caller's `?` abandons the run —
+/// which is also what re-arms `run_tick`'s next-tick retry. The un-attempted
+/// roots are deliberately left OUT of `poisoned`: they were never shown to be
+/// unpurgeable.
+async fn purge_roots_one_at_a_time(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &crate::materializer::Materializer,
+    ids: Vec<String>,
+    poisoned: &mut std::collections::HashSet<String>,
+    total_purged: &mut usize,
+) -> Result<(), AppError> {
+    for id in ids {
+        match crate::commands::blocks::crud::purge_blocks_by_ids_inner(
+            pool,
+            device_id,
+            materializer,
+            vec![id.clone().into()],
+        )
+        .await
+        {
+            Ok(_resp) => *total_purged += 1,
+            Err(e) if is_write_contention(&e) => {
+                tracing::warn!(
+                    error = %e,
+                    block_id = %id,
+                    purged = *total_purged,
+                    "tombstone_purge: the SQLite writer went busy/locked during \
+                     the per-root fallback — abandoning the rest of this run \
+                     (#4018); the daemon retries on the next tick"
+                );
+                return Err(e);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    block_id = %id,
+                    "tombstone_purge: root could not be purged; skipping it for the \
+                     rest of this run (it stays eligible for the next run)"
+                );
+                poisoned.insert(id);
+            }
+        }
     }
     Ok(())
 }
@@ -1130,6 +1272,332 @@ mod tests {
             aged_remaining().await,
             0,
             "second run must drain the rolled-over remainder"
+        );
+    }
+
+    /// Thread-safe buffered writer for in-process log capture (mirrors the
+    /// helper in `commands/blocks/crud.rs`; per tests/AGENTS.md "Test helper
+    /// duplication is intentional"). Paired with a current-thread runtime
+    /// (`#[tokio::test]`) so `set_default`'s thread-local guard covers every
+    /// `.await` point.
+    #[derive(Clone, Default)]
+    struct WarnBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for WarnBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for WarnBuf {
+        type Writer = WarnBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+    fn capture_warns() -> (WarnBuf, tracing::subscriber::DefaultGuard) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let buf = WarnBuf::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(buf.clone())
+                    .with_ansi(false),
+            );
+        let guard = tracing::subscriber::set_default(subscriber);
+        (buf, guard)
+    }
+    fn logged(buf: &WarnBuf) -> String {
+        String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned()
+    }
+
+    /// #4018 — [`is_write_contention`] must split the two failure shapes the
+    /// `tombstone_purge` fallback branches on, and it must do it against the
+    /// errors sqlx ACTUALLY produces (the classifier parses a driver-formatted
+    /// extended result code, so a hand-built error would not test the thing
+    /// that can break).
+    ///
+    /// Both directions in one walk, because either alone is worthless: a
+    /// classifier that says "yes" to everything passes the contention half,
+    /// and one that says "no" to everything passes the poison half.
+    #[tokio::test]
+    async fn is_write_contention_splits_busy_from_poison_4018() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = crate::db::init_pool(&db_path).await.unwrap();
+
+        // --- Poison: a trigger ABORT, the #3311 shape. ---
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES ('POISON00', 'content', 'unpurgeable', NULL, 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER poison_block_delete \
+             BEFORE DELETE ON blocks WHEN OLD.id = 'POISON00' \
+             BEGIN SELECT RAISE(ABORT, 'simulated unpurgeable root'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let poison: AppError = sqlx::query("DELETE FROM blocks WHERE id = 'POISON00'")
+            .execute(&pool)
+            .await
+            .expect_err("the trigger must abort the delete")
+            .into();
+        assert!(
+            !is_write_contention(&poison),
+            "a trigger ABORT is a poison root, not contention — it must keep the \
+             #3311 per-root fallback; got {poison}"
+        );
+
+        // --- Contention: a real BUSY from the single SQLite writer. ---
+        // A short busy_timeout so the wait is a test cost, not a 5 s one.
+        let busy_opts = agaric_store::db::base_connect_options(&db_path)
+            .busy_timeout(std::time::Duration::from_millis(50));
+        let contender = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(busy_opts)
+            .await
+            .unwrap();
+        let holder = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let busy: AppError = contender
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .expect_err("the write lock is held; BEGIN IMMEDIATE must report BUSY")
+            .into();
+        drop(holder);
+        assert!(
+            is_write_contention(&busy),
+            "a busy/locked writer must be classified as contention so the per-root \
+             fallback is skipped (#4018); got {busy}"
+        );
+
+        // --- The same signal one layer out: every write connection in the
+        // pool is already occupied, so the batch never reached SQLite. Not
+        // reachable from the walk above (it needs an exhausted pool, not a
+        // held file lock), so it is asserted directly.
+        assert!(
+            is_write_contention(&AppError::PoolTimedOut),
+            "an exhausted write pool is the same 'the writer is busy' condition and \
+             must not send the run into the per-root fallback either (#4018)"
+        );
+
+        // …and the conservative default for everything that is not a database
+        // error at all. `purge_blocks_by_ids_inner` refuses a live root with
+        // exactly this shape, and that IS a per-root failure: classifying it
+        // as contention would abandon the run over one bad id.
+        assert!(
+            !is_write_contention(&AppError::InvalidOperation(
+                "block 'X' must be soft-deleted before purging".into()
+            )),
+            "a non-database refusal belongs to the root that provoked it and must keep \
+             the #3311 per-root fallback (#4018)"
+        );
+    }
+
+    /// #4018 — the OTHER half of the contention bail-out: the writer going
+    /// busy part-way through a per-root fallback that started for a genuine
+    /// poison root.
+    ///
+    /// Driven against [`purge_roots_one_at_a_time`] directly, because that
+    /// interleaving cannot be scheduled through `tombstone_purge`: holding the
+    /// write lock from the start makes the BATCH fail busy, which the caller's
+    /// own arm handles without ever entering this loop (that path is
+    /// `tombstone_purge_abandons_the_run_on_writer_contention_4018`).
+    ///
+    /// Pins both directions. Under contention: `Err`, nothing recorded as
+    /// poison, nothing counted as purged. The poison direction — a root that
+    /// genuinely cannot be purged is recorded and the loop keeps going — is
+    /// `tombstone_purge_skips_poison_root_and_drains_the_rest_3311`.
+    #[tokio::test]
+    async fn per_root_fallback_stops_when_the_writer_goes_busy_4018() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let setup = crate::db::init_pool(&db_path).await.unwrap();
+
+        let aged_deleted_at = (chrono::Utc::now()
+            - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS + 5))
+        .timestamp_millis();
+        for i in 0..2i64 {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
+            )
+            .bind(format!("AGED{i:04}"))
+            .bind(i)
+            .bind(aged_deleted_at)
+            .execute(&setup)
+            .await
+            .unwrap();
+        }
+
+        let busy_opts = agaric_store::db::base_connect_options(&db_path)
+            .busy_timeout(std::time::Duration::from_millis(50));
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(busy_opts)
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        let holder = setup.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+        let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut total_purged: usize = 0;
+        let (buf, guard) = capture_warns();
+        let err = purge_roots_one_at_a_time(
+            &pool,
+            "test-device",
+            &mat,
+            vec!["AGED0000".to_string(), "AGED0001".to_string()],
+            &mut poisoned,
+            &mut total_purged,
+        )
+        .await
+        .expect_err(
+            "a busy writer met mid-fallback must abandon the run with Err (#4018), not \
+             plough through the remaining roots at one busy_timeout each",
+        );
+        drop(guard);
+        drop(holder);
+
+        assert!(
+            is_write_contention(&err),
+            "the surfaced error must be the contention itself; got {err}"
+        );
+        assert!(
+            poisoned.is_empty(),
+            "a root the writer never let us try is not a poison root — recording it \
+             would exclude it from the rest of the run for someone else's failure; \
+             got {poisoned:?}"
+        );
+        assert_eq!(total_purged, 0, "nothing committed, nothing counted");
+        let out = logged(&buf);
+        assert!(
+            out.contains("went busy/locked during the per-root fallback"),
+            "the abandoned fallback must say why, naming contention rather than poison. \
+             Captured logs:\n{out}"
+        );
+        assert!(
+            !out.contains("root could not be purged"),
+            "…and must not also log the poison line for the same root. Captured logs:\n{out}"
+        );
+    }
+
+    /// #4018 — one busy writer must not turn into a write-lock storm.
+    ///
+    /// `tombstone_purge`'s #3311 fallback retries a failed batch ONE ROOT AT A
+    /// TIME. That isolates a poison root, but under lock contention it is pure
+    /// amplification: nothing is wrong with any root, and each retry pays a
+    /// full `busy_timeout` against the writer that just refused the batch — at
+    /// production scale up to 1000 per batch and 50 batches per run.
+    ///
+    /// Drives a REAL `SQLITE_BUSY` by holding the single write lock from
+    /// another connection, and pins all three halves of the new contract: the
+    /// per-root fallback does not run, the run ends, and it ends with `Err` so
+    /// `run_tick` retries on the next 60 s tick instead of in 24 h.
+    ///
+    /// The other side of the split — a genuine poison root still gets its
+    /// per-root isolation and the run still returns `Ok` — is
+    /// `tombstone_purge_skips_poison_root_and_drains_the_rest_3311`, which must
+    /// stay green alongside this.
+    #[tokio::test]
+    async fn tombstone_purge_abandons_the_run_on_writer_contention_4018() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let setup = crate::db::init_pool(&db_path).await.unwrap();
+
+        let aged_deleted_at = (chrono::Utc::now()
+            - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS + 5))
+        .timestamp_millis();
+        // Two aged tombstones: fewer than the `cfg(test)` batch limit of 3, so
+        // this is exactly ONE batch and the per-root fallback (if it runs) is
+        // exactly two extra attempts — countable in the log.
+        for i in 0..2i64 {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', 'aged tombstone', NULL, ?, ?)",
+            )
+            .bind(format!("AGED{i:04}"))
+            .bind(i)
+            .bind(aged_deleted_at)
+            .execute(&setup)
+            .await
+            .unwrap();
+        }
+
+        // The pool the purge runs on: same file, short busy_timeout so the
+        // contention is observed in milliseconds rather than 5 s per attempt.
+        let busy_opts = agaric_store::db::base_connect_options(&db_path)
+            .busy_timeout(std::time::Duration::from_millis(50));
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(busy_opts)
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        // Another writer holds the single SQLite write lock. WAL keeps readers
+        // unaffected, so the eligibility SELECT still succeeds and the failure
+        // lands exactly where production's would: `BEGIN IMMEDIATE`.
+        let holder = setup.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+        let (buf, guard) = capture_warns();
+        let err = tombstone_purge(&pool, "test-device", &mat)
+            .await
+            .expect_err(
+                "a busy writer must ABANDON the run with Err (#4018) so the maintenance \
+                 daemon retries on the next 60 s tick — swallowing it into Ok defers the \
+                 retry to the job's own 24 h interval",
+            );
+        drop(guard);
+        drop(holder);
+
+        let out = logged(&buf);
+        // The load-bearing negative assertion: the fallback must not be
+        // ENTERED. Asserting only the absence of the per-root "could not be
+        // purged" line would be satisfied by a run that enters the fallback
+        // and bails on its FIRST root — which is the amplification this
+        // change exists to prevent, one root shy of the full storm.
+        assert!(
+            !out.contains("falling back to one root at a time"),
+            "the per-root fallback must NOT be entered under contention — it would cost \
+             one serialised busy_timeout wait per root for a failure that belongs to none \
+             of them (#4018). Captured logs:\n{out}"
+        );
+        assert!(
+            !out.contains("root could not be purged"),
+            "and no root may be recorded as poison for a failure that was the writer's. \
+             Captured logs:\n{out}"
+        );
+        assert!(
+            out.contains("abandoning this run instead of retrying the batch one root at a time"),
+            "the abandoned run must say why, naming contention rather than poison. \
+             Captured logs:\n{out}"
+        );
+        assert!(
+            is_write_contention(&err),
+            "the surfaced error must be the contention itself, not a rewrapped or \
+             synthesised one; got {err}"
+        );
+
+        // Nothing was purged and nothing was marked poison: the tombstones are
+        // still eligible for the retry this Err buys.
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE id LIKE 'AGED%' AND deleted_at IS NOT NULL",
+        )
+        .fetch_one(&setup)
+        .await
+        .unwrap();
+        assert_eq!(
+            remaining, 2,
+            "no tombstone may be reported purged when the writer never let a batch commit"
         );
     }
 

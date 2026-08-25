@@ -4166,3 +4166,136 @@ async fn rewind_boot_then_create_lands_in_projection_with_intact_content() {
         "the post-rewind block's content must be intact"
     );
 }
+
+/// #4018 item 2 — a HEALTHY boot must be silent at warn level about the apply
+/// cursor.
+///
+/// `snapshot_watermark` is deliberately `cursor - 1`, so a vault that exited
+/// cleanly always boots with `MIN(applied_through_seq) == cursor - 1` and
+/// `heal_orphaned_apply_cursor` always rewinds by exactly one op. Two lines
+/// used to announce that on every single boot: the heal's own
+/// "apply cursor is ahead of the Loro snapshot watermark", and a second,
+/// FIELDLESS "reset orphaned apply cursor — full op-log rebuild follows" here
+/// at the call site — which was doubly wrong, because "full op-log rebuild" is
+/// only true when the rewind target is 0 and the `bool` return cannot tell.
+/// #3309 filed exactly this as "permanent alarm poisoning".
+///
+/// Boot-level on purpose: the heal's own level is pinned in `replay.rs`
+/// (`routine_one_op_rewind_does_not_warn_4018`), but the call-site line was
+/// emitted regardless of what the heal decided, so only a boot can prove both
+/// are gone. The rewind must still HAPPEN — asserted here so "quieter" cannot
+/// be satisfied by "skipped".
+#[tokio::test]
+async fn healthy_boot_does_not_warn_about_the_routine_cursor_rewind_4018() {
+    #[derive(Clone, Default)]
+    struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+        type Writer = LogBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let dev = "healthy-boot-device";
+
+    // Build a real vault through the local-op path. Both blocks are ROOTS so
+    // the post-rewind replay of the tail op needs no parent in the engine.
+    let mat = Materializer::new(pool.clone());
+    for (id, content) in [
+        ("PAGEONE00000000000000000000", "page one"),
+        ("PAGETWO00000000000000000000", "page two"),
+    ] {
+        let record = append_local_op(
+            &pool,
+            dev,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(id),
+                block_type: "page".into(),
+                parent_id: None,
+                position: Some(0),
+                index: None,
+                content: content.into(),
+            }),
+        )
+        .await
+        .expect("append create op");
+        mat.dispatch_op(&record).await.expect("dispatch create op");
+    }
+    mat.flush().await.expect("flush vault build");
+    mat.shutdown();
+
+    let cursor: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(cursor > 0, "the session must have advanced the cursor");
+
+    // The clean-exit shape: `save_all_engines` persisted every space at
+    // `snapshot_watermark` == `cursor - 1`.
+    sqlx::query(
+        "INSERT INTO loro_doc_state \
+         (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+         VALUES ('test-space', X'00', 0, 0, ?)",
+    )
+    .bind(cursor - 1)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let buf = LogBuf::default();
+    let out = {
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(buf.clone())
+                    .with_ansi(false),
+            );
+        let _guard = tracing::subscriber::set_default(subscriber);
+        super::boot::reset_recovery_guard();
+        let mat = Materializer::new(pool.clone());
+        let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
+        recover_at_boot(&pool, dev, &mat, &registry)
+            .await
+            .expect("recover_at_boot");
+        mat.shutdown();
+        String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned()
+    };
+
+    assert!(
+        !out.contains("reset orphaned apply cursor"),
+        "the call-site announcement is gone: it fired on every healthy boot and \
+         claimed a full op-log rebuild it could not know about (#4018). \
+         Captured logs:\n{out}"
+    );
+    assert!(
+        !out.contains("apply cursor is ahead of the Loro snapshot watermark"),
+        "and the heal's own line stays at debug for the routine one-op rewind. \
+         Captured logs:\n{out}"
+    );
+
+    let healed_to: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        healed_to >= cursor - 1,
+        "the rewind must still have happened and replay must have caught the cursor \
+         back up; cursor was {cursor}, is now {healed_to}"
+    );
+}

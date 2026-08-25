@@ -120,10 +120,16 @@ pub async fn recover_at_boot(
     // step still runs from whatever cursor survives).
     // -----------------------------------------------------------------
     match heal_orphaned_apply_cursor(pool).await {
-        Ok(true) => {
-            tracing::warn!("recovery: reset orphaned apply cursor — full op-log rebuild follows");
-        }
-        Ok(false) => {}
+        // #4018 — deliberately silent. This arm used to emit a second,
+        // FIELDLESS warn ("reset orphaned apply cursor — full op-log rebuild
+        // follows") alongside the heal's own. It was wrong twice: it fired on
+        // every healthy boot (the heal always rewinds the one op
+        // `snapshot_watermark` withholds — see `heal_orphaned_apply_cursor`),
+        // and "full op-log rebuild" is only true when the rewind target is 0,
+        // which this call site cannot see because the return type is a bool.
+        // The heal owns the announcement instead: it has `cursor`, `reset_to`
+        // and `snapshot_count`, so it can pick both the level and the wording.
+        Ok(_) => {}
         Err(e) => {
             tracing::warn!(error = %e, "recovery: cursor self-heal check failed — continuing");
         }

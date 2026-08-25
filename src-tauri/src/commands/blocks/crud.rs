@@ -2516,6 +2516,36 @@ pub async fn purge_blocks_by_ids_inner(
     // lets the walk step from 99 to 100, so >= 99 is the conservative
     // boundary). When saturated we can't cheaply name the offending root
     // without re-walking, so the message points at the batch.
+    //
+    // #4018 — why this probe did NOT follow R27, which deleted the equivalent
+    // probes on the delete and restore paths (see the R27 notes in
+    // `delete_blocks_by_ids_inner` and `restore_block_inner`). R27 replaced a
+    // saturation probe with `collect_subtree_ids_unbounded` because those
+    // cascades are BEST-EFFORT: a capped walk truncated them silently, leaving
+    // live orphans under tombstoned ancestors, so reaching further was
+    // strictly better than warning. Purge is the documented opposite —
+    // `agaric_store::block_descendants::cascade_depth_saturated` splits its
+    // callers exactly this way ("`tracing::warn!` (default — best-effort
+    // cascades)" vs "`Err(AppError::validation(...))` (purge — hard delete
+    // should be all-or-nothing; a saturating cascade leaves orphans behind)").
+    // A hard delete that truncates cannot be healed on the next move like a
+    // stale `position` can: the rows below the cap are physically stranded
+    // under a parent that no longer exists. Refusing loudly is therefore the
+    // correct behaviour here, not an un-migrated leftover, and R27 is a
+    // convention for best-effort cascades rather than for every recursive walk.
+    // `capture_purge_engine_fanout` walks the same capped shape, so the SQL
+    // cascade and the engine fan-out stay in agreement behind this one refusal.
+    //
+    // Revisit when multi-device sync ships: a merged tree may then legally
+    // exceed depth 100 (R27's own premise), and on such a vault this refusal
+    // turns "empty the trash" into a permanently un-clearable action. The fix
+    // at that point is to seed `block_cleanup::purge_subtree_tables` from an
+    // unbounded cohort rather than from `cte`, not to weaken the refusal — in
+    // BOTH CTE-seeded variants (here and `purge_block_inner`, which carries
+    // the same `>= 99` refusal). `purge_all_deleted_inner` is unaffected: it
+    // shares the cascade helper but seeds it from the FLAT
+    // `deleted_at IS NOT NULL` selection, so it has no depth cap to saturate
+    // and carries no probe.
     let max_depth: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(sqlx::AssertSqlSafe(
         format!("{cte}SELECT MAX(depth) FROM descendants"),
     ))

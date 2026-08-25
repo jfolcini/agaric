@@ -108,6 +108,24 @@ fn now_ms() -> i64 {
 /// what every engine reflects; boot replay re-applies the idempotent tail
 /// above it. A read error degrades to `0` (a conservative full rebuild
 /// next boot) rather than risking a watermark that overshoots engine state.
+///
+/// # Two consequences of the `- 1`, both deliberate (#4018/#4020)
+///
+/// 1. A healthy vault's watermarks settle at exactly `cursor - 1`, so
+///    `recovery::replay::heal_orphaned_apply_cursor` sees `cursor > MIN(…)`
+///    and rewinds by one op on EVERY boot. The rewind is correct (one
+///    idempotent re-apply); what it must not do is announce itself as a stale
+///    snapshot, which is why that function special-cases a gap of exactly 1.
+/// 2. When the apply cursor is itself clamped to 0 — compaction having purged
+///    the local log to zero surviving rows, see
+///    `recovery::replay::read_apply_cursor` — this returns 0, and a
+///    [`save_all_engines`] pass firing in that window writes
+///    `applied_through_seq = 0` over a previously-high watermark for every
+///    DIRTY space, undoing for those rows what
+///    [`advance_clean_space_watermarks`] does for the clean ones. That is an
+///    under-claim, never a false one (`applied_through_seq` asserts only a
+///    lower bound); the full rationale for leaving it alone lives on
+///    `read_apply_cursor`.
 async fn snapshot_watermark(pool: &SqlitePool) -> i64 {
     let cursor: i64 = sqlx::query_scalar!(
         r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
@@ -411,10 +429,27 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     }
 
     // #3309 — the watermark refresh for the spaces this pass did NOT
-    // re-encode. Runs only on the normal exit path: the generation-guard
-    // `return ok` above skips it, because after a snapshot RESET the rows
-    // this would touch are exactly the ones that must not be trusted.
-    advance_clean_space_watermarks(pool, applied_through_seq, &attempted, &installed).await;
+    // re-encode. After a snapshot RESET the rows it would touch are exactly
+    // the ones that must not be trusted, so it must not run then.
+    //
+    // #4020 — that exclusion used to be delegated to the per-pair
+    // generation-check above ("the generation-guard `return ok` above skips
+    // it"). True only when the loop actually ran: with ZERO dirty spaces — the
+    // quiescent vault this whole #3309 mechanism exists for, and the case in
+    // which this tail does its only useful work — the loop body never executes
+    // and a RESET racing the pass met no guard at all. So the registry and the
+    // captured generation are threaded IN and re-checked there instead, which
+    // makes the exclusion a property of the function rather than of the
+    // caller's control flow.
+    advance_clean_space_watermarks(
+        pool,
+        applied_through_seq,
+        &attempted,
+        &installed,
+        registry,
+        generation,
+    )
+    .await;
 
     ok
 }
@@ -486,15 +521,47 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// the next boot's rewind target, never a correctness requirement, and it
 /// must not turn into a reason for the surrounding snapshot pass to fail.
 /// Returns the number of rows advanced.
+///
+/// ## The RESET guard (#4020)
+///
+/// `registry` + `generation` are the caller's pre-collect clear-generation
+/// capture (#607). Every premise above is a statement about the generation
+/// the enclosing pass observed, so a [`LoroEngineRegistry::clear`] (snapshot
+/// RESET) landing in between invalidates all of them at once: `attempted` and
+/// `installed` describe engines that no longer exist, and the rows they would
+/// vouch for belong to a wiped table. This used to be inherited from
+/// [`save_all_engines`]' per-pair check, which does not run when the dirty set
+/// is EMPTY — the exact quiescent case this function was written for. Checking
+/// it here at entry makes the exclusion a property of this function rather
+/// than of the caller's control flow.
+///
+/// The pre-#4020 code was not observably broken: a RESET wipes every
+/// `loro_doc_state` row inside its own transaction, so the UPDATEs matched
+/// zero rows anyway. That is a property of the reset's shape, not of this
+/// function, and it is not the kind of thing to leave load-bearing. For the
+/// same reason the check is NOT repeated per UPDATE the way the enclosing
+/// loop repeats it around its `INSERT OR REPLACE`: that loop writes BLOBS,
+/// which a wiped table would resurrect, whereas every write here is an
+/// `UPDATE … WHERE space_id = ?` that matches nothing once the rows are gone.
 async fn advance_clean_space_watermarks(
     pool: &SqlitePool,
     applied_through_seq: i64,
     attempted: &[SpaceId],
     installed: &[SpaceId],
+    registry: &LoroEngineRegistry,
+    generation: u64,
 ) -> usize {
     if applied_through_seq <= 0 {
         // Nothing can sit below 0 (`applied_through_seq` is
         // `INTEGER NOT NULL DEFAULT 0`), so skip the read entirely.
+        return 0;
+    }
+    if registry.generation() != generation {
+        tracing::warn!(
+            "loro:save_all_engines: registry cleared before the clean-space \
+             watermark refresh (snapshot RESET, #607/#4020); skipping it — the \
+             rows it would advance belong to the pre-reset generation",
+        );
         return 0;
     }
     let stale: Vec<(String,)> =
@@ -1183,6 +1250,61 @@ mod tests {
             1,
             "a row with no engine behind it must keep pinning MIN so the next \
              boot rebuilds it — 'not attempted' is not 'clean' (#3309)"
+        );
+    }
+
+    /// #4020 — a snapshot RESET racing the pass must stop the clean-space
+    /// watermark refresh, and that exclusion must hold when the dirty set is
+    /// EMPTY.
+    ///
+    /// `save_all_engines` used to delegate it entirely to the per-pair
+    /// `registry.generation()` check inside its loop. With zero dirty spaces
+    /// — the quiescent vault this refresh exists for, and the only case in
+    /// which it does any work — that loop body never runs, so the tail met no
+    /// guard at all. The guard now lives at the top of the refresh itself.
+    ///
+    /// Driven against [`advance_clean_space_watermarks`] directly: the
+    /// generation is captured INSIDE `save_all_engines`, so a clear that lands
+    /// between the capture and the tail cannot be scheduled from the outside.
+    /// The matching positive direction — same shape, generation unchanged, row
+    /// advanced — is `save_all_engines_advances_watermark_of_quiescent_space_3309`.
+    #[tokio::test]
+    async fn clean_watermark_refresh_bails_when_the_registry_was_cleared_4020() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+
+        // The quiescent shape: one persisted space, its engine rehydrated and
+        // clean, nothing dirty anywhere.
+        seed_row(&pool, SPACE_B, 1).await;
+        install_clean_engine(&registry, SPACE_B);
+        assert_eq!(registry.dirty_count(), 0, "no dirty space in this pass");
+
+        // What `save_all_engines` captures before the (empty) loop.
+        let generation = registry.generation();
+        let installed = registry.space_ids();
+
+        // …and the RESET that lands before the tail runs.
+        registry.clear();
+        assert_ne!(
+            registry.generation(),
+            generation,
+            "clear() must bump the generation, or this test proves nothing"
+        );
+
+        let advanced =
+            advance_clean_space_watermarks(&pool, 499, &[], &installed, &registry, generation)
+                .await;
+
+        assert_eq!(
+            advanced, 0,
+            "a refresh whose whole premise (`installed`, `attempted`) describes engines \
+             the RESET destroyed must advance nothing (#607/#4020)"
+        );
+        assert_eq!(
+            watermark_of(&pool, SPACE_B).await,
+            1,
+            "the pre-reset watermark must survive: advancing it would claim a wiped \
+             table's row reflects the op-log and suppress the rebuild that repairs it"
         );
     }
 
