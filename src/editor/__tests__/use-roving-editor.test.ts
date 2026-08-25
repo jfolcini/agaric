@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { Editor } from '@tiptap/core'
+import { Editor, Extension } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Document from '@tiptap/extension-document'
 import HardBreak from '@tiptap/extension-hard-break'
@@ -418,6 +418,50 @@ function createEditor(extensions: any[]): Editor {
   })
 }
 
+/**
+ * A real editor holding ONE code block, so `CodeBlockWithShortcut`'s node view
+ * actually runs and its live DOM can be inspected.
+ *
+ * `configure` is merged into the extension's own options (lowlight is always
+ * supplied, as in production) and `extras` lets a test add an extension that
+ * contributes global attributes — the two inputs that can make the node view's
+ * DOM disagree with `renderHTML` (#4316).
+ */
+function createCodeBlockEditor(
+  configure: Record<string, unknown> = {},
+  extras: any[] = [],
+  language: string | null = 'javascript',
+): Editor {
+  return new Editor({
+    element: document.createElement('div'),
+    extensions: [
+      Document,
+      Paragraph,
+      Text,
+      CodeBlockWithShortcut.configure({ lowlight: createLowlight(common), ...configure }),
+      ...extras,
+    ],
+    content: {
+      type: 'doc',
+      content: [
+        {
+          type: 'codeBlock',
+          attrs: { language },
+          content: [{ type: 'text', text: 'const a = 1' }],
+        },
+      ],
+    },
+  })
+}
+
+/** `name → value` for every attribute on `el`, order-insensitive. */
+function attributesOf(el: Element | null | undefined): Record<string, string> {
+  if (!el) return {}
+  return Object.fromEntries(
+    el.getAttributeNames().map((name) => [name, el.getAttribute(name) ?? '']),
+  )
+}
+
 // -- Custom extension keyboard shortcuts (real Editor) ------------------------
 
 describe('custom extension keyboard shortcuts', () => {
@@ -445,6 +489,15 @@ describe('custom extension keyboard shortcuts', () => {
   it('CodeBlockWithShortcut registers codeBlock extension with lowlight', () => {
     editor = createEditor([CodeBlockWithShortcut.configure({ lowlight: createLowlight(common) })])
     expect(editor.extensionManager.extensions.some((e) => e.name === 'codeBlock')).toBe(true)
+  })
+
+  it('CodeBlockWithShortcut renders a plain <pre><code> node view (no React wrapper)', () => {
+    editor = createCodeBlockEditor()
+    const pre = editor.view.dom.querySelector('pre')
+    expect(pre).not.toBeNull()
+    expect(pre?.firstElementChild?.tagName).toBe('CODE')
+    // The freeze fix (#4312): non-mermaid must never mount a React node view.
+    expect(editor.view.dom.querySelector('[data-node-view-wrapper]')).toBeNull()
   })
 
   it('PriorityShortcuts registers priorityShortcuts extension', () => {
@@ -2155,5 +2208,106 @@ describe('#2938 — update handler is a pure change signal (renderHook)', () => 
 
     editor.destroy()
     unmountHook()
+  })
+})
+
+// -- Code block node view ⇄ renderHTML parity (#4316) --------------------------
+//
+// The non-mermaid code block is rendered by a hand-written node view (#4312 —
+// a React node view froze the editor on mobile). That node view used to
+// reproduce `CodeBlockLowlight`'s `renderHTML` by hand, justified by "the
+// extension is configured with `lowlight` only, so no extra `HTMLAttributes` are
+// in play" — true at the time, and checked by nothing. The moment someone adds
+// an `HTMLAttributes` entry to `CodeBlockWithShortcut.configure({…})`, or an
+// `addGlobalAttributes` rule touching `codeBlock`, the on-screen DOM and the
+// serialized HTML disagree and copy/paste + export silently diverge from what
+// the editor shows.
+//
+// These tests supply exactly those two inputs. They pass only because the node
+// view derives its DOM from `this.type.spec.toDOM` (the compiled `renderHTML`);
+// a node view that hand-builds `<pre><code class="language-x">` fails every one
+// of them, which is the point — a test that only pins today's output would not.
+
+describe('code block node view derives its DOM from the node spec', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  /** Contributes a global attribute that renders onto every `codeBlock`. */
+  const LabelledCodeBlock = Extension.create({
+    name: 'labelledCodeBlock',
+    addGlobalAttributes() {
+      return [
+        {
+          types: ['codeBlock'],
+          attributes: {
+            codeLabel: {
+              default: 'snippet',
+              renderHTML: (attributes: Record<string, unknown>) => ({
+                'data-code-label': attributes['codeLabel'],
+              }),
+            },
+          },
+        },
+      ]
+    },
+  })
+
+  it("the live <pre> carries the extension's configured HTMLAttributes", () => {
+    editor = createCodeBlockEditor({ HTMLAttributes: { 'data-code-block': 'yes' } })
+
+    const pre = editor.view.dom.querySelector('pre')
+    expect(pre?.getAttribute('data-code-block')).toBe('yes')
+  })
+
+  it('the live <pre> carries a global attribute contributed for codeBlock', () => {
+    editor = createCodeBlockEditor({}, [LabelledCodeBlock])
+
+    const pre = editor.view.dom.querySelector('pre')
+    expect(pre?.getAttribute('data-code-label')).toBe('snippet')
+  })
+
+  it('the live DOM and the serialized HTML agree attribute-for-attribute', () => {
+    editor = createCodeBlockEditor({ HTMLAttributes: { 'data-code-block': 'yes' } }, [
+      LabelledCodeBlock,
+    ])
+
+    // `getHTML()` runs the schema's own DOMSerializer — the copy/paste and
+    // export path — so this compares the node view against the real thing
+    // rather than against another copy of the same assumption.
+    const serialized = new DOMParser().parseFromString(editor.getHTML(), 'text/html')
+    const livePre = editor.view.dom.querySelector('pre')
+    const serializedPre = serialized.querySelector('pre')
+
+    expect(attributesOf(livePre)).toEqual(attributesOf(serializedPre))
+    expect(attributesOf(livePre?.querySelector('code'))).toEqual(
+      attributesOf(serializedPre?.querySelector('code')),
+    )
+  })
+
+  it('a language-less block emits no class attribute at all (class: null parity)', () => {
+    editor = createCodeBlockEditor({}, [], null)
+
+    const code = editor.view.dom.querySelector('pre > code')
+    // `renderHTML` passes `class: null`, which emits NO attribute — a
+    // hand-written `className = ''` would leave `<code class="">` on screen
+    // where a re-parse of the serialized HTML produces a bare `<code>`.
+    expect(code?.hasAttribute('class')).toBe(false)
+  })
+
+  it('changing the language re-derives the class from the spec, and clearing it removes the attribute', () => {
+    editor = createCodeBlockEditor({}, [], 'javascript')
+    const code = () => editor.view.dom.querySelector('pre > code')
+    expect(code()?.getAttribute('class')).toBe('language-javascript')
+
+    // An attribute-only edit on the SAME node type — the transition the node
+    // view's `update()` has to handle itself.
+    editor.commands.updateAttributes('codeBlock', { language: 'rust' })
+    expect(code()?.getAttribute('class')).toBe('language-rust')
+
+    editor.commands.updateAttributes('codeBlock', { language: null })
+    expect(code()?.hasAttribute('class')).toBe(false)
   })
 })

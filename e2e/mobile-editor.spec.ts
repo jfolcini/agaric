@@ -196,11 +196,16 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
    * Regression: a code block used to freeze the editor PERMANENTLY on mobile.
    *
    * `CodeBlockWithShortcut` rendered every language through a React node view.
-   * A React node view rewrites its contentDOM on re-render; prosemirror-view's
-   * DOMObserver recorded those mutations and flushed, the flush re-rendered the
-   * node view, and the cycle never terminated. It only bit mobile because
-   * `browser.android`/`browser.ios` pick different selection-handling paths in
-   * prosemirror-view — desktop created the same block in ~80 ms.
+   * A React node view rewrites its own subtree on re-render; prosemirror-view
+   * recorded those mutations and flushed, the flush re-rendered the node view,
+   * and the cycle never terminated. The UA gate is @tiptap/core's default
+   * `NodeView.ignoreMutation`: on iOS/Android with the editor focused it does
+   * NOT ignore a childList mutation anywhere inside the node view's `dom` as
+   * long as every changed node is contentEditable, so React's own writes are
+   * read back as user edits. Desktop skips that branch and ignores everything
+   * outside `contentDOM` — it created the same block in ~80 ms. (#4315 located
+   * this; the earlier reading, which blamed `browser.android`/`browser.ios`
+   * selection paths inside prosemirror-view, was wrong.)
    *
    * The block never appeared and the whole app stopped responding (still dead
    * after three minutes), so this asserts the `<pre>` actually materialises.
@@ -235,8 +240,8 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
    * Runs on the mobile user agent this describe block configures, which is what
    * gates the freeze; the same assertions on a desktop UA pass against the bug.
    * (The mermaid⇄non-mermaid halves of the same swap are covered on the desktop
-   * UA by `mermaid-roundtrip.spec.ts` — the mermaid React node view does not
-   * render on this UA at all, see that spec's note.)
+   * UA by `mermaid-roundtrip.spec.ts`, where node-view identity is not UA-gated;
+   * that mermaid's own React node view survives THIS UA is asserted below.)
    */
   test('changing a code block language keeps the plain node view and stays responsive', async ({
     page,
@@ -259,5 +264,51 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
     // The editor must still accept input — a frozen main thread swallows this.
     await editor.pressSequentially('const ok = 1')
     await expect.poll(async () => (await editor.textContent()) ?? '').toContain('const ok = 1')
+  })
+
+  /**
+   * The half of the freeze seam #4312 did NOT change (#4315).
+   *
+   * `language === 'mermaid'` still mounts `MermaidCodeBlockView` through
+   * `ReactNodeViewRenderer` — a React node view, on the exact user agent that
+   * gates the freeze. That is the configuration the test above exists to keep
+   * every other language out of, so "mermaid is fine" cannot be assumed: it has
+   * to be measured on this UA, with the caret INSIDE the block and text landing
+   * on every keystroke (which is what makes React re-render the node view while
+   * prosemirror-view's DOMObserver is live).
+   *
+   * Typing into a mermaid block is the maximal version of that stress: each
+   * keystroke changes `node.textContent`, which re-keys `<MermaidDiagram>` and
+   * so rewrites a whole subtree of the node view, not just its attributes.
+   */
+  test('a mermaid code block renders and stays responsive on the mobile user agent', async ({
+    page,
+  }) => {
+    const editor = await focusBlock(page, 0)
+
+    // ```mermaid␣ — the same input rule as the plain-fence test above, so this
+    // differs from it in exactly one thing: the language.
+    await typeCodeFence(page, 'mermaid')
+
+    // The React node view is the point: mermaid is the ONE language that still
+    // gets one, so a count of 0 here would mean this test is not exercising the
+    // configuration #4315 asks about.
+    await expect(page.getByTestId('mermaid-node-view')).toBeVisible()
+    await expect(reactNodeViewWrapper(page)).not.toHaveCount(0)
+
+    // Selection is inside the node, so the view has flipped itself to source
+    // mode (Finding 45) and the editable `NodeViewContent` is on screen.
+    await expect(page.locator('[data-testid="block-editor"] pre.mermaid-source')).toBeVisible()
+
+    // The editor must still accept input — a frozen main thread swallows this,
+    // and every one of these keystrokes re-renders the React node view.
+    await editor.pressSequentially('graph TD')
+    await expect.poll(async () => (await editor.textContent()) ?? '').toContain('graph TD')
+
+    // …and it must still be alive AFTER the diagram has had a chance to render
+    // off the new source (the re-key remounts `MermaidDiagram` asynchronously,
+    // so a loop it feeds would only bite on a later keystroke).
+    await editor.pressSequentially(';A-->B')
+    await expect.poll(async () => (await editor.textContent()) ?? '').toContain(';A-->B')
   })
 })
