@@ -477,7 +477,7 @@ Cross-surface filter contract. Detail and rationale live in [`docs/architecture/
 | File | Purpose | When to update |
 |------|---------|---------------|
 | `docs/session-log/session-NNN-<slug>.md` | Per-session activity log (one file per session; see `docs/session-log/README.md`) | A new file at the next session number for each session |
-| [GitHub Issues](https://github.com/jfolcini/agaric/issues) | Deferred items, tech debt, future features | File with `gh issue create` when a fix is deferred |
+| [GitHub Issues](https://github.com/jfolcini/agaric/issues) | Deferred items, tech debt, future features | File with `gh issue create` only when the item names who is hurt and how — a user-visible failure you are deferring, something that blocks planned work, or a design decision. Mechanical cleanups get fixed in the PR; deliberate trades get a code comment. See `.claude/skills/batch-issues/SKILL.md` §4 "Disposing of a review finding" |
 | `docs/FEATURE-MAP.md` | Complete feature inventory for discovery/review | When features are added/changed (keep in sync with SESSION-LOG updates) |
 | `AGENTS.md` | This file | Only with explicit user approval |
 

@@ -331,6 +331,44 @@ Launch two review dimensions in parallel when a change has both code and user-fa
 
 Skip the UX reviewer for backend-only or test-only changes.
 
+### Disposing of a review finding
+
+Review depth is load-bearing and stays (above). What does **not** scale is turning every
+observation into permanent tracked work. A review producing six findings produced six
+issues, regardless of whether any was worth an afternoon. By Aug 2026 that had left a
+backlog of 192 open issues, 42 of them `severity:low` — a snapshot, not a metric to keep
+current, and the reason this section exists.
+
+Every finding gets exactly one of three dispositions. **Filing is the last resort, not
+the default:**
+
+1. **Fix it in this PR** — the default. Anything with a concrete failure scenario, plus
+   any mechanical cleanup (a redundant field, a dead branch, a wrong comment, a missing
+   `DROP`). Size is not the test: a 200-line fix with a real failure scenario belongs in
+   the PR; a 2-line change with an open design question does not.
+2. **Write it into a code comment** — a deliberate accepted trade, a non-obvious
+   invariant, a "why not X" rationale. This repo is unusually good at these; a comment at
+   the call site outlives an issue and is read by the person who needs it. "Filing so the
+   trade is recoverable rather than only living in a review thread" is an argument for a
+   comment, not for an issue.
+3. **File an issue** — only if at least one holds:
+   - it has a **user-visible failure scenario** you are deliberately not fixing now, or
+   - it **blocks or gates** other planned work, or
+   - it needs a **design decision** a reviewer cannot make alone.
+
+**Do not file** for: a redundant field, a doubled walk nobody has measured, the
+readability of a diagnostic, a trade the PR made on purpose, or a "worth doing if this is
+ever extended." Fix it, comment it, or let it go.
+
+**The self-reference check.** If a follow-up is about machinery the same PR just added —
+its diagnostics, its reporting, its guards — prefer fixing in-PR or dropping. When
+observability code generates more follow-up work than the thing it observes, that is
+churn, not diligence. #4232 added truncation reporting and its review spawned three
+issues, two of them about the reporting itself.
+
+The bar to clear before opening an issue: **name who is hurt and how.** If the answer is
+"a future maintainer's sense of tidiness", it is a comment or a drive-by fix.
+
 ## 5. MERGE
 
 Each issue already lives on its own branch and ships as its own PR — there is normally no
@@ -451,11 +489,10 @@ the backlog, not to stop. Pending PRs get merged at the next batch-boundary swee
 ## Principles
 
 - Pragmatic but rigorous: fix what's there, don't gold-plate, don't refactor beyond scope.
-- **Out-of-scope improvements go to GitHub issues, not TODO comments.** Binary choice:
-  (a) fix drive-by in the same PR if it's a 1-3 line change with no design questions, or
-  (b) file an issue (`gh issue create`; `--label plan` if multi-phase, `idea` for
-  speculative). "Not sure yet" is exactly why an issue exists. Do NOT create
-  `pending/PEND-*.md` files — that pattern was retired (2026-05-27 → 05-28).
+- **Out-of-scope improvements go to GitHub issues or code comments, never TODO comments.**
+  See [Disposing of a review finding](#disposing-of-a-review-finding) — filing is the
+  *last* of three options, not the default. Do NOT create `pending/PEND-*.md` files —
+  that pattern was retired (2026-05-27 → 05-28).
 - Every commit passes pre-commit; every push passes pre-push. Both run automatically.
 - Keep refactoring and feature work in separate commits so reverts stay surgical.
 
@@ -488,7 +525,8 @@ This applies with most force to claims that *support the conclusion you already 
 - **Parallel subagents doing git ops in a shared tree** — `git stash` is global and
   scrambles every concurrent agent's edits; use worktrees or forbid git in prompts.
 - **Running prek manually / inside subagents** — subagents run only their own tests.
-- **Letting improvement ideas slip** — file an issue immediately (60s); bar is low.
+- **Filing an issue instead of fixing or commenting** — the bar is a *named victim*, not
+  a confirmed finding; see §4 "Disposing of a review finding".
 - **Verify Rust with `cargo check --all-targets`** — `--tests` skips benches.
 - **dev.db schema must match the branch you push** — online clippy type-checks against it.
 - **Grep cross-table comparisons before a timestamp/enum column migration** — coupled
