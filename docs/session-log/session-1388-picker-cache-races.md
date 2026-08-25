@@ -18,7 +18,7 @@ first pass matched a NULL-content row's displayed "Untitled" placeholder by fold
 which also matched every one of "Untitled"'s own substrings ("unt", "tit", "title", ...) — and
 because blank titles sort first (#4138), a run of them could consume an entire result budget
 and drop a genuine match. Round two narrowed the match to a folded PREFIX test on the FTS
-path's cache supplement, and shared that test (`matchesPageRowFolded`) with the short-query
+path's cache supplement, and shared that test (`matchesBlankRowFolded`) with the short-query
 `matchSorter` path too, on the initial claim that `matchSorter`'s own ranking bounded the
 crowd-out there. Round three found that claim wrong — a prefix query ranks a blank row's
 "Untitled" hit at the SAME tier a genuine title match gets, not a fixed low one — and gave the
@@ -27,7 +27,7 @@ unconditionally, blank rows only fill the slots real matches don't use. A follow
 found the FTS path's OWN cache supplement had never received that partition (its
 `.slice(0, 10)` was still a flat, pagesListRef-ordered — i.e. blanks-first — filter, so a
 prefix query like `unt` reproduced the exact crowd-out on that path), and that
-`matchesPageRowFolded` recomputed the folded placeholder from scratch for every blank row on
+`matchesBlankRowFolded` recomputed the folded placeholder from scratch for every blank row on
 every keystroke; both are fixed here, the second by hoisting the fold to once per
 `searchPages` call (recomputed each call, not cached at module scope, since the active locale
 can change at runtime without a remount).
@@ -63,13 +63,13 @@ can change at runtime without a remount).
 - **#4152** — the localised `untitledOr()` placeholder is matched at **filter** time in both
   search paths, not at seed time: the stored title and therefore the sort key stay raw, which
   was the point of #4150. A NULL-content row's match text is decided by one shared helper,
-  `matchesPageRowFolded` — a fold-aware PREFIX test against the placeholder for a blank row,
+  `matchesBlankRowFolded` — a fold-aware PREFIX test against the placeholder for a blank row,
   the ordinary folded-SUBSTRING test (`matchesSearchFolded`) for a row with real content — so
   the two search paths can't diverge on what counts as a hit. Both paths also partition their
   result budget the same way: real-content matches are ranked/filtered first unconditionally,
   and blank rows are only admitted into the slots real matches don't use — `searchPagesViaCache`
   via a `matchSorter`-then-blanks concatenation, `searchPagesViaFts`'s cache supplement via the
-  same real-then-blank split before its `.slice(0, 10)`. `matchesPageRowFolded`'s per-blank-row
+  same real-then-blank split before its `.slice(0, 10)`. `matchesBlankRowFolded`'s per-blank-row
   fold of the placeholder is hoisted to `foldedUntitledPlaceholder()`, computed once per
   `searchPages` call rather than once per blank row per keystroke; it is recomputed on every
   call rather than cached at module scope, because the active locale can change at runtime

@@ -960,8 +960,8 @@ describe('searchPages — short query (<=2 chars)', () => {
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P30', title: '' }])
   })
 
-  // PR #4295 review, finding 1 — this mirrors the FTS-path crowd-out test
-  // below (`#4295 review, finding 1`, in the long-query describe block) for
+  // PR #4152 prefix rule — this mirrors the FTS-path crowd-out test
+  // below (`#4152 prefix rule`, in the long-query describe block) for
   // the SHORT-query cache path, which the PR's last commit deliberately left
   // untouched on the claim that `matchSorter`'s own ranking of the
   // "Untitled" placeholder text lands at "a fixed, low rank" that can only
@@ -976,13 +976,13 @@ describe('searchPages — short query (<=2 chars)', () => {
   // match out entirely — the exact bug the prefix-only narrowing
   // (`matchesBlankRowFolded`) was meant to fix on the FTS path, just reached
   // through this path's own ranking instead of an unranked array slice.
-  it('does not let "Untitled"-placeholder ranking crowd out a genuine cache match (#4295 review, finding 1)', async () => {
+  it('does not let "Untitled"-placeholder ranking crowd out a genuine cache match (#4152 prefix rule)', async () => {
     const { result } = renderHook(() => useBlockResolve())
 
     // 25 NULL-content ("Untitled") pages, plus one genuine page whose real
-    // title merely CONTAINS "un" ("f-UN"), not starts with it — the tier
-    // `matchSorter` ranks it at loses outright to every blank row's
-    // STARTS_WITH hit against "Untitled".
+    // title merely CONTAINS "un" ("My Fun Page"), rather than starting with
+    // it — the CONTAINS tier `matchSorter` ranks it at loses outright to
+    // every blank row's STARTS_WITH hit against "Untitled".
     const blanks = Array.from({ length: 25 }, (_, i) => ({ id: `BLANK${i}`, title: '' }))
     act(() => {
       result.current.pagesListRef.current = [...blanks, { id: 'GENUINE', title: 'My Fun Page' }]
@@ -1243,7 +1243,7 @@ describe('searchPages — long query (>2 chars)', () => {
     expect(nonCreateIds.filter((id) => id.startsWith('NULL'))).toHaveLength(0)
   })
 
-  // PR #4295 review, finding 1 — the test above queries "title", which the
+  // PR #4152 prefix rule — the test above queries "title", which the
   // prefix-only `matchesBlankRowFolded` excludes from matching a blank row
   // at all, so it cannot exercise the crowd-out this test is written for. A
   // genuine PREFIX of "Untitled" — "unt" here — still matches every blank
@@ -1252,7 +1252,7 @@ describe('searchPages — long query (>2 chars)', () => {
   // hands the unpartitioned, pagesListRef-ordered (blanks-first, #4138) list
   // straight to `.slice(0, 10)`, so ten blank rows fill the entire supplement
   // budget before the genuine cache-only match is ever considered.
-  it('does not let "Untitled"-prefix blank rows crowd out a genuine cache-only match for a prefix query (#4295 review, finding 1)', async () => {
+  it('does not let "Untitled"-prefix blank rows crowd out a genuine cache-only match for a prefix query (#4152 prefix rule)', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
