@@ -609,28 +609,38 @@ fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Ve
         }
     }
 
+    // A plain, undated `agaric.log`. The `Rotation::DAILY` appender above
+    // never writes one, but `Rotation::NEVER` DOES (it yields the bare
+    // prefix, no date), and hand-written test fixtures use it.
+    //
+    // #4290 — which family wins is decided by RECENCY, not by the mere
+    // ABSENCE of the other. The pre-#4290 rule (read the plain file only
+    // when no usable in-window dated file exists) defeated the very
+    // scenario the fallback was justified by: on the day the rotation
+    // policy is switched to `Rotation::NEVER`, the dated files written
+    // BEFORE the switch stay inside [`MAX_ROLLED_AGE_DAYS`] for a whole
+    // week, so `days` stays non-empty for that whole week and the live
+    // plain file — the only one still being appended to — is ignored. The
+    // summary then stops on the day of the switch, which is the "silently
+    // going blind" the fallback exists to prevent, and is a regression
+    // against the pre-#4216 code (that read `agaric.log` whenever
+    // `agaric.log.<today>` was absent).
+    //
+    // #4127's guarantee survives because it is the SAME comparison read the
+    // other way: a stale plain leftover is, by definition, older than the
+    // dated files production is still writing, so it loses and can neither
+    // be preferred over nor mixed into them. Only the inverse shape — a
+    // plain file NEWER than every in-window dated file — changes behaviour.
+    let plain_path = log_dir.join("agaric.log");
+    if plain_path.is_file() && plain_log_outranks_dated(&plain_path, &days) {
+        // Read it INSTEAD of the dated family rather than merging the two.
+        // #4127's rule is that the families are never mixed, and an undated
+        // file has no date key to order it by inside the chronological walk
+        // below; whichever family is live is the whole answer.
+        return read_errors_from_path(&plain_path);
+    }
+
     if days.is_empty() {
-        // Fall back to a plain `agaric.log`: the production appender never
-        // writes one, but this tolerates a future rotation-policy change
-        // (e.g. `Rotation::NEVER`, which DOES yield the bare prefix with no
-        // date) without silently going blind, and it is what hand-written
-        // test fixtures use.
-        //
-        // Reached when the loop above found no USABLE in-window dated
-        // file — which is broader than "no dated file exists": every
-        // dated file being older than [`MAX_ROLLED_AGE_DAYS`], or
-        // future-dated (clock skew), or not a regular file (a directory
-        // or dangling symlink wearing a dated name) also lands here. That
-        // is the same set of shapes the pre-#4216 code fell through on,
-        // so this is not a new preference for the stale file; and #4127's
-        // invariant is preserved exactly where it bites — whenever a
-        // readable in-window dated file exists, `days` is non-empty and
-        // this arm is unreachable, so a stale plain `agaric.log` can
-        // never be preferred over, or mixed into, the real dated files.
-        let plain_path = log_dir.join("agaric.log");
-        if plain_path.is_file() {
-            return read_errors_from_path(&plain_path);
-        }
         return Vec::new();
     }
 
@@ -660,6 +670,53 @@ fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Ve
         }
     }
     out
+}
+
+/// Does a plain, undated `agaric.log` outrank the dated `agaric.log.<date>`
+/// family — i.e. is it the file the app is currently writing?
+///
+/// #4290. The question is answered by RECENCY (mtime) because the two
+/// shapes that matter are indistinguishable by CATEGORY:
+///
+/// - a stale plain leftover sitting next to live dated files (#4127 — the
+///   dated family must win), and
+/// - a live plain file sitting next to dated files frozen by a
+///   `Rotation::NEVER` switch (the plain file must win),
+///
+/// are both just "a plain file and some in-window dated files". Only the
+/// clock separates them.
+///
+/// `days` being empty is the one case needing no comparison: there is
+/// nothing to outrank. That is the pre-#4290 fallback condition, kept
+/// exactly — an out-of-window, future-dated, or non-regular-file dated
+/// entry still leaves the plain file as the only readable log.
+///
+/// Everything else resolves toward #4127's conservative default:
+///
+/// - Ties lose. The plain file must be STRICTLY newer, so on a filesystem
+///   whose mtime granularity collapses two nearby writes onto one stamp the
+///   dated family still wins.
+/// - An unreadable mtime loses, on either side. Without a clock reading
+///   there is no evidence against the default, and a dated file whose
+///   metadata cannot be read is not evidence *for* the plain file.
+fn plain_log_outranks_dated(plain_path: &Path, days: &[(chrono::NaiveDate, PathBuf)]) -> bool {
+    // `path`'s mtime, or `None` if the filesystem will not say.
+    fn mtime(path: &Path) -> Option<std::time::SystemTime> {
+        fs::metadata(path).and_then(|meta| meta.modified()).ok()
+    }
+
+    if days.is_empty() {
+        return true;
+    }
+
+    let Some(plain_mtime) = mtime(plain_path) else {
+        return false;
+    };
+    let Some(newest_dated) = days.iter().filter_map(|(_, path)| mtime(path)).max() else {
+        return false;
+    };
+
+    plain_mtime > newest_dated
 }
 
 fn read_errors_from_path(path: &Path) -> Vec<String> {
@@ -2182,16 +2239,48 @@ mod tests {
         chrono::NaiveDate::from_ymd_opt(2025, 3, 10).expect("valid fixture date")
     }
 
+    /// The path `build_log_file_appender`'s `Rotation::DAILY` appender
+    /// produces for `date` — the single place the fixtures spell that
+    /// naming rule, so a test that has to reach a day's file after writing
+    /// it (to stamp its mtime, say) cannot spell it differently.
+    fn day_log_path(log_dir: &Path, date: chrono::NaiveDate) -> PathBuf {
+        log_dir.join(format!("agaric.log.{}", date.format("%Y-%m-%d")))
+    }
+
     /// Write `agaric.log.<date>` — the exact name `build_log_file_appender`'s
     /// `Rotation::DAILY` appender produces for that day.
     fn write_day_log(log_dir: &Path, date: chrono::NaiveDate, contents: &str) {
-        let name = format!("agaric.log.{}", date.format("%Y-%m-%d"));
-        fs::write(log_dir.join(name), contents).unwrap();
+        fs::write(day_log_path(log_dir, date), contents).unwrap();
     }
 
     fn day_before(date: chrono::NaiveDate, days: i64) -> chrono::NaiveDate {
         date.checked_sub_signed(chrono::Duration::days(days))
             .expect("fixture date arithmetic must not overflow")
+    }
+
+    /// A synthetic mtime for the #4290 fixtures: `secs` seconds after the
+    /// Unix epoch. Absolute values are irrelevant — only their ORDER is
+    /// read — but they are far enough apart that no filesystem's timestamp
+    /// granularity can collapse two of them together.
+    fn t4290(secs: u64) -> std::time::SystemTime {
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs)
+    }
+
+    /// Stamp `path`'s mtime explicitly.
+    ///
+    /// #4290's rule compares mtimes, so a fixture that relies on write
+    /// ORDER to produce them is only incidentally deterministic: two writes
+    /// microseconds apart can land on one stamp if the filesystem's
+    /// granularity is coarse, and a tie deliberately resolves toward the
+    /// dated family. Stamping makes each direction of the comparison a
+    /// property of the fixture rather than of the machine running it.
+    fn set_mtime(path: &Path, at: std::time::SystemTime) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("fixture file must open for writing to carry an mtime stamp")
+            .set_modified(at)
+            .expect("filesystem must support setting mtime");
     }
 
     /// #4216 case 2 — a report about something that happened yesterday.
@@ -2680,6 +2769,158 @@ mod tests {
         assert!(
             !fallback.iter().any(|l| l.contains("M4216_TOO_OLD")),
             "an out-of-window dated file must not be read, got: {fallback:?}"
+        );
+    }
+
+    /// #4290 — a plain `agaric.log` NEWER than every in-window dated file
+    /// is the live log, and must win.
+    ///
+    /// This is the `Rotation::NEVER` switch the fallback's own comment
+    /// justified itself by, and the shape the pre-#4290 predicate got
+    /// backwards: the dated files written before the switch stay inside
+    /// [`MAX_ROLLED_AGE_DAYS`], so `days` is non-empty for the whole
+    /// retention window and the "no usable in-window dated file" condition
+    /// never fires. The triager's summary then stops on the day of the
+    /// switch — blind to exactly the period they are reporting about.
+    ///
+    /// The fixture keeps a dated file for `today` itself, so the discarded
+    /// family is unambiguously "usable and in-window": pre-fix this test
+    /// sees only the dated markers.
+    #[test]
+    fn recent_errors_prefers_a_live_plain_log_over_stale_in_window_dated_files() {
+        let today = d4216_today();
+
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        write_day_log(
+            &log_dir,
+            day_before(today, 1),
+            "x ERROR [agaric] M4290_DATED_OLDER\n",
+        );
+        write_day_log(&log_dir, today, "x ERROR [agaric] M4290_DATED_NEWER\n");
+        fs::write(
+            log_dir.join("agaric.log"),
+            "x ERROR [agaric] M4290_LIVE_PLAIN\n",
+        )
+        .unwrap();
+
+        set_mtime(&day_log_path(&log_dir, day_before(today, 1)), t4290(1_000));
+        set_mtime(&day_log_path(&log_dir, today), t4290(2_000));
+        set_mtime(&log_dir.join("agaric.log"), t4290(3_000));
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            errors.iter().any(|l| l.contains("M4290_LIVE_PLAIN")),
+            "#4290: a plain agaric.log newer than every in-window dated \
+             file is the live log and its errors must reach the report, \
+             got: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|l| l.contains("M4290_DATED_NEWER")),
+            "the frozen dated family must not be mixed into the live \
+             plain file's errors, got: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|l| l.contains("M4290_DATED_OLDER")),
+            "the frozen dated family must not be mixed into the live \
+             plain file's errors, got: {errors:?}"
+        );
+    }
+
+    /// #4290's other direction, stated as a clock fact rather than as a
+    /// side effect of fixture write order: a plain `agaric.log` OLDER than
+    /// the dated family stays out of the report.
+    ///
+    /// `recent_errors_never_mixes_a_stale_plain_log_into_the_dated_family`
+    /// pins the same guarantee, but its plain file is stale only because it
+    /// happens to be written first. This one stamps the mtimes, so the
+    /// #4127 default is pinned by the comparison the code actually makes.
+    #[test]
+    fn recent_errors_ignores_a_plain_log_older_than_the_dated_family() {
+        let today = d4216_today();
+
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        fs::write(
+            log_dir.join("agaric.log"),
+            "x ERROR [agaric] M4290_STALE_PLAIN\n",
+        )
+        .unwrap();
+        write_day_log(
+            &log_dir,
+            day_before(today, 1),
+            "x ERROR [agaric] M4290_LIVE_YESTERDAY\n",
+        );
+        write_day_log(&log_dir, today, "x ERROR [agaric] M4290_LIVE_TODAY\n");
+
+        set_mtime(&log_dir.join("agaric.log"), t4290(1_000));
+        set_mtime(&day_log_path(&log_dir, day_before(today, 1)), t4290(2_000));
+        set_mtime(&day_log_path(&log_dir, today), t4290(3_000));
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            !errors.iter().any(|l| l.contains("M4290_STALE_PLAIN")),
+            "#4127: a plain agaric.log older than the dated family is a \
+             leftover and must never be read, got: {errors:?}"
+        );
+        assert_eq!(
+            errors.len(),
+            2,
+            "exactly the two dated days, with the stale plain file neither \
+             preferred nor mixed in, got: {errors:?}"
+        );
+        assert!(
+            errors[0].contains("M4290_LIVE_YESTERDAY") && errors[1].contains("M4290_LIVE_TODAY"),
+            "both dated days, chronological, newest last, got: {errors:?}"
+        );
+    }
+
+    /// #4290 — an mtime TIE resolves toward the dated family.
+    ///
+    /// The comparison is strictly-newer, not newer-or-equal, and that is
+    /// load-bearing rather than incidental: it is what keeps every
+    /// pre-existing #4127 fixture green. Those fixtures write the stale
+    /// plain file and the live dated file within microseconds of each
+    /// other and rely on the plain one being older; on a filesystem whose
+    /// timestamp granularity is coarse enough to collapse both writes onto
+    /// one stamp, a newer-or-equal comparison would flip them and start
+    /// preferring the stale file.
+    #[test]
+    fn recent_errors_gives_an_mtime_tie_to_the_dated_family() {
+        let today = d4216_today();
+
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        fs::write(
+            log_dir.join("agaric.log"),
+            "x ERROR [agaric] M4290_TIED_PLAIN\n",
+        )
+        .unwrap();
+        write_day_log(&log_dir, today, "x ERROR [agaric] M4290_TIED_DATED\n");
+
+        let same_instant = t4290(2_000);
+        set_mtime(&log_dir.join("agaric.log"), same_instant);
+        set_mtime(&day_log_path(&log_dir, today), same_instant);
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            errors.iter().any(|l| l.contains("M4290_TIED_DATED")),
+            "on a tie the dated family — what production writes — must \
+             still be read, got: {errors:?}"
+        );
+        assert!(
+            !errors.iter().any(|l| l.contains("M4290_TIED_PLAIN")),
+            "a tie is not evidence that the plain file is live, so #4127's \
+             default must hold, got: {errors:?}"
         );
     }
 
