@@ -30,8 +30,8 @@
 //! bind the socket to the source address that route selects. `getsockname()` then
 //! reads that selection back. Nothing is transmitted, nothing is observable from
 //! the network, and both calls are non-blocking — two syscalls, no I/O wait, which
-//! is why [`probe_peer_egress`] is a plain synchronous fn callable from an async
-//! context.
+//! is why [`probe_peer_egress_with`] is a plain synchronous fn callable from an
+//! async context.
 //!
 //! Comparing that selection against the *prefix* the sync endpoint actually bound
 //! answers a question no timeout can: *would our packets to this peer even leave
@@ -316,7 +316,7 @@ fn shares_prefix(bound: IpAddr, probed: IpAddr, prefix_len: Option<u8>) -> Optio
 /// `sync_daemon::lan_interface::route_source_ipv4`, generalised to both families
 /// and to a caller-supplied destination; that one aims at TEST-NET-1 to find the
 /// default route's source address, this one aims at a peer.
-fn system_source_address_for(dest: SocketAddr) -> Option<IpAddr> {
+pub(crate) fn system_source_address_for(dest: SocketAddr) -> Option<IpAddr> {
     let wildcard: SocketAddr = match dest {
         SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
         SocketAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
@@ -334,7 +334,17 @@ fn system_source_address_for(dest: SocketAddr) -> Option<IpAddr> {
 ///
 /// `bound` is the endpoint's own bound sockets, each carrying the prefix its bind is
 /// confined to (see [`BoundSocket`]); `candidates` are the peer's advertised
-/// addresses.
+/// addresses. `source_for` is the route lookup — production passes
+/// [`system_source_address_for`] (the two syscalls this module exists to make),
+/// tests pass a route table they wrote.
+///
+/// That seam is not a convenience. The aggregation here is policy — which candidate
+/// wins, which verdict outranks which, which bind a candidate is judged against —
+/// and policy that can only be exercised against the machine it happens to be
+/// running on is policy no test can pin. With the seam, neither the rules nor the
+/// ordering depend on CI's network topology; the seam is threaded one level further
+/// up, through `sync_daemon::session_supervisor::diagnose_dial_timeout_with`, for
+/// exactly the same reason (#4299 review).
 ///
 /// # Why one `SameEgress` outranks every mismatch
 ///
@@ -350,60 +360,75 @@ fn system_source_address_for(dest: SocketAddr) -> Option<IpAddr> {
 /// staying silent about a captured LAN, which leaves the user exactly where they
 /// were before this module existed. The expensive error is telling a user with a
 /// perfectly good network that it is broken.
-#[must_use]
-pub fn probe_peer_egress(bound: &[BoundSocket], candidates: &[SocketAddr]) -> EgressReport {
-    probe_with(bound, candidates, system_source_address_for)
-}
-
-/// [`probe_peer_egress`] with the syscall injected.
 ///
-/// The aggregation above is policy — which candidate wins, which verdict outranks
-/// which — and policy that can only be exercised against the machine it happens to
-/// be running on is policy no test can pin. `source_for` is the seam: production
-/// passes [`system_source_address_for`], tests pass a route table they wrote, and
-/// neither the rules nor the ordering depend on CI's network topology.
-fn probe_with<F>(bound: &[BoundSocket], candidates: &[SocketAddr], source_for: F) -> EgressReport
+/// # Every same-family bind, not the first one (#4299 review)
+///
+/// A candidate is compared against **all** the bound sockets of its own family, and
+/// a source address inside *any* of their prefixes is a `SameEgress`. The rule is
+/// the peer-level one above, applied to binds instead of candidates:
+/// `RoutedElsewhere` means *every* path we could take leaves this host by somewhere
+/// else, and a bind whose own prefix contains the selected source is a path. An
+/// earlier revision took only the first same-family bind, which — given a second
+/// socket on the subnet the system actually chose — reported a capture while a
+/// perfectly good local path existed, the one direction this module cannot afford
+/// (see [`compare`]).
+///
+/// Production has a single IPv4 bind today (`transport::endpoint::lan_only` calls
+/// `clear_ip_transports()` before adding it), so the two rules cannot disagree
+/// there. The parameter is a slice, though, and a slice that quietly ignored all but
+/// its first same-family element would be a trap for the bind policy that widens it.
+#[must_use]
+pub(crate) fn probe_peer_egress_with<F>(
+    bound: &[BoundSocket],
+    candidates: &[SocketAddr],
+    source_for: F,
+) -> EgressReport
 where
     F: Fn(SocketAddr) -> Option<IpAddr>,
 {
     let mut mismatch: Option<EgressReport> = None;
 
     for candidate in candidates {
-        // Like with like: a v6 candidate is only ever compared against a v6 bind —
+        // Like with like: a v6 candidate is only ever compared against v6 binds —
         // and against *that* bind's own prefix, never a prefix borrowed from the
         // other family's socket.
-        let Some(bound_socket) = bound
-            .iter()
-            .find(|b| b.addr.is_ipv4() == candidate.is_ipv4())
-        else {
-            continue;
+        let same_family = || {
+            bound
+                .iter()
+                .filter(move |b| b.addr.is_ipv4() == candidate.is_ipv4())
         };
-        let bound_addr = bound_socket.addr.ip();
+        // Nothing of this family to compare against: don't pay for the lookup.
+        if same_family().next().is_none() {
+            continue;
+        }
         let Some(probed) = source_for(*candidate) else {
             continue;
         };
-        match compare(bound_addr, bound_socket.prefix_len, probed) {
-            EgressVerdict::SameEgress => {
-                // One good path is enough; stop and say so.
-                return EgressReport {
-                    verdict: EgressVerdict::SameEgress,
-                    bound: Some(bound_addr),
-                    bound_prefix_len: bound_socket.prefix_len,
-                    probed: Some(probed),
-                    candidate: Some(*candidate),
-                };
+        for bound_socket in same_family() {
+            let bound_addr = bound_socket.addr.ip();
+            match compare(bound_addr, bound_socket.prefix_len, probed) {
+                EgressVerdict::SameEgress => {
+                    // One good path is enough; stop and say so.
+                    return EgressReport {
+                        verdict: EgressVerdict::SameEgress,
+                        bound: Some(bound_addr),
+                        bound_prefix_len: bound_socket.prefix_len,
+                        probed: Some(probed),
+                        candidate: Some(*candidate),
+                    };
+                }
+                EgressVerdict::RoutedElsewhere => {
+                    // Remember the first, keep looking for a path that works.
+                    mismatch.get_or_insert(EgressReport {
+                        verdict: EgressVerdict::RoutedElsewhere,
+                        bound: Some(bound_addr),
+                        bound_prefix_len: bound_socket.prefix_len,
+                        probed: Some(probed),
+                        candidate: Some(*candidate),
+                    });
+                }
+                EgressVerdict::Inconclusive => {}
             }
-            EgressVerdict::RoutedElsewhere => {
-                // Remember the first, keep looking for a path that works.
-                mismatch.get_or_insert(EgressReport {
-                    verdict: EgressVerdict::RoutedElsewhere,
-                    bound: Some(bound_addr),
-                    bound_prefix_len: bound_socket.prefix_len,
-                    probed: Some(probed),
-                    candidate: Some(*candidate),
-                });
-            }
-            EgressVerdict::Inconclusive => {}
         }
     }
 
@@ -651,7 +676,7 @@ mod tests {
         );
     }
 
-    // -- probe_with: the aggregation policy ---------------------------------
+    // -- probe_peer_egress_with: the aggregation policy ---------------------
     //
     // Every case below supplies its own route table, so none of these depend on
     // the machine's real network — they pass identically in CI and on a laptop
@@ -669,7 +694,7 @@ mod tests {
 
     #[test]
     fn a_tunnel_that_swallows_the_lan_is_reported_4299() {
-        let report = probe_with(
+        let report = probe_peer_egress_with(
             &[bound_sock("192.160.160.42:41234", 24)],
             &[sock("192.160.160.80:9999")],
             routes(&[("192.160.160.80:9999", "100.64.0.1")]),
@@ -688,7 +713,7 @@ mod tests {
 
     #[test]
     fn a_healthy_lan_route_reports_same_egress() {
-        let report = probe_with(
+        let report = probe_peer_egress_with(
             &[bound_sock("192.168.1.5:41234", 24)],
             &[sock("192.168.1.9:9999")],
             routes(&[("192.168.1.9:9999", "192.168.1.5")]),
@@ -707,13 +732,13 @@ mod tests {
             ("192.168.1.9:9999", "192.168.1.5"),
         ]);
         assert_eq!(
-            probe_with(&bound, &candidates, &table).verdict,
+            probe_peer_egress_with(&bound, &candidates, &table).verdict,
             EgressVerdict::SameEgress
         );
         // …and the ordering of the candidate list must not change the answer.
         let reversed = [candidates[1], candidates[0]];
         assert_eq!(
-            probe_with(&bound, &reversed, &table).verdict,
+            probe_peer_egress_with(&bound, &reversed, &table).verdict,
             EgressVerdict::SameEgress
         );
     }
@@ -723,12 +748,12 @@ mod tests {
     ///
     /// WiFi bound at `192.168.1.5/24`, a `br0` bridge at `192.168.1.9` holding the
     /// lower-metric route, and a peer that is simply asleep. The probe must add
-    /// nothing here — the aggregation in [`probe_with`] is where a `RoutedElsewhere`
-    /// would actually reach a user, and pinning the rule only at `compare` would
-    /// leave that route untested.
+    /// nothing here — the aggregation in [`probe_peer_egress_with`] is where a
+    /// `RoutedElsewhere` would actually reach a user, and pinning the rule only at
+    /// `compare` would leave that route untested.
     #[test]
     fn a_bridge_on_our_own_lan_is_not_reported_as_a_capture_4299() {
-        let report = probe_with(
+        let report = probe_peer_egress_with(
             &[bound_sock("192.168.1.5:41234", 24)],
             &[sock("192.168.1.80:9999")],
             routes(&[("192.168.1.80:9999", "192.168.1.9")]),
@@ -752,7 +777,7 @@ mod tests {
         let candidates = [sock("192.160.160.80:9999")];
         let table = routes(&[("192.160.160.80:9999", "100.64.0.1")]);
         assert_eq!(
-            probe_with(
+            probe_peer_egress_with(
                 &[bound_sock_unknown("192.160.160.42:41234")],
                 &candidates,
                 &table
@@ -762,7 +787,7 @@ mod tests {
             "without a prefix there is no link for the tunnel's source to be off"
         );
         assert_eq!(
-            probe_with(
+            probe_peer_egress_with(
                 &[bound_sock("192.160.160.42:41234", 24)],
                 &candidates,
                 &table
@@ -777,7 +802,7 @@ mod tests {
     fn a_candidate_with_no_bound_socket_of_its_family_is_skipped() {
         // v4-only bind, v6-only candidate: nothing to compare, and the v6
         // candidate must not be measured against the v4 bind.
-        let report = probe_with(
+        let report = probe_peer_egress_with(
             &[bound_sock("192.168.1.5:41234", 24)],
             &[sock("[fd00::9]:9999")],
             routes(&[("[fd00::9]:9999", "fd00::5")]),
@@ -787,7 +812,7 @@ mod tests {
 
         // …and the mirror, so the rule is pinned in both directions rather than
         // on the one arm that happened to be written first.
-        let mirrored = probe_with(
+        let mirrored = probe_peer_egress_with(
             &[bound_sock("[fd00::5]:41234", 64)],
             &[sock("192.168.1.9:9999")],
             routes(&[("192.168.1.9:9999", "100.64.0.1")]),
@@ -802,7 +827,7 @@ mod tests {
             bound_sock("192.168.1.5:41234", 24),
             bound_sock("[fd00::5]:41234", 64),
         ];
-        let report = probe_with(
+        let report = probe_peer_egress_with(
             &bound,
             &[sock("[fd00::9]:9999")],
             routes(&[("[fd00::9]:9999", "fd00:abcd::1")]),
@@ -811,9 +836,63 @@ mod tests {
         assert_eq!(report.bound, Some(ip("fd00::5")));
     }
 
+    /// A candidate inside the *second* same-family bind's prefix is not routed
+    /// elsewhere (#4299 review).
+    ///
+    /// The first bind is on a different subnet from the one the system chose, so a
+    /// probe that consulted only the first same-family bind would report a capture
+    /// while a local path plainly exists — the confidently-wrong direction
+    /// [`compare`] exists to avoid. `bound` is a slice; every element of the
+    /// candidate's family gets asked.
+    #[test]
+    fn a_candidate_inside_a_later_binds_prefix_is_not_a_mismatch_4299() {
+        let bound = [
+            bound_sock("192.168.1.5:41234", 24),
+            bound_sock("10.0.0.5:41234", 24),
+        ];
+        let report = probe_peer_egress_with(
+            &bound,
+            &[sock("10.0.0.9:9999")],
+            routes(&[("10.0.0.9:9999", "10.0.0.5")]),
+        );
+        assert_eq!(
+            report.verdict,
+            EgressVerdict::SameEgress,
+            "the source the system chose is inside the second bind's own /24; that \
+             bind is a path to this peer and a path is not a capture"
+        );
+        assert_eq!(
+            report.bound,
+            Some(ip("10.0.0.5")),
+            "…and the report must name the bind that actually agreed, not the one \
+             that happened to be listed first"
+        );
+        assert_eq!(report.bound_prefix_len, Some(24));
+    }
+
+    /// The mirror: when *no* same-family bind contains the selected source, the
+    /// mismatch stands — checking every bind must not have widened into silence.
+    #[test]
+    fn a_candidate_outside_every_binds_prefix_is_still_a_mismatch_4299() {
+        let report = probe_peer_egress_with(
+            &[
+                bound_sock("192.168.1.5:41234", 24),
+                bound_sock("10.0.0.5:41234", 24),
+            ],
+            &[sock("10.0.0.9:9999")],
+            routes(&[("10.0.0.9:9999", "100.64.0.1")]),
+        );
+        assert_eq!(report.verdict, EgressVerdict::RoutedElsewhere);
+        assert_eq!(
+            report.bound,
+            Some(ip("192.168.1.5")),
+            "the first disagreeing bind is the one the log line reports"
+        );
+    }
+
     #[test]
     fn a_route_that_does_not_resolve_is_inconclusive() {
-        let report = probe_with(
+        let report = probe_peer_egress_with(
             &[bound_sock("192.168.1.5:41234", 24)],
             &[sock("192.168.1.9:9999")],
             routes(&[]),
@@ -825,11 +904,11 @@ mod tests {
     fn no_bound_sockets_or_no_candidates_is_inconclusive() {
         let table = routes(&[("192.168.1.9:9999", "100.64.0.1")]);
         assert_eq!(
-            probe_with(&[], &[sock("192.168.1.9:9999")], &table).verdict,
+            probe_peer_egress_with(&[], &[sock("192.168.1.9:9999")], &table).verdict,
             EgressVerdict::Inconclusive
         );
         assert_eq!(
-            probe_with(&[bound_sock("192.168.1.5:41234", 24)], &[], &table).verdict,
+            probe_peer_egress_with(&[bound_sock("192.168.1.5:41234", 24)], &[], &table).verdict,
             EgressVerdict::Inconclusive
         );
     }
@@ -838,7 +917,7 @@ mod tests {
     /// It must never produce a diagnosis, whatever the route table says.
     #[test]
     fn a_loopback_bound_endpoint_never_diagnoses() {
-        let report = probe_with(
+        let report = probe_peer_egress_with(
             &[bound_sock("127.0.0.1:41234", 8)],
             &[sock("192.168.1.9:9999")],
             routes(&[("192.168.1.9:9999", "100.64.0.1")]),
@@ -875,7 +954,12 @@ mod tests {
 
         // And the whole path, against a loopback bind, must stay silent.
         assert_eq!(
-            probe_peer_egress(&[bound_sock("127.0.0.1:41234", 8)], &[sock("127.0.0.1:9")]).verdict,
+            probe_peer_egress_with(
+                &[bound_sock("127.0.0.1:41234", 8)],
+                &[sock("127.0.0.1:9")],
+                system_source_address_for
+            )
+            .verdict,
             EgressVerdict::Inconclusive,
             "a loopback bind is inconclusive by rule, whatever the host's routes are"
         );

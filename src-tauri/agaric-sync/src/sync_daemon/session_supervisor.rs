@@ -64,7 +64,9 @@ use iroh_dns::dns::DnsResolver;
 use crate::sync_protocol::{SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 use crate::transport::driver::{Role, SessionLimits, finish_session, run_session};
-use crate::transport::egress_probe::{BoundSocket, EgressReport, EgressVerdict, probe_peer_egress};
+use crate::transport::egress_probe::{
+    BoundSocket, EgressReport, EgressVerdict, probe_peer_egress_with, system_source_address_for,
+};
 use crate::transport::service::{SYNC_ALPN, SyncService};
 use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
@@ -1363,15 +1365,65 @@ const ROUTED_ELSEWHERE_MESSAGE: &str = "Connection failed: discovered on the net
 /// Synchronous inside an async fn on purpose: the probe is two non-blocking
 /// syscalls that send nothing (see [`crate::transport::egress_probe`]), so there
 /// is nothing here to await and no reason to pay a `spawn_blocking`.
+///
+/// This half is only the production wiring; the gate and the composition it
+/// describes live in [`diagnose_dial_timeout_with`], which is where they are
+/// tested.
 fn diagnose_dial_timeout(
     endpoint: &Endpoint,
     bind_prefix_len: Option<u8>,
     peer: &DiscoveredPeer,
     mdns_seen_at: Option<tokio::time::Instant>,
 ) -> Option<EgressReport> {
+    diagnose_dial_timeout_with(
+        &endpoint.bound_sockets(),
+        bind_prefix_len,
+        peer,
+        mdns_seen_at,
+        system_source_address_for,
+    )
+}
+
+/// [`diagnose_dial_timeout`] with the endpoint's bound sockets supplied and the
+/// route lookup injected — the seam the composition above is actually tested
+/// through (#4299 review).
+///
+/// # Why the seam has to reach this far up
+///
+/// `transport::egress_probe` tests its rules and its aggregation with a route table
+/// it writes. What no test there can reach is the *assembly* done here: turning
+/// `peer.addresses` plus `peer.port` into candidate sockets, and pairing the one
+/// prefix the bind policy measured with the bound socket it was measured on. Every
+/// test that drove [`diagnose_dial_timeout`] did so against the loopback endpoint
+/// every harness in this tree builds, where `compare`'s loopback rule answers
+/// `Inconclusive` before either of those compositions can matter — so two mutations
+/// of this function left the whole suite green, and the second of them,
+/// `bind_prefix_len.filter(|_| addr.is_ipv4())` reading `is_ipv6()`, would have
+/// silenced the diagnosis in production permanently. The feature would have shipped
+/// doing nothing, which is precisely the failure #4299 exists to name.
+///
+/// Taking `bound_sockets` as a slice rather than an [`Endpoint`] is the other half:
+/// a test can hand this a *LAN* bind, which an endpoint bound in CI cannot be.
+///
+/// The gate and the composition live here, so [`diagnose_dial_timeout`] is nothing
+/// but the production wiring — the real bound sockets and the real
+/// [`system_source_address_for`] — and there is no second code path to keep honest.
+fn diagnose_dial_timeout_with<F>(
+    bound_sockets: &[std::net::SocketAddr],
+    bind_prefix_len: Option<u8>,
+    peer: &DiscoveredPeer,
+    mdns_seen_at: Option<tokio::time::Instant>,
+    source_for: F,
+) -> Option<EgressReport>
+where
+    F: Fn(std::net::SocketAddr) -> Option<std::net::IpAddr>,
+{
     if !mdns_is_reaching_us(mdns_seen_at) {
         return None;
     }
+    // The peer's advertised addresses are dialled on the port it advertised, so that
+    // is the destination the route lookup must be asked about: a route is selected
+    // per destination address, and the socket the probe opens is a real one.
     let candidates: Vec<std::net::SocketAddr> = peer
         .addresses
         .iter()
@@ -1383,15 +1435,14 @@ fn diagnose_dial_timeout(
     // silently borrowing a length measured on the other family. Production has no
     // such socket in any case: `lan_only` calls `clear_ip_transports()` before adding
     // its single IPv4 bind, so `bound_sockets()` returns exactly that one.
-    let bound: Vec<BoundSocket> = endpoint
-        .bound_sockets()
-        .into_iter()
+    let bound: Vec<BoundSocket> = bound_sockets
+        .iter()
         .map(|addr| BoundSocket {
-            addr,
+            addr: *addr,
             prefix_len: bind_prefix_len.filter(|_| addr.is_ipv4()),
         })
         .collect();
-    let report = probe_peer_egress(&bound, &candidates);
+    let report = probe_peer_egress_with(&bound, &candidates, source_for);
     (report.verdict == EgressVerdict::RoutedElsewhere).then_some(report)
 }
 
@@ -3853,6 +3904,179 @@ mod tests {
         );
 
         endpoint.close().await;
+    }
+
+    /// A route table as a lookup, keyed on the **exact destination socket** —
+    /// address *and* port — the way the kernel's own route selection is. Anything
+    /// absent is a route that does not resolve.
+    ///
+    /// The port being part of the key is load-bearing here: it is what makes a
+    /// candidate assembled with the wrong port read as "no route" instead of
+    /// quietly agreeing.
+    fn routes(pairs: &[(&str, &str)]) -> impl Fn(std::net::SocketAddr) -> Option<std::net::IpAddr> {
+        let table: std::collections::HashMap<std::net::SocketAddr, std::net::IpAddr> = pairs
+            .iter()
+            .map(|(dest, src)| {
+                (
+                    dest.parse().expect("test socket address parses"),
+                    src.parse().expect("test address parses"),
+                )
+            })
+            .collect();
+        move |dest| table.get(&dest).copied()
+    }
+
+    /// A peer as mDNS announced it: one address, one port.
+    fn announced_peer(address: &str, port: u16) -> DiscoveredPeer {
+        DiscoveredPeer {
+            device_id: "PEER_4299".to_string(),
+            endpoint_id: Some(crate::mdns::test_endpoint_id("PEER_4299")),
+            addresses: vec![address.parse().expect("test address parses")],
+            port,
+        }
+    }
+
+    /// The recorded #4299 capture, driven through the **composition** rather than
+    /// through `compare` (#4299 review).
+    ///
+    /// Every other test of this arm binds loopback, because that is the only thing
+    /// an endpoint in CI can bind — and a loopback bind short-circuits to
+    /// `Inconclusive` in `egress_probe::compare` before the candidates this function
+    /// assembles or the prefix it pairs with each socket matter at all. So this one
+    /// supplies the bound sockets and the route table directly: a LAN bind at
+    /// `192.160.160.42/24`, a peer announced at `192.160.160.80:9999`, and a system
+    /// that would source that peer's traffic from the tunnel's `100.64.0.1`.
+    ///
+    /// Two mutations of the composition survived the entire suite before this test
+    /// existed, and each of them reddens it:
+    ///
+    /// * `SocketAddr::new(*ip, peer.port)` → port `0`: the route table is keyed on
+    ///   the destination socket, so the candidate is asked about a destination the
+    ///   system has no route for and the probe falls silent.
+    /// * `bind_prefix_len.filter(|_| addr.is_ipv4())` → `is_ipv6()`: the IPv4 bind
+    ///   loses the only prefix in existence, `compare` has no link to judge the
+    ///   tunnel's source against, and the diagnosis is silenced *permanently in
+    ///   production* — the feature ships doing nothing.
+    #[tokio::test]
+    async fn a_captured_lan_is_diagnosed_through_the_composition_4299() {
+        let peer = announced_peer("192.160.160.80", 9999);
+
+        let report = diagnose_dial_timeout_with(
+            &["192.160.160.42:41234".parse().unwrap()],
+            Some(24),
+            &peer,
+            Some(tokio::time::Instant::now()),
+            routes(&[("192.160.160.80:9999", "100.64.0.1")]),
+        )
+        .expect("mDNS is fresh and the system sources this peer from the tunnel");
+
+        assert_eq!(report.verdict, EgressVerdict::RoutedElsewhere);
+        assert_eq!(
+            report.candidate,
+            Some("192.160.160.80:9999".parse().unwrap()),
+            "the candidate is the announced address on the announced port; a \
+             candidate assembled with any other port asks the system about a \
+             destination this peer is not on"
+        );
+        assert_eq!(
+            report.bound,
+            Some("192.160.160.42".parse::<std::net::IpAddr>().unwrap())
+        );
+        assert_eq!(
+            report.bound_prefix_len,
+            Some(24),
+            "the bind policy's prefix must reach the socket it was measured on, or \
+             there is no link for the tunnel's source address to be off"
+        );
+        assert_eq!(
+            dial_timeout_text(&peer.device_id, Some(report)),
+            ROUTED_ELSEWHERE_MESSAGE,
+            "…and the whole path from a fresh announcement to the user-facing text"
+        );
+    }
+
+    /// The same composition, one route table apart, must stay silent: the system
+    /// sources this peer from an address inside the prefix we bound, so a path
+    /// exists and the peer is simply asleep.
+    ///
+    /// The pair with the test above is the point — a mutant that always diagnosed
+    /// would pass one of them and a mutant that never diagnosed would pass the
+    /// other.
+    #[tokio::test]
+    async fn a_route_inside_the_bound_prefix_stays_a_plain_timeout_4299() {
+        let peer = announced_peer("192.160.160.80", 9999);
+        assert!(
+            diagnose_dial_timeout_with(
+                &["192.160.160.42:41234".parse().unwrap()],
+                Some(24),
+                &peer,
+                Some(tokio::time::Instant::now()),
+                routes(&[("192.160.160.80:9999", "192.160.160.43")]),
+            )
+            .is_none(),
+            "a second address on our own /24 still reaches this peer over our own \
+             link; telling this user a VPN may be eating their LAN would be \
+             confidently wrong"
+        );
+        // …and the gate still closes first, even against the capture's own table:
+        // no announcement, no probe, whatever the routes say.
+        assert!(
+            diagnose_dial_timeout_with(
+                &["192.160.160.42:41234".parse().unwrap()],
+                Some(24),
+                &peer,
+                None,
+                routes(&[("192.160.160.80:9999", "100.64.0.1")]),
+            )
+            .is_none(),
+            "a peer we have heard no announcement from is a peer that is not there"
+        );
+    }
+
+    /// The prefix is paired with the socket it was measured on, in both directions
+    /// (#4299 review).
+    ///
+    /// `BindDecision` ranks and binds IPv4 only, so `bind_prefix_len` describes the
+    /// v4 socket and nothing else. Both halves are asserted against the *same* pair
+    /// of bound sockets, so the family test cannot be satisfied by a mutation that
+    /// merely moves the prefix to the other socket: `is_ipv6()` in place of
+    /// `is_ipv4()` reddens the first half by silencing the real capture and reddens
+    /// the second by inventing one out of a length measured on the other family.
+    #[tokio::test]
+    async fn the_bind_prefix_belongs_to_the_socket_it_was_measured_on_4299() {
+        let bound_sockets: [std::net::SocketAddr; 2] = [
+            "192.160.160.42:41234".parse().unwrap(),
+            "[fd00::42]:41234".parse().unwrap(),
+        ];
+        let fresh = || Some(tokio::time::Instant::now());
+
+        let v4 = diagnose_dial_timeout_with(
+            &bound_sockets,
+            Some(24),
+            &announced_peer("192.160.160.80", 9999),
+            fresh(),
+            routes(&[("192.160.160.80:9999", "100.64.0.1")]),
+        )
+        .expect("the v4 bind carries the v4 prefix, and the tunnel's source is off it");
+        assert_eq!(
+            v4.bound,
+            Some("192.160.160.42".parse::<std::net::IpAddr>().unwrap())
+        );
+        assert_eq!(v4.bound_prefix_len, Some(24));
+
+        assert!(
+            diagnose_dial_timeout_with(
+                &bound_sockets,
+                Some(24),
+                &announced_peer("fd00::80", 9999),
+                fresh(),
+                routes(&[("[fd00::80]:9999", "fd00:abcd::1")]),
+            )
+            .is_none(),
+            "no v6 prefix exists to carry, so a v6 candidate can only ever be \
+             inconclusive — it must never be judged against a length measured on \
+             the IPv4 interface"
+        );
     }
 
     /// The suppression-key property, for the one text #4299 adds.
