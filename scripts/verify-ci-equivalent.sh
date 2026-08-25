@@ -208,11 +208,27 @@ devdb_migration_gap() {
     # would otherwise print to the terminal while $out stays empty — a
     # hard block with a headline and a blank body.
     out="$(python3 - "$src_tauri" "$migrations_dir" 2>&1 <<'PYEOF'
+import contextlib
 import os
 import pathlib
 import re
 import sqlite3
 import sys
+
+
+def redact_url_credentials(url):
+    """Redact userinfo (user:password@) from a URL before it is ever
+    printed. Push output gets pasted into issues/chat, and a non-sqlite
+    DATABASE_URL reaching the diagnosis below (e.g.
+    "postgres://user:password@host/db") can carry a real credential.
+    Only the "//user:pass@" segment right after the scheme is touched —
+    scheme, host, port, path and query survive untouched, since those are
+    what make the printed line diagnostic in the first place. A URL with
+    no "//...@" segment at all (no userinfo, e.g. "sqlite:dev.db") is
+    returned unchanged.
+    """
+    return re.sub(r"//[^/@]*@", "//***@", url, count=1)
+
 
 def main():
     src_tauri, migrations_dir = sys.argv[1], sys.argv[2]
@@ -285,9 +301,15 @@ def main():
                         end = v.find(qc, 1)
                         v = v[1:end] if end != -1 else v[1:]
                     else:
-                        h = v.find("#")
-                        if h != -1:
-                            v = v[:h]
+                        # dotenvy only starts a comment at a "#" that is
+                        # PRECEDED BY WHITESPACE in an unquoted value — not
+                        # at any "#" — so "sqlite:my#db.db" is the whole
+                        # value, not truncated to "sqlite:my" (#4330 review:
+                        # that truncation produced a wrong-diagnosis hard
+                        # block naming the wrong file).
+                        h = re.search(r"(?<=\s)#", v)
+                        if h is not None:
+                            v = v[: h.start()]
                         v = v.strip()
                     if "${" in v:
                         # A variable reference (or anything else this
@@ -318,14 +340,44 @@ def main():
         # review). Not reachable in this repo today (sqlite-only,
         # .env.example pins "sqlite:dev.db") but exit 1 here would violate
         # that policy the moment it became reachable.
-        print("DATABASE_URL is set but is not a sqlite: URL: %r" % val)
-        print("  This preflight only understands sqlite: URLs and cannot tell")
-        print("  whether your actual database is caught up with migrations/.")
-        print("  If you are using sqlite, set it to a plain sqlite: URL, e.g.:")
-        print("    DATABASE_URL=sqlite:dev.db")
+        if val == "":
+            # Genuinely empty (an exported `DATABASE_URL=""` the shell
+            # inherited, or a clean-but-blank `.env` assignment) carries no
+            # information for this preflight to check against at all — say
+            # so plainly rather than the misleading "not a sqlite: URL: ''",
+            # which reads as if a value WAS given and rejected (#4330 review).
+            print("DATABASE_URL is set but empty: ''")
+            print("  There is nothing here for this preflight to check against —")
+            print("  it cannot tell whether your actual database is caught up")
+            print("  with migrations/. If you are using sqlite, set it to a")
+            print("  plain sqlite: URL, e.g.:")
+            print("    DATABASE_URL=sqlite:dev.db")
+        else:
+            # Redact userinfo (user:password@) before this ever hits stdout
+            # — push output gets pasted into issues/chat, and a non-sqlite
+            # URL here (e.g. "postgres://user:password@host/db") can carry a
+            # real credential. Keeps scheme/host/path so the line is still
+            # diagnostic; just not the password.
+            print("DATABASE_URL is set but is not a sqlite: URL: %r" % redact_url_credentials(val))
+            print("  This preflight only understands sqlite: URLs and cannot tell")
+            print("  whether your actual database is caught up with migrations/.")
+            print("  If you are using sqlite, set it to a plain sqlite: URL, e.g.:")
+            print("    DATABASE_URL=sqlite:dev.db")
         sys.exit(2)
     if val is not None:
         db_rel = resolve_sqlite_path(val)
+        if db_rel == ":memory:":
+            # sqlite::memory: (and equivalents resolving to the same bare
+            # path) has no on-disk file at all — "does not exist" below
+            # would be a confirmed-missing hard block (rc=1) for a database
+            # that was never meant to exist on disk. Same "cannot tell"
+            # category as the non-sqlite-engine case above: warn (rc=2),
+            # don't block (#4330 review).
+            print("DATABASE_URL is sqlite::memory: — an in-memory database")
+            print("  There is no on-disk file for this preflight to check against —")
+            print("  it cannot tell whether an in-memory database is caught up")
+            print("  with migrations/.")
+            sys.exit(2)
     db_file = db_rel if os.path.isabs(db_rel) else os.path.join(src_tauri, db_rel)
 
     # Printed as two lines rather than one "cd src-tauri && cargo sqlx migrate
@@ -363,22 +415,31 @@ def main():
         # to the same could-not-inspect rc=2 warn path as any other open
         # failure — safe, but silently inert for such a checkout (#4330
         # review). `Path.as_uri()` percent-escapes the path correctly.
-        con = sqlite3.connect(pathlib.Path(db_file).as_uri() + "?mode=ro", uri=True)
-        cur = con.cursor()
-        cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'"
-        )
-        if cur.fetchone() is None:
-            print("dev.db exists but has never been migrated (no _sqlx_migrations table): %s" % db_file)
-            print("  Apply all migrations:")
-            print_remedy()
-            sys.exit(1)
-        # AND success: a row for a migration whose application did not
-        # complete (success=0) is not "applied" — sqlx-cli itself treats
-        # it as a hard error requiring `cargo sqlx migrate repair`, not as
-        # caught-up state, and this preflight shouldn't be more lenient.
-        cur.execute("SELECT version FROM _sqlx_migrations WHERE success")
-        applied = {row[0] for row in cur.fetchall()}
+        #
+        # `contextlib.closing`: a bare `with sqlite3.connect(...) as con:`
+        # commits/rolls back a transaction on exit but does NOT close the
+        # connection (a standard-library gotcha) — this releases the handle
+        # before this short-lived probe process exits, rather than leaving
+        # it for process teardown.
+        with contextlib.closing(
+            sqlite3.connect(pathlib.Path(db_file).as_uri() + "?mode=ro", uri=True)
+        ) as con:
+            cur = con.cursor()
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'"
+            )
+            if cur.fetchone() is None:
+                print("dev.db exists but has never been migrated (no _sqlx_migrations table): %s" % db_file)
+                print("  Apply all migrations:")
+                print_remedy()
+                sys.exit(1)
+            # AND success: a row for a migration whose application did not
+            # complete (success=0) is not "applied" — sqlx-cli itself treats
+            # it as a hard error requiring `cargo sqlx migrate repair`, not
+            # as caught-up state, and this preflight shouldn't be more
+            # lenient.
+            cur.execute("SELECT version FROM _sqlx_migrations WHERE success")
+            applied = {row[0] for row in cur.fetchall()}
     except sqlite3.Error as e:
         print("could not inspect dev.db (%s): %s" % (db_file, e))
         sys.exit(2)
@@ -1428,12 +1489,15 @@ con.commit()
     fi
 
     # 49. An explicit but EMPTY "DATABASE_URL=" in .env must also warn
-    #     (rc=2), not silently fall back to the dev.db default.
+    #     (rc=2), not silently fall back to the dev.db default. Message
+    #     names the emptiness itself, not "not a sqlite: URL: ''" — case 54
+    #     below drives this exact code path from an exported-empty var
+    #     instead of an .env assignment, so the two share this message.
     st_devdb_seed dburl-empty "0001_initial.sql" "1"
     st_dir="$st_devdb_root/dburl-empty/src-tauri"
     printf 'DATABASE_URL=\n' >"$st_dir/.env"
     st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'not a sqlite: URL'; then
+    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty'; then
         st_ok "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db"
     else
         st_bad "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db" "rc=$st_rc out=$st_out"
@@ -1454,9 +1518,72 @@ con.commit()
         st_bad "a checkout path containing #, ?, or % is percent-escaped correctly, not misparsed into could-not-inspect" "rc=$st_rc out=$st_out"
     fi
 
+    # ── credential redaction (#4330 review — the leak this batch closes) ──
+    # 51. A DATABASE_URL carrying real "user:password@" userinfo must never
+    #     put the password on stdout — push output gets pasted into
+    #     issues/chat. The host survives (still diagnostic); the password
+    #     does not.
+    st_devdb_seed dburl-credentials "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/dburl-credentials/src-tauri"
+    printf 'DATABASE_URL=postgres://dbuser:sup3rSecr3t@localhost:5432/agaric\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'sup3rSecr3t' \
+        && printf '%s' "$st_out" | grep -q 'localhost'; then
+        st_ok "a DATABASE_URL password is redacted from the 'not a sqlite: URL' diagnosis"
+    else
+        st_bad "a DATABASE_URL password is redacted from the 'not a sqlite: URL' diagnosis" "rc=$st_rc out=$st_out"
+    fi
+
+    # ── dotenvy parity for the VALUE, not just the checkout path (#4330 review) ──
+    # 52. Only a WHITESPACE-preceded "#" starts a comment in an unquoted
+    #     value — "sqlite:my#db.db" is the whole value, not truncated to
+    #     "sqlite:my" at the first "#" (case 50 above covers "#" in the
+    #     CHECKOUT path; this is "#" in the DATABASE_URL VALUE itself). Must
+    #     resolve the full filename and pass SILENTLY.
+    st_devdb_seed dburl-hash-in-value "0001_initial.sql" "1" 'my#db.db'
+    st_dir="$st_devdb_root/dburl-hash-in-value/src-tauri"
+    printf 'DATABASE_URL=sqlite:my#db.db\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+        st_ok "an unquoted '#' not preceded by whitespace is part of the value, not a comment start"
+    else
+        st_bad "an unquoted '#' not preceded by whitespace is part of the value, not a comment start" "rc=$st_rc out=$st_out"
+    fi
+
+    # ── more "cannot tell" cases: warn, don't hard-block (#4330 review) ──
+    # 53. sqlite::memory: has no on-disk file to check — "cannot tell", same
+    #     category as the non-sqlite-engine case (48), not a confirmed
+    #     "dev.db does not exist" hard block (rc=1) for a database that was
+    #     never meant to exist on disk.
+    st_devdb_seed dburl-memory "0001_initial.sql" NODB
+    st_dir="$st_devdb_root/dburl-memory/src-tauri"
+    printf 'DATABASE_URL=sqlite::memory:\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'memory'; then
+        st_ok "sqlite::memory: warns (rc=2) instead of a confirmed-missing hard block"
+    else
+        st_bad "sqlite::memory: warns (rc=2) instead of a confirmed-missing hard block" "rc=$st_rc out=$st_out"
+    fi
+
+    # 54. An exported-but-EMPTY DATABASE_URL with no .env key at all: takes
+    #     the `if not val` branch, finds nothing in .env, and used to report
+    #     rc=2 "not a sqlite: URL: ''" — technically harmless (still a warn,
+    #     not a block) but naming the wrong cause. Must still warn (rc=2)
+    #     but say what actually happened, not claim a value was given and
+    #     rejected.
+    st_devdb_seed dburl-empty-exported-no-env "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/dburl-empty-exported-no-env/src-tauri"
+    st_out="$(unset SQLX_OFFLINE; DATABASE_URL="" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty' \
+        && ! printf '%s' "$st_out" | grep -q 'not a sqlite: URL'; then
+        st_ok "an exported-but-empty DATABASE_URL with no .env key warns, naming emptiness not a bogus URL"
+    else
+        st_bad "an exported-but-empty DATABASE_URL with no .env key warns, naming emptiness not a bogus URL" "rc=$st_rc out=$st_out"
+    fi
+
     rm -rf "$st_devdb_root"
 
-    # 47. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A —
+    # 55. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A —
     #     same failure shape as case 14 (diagnosing after the fact is the
     #     state being fixed). Reuses ST_PHASE_A_ANCHOR and st_order_check
     #     from the node-deps section above.
