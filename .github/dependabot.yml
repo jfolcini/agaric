@@ -26,9 +26,12 @@ version: 2
 # bumps fall outside every `groups:` entry below (groups default to
 # `update-types: [minor, patch]` unless explicitly opened up), so each
 # major lands as its own individual PR for the maintainer to review —
-# which is what we want for breaking-change risk. Sole exception:
-# `codeql-action` below opts majors in, because its sub-actions must
-# move in lockstep at every bump level (see that group's comment).
+# which is what we want for breaking-change risk. Two groups opt majors
+# back in, both for the same reason — their members pin each other at an
+# EXACT version, so a split major PR fails `npm ci`/the action resolver
+# before any test runs: `codeql-action` (its sub-actions must move in
+# lockstep at every bump level) and `stryker` (the runner peer-depends on
+# core at an exact pin). See each group's own comment.
 
 updates:
   - package-ecosystem: github-actions
@@ -132,6 +135,24 @@ updates:
           - 'typescript'
           - 'vite'
           - 'tslib'
+      # `@stryker-mutator/core` and `@stryker-mutator/vitest-runner` pin each
+      # other at an EXACT peer version, not a range. A split bump therefore
+      # produces a dependency set that cannot install at all: each PR alone
+      # fails `npm ci` with ERESOLVE before a single test, lint rule or
+      # Playwright spec runs, so eight unrelated-looking checks went red on
+      # each (#4332 / #4333). Merging them independently would have broken
+      # `npm ci` on main at whichever landed first, in either order.
+      #
+      # Majors are included on purpose, and are the case that needs it:
+      # `minor-and-patch` below already groups the lesser bumps via its `*`
+      # pattern, so 9.6.1 -> 10.0.0 was the one that escaped and split.
+      stryker:
+        patterns:
+          - '@stryker-mutator/*'
+        update-types:
+          - major
+          - minor
+          - patch
       minor-and-patch:
         patterns:
           - '*'
