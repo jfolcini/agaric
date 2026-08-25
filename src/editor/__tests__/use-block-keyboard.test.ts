@@ -1747,9 +1747,17 @@ describe('useBlockKeyboard — cleanup on a destroyed editor (#1017)', () => {
     editor.destroy()
     expect(editor.isDestroyed).toBe(true)
 
+    // tiptap 3.30 detaches its own listeners from inside `destroy()`: the new
+    // DecorationManager calls `editor.off('beforeTransaction', …)` there. Those
+    // calls are the editor tearing itself down, not the hook, so the baseline
+    // is taken AFTER destroy — what this test pins is that the effect cleanup
+    // adds nothing on top of it.
+    const offCallsBeforeCleanup = offSpy.mock.calls.length
+
     // Effect cleanup runs here — must early-return on the destroyed view.
     expect(() => unmount()).not.toThrow()
-    expect(offSpy).not.toHaveBeenCalled()
+    expect(offSpy).toHaveBeenCalledTimes(offCallsBeforeCleanup)
+    expect(offSpy).not.toHaveBeenCalledWith('mount', expect.any(Function))
 
     offSpy.mockRestore()
     element.remove()
