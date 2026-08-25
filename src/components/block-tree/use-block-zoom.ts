@@ -16,7 +16,7 @@
  * contents, rendering breadcrumbs over an empty pane; see `zoomedVisible`.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { BACK_PRIORITY_ZOOM, registerBackHandler } from '@/lib/back-chain'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -42,6 +42,14 @@ function viewScope(list: readonly FlatBlock[]): ZoomedBlocks {
 function selectAllScope(ids: readonly string[]): SelectAllScopeIds {
   return ids as SelectAllScopeIds
 }
+
+/**
+ * #3253 — per-row memo for the zoomed projection's depth rebase: `id → {source
+ * block object, depth offset it was rebased with, emitted object}`. A hit
+ * (same source reference AND same offset) re-emits the previous object so an
+ * unedited row keeps its identity across recomputes; anything else re-clones.
+ */
+type RebaseCache = Map<string, { src: FlatBlock; depthOffset: number; out: FlatBlock }>
 
 export interface UseBlockZoomReturn {
   zoomedBlockId: string | null
@@ -91,6 +99,11 @@ export function useBlockZoom(
   collapsedIds: ReadonlySet<string>,
 ): UseBlockZoomReturn {
   const [zoomedBlockId, setZoomedBlockId] = useState<string | null>(null)
+
+  // See `RebaseCache` — carries the zoomed projection's rebased row objects
+  // across `zoomedVisible` recomputes so unedited rows keep their identity.
+  const rebaseCacheRef = useRef<RebaseCache>(undefined)
+  rebaseCacheRef.current ??= new Map()
 
   const zoomIn = useCallback((blockId: string) => {
     setZoomedBlockId(blockId)
@@ -170,6 +183,15 @@ export function useBlockZoom(
     if (!zoomedBlock) return viewScope(collapseVisible)
     const depthOffset = zoomedBlock.depth + 1
     const descendants = getDragDescendants(blocks, zoomedBlockId)
+    // #3253 — reuse the previously-emitted rebased object whenever the SOURCE
+    // block object and `depthOffset` are both unchanged. Without this every
+    // recompute (any store write to `blocks`, any collapse toggle) minted a
+    // fresh object for every row, so each `SortableBlockWrapper`'s React.memo
+    // missed on its `block` prop and the whole pane re-rendered — throwing
+    // away the byte-for-byte reference stability the store preserves upstream
+    // (#2527). The cache is rebuilt per run so it never outgrows the pane.
+    const prevRebased = rebaseCacheRef.current as RebaseCache
+    const nextRebased: RebaseCache = new Map()
     const result: FlatBlock[] = []
     const skipUntilDepth: number[] = []
     for (const block of blocks) {
@@ -178,9 +200,16 @@ export function useBlockZoom(
         skipUntilDepth.pop()
       }
       if (skipUntilDepth.length > 0) continue
-      result.push(Object.assign({}, block, { depth: block.depth - depthOffset }))
+      const cached = prevRebased.get(block.id)
+      const rebased =
+        cached !== undefined && cached.src === block && cached.depthOffset === depthOffset
+          ? cached.out
+          : Object.assign({}, block, { depth: block.depth - depthOffset })
+      nextRebased.set(block.id, { src: block, depthOffset, out: rebased })
+      result.push(rebased)
       if (collapsedIds.has(block.id)) skipUntilDepth.push(block.depth)
     }
+    rebaseCacheRef.current = nextRebased
     return viewScope(result)
   }, [zoomedBlockId, blocks, collapseVisible, collapsedIds])
 

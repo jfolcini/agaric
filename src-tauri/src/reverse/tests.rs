@@ -2712,6 +2712,45 @@ async fn compute_reverse_batch_matches_per_op_loop() {
         .unwrap();
         att_ids.push(att_id);
     }
+
+    // #4346: a SECOND `add_attachment` naming an `attachment_id` already in
+    // this batch — the "add, undone and redone, reverted again in one sweep"
+    // shape. `fetch_live_attachment_state_batch` maps its fetched rows back to
+    // ops BY ID, not by index, and that is what makes every occurrence resolve
+    // rather than only the first; nothing exercised it, because the four adds
+    // above carry four DISTINCT ids and the `delete_attachment` ops bucket
+    // separately. So a regression to index-based mapping reddened nothing.
+    //
+    // Index-based mapping cannot survive this: the `IN (...)` returns four
+    // rows for the five bound ids (SQLite yields one row per matching id, not
+    // one per bind), so the fifth op would zip past the end and take the
+    // row-is-gone fallback — the ADD PAYLOAD's values. The single-op kernel
+    // queries by id and still returns the live row, so parity breaks here even
+    // though both kernels share `build_reverse_add_attachment`.
+    //
+    // The payload therefore has to differ from the live row on BOTH fields, or
+    // the fallback and the live answer coincide and the fixture proves nothing
+    // — the same defect #4253's review caught for the delete's `fs_path`.
+    let dup_att_id = att_ids[0].clone();
+    let dup_add_idx = op_refs.len();
+    let dup_rec = append_op(
+        &pool,
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
+            attachment_id: BlockId::test_id(&dup_att_id),
+            block_id: BlockId::test_id(blocks[0]),
+            mime_type: "image/png".into(),
+            filename: format!("redone_{dup_att_id}.png"),
+            size_bytes: 1024,
+            fs_path: format!("/tmp/redone_{dup_att_id}.png"),
+        }),
+        next_ts(&mut ts),
+    )
+    .await;
+    op_refs.push(agaric_store::op::OpRef {
+        device_id: dup_rec.device_id,
+        seq: dup_rec.seq,
+    });
+
     // #3706 review (B-3 parity): the delete's `fs_path` deliberately DIFFERS
     // from the matching add's (`/tmp/blob_{att_id}.png` vs `/tmp/{att_id}.png`)
     // — simulating a repoint onto a shared blob between the add and the
@@ -2870,7 +2909,11 @@ async fn compute_reverse_batch_matches_per_op_loop() {
         seq: peer_target.seq,
     });
 
-    assert_eq!(op_refs.len(), 22, "test should batch exactly 22 ops");
+    assert_eq!(
+        op_refs.len(),
+        23,
+        "test should batch exactly 23 ops (#4346 added the duplicate-id add)"
+    );
 
     // -- legacy oracle: per-op loop ----------------------------------
     let mut legacy: Vec<OpPayload> = Vec::with_capacity(op_refs.len());
@@ -3007,6 +3050,33 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 "expected DeleteAttachment for the add_attachment reverse at idx {idx}, got {other:?}"
             ),
         }
+    }
+
+    // #4346: the SECOND occurrence of an `attachment_id` already present in
+    // this batch. The absolute pin above only ever reaches the first
+    // occurrence of each id, so the by-id remap in
+    // `fetch_live_attachment_state_batch` is asserted here or nowhere: this
+    // reverse must adopt the SAME live row as its twin, not the add payload's
+    // `/tmp/redone_*` values that an index-based remap would fall back to.
+    match &batched[dup_add_idx] {
+        OpPayload::DeleteAttachment(p) => {
+            assert_eq!(
+                p.fs_path,
+                format!("attachments/live_blob_{dup_att_id}.png"),
+                "#4346: a duplicate attachment_id in one batch must resolve to the \
+                 live row for EVERY occurrence, not just the first — the by-id \
+                 remap is what makes that true"
+            );
+            assert_eq!(
+                p.filename,
+                format!("live_{dup_att_id}.png"),
+                "#4346: both live fields, for the duplicate occurrence too"
+            );
+        }
+        other => panic!(
+            "expected DeleteAttachment for the duplicate-id add_attachment reverse at \
+             idx {dup_add_idx}, got {other:?}"
+        ),
     }
 }
 

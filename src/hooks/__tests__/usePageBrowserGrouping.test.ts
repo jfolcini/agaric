@@ -112,6 +112,35 @@ describe('buildMultiPageBranch', () => {
     expect(treeRow).toBeDefined()
   })
 
+  // #3286 — both `node.pageId -> BlockRow` lookups now go through the id map
+  // built alongside `starredFiltered`/`pagesSourcePages` instead of a linear
+  // `filteredPagesUnsorted.find`. Pins the resolution the map has to preserve:
+  // the flat-page arm AND the hybrid tree-root arm (a page named `work` that
+  // also has `work/...` children), which is the only caller of the second one.
+  it('resolves a hybrid namespace root to its backing page row', () => {
+    const root = makePage({ id: 'P1', content: 'work' })
+    const child = makePage({ id: 'P2', content: 'work/foo' })
+    const flat = makePage({ id: 'P3', content: 'home' })
+    const result = buildMultiPageBranch(
+      [root, child, flat],
+      identitySort,
+      'alphabetical',
+      new Set(),
+    )
+    const treeIndex = result.groupedRows.findIndex((r) => r.kind === 'tree-page')
+    expect(treeIndex).toBeGreaterThanOrEqual(0)
+    const treeRow = result.groupedRows[treeIndex]
+    expect(treeRow).toMatchObject({ kind: 'tree-page', node: { pageId: 'P1' } })
+    // Keyboard Enter on the hybrid row opens `work` itself — the row must
+    // carry the backing BlockRow, not null.
+    const pageIndex = (treeRow as { pageIndex: number }).pageIndex
+    expect(result.filteredPages[pageIndex]).toBe(root)
+    // ...and the flat arm still resolves its own row.
+    const flatRow = result.groupedRows.find((r) => r.kind === 'page' && r.page.id === 'P3')
+    expect(flatRow).toBeDefined()
+    expect(result.filteredPages).toContain(flat)
+  })
+
   it('pageIndexToRowIndex skips header rows', () => {
     const a = makePage({ id: 'P1', content: 'Alpha' })
     const b = makePage({ id: 'P2', content: 'Bravo' })

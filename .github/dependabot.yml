@@ -42,6 +42,25 @@ version: 2
 # the action resolver before any test runs, and the property is too
 # load-bearing to leave resting on a default nobody can see in the file.
 # See each group's own comment.
+#
+# Grouping and SECURITY updates — the other default that is easy to miss.
+# A `groups:` entry with no `applies-to` covers `version-updates` ONLY.
+# Every group in this file was in that state until #4351, which means a
+# CVE against a single member of an EXACT-PIN group would arrive as a solo
+# security PR and hit the very install failure the group exists to
+# prevent — on the path that arrives unannounced and under time pressure.
+# Five groups are exact-pin and now carry a `*-security` mirror alongside
+# them: `codeql-action` (github-actions), `stryker`, `tiptap` and `vitest`
+# (npm), and `iroh` (cargo). Each pair MUST be edited together; Dependabot
+# cannot serve both paths from one entry, so the duplication is by design.
+#
+# `iroh` needed BOTH halves rather than just the mirror: `iroh`,
+# `iroh-base` and `iroh-dns` are pinned at an exact `=1.0.3` across
+# `agaric-sync` and `agaric-store` and pin each other in the same sense,
+# but they were in no group at all — they fell into the cargo
+# `minor-and-patch` catch-all, whose `update-types` would additionally have
+# split a major. So the version-updates group is the fix and the security
+# mirror is what keeps it from being bypassed by a CVE.
 
 updates:
   - package-ecosystem: github-actions
@@ -69,6 +88,25 @@ updates:
           - major
           - minor
           - patch
+      # ── SECURITY MIRROR of `codeql-action` above (#4351). EDIT THE TWO
+      # TOGETHER. ────────────────────────────────────────────────────────
+      # A `groups:` entry with no `applies-to` defaults to
+      # `version-updates`, so the group above covers Monday's scheduled
+      # bumps and NOTHING ELSE — a CVE filed against one sub-action alone
+      # would open a SOLO security PR and hit the exact version-skew
+      # failure the group exists to prevent. Dependabot cannot serve both
+      # paths from one entry (`applies-to` takes a single value), so the
+      # duplication is by design, not an oversight.
+      #
+      # The security path is the one that arrives unannounced and under
+      # time pressure, which makes leaving it uncovered the wrong way
+      # round. No `update-types` here: Dependabot documents that option as
+      # affecting VERSION updates only, so carrying it across would be
+      # dead config that reads like a constraint.
+      codeql-action-security:
+        applies-to: security-updates
+        patterns:
+          - github/codeql-action*
 
   # ─── npm (frontend) ────────────────────────────────────────────────
   #
@@ -124,10 +162,38 @@ updates:
       tiptap:
         patterns:
           - '@tiptap/*'
+      # ── SECURITY MIRROR of `tiptap` above (#4351). EDIT THE TWO TOGETHER. ──
+      # Found by the #4351 audit ("does any other group's members pin each
+      # other exactly?"), and they do: every `@tiptap/*` package
+      # peer-depends on `@tiptap/core` / `@tiptap/pm` at an EXACT version,
+      # not a range (`package-lock.json` — 44 such peer edges at 3.30.1),
+      # which is the same shape as `stryker` below, only wider. A solo
+      # security bump of one `@tiptap/*` package therefore fails `npm ci`
+      # with ERESOLVE before any test runs.
+      tiptap-security:
+        applies-to: security-updates
+        patterns:
+          - '@tiptap/*'
       radix-ui:
         patterns:
           - '@radix-ui/*'
       vitest:
+        patterns:
+          - 'vitest'
+          - '@vitest/*'
+          - 'vitest-axe'
+          - 'happy-dom'
+          - 'jsdom'
+      # ── SECURITY MIRROR of `vitest` above (#4351). EDIT THE TWO TOGETHER. ──
+      # Also found by the #4351 audit: `@vitest/coverage-v8` peer-depends on
+      # `vitest` at an EXACT version (4.1.10), and `vitest` returns the
+      # favour for every `@vitest/*` add-on. Both sides are inside this
+      # group's own patterns, so a solo security bump of either splits an
+      # exact pin — same `npm ci` ERESOLVE as `stryker` and `tiptap`.
+      # (`jsdom` / `happy-dom` / `vitest-axe` ride along because the group
+      # is the unit, exactly as they do for version updates.)
+      vitest-security:
+        applies-to: security-updates
         patterns:
           - 'vitest'
           - '@vitest/*'
@@ -163,6 +229,22 @@ updates:
           - major
           - minor
           - patch
+      # ── SECURITY MIRROR of `stryker` above (#4351). EDIT THE TWO TOGETHER. ──
+      # The group above is `version-updates` only (Dependabot's default when
+      # `applies-to` is absent), so a CVE filed against
+      # `@stryker-mutator/core` ALONE would open a solo security PR and hit
+      # the exact `ERESOLVE` that made #4332 structurally unmergeable — the
+      # failure #4350 opened the group to prevent. One entry cannot serve
+      # both paths, so this duplication is by design.
+      #
+      # No `update-types`: Dependabot documents it as affecting VERSION
+      # updates only. A security update is triggered by an advisory, not by
+      # a semver level, so listing them here would be inert config that
+      # reads like a constraint.
+      stryker-security:
+        applies-to: security-updates
+        patterns:
+          - '@stryker-mutator/*'
       minor-and-patch:
         patterns:
           - '*'
@@ -255,6 +337,30 @@ updates:
         patterns:
           - 'chrono'
           - 'chrono-tz'
+      # #4351 — `iroh`, `iroh-base` and `iroh-dns` are pinned at an EXACT
+      # `=1.0.3` (`agaric-sync/Cargo.toml:62,68`, `agaric-store/Cargo.toml:79`)
+      # and pin each other in the same sense: moving one alone cannot resolve,
+      # so an ungrouped bump is a guaranteed-failing PR. Without this entry they
+      # fell into the `minor-and-patch` catch-all, which carries `update-types`
+      # and so would have split a major.
+      #
+      # EDIT THE TWO TOGETHER — see `iroh-security` below.
+      iroh:
+        patterns:
+          - 'iroh'
+          - 'iroh-*'
+      # The security-updates half. A `groups:` entry with no `applies-to`
+      # covers version-updates ONLY, so without this a CVE against one iroh
+      # crate would arrive as a solo PR and hit the exact resolution failure
+      # the group above exists to prevent — on the path that arrives
+      # unannounced and under time pressure. No `update-types`: it is inert on
+      # the security path (GitHub's own reference says so), and carrying it
+      # would read as a constraint that is not one.
+      iroh-security:
+        applies-to: security-updates
+        patterns:
+          - 'iroh'
+          - 'iroh-*'
       minor-and-patch:
         patterns:
           - '*'

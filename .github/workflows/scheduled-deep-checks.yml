@@ -788,9 +788,13 @@ jobs:
         # `agaric-store` (`cache::tests`) and are reachable ONLY through
         # `--workspace`. Dropping the flag would silently skip them, which is
         # exactly the failure mode #3212 added it to prevent. Those three read
-        # `/proc/self/status` and are `#[cfg(target_os = "linux")]`, so they
-        # also vanish entirely if this lane ever leaves `ubuntu-*` — the same
-        # silent-coverage-hole shape, reached by a different route.
+        # `/proc/self/status` and are `#[cfg(target_os = "linux")]`. That
+        # hole is no longer held shut by this comment: #4273 added
+        # `residency_lane_is_not_linux_4273` plus same-named `#[ignore]`d twins
+        # under `cfg(not(target_os = "linux"))`, so if this lane ever leaves
+        # `ubuntu-*` the sweep FAILS LOUDLY instead of quietly reporting three
+        # fewer tests. Keep `runs-on: ubuntu-*` — but the assertion, not this
+        # paragraph, is what enforces it.
         run: >-
           cargo nextest run --workspace --run-ignored=only --no-fail-fast
 

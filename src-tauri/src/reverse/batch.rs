@@ -113,11 +113,6 @@ use agaric_store::op_log::OpRecord;
 //   * property:        idx, block_id, key, created_at, created_at, seq, seq, device_id → 8
 //   * attachment:      idx, attachment_id, created_at, created_at, seq, seq, device_id → 7
 //   * op-record fetch: idx, device_id, seq                                             → 3
-// #4259's live-row fetch is the one helper that is NOT a per-op UNION-ALL of
-// `LIMIT 1` subqueries: it is a single PRIMARY-KEY `IN (...)` over
-// `attachments`, so it binds exactly ONE parameter per op and maps rows back
-// by `id` rather than by a bound input index.
-const LIVE_ATTACHMENT_BINDS_PER_OP: usize = 1;
 // `MAX_SQL_PARAMS` is the crate-wide 999 bound from `crate::db` (the
 // same conservative `SQLITE_MAX_VARIABLE_NUMBER` floor the snapshot
 // `batch_insert_snapshot_rows!` chunker uses) — well under the real
@@ -127,6 +122,14 @@ const POSITION_BINDS_PER_OP: usize = 7;
 const PROPERTY_BINDS_PER_OP: usize = 8;
 const ATTACHMENT_BINDS_PER_OP: usize = 7;
 const OP_RECORD_BINDS_PER_OP: usize = 3;
+// #4259's live-row fetch is the one helper that is NOT a per-op UNION-ALL of
+// `LIMIT 1` subqueries: it is a single PRIMARY-KEY `IN (...)` over
+// `attachments`, so it binds exactly ONE parameter per op and maps rows back
+// by `id` rather than by a bound input index. Declared AFTER the five widths
+// above rather than between the bind-width block and the `MAX_SQL_PARAMS`
+// paragraph, so that paragraph introduces the consts it actually describes
+// (#4346).
+const LIVE_ATTACHMENT_BINDS_PER_OP: usize = 1;
 
 /// Op-types that a point-in-time restore treats as non-reversible
 /// UNCONDITIONALLY, regardless of whether a per-op inverse could be
@@ -776,7 +779,24 @@ async fn fetch_prior_attachment_batch(
 /// Mapping by `id` rather than by a bound input index is also what makes a
 /// batch containing the SAME `attachment_id` twice (an add, undone and redone,
 /// reverted again in one sweep) resolve every occurrence to the same row
-/// instead of only the first.
+/// instead of only the first. #4346 seeded the fixture that holds that: the
+/// duplicate-id pair inside `reverse::tests::compute_reverse_batch_matches_per_op_loop`.
+/// Until it existed, every `add_attachment` in every fixture carried a
+/// DISTINCT id, so a regression from this by-id remap back to index-based
+/// mapping reddened nothing in the suite.
+///
+/// # Two things this does twice, deliberately (#4346)
+///
+/// Each op's payload is deserialized here to extract its `attachment_id`, and
+/// again in [`attachment_ops::build_reverse_add_attachment`] during assembly;
+/// each live `fs_path` / `filename` is materialized into the id map and cloned
+/// out of it per occurrence. Both are the shape every sibling prefetch in this
+/// module already has — the prefetch reads what it needs to build its
+/// statement, the kernel reads the record it is handed — and collapsing either
+/// would mean threading a parsed payload (or a borrow of the map) through the
+/// shared single-op/batch kernel boundary that exists precisely so the two
+/// cannot drift. Recorded as a known cost, not a defect: the batch is capped
+/// at `MAX_REVERT_OPS` (1000), so the duplicated work is bounded and small.
 ///
 /// An entry is `None` when no row with that id exists — a legitimate,
 /// reachable state, not an error; see

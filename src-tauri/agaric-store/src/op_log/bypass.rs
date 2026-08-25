@@ -62,6 +62,14 @@ async fn disable_op_log_mutation_bypass_conn(
 /// [`super::high_water::capture_all_frontiers`] first, in the same
 /// transaction — or, preferably, use [`truncate`] / [`prune`] instead.
 ///
+/// #4018: that obligation is no longer carried by this doc comment alone.
+/// `scripts/check-op-log-delete.py` (prek hook `check-op-log-delete`) fails
+/// any production `DELETE FROM op_log` outside THIS file, so a new caller
+/// that opens a bypass window and deletes rows elsewhere cannot land without
+/// the review conversation. Confining the statement rather than making this
+/// pair private is deliberate — cross-crate tests legitimately drive their
+/// own bypass windows, and `#[cfg(test)]` code is exempt from the guard.
+///
 /// # Errors
 /// Returns [`AppError`] if the INSERT fails (e.g. the underlying connection
 /// has been closed).

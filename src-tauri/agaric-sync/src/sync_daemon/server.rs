@@ -686,7 +686,10 @@ async fn handle_incoming_sync_inner(
     // legitimate multi-device peer. It is deliberately NOT set from `claimed_id` for the
     // same reason; with it unset the FSM falls back to the same heads-derived id, which
     // is exactly what the old cert-less path did.
-    let mut orch = SyncOrchestrator::new(pool, device_id.clone(), materializer)
+    // #3328: the orchestrator takes ownership of the host, but the file-transfer
+    // phase below still needs it to resolve the attachment root. An `Arc` clone
+    // is a refcount bump — the host itself is not duplicated.
+    let mut orch = SyncOrchestrator::new(pool, device_id.clone(), Arc::clone(&materializer))
         .with_event_sink(event_sink_box);
     if !pairing_pending && !remote_id.is_empty() {
         orch = orch.with_expected_remote_id(remote_id.clone());
@@ -790,7 +793,10 @@ async fn handle_incoming_sync_inner(
     // user-cancel aborts a multi-gigabyte transfer between files rather than running it
     // to completion.
     if orch.is_succeeded() {
-        match crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
+        // #3328: the attachment root comes from the app-side host, with the
+        // DB-path derivation only as a fallback — so files received here land
+        // in the same tree the app's attachment GC reconciles.
+        match crate::sync_files::attachment_root(materializer.as_ref(), &pool_ref).await {
             Ok(app_data_dir) => {
                 // `None` progress: the responder is the *incoming* side, so no
                 // `start_sync` command on this device has set up a `Channel` for file

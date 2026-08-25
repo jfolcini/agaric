@@ -3,7 +3,7 @@
   "src/components/journal/UnfinishedTasks.tsx": 1,
   "src/hooks/useLocalStoragePreference.ts": 1,
   "src/hooks/usePropertyDefForEdit.ts": 1,
-  "src/lib/history-utils.ts": 3,
+  "src/lib/history-utils.ts": 2,
   "src/lib/inline-query-spec.ts": 1,
   "src/lib/preferences.ts": 2,
   "src/stores/advancedQuery.ts": 1,

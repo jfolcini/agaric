@@ -209,6 +209,7 @@ devdb_migration_gap() {
     # hard block with a headline and a blank body.
     out="$(python3 - "$src_tauri" "$migrations_dir" 2>&1 <<'PYEOF'
 import contextlib
+import hashlib
 import os
 import pathlib
 import re
@@ -599,8 +600,20 @@ def main():
             # it as a hard error requiring `cargo sqlx migrate repair`, not
             # as caught-up state, and this preflight shouldn't be more
             # lenient.
-            cur.execute("SELECT version FROM _sqlx_migrations WHERE success")
-            applied = {row[0] for row in cur.fetchall()}
+            # #4334 note 1 — `checksum` alongside `version`. Comparing the
+            # version SETS alone answers "was a migration with this number
+            # ever applied", which is a strictly weaker question than "does
+            # dev.db's schema match the files on disk". Editing a migration
+            # IN PLACE after applying it — routine while iterating on your
+            # own migration on a branch — leaves the version sets equal and
+            # the schemas different, so this preflight passed and Phase D
+            # then failed with exactly the confusing `no such table`-shaped
+            # error the preflight exists to get ahead of.
+            cur.execute("SELECT version, checksum FROM _sqlx_migrations WHERE success")
+            applied_rows = cur.fetchall()
+            applied = {row[0] for row in applied_rows}
+            applied_checksums = {row[0]: bytes(row[1]) if row[1] is not None else None
+                                 for row in applied_rows}
     except sqlite3.Error as e:
         print("could not inspect dev.db (%s): %s" % (db_file, e))
         sys.exit(2)
@@ -612,6 +625,59 @@ def main():
             print("    %s" % expected[v])
         print("  Apply them:")
         print_remedy()
+        confirmed_gap_exit()
+
+    # #4334 note 1, the MIRROR case: a version applied in dev.db with no
+    # file on disk. That is what you get after switching off a branch that
+    # added a migration — the database is AHEAD, not behind, which is its
+    # own confusing failure and used to read here as "up to date" because
+    # `pending` only ever looks in one direction. No `migrate run` can fix
+    # it (there is nothing left to run), so the remedy is different too.
+    ahead = sorted(v for v in applied if v not in expected)
+    if ahead:
+        print("dev.db is AHEAD of src-tauri/migrations/ — applied migration(s) with no file:")
+        for v in ahead:
+            print("    version %d (no matching src-tauri/migrations/%d_*.sql)" % (v, v))
+        print("  This is what switching off a branch that added a migration leaves behind.")
+        print("  `sqlx migrate run` cannot fix it — there is nothing left to run. Either")
+        print("  check that branch back out, or re-provision dev.db from scratch:")
+        print("    rm -f src-tauri/dev.db src-tauri/dev.db-wal src-tauri/dev.db-shm")
+        print("    bash scripts/setup-dev-db.sh")
+        confirmed_gap_exit()
+
+    # #4334 note 1, the case the version sets cannot see at all. sqlx stores
+    # a per-migration checksum — SHA-384 over the migration file's SQL text
+    # (`Migration::new` in sqlx-core hashes `sql.as_bytes()`) — so an
+    # in-place edit to an already-applied migration is detectable here for
+    # the price of one hash per file. Verified against this repo's real
+    # dev.db: all 112 applied rows match the on-disk files byte for byte
+    # under this hash.
+    #
+    # A row whose checksum is NULL (not something sqlx itself writes — the
+    # column is NOT NULL — but reachable for a hand-built database) is
+    # skipped rather than reported as a mismatch: an absent checksum is no
+    # evidence of drift, and this preflight must not hard-block on a
+    # question it cannot actually answer.
+    drifted = []
+    for v in sorted(applied):
+        if v not in expected:
+            continue
+        stored = applied_checksums.get(v)
+        if stored is None:
+            continue
+        with open(os.path.join(migrations_dir, expected[v]), "rb") as fh:
+            actual = hashlib.sha384(fh.read()).digest()
+        if actual != stored:
+            drifted.append(v)
+    if drifted:
+        print("dev.db's applied migration(s) no longer match src-tauri/migrations/ on disk:")
+        for v in drifted:
+            print("    %s (edited in place after it was applied)" % expected[v])
+        print("  The version numbers agree, so dev.db LOOKS caught up, but its schema is")
+        print("  whatever the OLD text of these file(s) produced. `sqlx migrate run` will")
+        print("  not re-run an already-applied version; re-provision dev.db from scratch:")
+        print("    rm -f src-tauri/dev.db src-tauri/dev.db-wal src-tauri/dev.db-shm")
+        print("    bash scripts/setup-dev-db.sh")
         confirmed_gap_exit()
 
     sys.exit(0)
@@ -1238,8 +1304,18 @@ typos")"
         # for none, or "NOTABLE" for a dev.db with no _sqlx_migrations table
         # at all, or "NODB" for no dev.db file), $4 = optional db filename
         # (default "dev.db" — override to prove a DATABASE_URL form was
-        # actually parsed, not just defaulted).
+        # actually parsed, not just defaulted), $5 = space-separated versions
+        # whose stored checksum should be deliberately WRONG (#4334 — the
+        # edited-in-place case; default "" = every applied row carries the
+        # real SHA-384 of its on-disk file, which is what sqlx itself
+        # stores), $6 = journal mode: "" for python's rollback-journal
+        # default, or "WAL" for the shape that actually ships (#4334 note 2
+        # — sqlx's `SqliteConnectOptions` defaults `journal_mode` to WAL, so
+        # a rollback-journal fixture is not the database this guard meets in
+        # a real checkout; a read-only open of a WAL database takes a
+        # different SQLite path and creates `-shm`/`-wal` beside the file).
         local name="$1" disk="$2" applied="$3" dbname="${4:-dev.db}"
+        local drift="${5:-}" journal="${6:-}"
         local dir="$st_devdb_root/$name/src-tauri"
         mkdir -p "$dir/migrations"
         local fn
@@ -1258,19 +1334,39 @@ con.commit()
                 ;;
             *)
                 python3 -c "
-import sqlite3
-con = sqlite3.connect('$dir/$dbname')
+import glob, hashlib, os, re, sqlite3
+d = '$dir'
+con = sqlite3.connect(os.path.join(d, '$dbname'))
+if '$journal':
+    con.execute('PRAGMA journal_mode=$journal')
 con.execute('''CREATE TABLE _sqlx_migrations (
     version BIGINT PRIMARY KEY, description TEXT NOT NULL,
     installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     success BOOLEAN NOT NULL, checksum BLOB NOT NULL, execution_time BIGINT NOT NULL
 )''')
-for v in '$applied'.split():
+# The stored checksum must be the REAL one — SHA-384 over the migration
+# file's bytes, the same thing sqlx's own \`Migration::new\` computes — or
+# every fixture whose versions line up would report as edited-in-place
+# under the #4334 comparison. A version with no file on disk (the DB-AHEAD
+# fixture) has nothing to hash, so it gets a placeholder.
+on_disk = {}
+for path in glob.glob(os.path.join(d, 'migrations', '*.sql')):
+    m = re.match(r'^(\d+)_.+\.sql\$', os.path.basename(path))
+    if m:
+        on_disk[int(m.group(1))] = path
+drift = {int(x) for x in '$drift'.split()}
+for raw in '$applied'.split():
+    v = int(raw)
+    path = on_disk.get(v)
+    checksum = hashlib.sha384(open(path, 'rb').read()).digest() if path else b'\x00'
+    if v in drift:
+        checksum = hashlib.sha384(b'the text this migration used to have').digest()
     con.execute(
         'INSERT INTO _sqlx_migrations VALUES (?,?,CURRENT_TIMESTAMP,1,?,0)',
-        (int(v), 'seed', b'\x00'),
+        (v, 'seed', checksum),
     )
 con.commit()
+con.close()
 "
                 ;;
         esac
@@ -1348,6 +1444,69 @@ con.commit()
         st_ok "a dev.db caught up with migrations/ passes silently"
     else
         st_bad "a dev.db caught up with migrations/ passes silently" "rc=$st_rc out=$st_out"
+    fi
+
+    # 30b (#4334 note 2). THE SHAPE THAT ACTUALLY SHIPS. Every fixture above
+    #     is a rollback-journal database, because that is python's sqlite3
+    #     default — but sqlx's `SqliteConnectOptions` defaults `journal_mode`
+    #     to WAL, so the dev.db this guard meets in a real checkout is a WAL
+    #     database, and a read-only open of one takes a DIFFERENT SQLite code
+    #     path (it materialises `-shm`/`-wal` beside the file). Case 30
+    #     therefore proved the healthy path for a database shape that does
+    #     not ship. Same assertion, WAL fixture.
+    st_devdb_seed up-to-date-wal "0001_initial.sql 0002_second.sql" "1 2" dev.db "" WAL
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/up-to-date-wal/src-tauri" "$st_devdb_root/up-to-date-wal/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+        st_ok "a caught-up WAL dev.db — the shape sqlx actually ships — also passes silently"
+    else
+        st_bad "a caught-up WAL dev.db — the shape sqlx actually ships — also passes silently" "rc=$st_rc out=$st_out"
+    fi
+
+    # 30c (#4334 note 1). THE CASE THE VERSION SETS CANNOT SEE: a migration
+    #     EDITED IN PLACE after it was applied — routine while iterating on
+    #     your own migration on a branch. The version sets are identical, so
+    #     every check above it reports caught up, while dev.db's schema is
+    #     whatever the file's OLD text produced and Phase D fails with the
+    #     confusing `no such table`-shaped error this preflight exists to get
+    #     ahead of. Must name the drifted file and ONLY it.
+    st_devdb_seed edited-in-place "0001_initial.sql 0002_second.sql" "1 2" dev.db "2"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/edited-in-place/src-tauri" "$st_devdb_root/edited-in-place/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0002_second.sql' \
+        && ! printf '%s' "$st_out" | grep -qF '0001_initial.sql'; then
+        st_ok "a migration edited in place after being applied is caught by checksum, not version"
+    else
+        st_bad "a migration edited in place after being applied is caught by checksum, not version" "rc=$st_rc out=$st_out"
+    fi
+
+    # 30d (#4334 note 1, the MIRROR). dev.db AHEAD: a version applied with no
+    #     file on disk, which is what switching off a branch that added a
+    #     migration leaves behind. `pending` only ever looks one way, so this
+    #     used to read as "up to date". The remedy must NOT be `migrate run`
+    #     — there is nothing left to run — so this case asserts the message
+    #     names the ahead version and does NOT print that remedy.
+    st_devdb_seed ahead-of-disk "0001_initial.sql" "1 2"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/ahead-of-disk/src-tauri" "$st_devdb_root/ahead-of-disk/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF 'AHEAD' \
+        && printf '%s' "$st_out" | grep -qF 'version 2' \
+        && ! st_devdb_names_remedy "$st_out"; then
+        st_ok "a dev.db AHEAD of migrations/ is named as such, with a remedy that is not migrate run"
+    else
+        st_bad "a dev.db AHEAD of migrations/ is named as such, with a remedy that is not migrate run" "rc=$st_rc out=$st_out"
+    fi
+
+    # 30e (#4334 note 1). BEHIND STILL WINS over the two new checks: a
+    #     fixture that is both behind (0003 pending) and drifted (0002
+    #     edited) must report the PENDING migration, because `migrate run`
+    #     is the remedy that actually moves it forward. A checksum report
+    #     that fired ahead of the pending one would hand the developer the
+    #     wrong command for the state they are in.
+    st_devdb_seed behind-and-drifted "0001_initial.sql 0002_second.sql 0003_third.sql" "1 2" dev.db "2"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_devdb_root/behind-and-drifted/src-tauri" "$st_devdb_root/behind-and-drifted/src-tauri/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -ne 0 ] && printf '%s' "$st_out" | grep -qF '0003_third.sql' \
+        && st_devdb_names_remedy "$st_out"; then
+        st_ok "a dev.db that is both behind and drifted reports the PENDING migration first"
+    else
+        st_bad "a dev.db that is both behind and drifted reports the PENDING migration first" "rc=$st_rc out=$st_out"
     fi
 
     # ── DATABASE_URL resolution (#4330 review) ────────────────────────

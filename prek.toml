@@ -1869,6 +1869,48 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit", "pre-push"]
 
+# Rust: production `DELETE FROM op_log` is confined to the store's bypass
+# module (#4018 / #3310). `op_log` is append-only by trigger, and a wholesale
+# delete carries a SECOND obligation the trigger does not enforce: capture the
+# pre-delete per-device MAX(seq) into the durable high-water mark. Skip it and
+# the local-append allocator restarts at seq = 1 over the emptied log,
+# re-minting (device_id, seq) addresses a paired peer still holds — whose
+# INSERT OR IGNORE silently swallows this device's post-wipe history, with no
+# local symptom at all. `truncate` / `prune` in
+# agaric-store/src/op_log/bypass.rs pair the two; the `pub`
+# enable/disable_op_log_mutation_bypass window does not, and its doc invites
+# callers to drive their own. Making that pair private would break the
+# cross-crate tests that legitimately use it, so this guard constrains the
+# dangerous STATEMENT instead of the API that permits it. An allowlist, not a
+# ratchet — the correct production count outside bypass.rs is zero. Test code
+# and `#[cfg(test)]` regions are exempt. Whole-tree scan (a delete can be
+# added to a file the commit did not otherwise touch), so `files` only decides
+# WHEN to run.
+[[repos.hooks]]
+id = "check-op-log-delete"
+name = "op_log delete confinement guard (#4018)"
+entry = "python3 scripts/check-op-log-delete.py"
+language = "system"
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src|diagnostics/src)/.*\.rs$'
+stages = ["pre-commit", "pre-push"]
+
+# #4018: the confinement guard must read SQL inside `sqlx::query!("…")` macro
+# STRINGS while ignoring the several doc comments that quote
+# `DELETE FROM op_log` verbatim (bypass.rs's own docs, snapshot/restore.rs's
+# trigger explanation, this guard's rationale) and the `#[cfg(test)]` sites
+# that must be able to attempt exactly that statement. This companion hook
+# runs the guard's fixture suite (`--self-test`), which also asserts the
+# allowlisted path still exists and still contains the statements — so the
+# exemption cannot rot into a stale path that silently excuses nothing.
+[[repos.hooks]]
+id = "check-op-log-delete-self-test"
+name = "op_log delete guard self-test (#4018 match fixtures)"
+entry = "python3 scripts/check-op-log-delete.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Migration → JS-mock schema-contract guard (#3084). The browser/e2e Tauri
 # mock (src/lib/tauri-mock/) is a hand-maintained SECOND implementation of the
 # schema; when a migration changes a table the mock models, the mock silently

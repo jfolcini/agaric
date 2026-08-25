@@ -286,7 +286,7 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
         if !block.content.contains("[[") {
             continue;
         }
-        let code_spans = inline_code_spans(&block.content);
+        let code_spans = import::inline_code_spans(&block.content);
         for cap in HUMAN_PAGE_LINK_RE.captures_iter(&block.content) {
             let whole = cap.get(0).expect("group 0 always present");
             // #3605 — inside an inline-code span: literal, never resolved.
@@ -336,7 +336,7 @@ fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>)
     if !content.contains("[[") {
         return content.to_string();
     }
-    let code_spans = inline_code_spans(content);
+    let code_spans = import::inline_code_spans(content);
     HUMAN_PAGE_LINK_RE
         .replace_all(content, |caps: &regex::Captures<'_>| {
             let m = caps.get(0).expect("group 0 always present");
@@ -369,34 +369,6 @@ fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>)
             }
         })
         .into_owned()
-}
-
-/// #1924 — byte ranges of `content` that lie inside an inline-code span
-/// (`` `...` ``). A simple left-to-right scan that pairs backticks: text
-/// between a backtick and the next backtick is a code span (the backticks
-/// themselves are included in the range). The inline-tag pre-pass skips any
-/// `#tag` token whose match falls inside one of these ranges, so a `#tag` in
-/// `` `code` `` stays literal — mirroring the fenced-code skip (`is_code`) for
-/// inline spans. Deliberately minimal: it does not implement the full CommonMark
-/// backtick-run-length matching rule (a span opened by N backticks closes only
-/// on a run of exactly N); a single-backtick pairing is sufficient for the
-/// import safety net and matches the spirit of the fence handling.
-fn inline_code_spans(content: &str) -> Vec<(usize, usize)> {
-    let mut spans: Vec<(usize, usize)> = Vec::new();
-    let mut open: Option<usize> = None;
-    for (i, b) in content.bytes().enumerate() {
-        if b == b'`' {
-            match open {
-                None => open = Some(i),
-                Some(start) => {
-                    // Range covers the opening backtick through the closing one.
-                    spans.push((start, i + 1));
-                    open = None;
-                }
-            }
-        }
-    }
-    spans
 }
 
 /// `true` when byte offset `pos` falls inside any of the half-open `spans`.
@@ -463,7 +435,7 @@ fn collect_inbound_tag_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
         if !block.content.contains('#') {
             continue;
         }
-        let spans = inline_code_spans(&block.content);
+        let spans = import::inline_code_spans(&block.content);
         let link_spans = human_page_link_spans(&block.content);
         // Multi-word `#[[...]]` first.
         for cap in HUMAN_MULTIWORD_TAG_RE.captures_iter(&block.content) {
@@ -517,7 +489,7 @@ fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> St
     if !content.contains('#') {
         return content.to_string();
     }
-    let spans = inline_code_spans(content);
+    let spans = import::inline_code_spans(content);
     // Pass 1: multi-word `#[[name]]` → `#[ULID]`.
     let after_multi = HUMAN_MULTIWORD_TAG_RE.replace_all(content, |caps: &regex::Captures<'_>| {
         let m = caps.get(0).expect("group 0 present");
@@ -540,7 +512,7 @@ fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> St
     // wiki-link spans that mis-alignment is not merely defensive. `#[[a b]]
     // [[Project #alpha]]` shifts the link 10 bytes right, moving `#alpha`
     // clean out of the stale span and back into the corrupting rewrite (#3598).
-    let spans2 = inline_code_spans(&after_multi);
+    let spans2 = import::inline_code_spans(&after_multi);
     let link_spans2 = human_page_link_spans(&after_multi);
     HUMAN_TAG_RE
         .replace_all(&after_multi, |caps: &regex::Captures<'_>| {

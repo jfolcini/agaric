@@ -402,10 +402,34 @@ pub fn match_vault_file(reference: &str, vault_files: &[VaultFile]) -> Option<(u
     }
 }
 
-/// Inline-code-span byte ranges in `content` (`` `...` ``), used by
-/// [`detect_attachment_refs`] to skip refs inside inline code. Single-backtick
-/// pairing — the same minimal rule the #1924 inline-tag helpers use. Lifted
-/// here so the importer can compute spans once per block and reuse them.
+/// Byte ranges of `content` that lie inside an inline-code span
+/// (`` `...` ``). A left-to-right scan that pairs backticks: the text between
+/// a backtick and the next backtick is a code span, and the backticks
+/// themselves are included in the range.
+///
+/// This is the SINGLE definition for the whole workspace (#3264). Two
+/// consumers read the same spans off the same block content during one
+/// `import_markdown` call:
+/// - [`detect_attachment_refs`] here in the engine, which skips attachment
+///   refs that fall inside a span;
+/// - the app-side #1924 inline-tag / human-page-link pre-pass in
+///   `commands::pages::markdown`, which leaves a `#tag` inside `` `code` ``
+///   literal rather than rewriting it to `#[ULID]`.
+///
+/// Those two used to hold statement-identical private copies. Because both
+/// copies carried the caveat below, the first fix to either one would have
+/// desynchronised them — within a single imported block a backtick-delimited
+/// region would be code for one pass (attachments skipped) and not code for
+/// the other (`#tag` rewritten), silently corrupting the block. Keeping one
+/// definition is what makes that failure unrepresentable, so do not re-inline
+/// a local copy on either side.
+///
+/// Deliberately minimal: it does not implement the full CommonMark
+/// backtick-run-length matching rule (a span opened by N backticks closes only
+/// on a run of exactly N); single-backtick pairing is sufficient for the
+/// import safety net and matches the spirit of the fenced-code (`is_code`)
+/// handling. If that is ever tightened, it is tightened here, once, for both
+/// consumers at the same time.
 pub fn inline_code_spans(content: &str) -> Vec<(usize, usize)> {
     let mut spans: Vec<(usize, usize)> = Vec::new();
     let mut open: Option<usize> = None;

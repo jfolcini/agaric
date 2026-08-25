@@ -314,4 +314,54 @@ describe('useBlockZoom', () => {
       expect(result.current.selectAllIds).toEqual(['B', 'D'])
     })
   })
+
+  describe('rebased row identity (#3253)', () => {
+    it('reuses the rebased object for rows whose source block is unchanged', () => {
+      const { result, rerender } = renderHook(
+        ({ blocks }: { blocks: FlatBlock[] }) => useBlockZoom(blocks, blocks, NO_COLLAPSE),
+        { initialProps: { blocks: allBlocks } },
+      )
+
+      act(() => {
+        result.current.zoomIn('A')
+      })
+
+      const first = result.current.zoomedVisible
+      expect(first.map((b) => b.id)).toEqual(['B', 'C', 'D'])
+
+      // Mirrors a store write (#2527): every untouched block keeps its exact
+      // prior object reference, only the edited one is replaced.
+      const editedD = { ...(allBlocks[3] as FlatBlock), content: 'Other (edited)' }
+      const nextBlocks = [...allBlocks.slice(0, 3), editedD, allBlocks[4] as FlatBlock]
+      rerender({ blocks: nextBlocks })
+
+      const second = result.current.zoomedVisible
+      expect(second.map((b) => b.id)).toEqual(['B', 'C', 'D'])
+      // Unedited rows keep identity, so their React.memo'd row wrappers
+      // short-circuit instead of re-rendering the whole pane.
+      expect(second[0]).toBe(first[0])
+      expect(second[1]).toBe(first[1])
+      // The edited row is re-derived, still with the pane-relative depth.
+      expect(second[2]).not.toBe(first[2])
+      expect(second[2]?.content).toBe('Other (edited)')
+      expect(second.map((b) => b.depth)).toEqual([0, 1, 0])
+    })
+
+    it('re-derives rows when the depth offset changes', () => {
+      const { result } = renderHook(() => useBlockZoom(allBlocks, allBlocks, NO_COLLAPSE))
+
+      act(() => {
+        result.current.zoomIn('A')
+      })
+      const fromA = result.current.zoomedVisible.find((b) => b.id === 'C')
+      expect(fromA?.depth).toBe(1)
+
+      act(() => {
+        result.current.zoomIn('B')
+      })
+      const fromB = result.current.zoomedVisible.find((b) => b.id === 'C')
+      expect(fromB?.depth).toBe(0)
+      expect(fromB).not.toBe(fromA)
+    })
+  })
 })

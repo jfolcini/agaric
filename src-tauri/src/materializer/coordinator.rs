@@ -1388,7 +1388,11 @@ impl std::fmt::Debug for Materializer {
 /// `RebuildPagesCacheCounts` (tail) are enqueued separately in
 /// [`Materializer::enqueue_post_snapshot_rebuilds`] — see that method for the
 /// ordering rationale.
-const POST_SNAPSHOT_CACHE_REBUILDS: &[(&str, MaterializeTask)] = &[
+/// #3328: `pub(super)` so `materializer::tests` can hold this list against
+/// `agaric_sync::snapshot::CACHE_TABLES` — the wipe half of the same
+/// contract, which the restore path issues in another crate. Widened for the
+/// parity test only; nothing outside `materializer` consumes it.
+pub(super) const POST_SNAPSHOT_CACHE_REBUILDS: &[(&str, MaterializeTask)] = &[
     ("agenda_cache", MaterializeTask::RebuildAgendaCache),
     ("pages_cache", MaterializeTask::RebuildPagesCache),
     ("tags_cache", MaterializeTask::RebuildTagsCache),
@@ -1417,6 +1421,19 @@ impl agaric_sync::apply_host::ApplyHost for Materializer {
         purged_blocks: &[agaric_core::ulid::BlockId],
     ) -> Result<(), AppError> {
         Materializer::enqueue_inbound_sync_rebuilds(self, changed_blocks, purged_blocks).await
+    }
+
+    /// #3328: the attachment root, served from the value `lib.rs` registers
+    /// via [`Materializer::set_app_data_dir`] — the same `OnceLock` the
+    /// `CleanupOrphanedAttachments` task reads. Sync-received attachments and
+    /// the GC that reconciles them now resolve their directory from one
+    /// place instead of two.
+    ///
+    /// `None` before `set_app_data_dir` runs (and in tests that never call
+    /// it); the sync call sites fall back to deriving the root from the pool
+    /// in that case, which is the pre-#3328 behaviour.
+    fn app_data_dir(&self) -> Option<PathBuf> {
+        Materializer::app_data_dir(self)
     }
 
     async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError> {

@@ -425,6 +425,75 @@ pub async fn set_todo_state_inner(
     Ok(ActiveBlockRow::from_block_row_unchecked(result))
 }
 
+/// Probe a batch's target blocks for a `repeat` property and `warn!` if any
+/// carry one, because none of the batch paths run the per-block recurrence
+/// advance the single-row `set_todo_state_inner` performs.
+///
+/// #3264: this used to be open-coded inside [`set_todo_state_batch_inner`]
+/// only. [`set_property_batch_inner`] — its generalisation across the four
+/// reserved column-backed keys — skips recurrence identically but emitted
+/// nothing, so the two live batch surfaces behaved the same and logged
+/// differently. The concrete cost: a user multi-selects pages in the Pages
+/// browser and sets `todo_state = DONE` through
+/// `PageBrowserBatchToolbar`, any `repeat`-carrying page never rolls forward,
+/// and the daily log is silent — triage has to first work out WHICH of the two
+/// batch commands the click routed to before it can even look for the
+/// diagnostic. One helper, one target, both callers.
+///
+/// The `command` field (not the target) distinguishes the callers, so a log
+/// filter on `agaric::batch_recurrence_skip` catches every batch path,
+/// including ones added later.
+///
+/// #473 L3: `conn` MUST be the caller's already-open `BEGIN IMMEDIATE`
+/// transaction, not the pool, so the read sits in the same serialized window
+/// as the writes it is warning about — otherwise a `repeat` property
+/// added/removed between the probe and the tx open makes the warning lie.
+/// A single SELECT probing `key = 'repeat'` across the whole batch, not a
+/// per-block read.
+///
+/// The gate at the call sites is the KEY (`todo_state`), never the value:
+/// [`set_todo_state_batch_inner`] warns for every state it is handed —
+/// including a clear — so gating the sibling on `Some("DONE")` would put the
+/// two paths back out of step, which is the whole defect.
+///
+/// # Errors
+/// Returns [`AppError`] if the probe query fails. Deliberately propagated
+/// rather than swallowed: the probe runs on the command transaction, so a
+/// failure here is a failure of that transaction, and silently degrading to
+/// "no warning" would recreate the blind spot this helper exists to close.
+async fn warn_if_batch_skips_recurrence(
+    conn: &mut sqlx::SqliteConnection,
+    command: &'static str,
+    block_ids: &[BlockId],
+) -> Result<(), AppError> {
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — `BlockId` normalises to
+    // canonical uppercase on construction, so the serialized ids match the
+    // byte-exact ULIDs on disk regardless of the casing the caller supplied
+    // (MCP, sync replay, hand-crafted scripts).
+    let block_ids_json = serde_json::to_string(block_ids)?;
+    let repeat_carriers = sqlx::query_scalar::<_, String>(
+        "SELECT block_id FROM block_properties \
+         WHERE key = 'repeat' AND block_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(block_ids_json)
+    .fetch_all(&mut *conn)
+    .await?;
+    if !repeat_carriers.is_empty() {
+        tracing::warn!(
+            target: "agaric::batch_recurrence_skip",
+            command = command,
+            repeat_carrier_count = repeat_carriers.len(),
+            example_block_id = %repeat_carriers.first().map_or("", String::as_str),
+            "{} skips the per-block recurrence advance + completion-timestamp \
+             side-effects that the single-row path runs; {} block(s) in this \
+             batch carry `repeat` and will NOT roll forward",
+            command,
+            repeat_carriers.len(),
+        );
+    }
+    Ok(())
+}
+
 /// Batch variant of [`set_todo_state_inner`].
 ///
 /// Replaces the per-row IMMEDIATE-tx loop the FE used to drive on
@@ -478,14 +547,6 @@ pub async fn set_todo_state_batch_inner(
         ));
     }
 
-    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — `BlockId` normalises to
-    // canonical uppercase on construction, so the membership probe matches
-    // the byte-exact ULID on disk regardless of casing supplied by the
-    // caller (MCP, sync replay, hand-crafted scripts). Project to the
-    // owned `String` form once for the `json_each` bind below.
-    let block_id_strings: Vec<String> =
-        block_ids.iter().map(|id| id.as_str().to_string()).collect();
-
     // One IMMEDIATE tx covers every per-block write (op_log + blocks
     // column). Either every state change commits or none of them.
     let mut tx = CommandTx::begin_immediate(pool, "set_todo_state_batch").await?;
@@ -494,34 +555,11 @@ pub async fn set_todo_state_batch_inner(
 
     // SQL-review this batch path skips the timestamp + recurrence
     // side-effects that the single-row `set_todo_state_inner` performs.
-    // If any block in the batch carries a `repeat` property, emit a
-    // `tracing::warn!` so callers expecting per-block recurrence advance
-    // notice that this is the batched path. The check is a single
-    // SELECT that probes for `key = 'repeat'` across the batch's blocks
-    // — cheaper than the per-block-read pre-commit shape.
-    //
-    // #473 L3: probe inside the IMMEDIATE tx (not on the pool) so the
-    // read is in the same serialized window as the writes below —
-    // avoiding a TOCTOU race where a repeat property is added/removed
-    // between this probe and the tx open.
-    let repeat_carriers = sqlx::query_scalar::<_, String>(
-        "SELECT block_id FROM block_properties \
-         WHERE key = 'repeat' AND block_id IN (SELECT value FROM json_each(?))",
-    )
-    .bind(serde_json::to_string(&block_id_strings)?)
-    .fetch_all(&mut **tx)
-    .await?;
-    if !repeat_carriers.is_empty() {
-        tracing::warn!(
-            target: "agaric::set_todo_state_batch",
-            repeat_carrier_count = repeat_carriers.len(),
-            example_block_id = %repeat_carriers.first().map_or("", String::as_str),
-            "set_todo_state_batch_inner skips per-block recurrence advance + \
-             completion-timestamp side-effects that the single-row path runs; \
-             {} block(s) in this batch carry `repeat` and will NOT roll forward",
-            repeat_carriers.len(),
-        );
-    }
+    // #3264: the probe + `warn!` now live in the shared
+    // [`warn_if_batch_skips_recurrence`] so `set_property_batch_inner` — which
+    // skips recurrence in exactly the same way — emits the same diagnostic
+    // instead of nothing.
+    warn_if_batch_skips_recurrence(&mut tx, "set_todo_state_batch_inner", &block_ids).await?;
 
     // Fallback validation — mirrors
     // `set_todo_state_inner`. Read once for the whole batch (single
@@ -622,6 +660,10 @@ const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
 ///
 /// Like the todo batch, this path deliberately does NOT run recurrence /
 /// completion-timestamp transitions — it is a bulk multi-select reflex.
+/// #3264: and, like the todo batch, it now says so — when `key` is
+/// `todo_state` it runs [`warn_if_batch_skips_recurrence`] inside the same
+/// IMMEDIATE tx, so a Pages-browser multi-select over `repeat`-carrying pages
+/// leaves a diagnostic in the daily log instead of nothing.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn set_property_batch_inner(
     pool: &SqlitePool,
@@ -684,6 +726,18 @@ pub async fn set_property_batch_inner(
     let mut tx = CommandTx::begin_immediate(pool, "set_property_batch").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
+
+    // #3264: `todo_state` is the only allowlisted key with recurrence
+    // semantics, and this path skips them exactly as
+    // `set_todo_state_batch_inner` does — so it now emits the same warning
+    // through the same shared probe. Gated on the KEY, not on
+    // `value == Some("DONE")`: the sibling warns for every state including a
+    // clear, and re-introducing a value gate here would put the two paths back
+    // out of step. Skipped entirely for the three non-recurring keys so the
+    // other 3/4 of this command pays no extra SELECT.
+    if key == "todo_state" {
+        warn_if_batch_skips_recurrence(&mut tx, "set_property_batch_inner", &block_ids).await?;
+    }
 
     // Reserved-key option-list fallback validation for the two text keys,
     // mirroring `set_todo_state_batch_inner` / `set_priority_inner`. Read

@@ -2855,7 +2855,8 @@ pub async fn purge_blocks_by_ids(
 /// once per descendant / per markdown line in `template-utils.ts`. The
 /// `properties` map carries arbitrary `key -> value_text` pairs that land
 /// as `SetProperty` ops inside the same transaction (mirrors
-/// `import_markdown_inner`'s precedent — see `pages.rs:622-637`). Reserved
+/// `import_markdown_inner`'s precedent — see its `set_property_in_tx`
+/// loop in `src-tauri/src/commands/pages/markdown.rs`). Reserved
 /// keys (`todo_state` / `priority` / `due_date` / `scheduled_date`) route
 /// through the same `set_property_in_tx` helper so they hit the right
 /// columns on `blocks` instead of `block_properties`.
@@ -2896,11 +2897,13 @@ pub struct CreateBlockSpec {
 /// op_log scope.
 ///
 /// Per-spec semantics: each entry in `specs` runs through
-/// [`create_block_in_tx`] (the same helper [`import_markdown_inner`] uses,
-/// see `pages.rs:607`), accumulating `(BlockRow, OpRecord)` pairs. After
+/// [`create_block_in_tx`] (the same helper [`import_markdown_inner`] uses
+/// in `src-tauri/src/commands/pages/markdown.rs`), accumulating
+/// `(BlockRow, OpRecord)` pairs. After
 /// the `CreateBlock` op is appended, every `(key, value)` pair in
 /// `properties` runs through [`set_property_in_tx`] — same precedent as
-/// the markdown-import loop (`pages.rs:622-637`). All ops enqueue for
+/// the markdown-import loop in `src-tauri/src/commands/pages/markdown.rs`.
+/// All ops enqueue for
 /// background dispatch; one `commit_and_dispatch` at the end drains them
 /// in FIFO order.
 ///

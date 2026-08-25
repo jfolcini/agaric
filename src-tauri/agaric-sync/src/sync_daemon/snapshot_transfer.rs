@@ -119,7 +119,7 @@ use crate::apply_host::ApplyHost;
 use crate::snapshot::apply_snapshot;
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_files::app_data_dir_from_pool;
+use crate::sync_files::attachment_root;
 use crate::sync_protocol::SyncMessage;
 use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
 use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
@@ -890,7 +890,10 @@ pub async fn try_receive_snapshot_catchup(
     // `recv_bulk` as a backstop; see there.
     // `SnapshotTempFile::Drop` unlinks the temp on every exit path
     // (success, decode failure, panic) — see the type's docs.
-    let app_data_dir = app_data_dir_from_pool(pool).await?;
+    // #3328: the temp file and the attachments the applied snapshot refers to
+    // must live under the root the app owns, not under whatever directory
+    // happens to contain the database file.
+    let app_data_dir = attachment_root(materializer, pool).await?;
     let recv_progress = SnapshotTransferProgress {
         event_sink,
         remote_device_id,
