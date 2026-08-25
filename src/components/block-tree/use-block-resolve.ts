@@ -87,6 +87,30 @@ type PagesListRef = React.RefObject<PageRow[]>
 type GenerationRef = React.RefObject<number>
 
 /**
+ * Ref to a per-list monotonic sequence counter — one for `pagesListRef`
+ * fills, a separate one for `tagsListRef` fills (`pagesRequestSeqRef` /
+ * `tagsRequestSeqRef` in `useBlockResolve`).
+ *
+ * #4270 — the generation guard above makes a fill correct with respect to
+ * *invalidations*, not with respect to *request ORDER*: two fills started in
+ * the same generation (no invalidation between them) both pass it, so
+ * whichever RESOLVES last wins, even if it was the earlier-STARTED request
+ * racing a fresher one. This ref closes that. It is bumped synchronously at
+ * DISPATCH time (before the IPC await), so it always reflects the highest
+ * sequence number ISSUED so far, regardless of resolution order. A fill's
+ * write is gated on `seqRef.current === (the value it captured at dispatch
+ * time)` — i.e. "no newer request for this same list has been issued since
+ * I started" — composed with (not replacing) the generation/space checks.
+ *
+ * Split per-list rather than shared with its sibling: an unrelated tag fill
+ * issued between two page fills would otherwise starve out an
+ * earlier-but-still-uncontested page fill, which is a needless extra
+ * over-rejection this ref has no reason to cause (contrast the generation
+ * ref, which is deliberately shared — see its comment in `useBlockResolve`).
+ */
+type RequestSeqRef = React.RefObject<number>
+
+/**
  * Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`.
  *
  * Bug 1: delegates to the shared `getPageDisplayName` formatter so
@@ -143,6 +167,7 @@ async function searchPagesViaCache(
   q: string,
   pagesListRef: PagesListRef,
   generationRef: GenerationRef,
+  requestSeqRef: RequestSeqRef,
 ): Promise<PageRow[]> {
   let source = pagesListRef.current
   if (source.length === 0) {
@@ -165,6 +190,10 @@ async function searchPagesViaCache(
     // this fetch started under — persisting `source` over it would
     // resurrect exactly the stale entries #4007 exists to remove.
     const requestGeneration = generationRef.current
+    // #4270 — capture this fill's own sequence number BEFORE the IPC, same
+    // moment as `requestGeneration`. See `RequestSeqRef`'s comment.
+    const requestSeq = requestSeqRef.current + 1
+    requestSeqRef.current = requestSeq
     const pages = unwrap(await commands.listAllPagesInSpace(requireActiveScope(spaceId), null))
     // #4138 — seed the RAW title (`''` for NULL content), matching the
     // backend's `COALESCE(b.content, '')` `ORDER BY`. The `'Untitled'`
@@ -178,29 +207,137 @@ async function searchPagesViaCache(
     // cannot see this in-flight promise).
     // #4055 — AND only while no name-change-bus event has landed since. See
     // the comment above `requestGeneration`.
+    // #4270 — AND only while no newer fill for this same list has been
+    // ISSUED since. See `RequestSeqRef`'s comment.
     if (
       (useSpaceStore.getState().currentSpaceId ?? '') === spaceId &&
-      generationRef.current === requestGeneration
+      generationRef.current === requestGeneration &&
+      requestSeqRef.current === requestSeq
     ) {
       pagesListRef.current = source
     } else {
-      // The guard rejected this fetch — a space switch or a name-change-bus
-      // event landed while it was in flight, and `pagesListRef.current`
-      // already reflects that (cleared or patched by whichever raced us).
-      // Serve THIS call's result from there instead of the discarded
-      // `source`: the caller (`searchPages`, and via
-      // `populatePageResolveCache`, the shared resolve store) would
-      // otherwise still receive the exact stale/deleted/renamed row the
-      // guard exists to keep out of the cache — just for one call instead
-      // of forever, which is still the bug #4055 exists to close.
+      // The guard rejected this fetch. Two different, both-safe reasons land
+      // here:
+      //   - A name-change-bus event (rename/removal/invalidation) landed on
+      //     THIS space while the fetch was in flight, or a newer fill for
+      //     this list was issued and this one lost the #4270 race —
+      //     `pagesListRef.current` is cleared, patched, overwritten, or
+      //     superseded by a still-in-flight newer request (the #4270 loser
+      //     can resolve BEFORE its winner: `pagesListRef.current` then
+      //     hasn't been touched by the winning fill yet either — that fill
+      //     has only been ISSUED, not resolved — so this is not always
+      //     "the winning state" at the moment this branch reads it, just
+      //     never the losing fetch's own now-discarded `source`). Serve
+      //     THIS call's result from there instead of the discarded
+      //     `source`: the caller (`searchPages`, and via
+      //     `populatePageResolveCache`, the shared resolve store) would
+      //     otherwise still receive the exact stale/deleted/renamed row the
+      //     guard exists to keep out of the cache — just for one call
+      //     instead of forever, which is still the bug #4055 exists to
+      //     close.
+      //   - A SPACE SWITCH landed mid-flight and a fill for the NEW space has
+      //     already completed and populated `pagesListRef.current`: this
+      //     branch then hands the new space's rows back to a call issued for
+      //     the OLD space. Harmless (arguably more correct than serving
+      //     nothing), and no cross-space WRITE is reachable through it —
+      //     `populatePageResolveCache`'s `batchSet` stays gated on
+      //     `requestSpaceId` (captured by the caller before dispatch, not on
+      //     this fallback path), so a stale-space call can read the new
+      //     space's rows here but can never seed the resolve store under the
+      //     old space's key.
       source = pagesListRef.current
     }
   }
-  const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
+  // #4152 — a blank row's only searchable text is the DISPLAYED "Untitled"
+  // placeholder. Matched at FILTER time only: `source`'s rows still carry the
+  // raw `''` title, so #4138's sort-key invariant is untouched.
+  //
+  // Blank rows do NOT go through `matchSorter`. A blank row has no title to
+  // fuzzy-rank, and ranking the placeholder text puts it in the SAME tiers a
+  // real title can reach — `un` scores STARTS_WITH against "Untitled", and
+  // same-tier ties fall back to `localeCompare`, which "Untitled" wins against
+  // most real titles starting "Un". So blank rows crowd real matches out of
+  // the slice budget. Instead: rank real content, admit blank rows by
+  // `matchesBlankRowFolded`'s prefix test (the same predicate the FTS path
+  // uses), and place real matches first unconditionally, so a placeholder row
+  // can only fill a slot no real match wanted.
+  //
+  // Only for a non-empty query. An empty `q` means "everything matches", and
+  // `source` is already in #4138's title-sort order with blank rows FIRST.
+  // Partitioning unconditionally would silently reorder that listing.
+  // The blank-row comparison takes no per-row input, so it is hoisted to a
+  // single value evaluated once rather than once per blank row: the
+  // placeholder is recomputed per call rather than cached at module scope,
+  // because `untitledOr` reads the live i18next instance (#4153) and
+  // `changeLanguage` can fire without a remount.
+  const foldedPlaceholder = q ? foldedUntitledPlaceholder() : ''
+  const foldedQuery = q ? foldForSearch(q) : ''
+  const blankRowsMatch = matchesBlankRowFolded(foldedQuery, foldedPlaceholder)
+  const filtered = q
+    ? [
+        ...matchSorter(
+          source.filter((p) => p.title.trim() !== ''),
+          q,
+          { keys: ['title'] },
+        ),
+        ...source.filter((p) => p.title.trim() === '' && blankRowsMatch),
+      ]
+    : source
   // Copy rather than hand back `pagesListRef.current`'s own objects — the
   // dispatcher and the cache seed both read these, and aliasing the ref's
   // entries would let a future consumer mutate the lazily-filled cache.
   return filtered.slice(0, 20).map((p) => ({ id: p.id, title: p.title }))
+}
+
+/**
+ * Decides whether a blank (NULL-content) page row matches a picker query,
+ * given both sides already folded so neither is recomputed per row.
+ *
+ * A blank row has no searchable text of its own — only the "Untitled"
+ * placeholder it displays (#4152) — and matches that by PREFIX, not
+ * substring.
+ *
+ * The prefix rule is the whole point. A substring test against the
+ * placeholder makes every blank row match every substring of it ("unt",
+ * "tit", "led", "title"), and because blank titles sort first (#4138) a run
+ * of them fills a result budget before any genuine match is considered.
+ * `title` is a realistic query.
+ *
+ * Both filter paths (`searchPagesViaCache` and `searchPagesViaFts`'s cache
+ * supplement) route blank rows through this one function, so they cannot
+ * disagree about which rows a blank page's match text qualifies for. They
+ * did once: a user typing progressively saw blank pages appear and then
+ * vanish as the query crossed the length threshold between them.
+ *
+ * This is about MATCH text only. Where the displayed label comes from is
+ * `untitledOr` / `makePagePickerItem` — a separate question, and the one
+ * #4138's "search text and displayed label cannot diverge" note is about.
+ *
+ * Known limitation: prefix-only means a multi-word localised placeholder
+ * (fr "Sans titre") is unreachable by its second word. Only `en` ships today.
+ *
+ * The empty-query guard is load-bearing: a RAW query that is non-empty but
+ * folds to `''` — one made entirely of combining marks, which `foldForSearch`
+ * strips — would otherwise hit `startsWith('')`'s vacuous truth and match
+ * every blank row.
+ */
+function matchesBlankRowFolded(foldedQuery: string, foldedPlaceholder: string): boolean {
+  return foldedQuery !== '' && foldedPlaceholder.startsWith(foldedQuery)
+}
+
+/**
+ * The once-per-call value `matchesBlankRowFolded` needs for every blank row
+ * it is asked about. Recomputed on every call
+ * (never cached at module scope): `untitledOr` resolves through the live
+ * i18next instance (#4153's "routes the placeholder through the live i18n
+ * instance, not a hardcoded literal"), and the active locale can change at
+ * runtime via `i18next.changeLanguage` with no remount in between, so a
+ * module-scope cache would keep serving a placeholder folded under the OLD
+ * locale after such a switch. Once per `searchPages` call is still a large
+ * win over once per blank row — the fix this note is about.
+ */
+function foldedUntitledPlaceholder(): string {
+  return foldForSearch(untitledOr(''))
 }
 
 /**
@@ -250,10 +387,43 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
     return matches
   }
   const ftsIds = new Set(matches.map((m) => m.id))
-  // Unicode-aware fold. `matchesSearchFolded`'s ASCII fast
-  // path keeps this hot cache-lookup cheap when the query is ASCII.
-  const cacheMatches = pagesListRef.current
-    .filter((p) => matchesSearchFolded(p.title, q) && !ftsIds.has(p.id))
+  // #4152 / item 1 of #4295's review — a row with real content is matched by
+  // `matchesSearchFolded`'s ordinary folded-SUBSTRING test — including its
+  // Unicode-aware fold and ASCII fast path, which keeps this hot
+  // cache-lookup cheap when the query is ASCII. A NULL-content row instead
+  // matches the DISPLAYED "Untitled" placeholder, prefix-only, via
+  // `matchesBlankRowFolded` (see its own docstring for why substring is too
+  // noisy here). `p.title` in the returned row (the `.map` below) stays raw
+  // either way.
+  //
+  // #4152 — an earlier round partitioned
+  // `searchPagesViaCache`'s ranking (real-content rows first, blank rows
+  // only filling what's left) but left THIS supplement as a flat filter +
+  // `.slice(0, 10)` over `pagesListRef.current`'s own order, which is
+  // blanks-first (#4138: an empty title sorts before any real one). A
+  // prefix of "Untitled" (`unt` and longer) matches every blank row via
+  // `matchesBlankRowFolded`, so ten of them fill the entire supplement
+  // budget before a genuine cache-only match is ever considered — the exact
+  // crowd-out the prefix-only narrowing was meant to fix, just reached
+  // through this path's unranked slice instead of `matchSorter`'s ranking.
+  // Partitioned the same way as `searchPagesViaCache`, so the two paths
+  // can't diverge on the rule: real-content matches first, blank rows only
+  // fill the slots real matches don't use.
+  //
+  // `foldedPlaceholder` is computed once here, and the blank-row comparison
+  // itself (which takes no per-row input) is hoisted to a single value
+  // evaluated once rather than once per blank row inside
+  // `matchesBlankRowFolded`. See `foldedUntitledPlaceholder`'s comment for
+  // why the placeholder is recomputed per call rather than cached at module
+  // scope.
+  const foldedPlaceholder = foldedUntitledPlaceholder()
+  const foldedQuery = foldForSearch(q)
+  const blankRowsMatch = matchesBlankRowFolded(foldedQuery, foldedPlaceholder)
+  const candidates = pagesListRef.current.filter((p) => !ftsIds.has(p.id))
+  const cacheMatches = [
+    ...candidates.filter((p) => p.title.trim() !== '' && matchesSearchFolded(p.title, q)),
+    ...candidates.filter((p) => p.title.trim() === '' && blankRowsMatch),
+  ]
     .slice(0, 10)
     .map((p) => ({ id: p.id, title: p.title }))
   return [...matches, ...cacheMatches].slice(0, 20)
@@ -540,8 +710,32 @@ export function useBlockResolve(): UseBlockResolveReturn {
   // `searchTags`'s inline fill) capture this before their IPC and refuse to
   // persist a stale response once it no longer matches — closing the
   // in-flight window the #732 space-only guard couldn't see: a bus event
-  // landing between the IPC dispatch and its resolution.
+  // landing between the IPC dispatch and its resolution. Also bumped by
+  // `onCreatePage` / `onCreateTag` (#4275 item 1 — see their comments): a
+  // create is a name-change too, and without this an in-flight fill's
+  // pre-create snapshot could win and silently hide the just-created page/tag.
+  //
+  // #4275 item 2 — deliberately ONE counter shared across both entities
+  // (page/tag) and every event kind, not split per-entity. A tag rename
+  // therefore also rejects an in-flight PAGE fill, and vice versa: safe
+  // (it over-rejects, never under-rejects — the fill just re-fetches), but
+  // it costs an avoidable `listAllPagesInSpace`/`listAllTagsInSpace` round
+  // trip and a transiently empty picker for an event that could not have
+  // affected that particular fetch. Recorded decision: left as one counter.
+  // Over-rejection is the correct bias for a correctness guard, and two
+  // counters are two things that can drift out of sync (miss bumping one on
+  // a new event kind) for a cost that is small and self-healing on the very
+  // next keystroke. Split them only if the extra round trips are ever
+  // measured to matter.
   const nameChangeGenerationRef = useRef(0)
+
+  // #4270 — per-list monotonic sequence counters gating a fill's write on
+  // being the latest ISSUED request for that list, not merely the latest
+  // RESOLVED one. See `RequestSeqRef`'s comment for the mechanism and why
+  // these stay split per-list rather than sharing one counter (contrast
+  // `nameChangeGenerationRef` just above, which is deliberately shared).
+  const pagesRequestSeqRef = useRef(0)
+  const tagsRequestSeqRef = useRef(0)
 
   // #732 — the cache holds space-scoped data in a space-agnostic
   // container, and the hook instance SURVIVES page-editor→page-editor
@@ -661,6 +855,11 @@ export function useBlockResolve(): UseBlockResolveReturn {
         // #853 space check alone doesn't notice a rename/removal/invalidation
         // landing on THIS space while the fetch is in flight.
         const requestGeneration = nameChangeGenerationRef.current
+        // #4270 — capture this fill's own sequence number BEFORE the IPC,
+        // same guard as `searchPagesViaCache`'s `requestSeq` (see
+        // `RequestSeqRef`'s comment).
+        const requestSeq = tagsRequestSeqRef.current + 1
+        tagsRequestSeqRef.current = requestSeq
         const fetched = unwrap(
           await commands.listAllTagsInSpace(requireActiveScope(requestSpaceId)),
         )
@@ -669,9 +868,12 @@ export function useBlockResolve(): UseBlockResolveReturn {
         // from a since-abandoned space must not seed the new space's
         // cache (neither the resolve store nor `tagsListRef`).
         // #4055 — AND behind the captured-generation guard above.
+        // #4270 — AND behind the captured-sequence guard (latest ISSUED,
+        // not merely latest RESOLVED, request for `tagsListRef`).
         if (
           isRequestSpaceStillActive(requestSpaceId) &&
-          nameChangeGenerationRef.current === requestGeneration
+          nameChangeGenerationRef.current === requestGeneration &&
+          tagsRequestSeqRef.current === requestSeq
         ) {
           tagsListRef.current = fetched
           // Populate the resolve cache so tag_ref nodes can resolve the
@@ -693,9 +895,14 @@ export function useBlockResolve(): UseBlockResolveReturn {
             )
           }
         } else {
-          // The guard rejected this fetch — a space switch or a
-          // name-change-bus event landed while it was in flight, and
-          // `tagsListRef.current` already reflects that. Serve this call's
+          // The guard rejected this fetch — a space switch, a
+          // name-change-bus event, or the #4270 sequence guard just above
+          // (a newer fill for `tagsListRef` was issued and this one lost
+          // the race) landed while it was in flight. `tagsListRef.current`
+          // is cleared, patched, overwritten, or superseded by a
+          // still-in-flight newer request (the #4270 loser can resolve
+          // BEFORE its winner, in which case `tagsListRef.current` hasn't
+          // been touched by the winning fill yet either). Serve this call's
           // result from there instead of the discarded `fetched`: otherwise
           // this one call still returns the exact stale/deleted/renamed tag
           // the guard exists to keep out of the cache. Mirrors the
@@ -765,7 +972,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // relevance-ranked results.
       const rows =
         q.length <= 2
-          ? await searchPagesViaCache(q, pagesListRef, nameChangeGenerationRef)
+          ? await searchPagesViaCache(q, pagesListRef, nameChangeGenerationRef, pagesRequestSeqRef)
           : await searchPagesViaFts(q, pagesListRef)
 
       // #4239 — seed from the ROWS (raw, un-split titles) and render the
@@ -906,6 +1113,19 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const newId = unwrap(await commands.createPageInSpace(null, label, currentSpaceId))
       // Populate resolve cache so the link chip shows the title immediately
       useResolveStore.getState().set(newId, label, false)
+      // #4275 item 1 — bump the generation, exactly like the name-change-bus
+      // subscriber does for a rename/removal/invalidation. Without this, a
+      // create landing WHILE `pagesListRef` is empty and a fill is in flight
+      // was silently lost: the #4008 guard just below only appends into an
+      // ALREADY-filled cache, so an empty-cache create skips the append —
+      // and the racing fill's pre-create snapshot then passed both the
+      // space and generation guards in `searchPagesViaCache` and won,
+      // leaving the new page absent from the picker until something else
+      // invalidated. Bumping here makes that racing fill's snapshot fail
+      // the generation guard instead, so it is discarded (see the
+      // "guard rejected this fetch" branch) and the NEXT read re-fetches
+      // with this create included.
+      nameChangeGenerationRef.current += 1
       // #4008 review note 1 — append ONLY into an already-filled cache, the
       // same guard `onCreateTag` carries below. An EMPTY `pagesListRef` is not
       // "a space with no pages", it is the "not fetched for this space yet"
@@ -956,6 +1176,12 @@ export function useBlockResolve(): UseBlockResolveReturn {
       )
       // Populate resolve cache so the tag chip shows the name immediately
       useResolveStore.getState().set(block.id, name, false)
+      // #4275 item 1 — bump the generation. Mirrors `onCreatePage` above:
+      // an empty `tagsListRef` skips the append below (#4008 review note 6),
+      // so without this an in-flight `searchTags` fill's pre-create snapshot
+      // could win the race and hide the just-created tag until something
+      // else invalidated. See `onCreatePage`'s comment for the full mechanism.
+      nameChangeGenerationRef.current += 1
       // #3277 finding 1 — mirror `onCreatePage`'s `pagesListRef` append.
       // Without this, a tag created through the SAME `@`-picker session
       // that already lazily filled `tagsListRef` stayed unfindable by that

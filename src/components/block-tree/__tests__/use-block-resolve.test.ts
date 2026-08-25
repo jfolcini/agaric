@@ -901,20 +901,17 @@ describe('searchPages — short query (<=2 chars)', () => {
     }
   })
 
-  // #4138 item 1, continued — a direct consequence of the seed no longer
-  // baking "Untitled" text into the title: a short-query substring search
-  // for "un" used to match a NULL-content page (because its stored title
-  // literally contained the substring "un"), even though the backend's own
-  // full-text index has nothing to match ("un" doesn't appear anywhere in a
-  // NULL/empty content column). Confirms the placeholder no longer leaks
-  // into the searchable text.
+  // #4138 item 1 made the cache seed store the RAW `''` title instead of
+  // baking `'Untitled'` into it (so the sort key would match the backend's
+  // `COALESCE(b.content, '')`), which had the side effect of making a
+  // NULL-content page unfindable by typing its own displayed label — #4152.
   //
-  // #4152 considered inverting this (matching the DISPLAYED "Untitled"
-  // placeholder), but that is an open product question the issue itself
-  // declines to settle (labelled `idea`, zero comments, #4154 explicitly
-  // filed-not-implemented) — not something this session has standing to
-  // decide by flipping the assertion #4150 deliberately locked in.
-  it('does NOT match a NULL-content page by searching its "Untitled" placeholder text', async () => {
+  // #4152's chosen fix (the "middle option" of its three): match the
+  // DISPLAYED "Untitled" placeholder at FILTER time only, in both
+  // `searchPages` code paths, without putting it back in the STORED title —
+  // see the matching test below and `comparePageRows`'s "sorts FIRST" test,
+  // which together keep the #4138 sort-key invariant intact.
+  it('matches a NULL-content page by searching its "Untitled" placeholder text (#4152)', async () => {
     mockedListAllPagesInSpace.mockResolvedValueOnce([
       {
         id: 'P30',
@@ -933,7 +930,71 @@ describe('searchPages — short query (<=2 chars)', () => {
       items = await result.current.searchPages('un')
     })
 
-    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).not.toContain('P30')
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('P30')
+  })
+
+  // #4152 — the fix must not leak the placeholder back into the STORED
+  // title: it is a match-time-only substitution, so the cache seed (and
+  // thus the sort key `comparePageRows` reads) stays the raw `''` #4138
+  // established. This is the thing the pre-#4152 test above was protecting;
+  // asserting it directly here keeps that protection even though the
+  // matching behaviour flipped.
+  it('still seeds pagesListRef with the raw empty title, not "Untitled", after a placeholder-matching search (#4152)', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      {
+        id: 'P30',
+        content: null,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('un')
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P30', title: '' }])
+  })
+
+  // PR #4152 prefix rule — this mirrors the FTS-path crowd-out test
+  // below (`#4152 prefix rule`, in the long-query describe block) for
+  // the SHORT-query cache path, which the PR's last commit deliberately left
+  // untouched on the claim that `matchSorter`'s own ranking of the
+  // "Untitled" placeholder text lands at "a fixed, low rank" that can only
+  // crowd out a match no better than CONTAINS. That claim is wrong for
+  // exactly the queries #4152 targets: verified against the installed
+  // `match-sorter` (8.3.0), `matchSorter("Untitled", "un")` ranks
+  // `STARTS_WITH` (5), the SAME tier a genuine `Unusual Page`-style match
+  // gets, and same-tier ties fall back to `localeCompare` of the ranked
+  // value — "Untitled" sorts before "Unusual", so it wins the tie too. A
+  // genuine CONTAINS-tier match (e.g. "My Fun Page") loses outright, never
+  // even tying. Past `.slice(0, 20)`, a run of blank pages crowds a genuine
+  // match out entirely — the exact bug the prefix-only narrowing
+  // (`matchesBlankRowFolded`) was meant to fix on the FTS path, just reached
+  // through this path's own ranking instead of an unranked array slice.
+  it('does not let "Untitled"-placeholder ranking crowd out a genuine cache match (#4152 prefix rule)', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    // 25 NULL-content ("Untitled") pages, plus one genuine page whose real
+    // title merely CONTAINS "un" ("My Fun Page"), rather than starting with
+    // it — the CONTAINS tier `matchSorter` ranks it at loses outright to
+    // every blank row's STARTS_WITH hit against "Untitled".
+    const blanks = Array.from({ length: 25 }, (_, i) => ({ id: `BLANK${i}`, title: '' }))
+    act(() => {
+      result.current.pagesListRef.current = [...blanks, { id: 'GENUINE', title: 'My Fun Page' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('un')
+    })
+
+    const nonCreateIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(nonCreateIds).toContain('GENUINE')
   })
 
   it('returns all pages (up to 20) for empty query string', async () => {
@@ -1110,6 +1171,113 @@ describe('searchPages — long query (>2 chars)', () => {
       expect.objectContaining({ id: 'C1', label: 'Design Review' }),
       expect.objectContaining({ id: 'C2', label: 'Design Sprint' }),
     ])
+  })
+
+  // #4152's fix touches BOTH `searchPages` code paths — this is the long
+  // query / FTS-cache-supplement one (`searchPagesViaFts`'s
+  // `matchesSearchFolded` filter). The matchSorter/short-query path is
+  // covered above.
+  it('supplements from pagesListRef by matching a NULL-content page\'s "Untitled" placeholder (#4152)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [
+        { id: 'C_NULL', title: '' },
+        { id: 'C_OTHER', title: 'Something Else' },
+      ]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('untitled')
+    })
+
+    const nonCreateIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(nonCreateIds).toContain('C_NULL')
+    expect(nonCreateIds).not.toContain('C_OTHER')
+  })
+
+  // `matchesBlankRowFolded` matches a blank row's "Untitled" placeholder by
+  // PREFIX only, not substring — see its docstring for why. "title" is a
+  // substring of "Untitled" but not a prefix of it, so it is the case that
+  // rule exists to reject: a substring test would wrongly admit every
+  // NULL-content row here (and, pre-#4152's crowd-out fix, let a run of them
+  // consume the `.slice(0, 10)` supplement budget ahead of a genuine match —
+  // see the sibling `finding 1` test below for that scenario, which uses
+  // "unt", an actual prefix). This test guards the prefix rule itself: none
+  // of the ten NULL-content rows may appear, only the genuine match.
+  it('does not match a blank row on a substring of "Untitled" that is not a prefix', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Ten NULL-content ("Untitled") pages, sorted first as #4138 dictates,
+    // followed by one genuine page whose real title contains "title".
+    const placeholders = Array.from({ length: 10 }, (_, i) => ({ id: `NULL${i}`, title: '' }))
+    act(() => {
+      result.current.pagesListRef.current = [
+        ...placeholders,
+        { id: 'GENUINE', title: 'My Title Page' },
+      ]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('title')
+    })
+
+    const nonCreateIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(nonCreateIds).toContain('GENUINE')
+    expect(nonCreateIds.filter((id) => id.startsWith('NULL'))).toHaveLength(0)
+  })
+
+  // PR #4152 prefix rule — the test above queries "title", which the
+  // prefix-only `matchesBlankRowFolded` excludes from matching a blank row
+  // at all, so it cannot exercise the crowd-out this test is written for. A
+  // genuine PREFIX of "Untitled" — "unt" here — still matches every blank
+  // row (prefix test), and `searchPagesViaFts` never got
+  // the same real-content-first partition `searchPagesViaCache` did: it
+  // hands the unpartitioned, pagesListRef-ordered (blanks-first, #4138) list
+  // straight to `.slice(0, 10)`, so ten blank rows fill the entire supplement
+  // budget before the genuine cache-only match is ever considered.
+  it('does not let "Untitled"-prefix blank rows crowd out a genuine cache-only match for a prefix query (#4152 prefix rule)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Ten NULL-content ("Untitled") pages, sorted first as #4138 dictates,
+    // followed by one genuine page whose real title contains "unt" as a
+    // substring (not itself a prefix match, so it only ever surfaces via
+    // `matchesSearchFolded`'s ordinary substring test).
+    const placeholders = Array.from({ length: 10 }, (_, i) => ({ id: `NULL${i}`, title: '' }))
+    act(() => {
+      result.current.pagesListRef.current = [...placeholders, { id: 'GENUINE', title: 'Countdown' }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('unt')
+    })
+
+    const nonCreateIds = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(nonCreateIds).toContain('GENUINE')
   })
 
   it('does NOT supplement from cache when FTS returns >= 5 results', async () => {
@@ -4204,14 +4372,15 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     expect(result.current.pagesListRef.current).toEqual([])
   })
 
-  // REVIEW — two overlapping fills with NO invalidation between them: both
-  // capture the SAME generation (nothing bumped it), so neither guard can
-  // distinguish "older" from "newer" — the mechanism is last-RESOLVED-wins,
-  // not last-REQUESTED-wins. Constructing this to document the actual
-  // behaviour, not to assert it is wrong: it is a real characteristic of
-  // the generation-counter design, distinct from the invalidation hole
-  // #4055 closes.
-  it('pagesListRef: two concurrent fills — the later-resolving one wins regardless of start order', async () => {
+  // #4270 — two overlapping fills with NO invalidation between them: both
+  // capture the SAME generation (nothing bumped it), so the generation guard
+  // alone cannot distinguish "older" from "newer" request. This USED TO be
+  // last-RESOLVED-wins (the generation counter has no opinion on request
+  // order) — the `pagesRequestSeqRef` sequence counter added for #4270
+  // closes that: it is bumped at DISPATCH time, so the earlier-started
+  // request's write loses to the later-started one regardless of which
+  // settles first.
+  it('pagesListRef: two concurrent fills — the later-STARTED one wins, even if it resolves first', async () => {
     let resolveFirst: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
     let resolveSecond: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
     mockedListAllPagesInSpace
@@ -4255,9 +4424,258 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
       await inFlight1
     })
 
-    // The later-RESOLVING response (the first one, resolved last) wins and
-    // clobbers the fresher data the second request had already written —
-    // last-resolved-wins, not last-requested-wins or freshest-wins.
-    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_OLDER', title: 'Older Page' }])
+    // #4270 fix: the earlier-STARTED request (resolved last, with OLDER
+    // data) must lose to the later-started one — the sequence counter
+    // rejects its write because a newer request was ISSUED after it,
+    // regardless of resolution order. The ref is left holding the
+    // later-started request's (fresher) rows.
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_NEWER', title: 'Newer Page' }])
+  })
+
+  // PR #4295 review, finding 6 — the test above pins `pagesRequestSeqRef`;
+  // `tagsRequestSeqRef` (the mirror-image counter `searchTags` uses to fill
+  // `tagsListRef`, per `RequestSeqRef`'s own comment: "a separate one for
+  // `tagsListRef` fills") had no equivalent coverage. Same scenario, tags
+  // side: two overlapping fills with no invalidation between them, later
+  // one resolves first.
+  //
+  // `tagsListRef` isn't exposed on the hook's return value the way
+  // `pagesListRef` is (see `UseBlockResolveReturn`), so this asserts
+  // indirectly: a THIRD call must be served from cache (no new IPC call)
+  // and must return the later-started fill's rows, not the earlier one's —
+  // which is only true if the sequence guard rejected the earlier-started,
+  // later-resolving write.
+  it('tagsListRef: two concurrent fills — the later-STARTED one wins, even if it resolves first', async () => {
+    // `tagRow` here is this describe block's own helper (defined above,
+    // `{ tag_id, name, usage_count: 1, ... }`) — not a redeclaration.
+    let resolveFirst: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    let resolveSecond: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Both `@` keystrokes land while the cache is still empty, so BOTH take
+    // the lazy-fill branch and dispatch their own `listAllTagsInSpace` call.
+    let inFlight1: Promise<unknown> = Promise.resolve()
+    let inFlight2: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight1 = result.current.searchTags('')
+    })
+    act(() => {
+      inFlight2 = result.current.searchTags('')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+
+    // The SECOND (later-started) request resolves FIRST, with the FRESHER
+    // data — then the FIRST (earlier-started) request resolves LAST, with
+    // OLDER data, and no bus event ever fired to distinguish them.
+    await act(async () => {
+      resolveSecond([tagRow('T_NEWER', 'newer')])
+      await inFlight2
+    })
+    await act(async () => {
+      resolveFirst([tagRow('T_OLDER', 'older')])
+      await inFlight1
+    })
+
+    // A third call is served from cache — no new IPC — and must see the
+    // later-started fill's rows.
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(ids).toContain('T_NEWER')
+    expect(ids).not.toContain('T_OLDER')
+  })
+})
+
+// ── onCreatePage/onCreateTag bump the generation counter (#4275 item 1) ──
+//
+// `onCreatePage` / `onCreateTag` only APPEND into `pagesListRef` /
+// `tagsListRef` when the cache is already filled (#4008 review note 1 / 6)
+// — an empty cache means "not fetched yet", and appending a single row would
+// wrongly latch it as "the whole space". So when a create lands WHILE the
+// cache is empty and a fill is already in flight, the create is invisible
+// to `pagesListRef`/`tagsListRef` directly; the only way it can still reach
+// the picker is if the racing fill's PRE-CREATE snapshot is rejected by the
+// generation guard, forcing the next read to re-fetch (and pick up the
+// create). That requires the create to bump the generation, same as any
+// other name-change-bus event.
+
+describe('onCreatePage / onCreateTag bump the generation counter (#4275 item 1)', () => {
+  function pageRow(id: string, content: string) {
+    return {
+      id,
+      content,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+  }
+
+  function tagRow(id: string, name: string) {
+    return { tag_id: id, name, usage_count: 0, updated_at: '2024-01-01' }
+  }
+
+  function tagBlock(id: string, content: string) {
+    return {
+      id,
+      block_type: 'tag' as const,
+      content,
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      page_id: null,
+      // #2468 — createBlock resolves WithOps<BlockRow>.
+      op_refs: [],
+    }
+  }
+
+  afterEach(() => {
+    mockedListAllPagesInSpace.mockReset()
+    mockedCreatePageInSpace.mockReset()
+    mockedListAllTagsInSpace.mockReset()
+    mockedCreateBlock.mockReset()
+  })
+
+  it('a create landing mid-flight is not lost: the racing fill is rejected and the NEXT read shows the created page', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+    mockedCreatePageInSpace.mockResolvedValueOnce('NEW_PAGE_MIDFLIGHT')
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Start the short-query fill — the cache is empty, so this dispatches
+    // `listAllPagesInSpace` and leaves it in flight.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    // A page is created WHILE that fill is still in flight — the #4008
+    // guard skips the append (pagesListRef is still empty at this point).
+    await act(async () => {
+      await result.current.onCreatePage('Created Mid-Flight')
+    })
+
+    // …THEN the pre-create fetch resolves, with rows that do NOT include
+    // the just-created page (it started before the create).
+    let staleItems: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      resolveFetch([pageRow('P_PRE_EXISTING', 'Pre-existing Page')])
+      staleItems = (await inFlight) as typeof staleItems
+    })
+
+    // The generation bump must have rejected this write: the pre-create
+    // snapshot is NOT persisted (without the fix, `pagesListRef.current`
+    // would now hold `[{ id: 'P_PRE_EXISTING', ... }]`, missing the create).
+    expect(result.current.pagesListRef.current).toEqual([])
+    // …and the rejected fill's own caller gets the (empty) fallback rather than
+    // the stale snapshot. `not.toContain('NEW_PAGE_MIDFLIGHT')` would be trivially
+    // true here — the pre-create fetch never held it — so pin the fallback itself.
+    expect(staleItems.filter((i) => !i.isCreate).map((i) => i.id)).toEqual([])
+
+    // The picker's NEXT read re-fetches (cache still empty) — the backend
+    // has already committed the create, so this response includes it.
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_PRE_EXISTING', 'Pre-existing Page'),
+      pageRow('NEW_PAGE_MIDFLIGHT', 'Created Mid-Flight'),
+    ])
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('NEW_PAGE_MIDFLIGHT')
+  })
+
+  // PR #4295 review, finding 6 — this describe block's title names BOTH
+  // `onCreatePage` and `onCreateTag`, but only `onCreatePage`'s generation
+  // bump had a test above; `onCreateTag`'s (`nameChangeGenerationRef.current
+  // += 1` in `onCreateTag`, mirroring `onCreatePage`'s own — see its
+  // comment) was unexercised. Same scenario, tags side.
+  //
+  // `tagsListRef` isn't exposed on the hook's return value the way
+  // `pagesListRef` is, so this asserts indirectly through `searchTags`'s
+  // observable behaviour instead of reading the ref directly — same
+  // adaptation as the `tagsRequestSeqRef` test above.
+  it('a tag create landing mid-flight is not lost: the racing fill is rejected and the NEXT read shows the created tag', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+    mockedCreateBlock.mockResolvedValueOnce(tagBlock('NEW_TAG_MIDFLIGHT', 'urgent'))
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Start the short-query fill — the cache is empty, so this dispatches
+    // `listAllTagsInSpace` and leaves it in flight.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchTags('')
+    })
+
+    // A tag is created WHILE that fill is still in flight — the #4008
+    // review note 6 guard skips the append (tagsListRef is still empty at
+    // this point).
+    await act(async () => {
+      await result.current.onCreateTag('urgent')
+    })
+
+    // …THEN the pre-create fetch resolves, with rows that do NOT include
+    // the just-created tag (it started before the create).
+    let staleItems: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      resolveFetch([tagRow('T_PRE_EXISTING', 'pre-existing')])
+      staleItems = (await inFlight) as typeof staleItems
+    })
+
+    // The generation bump must have rejected this write: the racing fill's
+    // rejected branch serves `tagsListRef.current` (still empty) instead of
+    // the discarded pre-create snapshot, so the caller sees no rows here —
+    // without the fix this would instead contain 'T_PRE_EXISTING'.
+    expect(staleItems.filter((i) => !i.isCreate).map((i) => i.id)).toEqual([])
+
+    // The picker's NEXT read re-fetches (cache still empty) — the backend
+    // has already committed the create, so this response includes it.
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_PRE_EXISTING', 'pre-existing'),
+      tagRow('NEW_TAG_MIDFLIGHT', 'urgent'),
+    ])
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('')
+    })
+
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('NEW_TAG_MIDFLIGHT')
   })
 })
