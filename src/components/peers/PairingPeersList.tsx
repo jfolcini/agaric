@@ -18,8 +18,9 @@ import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import type { PeerRef } from '@/lib/bindings'
+import { truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import { peerDisplayName } from '@/lib/peer-display-name'
+import { peerDisplayName, peerName } from '@/lib/peer-display-name'
 import { comparePeers, lastSyncActivityAt } from '@/lib/peer-sync-activity'
 
 export interface PairingPeersListProps {
@@ -73,10 +74,41 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                               Unpair off the screen edge, which is why the
                               fallback is truncated. `title` keeps the full id
                               available on hover / to assistive tech
-                              regardless of which name is shown. */}
-                          <p className="text-sm font-mono truncate" title={peer.peer_id}>
+                              regardless of which name is shown — it stays on
+                              this one line rather than being repeated on the
+                              id below, so the full id has exactly one home on
+                              the row whether or not the row has a name.
+
+                              No `font-mono`: that was chosen when this line
+                              was always a hex id, and a device name is prose.
+                              The id keeps the monospace, on its own line. */}
+                          <p
+                            className="pairing-peer-name text-sm font-medium truncate"
+                            title={peer.peer_id}
+                          >
                             {peerDisplayName(peer)}
                           </p>
+                          {/* #4298 (review): the id line is the SUBTITLE under
+                              a name, mirroring `PeerListItem` — this list must
+                              not disagree with the device list about the same
+                              peer. Replacing the id with the name was a
+                              regression on the very device that motivated
+                              #4298: stock Android reports the hostname
+                              `localhost` for every device, so two paired
+                              phones rendered as two identical rows,
+                              distinguishable only by a hover `title`, where
+                              this list previously showed two distinct ids. The
+                              backend now declines to advertise a name that
+                              identifies nothing, and this line is the second
+                              half: two devices that legitimately share a name
+                              stay tellable apart. Gating on a name at all is
+                              what stops it rendering twice on an unnamed row,
+                              where the name line IS the truncated id. */}
+                          {peerName(peer) != null && (
+                            <p className="pairing-peer-id text-xs font-mono text-muted-foreground truncate">
+                              {truncateId(peer.peer_id)}
+                            </p>
+                          )}
                           {peer.unpaired_by_peer_at_ms != null ? (
                             /*
                               #4297 — mirrors `PeerListItem`. This list must not

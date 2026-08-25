@@ -136,7 +136,9 @@ One row per paired peer (`device_id` PK):
 - `cert_hash` — the old pinned TLS hash. **Retained but dead**: nothing in production reads it since the cutover. Migrations are append-only, so deleting the old transport (#3544) did not take the column with it; it outlives the code that gave it meaning until a migration retires it explicitly.
 - `last_address` — manual `host:port` override. Still written and still read, but only as one half of the mDNS-independent fallback: a row needs a bound `endpoint_id` too before it resolves a dialable peer.
 - `last_hash` — content hash from last successful sync; used as snapshot-catch-up watermark.
-- `device_name` — display name.
+- `device_name` — the **local user's override**, typed into the rename dialog on *this* device (`update_peer_name`). Nothing on the wire may write it.
+- `remote_device_name` — what the peer **claimed** it is called, over the wire: the OS hostname it advertised on `HeadExchange.device_name` (#4298, migration `0114`). Untrusted display text — clamped and normalised by `clamp_device_name` on receive as well as on send — and kept in its own column precisely so a peer can never overwrite the user's override. Re-read on every session and rewritten only on a change, so a rename on the far device propagates on the next sync. Stays `NULL` when the peer advertises nothing, which includes a peer whose OS reports no *identifying* hostname: stock Android reports `localhost` for every device, so the boot refresh (`identifying_hostname` in `lib.rs`) declines to advertise it rather than making every Android peer claim the same name.
+- Display precedence is `device_name` → `remote_device_name` → truncated `device_id`, resolved in one place (`peerDisplayName`, `src/lib/peer-display-name.ts`) so no two surfaces can call the same peer different things. Where a name is shown, the truncated id stays on the row as a subtitle — two devices that legitimately share a name are still tellable apart.
 - `reset_count` + `last_reset_at` — count + timestamp of how many times the peer issued a `ResetRequired` (forces full re-sync; useful for diagnostics).
 
 ## Tauri commands

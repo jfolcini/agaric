@@ -120,7 +120,8 @@ HeadExchange { heads: Vec<DeviceHead>,
                engine_format_version: u32,           // #[serde(default)]
                op_log_replication: bool,             // #[serde(default)] capability
                op_log_batch_chunked: bool,           // #[serde(default)] capability
-               pairing_proof: Option<String> }       // #[serde(default)]
+               pairing_proof: Option<String>,        // #[serde(default)]
+               device_name: Option<String> }         // #[serde(default)]
 ```
 
 Every field after `heads` is `#[serde(default)]`, so a peer predating any of
@@ -210,6 +211,42 @@ tightening, since pairing is a deliberate mutual act on current builds. The
 proof travels only over the QUIC channel's TLS 1.3 encryption; a full
 man-in-the-middle relay is out of the paired-device threat model
 (AGENTS.md §"Threat Model").
+
+`device_name: Option<String>` (#4298) is what the initiator calls itself — its
+OS hostname — so the responder can render the paired device as
+`javier-thinkpad` rather than `e3d48f0a-45a…`. The responder persists it as
+`peer_refs.remote_device_name`, **never** as `peer_refs.device_name`, which is
+the local user's override and outranks it (see
+[sync-and-network.md](sync-and-network.md#peer_refs-table)). It is re-sent on
+every session rather than once at pairing, because a device can be renamed at
+any time and no other frame would carry the update; the write is conditional on
+a change, so a steady-state session costs a read and no write.
+
+It is untrusted display text. `clamp_device_name` strips display-hostile
+characters, trims, caps it at `MAX_DEVICE_NAME_CHARS`, and maps
+empty/whitespace-only to `None` — applied on send *and* again on receive, since
+nothing a well-behaved sender does can be assumed of a hostile one.
+
+It is `#[serde(default)]` (→ `None`) for the same wire back-compat reason as
+`pairing_proof`: a peer predating the field omits it and the responder simply
+keeps whatever name it already had, while a peer predating it that *receives*
+one ignores the unknown key (no `deny_unknown_fields`). `None` is also what a
+*current* peer sends when its OS reports no hostname that names it in
+particular — stock Android reports `localhost` for every device, so that value
+is filtered at the boot refresh (`identifying_hostname` in `lib.rs`) rather
+than advertised, and every consumer falls through to the truncated id.
+
+Initiator-only, because `HeadExchange` is: the responder has no equivalent
+one-shot frame and does not answer with its own name. The gap closes on its
+own — roles are not fixed, every device dials its peers on the resync
+scheduler, so each side initiates some session and the pair converges on both
+names within a resync interval.
+
+**Privacy note.** `HeadExchange` is the opening frame, and during the pairing
+window a joiner dials *every* mDNS-discovered device on the LAN — so a hostname
+(which often embeds the user's real name) reaches devices that go on to reject
+the session. A real but marginal exposure, and not a new one: `pairing_proof`
+already travels the same frame to the same over-broad audience.
 
 **`HeadExchange` carries no `device_id`, and S-5 is keyed accordingly (#3511).**
 The responder cannot learn the peer's Agaric device id before the session runs:

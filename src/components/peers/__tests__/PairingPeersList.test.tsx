@@ -100,11 +100,55 @@ describe('PairingPeersList', () => {
 
     expect(screen.getByText('Pixel 8')).toBeInTheDocument()
     expect(screen.getByText('Wire Hostname')).toBeInTheDocument()
-    expect(screen.queryByText('peer-abc-123...')).not.toBeInTheDocument()
-    expect(screen.queryByText('peer-def-098...')).not.toBeInTheDocument()
+    // The name takes over the HEADING; the id moves to the subtitle rather
+    // than leaving the row (#4298 review) — see the shared-name test below for
+    // why removing it entirely was a regression.
+    expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
+    expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
+    expect(screen.getByText('Pixel 8').className).toContain('font-medium')
     // The full id stays available on `title` regardless of which name is shown.
     expect(screen.getByTitle('peer-abc-1234567890')).toBeInTheDocument()
     expect(screen.getByTitle('peer-def-0987654321')).toBeInTheDocument()
+  })
+
+  // #4298 (review) — stock Android reports the hostname `localhost` for EVERY
+  // device (verified on the android-34 emulator image), so two paired phones
+  // arrive here carrying the same `remote_device_name`. Replacing the id with
+  // the name left them as two identical rows, told apart only by a hover
+  // `title` — strictly worse than the two distinct ids `main` renders. The id
+  // stays on the row as a subtitle, exactly as `PeerListItem` keeps it.
+  it('keeps each peer id visible when two peers share one name (#4298)', () => {
+    const sameName = [
+      { ...firstPeer, remote_device_name: 'localhost' },
+      { ...secondPeer, remote_device_name: 'localhost' },
+    ]
+
+    render(<PairingPeersList peers={sameName} onUnpair={vi.fn()} />)
+
+    expect(screen.getAllByText('localhost')).toHaveLength(2)
+    // The distinguishing half: without these the two rows are the same row.
+    expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
+    expect(screen.getByText('peer-def-098...')).toBeInTheDocument()
+  })
+
+  // #4298 (review) — `font-mono` was chosen when this line was always a hex
+  // id. A device name is prose and must not render monospaced; the id keeps
+  // the monospace it earns.
+  it('renders the name as prose and the id as monospace (#4298)', () => {
+    const namedPeers = [{ ...firstPeer, device_name: 'Pixel 8' }]
+
+    render(<PairingPeersList peers={namedPeers} onUnpair={vi.fn()} />)
+
+    expect(screen.getByText('Pixel 8').className).not.toContain('font-mono')
+    expect(screen.getByText('peer-abc-123...').className).toContain('font-mono')
+  })
+
+  it('shows no id subtitle when the id IS the name line (#4298)', () => {
+    render(<PairingPeersList peers={[firstPeer]} onUnpair={vi.fn()} />)
+
+    // One occurrence, not two: an unnamed row already renders its id as the
+    // heading, so the subtitle would be the same string twice.
+    expect(screen.getAllByText('peer-abc-123...')).toHaveLength(1)
   })
 
   it('still falls back to the truncated id when no name is supplied (#4298)', () => {
@@ -288,8 +332,11 @@ describe('PairingPeersList — order matches the last-sync activity it displays 
 
   /** The rendered peer ids, top to bottom. */
   const renderedOrder = (container: HTMLElement): string[] =>
-    Array.from(container.querySelectorAll('.pairing-peer-item p.font-mono')).map(
-      // `title` carries the full id; the visible text is truncated.
+    // Keyed on the name line, whose `title` carries the full id whether that
+    // line renders a name or the truncated id itself. (Not `p.font-mono`: since
+    // #4298's review fix the monospace belongs to the id SUBTITLE, which only
+    // named rows have, so that selector saw a different set of rows per row.)
+    Array.from(container.querySelectorAll('.pairing-peer-item p.pairing-peer-name')).map(
       (el) => el.getAttribute('title') ?? '',
     )
 
