@@ -261,6 +261,13 @@
     "test": "compute_reverse_batch_matches_per_op_fold"
   },
   {
+    "fn": "src-tauri/src/reverse/batch.rs::fetch_live_attachment_state_batch",
+    "kind": "read-only",
+    "status": "covered",
+    "test": "compute_reverse_batch_matches_per_op_loop",
+    "pin": "#4259's batch-side live-row fetch, sibling to the five fetch_*_batch kernels and covered by `reverse::tests::compute_reverse_batch_matches_per_op_loop` — NOT by the `compute_reverse_batch_matches_per_op_fold` proptest the siblings name. That distinction is load-bearing: the proptest only appends to op_log and never inserts `attachments` rows, so every add_attachment in it resolves to None on both kernels, they agree via the row-is-gone fallback, and the entry would stay green with this fetch stubbed to return all-None — the blind-oracle failure this fix exists to close. The _loop test seeds live rows whose fs_path AND filename both differ from the add payload's and pins the absolute value, so a fetch returning the wrong row reddens it. It does NOT cover a duplicate attachment_id within one chunk: its four add_attachment ops carry four distinct ids, and its delete_attachment ops bucket separately. The by-id remap that handles duplicates is therefore unpinned — stated rather than implied, since over-claiming an oracle's reach is the exact failure this entry was corrected for once already."
+  },
+  {
     "fn": "src-tauri/src/reverse/batch.rs::fetch_prev_edit_rows_batch",
     "kind": "read-only",
     "status": "covered",

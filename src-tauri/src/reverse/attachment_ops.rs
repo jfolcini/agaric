@@ -5,23 +5,166 @@ use agaric_store::op::OpPayload;
 use agaric_store::op_log::OpRecord;
 use sqlx::SqlitePool;
 
-pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> {
+/// The `attachments` row state a synthetic `delete_attachment` adopts, read
+/// LIVE at reverse-computation time (#4259).
+///
+/// Deliberately the same two fields `delete_attachment_inner` captures from
+/// the live row for a REAL delete (`fs_path`, `filename`) — see
+/// [`adopt_delete_time_state`] for why those two and only those two are the
+/// fields a first-class op can change behind a reverse's back. Carrying them
+/// as one struct rather than two loose `Option<String>`s is what makes
+/// "a synthetic delete describes the same row state a real one would" a
+/// property of the type instead of two arguments a caller has to keep in step.
+pub(super) struct LiveAttachmentState {
+    pub fs_path: String,
+    pub filename: String,
+}
+
+/// Read the LIVE `attachments` row a `reverse_add_attachment` should describe.
+///
+/// `None` means the row is gone — see [`build_reverse_add_attachment`] for
+/// the defined fallback that case takes. The SQL is byte-identical to
+/// `delete_attachment_inner`'s own live-row capture, deliberately: the two
+/// produce the same kind of op and must observe the same row the same way.
+async fn fetch_live_attachment_state(
+    pool: &SqlitePool,
+    attachment_id: &str,
+) -> Result<Option<LiveAttachmentState>, AppError> {
+    let row = sqlx::query!(
+        r#"SELECT fs_path, filename FROM attachments WHERE id = ?"#,
+        attachment_id
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| LiveAttachmentState {
+        fs_path: r.fs_path,
+        filename: r.filename,
+    }))
+}
+
+/// Reverse an `add_attachment` op by minting the `delete_attachment` that
+/// takes the row back.
+///
+/// # Why this reads the DB at all (#4259)
+///
+/// It used to be a pure payload transform, and that was the asymmetry #4259
+/// closed. `DeleteAttachmentPayload::fs_path`/`filename` on a REAL delete are
+/// captured by `delete_attachment_inner` from the LIVE row inside the delete's
+/// own transaction, so they reflect any repoint or rename. The SYNTHETIC
+/// delete minted here observed nothing, so it carried the add payload's
+/// CREATION-time values — the values the row was *born* with.
+///
+/// For `fs_path` that is a false refusal waiting to happen. `persist_attachment`
+/// may store the canonical BLOB path in the row rather than the per-add path
+/// the op payload records (#1993 dedup reuse, which then unlinks the redundant
+/// per-add file), and three repointers — `recovery::attachment_blob_backfill`,
+/// `agaric_sync::sync_files::maybe_link_local_blob`, and `sync_files`' `FileOffer`
+/// skip path — move a live row onto a shared blob after the fact. Once that has
+/// happened the original path is referenced by nothing, so the orphan GC
+/// reclaims it as a matter of course while the bytes stay perfectly alive under
+/// the blob. Undoing the add then minted a delete naming the reclaimed path, and
+/// the REDO of that undo reconstructs an `add_attachment` from it and hands the
+/// #3706 byte-existence guard a path that is gone — refusing an operation whose
+/// bytes are right there.
+///
+/// Reading the live row makes the synthetic delete say what a real one would,
+/// which is what closes it: the redo then reconstructs the BLOB path, the guard
+/// stats a file that exists, and the row comes back naming the bytes it actually
+/// held.
+///
+/// # Threading, not reaching
+///
+/// The row is passed IN rather than fetched here so the single-op kernel
+/// ([`reverse_add_attachment`]) and the batch kernel
+/// (`batch::compute_reverse_batch`, which prefetches every `add_attachment`'s
+/// row in one query) share ONE implementation instead of being twins that can
+/// drift — the hazard `adopt_delete_time_state` exists to stop for the
+/// `delete_attachment` reverse, which is a twin pair.
+///
+/// # The row-is-gone fallback: the ORIGINAL payload values
+///
+/// `live` is `None` whenever no `attachments` row with this id exists at
+/// reverse-computation time, and that is a LEGITIMATE, reachable state, not an
+/// error: undo of an `add_attachment` whose row a later op already removed (a
+/// `delete_attachment`, a `purge_block`, a block delete cascade), and any
+/// reverse computed for an attachment this device never materialized.
+///
+/// The fallback is the add payload's own `fs_path` and `filename` — i.e.
+/// EXACTLY the pre-#4259 behaviour, for exactly the cases where there is
+/// nothing better to be had. It is stated here rather than left to fall out of
+/// an `unwrap_or` because it is a decision: the alternative (refusing to
+/// compute the reverse at all when the row is gone) would break undo of an
+/// already-deleted attachment, which works today and has nothing to do with
+/// this bug.
+pub(super) fn build_reverse_add_attachment(
+    record: &OpRecord,
+    live: Option<&LiveAttachmentState>,
+) -> Result<OpPayload, AppError> {
     let payload: agaric_store::op::AddAttachmentPayload = serde_json::from_str(&record.payload)?;
-    Ok(OpPayload::DeleteAttachment(
-        agaric_store::op::DeleteAttachmentPayload {
-            attachment_id: payload.attachment_id,
-            // Carry forward the original `fs_path` so the reverse op can
-            // unlink the file the AddAttachment created.
-            fs_path: payload.fs_path,
-            // #4262: same treatment, same limitation. This SYNTHETIC delete
-            // never observed the live row, so all it can carry is the add
-            // payload's creation-time name — exactly the residual already
-            // documented for `fs_path` under "redo after undo-of-add" below.
-            // Carrying it is still strictly better than leaving it empty:
-            // an empty `filename` is the legacy sentinel, and a redo of this
-            // op would then fall back to... this same add payload anyway.
-            filename: payload.filename,
-        },
+    Ok(build_reverse_add_attachment_from_payload(payload, live))
+}
+
+/// [`build_reverse_add_attachment`] with the payload already deserialized —
+/// the form the single-op kernel uses, since it has to parse the payload up
+/// front anyway to know which row to read.
+fn build_reverse_add_attachment_from_payload(
+    payload: agaric_store::op::AddAttachmentPayload,
+    live: Option<&LiveAttachmentState>,
+) -> OpPayload {
+    let agaric_store::op::AddAttachmentPayload {
+        attachment_id,
+        fs_path,
+        filename,
+        ..
+    } = payload;
+    let (fs_path, filename) = match live {
+        // The row is there: describe it as it stands NOW, the way
+        // `delete_attachment_inner` does for a real delete (#4259).
+        Some(row) => {
+            if row.fs_path != fs_path || row.filename != filename {
+                tracing::debug!(
+                    attachment_id = attachment_id.as_str(),
+                    original_fs_path = %fs_path,
+                    live_fs_path = %row.fs_path,
+                    original_filename = %filename,
+                    live_filename = %row.filename,
+                    "minting the reverse of an add_attachment from the LIVE row \
+                     rather than the add payload's creation-time values (#4259)"
+                );
+            }
+            (row.fs_path.clone(), row.filename.clone())
+        }
+        // The row is gone — see "The row-is-gone fallback" above. The add
+        // payload's own values are all that can be known, and they are what
+        // this function carried unconditionally before #4259.
+        None => (fs_path, filename),
+    };
+    OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
+        attachment_id,
+        // Names the file the reverse op refers to, so the reverse can
+        // unlink it and so a REDO of this undo reconstructs the right path.
+        fs_path,
+        // #4262: an empty `filename` is the legacy "nothing was recorded"
+        // sentinel `adopt_delete_time_state` reads. A live row always supplies
+        // a real one — but the row-is-gone arm forwards the add payload's
+        // `filename` verbatim, so a legacy add op carrying an empty one still
+        // mints an empty one. Same as before #4259; not a guarantee this
+        // constructor can make on its own.
+        filename,
+    })
+}
+
+/// Single-op entry point: fetch the live row, then
+/// [`build_reverse_add_attachment`].
+pub async fn reverse_add_attachment(
+    pool: &SqlitePool,
+    record: &OpRecord,
+) -> Result<OpPayload, AppError> {
+    let payload: agaric_store::op::AddAttachmentPayload = serde_json::from_str(&record.payload)?;
+    let live = fetch_live_attachment_state(pool, payload.attachment_id.as_str()).await?;
+    Ok(build_reverse_add_attachment_from_payload(
+        payload,
+        live.as_ref(),
     ))
 }
 
@@ -120,29 +263,48 @@ pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> 
 /// behind the reverse's back, which is why those two and only those two are
 /// adopted from the delete payload.
 ///
-/// # Residual: redo after undo-of-add can still false-refuse
+/// # CLOSED (#4259): redo after undo-of-add no longer false-refuses
+///
+/// This section recorded a residual that #4259 has since fixed, and it is kept
+/// (rather than deleted) because the shape is the one thing a future reader is
+/// most likely to reintroduce.
 ///
 /// A `delete_attachment` minted by [`reverse_add_attachment`] (the reverse of
-/// undoing an `add_attachment`) copies the ADD payload's ORIGINAL `fs_path`
-/// forward rather than reading the live row — see that function's doc. This
-/// module's adoption fixes the case where a REAL `delete_attachment` observes
-/// the repoint; it does nothing for a SYNTHETIC one that never does.
+/// undoing an `add_attachment`) used to copy the ADD payload's ORIGINAL
+/// `fs_path` forward rather than reading the live row. This module's adoption
+/// fixed the case where a REAL `delete_attachment` observes a repoint; it did
+/// nothing for a SYNTHETIC one that never did.
 ///
 /// Concretely: add → something repoints the row onto a shared blob → the
 /// ordinary sweep reclaims the now-orphaned original path (the bytes stay
 /// alive under the blob) → undo the add (hard-deletes the row; the synthetic
-/// `delete_attachment` this mints carries the ORIGINAL path, since
+/// `delete_attachment` minted there carried the ORIGINAL path, since
 /// `reverse_add_attachment` never saw the repoint) → redo reconstructs the
 /// `add_attachment` from that synthetic op, this function finds no
-/// delete-time path to adopt (there is only the original, already-reclaimed
+/// delete-time path to adopt (there was only the original, already-reclaimed
 /// one), and the #3706 byte-existence guard refuses — over bytes that are
 /// right there under the blob.
 ///
-/// This is strictly better than pre-#3706 (which would have committed a row
-/// over the reclaimed path instead of refusing), but it is a **false
-/// refusal**, not a fully-fixed path. Closing it symmetrically would mean
-/// [`reverse_add_attachment`] reading the live row instead of its own
-/// payload — a wider change, deliberately not made in the #3706 review.
+/// [`build_reverse_add_attachment`] now reads the live row, so the synthetic
+/// delete carries the same post-repoint `fs_path` a real one would and this
+/// function has the blob path to adopt. The invariant to preserve: **both
+/// producers of a `DeleteAttachmentPayload` describe the live row as of
+/// reverse-COMPUTATION time, never the row's creation-time values.** A future
+/// change that makes the synthetic producer a pure payload transform again
+/// reopens exactly this.
+///
+/// The "as of computation time" qualifier is load-bearing for batches, not
+/// pedantry. `revert_ops_in_tx` computes every reverse up front against the
+/// pool and only then applies them newest-first inside the transaction, so
+/// undoing `[add_attachment A, rename_attachment A]` mints the synthetic
+/// delete carrying the pre-batch (renamed) `filename`, while the rename's
+/// reverse restores the original name before the delete lands. A real
+/// `delete_attachment` at that instant would have captured the original.
+/// Not a regression — the creation-time name this replaced was equally stale —
+/// and `fs_path` is unaffected, since no reverse mutates `attachments.fs_path`.
+/// This is also the only prefetch in `compute_reverse_batch` that reads
+/// mutable materialized state rather than the append-only `op_log`, which is
+/// why it is the only one exposed to the gap.
 fn adopt_delete_time_fs_path(
     delete_fs_path: &str,
     add_payload: &mut agaric_store::op::AddAttachmentPayload,

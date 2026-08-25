@@ -530,9 +530,12 @@ fn reverse_attachment_filename(raw: &str, attachment_id: &str, arm: &'static str
 ///
 /// That future-proofing is also why not every refusal below is
 /// `NonReversible`: a skippable class is a licence to DROP the op, so only
-/// the refusals that are true statements about today's vault (the bytes are
-/// gone, or the path is not a file) get it. A stat that merely FAILED gets
-/// [`AppError::Io`] instead — see "A transient I/O fault is NOT the GC" below.
+/// the ONE refusal that is an ordinary, expected statement about today's
+/// vault gets it — the bytes are gone, which is what the orphan GC does as a
+/// matter of course. A stat that merely FAILED gets [`AppError::Io`] instead,
+/// and so does a stat that SUCCEEDS on a non-regular file (#4268): a
+/// directory or a fifo at an `fs_path` is corruption, not reclamation. See "A
+/// transient I/O fault is NOT the GC" below.
 ///
 /// Keeping the bytes alive *instead* — a GC grace period, or having the GC
 /// consult the undo horizon — would preserve the user's expectation, but the
@@ -580,8 +583,21 @@ fn reverse_attachment_filename(raw: &str, attachment_id: &str, arm: &'static str
 ///   wearing a different hat (the bytes are not there), not a readable file.
 /// * **Symlink to a live file** — followed, `is_file()` is true, accepted.
 ///   A vault that keeps its blobs behind links still undoes normally.
-/// * **Directory / fifo / socket / device** — `is_file()` is false: refused.
-///   Nothing here can serve `read_attachment_file`.
+/// * **Directory / fifo / socket / device** — `is_file()` is false: refused,
+///   and refused with the FATAL [`AppError::Io`] class
+///   (`ErrorKind::InvalidData`), NOT the skippable one (#4268). Nothing here
+///   can serve `read_attachment_file`, and — unlike a reclaimed file —
+///   nothing in this system produces such a path either: it is the vault in a
+///   state that should not exist. `NotFound` is the only shape that is
+///   genuinely "the orphan GC did its job", which is the ordinary, expected
+///   outcome the skippable class exists to describe. See "A transient I/O
+///   fault is NOT the GC" below for why a skippable class is a licence to
+///   DROP the op, and why dropping an op because the vault is corrupt is the
+///   wrong response to corruption.
+///   `InvalidData` rather than `IsADirectory`: a directory is only one of the
+///   shapes that land here, so `IsADirectory` would misreport a fifo, a
+///   socket or a device. The observed detail rides on the warning's `is_dir`
+///   field instead of being asserted by an error kind that cannot know it.
 /// * **Zero-byte regular file** — ACCEPTED, deliberately. `std::fs::read`
 ///   returns `Ok(vec![])` for it, so the restored row resolves to a readable
 ///   attachment; an empty file is a legitimate attachment, not a torn write
@@ -614,6 +630,17 @@ fn reverse_attachment_filename(raw: &str, attachment_id: &str, arm: &'static str
 /// [`reverse::is_skippable_non_reversible`] classifies as fatal: the restore
 /// fails whole and the user can retry once the vault is reachable again,
 /// instead of quietly losing the op.
+///
+/// #4268 extended the same argument one shape further. A stat that SUCCEEDS
+/// on something that is not a regular file is not a transient fault, but it
+/// is not the GC either — a directory or a fifo at an `fs_path` is the vault
+/// in a state nothing here produces. It got the skippable class purely
+/// because it shares the "cannot restore this row" outcome with the GC case,
+/// and outcome is not classification: the skippable class says "this is an
+/// ordinary, expected fact about today's vault, drop the op and carry on",
+/// which is false of corruption. It now returns [`AppError::Io`] too, so
+/// `NotFound` — a reclaimed file and nothing else — is the sole skippable
+/// refusal this guard can produce.
 async fn require_reverse_attachment_bytes(
     app_data_dir: Option<&std::path::Path>,
     p: &agaric_store::op::AddAttachmentPayload,
@@ -642,12 +669,39 @@ async fn require_reverse_attachment_bytes(
     // above for the full shape-by-shape classification.
     match tokio::fs::metadata(&full).await {
         Ok(meta) if meta.is_file() => return Ok(()),
-        Ok(meta) => tracing::warn!(
-            attachment_id = p.attachment_id.as_str(),
-            path = %full.display(),
-            is_dir = meta.is_dir(),
-            "refusing to undo a delete_attachment whose fs_path names something that is not a regular file (a directory or other non-file cannot be read back through read_attachment_inner) — restoring the row would leave a live reference over unreadable bytes (#3706 review)"
-        ),
+        Ok(meta) => {
+            // #4268: the vault is in a state nothing in this system produces —
+            // a directory, a fifo, a socket or a device sitting at an
+            // `fs_path`. That is CORRUPTION, not the GC, so it gets the same
+            // FATAL class the unreadable-stat arm below gets rather than the
+            // skippable `NonReversible` that only "the orphan GC reclaimed
+            // the bytes" earns. A skippable class is a licence for a caller
+            // to DROP the op, and dropping an op because the vault is corrupt
+            // is the wrong response to corruption.
+            //
+            // `InvalidData` (not `IsADirectory`): every non-regular shape
+            // lands here and only one of them is a directory, so
+            // `IsADirectory` would misreport a fifo, a socket or a block
+            // device. `InvalidData` is the one kind that is true of all of
+            // them — what is at the path is not data this operation can use —
+            // and the `is_dir` field on the warning below carries the
+            // observed detail without the error kind having to lie.
+            tracing::warn!(
+                attachment_id = p.attachment_id.as_str(),
+                path = %full.display(),
+                is_dir = meta.is_dir(),
+                "refusing to undo a delete_attachment whose fs_path names something that is not a regular file (a directory or other non-file cannot be read back through read_attachment_inner) — restoring the row would leave a live reference over unreadable bytes; this is vault corruption, not GC reclamation, so it is NOT skippable (#3706 review / #4268)"
+            );
+            return Err(AppError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "attachment bytes at {} are not a regular file (is_dir={}) for an undo of \
+                     delete_attachment",
+                    full.display(),
+                    meta.is_dir()
+                ),
+            )));
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => tracing::warn!(
             attachment_id = p.attachment_id.as_str(),
             path = %full.display(),
@@ -1367,7 +1421,15 @@ async fn revert_ops_in_tx(
     //      the five context-bearing op-types).
     //
     // These reads target already-committed ops (the records being reverted),
-    // so they run against the bare pool. The membership read that decides
+    // so they run against the bare pool — with ONE exception since #4259:
+    // `fetch_live_attachment_state_batch` reads `attachments`, which is
+    // mutable materialized state rather than the append-only log, while `tx`
+    // is already open. So the live row it adopts is the row as of
+    // reverse-COMPUTATION time, not as of the moment each reverse is applied.
+    // That gap is spelled out at `build_reverse_add_attachment`; noting it
+    // here too because this is the comment a reader reaches first, and on its
+    // own it now asserts a rationale that no longer covers every prefetch.
+    // The membership read that decides
     // *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
     // SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
     // #2549: refuse to revert a REPLICATED audit op (`is_replicated = 1`,
