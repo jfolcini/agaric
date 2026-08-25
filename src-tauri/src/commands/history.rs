@@ -1421,7 +1421,15 @@ async fn revert_ops_in_tx(
     //      the five context-bearing op-types).
     //
     // These reads target already-committed ops (the records being reverted),
-    // so they run against the bare pool. The membership read that decides
+    // so they run against the bare pool — with ONE exception since #4259:
+    // `fetch_live_attachment_state_batch` reads `attachments`, which is
+    // mutable materialized state rather than the append-only log, while `tx`
+    // is already open. So the live row it adopts is the row as of
+    // reverse-COMPUTATION time, not as of the moment each reverse is applied.
+    // That gap is spelled out at `build_reverse_add_attachment`; noting it
+    // here too because this is the comment a reader reaches first, and on its
+    // own it now asserts a rationale that no longer covers every prefetch.
+    // The membership read that decides
     // *which* ops are reverted — `restore_page_to_op_inner`'s ops-to-revert
     // SELECT — runs inside `tx` so it shares the IMMEDIATE write lock.
     // #2549: refuse to revert a REPLICATED audit op (`is_replicated = 1`,
