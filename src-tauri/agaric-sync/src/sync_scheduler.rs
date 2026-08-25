@@ -1541,13 +1541,34 @@ mod tests {
              and the record are one critical section, so no interleaving can let two \
              callers both see 'not yet reported'"
         );
+        // #4231 — `ROUNDS` (300) exceeds `MAX_BACKOFF_PEERS` (64), so by the end
+        // the map holds only the most recent cap's worth of peers and the
+        // earlier ones have been EVICTED, not mis-booked. The two mechanisms
+        // are unrelated and this assertion is about the first: an "atomic"
+        // check-and-record variant that dropped the losers' bookings would be a
+        // hot loop, because the backoff is what paces the retry. Eviction is a
+        // deliberate bound on the key set, deciding nothing about whether a
+        // racing call was booked while its peer was resident.
+        //
+        // So the claim is scoped to residency rather than weakened: every peer
+        // STILL in the map carries all `THREADS` bookings, and the map holds
+        // exactly the cap — which also proves eviction happened rather than
+        // bookings silently going missing.
+        let resident: Vec<(String, u32)> = sched.failure_counts();
+        assert_eq!(
+            resident.len(),
+            MAX_BACKOFF_PEERS,
+            "#4231: {ROUNDS} distinct peers against a {MAX_BACKOFF_PEERS} cap must leave \
+             exactly the cap resident — a different count means the bound is not holding, \
+             not that a booking was lost"
+        );
         assert!(
-            peers
+            resident
                 .iter()
-                .all(|p| sched.failure_count(p) == u32::try_from(THREADS).unwrap()),
-            "…and every racing call is still booked as a failure: the backoff is what \
-             paces the retry, and an 'atomic' variant that dropped the losers' \
-             bookings would be a hot loop"
+                .all(|(_, n)| *n == u32::try_from(THREADS).unwrap()),
+            "…and every racing call against a RESIDENT peer is still booked as a failure: \
+             the backoff is what paces the retry, and an 'atomic' variant that dropped the \
+             losers' bookings would be a hot loop"
         );
     }
 
