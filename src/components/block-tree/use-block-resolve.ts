@@ -73,6 +73,57 @@ export interface UseBlockResolveReturn {
    * convention, the same convention that holds inside this hook, not a
    * barrier. Narrow it by moving the two refs behind a test-only accessor
    * if a production consumer ever appears.
+   *
+   * #4358 asked whether the OTHER `createPageInSpace` call sites should
+   * register too. Answer: NO code change is needed. The finding worth
+   * keeping is the enumeration behind that answer, so it is recorded here
+   * rather than re-derived:
+   *
+   *  1. TWO ENTRY POINTS. `createPageInSpace` exists both as a typed helper
+   *     (`@/lib/tauri/system.ts`) AND as the raw binding
+   *     (`commands.createPageInSpace`), so a reference query on either one
+   *     alone undercounts — asymmetrically: the helper reaches five of the
+   *     sites below and the raw binding the other four, so searching the
+   *     helper alone misses four and searching the binding alone misses
+   *     five. There are NINE creation sites outside
+   *     `onCreatePage`: eight do not register, one does
+   *     (`src/components/block-tree/use-block-date-picker.ts:180`, the #4319 site above).
+   *  2. THE EIGHT CANNOT REGISTER — they did not forget to.
+   *     `useBlockResolve()` has exactly one caller
+   *     (`src/components/editor/BlockTree.tsx:494`), and every one of the eight sits above or
+   *     beside `BlockTree`: ancestors (`useJournalBlockCreation` via
+   *     `JournalPage`/`StreamView`, `App.tsx`, `useAppKeyboardShortcuts`),
+   *     sibling subtrees with no BlockTree at all (`usePageCreation` in
+   *     PageBrowser, `TemplatesView`), or module-level functions with no
+   *     hook context by construction (`palette-commands.ts`,
+   *     `WelcomeModal`'s `ensureSamplePage`, and `src/lib/paste-internalize.ts:110`
+   *     — the closest analogue to `onCreatePage` in the codebase, and the
+   *     one every prior enumeration missed). The journal also mounts one
+   *     BlockTree PER DAY PANEL, so several `pagesListRef` caches coexist:
+   *     there is no single cache to register into.
+   *  3. THE IMPACT CEILING, which is NOT uniform across the two readers.
+   *     `searchPages` routes `q.length <= 2` through the cache and
+   *     everything longer through FTS, so a missing cache row hides a page
+   *     from SEARCH RESULTS only for empty and <=2-char queries, and only
+   *     against an already-warm cache. But `appendCreatePageOptionIfNeeded`
+   *     reads `pagesListRef` at ANY query length, so CREATE-SUPPRESSION is
+   *     affected more broadly than search is — the easy half to miss.
+   *  4. THE #4319 OVERWRITE SHAPE REQUIRES REACHING `pagesListRef`. A site
+   *     that never touches the ref cannot reproduce it, however the page is
+   *     registered later: a refill is a guarded DB replace, and a
+   *     name-change event bumps the generation BEFORE it applies, so a
+   *     bump-without-append can only cost an extra refetch, never a lost
+   *     row.
+   *  5. IF A SITE EVER DOES NEED TO REGISTER, the route is an `'added'`
+   *     event on the name-change bus — not this return value (unreachable
+   *     for all eight) and not a React context (module-level call sites
+   *     cannot consume one, and it would still fan out to N instances).
+   *     `name-change-bus.ts`'s docblock currently states there is
+   *     deliberately no "added" event because inserting one row would latch
+   *     a one-row list as the whole space; `recordCreatedRow`'s
+   *     append-only-into-a-non-empty-cache guard now answers that
+   *     objection, so whoever implements it must AMEND that paragraph
+   *     rather than silently contradict it.
    */
   registerCreatedPage: (row: { id: string; title: string }) => void
   /** Ref to the pages list cache for search. Lazily filled by
@@ -249,26 +300,65 @@ async function searchPagesViaCache(
     // the comment above `requestGeneration`.
     // #4270 — AND only while no newer fill for this same list has been
     // ISSUED since. See `RequestSeqRef`'s comment.
-    if (
-      (useSpaceStore.getState().currentSpaceId ?? '') === spaceId &&
-      generationRef.current === requestGeneration &&
-      requestSeqRef.current === requestSeq
-    ) {
+    // #4344 part 2 — the three conditions are evaluated SEPARATELY rather
+    // than as one `&&`, because they do not all mean the same thing about
+    // the rows that just arrived. Space + generation say whether `source` is
+    // still SERVABLE at all (right space, no mutation since it was issued);
+    // the sequence only says whether it is the FRESHEST fill. See the two
+    // rejection branches below.
+    const spaceStillActive = (useSpaceStore.getState().currentSpaceId ?? '') === spaceId
+    const generationUnchanged = generationRef.current === requestGeneration
+    const isLatestFill = requestSeqRef.current === requestSeq
+    if (spaceStillActive && generationUnchanged && isLatestFill) {
       pagesListRef.current = source
+    } else if (spaceStillActive && generationUnchanged) {
+      // LOST THE #4270 TIE-BREAK, but still SERVABLE: return the freshest
+      // rows in hand, without persisting. "Freshest in hand" is
+      // `pagesListRef.current` when the #4270 winner has already filled it,
+      // and this fill's own `source` otherwise — see the assignment at the
+      // end of this branch. Full rationale follows.
+      //
+      // #4344 part 2 — the space is unchanged and no name-change-bus event
+      // has landed, so `source` is a valid snapshot of THIS space at THIS
+      // generation: it is merely not the freshest one, and a newer fill has
+      // been ISSUED that should own the cache. So: do not PERSIST it (that
+      // is #4270's whole point — the earlier-issued fill must not overwrite
+      // the later-issued one), but DO RETURN something usable.
+      //
+      // This branch used to fall through to `source = pagesListRef.current`
+      // below, together with the genuinely-unsafe cases. On the common
+      // cold-cache path that read ZERO pages: in-order IPC means the
+      // earlier-issued fill resolves FIRST, so the winning fill has only
+      // been issued, not resolved, and nothing has written the ref yet. The
+      // picker therefore rendered EMPTY for one round trip on exactly the
+      // fast-typing-into-a-cold-cache path — a flash of nothing where the
+      // only thing wrong with the data in hand was that it was one keystroke
+      // old. Self-healing, but visible, and strictly worse than the
+      // marginally-older answer it discarded.
+      //
+      // Deliberately NOT extended to the space/generation cases: those are
+      // correctness guards, not freshness ones. A space switch must never
+      // leak the previous space's pages into the new space's picker, and a
+      // rename/removal/invalidation means `source` carries exactly the
+      // stale/deleted row #4055 exists to keep out.
+      //
+      // #4344 part 2 review — plain `source` was still wrong in the OTHER
+      // resolution order, which no test asserted: when the later-issued
+      // fill (the #4270 winner) resolves FIRST and persists, THIS fill —
+      // the earlier-issued loser, resolving second — used to hand back its
+      // own older `source` even though `pagesListRef.current` had just been
+      // overwritten with the winner's fresher rows sitting right there.
+      // Prefer the ref whenever the winner has already filled it; fall back
+      // to `source` only when it hasn't (the in-order case above).
+      source = pagesListRef.current.length > 0 ? pagesListRef.current : source
     } else {
-      // The guard rejected this fetch. Two different, both-safe reasons land
-      // here:
+      // The fetch was rejected for a reason that also makes it unsafe to
+      // RETURN. Two of those, both requiring the discarded `source` to be
+      // replaced rather than served:
       //   - A name-change-bus event (rename/removal/invalidation) landed on
-      //     THIS space while the fetch was in flight, or a newer fill for
-      //     this list was issued and this one lost the #4270 race —
-      //     `pagesListRef.current` is cleared, patched, overwritten, or
-      //     superseded by a still-in-flight newer request (the #4270 loser
-      //     can resolve BEFORE its winner: `pagesListRef.current` then
-      //     hasn't been touched by the winning fill yet either — that fill
-      //     has only been ISSUED, not resolved — so this is not always
-      //     "the winning state" at the moment this branch reads it, just
-      //     never the losing fetch's own now-discarded `source`). Serve
-      //     THIS call's result from there instead of the discarded
+      //     THIS space while the fetch was in flight, so
+      //     `pagesListRef.current` has been cleared, patched or overwritten.
+      //     Serve THIS call's result from there instead of the discarded
       //     `source`: the caller (`searchPages`, and via
       //     `populatePageResolveCache`, the shared resolve store) would
       //     otherwise still receive the exact stale/deleted/renamed row the
@@ -666,12 +756,16 @@ async function mergeAliasPrefixMatches(matches: PickerItem[], q: string): Promis
  */
 function appendCreatePageOptionIfNeeded(
   matches: PickerItem[],
+  rows: readonly PageRow[],
   query: string,
   q: string,
   pagesListRef: PagesListRef,
 ): void {
   if (q.length === 0) return
-  const allSource = pagesListRef.current.length > 0 ? pagesListRef.current : matches
+  // #4354 — the cold-cache arm is `rows` (this call's RAW page rows), not
+  // the rendered `matches`. See the note below the fold guard.
+  const allSource: readonly PageRow[] =
+    pagesListRef.current.length > 0 ? pagesListRef.current : rows
   // Fold both sides so the "exact match exists" check folds
   // Turkish / German / accented inputs the same way `matchesSearchFolded`
   // does in the filter above.  Without this, a page titled `İstanbul`
@@ -701,17 +795,38 @@ function appendCreatePageOptionIfNeeded(
   // placeholder is what made the picker offer "Create new page: Untitled"
   // directly beneath the existing blank page it had just matched.
   //
-  // The `PickerItem` arm (`p.label`, used when `pagesListRef` is cold and
-  // `matches` is the only source available) needs no substitution of its
-  // own: `makePagePickerItem` has already run the label through
-  // `untitledOr`, so a blank row arrives here as the literal placeholder
-  // and `foldedRowMatchText` passes it through unchanged.
+  // #4354 — BOTH arms compare the page's FULL TITLE. The cold-cache arm
+  // used to read the already-rendered `PickerItem.label`, and
+  // `makePagePickerItem` runs every title through `formatNamespacedLabel`,
+  // which keeps only the LEAF of a namespaced path. So for a page titled
+  // `Engineering/Platform/Observability` that arm compared against
+  // `Observability`, and the picker answered the same query two different
+  // ways depending on nothing but whether the cache happened to be warm:
+  //   - `Observability` on a COLD cache matched the leaf and SUPPRESSED
+  //     Create, so the user could not create the page they had just named,
+  //     and the row offered in its place was a different page whose path
+  //     merely ends that way.
+  //   - `Engineering/Platform/Observability` on a cold cache matched
+  //     nothing (the label is only the leaf) and OFFERED Create for a page
+  //     that already exists.
+  // The create option creates a PAGE, and a page is identified by its full
+  // path, not its leaf — so the full title is what both arms compare, which
+  // is what `pagesListRef`'s rows already carried. Passing the raw `rows`
+  // instead of `matches` is the whole fix: `allSource` is now one row type,
+  // and the union-narrowing this expression used to do (`'title' in p`) goes
+  // with it.
+  //
+  // #4321's guarantee is untouched, and is the reason this is a change of
+  // WHICH STRING is read rather than a second blank-row rule: both arms
+  // still read their row's name through `foldedRowMatchText`, so a blank
+  // row is still named by the placeholder on both. The label arm relied on
+  // `makePagePickerItem` having already applied `untitledOr`; the row arm
+  // gets the same substitution from `foldedRowMatchText`'s own blank branch,
+  // which is where the raw `''` a cold FTS row carries is handled.
   const foldedPlaceholder = foldedUntitledPlaceholder()
   const exactMatch =
     qFolded !== '' &&
-    allSource.some(
-      (p) => foldedRowMatchText('title' in p ? p.title : p.label, foldedPlaceholder) === qFolded,
-    )
+    allSource.some((p) => foldedRowMatchText(p.title, foldedPlaceholder) === qFolded)
   if (exactMatch) return
   matches.push({
     id: '__create__',
@@ -1086,17 +1201,94 @@ export function useBlockResolve(): UseBlockResolveReturn {
         // #4055 — AND behind the captured-generation guard above.
         // #4270 — AND behind the captured-sequence guard (latest ISSUED,
         // not merely latest RESOLVED, request for `tagsListRef`).
-        if (
-          isRequestSpaceStillActive(requestSpaceId) &&
-          nameChangeGenerationRef.current === requestGeneration &&
-          tagsRequestSeqRef.current === requestSeq
-        ) {
-          tagsListRef.current = fetched
+        // #4344 part 2 — the three conditions are evaluated SEPARATELY
+        // rather than as one `&&`, for the same reason as
+        // `searchPagesViaCache` above: space + generation say whether
+        // `fetched` is still SERVABLE at all (and therefore whether it may
+        // be returned AND seeded), while the sequence says only whether it
+        // is the FRESHEST fill (and therefore whether it may own the cache).
+        // Hence the nesting rather than a flat three-way split: two of the
+        // three outcomes share the servable half.
+        const spaceStillActive = isRequestSpaceStillActive(requestSpaceId)
+        const generationUnchanged = nameChangeGenerationRef.current === requestGeneration
+        const isLatestFill = tagsRequestSeqRef.current === requestSeq
+        if (spaceStillActive && generationUnchanged) {
+          // SERVABLE: right space, no name-change-bus event since this fill
+          // was issued. `fetched` is a valid snapshot of THIS space at THIS
+          // generation, so it is both returned (by leaving `tags` as
+          // `fetched`) and seeded — see below. Whether it also OWNS the
+          // cache is a separate, freshness-only question.
+          if (isLatestFill) {
+            tagsListRef.current = fetched
+          } else {
+            // LOST THE #4270 TIE-BREAK, but still SERVABLE: return the
+            // freshest rows in hand, without persisting. "Freshest in hand"
+            // is `tagsListRef.current` when the #4270 winner has already
+            // filled it, and this fill's own `fetched` otherwise — see the
+            // assignment at the end of this branch. Full rationale follows.
+            //
+            // #4344 part 2 — a newer fill has been ISSUED that should own
+            // the cache. So do not PERSIST (that is #4270's whole point —
+            // the earlier-issued fill must not overwrite the later-issued
+            // one), but DO RETURN something usable.
+            //
+            // Same defect, same fix, as `searchPagesViaCache` above: this
+            // used to fall through to `tags = tagsListRef.current` together
+            // with the genuinely-unsafe cases, and on the common cold-cache
+            // path that read ZERO tags. In-order IPC means the
+            // earlier-issued fill resolves FIRST, so the winning fill has
+            // only been issued, not resolved, and nothing has written the
+            // ref yet — the `#` picker rendered EMPTY for one round trip on
+            // exactly the fast-typing-into-a-cold-cache path, discarding a
+            // snapshot whose only flaw was being one keystroke old.
+            //
+            // #4344 part 2 review — plain `fetched` was still wrong in the
+            // OTHER resolution order, which no test asserted: when the
+            // later-issued fill (the #4270 winner) resolves FIRST and
+            // persists, THIS fill — the earlier-issued loser, resolving
+            // second — used to hand back its own older `fetched` even
+            // though `tagsListRef.current` had just been overwritten with
+            // the winner's fresher rows sitting right there. Prefer the ref
+            // whenever the winner has already filled it; fall back to
+            // `fetched` only when it hasn't (the in-order case above).
+            //
+            // The `batchSet` seed just below stays keyed on this fill's own
+            // `fetched`, not this freshened `tags` — deliberately: `batchSet`
+            // is a per-id upsert (never a wholesale replace, confirmed
+            // against `@/stores/resolve.ts`), so seeding from a stale
+            // snapshot cannot un-seed an id the winner already wrote, and
+            // for any id BOTH snapshots share the value is identical anyway
+            // (the generation guard above rules out a rename between the
+            // two dispatches). Rekeying it to `tags` would add a second
+            // meaning of "freshest" to track for zero behavioural gain.
+            tags = tagsListRef.current.length > 0 ? tagsListRef.current : fetched
+          }
           // Populate the resolve cache so tag_ref nodes can resolve the
           // name after the block is saved (serialized as #[ULID]) and
-          // reloaded. Only on the FILL — a cache-served keystroke re-seeds
-          // nothing new, so re-running the diff every keystroke bought
-          // nothing (#3277).
+          // reloaded. Only on a SERVABLE fill, not merely "the fill" — see
+          // #4344 part 2 just below: a servable-but-losing fill also seeds.
+          // Either way a cache-served keystroke re-seeds nothing new, so
+          // re-running the diff every keystroke bought nothing (#3277).
+          //
+          // #4344 part 2 — the seed is gated on SERVABLE, not on PERSISTING.
+          // It has to be: `searchTags` now returns the tie-break loser's
+          // rows, and a returned-but-unseeded tag is a state that could not
+          // exist before — every tag this function could return used to come
+          // from a fill that had persisted AND seeded. A `tag_ref` chip
+          // resolves its name ONLY through the resolve store
+          // (`useRichContentCallbacks.resolveTagName`; `#[ULID]` has no lazy
+          // per-id fallback the way `[[ULID]]` has `fetchAndCacheLinks`), so
+          // a tag picked out of the loser's list would render as
+          // `#01ABCDE...`. "The winner will seed it" is not a guarantee —
+          // the winner can itself be rejected by a bus event landing while
+          // IT is in flight, and then nothing seeds the tag at all. This
+          // also restores the mirror with the pages side, where
+          // `populatePageResolveCache` runs in `searchPages` over whatever
+          // the guard RETURNED, outside the persist decision entirely.
+          //
+          // Still no cross-space write: `batchSet` keys on the LIVE active
+          // space, which `spaceStillActive` has just pinned to
+          // `requestSpaceId`.
           if (fetched.length > 0) {
             // #4239 — `resolveStoreTitle` on the tag arm is `untitledOr`:
             // verbatim for a real name, the placeholder for a blank one. That
@@ -1111,18 +1303,17 @@ export function useBlockResolve(): UseBlockResolveReturn {
             )
           }
         } else {
-          // The guard rejected this fetch — a space switch, a
-          // name-change-bus event, or the #4270 sequence guard just above
-          // (a newer fill for `tagsListRef` was issued and this one lost
-          // the race) landed while it was in flight. `tagsListRef.current`
-          // is cleared, patched, overwritten, or superseded by a
-          // still-in-flight newer request (the #4270 loser can resolve
-          // BEFORE its winner, in which case `tagsListRef.current` hasn't
-          // been touched by the winning fill yet either). Serve this call's
-          // result from there instead of the discarded `fetched`: otherwise
-          // this one call still returns the exact stale/deleted/renamed tag
-          // the guard exists to keep out of the cache. Mirrors the
-          // `searchPagesViaCache` fix above.
+          // The fetch was rejected for a reason that also makes it unsafe
+          // to RETURN: a SPACE SWITCH (serving `fetched` would leak the
+          // previous space's tags into the new space's picker) or a
+          // name-change-bus event on THIS space (rename/removal/
+          // invalidation — `fetched` carries exactly the stale/deleted/
+          // renamed tag the guard exists to keep out). Either way
+          // `tagsListRef.current` has been cleared, patched or overwritten;
+          // serve this call's result from there instead of the discarded
+          // `fetched`, otherwise this one call still returns the row the
+          // guard just refused to cache. Mirrors the `searchPagesViaCache`
+          // fix above.
           tags = tagsListRef.current
         }
       }
@@ -1199,7 +1390,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       populatePageResolveCache(rows, requestSpaceId)
       const matches = rows.map((r) => makePagePickerItem(r.id, r.title))
       await mergeAliasPrefixMatches(matches, q)
-      appendCreatePageOptionIfNeeded(matches, query, q, pagesListRef)
+      appendCreatePageOptionIfNeeded(matches, rows, query, q, pagesListRef)
 
       logSlowQuery('searchPages', q, t0, matches.length)
       return matches
