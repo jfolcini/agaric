@@ -50,8 +50,10 @@ The statement lives INSIDE `sqlx::query!("…")` / `sqlx::query("…")` strings,
 so — like check-table-ownership.py and unlike the code-token guards — this
 scans string CONTENTS. It blanks only `//` and `/* */` comments (so the
 several doc comments that quote `DELETE FROM op_log` never trip it) and
-reuses `cfg_test_line_set` / `is_test_file` from check-raw-tx.py to skip test
-fixtures and `#[cfg(test)]` regions. Stdlib only — no third-party deps.
+reuses `cfg_test_line_set` from check-raw-tx.py to skip `#[cfg(test)]` regions
+and `is_excluded_file` from check-table-ownership.py (which itself ORs
+check-raw-tx.py's `is_test_file` with that guard's extra fixture globs) to skip
+test files. Stdlib only — no third-party deps.
 
 Usage:
     python3 scripts/check-op-log-delete.py [FILE ...]   # scan (args ignored)
@@ -87,8 +89,11 @@ _to = importlib.util.module_from_spec(_to_spec)
 _to_spec.loader.exec_module(_to)
 
 cfg_test_line_set = _rt.cfg_test_line_set
-is_test_file = _rt.is_test_file
 strip_comments_keep_strings = _to.strip_comments_keep_strings
+# `is_excluded_file` already ORs check-raw-tx.py's `is_test_file` with the
+# ownership guard's own extra fixture globs, so it is the ONLY file-level
+# test predicate this guard needs — binding `is_test_file` here as well would
+# read as if `scan()` applied two independent skips when it applies one.
 is_excluded_file = _to.is_excluded_file
 
 # The ONE module allowed to delete `op_log` rows in production: it owns both
