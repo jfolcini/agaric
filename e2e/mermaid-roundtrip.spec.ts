@@ -195,10 +195,10 @@ test.describe('Mermaid diagram round-trip (#1438)', () => {
    * configuration the mobile freeze was made of.
    *
    * These run on the DESKTOP user agent (this file's default). The freeze itself
-   * is UA-gated, but the node-view identity asserted here is not — and the
-   * mermaid React node view does not render at all under Playwright's mobile UA
-   * (it hits prosemirror-view's `browser.ios` rebuild path and never paints), so
-   * the mermaid halves of this seam are only observable here.
+   * is UA-gated, but the node-view identity asserted here is not, so asserting
+   * it once on desktop covers both. That the mermaid React node view SURVIVES
+   * the mobile UA — it did not, until #4315 gave it an `ignoreMutation` — is a
+   * separate assertion, made where the gate lives: `mobile-editor.spec.ts`.
    */
   test('switching a code block to mermaid and back swaps the node view each way', async ({
     page,

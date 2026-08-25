@@ -31,7 +31,7 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
-import type { Node as PMNode } from '@tiptap/pm/model'
+import { DOMSerializer, type Node as PMNode } from '@tiptap/pm/model'
 import { type Editor, Extension, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
@@ -213,23 +213,50 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   // round-trips to a ```mermaid fence via the existing markdown serializer.
   //
   // ONLY mermaid gets the React node view. Routing every language through it
-  // froze the editor permanently on mobile: a React node view rewrites its
-  // contentDOM subtree on re-render, prosemirror-view's DOMObserver records
-  // those mutations and flushes, the flush re-renders the node view, and the
-  // cycle never terminates (`DOMObserver.observer → flush → updateState →
-  // selectionToDOM → …`). It is UA-gated because `browser.android`/`browser.ios`
-  // select different selection-handling paths in prosemirror-view, so desktop
-  // never spins. Any code block — typed as ```␣, inserted from the slash menu,
-  // or picked in the language selector — locked the app until it was killed.
+  // froze the editor permanently on mobile: a React node view rewrites its own
+  // subtree on re-render, prosemirror-view records those mutations and flushes,
+  // the flush re-renders the node view, and the cycle never terminates. Any code
+  // block — typed as ```␣, inserted from the slash menu, or picked in the
+  // language selector — locked the app until it was killed.
   //
-  // Non-mermaid therefore uses a plain DOM node view that reproduces
-  // `CodeBlockLowlight`'s own `renderHTML` (`<pre><code class="language-x">`,
-  // the extension is configured with `lowlight` only, so no extra
-  // `HTMLAttributes` are in play). Lowlight's highlighting is applied as
-  // decorations inside `contentDOM` and is unaffected.
+  // The UA gate is @tiptap/core's default `NodeView.ignoreMutation` (#4315
+  // located it): on iOS/Android with the editor focused, a childList mutation
+  // ANYWHERE inside the node view's `dom` is *not* ignored as long as every
+  // added/removed node is contentEditable — so React's own writes are read back
+  // as user edits. Desktop skips that branch and ignores everything outside
+  // `contentDOM`, which is why desktop never spun. Mermaid keeps its React node
+  // view and overrides `ignoreMutation` to the desktop rule (see below).
+  //
+  // Non-mermaid therefore uses a plain DOM node view, built from the node SPEC
+  // rather than hand-copied from `renderHTML` (#4316 — see `renderFromSpec`).
+  // Lowlight's highlighting is applied as decorations inside `contentDOM` and is
+  // unaffected.
   addNodeView() {
-    const prefix = this.options.languageClassPrefix ?? 'language-'
+    const nodeType = this.type
     const isMermaid = (node: PMNode): boolean => node.attrs['language'] === 'mermaid'
+
+    // `spec.toDOM` IS the compiled `renderHTML`: tiptap sets
+    // `schema.toDOM = node => renderHTML({ node, HTMLAttributes: getRenderedAttributes(…) })`
+    // when it builds the schema, so it carries the extension's configured
+    // `HTMLAttributes` AND every `addGlobalAttributes` rule that targets
+    // `codeBlock`. Deriving the node view's DOM from it is what keeps the
+    // on-screen DOM from drifting away from serialized HTML (copy/paste, export)
+    // when either of those grows an entry. A missing `toDOM` would mean the
+    // extension lost its `renderHTML` entirely — fail loudly at editor creation
+    // rather than silently render a different `<pre>` than we serialize.
+    const toDOM = nodeType.spec.toDOM
+    if (!toDOM) throw new Error('codeBlock node spec has no toDOM — renderHTML is missing')
+
+    /**
+     * Render `node` through the spec. Returns the fresh `<pre>` and the `<code>`
+     * content hole inside it.
+     */
+    const renderFromSpec = (node: PMNode): { dom: HTMLElement; contentDOM: HTMLElement } => {
+      const rendered = DOMSerializer.renderSpec(document, toDOM(node))
+      const { contentDOM } = rendered
+      if (!contentDOM) throw new Error('codeBlock renderHTML produced no content hole')
+      return { dom: rendered.dom as HTMLElement, contentDOM }
+    }
 
     // The mirror image of the plain view's `update` below: tiptap's default
     // `NodeView.update` only refuses when the node TYPE changes, and switching
@@ -252,24 +279,72 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
         if (oldNode !== newNode) updateProps()
         return true
       },
+      // #4315 — mermaid is the one language still on a React node view, i.e.
+      // still in the configuration that froze the app, and measurement (see
+      // `e2e/mobile-editor.spec.ts`) showed it DID freeze: the block never
+      // materialised and React bailed out with "Maximum update depth exceeded".
+      //
+      // The trigger is a mobile-only branch in @tiptap/core's default
+      // `NodeView.ignoreMutation`: on iOS/Android, while the editor is focused,
+      // a childList mutation ANYWHERE inside the node view's `dom` — not only
+      // inside `contentDOM` — is *not* ignored as long as every added/removed
+      // node is contentEditable. React rewriting its own subtree therefore looks
+      // like a user edit; prosemirror-view reads it, dispatches, the node view
+      // re-renders, and the cycle never terminates. Desktop skips that branch
+      // and ignores everything outside `contentDOM`, which is exactly why the
+      // freeze is UA-gated.
+      //
+      // Supplying `ignoreMutation` short-circuits BEFORE that branch, restoring
+      // the desktop rule on every UA: mutations inside `contentDOM` are real
+      // content edits and must be read, everything else is React's own chrome
+      // (the source toggle, the rendered diagram) and is ignored. What that
+      // gives up is tiptap's mobile-IME workaround for text typed OUTSIDE
+      // `contentDOM`, which cannot happen here — the only editable text in this
+      // view IS the content hole.
+      ignoreMutation: ({ mutation }) => {
+        if (mutation.type === 'selection') return false
+        // tiptap marks its own content host with `data-node-view-content-react`
+        // (`ReactNodeView`'s `contentDOMElement`). A code block's content is
+        // plain text, so it can never nest another node view — the nearest such
+        // ancestor is always THIS view's `contentDOM`.
+        const target = mutation.target
+        const element = target instanceof Element ? target : target.parentElement
+        const contentHost = element?.closest('[data-node-view-content-react]') ?? null
+        if (contentHost === null) return true
+        // An attribute write on the host itself is React re-rendering the
+        // wrapper, not a content edit (tiptap's default says the same).
+        if (target === contentHost && mutation.type === 'attributes') return true
+        return false
+      },
     })
 
     return (props) => {
       if (isMermaid(props.node)) return renderReact(props)
 
-      const dom = document.createElement('pre')
-      const contentDOM = document.createElement('code')
-      dom.append(contentDOM)
+      const { dom, contentDOM } = renderFromSpec(props.node)
 
-      const applyLanguage = (node: PMNode): void => {
-        const language = node.attrs['language'] as string | null
-        // `renderHTML` passes `class: null` for a language-less block, which
-        // emits NO class attribute — setting `className = ''` would emit
-        // `<code class="">` instead, so remove the attribute to match exactly.
-        if (language) contentDOM.className = `${prefix}${language}`
-        else contentDOM.removeAttribute('class')
+      // `update()` re-derives the content hole's attributes from the same spec
+      // instead of re-rendering into it: `renderSpec` builds a FRESH element
+      // tree (a `createElement` per tag plus a `setAttribute` loop — cheap, but
+      // new objects), and a node view may not swap its `contentDOM` after mount
+      // without discarding the ProseMirror-managed children and the selection
+      // inside them. So the throwaway render is used as the source of truth for
+      // attributes only. The outer `<pre>` is set once at mount because
+      // prosemirror-view owns that element's attributes afterwards (node
+      // decorations, the selected-node class); `language` — the only attr the UI
+      // can change — renders onto the `<code>`.
+      const syncContentAttributes = (node: PMNode): void => {
+        const fresh = renderFromSpec(node).contentDOM
+        for (const name of contentDOM.getAttributeNames()) {
+          if (!fresh.hasAttribute(name)) contentDOM.removeAttribute(name)
+        }
+        for (const name of fresh.getAttributeNames()) {
+          const value = fresh.getAttribute(name)
+          if (value !== null && contentDOM.getAttribute(name) !== value) {
+            contentDOM.setAttribute(name, value)
+          }
+        }
       }
-      applyLanguage(props.node)
 
       return {
         dom,
@@ -278,7 +353,7 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
           // A switch to/from mermaid needs the other node view: refuse the
           // update so prosemirror rebuilds this one.
           if (node.type !== props.node.type || isMermaid(node)) return false
-          applyLanguage(node)
+          syncContentAttributes(node)
           return true
         },
       }
