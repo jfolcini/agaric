@@ -649,7 +649,20 @@ pub struct PairingState(pub Mutex<Option<PairingSession>>);
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct ResolvedBlock {
     pub id: String,
-    /// `content` column — page title, tag name, or content text (truncated).
+    /// `content` column — page title, tag name, or content text, carried
+    /// **verbatim**: [`batch_resolve_inner`] selects `b.content AS title`
+    /// with no truncation, so this is the block's FULL content and is
+    /// unbounded in length (#4237 — the comment used to say "truncated",
+    /// which it never was).
+    ///
+    /// Bounding it is the consumer's obligation, and the consumer that owns
+    /// that bound is `src/lib/block-title.ts`'s `normalizeBlockRefTitle`
+    /// (#4228): first line, placeholder-substituted, capped, applied at the
+    /// seed for every writer of the resolve store. Do NOT "fix" this by
+    /// truncating here — a second, differently-shaped bound upstream
+    /// reintroduces exactly the two-owners problem #4228 removed. A bound at
+    /// the IPC layer is a separate design decision with its own consumers to
+    /// check.
     pub title: Option<String>,
     pub block_type: String,
     pub deleted: bool,

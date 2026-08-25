@@ -1842,7 +1842,8 @@ export type CompareOp = "Eq" | "Neq" | "Lt" | "Gt" | "Lte" | "Gte" | "Contains" 
  *  once per descendant / per markdown line in `template-utils.ts`. The
  *  `properties` map carries arbitrary `key -> value_text` pairs that land
  *  as `SetProperty` ops inside the same transaction (mirrors
- *  `import_markdown_inner`'s precedent — see `pages.rs:622-637`). Reserved
+ *  `import_markdown_inner`'s precedent — see its `set_property_in_tx`
+ *  loop in `src-tauri/src/commands/pages/markdown.rs`). Reserved
  *  keys (`todo_state` / `priority` / `due_date` / `scheduled_date`) route
  *  through the same `set_property_in_tx` helper so they hit the right
  *  columns on `blocks` instead of `block_properties`.
@@ -3429,7 +3430,22 @@ export type RecoveryStatus = {
 /**  Lightweight metadata returned by [`batch_resolve_inner`]. */
 export type ResolvedBlock = {
 	id: string,
-	/**  `content` column — page title, tag name, or content text (truncated). */
+	/**
+	 *  `content` column — page title, tag name, or content text, carried
+	 *  **verbatim**: [`batch_resolve_inner`] selects `b.content AS title`
+	 *  with no truncation, so this is the block's FULL content and is
+	 *  unbounded in length (#4237 — the comment used to say "truncated",
+	 *  which it never was).
+	 * 
+	 *  Bounding it is the consumer's obligation, and the consumer that owns
+	 *  that bound is `src/lib/block-title.ts`'s `normalizeBlockRefTitle`
+	 *  (#4228): first line, placeholder-substituted, capped, applied at the
+	 *  seed for every writer of the resolve store. Do NOT "fix" this by
+	 *  truncating here — a second, differently-shaped bound upstream
+	 *  reintroduces exactly the two-owners problem #4228 removed. A bound at
+	 *  the IPC layer is a separate design decision with its own consumers to
+	 *  check.
+	 */
 	title: string | null,
 	block_type: string,
 	deleted: boolean,

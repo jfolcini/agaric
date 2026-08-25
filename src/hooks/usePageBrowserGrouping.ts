@@ -133,7 +133,14 @@ export function buildMultiPageBranch(
   // A starred non-namespaced page lives ONLY in `Starred`; including
   // it under `Pages` too would duplicate the row without value.
   const pagesSourcePages: BlockRow[] = []
+  // #3286 — `id → row` index built in the walk that already exists, so the
+  // two lookups below are O(1) instead of a `filteredPagesUnsorted.find(...)`
+  // scan per top-level unit (the Pages browser's infinite query accumulates
+  // every fetched page, so that was O(P²) in the loaded-page count). First
+  // writer wins, matching `.find`'s first-match semantics.
+  const byId = new Map<string, BlockRow>()
   for (const p of filteredPagesUnsorted) {
+    if (!byId.has(p.id)) byId.set(p.id, p)
     const starred = starredSet.has(p.id)
     const isNamespaced = (p.content ?? '').includes('/')
     if (starred) starredFiltered.push(p)
@@ -158,7 +165,7 @@ export function buildMultiPageBranch(
   const allRoots = buildPageTree(pagesSorted)
   const topLevelUnits: PagesTopLevelUnit[] = allRoots.map((node) => {
     if (node.pageId && node.children.length === 0) {
-      const page = filteredPagesUnsorted.find((p) => p.id === node.pageId)
+      const page = byId.get(node.pageId)
       if (page) return { type: 'page', page }
     }
     return { type: 'tree', node }
@@ -199,11 +206,7 @@ export function buildMultiPageBranch(
         // A namespace root has no single backing page (or is a
         // hybrid — `node.pageId` may be set). For keyboard Enter on
         // the row we record the hybrid page if present, else null.
-        pageRows.push(
-          unit.node.pageId
-            ? (filteredPagesUnsorted.find((p) => p.id === unit.node.pageId) ?? null)
-            : null,
-        )
+        pageRows.push(unit.node.pageId ? (byId.get(unit.node.pageId) ?? null) : null)
       }
       pageIndex += 1
     }

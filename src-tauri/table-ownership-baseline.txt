@@ -40,3 +40,25 @@
 # soft-delete, descendant cache) and cannot call up into engine. These 10
 # store writers are sanctioned owner-adjacent carve-outs, not migratable debt.
 10 store blocks  # owner-adjacent: physical primitives (split contract)
+
+# --- sync crate: the snapshot RESET cache wipe (#3328). These seven writes
+# are not new. `snapshot/restore.rs` has always truncated the store-owned
+# derived caches before re-inserting a received snapshot's rows — it just did
+# so through `format!("DELETE FROM {table}")`, which this guard's per-table
+# literal regex cannot match, so the whole cross-crate wipe counted as ZERO
+# and the sync crate had no line here at all. #3328 replaced the
+# interpolation with a literal statement per table; the counts below are that
+# pre-existing wipe becoming visible, not new debt.
+#
+# They stay cross-crate for now: the end-state (#2895 slice 4, already done
+# for `block_links`) is an owner-side `truncate_all_caches` in
+# agaric-store/src/cache/, at which point these seven lines drop to zero
+# together. Until then, a NEW cache table wiped from here shows up as an
+# eighth line and gets reviewed. ---
+1 sync agenda_cache  # snapshot RESET wipe (#3328); migrates to an owner-side truncate helper
+1 sync block_tag_inherited  # snapshot RESET wipe (#3328)
+1 sync block_tag_refs  # snapshot RESET wipe (#3328)
+1 sync page_link_cache  # snapshot RESET wipe (#3328)
+1 sync pages_cache  # snapshot RESET wipe (#3328)
+1 sync projected_agenda_cache  # snapshot RESET wipe (#3328)
+1 sync tags_cache  # snapshot RESET wipe (#3328)

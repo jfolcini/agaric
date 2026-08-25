@@ -2541,7 +2541,10 @@ pub async fn run_sync_session(
     // hits "cancel sync" (otherwise the run_sync_session loop's cancel
     // check is dead code once we reach this phase).
     if orch.is_succeeded() {
-        match crate::sync_files::app_data_dir_from_pool(pool).await {
+        // #3328: the attachment root comes from the app-side host, with the
+        // DB-path derivation only as a fallback — so files received here land
+        // in the same tree the app's attachment GC reconciles.
+        match crate::sync_files::attachment_root(materializer.as_ref(), pool).await {
             Ok(app_data_dir) => {
                 // Wire the active sync's event sink into
                 // file transfer so per-frame progress lands on the same

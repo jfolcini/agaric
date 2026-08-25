@@ -310,8 +310,18 @@ pub async fn rebuild_block_links_unresolved_conn(
     // tests in this crate's `cache::tests`, which re-run the comparison —
     // this streamed fold against a faithful copy of the pre-#4242 buffered
     // one — in the weekly deep-checks lane and print the current figures.
-    // They also pin the property this rewrite had to preserve: both folds
-    // must derive byte-identical obligations from the same vault.
+    // They also pin the property this rewrite had to preserve — but only on
+    // the path their own fixture walks, which is narrower than the sentence
+    // that used to stand here claimed (#4291 corrected the copy in
+    // `cache::tests`; #4292 this one). That fixture leaves `block_links`
+    // empty, so the `NOT EXISTS` clause below discharges nothing, and gives
+    // every seeded source exactly one token, so the dedup below removes
+    // nothing. What they pin is that the two folds agree on the PLAIN path.
+    // The other two answers are pinned elsewhere:
+    // `rebuild_block_links_unresolved_recomputes_the_whole_vault_4218` for
+    // discharge against a real edge, and
+    // `rebuild_block_links_unresolved_dedups_a_repeated_token_4292` for a
+    // source that names one target more than once.
     let mut pairs: Vec<(String, String)> = Vec::new();
     {
         let mut rows = sqlx::query!(

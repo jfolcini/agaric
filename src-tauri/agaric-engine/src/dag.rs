@@ -664,13 +664,23 @@ pub async fn append_merge_op(
     // allow-raw-tx: test/bench-only helper (#224)
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let row = sqlx::query!(
-        r#"SELECT COALESCE(MAX(seq), 0) + 1 as "next_seq!: i64" FROM op_log WHERE device_id = ?"#,
-        device_id,
-    )
-    .fetch_one(&mut *tx)
-    .await?;
-    let seq = row.next_seq;
+    // #4018 / #3310: allocate through the shared, store-owned allocator
+    // rather than open-coding `COALESCE(MAX(seq), 0) + 1`. The open-coded
+    // form is the PRE-#3310 allocator: it reads only the surviving `op_log`
+    // rows and so restarts at `seq = 1` over a log that a compaction prune or
+    // a snapshot RESET emptied, re-minting `(device_id, seq)` addresses a
+    // paired peer still holds — whose `INSERT OR IGNORE` then silently
+    // swallows this device's post-wipe history. `next_seq_for_device` floors
+    // the same expression at the durable per-device high-water mark the wipe
+    // recorded, which is why it is the single allocator everywhere else.
+    //
+    // This helper has no production callers today (see the module docs), so
+    // the divergence was not a live defect — it was a trap primed to
+    // reintroduce the seq restart the moment the merge path is wired up. The
+    // read runs on this function's own IMMEDIATE transaction, the same
+    // serialized window as the INSERT below, exactly as on the local-append
+    // path.
+    let seq = agaric_store::op_log::next_seq_for_device(&mut tx, device_id).await?;
 
     let hash = compute_op_hash(
         device_id,

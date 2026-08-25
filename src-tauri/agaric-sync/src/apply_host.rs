@@ -26,6 +26,40 @@ pub trait ApplyHost: Send + Sync + std::fmt::Debug {
     async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError>;
     /// Await both foreground and background materialize queues draining.
     async fn flush(&self) -> Result<(), AppError>;
+
+    /// The app data directory whose `attachments/` subtree the sync layer
+    /// writes received attachments into, or `None` when the host has no
+    /// registered root.
+    ///
+    /// #3328 — why this belongs on the port. The sync layer writes
+    /// attachments; the app-side `Materializer` reads them back (its
+    /// `CleanupOrphanedAttachments` task walks `attachments/` and reconciles
+    /// it against the `attachments` table). Those two must address the SAME
+    /// tree, yet the sync side used to derive its root independently, by
+    /// asking SQLite for its own database file and taking the parent
+    /// directory ([`crate::sync_files::app_data_dir_from_pool`]). That
+    /// encoded `db_path.parent() == materializer.app_data_dir()` in no type
+    /// and no test — it held only because `lib.rs` happens to build the DB
+    /// path as `app_data_dir.join("notes.db")`.
+    ///
+    /// Anything that relocates the database relative to the app data
+    /// directory — a `db/` subdirectory, a custom-DB-path or external-vault
+    /// setting, an Android variant whose DB sandbox is not where user files
+    /// live — would silently point the sync writer at one tree and the
+    /// attachment GC at another, with no compile-time or test signal. The
+    /// symptom surfaces much later, as attachments missing after a sync.
+    /// Routing the root through the port makes the app the single authority
+    /// for it, the same way it already is for the Loro registry above.
+    ///
+    /// Defaulted to `None` so pool-only test harnesses (and
+    /// `test_support::RecordingApplyHost`) need not carry a filesystem root; the
+    /// production impl returns the value `lib.rs` registers. Call sites treat
+    /// `None` as "fall back to deriving it from the pool" — see
+    /// `app_data_dir_from_pool`, which documents that fallback and is why
+    /// this is `Option` rather than a required method.
+    fn app_data_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
 }
 
 /// A recording, side-effect-free [`ApplyHost`] for tests.

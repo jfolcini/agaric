@@ -5323,6 +5323,93 @@ async fn rebuild_block_links_unresolved_on_an_empty_vault_writes_nothing_4218() 
     );
 }
 
+/// #4292 — one source, the SAME unresolvable target named three times, must
+/// owe exactly ONE obligation.
+///
+/// Filed because the property had no dedicated coverage against this fold.
+/// `block_links_deduplicates_repeated_references` in this file exercises
+/// `reindex_block_links` — the *other* fold, writing the `block_links` table —
+/// and every fixture that reaches `rebuild_block_links_unresolved` (both
+/// `_4218` tests and the `_4242` equivalence pin) gives each source exactly one
+/// token. So the vault-wide fold's behaviour on a repeated token was asserted
+/// nowhere, and the `_4242` pin's corrected comment (#4291) handed it to tests
+/// that do not cover it.
+///
+/// # What this pins, and what it deliberately does not
+///
+/// It pins the fold's OUTPUT contract: one row, and a returned count of one.
+/// It does not pin the `pairs.dedup()` line specifically, and cannot — that
+/// line is an EQUIVALENT MUTANT under today's schema. `block_links_unresolved`
+/// is `PRIMARY KEY (source_id, target_id)` and the refill is
+/// `INSERT OR IGNORE`, so a duplicate pair that reaches SQL is absorbed there:
+/// with the Rust dedup deleted, both the row count AND `changes()` still come
+/// back as one (verified directly against SQLite). The dedup earns its place
+/// for the reason its own comment gives — it keeps the CHUNK BOUNDARY from
+/// being the thing that decides whether `INSERT OR IGNORE` absorbs the
+/// duplicate — which is a statement about which layer owns the guarantee, not
+/// a second observable answer.
+///
+/// So this test goes red when the *answer* stops being one obligation: the
+/// pre-filter or the regex dropping a repeat, the PK going away, the
+/// `OR IGNORE` becoming a plain `INSERT` (which would now abort the whole
+/// rebuild, and with it a snapshot restore). That is the property a caller
+/// depends on; the two mechanisms that agree on it are an implementation
+/// detail.
+#[tokio::test]
+async fn rebuild_block_links_unresolved_dedups_a_repeated_token_4292() {
+    let (pool, _dir) = test_pool().await;
+
+    let owing = "01HZ0000000000000000REPEAT";
+    let absent = "01HZ0000000000000000ABSENT";
+
+    // Three occurrences, in BOTH token shapes, so a grammar arm that stopped
+    // matching would change the answer rather than being absorbed by a
+    // surviving sibling occurrence.
+    insert_block(
+        &pool,
+        owing,
+        "content",
+        &format!("see [[{absent}]] and again (({absent})) and once more [[{absent}]]"),
+    )
+    .await;
+
+    // The `_conn` form, not the pool wrapper: the wrapper discards the count
+    // (`Result<()>`) and the count is half of what is asserted here.
+    let rebuild = || async {
+        let mut tx = pool.begin().await.expect("begin");
+        let inserted = rebuild_block_links_unresolved_conn(&mut tx)
+            .await
+            .expect("rebuild");
+        tx.commit().await.expect("commit");
+        inserted
+    };
+
+    let inserted = rebuild().await;
+    assert_eq!(
+        all_unresolved(&pool).await,
+        vec![(owing.to_owned(), absent.to_owned())],
+        "#4292: naming the same unresolvable target three times is ONE obligation"
+    );
+    assert_eq!(
+        inserted, 1,
+        "the reported obligation count must be the number of rows the vault \
+         owes, not the number of tokens it contains"
+    );
+
+    // The rebuild is a recompute, so a second run over the state it just
+    // produced must be a fixed point — the shape a snapshot RESET repeats.
+    assert_eq!(
+        rebuild().await,
+        1,
+        "a second rebuild derives the same single obligation"
+    );
+    assert_eq!(
+        all_unresolved(&pool).await,
+        vec![(owing.to_owned(), absent.to_owned())],
+        "a second rebuild must neither duplicate nor drop the obligation"
+    );
+}
+
 // ====================================================================
 // #4242 — the residency measurement behind the `fetch_all` -> streaming
 // change in `rebuild_block_links_unresolved_conn`
@@ -5673,8 +5760,12 @@ async fn measure_unresolved_rebuild_residency(blocks: usize) {
     // source carries exactly one token, so its dedup removes nothing. The two
     // folds must therefore agree exactly, but what that agreement covers is
     // the plain path only. Discharge against an existing edge and multi-token
-    // dedup — the two places ordering could diverge — are the `_4218` tests'
-    // job, not this one's.
+    // dedup — the two places ordering could diverge — are not this fixture's
+    // job. #4292: the hand-off used to name "the `_4218` tests" for both, and
+    // that was right for only one of them — `_4218` plants a real `block_links`
+    // edge and asserts it is not re-owed, but its sources carry one token each,
+    // so the repeated-token answer was covered nowhere. It is
+    // `rebuild_block_links_unresolved_dedups_a_repeated_token_4292` now.
     assert_eq!(
         inserted,
         u64::try_from(buffered_pairs.len()).unwrap(),
@@ -5740,4 +5831,66 @@ async fn rebuild_block_links_unresolved_residency_at_50k_blocks_4242() {
 #[ignore = "deep-checks lane: seeds a 100k-block vault to measure rebuild peak residency"]
 async fn rebuild_block_links_unresolved_residency_at_100k_blocks_4242() {
     measure_unresolved_rebuild_residency(100_000).await;
+}
+
+/// #4273 — the non-Linux TWIN of the three `_4242` residency measurements
+/// above, and the reason they cannot vanish quietly any more.
+///
+/// Those three are `#[cfg(target_os = "linux")]` because they sample RSS out
+/// of `/proc/self/status`. `scheduled-deep-checks.yml`'s ignored-test sweep
+/// reaches them only because that job pins `ubuntu-24.04`: point its
+/// `runs-on:` at a `macos-*` or `windows-*` runner and all three simply
+/// cease to exist — no failure, no skip notice, no signal at all, while the
+/// sweep still reports success over a strictly smaller set of tests than it
+/// covered the day before.
+///
+/// That is the same coverage hole #3212 closed for PACKAGE scoping, reached
+/// by a different route — and the two were not defended equally. The package
+/// hole is closed by a `--workspace` flag that is present in the command and
+/// would have to be actively deleted. The platform hole was closed by a
+/// COMMENT in the workflow asserting that the lane runs on Linux, which a
+/// `runs-on:` edit in an unrelated PR silently invalidates. A contract
+/// enforced by a comment is not the same class of thing as one enforced by a
+/// flag, so this replaces it with an assertion that lives WITH the tests —
+/// the same place #3212's defence lives relative to what it protects.
+///
+/// `#[ignore]`d exactly like the tests it stands in for, so it fires in the
+/// deep-checks sweep (`--run-ignored=only`, the only place the real three
+/// ever run) and nowhere else: an ordinary `cargo test` on a developer's
+/// macOS machine is not the caller this contract is about, and reddening
+/// that would be a different bug.
+#[cfg(not(target_os = "linux"))]
+fn residency_lane_is_not_linux_4273() -> ! {
+    panic!(
+        "the three #4242 `..._residency_at_*_blocks_4242` measurements are \
+         #[cfg(target_os = \"linux\")] (they sample RSS from /proc/self/status), so on this \
+         target they do not exist and this sweep is covering FEWER tests than it reports. \
+         See #4273. Fix: restore the deep-checks ignored-test sweep to a Linux runner \
+         (`runs-on: ubuntu-*`), or port the residency sampling to this platform and delete \
+         these stubs."
+    );
+}
+
+/// #4273 — non-Linux twin of point 1 of 3. See `residency_lane_is_not_linux_4273`.
+#[cfg(not(target_os = "linux"))]
+#[test]
+#[ignore = "deep-checks lane: seeds a 20k-block vault to measure rebuild peak residency"]
+fn rebuild_block_links_unresolved_residency_at_20k_blocks_4242() {
+    residency_lane_is_not_linux_4273();
+}
+
+/// #4273 — non-Linux twin of point 2 of 3. See `residency_lane_is_not_linux_4273`.
+#[cfg(not(target_os = "linux"))]
+#[test]
+#[ignore = "deep-checks lane: seeds a 50k-block vault to measure rebuild peak residency"]
+fn rebuild_block_links_unresolved_residency_at_50k_blocks_4242() {
+    residency_lane_is_not_linux_4273();
+}
+
+/// #4273 — non-Linux twin of point 3 of 3. See `residency_lane_is_not_linux_4273`.
+#[cfg(not(target_os = "linux"))]
+#[test]
+#[ignore = "deep-checks lane: seeds a 100k-block vault to measure rebuild peak residency"]
+fn rebuild_block_links_unresolved_residency_at_100k_blocks_4242() {
+    residency_lane_is_not_linux_4273();
 }

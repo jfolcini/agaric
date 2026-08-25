@@ -225,14 +225,59 @@ const AMBIENT_BLOCK_LEAD = new Set(['module', 'global', 'namespace'])
  * fail-closed: anything other than an immediately-adjacent `{` means "no
  * body", not "keep looking".
  *
- * @param {{kind: string, value?: string, start: number, propertyName?: boolean}[]} tokens
+ * #4269 — and the `declare` token must actually BEGIN A STATEMENT, not
+ * merely be the token before `module`/`global`/`namespace`. `declare` is a
+ * legal IDENTIFIER in TypeScript, so a prior statement ending in a bare
+ * `declare` glues itself to a following block across the newline by ASI:
+ *
+ *     let declare
+ *     namespace Foo { export const leak = 1 }
+ *
+ * Adjacency alone reads that as `declare namespace` and excludes the whole
+ * body — and an UNDECLARED `namespace` block emits a real IIFE, so that is
+ * precisely the runtime leak this guard exists to catch, silently not
+ * reported. This is a fail-OPEN path in a guard that is deliberately built
+ * with no baseline and no opt-out, which is the worst direction for it to
+ * fail in: a false positive gets fixed because someone is blocked, a
+ * silent exclusion gets fixed only if someone goes looking.
+ *
+ * `isStatementStart` is the boundary test, and it is deliberately the
+ * PERMISSIVE half of the shapes the issue lists — a false positive here
+ * would redden a legitimate ambient block, so anything that plausibly
+ * begins a statement is accepted:
+ *
+ *   - nothing before it (start of file);
+ *   - `;`, `{` or `}` (an explicit statement or block boundary);
+ *   - the `export` keyword (`export declare namespace Foo { … }` is a
+ *     legal ambient declaration and must stay excluded);
+ *   - a NEWLINE between the previous token and this one. This repo is
+ *     semicolon-free, so the overwhelmingly common real boundary is a line
+ *     break and nothing else — requiring a punctuator would redden every
+ *     ambient block in the tree.
+ *
+ * What that leaves out is exactly the defect: `let declare` puts an
+ * identifier on the SAME LINE immediately before `declare`, which no
+ * statement-position `declare` ever has.
+ *
+ * @param {{kind: string, value?: string, start: number, end: number, propertyName?: boolean}[]} tokens
  * @param {string} src
  */
+function isStatementStart(tokens, i, src) {
+  const prev = tokens[i - 1]
+  if (!prev) return true
+  if (prev.kind === 'punct' && (prev.value === ';' || prev.value === '{' || prev.value === '}')) {
+    return true
+  }
+  if (prev.kind === 'ident' && prev.value === 'export' && prev.propertyName !== true) return true
+  return src.slice(prev.end, tokens[i].start).includes('\n')
+}
+
 function findAmbientRanges(tokens, src) {
   const ranges = []
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i]
     if (tok.kind !== 'ident' || tok.value !== 'declare' || tok.propertyName === true) continue
+    if (!isStatementStart(tokens, i, src)) continue
     const next = tokens[i + 1]
     if (!next || next.kind !== 'ident' || !AMBIENT_BLOCK_LEAD.has(next.value)) continue
 
@@ -626,6 +671,38 @@ function runSelfTest() {
       path.join(typesDir, 'declareModuleBodyless.ts'),
       "declare module 'legacy-thing'\n\nnamespace Wrapper {\n  export const leak = 1\n}\n",
     )
+    // FALSIFYING FIXTURES (#4269): `declare` is a legal IDENTIFIER, so a
+    // prior statement ENDING in a bare `declare` is glued to the following
+    // block across the newline by ASI. Matching the lead keyword by token
+    // ADJACENCY alone reads `declare` + `namespace` here and excludes the
+    // whole body — and an undeclared `namespace Foo { export const … = 1 }`
+    // compiles to a real IIFE, so the leak this guard exists to catch is
+    // silently not reported. All three `AMBIENT_BLOCK_LEAD` keywords share
+    // the mechanism, so all three get the fixture; `namespace` is asserted
+    // on its own below because it is the only one with a real runtime
+    // consequence behind it (drop the `declare` from `module`/`global` and
+    // you have a syntax error or a still-ambient augmentation, not a leak).
+    fs.writeFileSync(
+      path.join(typesDir, 'declareIdentThenNamespace.ts'),
+      'let declare\nnamespace Foo {\n  export const leak = 1\n}\n',
+    )
+    fs.writeFileSync(
+      path.join(typesDir, 'declareIdentThenModule.ts'),
+      'let declare\nmodule Bar {\n  export const leak = 1\n}\n',
+    )
+    fs.writeFileSync(
+      path.join(typesDir, 'declareIdentThenGlobal.ts'),
+      'let declare\nglobal {\n  export const leak = 1\n}\n',
+    )
+    // THE OTHER HALF of #4269: the statement-boundary check must not
+    // redden a legitimate ambient block. `export declare namespace Foo { … }`
+    // has an IDENTIFIER (`export`) immediately before `declare` on the same
+    // line — the exact shape the naive "previous token must be a
+    // punctuator" boundary test would reject — and is still ambient.
+    fs.writeFileSync(
+      path.join(typesDir, 'exportDeclareNamespaceAmbient.ts'),
+      'export declare namespace Baz {\n  export const x: string\n}\n',
+    )
     // Test file with a runtime export — out of scope, ignored entirely.
     fs.writeFileSync(path.join(testDir, 'fixture.test.ts'), 'export const testOnly = { a: 1 }\n')
     // `.d.ts` file with an initializer-shaped export — ignored (cannot
@@ -728,6 +805,49 @@ function runSelfTest() {
       fail(
         'file-scope export still caught alongside an ambient declare-namespace block',
         JSON.stringify(details.get(rel('declareNamespaceMixed.ts'))),
+      )
+    }
+
+    if (
+      offenders.includes(rel('declareIdentThenNamespace.ts')) &&
+      details.get(rel('declareIdentThenNamespace.ts'))[0].startsWith('line 3:')
+    ) {
+      ok(
+        'a bare `declare` IDENTIFIER on the previous line does not make the following `namespace` block ambient — the IIFE-emitting leak is still flagged (#4269)',
+      )
+    } else {
+      fail(
+        '`let declare` + `namespace` leak flagged',
+        JSON.stringify(details.get(rel('declareIdentThenNamespace.ts'))),
+      )
+    }
+
+    if (offenders.includes(rel('declareIdentThenModule.ts'))) {
+      ok('the same `let declare` adjacency gap is closed for `module` too (#4269)')
+    } else {
+      fail(
+        '`let declare` + `module` leak flagged',
+        JSON.stringify(details.get(rel('declareIdentThenModule.ts'))),
+      )
+    }
+
+    if (offenders.includes(rel('declareIdentThenGlobal.ts'))) {
+      ok('the same `let declare` adjacency gap is closed for `global` too (#4269)')
+    } else {
+      fail(
+        '`let declare` + `global` leak flagged',
+        JSON.stringify(details.get(rel('declareIdentThenGlobal.ts'))),
+      )
+    }
+
+    if (!offenders.includes(rel('exportDeclareNamespaceAmbient.ts'))) {
+      ok(
+        "'export declare namespace' is still ambient — the boundary check is not over-tight (#4269)",
+      )
+    } else {
+      fail(
+        "'export declare namespace' still ambient",
+        JSON.stringify(details.get(rel('exportDeclareNamespaceAmbient.ts'))),
       )
     }
 

@@ -212,10 +212,14 @@ pub struct FailureBooking {
 /// [`SyncScheduler::record_failure_and_take_report`] can book the failure and
 /// consult the report memory under **one** acquisition of the mutex, without
 /// the two paths drifting into two different ladders (#4202).
+///
+/// This is the ONLY place a `backoff` entry is created, which is why the
+/// [`MAX_BACKOFF_PEERS`] cap is enforced here (#4231).
 fn book_failure<'a>(
     backoff: &'a mut HashMap<String, BackoffState>,
     peer_id: &str,
 ) -> &'a mut BackoffState {
+    evict_for_new_peer(backoff, peer_id);
     let state = backoff.entry(peer_id.to_string()).or_insert(BackoffState {
         next_retry_at: Instant::now(),
         backoff: MIN_BACKOFF,
@@ -234,6 +238,54 @@ fn book_failure<'a>(
     state.backoff = base; // store the deterministic base for the next doubling
     state.next_retry_at = Instant::now() + Duration::from_secs_f64(jittered_secs);
     state
+}
+
+/// Make room for a *new* `peer_id` in `backoff`, evicting the
+/// least-recently-touched entry once the map is at [`MAX_BACKOFF_PEERS`]
+/// (#4231).
+///
+/// A no-op when `peer_id` already has an entry (booking another failure for a
+/// peer already in the map cannot grow it) or when the map is below the cap —
+/// so on a real LAN, where the peer count is single digits, this never runs.
+///
+/// # Why "least-recently-touched" is measured by `next_retry_at`
+///
+/// [`book_failure`] rewrites `next_retry_at` to `now + backoff` on every
+/// failure, so it is a monotone stamp of the last touch, offset by a ladder
+/// value that is capped at [`MAX_BACKOFF`]. The ordering it induces therefore
+/// agrees with true touch order except within one 60s window — an accuracy
+/// this decision does not need, and cheaper than carrying a second `Instant`
+/// whose only reader would be this function.
+///
+/// # Why evicting is safe
+///
+/// The entry is a *retry hint*, not a fact: dropping one lets that peer retry
+/// immediately instead of after its accumulated wait, and clears the report
+/// memory so its next failure text is reportable again. Both are the
+/// pre-backoff behaviour — noisier, never quieter, and never wrong. That is
+/// the same safe direction [`MAX_REMEMBERED_REPORTS`]'s overflow takes, and
+/// the reason a cap is preferable to letting the map track a key set the local
+/// network decides: entries are created from mDNS-announced device ids, and
+/// only [`SyncScheduler::record_success`] / [`SyncScheduler::clear_backoff`]
+/// remove them, so a peer that never succeeds is otherwise never evicted.
+fn evict_for_new_peer(backoff: &mut HashMap<String, BackoffState>, peer_id: &str) {
+    if backoff.len() < MAX_BACKOFF_PEERS || backoff.contains_key(peer_id) {
+        return;
+    }
+    let victim = backoff
+        .iter()
+        .min_by_key(|(_, state)| state.next_retry_at)
+        .map(|(id, _)| id.clone());
+    if let Some(victim) = victim {
+        tracing::debug!(
+            evicted_peer = %victim,
+            for_peer = %peer_id,
+            cap = MAX_BACKOFF_PEERS,
+            "sync scheduler: backoff map at cap; evicting the least-recently-touched \
+             peer's retry hint (#4231)"
+        );
+        backoff.remove(&victim);
+    }
 }
 
 /// Push a reported failure onto a streak's report memory, evicting the oldest
@@ -290,7 +342,9 @@ const MIN_BACKOFF: Duration = Duration::from_secs(1);
 /// comfortably holds the fixed-text causes that can genuinely alternate, and
 /// bounds the memory at eight short strings per peer *in backoff* (the map is
 /// emptied by [`SyncScheduler::record_success`] and
-/// [`SyncScheduler::clear_backoff`]).
+/// [`SyncScheduler::clear_backoff`]). The number of *peers* is bounded
+/// separately by [`MAX_BACKOFF_PEERS`] (#4231) — this const alone bounds only
+/// the per-entry payload, which is the gap that issue names.
 ///
 /// If you are here because you added a sixth failure site: you do not need to
 /// raise this. Read the overflow paragraph.
@@ -304,6 +358,23 @@ pub const MAX_REMEMBERED_REPORTS: usize = 8;
 /// stays there — every further failure schedules another retry roughly
 /// 60s out (±10% jitter).
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
+/// Cap on how many peers the backoff map retains at once (#4231).
+///
+/// The map's key set is not chosen by the user: entries are created from
+/// mDNS-announced device ids, and are removed only by
+/// [`SyncScheduler::record_success`] (that one peer) and
+/// [`SyncScheduler::clear_backoff`] (all peers). A peer that fails *forever*
+/// therefore never leaves, so on a busy or hostile LAN the map grows with the
+/// number of announcers rather than with anything the local device did — and
+/// since #4201 each entry can hold up to [`MAX_REMEMBERED_REPORTS`] short
+/// strings rather than one.
+///
+/// 64 is a ceiling, not a working set: a household vault pairs single digits
+/// of devices, so the cap is roughly an order of magnitude above anything
+/// legitimate and is expected never to bind in production. It exists so the
+/// growth is *bounded* — see [`evict_for_new_peer`] for why exceeding it costs
+/// at most one premature retry.
+const MAX_BACKOFF_PEERS: usize = 64;
 const DEFAULT_DEBOUNCE: Duration = Duration::from_secs(3);
 const DEFAULT_RESYNC: Duration = Duration::from_secs(60);
 
@@ -903,6 +974,87 @@ mod tests {
         assert_eq!(sched.failure_count("peer-a"), 0);
     }
 
+    /// #4231: the backoff map's key set is influenced by whatever announces
+    /// itself on the local network, and an entry leaves only via
+    /// `record_success` (that peer) or `clear_backoff` (all peers) — so a peer
+    /// that fails FOREVER is never evicted, and since #4201 each stuck entry
+    /// can hold up to `MAX_REMEMBERED_REPORTS` strings rather than one.
+    ///
+    /// Announce four times the cap in peers that never succeed and assert the
+    /// map stops growing. RED before `evict_for_new_peer`: the map held every
+    /// announcer.
+    #[test]
+    fn backoff_map_is_bounded_by_max_backoff_peers_4231() {
+        let sched = SyncScheduler::new();
+
+        for i in 0..MAX_BACKOFF_PEERS * 4 {
+            sched.record_failure(&format!("announcer-{i:04}"));
+        }
+        assert_eq!(
+            sched.backoff.lock().unwrap().len(),
+            MAX_BACKOFF_PEERS,
+            "#4231: four times the cap in never-succeeding peers must leave \
+             exactly the cap behind, not one entry per announcer"
+        );
+
+        // A peer that is ALREADY resident cannot grow the map, however long
+        // its streak runs — the cap is about the key set, not the ladder.
+        let resident = sched
+            .backoff
+            .lock()
+            .unwrap()
+            .keys()
+            .next()
+            .expect("the map is at its cap, so it is non-empty")
+            .clone();
+        for _ in 0..50 {
+            sched.record_failure(&resident);
+        }
+        assert_eq!(
+            sched.backoff.lock().unwrap().len(),
+            MAX_BACKOFF_PEERS,
+            "booking further failures for a resident peer must not evict anyone"
+        );
+        assert!(
+            sched.failure_count(&resident) >= 50,
+            "the resident's own streak must have kept advancing"
+        );
+
+        // The victim is the LEAST-RECENTLY-TOUCHED entry, not an arbitrary
+        // one. `next_retry_at` is the stamp that decides (see
+        // `evict_for_new_peer`), so push every other resident's stamp far into
+        // the future and leave `stale` as the minimum — deterministic, where
+        // relying on the ±10 % jitter of a same-instant fill would not be.
+        let stale = "announcer-stale";
+        sched.record_failure(stale);
+        {
+            let mut backoff = sched.backoff.lock().unwrap();
+            let far = Instant::now() + Duration::from_secs(3600);
+            for (id, state) in backoff.iter_mut() {
+                if id != stale {
+                    state.next_retry_at = far;
+                }
+            }
+        }
+        sched.record_failure("announcer-fresh");
+
+        let backoff = sched.backoff.lock().unwrap();
+        assert_eq!(
+            backoff.len(),
+            MAX_BACKOFF_PEERS,
+            "the map stays at the cap across an eviction"
+        );
+        assert!(
+            !backoff.contains_key(stale),
+            "#4231: the entry nothing has touched in an hour is the one that goes"
+        );
+        assert!(
+            backoff.contains_key("announcer-fresh"),
+            "the peer whose failure triggered the eviction must be the one that \
+             took the freed slot"
+        );
+    }
+
     /// Pin the documented intent — the first `record_failure` call
     /// doubles the `MIN_BACKOFF` seed `1s → 2s`, so the user-observable
     /// first wait is `2s`, not `1s`. The doc-comments on `MIN_BACKOFF` and
@@ -1389,13 +1541,34 @@ mod tests {
              and the record are one critical section, so no interleaving can let two \
              callers both see 'not yet reported'"
         );
+        // #4231 — `ROUNDS` (300) exceeds `MAX_BACKOFF_PEERS` (64), so by the end
+        // the map holds only the most recent cap's worth of peers and the
+        // earlier ones have been EVICTED, not mis-booked. The two mechanisms
+        // are unrelated and this assertion is about the first: an "atomic"
+        // check-and-record variant that dropped the losers' bookings would be a
+        // hot loop, because the backoff is what paces the retry. Eviction is a
+        // deliberate bound on the key set, deciding nothing about whether a
+        // racing call was booked while its peer was resident.
+        //
+        // So the claim is scoped to residency rather than weakened: every peer
+        // STILL in the map carries all `THREADS` bookings, and the map holds
+        // exactly the cap — which also proves eviction happened rather than
+        // bookings silently going missing.
+        let resident: Vec<(String, u32)> = sched.failure_counts();
+        assert_eq!(
+            resident.len(),
+            MAX_BACKOFF_PEERS,
+            "#4231: {ROUNDS} distinct peers against a {MAX_BACKOFF_PEERS} cap must leave \
+             exactly the cap resident — a different count means the bound is not holding, \
+             not that a booking was lost"
+        );
         assert!(
-            peers
+            resident
                 .iter()
-                .all(|p| sched.failure_count(p) == u32::try_from(THREADS).unwrap()),
-            "…and every racing call is still booked as a failure: the backoff is what \
-             paces the retry, and an 'atomic' variant that dropped the losers' \
-             bookings would be a hot loop"
+                .all(|(_, n)| *n == u32::try_from(THREADS).unwrap()),
+            "…and every racing call against a RESIDENT peer is still booked as a failure: \
+             the backoff is what paces the retry, and an 'atomic' variant that dropped the \
+             losers' bookings would be a hot loop"
         );
     }
 

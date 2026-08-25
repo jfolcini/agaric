@@ -425,10 +425,18 @@ impl SyncOrchestrator {
     /// advertised head happens to belong to a peer already bound to another
     /// key gets refused on *every* call site, not just one: its session
     /// writes no bookkeeping at all for itself — neither `synced_at` /
-    /// `last_hash` nor the `loro_vv_bytes` export floor. This is not a
-    /// regression (the post-session bind already refused the same joiner the
-    /// same way); it is the practical shape of the residual behind #4251 and
-    /// #4252, stated here so it does not live only in those issues.
+    /// `last_hash` nor the `loro_vv_bytes` export floor.
+    ///
+    /// #4252 added the one caller that is not a write:
+    /// `head_exchange_outgoing_loro` asks before READING that same export
+    /// floor back, because a floor read off a row this session may not key on
+    /// is a floor belonging to some other device. A refusal there is not a
+    /// skipped write but an ABSENT floor, which means a full stream — see
+    /// there for why that is the cheap outcome rather than the expensive one.
+    ///
+    /// None of this is a regression (the post-session bind already refused the
+    /// same joiner the same way); it is the practical shape of the residual
+    /// behind #4251, stated here so it does not live only in that issue.
     async fn may_key_bookkeeping_on(&self, peer_id: &str) -> bool {
         let Some(endpoint_id) = self.unverified_claim_endpoint_id.as_deref() else {
             return true;
@@ -1422,20 +1430,31 @@ impl SyncOrchestrator {
             // receiver's `apply_remote` reachability gate catches an unbridgeable
             // `from_vv` and falls back to a snapshot. Empty when we have no persisted
             // frontier for this peer (never synced, or the peer id is unresolved).
-            let persisted_floor: Vec<crate::sync_protocol::types::SpaceVersionVector> =
-                match self.remote_device_id.clone().filter(|s| !s.is_empty()) {
-                    Some(peer_id) => {
-                        match agaric_store::peer_refs::get_loro_vv_bytes(&self.pool, &peer_id)
-                            .await?
-                        {
-                            Some(bytes) => {
-                                crate::sync_protocol::types::decode_persisted_loro_vvs(&bytes)
-                            }
-                            None => Vec::new(),
-                        }
-                    }
-                    None => Vec::new(),
-                };
+            //
+            // #4252: the READ asks the same question [`Self::may_key_bookkeeping_on`]
+            // asks on every WRITE (#4230). On a pairing-window session
+            // `remote_device_id` is a *claim* — the first non-self advertised head —
+            // and #2481 makes advertising a foreign device's frontier NORMAL, so a
+            // legitimate joiner routinely keys this session on an id that is not its
+            // own. Reading that row's floor computes this peer's delta from ANOTHER
+            // device's frontier: never more than it should get (a further-ahead
+            // baseline omits ops, it does not add any), but a truncated stream that
+            // `apply_remote`'s reachability gate then refuses, costing a
+            // `ResetRequired` → full-snapshot round trip on the first pairing — the
+            // slowest possible path, for a peer doing nothing wrong. Treating the
+            // floor as ABSENT ships the full stream directly, which is the outcome
+            // that round trip was going to reach anyway.
+            let persisted_floor: Vec<crate::sync_protocol::types::SpaceVersionVector> = {
+                let mut floor = Vec::new();
+                if let Some(peer_id) = self.remote_device_id.clone().filter(|s| !s.is_empty())
+                    && self.may_key_bookkeeping_on(&peer_id).await
+                    && let Some(bytes) =
+                        agaric_store::peer_refs::get_loro_vv_bytes(&self.pool, &peer_id).await?
+                {
+                    floor = crate::sync_protocol::types::decode_persisted_loro_vvs(&bytes);
+                }
+                floor
+            };
 
             for sid in &space_ids {
                 let peer_vv = peer_vvs

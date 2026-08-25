@@ -258,16 +258,36 @@ function listTsFiles(tracked) {
  * Comments are joined with `\n` — not concatenated raw — so a candidate
  * cannot span two unrelated comments glued end to end.
  *
+ * #4220 — with one distinction the flat `\n` join used to throw away. A
+ * CONTIGUOUS run of comments (nothing but whitespace, and at most one
+ * newline, between them) is ONE piece of prose: a `//` comment continued on
+ * the next `//` line routinely opens a backtick span on one line and closes
+ * it on the next, and `inlineCodeSpans` must be able to pair across that
+ * boundary — that is the whole defect #4220 is about. Two comments with
+ * CODE between them are not one piece of prose, so they are joined with a
+ * BLANK line, which `inlineCodeSpans` treats as a hard reset. That bounds
+ * the blast radius of an unbalanced backtick (a stray closing backtick with
+ * no opener — `src/lib/bindings.ts` has one) to the comment it appears in,
+ * instead of flipping the pairing of every citation in the rest of the file.
+ *
  * Throws `ScanError` (propagated to the caller) on input the shared
  * tokenizer cannot lex unambiguously; callers must not swallow it, per the
  * module's fail-closed policy.
  */
 function extractCommentText(body) {
-  const spans = []
+  let out = ''
+  let prevEnd = -1
   for (const tok of tokenize(body)) {
-    if (tok.kind === 'comment') spans.push(body.slice(tok.start, tok.end))
+    if (tok.kind !== 'comment') continue
+    if (prevEnd >= 0) {
+      const between = body.slice(prevEnd, tok.start)
+      const contiguous = /^[ \t\r]*\n?[ \t\r]*$/.test(between)
+      out += contiguous ? '\n' : '\n\n'
+    }
+    out += body.slice(tok.start, tok.end)
+    prevEnd = tok.end
   }
-  return spans.join('\n')
+  return out
 }
 
 // Path prefixes that are gitignored on this repo and therefore expected
@@ -315,11 +335,74 @@ function isLocalPathCandidate(raw) {
   return cleaned
 }
 
+// #4220 — the ONE place inline code spans are paired, shared by all four
+// extraction kinds (`missing`, the #4244 line-bounds citations, the #4135
+// bare form and the #4184 partial-root form). Every one of them used to run
+// its own copy of `/`([^`\n]{2,200})`/g`, and that pattern cannot pair
+// across a newline: a span opened several lines earlier and closed mid-line
+// leaves the line with an ODD number of backticks, so the closing backtick
+// of the multi-line span gets paired with the OPENING backtick of the
+// citation that follows it on the same line, and the citation's own closing
+// backtick is left over. The citation never reaches the candidate list at
+// all — it is invisible to the guard AND to the guard's own reporting,
+// which is the worst failure mode for a drift check.
+//
+// The pairing here is a single left-to-right scan over backtick RUNS,
+// within a BLANK-LINE-delimited segment:
+//
+//   - A run of exactly one backtick opens a span, or closes the span that
+//     is open. The span may cross newlines — that is the whole fix.
+//   - A run of TWO OR MORE backticks resets the scan (any open span is
+//     abandoned) rather than delimiting one. Two things depend on this,
+//     and both are pre-existing behaviour that a naive
+//     longest-run-matches-longest-run pairing would silently change:
+//       * The `` `path` `` escape (a doubled backtick wrapping a span that
+//         itself contains backticks) still yields its INNER `path`, because
+//         the `` runs reset instead of swallowing it.
+//       * A fenced ``` block still has its CONTENTS scanned, which
+//         `extractBareCitations`'s header documents as deliberate — pairing
+//         the two fences with each other would consume the whole block.
+//   - A BLANK LINE resets the scan too, which is CommonMark's own rule (a
+//     code span cannot contain a blank line) and, more practically, the
+//     blast-radius bound this fix needs: an unbalanced backtick — a stray
+//     closer with no opener, which the tree really does contain — flips the
+//     pairing of everything after it, and without a reset that means every
+//     later citation in the file rather than every later citation in the
+//     paragraph. `extractCommentText` inserts a blank line between two
+//     comments with code between them for exactly this reason.
+//
+// The 2..200 length window is a FILTER on what is yielded, never on what is
+// consumed: a span outside it is still paired and skipped, so an over-long
+// or empty span cannot shift the pairing of everything after it (the exact
+// failure the old regex had, where a non-matching span left its delimiters
+// free to mispair with the next one).
+//
+// @param {string} text
+function* inlineCodeSpans(text) {
+  for (const segment of text.split(/\n[ \t\r]*\n/)) {
+    let openAt = -1
+    for (const run of segment.matchAll(/`+/g)) {
+      if (run[0].length > 1) {
+        openAt = -1
+        continue
+      }
+      if (openAt < 0) {
+        openAt = run.index + 1
+        continue
+      }
+      const content = segment.slice(openAt, run.index)
+      openAt = -1
+      if (content.length < 2 || content.length > 200) continue
+      yield content
+    }
+  }
+}
+
 function extractCandidates(text) {
   const found = new Set()
   // Inline code spans: `` `path` ``.
-  for (const match of text.matchAll(/`([^`\n]{2,200})`/g)) {
-    const cleaned = isLocalPathCandidate(match[1] ?? '')
+  for (const content of inlineCodeSpans(text)) {
+    const cleaned = isLocalPathCandidate(content)
     if (cleaned) found.add(cleaned)
   }
   // Markdown links: [label](target).
@@ -460,7 +543,7 @@ function extractLineCitations(text) {
       .map((n) => Number.parseInt(n, 10))
     found.set(key, { cleaned, lineNumbers })
   }
-  for (const match of text.matchAll(/`([^`\n]{2,200})`/g)) consider(match[1])
+  for (const content of inlineCodeSpans(text)) consider(content)
   for (const match of text.matchAll(/\]\(([^)\s]+)\)/g)) consider(match[1])
   return [...found.values()]
 }
@@ -559,8 +642,8 @@ const BARE_CODE_CITATION_RE =
  */
 function extractBareCitations(text) {
   const found = new Set()
-  for (const match of text.matchAll(/`([^`\n]{2,200})`/g)) {
-    const raw = (match[1] ?? '').trim()
+  for (const content of inlineCodeSpans(text)) {
+    const raw = content.trim()
     if (BARE_CODE_CITATION_RE.test(raw)) found.add(raw)
   }
   return found
@@ -613,8 +696,8 @@ const PARTIALLY_ROOTED_CODE_CITATION_RE =
  */
 function extractPartiallyRootedCitations(text) {
   const found = new Set()
-  for (const match of text.matchAll(/`([^`\n]{2,200})`/g)) {
-    const raw = (match[1] ?? '').trim()
+  for (const content of inlineCodeSpans(text)) {
+    const raw = content.trim()
     if (!PARTIALLY_ROOTED_CODE_CITATION_RE.test(raw)) continue
     if (PATH_PREFIX_RE.test(raw)) continue
     found.add(raw)
@@ -1583,6 +1666,193 @@ function partiallyRootedCitationScenarios(root) {
 }
 
 /**
+ * #4220 — the code-span PAIRING itself, the machinery every extraction kind
+ * shares. The old line-scoped `` /`([^`\n]{2,200})`/g `` could not pair a
+ * span across a newline, so a line that CLOSES a multi-line span and then
+ * carries a citation has an odd number of backticks on it: the span's
+ * closing backtick pairs with the citation's OPENING one, and the citation
+ * is never extracted by any kind at all.
+ *
+ * Both real shapes in the tree get a fixture, because they are two distinct
+ * routes to the same mispairing and only one of them is the one the issue
+ * is named for:
+ *
+ *   1. The multi-line span (`src/lib/tauri-mock/handlers/links.ts:70-71`).
+ *   2. A span too SHORT for the 2-character minimum — `` `t` `` — which the
+ *      old regex declined to match, leaving its delimiters free to pair
+ *      with the next span's (`src/lib/repeat-utils.ts:29-30`). This is why
+ *      the length window is now a filter on what is YIELDED rather than on
+ *      what is CONSUMED.
+ *
+ * Every RED assertion here is red only because of the fix: against the
+ * pre-#4220 extractor each of these fixtures exits 0, the citation being
+ * invisible rather than judged. The GREEN assertions are the other half —
+ * the pairing must not have been widened into swallowing whole documents,
+ * so the `` `path` `` escape and the blast-radius bound are asserted too.
+ */
+function spanPairingScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'span-pairing')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    const run = (flags) => {
+      const r = spawnSync(process.execPath, [import.meta.filename, ...flags], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      })
+      return { status: r.status, stderr: r.stderr ?? '' }
+    }
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'real.ts'), 'export const REAL = 1\n')
+
+    // SHAPE 1, THE ISSUE'S OWN: a span opened on one line and closed on the
+    // next, immediately before a parenthesised citation. Pre-#4220 this
+    // exits 0 — the citation is not judged and not reported.
+    writeFileSync(
+      join(dir, 'README.md'),
+      [
+        'The filter is `sanitize_fts_query` + `WHERE',
+        'fts_blocks MATCH ?1` (`src/nowhere/deleted-module.ts`, SQL at the top).',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const multiLine = run(['--worktree'])
+    record(
+      'a citation on the CLOSING line of a multi-line span is extracted (and red)',
+      multiLine.status === 1 && /deleted-module\.ts/.test(multiLine.stderr),
+      `expected 1 naming deleted-module.ts, got ${multiLine.status}: ${multiLine.stderr}`,
+    )
+
+    // The same fixture with the citation retargeted at a real path goes
+    // green — the pairing is what changed, not the verdict machinery. A
+    // one-sided red would pass against an extractor that flags everything.
+    writeFileSync(
+      join(dir, 'README.md'),
+      [
+        'The filter is `sanitize_fts_query` + `WHERE',
+        'fts_blocks MATCH ?1` (`src/real.ts`, SQL at the top).',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const multiLineFixed = run(['--worktree'])
+    record(
+      'the SAME multi-line-span shape citing a REAL path is green',
+      multiLineFixed.status === 0,
+      `expected 0, got ${multiLineFixed.status}: ${multiLineFixed.stderr}`,
+    )
+
+    // SHAPE 2: a one-character span ahead of the citation on the same line.
+    // `t` is below the 2-character minimum, so the old regex refused to
+    // match it and its two backticks mispaired with the citation's.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'Obtain a `t` via `useTranslation()`, or the `t` exported from `src/nowhere/i18n.ts`.\n',
+    )
+    git('add', '-A')
+    const shortSpan = run(['--worktree'])
+    record(
+      'a citation following a BELOW-MINIMUM span on the same line is extracted (and red)',
+      shortSpan.status === 1 && /i18n\.ts/.test(shortSpan.stderr),
+      `expected 1 naming i18n.ts, got ${shortSpan.status}: ${shortSpan.stderr}`,
+    )
+
+    // The `` `path` `` escape — a doubled-backtick wrapper around a span
+    // that itself contains backticks — must still yield its INNER path.
+    // This is the shape a run-length pairing would silently swallow, and
+    // the reason a run of two or more backticks RESETS instead of
+    // delimiting. Red proves the inner span is still reaching the scan.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'Written as `` `src/nowhere/escaped.ts` `` in the prose.\n',
+    )
+    git('add', '-A')
+    const escaped = run(['--worktree'])
+    record(
+      'the `` `path` `` double-backtick escape still yields its INNER citation',
+      escaped.status === 1 && /escaped\.ts/.test(escaped.stderr),
+      `expected 1 naming escaped.ts, got ${escaped.status}: ${escaped.stderr}`,
+    )
+
+    // THE BLAST-RADIUS BOUND, and the reason this fix is not simply "let
+    // spans cross newlines". An UNBALANCED backtick — a stray closer with
+    // no opener, which `src/lib/bindings.ts` really does contain — flips
+    // the pairing of everything after it. A blank line (in Markdown) and a
+    // run of comments separated by CODE (in `.ts`) both reset the scan, so
+    // the damage stops at the paragraph instead of hiding every later
+    // citation in the file. Red: the LATER citation is still seen.
+    writeFileSync(
+      join(dir, 'README.md'),
+      [
+        'A stray closer: resolver filters deleted_at IS NULL` on every row.',
+        '',
+        'A later citation: `src/nowhere/after-stray.ts` still gets judged.',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const afterStrayMd = run(['--worktree'])
+    record(
+      'an unbalanced backtick does not hide a citation in a LATER markdown paragraph',
+      afterStrayMd.status === 1 && /after-stray\.ts/.test(afterStrayMd.stderr),
+      `expected 1 naming after-stray.ts, got ${afterStrayMd.status}: ${afterStrayMd.stderr}`,
+    )
+
+    writeFileSync(join(dir, 'README.md'), 'Nothing cited here.\n')
+    writeFileSync(
+      join(dir, 'src', 'stray.ts'),
+      [
+        '/**',
+        ' * A stray closer: resolver filters deleted_at IS NULL` on every row.',
+        ' */',
+        'export const A = 1',
+        '',
+        '/**',
+        ' * A later citation: `src/nowhere/after-stray-ts.ts` still gets judged.',
+        ' */',
+        'export const B = 2',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const afterStrayTs = run(['--worktree'])
+    record(
+      'an unbalanced backtick does not hide a citation in a LATER .ts comment block',
+      afterStrayTs.status === 1 && /after-stray-ts\.ts/.test(afterStrayTs.stderr),
+      `expected 1 naming after-stray-ts.ts, got ${afterStrayTs.status}: ${afterStrayTs.stderr}`,
+    )
+
+    // …while a CONTIGUOUS run of `//` lines is still ONE piece of prose, so
+    // a span opened on one `//` line and closed on the next still pairs.
+    // This is the pair to the assertion above: the reset must be inserted
+    // between comments separated by CODE, never between adjacent comment
+    // lines, or shape 1 comes straight back for `//` comments.
+    writeFileSync(join(dir, 'src', 'stray.ts'), 'export const A = 1\n')
+    writeFileSync(
+      join(dir, 'src', 'contiguous.ts'),
+      [
+        '// The filter is `sanitize_fts_query` + `WHERE',
+        '// fts_blocks MATCH ?1` (`src/nowhere/contiguous-miss.ts`, SQL above).',
+        'export const C = 3',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const contiguous = run(['--worktree'])
+    record(
+      'a span spanning two ADJACENT `//` lines still pairs, so the citation after it is seen',
+      contiguous.status === 1 && /contiguous-miss\.ts/.test(contiguous.stderr),
+      `expected 1 naming contiguous-miss.ts, got ${contiguous.status}: ${contiguous.stderr}`,
+    )
+    return results
+  })
+}
+
+/**
  * #4244 part (b) — the opportunistic line-bounds WARNING. Every assertion
  * here proves the same two things together: the warning fires/does-not-fire
  * on the right shape, AND (the part that actually matters) it never once
@@ -2264,6 +2534,7 @@ function selfTest() {
     results.push(...tsCommentScenarios(root))
     results.push(...bareCitationScenarios(root))
     results.push(...partiallyRootedCitationScenarios(root))
+    results.push(...spanPairingScenarios(root))
     results.push(...lineBoundsWarningScenarios(root))
     results.push(...guardSelfPathDerivationScenarios(root))
     results.push(...knownIntentionalWarningScenarios(root))

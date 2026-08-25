@@ -41,6 +41,7 @@ use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use iroh::endpoint::{RecvStream, SendStream};
 
+use crate::apply_host::ApplyHost;
 use crate::sync_protocol::SyncMessage;
 use crate::transport::bulk::{recv_bulk, send_bulk};
 use crate::transport::session::{
@@ -2171,6 +2172,22 @@ pub async fn run_file_transfer_responder(
 /// The pool connects to a database file (e.g. `/path/to/app_data/notes.db`);
 /// the parent directory of that file is the app data dir where attachments
 /// are stored.
+///
+/// # #3328: this is the FALLBACK, not the source of truth
+/// The authority for the attachment root is the app-side host, reached
+/// through [`ApplyHost::app_data_dir`]; prefer [`attachment_root`], which
+/// asks the host first and only lands here when the host has no registered
+/// root (pool-only test harnesses, and the window before `lib.rs` calls
+/// `set_app_data_dir`).
+///
+/// This derivation silently assumes `db_path.parent() ==
+/// materializer.app_data_dir()`. That equality is true today only because
+/// `lib.rs` builds the DB path as `app_data_dir.join("notes.db")` — it is
+/// encoded in no type and asserted by no test. Any change that moves the
+/// database relative to the app data directory (a `db/` subdirectory, a
+/// custom-DB-path setting, an Android sandbox split) would make this function
+/// quietly correct about the DB and wrong about the attachments. Do not add
+/// new production callers.
 pub async fn app_data_dir_from_pool(pool: &SqlitePool) -> Result<PathBuf, AppError> {
     let row: (String,) =
         // dynamic-sql: a PRAGMA virtual table the sqlx macros cannot type-check.
@@ -2184,6 +2201,39 @@ pub async fn app_data_dir_from_pool(pool: &SqlitePool) -> Result<PathBuf, AppErr
         .ok_or_else(|| {
             AppError::InvalidOperation("cannot determine app data dir from database path".into())
         })
+}
+
+/// The root under which sync reads and writes attachment files.
+///
+/// #3328 — the single entry point every sync file-transfer and
+/// snapshot-catch-up path should use. It asks the app-side host
+/// ([`ApplyHost::app_data_dir`]) first, so the directory the sync layer
+/// writes into is by construction the one the app's
+/// `CleanupOrphanedAttachments` task later walks. Before this, the sync layer
+/// derived its own root from the database file's parent directory and the two
+/// agreed only by coincidence of how `lib.rs` composes the DB path.
+///
+/// Falls back to [`app_data_dir_from_pool`] when the host reports no root.
+/// That keeps every pool-only test harness working and makes the change
+/// behaviour-preserving in production, where the two values are equal today —
+/// the point of the change is that the host's answer now WINS, so a future
+/// relocation of the database moves the DB without dragging the attachment
+/// tree along with it.
+///
+/// # Errors
+/// Returns [`AppError`] only on the fallback path, if the database path
+/// cannot be read or has no parent directory.
+pub async fn attachment_root(host: &dyn ApplyHost, pool: &SqlitePool) -> Result<PathBuf, AppError> {
+    match host.app_data_dir() {
+        Some(dir) => Ok(dir),
+        None => {
+            tracing::debug!(
+                "sync attachment root: host reports no app data dir; \
+                 falling back to the database file's parent directory"
+            );
+            app_data_dir_from_pool(pool).await
+        }
+    }
 }
 
 // ===========================================================================

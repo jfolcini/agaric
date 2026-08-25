@@ -5,7 +5,7 @@ import type { StoreApi } from 'zustand'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { getDragDescendants } from '@/lib/tree-utils'
+import { buildIndexById, getDragDescendants } from '@/lib/tree-utils'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -175,8 +175,13 @@ export function useBlockMultiSelect({
         // id→block map is reconciled in the same write.
         pageStore.setState((s) => {
           const removed = new Set(ids)
+          // #2041 — one shared `id → index` map for the whole selection, so
+          // each root's descendant walk is an O(1) lookup instead of its own
+          // `findIndex` scan over `s.blocks` (matches `serializeBlockSubtree`
+          // in `src/lib/block-clipboard.ts`).
+          const indexById = buildIndexById(s.blocks)
           for (const id of ids) {
-            for (const descendantId of getDragDescendants(s.blocks, id)) {
+            for (const descendantId of getDragDescendants(s.blocks, id, indexById)) {
               removed.add(descendantId)
             }
           }

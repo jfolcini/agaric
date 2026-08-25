@@ -6,8 +6,19 @@ use crate::apply_host::ApplyHost;
 use agaric_core::error::AppError;
 use agaric_store::db::MAX_SQL_PARAMS;
 
-/// (d): inventory of cache tables wiped by the RESET path. The wipe loop
-/// issues `DELETE FROM <table>` for each entry.
+/// (d): inventory of cache tables wiped by the RESET path. Each entry is
+/// wiped by the literal statement [`cache_wipe_sql`] pairs with it.
+///
+/// #3328: `pub` — and re-exported from [`crate::snapshot`] — so this
+/// inventory is checkable from outside the crate. Its counterpart,
+/// `POST_SNAPSHOT_CACHE_REBUILDS` in the app crate's materializer
+/// coordinator, lists the rebuild task that refills each of these tables
+/// after the restore commits; while this list was private nothing could
+/// compare the two, so a new cache table added HERE and forgotten THERE
+/// would truncate on every snapshot catch-up and never rebuild — bit for bit
+/// the #617/#794 failure, which has already shipped once. The app-crate
+/// parity test over the two lists is what closes that, and it needs this to
+/// be public.
 ///
 /// #2621 (agaric-sync inversion): this list used to pair each table with the
 /// `MaterializeTask` that repopulates it, but naming `MaterializeTask` (an
@@ -42,7 +53,7 @@ use agaric_store::db::MAX_SQL_PARAMS;
 /// `REFERENCES blocks(id) ON DELETE CASCADE`, so the `DELETE FROM blocks` below
 /// wiped it IMPLICITLY — listing it here makes the wipe explicit (idempotent
 /// with the cascade) so a RESET can never leave the links/backlinks UI stale.
-const CACHE_TABLES: &[&str] = &[
+pub const CACHE_TABLES: &[&str] = &[
     "agenda_cache",
     "pages_cache",
     "tags_cache",
@@ -64,6 +75,46 @@ const CACHE_TABLES: &[&str] = &[
     "block_tag_refs",
     "page_link_cache",
 ];
+
+/// The wipe statement for one [`CACHE_TABLES`] entry, or `None` if the entry
+/// has no statement yet.
+///
+/// #3328 — why a match arm per table instead of `format!("DELETE FROM
+/// {table}")`. The interpolated form is invisible to
+/// `scripts/check-table-ownership.py`: that guard finds cross-crate raw
+/// writes with a per-table literal regex (`DELETE\s+FROM\s+<table>\b`) over
+/// the source text, so a table name that only ever exists as a runtime
+/// `&str` cannot match. Seven of the tables below are owned by
+/// `agaric-store`, and every one of these writes is `agaric-sync` reaching
+/// across the crate boundary into them — the exact shape the guard exists to
+/// ratchet — yet `src-tauri/table-ownership-baseline.txt` carried no `sync`
+/// line at all, because the guard counted zero. Spelling the statements out
+/// makes them countable, and therefore makes the NEXT cross-crate cache write
+/// added here something a reviewer is told about.
+///
+/// It also removes an `AssertSqlSafe` from the RESET path. The assertion was
+/// sound (the interpolated value came from a `const` array, never from
+/// input), but "sound because you traced where the string came from" is
+/// strictly weaker than "there is no string to trace".
+///
+/// The single inventory stays [`CACHE_TABLES`]: this function is a lookup
+/// keyed by it, not a second list to keep in step. An entry with no arm is a
+/// hard error at RESET time — see the call site — and the unit test below
+/// turns that into a compile-and-test-time failure instead.
+fn cache_wipe_sql(table: &str) -> Option<&'static str> {
+    Some(match table {
+        "agenda_cache" => "DELETE FROM agenda_cache",
+        "pages_cache" => "DELETE FROM pages_cache",
+        "tags_cache" => "DELETE FROM tags_cache",
+        "block_tag_inherited" => "DELETE FROM block_tag_inherited",
+        "projected_agenda_cache" => "DELETE FROM projected_agenda_cache",
+        "projected_agenda_horizon" => "DELETE FROM projected_agenda_horizon",
+        "fts_blocks" => "DELETE FROM fts_blocks",
+        "block_tag_refs" => "DELETE FROM block_tag_refs",
+        "page_link_cache" => "DELETE FROM page_link_cache",
+        _ => return None,
+    })
+}
 
 /// Apply a snapshot (RESET path). Wipes all core + cache tables, inserts
 /// snapshot data, then enqueues the full cache-rebuild set on the
@@ -194,11 +245,22 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // (d): wipe every cache table from the single inventory.
     // FK ordering is moot under `defer_foreign_keys = ON`; iteration order
     // matches `CACHE_TABLES` for reviewability.
+    //
+    // #3328: the statement is a literal looked up per table rather than
+    // interpolated, so `check-table-ownership.py` can see these cross-crate
+    // writes — see [`cache_wipe_sql`]. A missing arm aborts the RESET before
+    // any wipe lands (we are still inside the IMMEDIATE tx, which is dropped
+    // and rolled back on `?`) rather than silently leaving that cache stale
+    // for the rest of the vault's life; the unit test below is what should
+    // actually catch it, long before a user's restore does.
     for table in CACHE_TABLES {
-        let sql = format!("DELETE FROM {table}");
-        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .execute(&mut *tx)
-            .await?;
+        let sql = cache_wipe_sql(table).ok_or_else(|| {
+            AppError::Snapshot(format!(
+                "snapshot RESET: cache table `{table}` is in CACHE_TABLES but has no \
+                 wipe statement in `cache_wipe_sql`; add the match arm"
+            ))
+        })?;
+        sqlx::query(sql).execute(&mut *tx).await?;
     }
 
     // Wipe core tables (children before parents purely for reviewability —
@@ -787,4 +849,44 @@ pub async fn apply_snapshot<R: std::io::Read>(
     host.enqueue_post_snapshot_rebuilds().await?;
 
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CACHE_TABLES, cache_wipe_sql};
+
+    /// #3328 — every [`CACHE_TABLES`] entry must have a literal wipe
+    /// statement, and that statement must target the entry it is keyed by.
+    ///
+    /// This is the guard that makes the lookup safe to prefer over the old
+    /// `format!("DELETE FROM {table}")`: interpolation could never be wrong
+    /// about WHICH table it wiped, a hand-written arm can. Adding a table to
+    /// the inventory and forgetting the arm fails here, in a test with no
+    /// database, instead of aborting a user's snapshot restore.
+    #[test]
+    fn every_cache_table_has_a_matching_literal_wipe_statement() {
+        for table in CACHE_TABLES {
+            let sql = cache_wipe_sql(table)
+                .unwrap_or_else(|| panic!("cache table `{table}` has no arm in `cache_wipe_sql`"));
+            assert_eq!(
+                sql,
+                format!("DELETE FROM {table}"),
+                "`cache_wipe_sql({table})` wipes the wrong table"
+            );
+        }
+    }
+
+    /// The inventory is a set, not a bag: a duplicated entry would issue a
+    /// redundant DELETE and, more to the point, would show up twice in any
+    /// parity check built on top of it.
+    #[test]
+    fn cache_tables_has_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for table in CACHE_TABLES {
+            assert!(
+                seen.insert(*table),
+                "`{table}` appears twice in CACHE_TABLES"
+            );
+        }
+    }
 }

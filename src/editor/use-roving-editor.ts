@@ -252,7 +252,23 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
      * content hole inside it.
      */
     const renderFromSpec = (node: PMNode): { dom: HTMLElement; contentDOM: HTMLElement } => {
-      const rendered = DOMSerializer.renderSpec(document, toDOM(node))
+      const rendered = DOMSerializer.renderSpec(
+        document,
+        toDOM(node),
+        null,
+        // #4357 — `blockArraysIn`. `prosemirror-model@1.25.11` declares
+        // `renderSpec(doc, structure, xmlNS?)` in its `.d.ts` but implements a
+        // FOURTH parameter, and its own `serializeNodeInner` passes `node.attrs`
+        // there to arm the guard that rejects an attribute value being reused as
+        // a DOM spec ("Using an array from an attribute object as a DOM spec…" —
+        // the XSS defence). Without it this node view would render the same spec
+        // with the guard DISARMED while copy/paste and export render it armed.
+        // The directive is deliberately narrow and self-removing: when upstream
+        // fixes the declaration, `@ts-expect-error` becomes unused and fails the
+        // build, which is the signal to delete these lines.
+        // @ts-expect-error — upstream .d.ts omits the implemented 4th parameter
+        node.attrs,
+      )
       const { contentDOM } = rendered
       if (!contentDOM) throw new Error('codeBlock renderHTML produced no content hole')
       return { dom: rendered.dom as HTMLElement, contentDOM }
