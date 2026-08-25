@@ -472,6 +472,27 @@ impl SyncOrchestrator {
         // value proves knowledge. `None` on any normal (non-pairing) sync — the
         // responder only consults it on the unpaired-pending-pairing path.
         let pairing_proof = agaric_store::peer_refs::get_pending_pairing_proof(&self.pool).await?;
+        // #4298: advertise what this device calls itself so the peer stops
+        // rendering us as a truncated UUID. The app writes the OS hostname into
+        // `app_settings` at boot (`peer_refs::set_local_device_name`), which is
+        // how the value reaches this layer without `agaric-sync` taking a
+        // `tauri` dependency for one string. Clamped here as well as on the
+        // receiving side — see `clamp_device_name`.
+        //
+        // A read failure is not worth failing a sync over: the name is a
+        // display nicety and the peer keeps whatever it already had, so this
+        // degrades to "advertise no name" rather than aborting the session
+        // before a single op moves.
+        let device_name = match agaric_store::peer_refs::get_local_device_name(&self.pool).await {
+            Ok(name) => name.as_deref().and_then(clamp_device_name),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "could not read this device's own name; advertising none (#4298)"
+                );
+                None
+            }
+        };
         self.state = SyncState::ExchangingHeads;
         self.session.state = SyncState::ExchangingHeads;
         self.emit(crate::sync_events::SyncEvent::Progress {
@@ -497,6 +518,8 @@ impl SyncOrchestrator {
             op_log_batch_chunked: true,
             // #855: passphrase proof, present only while mid-pairing.
             pairing_proof,
+            // #4298: this device's own name, so the peer can render it.
+            device_name,
         })
     }
 
@@ -652,6 +675,12 @@ impl SyncOrchestrator {
                 // responder daemon (`sync_daemon::server`) before it TOFU-pins
                 // an unpaired device, not by this state-machine core.
                 pairing_proof: _,
+                // #4298: the initiator's own name is likewise consumed by the
+                // responder daemon, which persists it as
+                // `peer_refs.remote_device_name` at the TOFU bind point — the
+                // first place the authoritative peer id is known. This core has
+                // no peer row to write it to and nothing to do with it.
+                device_name: _,
             } => {
                 // Gate raw-byte Loro merges by engine format before doing any
                 // import work (#2130). An incompatible peer is rejected up

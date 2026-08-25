@@ -649,6 +649,7 @@ fn sync_message_serde_roundtrip() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         },
         SyncMessage::LoroSync {
             msg: agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
@@ -759,6 +760,7 @@ async fn orchestrator_rejects_incompatible_engine_format() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await;
 
@@ -813,6 +815,7 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
                 op_log_replication: false,
                 op_log_batch_chunked: false,
                 pairing_proof: None,
+                device_name: None,
             })
             .await
             .unwrap_or_else(|e| {
@@ -1106,6 +1109,7 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await;
     assert!(
@@ -1219,6 +1223,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await;
 
@@ -1323,6 +1328,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await;
     assert!(
@@ -1492,6 +1498,7 @@ async fn orchestrator_uses_cert_cn_identity_over_advertised_heads_2481() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await;
 
@@ -1535,6 +1542,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await;
 
@@ -1612,6 +1620,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .unwrap();
@@ -1728,6 +1737,7 @@ async fn issue4096_short_circuit_writes_no_row_when_peer_is_unidentified() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .expect(
@@ -1853,6 +1863,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
         op_log_replication: false,
         op_log_batch_chunked: false,
         pairing_proof: None,
+        device_name: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
@@ -1931,6 +1942,7 @@ fn json_shape_head_exchange_matches_wire_format() {
         op_log_replication: false,
         op_log_batch_chunked: false,
         pairing_proof: None,
+        device_name: None,
     };
     let json: serde_json::Value =
         serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
@@ -1965,6 +1977,7 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             op_log_replication,
             op_log_batch_chunked,
             pairing_proof,
+            device_name,
         } => {
             assert_eq!(heads.len(), 1, "heads must round-trip");
             assert!(
@@ -1986,6 +1999,13 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             assert!(
                 pairing_proof.is_none(),
                 "a missing pairing_proof field must default to None (#855 old-peer)"
+            );
+            assert!(
+                device_name.is_none(),
+                "a missing device_name field must default to None (#4298 old-peer). A \
+                 peer predating the field says nothing about what it is called, which \
+                 must read as 'no name supplied' — the receiver then keeps whatever \
+                 name it already had rather than clearing the row to an empty string"
             );
         }
         other => panic!("expected HeadExchange, got {other:?}"),
@@ -2027,6 +2047,7 @@ fn json_shape_all_variants_have_type_tag() {
                 op_log_replication: false,
                 op_log_batch_chunked: false,
                 pairing_proof: None,
+                device_name: None,
             },
         ),
         (
@@ -2168,6 +2189,7 @@ fn serde_roundtrip_empty_heads() {
         op_log_replication: false,
         op_log_batch_chunked: false,
         pairing_proof: None,
+        device_name: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
@@ -2213,6 +2235,7 @@ fn serde_roundtrip_many_heads() {
         op_log_replication: false,
         op_log_batch_chunked: false,
         pairing_proof: None,
+        device_name: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
     let deser: SyncMessage =
@@ -2357,6 +2380,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await;
     assert!(
@@ -2453,6 +2477,7 @@ async fn handle_message_emits_within_sync_msg_span() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await;
 
@@ -2502,6 +2527,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .expect("HeadExchange must not error under the engine path");
@@ -3918,6 +3944,7 @@ async fn streamer_appends_op_log_batch_for_capable_peer_2481() {
             op_log_replication: true,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .unwrap();
@@ -3971,6 +3998,7 @@ async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .unwrap();
@@ -4024,6 +4052,7 @@ async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
             // Chunked-capable peer → the oversized record streams.
             op_log_batch_chunked: true,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .unwrap();
@@ -4075,6 +4104,7 @@ async fn streamer_skips_oversized_op_record_for_chunked_incapable_peer_2593() {
             op_log_replication: true,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .unwrap();
@@ -4112,6 +4142,7 @@ async fn streamer_rejects_inbound_op_log_batch_2481() {
             op_log_replication: true,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .unwrap();
@@ -4977,6 +5008,7 @@ async fn certless_session_still_resolves_the_peer_from_heads_4085() {
         op_log_replication: false,
         op_log_batch_chunked: false,
         pairing_proof: None,
+        device_name: None,
     })
     .await
     .unwrap();
@@ -4987,6 +5019,291 @@ async fn certless_session_still_resolves_the_peer_from_heads_4085() {
         "with no expected_remote_id the advertised heads are still the source \
          of the peer identity"
     );
+
+    materializer.shutdown();
+}
+
+// ── #4298 device name on the wire ───────────────────────────────────
+
+/// The name a device advertises survives a JSON round-trip through
+/// `HeadExchange`, which is the whole mechanism: before #4298 the field did not
+/// exist and every paired peer rendered as `truncateId(peer_id)`.
+#[test]
+fn head_exchange_round_trips_the_device_name_4298() {
+    let msg = SyncMessage::HeadExchange {
+        heads: vec![],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: true,
+        op_log_batch_chunked: true,
+        pairing_proof: None,
+        device_name: Some("javier-thinkpad".into()),
+    };
+
+    let json = serde_json::to_string(&msg).expect("HeadExchange must serialize");
+    let back: SyncMessage = serde_json::from_str(&json).expect("HeadExchange must deserialize");
+
+    match back {
+        SyncMessage::HeadExchange { device_name, .. } => assert_eq!(
+            device_name.as_deref(),
+            Some("javier-thinkpad"),
+            "the advertised device name must survive the wire verbatim"
+        ),
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+}
+
+/// `clamp_device_name` is applied on send AND on receive, and both directions
+/// are the same function — a peer is untrusted, so the receiving side re-applies
+/// every bound rather than assuming the sender applied it.
+///
+/// 64 matches `MAX_RENAME_LENGTH` in `src/components/dialogs/RenameDialog.tsx`,
+/// so a peer-supplied name occupies exactly the space a user-typed one does.
+#[test]
+fn device_name_is_clamped_to_sixty_four_chars_4298() {
+    assert_eq!(
+        agaric_sync::sync_protocol::MAX_DEVICE_NAME_CHARS,
+        64,
+        "the wire cap must stay equal to the frontend's MAX_RENAME_LENGTH; a \
+         peer-supplied name and a user-typed one have to fit the same row"
+    );
+
+    let over = "n".repeat(200);
+    let clamped = clamp_device_name(&over).expect("a long name is still a name");
+    assert_eq!(
+        clamped.chars().count(),
+        64,
+        "an over-long name must be truncated, not rejected — dropping it entirely \
+         would send the device list back to rendering a UUID"
+    );
+    assert_eq!(clamped, "n".repeat(64));
+
+    // Exactly at the bound is untouched: `.chars().take(64)` on a 64-char
+    // name takes every character, so nothing is actually truncated.
+    let exact = "x".repeat(64);
+    assert_eq!(
+        clamp_device_name(&exact).as_deref(),
+        Some(exact.as_str()),
+        "a name exactly at the cap must pass through unchanged"
+    );
+
+    // Counted in CHARACTERS, not bytes. A byte cap would truncate a CJK name to
+    // a third of the visible length it is allowed.
+    let cjk = "字".repeat(100);
+    let clamped_cjk = clamp_device_name(&cjk).expect("a CJK name is a name");
+    assert_eq!(
+        clamped_cjk.chars().count(),
+        64,
+        "the cap counts Unicode scalar values, so the bound is on what is rendered \
+         rather than on the encoding"
+    );
+}
+
+/// The trim happens before the take, so a name whose 64th surviving scalar
+/// lands on whitespace (the rest of that word is sliced off by the cap) must
+/// not keep a trailing space — that space would otherwise ride along into
+/// storage and the wire on every clamped-length name.
+#[test]
+fn clamp_device_name_has_no_trailing_space_when_the_cap_lands_on_whitespace_4298() {
+    // 63 non-space chars, then a space at index 63 (the 64th surviving
+    // scalar), then more name that the cap slices off entirely.
+    let name: String = "n".repeat(63) + " " + &"m".repeat(20);
+    let clamped = clamp_device_name(&name).expect("a long name is still a name");
+    assert_eq!(
+        clamped,
+        "n".repeat(63),
+        "the trailing space `.take(64)` lands on must not survive into the clamped name"
+    );
+}
+
+/// Empty, blank and whitespace-only names are all *no name*, so the receiver
+/// never has to distinguish "sent nothing" from "sent spaces".
+///
+/// This is what keeps a stored `NULL` meaningful: the display precedence falls
+/// through to the next level on `NULL`, and an empty string persisted instead
+/// would render a paired device as a blank row.
+#[test]
+fn blank_device_names_normalise_to_none_4298() {
+    assert_eq!(clamp_device_name(""), None, "an empty name is no name");
+    assert_eq!(
+        clamp_device_name("   \t\n "),
+        None,
+        "a whitespace-only name is no name"
+    );
+    assert_eq!(
+        clamp_device_name("  padded  ").as_deref(),
+        Some("padded"),
+        "surrounding whitespace is trimmed rather than making the name invalid"
+    );
+}
+
+/// A device name is the one string in this app that arrives from an untrusted
+/// remote and is rendered verbatim — in the device-list row, the sync-failure
+/// toast, the unpair dialog and the rename/address `aria-label`s. React escapes
+/// it, so this is not an XSS question; it is a SPOOFING one. `U+202E`
+/// RIGHT-TO-LEFT OVERRIDE reverses the display order of everything after it,
+/// the isolates do the same with a scope, and a newline breaks the name across
+/// the row it is supposed to occupy. All of them let a peer name itself such
+/// that the row reads as some other device.
+///
+/// Stripped in `clamp_device_name`, which is the shared clamp: one change
+/// covers both the send side and the load-bearing receive side.
+#[test]
+fn device_names_are_stripped_of_control_and_bidi_characters_4298() {
+    assert_eq!(
+        clamp_device_name("Javier\u{202E} desk").as_deref(),
+        Some("Javier desk"),
+        "RIGHT-TO-LEFT OVERRIDE must not survive: it reverses the display order of \
+         everything after it, so the row can be made to read as another device"
+    );
+    assert_eq!(
+        clamp_device_name("\u{2066}Javier\u{2069} laptop").as_deref(),
+        Some("Javier laptop"),
+        "the bidi isolates are the same attack with a scope"
+    );
+    assert_eq!(
+        clamp_device_name("left\u{200E}right\u{200F}mark").as_deref(),
+        Some("leftrightmark"),
+        "LRM/RLM are invisible and reorder what surrounds them"
+    );
+    assert_eq!(
+        clamp_device_name("laptop\u{061C}arabic").as_deref(),
+        Some("laptoparabic"),
+        "ARABIC LETTER MARK is the same class of invisible directional control"
+    );
+
+    assert_eq!(
+        clamp_device_name("Javier's\nLaptop").as_deref(),
+        Some("Javier'sLaptop"),
+        "a newline breaks the name across the single row it is rendered in"
+    );
+    assert_eq!(
+        clamp_device_name("bell\u{7}tab\tnul\u{0}").as_deref(),
+        Some("belltabnul"),
+        "C0 controls render as nothing or as a replacement box"
+    );
+    assert_eq!(
+        clamp_device_name("c1\u{85}next-line").as_deref(),
+        Some("c1next-line"),
+        "`char::is_control` covers C1 as well, and so must this"
+    );
+
+    assert_eq!(
+        clamp_device_name("laptop\u{200B}\u{200C}\u{200D}\u{FEFF}").as_deref(),
+        Some("laptop"),
+        "the zero-width characters have no width, so two peers could otherwise hold \
+         names that are visually identical and textually distinct"
+    );
+
+    // The strip runs BEFORE the trim, so whitespace the format characters were
+    // fencing is still removed rather than persisted as a leading space.
+    assert_eq!(
+        clamp_device_name("\u{202E}  Javier's Laptop  \u{202C}").as_deref(),
+        Some("Javier's Laptop"),
+        "stripping must expose the surrounding whitespace to the trim"
+    );
+
+    // …and a name that is ONLY hostile characters is not a name at all, which
+    // must fall through to `None` rather than persisting an empty string: the
+    // display precedence keys on NULL, and an empty string renders a blank row.
+    assert_eq!(
+        clamp_device_name("\u{202E}\u{200B}\n\t\u{FEFF}"),
+        None,
+        "a name with nothing visible left in it is no name"
+    );
+
+    // The cap counts what survives the strip: 64 scalars of actual name, not 64
+    // scalars of invisible padding.
+    let padded_over_the_cap: String = "\u{200B}".repeat(100) + &"n".repeat(80);
+    assert_eq!(
+        clamp_device_name(&padded_over_the_cap).as_deref(),
+        Some("n".repeat(64).as_str()),
+        "invisible characters must not consume the budget a visible name is owed"
+    );
+
+    // A name that needs no stripping is untouched, including non-ASCII: this is
+    // a filter on format/control characters, not on scripts.
+    assert_eq!(
+        clamp_device_name("Javier's MacBook Pro — 字 — Ünïcödé").as_deref(),
+        Some("Javier's MacBook Pro — 字 — Ünïcödé"),
+        "an ordinary name, in any script, passes through unchanged"
+    );
+
+    // General_Category=Cf (Format) code points the earlier by-name list did not
+    // enumerate, but which are exactly the same invisible-format class as the
+    // zero-width characters above.
+    assert_eq!(
+        clamp_device_name("word\u{2060}joiner").as_deref(),
+        Some("wordjoiner"),
+        "U+2060 WORD JOINER is zero-width and General_Category=Cf"
+    );
+    assert_eq!(
+        clamp_device_name("soft\u{00AD}hyphen").as_deref(),
+        Some("softhyphen"),
+        "U+00AD SOFT HYPHEN is General_Category=Cf: it renders as nothing unless a \
+         line break lands on it"
+    );
+    assert_eq!(
+        clamp_device_name("tag\u{E0001}\u{E0020}space\u{E007F}end").as_deref(),
+        Some("tagspaceend"),
+        "the Tags block (U+E0001 LANGUAGE TAG, U+E0020..U+E007F TAG characters) is \
+         General_Category=Cf and renders nothing in a font without Tags support"
+    );
+
+    // Blank-rendering code points that fall OUTSIDE Cf, so a wholesale
+    // General_Category=Cf strip does not catch them by itself.
+    assert_eq!(
+        clamp_device_name("laptop\u{3164}filler").as_deref(),
+        Some("laptopfiller"),
+        "U+3164 HANGUL FILLER renders blank but is General_Category=Lo \
+         (Other_Letter), not Cf — it must be stripped by name"
+    );
+    assert_eq!(
+        clamp_device_name("reserved\u{E0000}tag").as_deref(),
+        Some("reservedtag"),
+        "U+E0000 is the unassigned (Cn) member of the Tags block — stripped by \
+         name alongside its Cf siblings so the whole named block is covered"
+    );
+}
+
+/// The sending half of the clamp: `SyncOrchestrator::start` advertises what
+/// `app_settings` holds, bounded — this device must not be the one that puts an
+/// unreasonable value on the wire, even though the receiver re-clamps anyway.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_start_advertises_the_clamped_local_device_name_4298() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // No name published yet: the field must be absent rather than empty.
+    let mut orchestrator =
+        SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    match orchestrator.start().await.unwrap() {
+        SyncMessage::HeadExchange { device_name, .. } => assert_eq!(
+            device_name, None,
+            "with no published local name the field must be None, so the peer keeps \
+             whatever name it already had"
+        ),
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+
+    agaric_store::peer_refs::set_local_device_name(&pool, &"h".repeat(300))
+        .await
+        .unwrap();
+
+    let mut orchestrator =
+        SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    match orchestrator.start().await.unwrap() {
+        SyncMessage::HeadExchange { device_name, .. } => {
+            let name = device_name.expect("a published local name must be advertised");
+            assert_eq!(
+                name.chars().count(),
+                64,
+                "start() must clamp on send; the store keeps the OS's answer verbatim \
+                 and the wire applies the bound"
+            );
+        }
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
 
     materializer.shutdown();
 }

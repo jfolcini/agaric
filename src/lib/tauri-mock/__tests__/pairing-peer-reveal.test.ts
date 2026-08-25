@@ -78,7 +78,10 @@ describe('tauri-mock pairing peer reveal (#3469)', () => {
     // 3 — the first 2s interval tick: the peer legitimately appears.
     const revealed = listPeerRefs()
     expect(revealed).toHaveLength(1)
-    expect(revealed[0]?.['device_name']).toBe('Paired Device')
+    // #4298: the mock's revealed peer carries a PEER-SUPPLIED name and no local
+    // override, which is the shape a real freshly-paired row has.
+    expect(revealed[0]?.['device_name']).toBeNull()
+    expect(revealed[0]?.['remote_device_name']).toBe('Paired Device')
     expect(revealed[0]?.['peer_id']).toEqual(expect.any(String))
   })
 

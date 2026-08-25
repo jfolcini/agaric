@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at, cert_hash,\n                  device_name, last_address, endpoint_id, unpaired_by_peer_at_ms\n           FROM peer_refs\n           WHERE peer_id != ''\n           ORDER BY synced_at DESC",
+  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at, cert_hash,\n                  device_name, remote_device_name, last_address, endpoint_id,\n                  unpaired_by_peer_at_ms\n           FROM peer_refs WHERE endpoint_id = ? AND peer_id != ''",
   "describe": {
     "columns": [
       {
@@ -103,8 +103,19 @@
         }
       },
       {
-        "name": "last_address",
+        "name": "remote_device_name",
         "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "remote_device_name"
+          }
+        }
+      },
+      {
+        "name": "last_address",
+        "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -115,7 +126,7 @@
       },
       {
         "name": "endpoint_id",
-        "ordinal": 10,
+        "ordinal": 11,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -126,7 +137,7 @@
       },
       {
         "name": "unpaired_by_peer_at_ms",
-        "ordinal": 11,
+        "ordinal": 12,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -137,7 +148,7 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
@@ -151,8 +162,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "8d0cacf8722b8134c4f923d294c1be1443224f4a85abc821517aa88816e6b984"
+  "hash": "ca36f922678cd90aa36a0a0794676929b1b0c7dc28a9f151e7c09d38e0d12e75"
 }

@@ -32,6 +32,7 @@ function makePeer(overrides: Partial<PeerRef> = {}): PeerRef {
     last_reset_at: null,
     cert_hash: null,
     device_name: null,
+    remote_device_name: null,
     last_address: null,
     endpoint_id: null,
     unpaired_by_peer_at_ms: null,
@@ -58,6 +59,7 @@ describe('PeerListItem', () => {
   it('renders peer name and status', () => {
     const peer = makePeer({
       device_name: 'Work Laptop',
+      remote_device_name: null,
       synced_at: null,
     })
 
@@ -73,6 +75,50 @@ describe('PeerListItem', () => {
     render(<PeerListItem peer={peer} {...defaultProps} />)
 
     expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
+  })
+
+  // ── #4298: the display precedence ────────────────────────────────
+
+  it('renders the name the peer supplied when the user has set no override (#4298)', () => {
+    // The reported bug: a freshly paired peer had no name anywhere, so the row
+    // rendered `truncateId(peer_id)` — `e3d48f0a-45a…` — and stayed that way
+    // until the user renamed it by hand on this device AND on the other one.
+    const peer = makePeer({ device_name: null, remote_device_name: 'javier-thinkpad' })
+
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    expect(screen.getByText('javier-thinkpad')).toBeInTheDocument()
+    expect(screen.getByText('peer-abc-123...')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Rename.*javier-thinkpad/i })).toBeInTheDocument()
+  })
+
+  it('lets the user override outrank the name the peer supplied (#4298)', () => {
+    const peer = makePeer({ device_name: 'Work Laptop', remote_device_name: 'javier-thinkpad' })
+
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    expect(screen.getByText('Work Laptop')).toBeInTheDocument()
+    expect(screen.queryByText('javier-thinkpad')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the truncated id only when neither name exists (#4298)', () => {
+    const peer = makePeer({ device_name: null, remote_device_name: null })
+
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    // The id is the NAME line here, so it appears exactly once — the separate
+    // id subtitle is suppressed rather than repeating it.
+    expect(screen.getAllByText('peer-abc-123...')).toHaveLength(1)
+  })
+
+  it('treats a blank name as no name at all (#4298)', () => {
+    // `update_peer_name` is a local command and the wire value is normalised
+    // backend-side, but a blank must never render as an empty row heading.
+    const peer = makePeer({ device_name: '   ', remote_device_name: 'javier-thinkpad' })
+
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    expect(screen.getByText('javier-thinkpad')).toBeInTheDocument()
   })
 
   it('calls onSyncNow when sync button is clicked', async () => {
@@ -135,6 +181,7 @@ describe('PeerListItem', () => {
   it('renders last-synced time via the interpolated device.lastSyncedAt key', () => {
     const peer = makePeer({
       device_name: 'Work Laptop',
+      remote_device_name: null,
       synced_at: Date.now() - 5 * 60 * 1000,
     })
 
@@ -156,6 +203,7 @@ describe('PeerListItem', () => {
     it('replaces the stale last-synced line with a destructive pairing-lost state', () => {
       const peer = makePeer({
         device_name: 'Work Laptop',
+        remote_device_name: null,
         synced_at: FIVE_MINUTES_AGO,
         unpaired_by_peer_at_ms: TWO_MINUTES_AGO,
       })
@@ -178,6 +226,7 @@ describe('PeerListItem', () => {
     it('announces the dead pairing to assistive technology', () => {
       const peer = makePeer({
         device_name: 'Work Laptop',
+        remote_device_name: null,
         synced_at: FIVE_MINUTES_AGO,
         unpaired_by_peer_at_ms: TWO_MINUTES_AGO,
       })
@@ -194,6 +243,7 @@ describe('PeerListItem', () => {
     it('leaves a healthy peer rendering its last-synced time', () => {
       const peer = makePeer({
         device_name: 'Work Laptop',
+        remote_device_name: null,
         synced_at: FIVE_MINUTES_AGO,
         unpaired_by_peer_at_ms: null,
       })
@@ -207,6 +257,7 @@ describe('PeerListItem', () => {
     it('has no a11y violations in the pairing-lost state', async () => {
       const peer = makePeer({
         device_name: 'Work Laptop',
+        remote_device_name: null,
         synced_at: FIVE_MINUTES_AGO,
         unpaired_by_peer_at_ms: TWO_MINUTES_AGO,
       })
@@ -542,6 +593,7 @@ describe('PeerListItem — last-sync activity (#4084)', () => {
   it('shows a relative time for a peer that has only ever been streamed to', () => {
     const peer = makePeer({
       device_name: 'Android Phone',
+      remote_device_name: null,
       synced_at: null,
       streamed_at: Date.now() - 5 * 60 * 1000,
     })
@@ -565,6 +617,7 @@ describe('PeerListItem — last-sync activity (#4084)', () => {
     const onSyncNow = vi.fn()
     const peer = makePeer({
       device_name: 'Android Phone',
+      remote_device_name: null,
       synced_at: null,
       streamed_at: Date.now() - 60_000,
     })

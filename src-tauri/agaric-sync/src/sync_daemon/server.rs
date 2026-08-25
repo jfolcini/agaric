@@ -82,7 +82,7 @@ use std::sync::atomic::AtomicBool;
 use crate::apply_host::ApplyHost;
 use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_protocol::{SyncMessage, SyncOrchestrator};
+use crate::sync_protocol::{SyncMessage, SyncOrchestrator, clamp_device_name};
 use crate::sync_scheduler::SyncScheduler;
 use crate::transport::driver::{Role, SessionLimits, finish_session, run_session};
 use crate::transport::service::InboundSession;
@@ -490,18 +490,28 @@ async fn handle_incoming_sync_inner(
     // here says that once, rather than leaving it to be re-derived from the shape of
     // the `Option` below.
     //
-    // Both fields are copied out of the frame here rather than borrowed from it,
+    // All three fields are copied out of the frame here rather than borrowed from it,
     // because `opening` is moved into the driver below and everything between now and
     // then needs `&mut session`.
+    //
+    // #4298: `device_name` is clamped as it is copied out, at the boundary rather than
+    // at the write site further down. It is the first thing this process does with an
+    // untrusted string from the wire, so there is no window in which an unbounded value
+    // exists in a variable something else could pick up.
     let opening_parts = match &opening {
         SyncMessage::HeadExchange {
             heads,
             pairing_proof,
+            device_name,
             ..
-        } => Some((heads.clone(), pairing_proof.clone())),
+        } => Some((
+            heads.clone(),
+            pairing_proof.clone(),
+            device_name.as_deref().and_then(clamp_device_name),
+        )),
         _ => None,
     };
-    let Some((heads, offered_proof)) = opening_parts else {
+    let Some((heads, offered_proof, offered_device_name)) = opening_parts else {
         // Log the variant only (`discriminant`, the convention in
         // `session_state_machine::handle_message`) — never the payload.
         tracing::warn!(
@@ -845,6 +855,11 @@ async fn handle_incoming_sync_inner(
         &settled_remote_id,
         &endpoint_id_str,
     );
+    // Set only where this session ESTABLISHED that `settled_remote_id` is the device
+    // behind the key the handshake authenticated — i.e. the TOFU bind below returned
+    // `Ok(())`, so the row that id names now carries this key. Read by the #4298 name
+    // write, which must not run on an id this session merely heard claimed.
+    let mut bound_to_this_key = false;
     if already_bound_elsewhere {
         tracing::warn!(
             peer_id = %settled_remote_id,
@@ -855,6 +870,7 @@ async fn handle_incoming_sync_inner(
     } else if !settled_remote_id.is_empty() && settled_remote_id != device_id {
         match peer_refs::bind_endpoint_id(&pool_ref, &settled_remote_id, &endpoint_id_str).await {
             Ok(()) => {
+                bound_to_this_key = true;
                 // #1519: a binding now exists, so the pending-pairing bridge that
                 // admitted this connection has done its job. Clear the marker so the
                 // daemon stops advertising "accepting pairing" and a later unpaired
@@ -882,6 +898,69 @@ async fn handle_incoming_sync_inner(
             "pairing peer did not identify itself in this session; leaving it unbound \
              for its own initiator pass to bind"
         );
+    }
+
+    // ── Record what the peer calls itself (#4298) ─────────────────────────────
+    //
+    // Here, and not earlier, for the same reason the bind is here: this is the first
+    // point at which the authoritative peer id is known. A name is worthless without an
+    // id to hang it on, and the id an unpaired device advertises up front is not one
+    // (an empty op log advertises no head of its own).
+    //
+    // Gated on this session having AUTHENTICATED the peer as `settled_remote_id`, which
+    // is exactly the two outcomes above where the id and the handshake key are known to
+    // belong together:
+    //
+    // * `!pairing_pending` — S-1 resolved the row from the key the QUIC handshake
+    //   proved, and that row's id went to the FSM as `expected_remote_id`, which it
+    //   takes verbatim in preference to the advertised heads. The id is our store's,
+    //   not the peer's word.
+    // * `bound_to_this_key` — the TOFU bind just accepted this key for this id, so from
+    //   the next session on the peer resolves through the first bullet.
+    //
+    // What that deliberately excludes is the `already_bound_elsewhere` refusal, and the
+    // earlier shape of this block — outside the branches, "a peer whose bind was refused
+    // still gets its name refreshed if we already hold a row for it" — inverted the
+    // guard it sat under. `peer_is_bound_to_another_key` exists precisely because "a
+    // device that changed keys" and "an impostor claiming that device's id" are
+    // indistinguishable at this point: the id is derived from advertised heads, which is
+    // a claim, and the row it names is pinned to somebody else's key. Writing a name
+    // there lets an unbound passphrase-holder relabel an already-paired device in the
+    // user's device list — and in the sync-failure toast, the unpair dialog and the
+    // rename/address labels — wherever no local `device_name` override exists, which is
+    // the default state this feature exists to improve. It is #4230's invariant applied
+    // to one more column: a session keyed on a CLAIMED device id writes nothing to the
+    // row that id names. A device that legitimately changed keys is re-paired through
+    // `delete_peer_ref`, and its name arrives with the bind that follows.
+    //
+    // Nothing is lost on the honest paths: `update_remote_device_name` is a
+    // `WHERE peer_id = ?`, so a stranger with no row still records nothing, and the
+    // joiner that just paired binds first and is named in the same pass. The value was
+    // clamped at the frame boundary; the store write is conditional on an actual change,
+    // so a steady-state session costs one read and no write.
+    //
+    // Best-effort: a failure here loses a display nicety for one session and the next
+    // one re-sends the name. It must not fail a session that has already moved data.
+    let authenticated_as_settled_id = !pairing_pending || bound_to_this_key;
+    if authenticated_as_settled_id
+        && !settled_remote_id.is_empty()
+        && settled_remote_id != device_id
+        && let Some(name) = offered_device_name.as_deref()
+    {
+        match peer_refs::update_remote_device_name(&pool_ref, &settled_remote_id, Some(name)).await
+        {
+            Ok(true) => tracing::info!(
+                peer_id = %settled_remote_id,
+                "recorded the name this peer advertises for itself (#4298)"
+            ),
+            Ok(false) => {}
+            Err(e) => tracing::warn!(
+                peer_id = %settled_remote_id,
+                error = %e,
+                "failed to record the peer's advertised device name (#4298); the device \
+                 list keeps whatever name it already had"
+            ),
+        }
     }
 
     let session_state = orch.session();
@@ -924,6 +1003,7 @@ mod tests {
             last_reset_at: None,
             cert_hash: None,
             device_name: None,
+            remote_device_name: None,
             last_address: None,
             endpoint_id: endpoint_id.map(str::to_owned),
             unpaired_by_peer_at_ms: None,

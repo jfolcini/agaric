@@ -35,9 +35,9 @@ import type { PeerRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { formatErrorForDisplay } from '@/lib/error-display'
-import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { peerDisplayName, peerDisplayNameOrId } from '@/lib/peer-display-name'
 import { comparePeers } from '@/lib/peer-sync-activity'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -191,7 +191,7 @@ export function DeviceManagement(): React.ReactElement {
         })
       } catch (err) {
         logger.error('DeviceManagement', `Sync failed for ${peer.peer_id}`, undefined, err)
-        failures.push(peer.device_name || truncateId(peer.peer_id))
+        failures.push(peerDisplayName(peer))
       }
       setSyncingPeerId(null)
     }
@@ -415,7 +415,13 @@ export function DeviceManagement(): React.ReactElement {
           {/* Screen reader status announcements */}
           <div aria-live="polite" className="sr-only">
             {loading && !deviceId && t('device.loadingMessage')}
-            {syncingPeerId && t('device.syncingMessage', { id: syncingPeerId })}
+            {syncingPeerId &&
+              t('device.syncingMessage', {
+                name: peerDisplayNameOrId(
+                  peers.find((p) => p.peer_id === syncingPeerId),
+                  syncingPeerId,
+                ),
+              })}
             {syncingAll && t('device.syncingAllMessage')}
             {error && t('device.syncErrorMessage', { error })}
           </div>
@@ -434,10 +440,10 @@ export function DeviceManagement(): React.ReactElement {
         onConfirm={() => {
           if (unpairPeerId) handleUnpair(unpairPeerId)
         }}
-        deviceName={
-          peers.find((p) => p.peer_id === unpairPeerId)?.device_name ??
-          truncateId(unpairPeerId ?? '')
-        }
+        deviceName={peerDisplayNameOrId(
+          peers.find((p) => p.peer_id === unpairPeerId),
+          unpairPeerId ?? '',
+        )}
         className="device-unpair-confirm"
       />
 
@@ -448,6 +454,15 @@ export function DeviceManagement(): React.ReactElement {
           if (!o) setRenamePeerId(null)
         }}
         onConfirm={handleRename}
+        /*
+          #4298: seeded from the user's override ALONE, not the display
+          precedence. The dialog edits `device_name`, and pre-filling it with
+          the peer-supplied name would turn "open the dialog and press save"
+          into a silent promotion of the peer's claim into a local override —
+          after which clearing the field could no longer fall back to it.
+          An empty field on a peer-named device is correct: it says "you have
+          not overridden this", which is the fact the dialog is about.
+        */
         currentName={peers.find((p) => p.peer_id === renamePeerId)?.device_name ?? ''}
       />
     </div>

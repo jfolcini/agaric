@@ -133,6 +133,7 @@ const mockPeers = [
     last_reset_at: null,
     cert_hash: null,
     device_name: null,
+    remote_device_name: null,
     last_address: null,
   },
   {
@@ -145,6 +146,7 @@ const mockPeers = [
     last_reset_at: 1735689600000, // 2025-01-01T00:00:00Z
     cert_hash: null,
     device_name: null,
+    remote_device_name: null,
     last_address: null,
   },
 ]
@@ -437,6 +439,43 @@ describe('DeviceManagement', () => {
     expect(srOnly?.textContent).toContain('Sync error: Connection refused by peer')
   })
 
+  // #4298 — the sr-only "Syncing with device …" announcement must name the
+  // device the same way the sighted row does (device_name, then
+  // remote_device_name, then a truncated id) instead of reading a raw
+  // 36-char peer_id aloud. `start_sync` is held pending so the assertion can
+  // land while `syncingPeerId` is still set.
+  it('announces sync progress using the device name, not the raw peer id', async () => {
+    const user = userEvent.setup()
+    let resolveStartSync: (() => void) | undefined
+    const namedPeers = [{ ...mockPeers[0], device_name: 'Pixel 8' }, mockPeers[1]]
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_device_id') return mockDeviceId
+      if (cmd === 'list_peer_refs') return namedPeers
+      if (cmd === 'start_sync') {
+        return new Promise((resolve) => {
+          resolveStartSync = () => resolve(undefined)
+        })
+      }
+      return undefined
+    })
+
+    const { container } = render(<DeviceManagement />)
+
+    await screen.findByText('Pixel 8')
+
+    const syncBtns = screen.getAllByRole('button', { name: /Sync Now/i })
+    await user.click(syncBtns[0] as HTMLElement)
+
+    await waitFor(() => {
+      const srRegions = container.querySelectorAll('[aria-live="polite"]')
+      const srOnly = Array.from(srRegions).find((el) => el.classList.contains('sr-only'))
+      expect(srOnly?.textContent).toContain('Syncing with device Pixel 8...')
+      expect(srOnly?.textContent).not.toContain('peer-abc-1234567890')
+    })
+
+    resolveStartSync?.()
+  })
+
   // --- New tests ---
 
   it('refreshes peer list when PairingDialog closes', async () => {
@@ -669,6 +708,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
         ]
       return null
@@ -696,6 +736,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
           {
             peer_id: 'peer-2',
@@ -707,6 +748,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
         ]
       if (cmd === 'start_sync') {
@@ -749,6 +791,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: "Javier's Phone",
+          remote_device_name: null,
         },
       ],
     })
@@ -776,6 +819,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
           {
             peer_id: 'peer-2',
@@ -787,6 +831,7 @@ describe('DeviceManagement', () => {
             last_reset_at: null,
             cert_hash: null,
             device_name: null,
+            remote_device_name: null,
           },
         ]
       if (cmd === 'start_sync') {
@@ -908,6 +953,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: 'Work Laptop',
+          remote_device_name: null,
         },
       ],
       delete_peer_ref: undefined,
@@ -944,6 +990,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: null,
+          remote_device_name: null,
         },
         {
           peer_id: 'peer-1',
@@ -955,6 +1002,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: 'Zebra',
+          remote_device_name: null,
         },
         {
           peer_id: 'peer-2',
@@ -966,6 +1014,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: 'Apple',
+          remote_device_name: null,
         },
       ],
     })
@@ -993,6 +1042,7 @@ describe('DeviceManagement', () => {
       last_reset_at: null,
       cert_hash: null,
       device_name: null,
+      remote_device_name: null,
       last_address: null,
       endpoint_id: null,
       unpaired_by_peer_at_ms: null,
@@ -1245,6 +1295,7 @@ describe('DeviceManagement', () => {
           last_reset_at: null,
           cert_hash: null,
           device_name: null,
+          remote_device_name: null,
           last_address: null,
         },
       ],

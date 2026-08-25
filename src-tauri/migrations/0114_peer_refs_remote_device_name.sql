@@ -1,0 +1,81 @@
+-- #4298 — `remote_device_name`: what the peer, on the wire, told us it is
+-- called. The other half of a name pair whose local half already existed.
+--
+-- ## The gap this closes
+--
+-- A device name was never exchanged. `device_name` does not appear anywhere in
+-- `agaric-sync/src/sync_protocol/types.rs`; every construction site sets it to
+-- `None`, and the sole writer is the local Tauri command `update_peer_name`
+-- (`commands/sync_cmds.rs`). So after a successful first pair — verified
+-- two-way sync between a Linux desktop and a Pixel 8 — both rows read
+-- `device_name = (empty)` and both device lists fall back to
+-- `truncateId(peer_id)`: `e3d48f0a-45a…`. Neither device knows what the other
+-- is called until the user renames it, by hand, on each device separately. A
+-- user with three devices performs six renames to get a legible list, and
+-- until then a multi-peer list is two rows of hex.
+--
+-- The name also leaks out of the list: it is what the sync-failure toast, the
+-- rename/unpair dialogs and the address-edit label all render, so an
+-- unexchanged name puts a truncated UUID on several surfaces at once.
+--
+-- ## Why a SECOND column and not a writer for the existing one
+--
+-- The two values answer different questions and have different trust.
+--
+-- `device_name` is the USER'S override: a per-device display preference,
+-- typed into `RenameDialog`, authoritative on the device it was typed on and
+-- nowhere else. `remote_device_name` is a CLAIM by an untrusted remote: it
+-- arrives inside `HeadExchange`, from a peer that can put anything in it, on
+-- every session forever.
+--
+-- Folding the claim into `device_name` would mean the peer's next sync silently
+-- overwrites a name the user chose — the one outcome a rename feature must
+-- never produce. Keeping them apart makes the precedence expressible instead of
+-- racy: the UI renders `device_name` → `remote_device_name` →
+-- `truncateId(peer_id)`, so the override always wins while it exists, and
+-- clearing it falls back to the peer's own name rather than to hex.
+--
+-- That fallback is also a correction. `update_peer_name`'s doc comment has
+-- always claimed that passing `None` clears the name "back to the
+-- device-supplied value" — true of the intent, false of the schema, because
+-- nothing supplied one. This column is what makes the sentence true.
+--
+-- ## Shape
+--
+-- Plain nullable `TEXT`, no DEFAULT, no CHECK.
+--
+-- NULL is the correct and expected value for every existing row, and the state
+-- every peer starts in: no device has ever received a name over the wire and
+-- there is nothing to derive one from. It is also the state a row returns to
+-- when a peer stops sending one (an older build, or a device whose hostname
+-- could not be read).
+--
+-- The 64-character cap is deliberately NOT a `CHECK` here. The clamp is a
+-- property of the wire, applied on send and re-applied on receive
+-- (`sync_protocol::types::clamp_device_name`, matching `MAX_RENAME_LENGTH` in
+-- `src/components/dialogs/RenameDialog.tsx`), and it is the peer that is
+-- untrusted, not this device's own store. A `CHECK` would turn a hostile
+-- peer's over-long name into a constraint violation surfacing at the bottom of
+-- a `?` chain in the middle of an otherwise-successful session, when the right
+-- answer is to truncate it and carry on. `device_name`, the column this one
+-- sits beside, carries no length CHECK either.
+--
+-- `peer_refs` has been STRICT since 0075; TEXT is a STRICT-permitted type and a
+-- nullable ADD COLUMN needs no default, so this is an append-only ALTER with no
+-- table rebuild and no backfill.
+--
+-- mock-unaffected, in the corrected sense 0113 records. The claim 0107 and 0111
+-- make — that the JS Tauri mock answers `list_peer_refs` with a literal `[]` —
+-- stopped being true at #3469, which gave the mock a real `peerRefs` store
+-- (`src/lib/tauri-mock/seed.ts`) that `confirm_pairing` populates. The mock's
+-- seeded row is nonetheless a partial fixture (it already omits `endpoint_id`
+-- and `unpaired_by_peer_at_ms`), and an absent key is how it says "this column
+-- has no value" — which is exactly right for a mock with no peer transport:
+-- nothing can arrive over a wire that does not exist. `peer_refs` is
+-- correspondingly absent from the CONTRACT map in
+-- `scripts/check-migration-mock-contract.py`. The mock's peer row is updated in
+-- this change anyway, to keep it typing against the regenerated `PeerRef`
+-- binding rather than because the schema forced it.
+
+ALTER TABLE peer_refs
+    ADD COLUMN remote_device_name TEXT;

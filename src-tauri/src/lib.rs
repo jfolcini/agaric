@@ -1827,6 +1827,135 @@ struct SyncDaemonWiring {
     cancel_flag: Arc<AtomicBool>,
 }
 
+/// Hostnames that every device reports, and so identify none of them (#4298
+/// review).
+///
+/// Compared against the hostname case-folded and with a trailing
+/// `.localdomain` removed, so `LOCALHOST` and `localhost.localdomain` are the
+/// same non-name as `localhost`.
+///
+/// - `localhost` is what **stock Android** reports. Verified by booting the
+///   `android-34` emulator system image: `uname -a` reads
+///   `Linux localhost 6.1.23-android14-4-…`, and `uname -n` is exactly the
+///   value `tauri_plugin_os::hostname()` returns — it calls
+///   `gethostname::gethostname()`, which on every unix is
+///   `rustix::system::uname().nodename()`. Android's user-facing device name
+///   lives in `Settings.Global.device_name` instead, which this API cannot
+///   reach. `localhost` is also the stock value on a Linux box whose hostname
+///   was never set.
+/// - `(none)` is the Linux kernel's own compiled-in default and what stands on
+///   any boot where userspace never overwrites it. The Android 14 GKI kernel
+///   shipped in that image is built with `CONFIG_DEFAULT_HOSTNAME="(none)"`
+///   (read from the kernel's embedded `IKCFG_ST` config blob).
+const NON_IDENTIFYING_HOSTNAMES: [&str; 2] = ["localhost", "(none)"];
+
+/// The OS hostname, if it actually names *this particular* device (#4298).
+///
+/// # Why a non-name must become *no* name rather than a name
+///
+/// `device_name` is a display precedence — the user's override, then the name
+/// the peer advertised, then the peer's truncated id — and each level only
+/// gets its turn when the one above it is absent. A hostname that every device
+/// shares is therefore worse than none: it occupies the middle level on every
+/// Android peer at once, so a device list holding two phones renders two rows
+/// both reading `localhost`, where before #4298 it rendered two distinct hex
+/// ids. Returning `None` here keeps the truncated id — the one field on the
+/// row that is unique per device — as what the user reads, which is exactly
+/// the pre-#4298 behaviour, so the feature can only ever add information.
+///
+/// Filtering at the boot refresh rather than at the display keeps the useless
+/// value out of the system entirely: it is never stored in `app_settings`,
+/// never put on the wire, and never persisted into a peer's
+/// `remote_device_name` on the far side — so no consumer, present or future,
+/// has to know about it, and no peer is left holding a stale `localhost` that
+/// a later fix would have to go back and clear.
+///
+/// The comparison is ASCII-case-insensitive because hostnames are
+/// (RFC 1035 §2.3.3), and it strips one trailing `.localdomain` because that
+/// is the suffix AOSP's historical `hostname localhost` / `domainname
+/// localdomain` pairing produces and the stock value on several Linux
+/// distributions. The suffix is stripped for the *comparison only* — a real
+/// host that genuinely lives in that domain (`pixel-8.localdomain`) is
+/// returned verbatim, because the part before the dot does name a device.
+fn identifying_hostname(hostname: &str) -> Option<&str> {
+    let trimmed = hostname.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let folded = trimmed.to_ascii_lowercase();
+    let bare = folded
+        .strip_suffix(".localdomain")
+        .unwrap_or(folded.as_str());
+    if NON_IDENTIFYING_HOSTNAMES.contains(&bare) {
+        return None;
+    }
+    Some(trimmed)
+}
+
+/// Publish this device's own name — its OS hostname — into `app_settings`, so
+/// the sync layer can advertise it to peers in `HeadExchange` (#4298).
+///
+/// # Why the app crate writes it and the sync crate reads it back off the pool
+///
+/// `tauri_plugin_os::hostname()` is the only cross-platform hostname source
+/// this app has, and it lives behind a Tauri plugin. `agaric-sync` must not
+/// gain a `tauri` dependency for one string, so the value travels through the
+/// database the two already share — the same seam the pending-pairing marker
+/// uses (`peer_refs::set_local_device_name` / `get_local_device_name`).
+///
+/// # Why every boot, and why best-effort
+///
+/// A hostname is user-editable and does change; pinning it at first run would
+/// leave every renamed device advertising a stale name with nothing to ever
+/// correct it. Re-reading it each launch costs one UPSERT and makes a rename
+/// propagate on the next sync.
+///
+/// It is spawned rather than awaited, and swallows its failure: the name is a
+/// display nicety, not a precondition for syncing. Losing the race with the
+/// first outbound session — the daemon spawns immediately after this — costs
+/// that one session's advertisement, and the peer keeps whatever name it
+/// already had until the next dial. Blocking boot on it would be the wrong
+/// trade in the other direction.
+///
+/// # Why a hostname can be rejected outright
+///
+/// A hostname that names no particular device — empty, or one of
+/// [`NON_IDENTIFYING_HOSTNAMES`] — is written as nothing at all, and
+/// [`identifying_hostname`] is what decides. Stock Android reports `localhost`
+/// for every device, so storing it would make this feature *remove*
+/// information from a device list holding two phones rather than add it. With
+/// nothing stored, `get_local_device_name` returns `None`, no name reaches the
+/// wire, and every consumer falls through to the peer's truncated id — the
+/// behaviour that shipped before #4298.
+fn spawn_local_device_name_refresh(pool: sqlx::SqlitePool) {
+    tauri::async_runtime::spawn(async move {
+        let raw = tauri_plugin_os::hostname();
+        let Some(hostname) = identifying_hostname(&raw) else {
+            tracing::debug!(
+                "the OS reported no device-identifying hostname; advertising no device name (#4298)"
+            );
+            return;
+        };
+        match agaric_store::peer_refs::set_local_device_name(&pool, hostname).await {
+            Ok(()) => tracing::debug!(
+                // A hostname frequently embeds a real name (a person's given
+                // name, a work laptop's asset tag); this codebase otherwise
+                // logs discriminants and ids, not payloads, so log the
+                // length only — enough to tell whether an unusually
+                // long/short name is being clamped downstream, without
+                // writing the name itself into the log.
+                device_name_len = hostname.chars().count(),
+                "published this device's own name for peers to display (#4298)"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "could not publish this device's own name; peers will keep rendering \
+                 this device by whatever name they already have (#4298)"
+            ),
+        }
+    });
+}
+
 /// Boot-phase 13 — install the rustls CryptoProvider and spawn the
 /// [`SyncDaemon`](agaric_sync::sync_daemon::SyncDaemon).
 ///
@@ -2472,6 +2601,12 @@ pub fn run() {
                 // connections, so no snapshot receive can be in flight yet.
                 agaric_sync::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
 
+                // #4298 — publish this device's hostname before the daemon
+                // spawns, so the first session that reaches `HeadExchange` has
+                // a name to advertise and the peer stops rendering this device
+                // as a truncated UUID.
+                spawn_local_device_name_refresh(daemon_wiring.pool.clone());
+
                 // Install rustls + spawn the SyncDaemon (#382/#383/#278).
                 let daemon_wiring = SyncDaemonWiring {
                     cancel_flag,
@@ -2913,6 +3048,103 @@ mod log_bridge_tests {
 /// platform, with the entire Rust suite green and four release jobs reporting
 /// success. The tests above cover the halves in isolation; this one runs the
 /// sequence.
+#[cfg(test)]
+mod local_device_name_tests {
+    use super::identifying_hostname;
+
+    /// The motivating device for #4298 is a Pixel 8, and stock Android never
+    /// gives the kernel a hostname that names the phone.
+    ///
+    /// Established by booting the `android-34` emulator system image and
+    /// reading the value the plugin's source path actually returns:
+    /// `tauri_plugin_os::hostname()` → `gethostname::gethostname()` →
+    /// `rustix::system::uname().nodename()`, i.e. the UTS nodename that
+    /// `uname -n` prints. On that image `uname -a` reads
+    /// `Linux localhost 6.1.23-android14-4-…`. The Android device name a user
+    /// would recognise lives in `Settings.Global.device_name`
+    /// (`sdk_gphone64_x86_64` there) and is not the nodename.
+    ///
+    /// So every Android peer would advertise the identical string
+    /// `"localhost"`. Advertising nothing instead lets each of them fall back
+    /// to its own truncated id, which is the one thing on the row that is
+    /// distinct per device.
+    #[test]
+    fn android_localhost_hostname_advertises_no_device_name_4298() {
+        assert_eq!(
+            identifying_hostname("localhost"),
+            None,
+            "`localhost` is what stock Android reports for EVERY device;              advertising it would make two Android peers render as two              identical rows"
+        );
+    }
+
+    /// The same non-name in the spellings the OS actually produces.
+    ///
+    /// `(none)` is the Linux kernel's own default — the Android 14 GKI kernel
+    /// in the `android-34` image is built with
+    /// `CONFIG_DEFAULT_HOSTNAME="(none)"` (read out of the kernel's embedded
+    /// `IKCFG_ST` config blob), which is the value left standing on any boot
+    /// where userspace does not overwrite it.
+    ///
+    /// `.localdomain` is the historical AOSP pairing (`hostname localhost` +
+    /// `domainname localdomain`) and the stock value on more than one Linux
+    /// distribution.
+    #[test]
+    fn non_identifying_hostname_variants_advertise_nothing_4298() {
+        for raw in [
+            "",
+            "   ",
+            "\t\n",
+            "LOCALHOST",
+            "LocalHost",
+            "localhost.localdomain",
+            "LocalHost.LocalDomain",
+            "  localhost  ",
+            "(none)",
+            "(NONE)",
+        ] {
+            assert_eq!(
+                identifying_hostname(raw),
+                None,
+                "{raw:?} names no particular device and must not be advertised"
+            );
+        }
+    }
+
+    /// The other half of the contract: a hostname that DOES name a device is
+    /// still advertised, or #4298 would have shipped a feature that never
+    /// fires.
+    #[test]
+    fn a_real_hostname_is_still_advertised_4298() {
+        assert_eq!(
+            identifying_hostname("javier-thinkpad"),
+            Some("javier-thinkpad")
+        );
+        assert_eq!(identifying_hostname("  Pixel 8  "), Some("Pixel 8"));
+        assert_eq!(
+            identifying_hostname("MacBook-Pro.local"),
+            Some("MacBook-Pro.local")
+        );
+    }
+
+    /// `.localdomain` is stripped only to *recognise* a non-name; it must not
+    /// swallow a real host that happens to sit in that domain, and a name that
+    /// merely contains the substring is untouched.
+    #[test]
+    fn localdomain_suffix_does_not_discard_a_real_hostname_4298() {
+        assert_eq!(
+            identifying_hostname("pixel-8.localdomain"),
+            Some("pixel-8.localdomain"),
+            "the suffix is stripped for the comparison only; a real host in              that domain keeps the name the OS reports"
+        );
+        assert_eq!(
+            identifying_hostname("localhost-upstairs"),
+            Some("localhost-upstairs"),
+            "a device genuinely named this is not the stock value"
+        );
+        assert_eq!(identifying_hostname("not-localhost"), Some("not-localhost"));
+    }
+}
+
 #[cfg(test)]
 mod boot_path_tests {
     /// Drives the real `init_logging` against a mock app and a throwaway

@@ -105,6 +105,7 @@ fn head_exchange(heads: Vec<DeviceHead>, pairing_proof: Option<String>) -> SyncM
         op_log_replication: false,
         op_log_batch_chunked: false,
         pairing_proof,
+        device_name: None,
     }
 }
 
@@ -539,6 +540,7 @@ fn make_peer_ref(peer_id: &str) -> PeerRef {
         last_reset_at: None,
         cert_hash: None,
         device_name: None,
+        remote_device_name: None,
         last_address: None,
         endpoint_id: None,
         unpaired_by_peer_at_ms: None,
@@ -3102,6 +3104,7 @@ fn make_peer_ref_with_cert(peer_id: &str, cert_hash: Option<&str>) -> PeerRef {
         last_reset_at: None,
         cert_hash: cert_hash.map(String::from),
         device_name: None,
+        remote_device_name: None,
         last_address: None,
         endpoint_id: None,
         unpaired_by_peer_at_ms: None,
@@ -5067,6 +5070,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         },
     )
     .await
@@ -7571,6 +7575,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .expect("responder handle_message")
@@ -7626,6 +7631,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             op_log_replication: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
+            device_name: None,
         })
         .await
         .expect("responder handle_message")
@@ -10995,11 +11001,18 @@ async fn the_rejecting_device_surfaces_its_own_rejection_3491() {
 // proved the #855 passphrase — `expected_remote_id` is deliberately left unset,
 // and the session is keyed on the first non-self **advertised head**: a claim.
 //
-// The session writes two things under that id: `streamed_at`, and
-// `loro_vv_bytes`, the export floor the NEXT session computes its incremental
-// update from. The post-session bind already refuses to let a claim take over an
-// already-bound peer's row (`peer_is_bound_to_another_key`); these tests are
-// about the writes that run *before* that check.
+// The session writes two things under that id BEFORE the bind check:
+// `streamed_at`, and `loro_vv_bytes`, the export floor the NEXT session computes
+// its incremental update from. The post-session bind already refuses to let a
+// claim take over an already-bound peer's row (`peer_is_bound_to_another_key`);
+// these tests began as being about the writes that run *before* that check.
+//
+// #4298 added a third, `remote_device_name`, and it sits AFTER the bind check —
+// which turned out not to be enough on its own, because a write placed after a
+// refusal is only safe if it reads the refusal. It did not, so a claimant could
+// relabel the row the guard had just refused to re-bind. That is why these tests
+// now also cover the write on the far side of the bind: the invariant is about
+// the row, not about a position in the function.
 //
 // # Why the joiner's claim is seeded as a real op rather than a fabricated frame
 //
@@ -11028,6 +11041,21 @@ const HOST_CONTENT_4230: &str = "seeded on the host (#4230)";
 /// because it also fails if the row is rewritten with something that merely
 /// looks empty.
 const VICTIM_FLOOR_4230: &[u8] = b"the real VICT4230's frontier (#4230)";
+
+/// The name the victim's real device advertised in an earlier session, already
+/// on its row when the claimant dials.
+///
+/// A distinctive pre-existing value for the same reason `VICTIM_FLOOR_4230` is
+/// one: "was NULL, still NULL" would also be satisfied by a write that happened
+/// to record nothing, and this column is the one the device list, the
+/// sync-failure toast, the unpair dialog and the rename/address labels all fall
+/// back to when the user has set no override of their own — which is the
+/// default state (#4298).
+const VICTIM_NAME_4230: &str = "the real VICT4230";
+
+/// What the claimant advertises for itself: a name chosen to be indistinguishable
+/// from the victim's in a device list, which is the point of overwriting it.
+const CLAIMANT_NAME_4230: &str = "Javier's Laptop (SAFE)";
 
 /// What one run left on the host, sampled either side of the session.
 struct PairingClaimRun4230 {
@@ -11096,6 +11124,11 @@ async fn drive_pairing_claim_4230(
             .unwrap();
         tx.commit().await.unwrap();
     }
+    // #4298: and the name its real device told the host it is called. The user
+    // has set no override, so this is what every surface renders for it.
+    peer_refs::update_remote_device_name(&host_pool, VICTIM_DEV_4230, Some(VICTIM_NAME_4230))
+        .await
+        .unwrap();
 
     make_local_edit_602(
         &host_pool,
@@ -11135,6 +11168,15 @@ async fn drive_pairing_claim_4230(
         .await
         .unwrap();
 
+    // #4298: the joiner advertises a device name in its `HeadExchange` — read by
+    // the production initiator off its own `app_settings`, so the name travels
+    // the real path rather than a hand-built frame. Without it the claim run
+    // exercises the id-keyed writes but never reaches the name write at all, and
+    // a hole there would be invisible to this whole family of tests.
+    peer_refs::set_local_device_name(&joiner_pool, CLAIMANT_NAME_4230)
+        .await
+        .unwrap();
+
     // ── Two real endpoints: the host serves, the joiner dials ───────────
     let harness = ServiceHarness::new().await;
     let joiner_key = client_key(&harness);
@@ -11171,6 +11213,14 @@ async fn drive_pairing_claim_4230(
             .as_ref()
             .is_some_and(|r| r.streamed_at.is_some()),
         "precondition: the victim must carry a stream stamp to be robbed of"
+    );
+    assert_eq!(
+        victim_before
+            .as_ref()
+            .and_then(|r| r.remote_device_name.as_deref()),
+        Some(VICTIM_NAME_4230),
+        "precondition: the victim must carry the name its real device advertised, or \
+         `assert_victim_untouched_4230` cannot tell an overwrite from a no-op (#4298)"
     );
 
     // ── The responder: production `handle_incoming_sync` on the host ────
@@ -11250,12 +11300,29 @@ async fn drive_pairing_claim_4230(
 
 /// Assert the run left the victim's row byte-for-byte as it found it.
 ///
-/// The three columns are collected rather than asserted one at a time so a
-/// failure reports the WHOLE of the damage. The issue names two writes and
-/// ranks them the other way round from the order a reader meets them —
-/// `loro_vv_bytes` is the export floor, so poisoning it is a data-correctness
-/// problem, where `streamed_at` costs a few suppressed toasts — and a
-/// short-circuiting `assert_eq!` chain would show only the first.
+/// The columns are collected rather than asserted one at a time so a failure
+/// reports the WHOLE of the damage. The issue names two writes and ranks them
+/// the other way round from the order a reader meets them — `loro_vv_bytes` is
+/// the export floor, so poisoning it is a data-correctness problem, where
+/// `streamed_at` costs a few suppressed toasts — and a short-circuiting
+/// `assert_eq!` chain would show only the first.
+///
+/// # The `damage` vector is this guard's surface, and it has to grow
+///
+/// This function is what #4230's invariant — *a session keyed on a CLAIMED
+/// device id must write nothing to the row that id names* — actually consists
+/// of. It is not a statement about `peer_refs`; it is a statement about the
+/// columns listed below, and it says nothing whatsoever about a column that is
+/// missing from them.
+///
+/// #4298 proved that the hard way. It added `remote_device_name` and a write
+/// near the bind point that was reachable on the refused-bind path, and every
+/// test in this family stayed green — because the vector listed three columns
+/// and the new one was not among them. **Whenever a column is added to
+/// `peer_refs` and written anywhere around the bind, add it here**, and make
+/// sure the fixture actually drives a value into it (see
+/// `CLAIMANT_NAME_4230`): a column the run never supplies a value for cannot
+/// fail this assertion however wrong the production code is.
 fn assert_victim_untouched_4230(out: &PairingClaimRun4230) {
     let before = out
         .victim_before
@@ -11289,6 +11356,23 @@ fn assert_victim_untouched_4230(out: &PairingClaimRun4230) {
             "the binding moved ({:?} -> {:?}), which #800's post-session check is \
              supposed to refuse outright",
             before.endpoint_id, after.endpoint_id
+        ));
+    }
+    if after.remote_device_name != before.remote_device_name {
+        damage.push(format!(
+            "`remote_device_name` was rewritten ({:?} -> {:?}): #4298 makes this the \
+             name the device list, the sync-failure toast, the unpair dialog and the \
+             rename/address labels all render for a peer whenever the user has set no \
+             override — the default — so a claimant that can write it here relabels a \
+             legitimately paired device in the user's own UI",
+            before.remote_device_name, after.remote_device_name
+        ));
+    }
+    if after.device_name != before.device_name {
+        damage.push(format!(
+            "`device_name`, the USER'S override, was rewritten ({:?} -> {:?}); nothing \
+             on the wire may ever touch that column",
+            before.device_name, after.device_name
         ));
     }
     assert!(
@@ -11397,6 +11481,15 @@ async fn a_legitimate_pairing_still_records_its_own_bookkeeping_4230() {
         "#2502: the joiner's advertised frontier must be persisted as the export \
          floor, or the next session re-ships a full snapshot per space"
     );
+    assert_eq!(
+        row.remote_device_name.as_deref(),
+        Some(CLAIMANT_NAME_4230),
+        "#4298: and the name it advertised must be recorded on the row it just bound. \
+         This is the half the guard must NOT cost: the gate is on having been \
+         authenticated as this id, and a joiner that binds has been — so the very \
+         first session after a pair names the device, instead of leaving the user \
+         looking at a truncated UUID until they rename it by hand"
+    );
     assert!(
         !out.host_still_pending,
         "#1519: a completed pair closes the window behind it"
@@ -11446,4 +11539,98 @@ async fn the_bound_branch_keys_bookkeeping_on_the_authenticated_row_4230() {
 
     // The head it advertised named the victim; `expected_remote_id` outranked it.
     assert_victim_untouched_4230(&out);
+}
+
+/// #4298 — the responder records the name the initiator advertised, clamps it,
+/// and does not touch the name the user set by hand.
+///
+/// This is the whole user-visible fix driven through the real admission path.
+/// Before it, `device_name` appeared nowhere in the wire protocol, so a freshly
+/// paired peer rendered as `truncateId(peer_id)` — `e3d48f0a-45a…` — on both
+/// devices until the user renamed it separately on each.
+///
+/// Three things are pinned here that the store-level tests cannot reach:
+///
+/// * the name survives the frame boundary and reaches `peer_refs` at all;
+/// * it is re-clamped **on receive**. The sender clamps too, but the sender is
+///   an untrusted remote and a hostile one simply would not — so the bound has
+///   to be re-applied by the side that has to render it;
+/// * `device_name` is untouched. A peer whose next sync could overwrite the
+///   user's rename would silently undo it, which is the outcome the two-column
+///   design exists to prevent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn handle_incoming_sync_records_the_peer_supplied_device_name_4298() {
+    const REMOTE: &str = "REMOTE4298";
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let harness = ServiceHarness::new().await;
+    bind_client_as(&pool, REMOTE, &harness).await;
+    // The user has already renamed this peer on THIS device. That override must
+    // outrank whatever the peer calls itself.
+    peer_refs::update_device_name(&pool, REMOTE, Some("Javier's Phone"))
+        .await
+        .unwrap();
+
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler,
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &SyncMessage::HeadExchange {
+            heads: vec![fake_head(REMOTE)],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            // Deliberately over-long: a peer can put anything in this field.
+            device_name: Some("p".repeat(200)),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Empty registry on both sides, so the responder short-circuits straight to
+    // `SyncComplete` with nothing to stream.
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert!(
+        matches!(response, SyncMessage::SyncComplete { .. }),
+        "an empty-registry session must short-circuit to SyncComplete, got {response:?}"
+    );
+
+    close_and_join_ok(client, handle).await;
+
+    let peer = peer_refs::get_peer_ref(&pool, REMOTE)
+        .await
+        .unwrap()
+        .expect("the peer row must survive the session");
+    let recorded = peer
+        .remote_device_name
+        .expect("#4298: the responder must record the name the peer advertised");
+    assert_eq!(
+        recorded.chars().count(),
+        64,
+        "the receiving side must re-clamp — the sender's clamp is not a bound this \
+         device may rely on"
+    );
+    assert_eq!(recorded, "p".repeat(64));
+    assert_eq!(
+        peer.device_name.as_deref(),
+        Some("Javier's Phone"),
+        "a peer-supplied name must never overwrite the user's own rename"
+    );
+
+    materializer.shutdown();
 }

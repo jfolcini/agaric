@@ -207,6 +207,7 @@ dependencies = [
  "chrono",
  "ciborium",
  "futures-util",
+ "icu_properties",
  "if-addrs",
  "iroh",
  "iroh-dns",

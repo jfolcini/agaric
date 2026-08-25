@@ -51,8 +51,52 @@ pub struct PeerRef {
     /// SHA-256 hex of the peer's TLS certificate, observed during pairing.
     /// Used for certificate pinning on reconnection.
     pub cert_hash: Option<String>,
-    /// Human-readable name/label for this peer (e.g. "Javier's Phone").
+    /// The USER'S name for this peer (e.g. "Javier's Phone") — a local display
+    /// override, typed into the rename dialog on THIS device and authoritative
+    /// nowhere else.
+    ///
+    /// Written only by the `update_peer_name` command
+    /// ([`update_device_name`]). Nothing on the wire may touch it: a peer that
+    /// could overwrite it would silently undo a rename the user performed,
+    /// which is the one outcome a rename feature must never produce. The name
+    /// the peer supplies lands in [`Self::remote_device_name`] instead.
+    ///
+    /// `None` means the user has not renamed this peer — NOT that the peer has
+    /// no name. Read it through the display precedence
+    /// (`device_name` → `remote_device_name` → truncated `peer_id`), never on
+    /// its own.
     pub device_name: Option<String>,
+    /// The name the peer told us it is called, over the wire (migration 0114,
+    /// #4298) — a CLAIM by an untrusted remote, not a fact about it.
+    ///
+    /// Carried in `HeadExchange` and refreshed on every session in which this
+    /// device is the responder AND authenticated the peer as this row's id — a
+    /// bound peer resolved through the key its handshake proved, or a joiner the
+    /// TOFU bind just accepted. So a peer renamed on its own machine propagates
+    /// that name here on its next dial, and a session keyed on a device id it
+    /// merely *claimed* writes nothing here (see the responder's name block and
+    /// #4230). It is stripped of control and bidi-format characters and clamped
+    /// to 64 characters on send AND again on receive, and empty/whitespace-only
+    /// is normalised to `None`; a peer can put anything in this field, so the
+    /// receiving side re-applies every bound rather than trusting the sender to
+    /// have applied it.
+    ///
+    /// Strictly lower precedence than [`Self::device_name`]: it is what the UI
+    /// falls back to when the user has set no override, which is what makes
+    /// clearing an override fall back to the peer's own name rather than to a
+    /// truncated UUID.
+    ///
+    /// `None` is normal *as a starting state* — a peer on a build predating
+    /// #4298 sends no name, and a device whose hostname could not be read sends
+    /// none either. It is not a state a row goes back to: the responder
+    /// short-circuits on a missing name rather than recording its absence (`if
+    /// let Some(name) = offered_device_name`), so once a name has been recorded
+    /// the row keeps it until the peer supplies a different one. That is the
+    /// wanted behaviour — a peer that downgrades, or boots once without a
+    /// readable hostname, must not blank a device list back to hex — and it
+    /// means [`update_remote_device_name`]'s `None` arm has no production
+    /// caller.
+    pub remote_device_name: Option<String>,
     /// Last known network address (host:port) for direct connection.
     /// Updated after each successful sync. Used when mDNS is unavailable.
     pub last_address: Option<String>,
@@ -98,7 +142,8 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address, endpoint_id, unpaired_by_peer_at_ms
+                  device_name, remote_device_name, last_address, endpoint_id,
+                  unpaired_by_peer_at_ms
            FROM peer_refs WHERE peer_id = ?"#,
         peer_id,
     )
@@ -239,7 +284,8 @@ pub async fn get_peer_ref_by_endpoint_id(
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address, endpoint_id, unpaired_by_peer_at_ms
+                  device_name, remote_device_name, last_address, endpoint_id,
+                  unpaired_by_peer_at_ms
            FROM peer_refs WHERE endpoint_id = ? AND peer_id != ''"#,
         endpoint_id,
     )
@@ -335,7 +381,8 @@ pub async fn list_peer_refs(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError>
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at, streamed_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address, endpoint_id, unpaired_by_peer_at_ms
+                  device_name, remote_device_name, last_address, endpoint_id,
+                  unpaired_by_peer_at_ms
            FROM peer_refs
            WHERE peer_id != ''
            ORDER BY synced_at DESC"#,
@@ -706,7 +753,17 @@ pub async fn delete_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<(), App
     Ok(())
 }
 
-/// Update the human-readable name for a peer.
+/// Update the USER'S display override for a peer ([`PeerRef::device_name`]).
+///
+/// The local half of the #4298 name pair, and the only writer of that column.
+/// Passing `None` clears the override, which — since 0114 — falls back to the
+/// name the peer supplied over the wire ([`update_remote_device_name`]) rather
+/// than to a truncated peer id.
+///
+/// Returns [`AppError::NotFound`] if `peer_id` does not exist: the caller is a
+/// user acting on a row they can see, so a missing row is a real error here (in
+/// deliberate contrast to [`update_remote_device_name`], which is driven by an
+/// unauthenticated wire claim).
 pub async fn update_device_name(
     pool: &SqlitePool,
     peer_id: &str,
@@ -725,6 +782,80 @@ pub async fn update_device_name(
         return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
     }
     Ok(())
+}
+
+/// Record the name a peer told us it is called ([`PeerRef::remote_device_name`],
+/// migration 0114, #4298).
+///
+/// Returns `true` when the stored value actually changed, `false` when it was
+/// already exactly this — or when no row exists for `peer_id`.
+///
+/// # `None` is expressible here and unreachable from production
+///
+/// The parameter is `Option<&str>` because that is the column's type and a
+/// setter that could not express the column's full range would be the odd one
+/// out among its neighbours. But the sole production caller — the responder's
+/// post-bind name block — reaches this only inside `if let Some(name) =
+/// offered_device_name`, so it never passes `None`. A peer that stops sending a
+/// name (an older build, or a boot where the hostname could not be read) leaves
+/// whatever it last said standing.
+///
+/// That is deliberate, not an oversight to be closed: the alternative is that
+/// one downgraded session blanks a device list back to truncated UUIDs, and a
+/// name that is a session stale is worth more to a user than no name at all.
+/// The `None` arm stays exercised by the store tests below, which is where the
+/// clearing behaviour is pinned in case a caller ever wants it.
+///
+/// # Why unchanged is a no-op rather than an idempotent write
+///
+/// A peer re-advertises its name on every session, forever. The overwhelmingly
+/// common case is that it has not changed, so the honest shape is a read
+/// followed by a write only on a transition: otherwise this is one `UPDATE` per
+/// peer per session that records nothing new. Making it conditional also makes
+/// the return value meaningful — the caller logs a rename once, instead of on
+/// every tick.
+///
+/// # Why a missing row is `false` and not [`AppError::NotFound`]
+///
+/// Same reasoning as [`mark_unpaired_by_peer`], for the same reason: the input
+/// is an unauthenticated claim from the wire, and "we hold no row for this
+/// device" is the normal answer for a stranger — a joiner mid-pairing dials
+/// every discovered device (#3502/#3505). `WHERE peer_id = ?` matching nothing
+/// is the discriminator, not a lookup that failed.
+///
+/// # What this does NOT touch
+///
+/// [`PeerRef::device_name`]. The user's override outranks the peer's claim and
+/// is never written from here; that separation is the whole point of the two
+/// columns (see the field docs).
+pub async fn update_remote_device_name(
+    pool: &SqlitePool,
+    peer_id: &str,
+    remote_device_name: Option<&str>,
+) -> Result<bool, AppError> {
+    let current: Option<Option<String>> = sqlx::query_scalar!(
+        "SELECT remote_device_name FROM peer_refs WHERE peer_id = ?",
+        peer_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    // No row: a stranger, or a peer we never bound. Nothing to record.
+    let Some(current) = current else {
+        return Ok(false);
+    };
+    if current.as_deref() == remote_device_name {
+        return Ok(false);
+    }
+
+    let result = sqlx::query!(
+        "UPDATE peer_refs SET remote_device_name = ? WHERE peer_id = ?",
+        remote_device_name,
+        peer_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Update the last known network address for a peer.
@@ -949,6 +1080,75 @@ pub async fn clear_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
     .execute(pool)
     .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// This device's own name (#4298)
+// ---------------------------------------------------------------------------
+
+/// `app_settings` key holding THIS device's own name — the value advertised to
+/// peers in `HeadExchange` and stored by each of them as
+/// [`PeerRef::remote_device_name`] (#4298).
+///
+/// # Why `app_settings` and not a constant the sync layer reads directly
+///
+/// The name is the OS hostname, and the only cross-platform way to obtain it in
+/// this app is `tauri_plugin_os::hostname()`, which lives in the Tauri app
+/// crate. `agaric-sync` must not gain a `tauri` dependency for one string, so
+/// the app writes the value here at boot and the sync layer reads it back off
+/// the pool it already holds. That is the same shape the pending-pairing marker
+/// uses to get a value from a command handler to the daemon
+/// ([`PENDING_PAIRING_KEY`]) — a key/value row is the established seam between
+/// the two.
+///
+/// It is deliberately NOT part of `peer_refs`: that table is one row per
+/// *remote* device, and this is a fact about the local one.
+const LOCAL_DEVICE_NAME_KEY: &str = "sync.local_device_name";
+
+/// Record this device's own name, to be advertised to peers (#4298).
+///
+/// Written at every app boot from the OS hostname rather than once on first
+/// run: a hostname is user-editable and does change (a laptop renamed in system
+/// settings, a phone renamed in Android's about screen), and a name pinned at
+/// first launch would be wrong on every device that has ever been renamed, with
+/// no path back — nothing else would ever rewrite it. Re-reading it each boot
+/// costs one `UPSERT` per launch and makes a rename propagate on the next sync.
+///
+/// The value is stored verbatim; the wire clamp
+/// (`sync_protocol::types::clamp_device_name`) is applied on send, where the
+/// bound belongs, so this row keeps saying what the OS actually reports.
+pub async fn set_local_device_name(pool: &SqlitePool, device_name: &str) -> Result<(), AppError> {
+    let now = crate::db::now_ms();
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             updated_at = excluded.updated_at",
+        LOCAL_DEVICE_NAME_KEY,
+        device_name,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Read this device's own name for advertisement in `HeadExchange` (#4298).
+///
+/// `None` when the marker is absent (a boot in which the hostname could not be
+/// read, or a headless test harness that never wrote one) or empty. Both mean
+/// the same thing to the caller — advertise no name — so they are not
+/// distinguished, and a peer receiving no name simply keeps whatever it already
+/// had.
+pub async fn get_local_device_name(pool: &SqlitePool) -> Result<Option<String>, AppError> {
+    let value: Option<String> = sqlx::query_scalar!(
+        "SELECT value FROM app_settings WHERE key = ?",
+        LOCAL_DEVICE_NAME_KEY,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(value.filter(|v| !v.trim().is_empty()))
 }
 
 // ===========================================================================
@@ -2469,6 +2669,186 @@ mod tests {
                 .unpaired_by_peer_at_ms
                 .is_some(),
             "the device list's own query must carry the flag, or the UI cannot render it"
+        );
+    }
+
+    // ── remote_device_name / local device name (#4298) ──────────────────
+
+    /// The peer-supplied name is persisted and readable through the query the
+    /// device list actually uses.
+    #[tokio::test]
+    async fn remote_device_name_round_trips_through_list_peer_refs_4298() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "PEER4298").await.unwrap();
+
+        assert!(
+            update_remote_device_name(&pool, "PEER4298", Some("javier-thinkpad"))
+                .await
+                .unwrap(),
+            "the first name a peer supplies is a change and must report as one"
+        );
+
+        let listed = list_peer_refs(&pool).await.unwrap();
+        let peer = listed
+            .iter()
+            .find(|p| p.peer_id == "PEER4298")
+            .expect("PEER4298 must be listed");
+        assert_eq!(
+            peer.remote_device_name.as_deref(),
+            Some("javier-thinkpad"),
+            "the device list's own query must carry the peer-supplied name, or the UI \
+             cannot fall back to it"
+        );
+        assert_eq!(
+            peer.device_name, None,
+            "a peer-supplied name must never populate the user's override column"
+        );
+    }
+
+    /// A peer re-advertises its name on every session, forever. Re-recording an
+    /// unchanged name must not write — otherwise this is one UPDATE per peer per
+    /// session that records nothing — and the return value is what lets the
+    /// caller log a rename once instead of every tick.
+    #[tokio::test]
+    async fn recording_an_unchanged_remote_device_name_is_a_no_op_4298() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "PEER4298B").await.unwrap();
+
+        assert!(
+            update_remote_device_name(&pool, "PEER4298B", Some("pixel-8"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !update_remote_device_name(&pool, "PEER4298B", Some("pixel-8"))
+                .await
+                .unwrap(),
+            "re-recording the same name must report no change"
+        );
+        assert!(
+            update_remote_device_name(&pool, "PEER4298B", Some("pixel-8-pro"))
+                .await
+                .unwrap(),
+            "a peer renamed on its own machine must propagate on its next session"
+        );
+        // `None` clears the column — a property of this setter, NOT a transition
+        // production performs. The responder short-circuits on a missing name
+        // (`if let Some(name) = offered_device_name`) precisely so a peer that
+        // downgrades, or boots once without a readable hostname, cannot blank a
+        // device list back to truncated UUIDs. Pinned here so the arm has a
+        // defined meaning if a caller ever does want it.
+        assert!(
+            update_remote_device_name(&pool, "PEER4298B", None)
+                .await
+                .unwrap(),
+            "passing None must clear the column back to NULL"
+        );
+        assert!(
+            !update_remote_device_name(&pool, "PEER4298B", None)
+                .await
+                .unwrap(),
+            "clearing an already-clear column must report no change"
+        );
+    }
+
+    /// The input is an unauthenticated claim from the wire and "we hold no row
+    /// for this device" is the normal answer for a stranger — a joiner
+    /// mid-pairing dials every discovered device (#3502/#3505). That must be
+    /// `false`, not an error, exactly as `mark_unpaired_by_peer` decided.
+    #[tokio::test]
+    async fn a_stranger_supplying_a_name_records_nothing_4298() {
+        let (pool, _dir) = test_pool().await;
+        assert!(
+            !update_remote_device_name(&pool, "NEVER-PAIRED", Some("attacker"))
+                .await
+                .unwrap(),
+            "a peer we hold no row for must record nothing and must not error"
+        );
+    }
+
+    /// The core of the two-column design: a name arriving from the wire must
+    /// never touch the name the user typed. If it could, a peer's next sync
+    /// would silently undo a rename — the one outcome a rename feature must not
+    /// produce.
+    #[tokio::test]
+    async fn a_peer_supplied_name_never_overwrites_the_user_override_4298() {
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "PEER4298C").await.unwrap();
+        update_device_name(&pool, "PEER4298C", Some("Javier's Phone"))
+            .await
+            .unwrap();
+
+        update_remote_device_name(&pool, "PEER4298C", Some("pixel-8"))
+            .await
+            .unwrap();
+
+        let peer = get_peer_ref(&pool, "PEER4298C").await.unwrap().unwrap();
+        assert_eq!(
+            peer.device_name.as_deref(),
+            Some("Javier's Phone"),
+            "the user's override must survive a peer advertising its own name"
+        );
+        assert_eq!(
+            peer.remote_device_name.as_deref(),
+            Some("pixel-8"),
+            "and the peer's claim must still be recorded, beside it"
+        );
+
+        // Clearing the override is what reveals the peer's name — the behaviour
+        // `update_peer_name`'s doc comment has always claimed and, before 0114,
+        // could not deliver, because nothing ever supplied a name.
+        update_device_name(&pool, "PEER4298C", None).await.unwrap();
+        let peer = get_peer_ref(&pool, "PEER4298C").await.unwrap().unwrap();
+        assert_eq!(peer.device_name, None);
+        assert_eq!(
+            peer.remote_device_name.as_deref(),
+            Some("pixel-8"),
+            "clearing the override must fall back to the device-supplied value, not to \
+             a truncated peer id"
+        );
+    }
+
+    /// This device's own name round-trips through `app_settings`, and is
+    /// overwritten on every boot so a hostname change propagates.
+    #[tokio::test]
+    async fn local_device_name_round_trips_and_refreshes_4298() {
+        let (pool, _dir) = test_pool().await;
+        assert_eq!(
+            get_local_device_name(&pool).await.unwrap(),
+            None,
+            "before the app publishes one, there is no local name to advertise"
+        );
+
+        set_local_device_name(&pool, "javier-thinkpad")
+            .await
+            .unwrap();
+        assert_eq!(
+            get_local_device_name(&pool).await.unwrap().as_deref(),
+            Some("javier-thinkpad")
+        );
+
+        set_local_device_name(&pool, "javier-framework")
+            .await
+            .unwrap();
+        assert_eq!(
+            get_local_device_name(&pool).await.unwrap().as_deref(),
+            Some("javier-framework"),
+            "the value is refreshed each boot, so a machine renamed in system settings \
+             stops advertising its old name"
+        );
+    }
+
+    /// A blank hostname is not a name. Reading it back as `None` is what keeps a
+    /// device whose OS reports nothing from blanking its own row in every peer's
+    /// device list.
+    #[tokio::test]
+    async fn a_blank_local_device_name_reads_as_absent_4298() {
+        let (pool, _dir) = test_pool().await;
+        set_local_device_name(&pool, "   ").await.unwrap();
+        assert_eq!(
+            get_local_device_name(&pool).await.unwrap(),
+            None,
+            "a whitespace-only hostname must read as no name at all"
         );
     }
 }
