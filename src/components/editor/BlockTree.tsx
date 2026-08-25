@@ -626,7 +626,7 @@ export function BlockTree({
     rootParentId,
     pageStore,
     rovingEditor,
-    pagesListRef: resolve.pagesListRef,
+    registerCreatedPage: resolve.registerCreatedPage,
     t,
   })
 

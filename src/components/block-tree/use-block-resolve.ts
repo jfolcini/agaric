@@ -50,11 +50,51 @@ export interface UseBlockResolveReturn {
   searchBlockRefs: (query: string) => Promise<PickerItem[]>
   onCreatePage: (label: string) => Promise<string>
   onCreateTag: (name: string) => Promise<string>
+  /**
+   * #4319 — the ONLY sanctioned way for a page-creation site OUTSIDE this
+   * hook (today: the date picker's `handleDateMode`) to tell the picker
+   * cache about a page it just created. Wraps `recordCreatedRow`, so the
+   * append and the generation bump cannot be taken apart: a caller cannot
+   * do one without the other.
+   *
+   * The date picker used to be handed `pagesListRef` itself and appended to
+   * it directly — which is how it ended up the one creation site carrying
+   * NEITHER invariant. It receives this instead.
+   *
+   * How strong the guarantee is, precisely: for a site handed ONLY this
+   * callback — which is what `UseBlockDatePickerParams` now passes — it is
+   * a compile-time one, because that site has no reference to
+   * `pagesListRef` to append to. It is NOT compile-time for a component
+   * that calls `useBlockResolve()` itself: `pagesListRef` / `tagsListRef`
+   * are on this interface (for tests, see their own notes) and
+   * `React.RefObject.current` is mutable, so `resolve.pagesListRef.current`
+   * can still be reassigned or `.push`ed by hand. Nothing does today
+   * (`BlockTree` reads neither ref), and nothing should — but that is
+   * convention, the same convention that holds inside this hook, not a
+   * barrier. Narrow it by moving the two refs behind a test-only accessor
+   * if a production consumer ever appears.
+   */
+  registerCreatedPage: (row: { id: string; title: string }) => void
   /** Ref to the pages list cache for search. Lazily filled by
-   *  `searchPagesViaCache`, appended to by `onCreatePage` and the date
-   *  picker, cleared on space switch (#732), and kept current across renames
-   *  and deletes by the name-change bus (#4007). */
+   *  `searchPagesViaCache`, written by `onCreatePage` /
+   *  `registerCreatedPage` through `recordCreatedRow` (never appended to
+   *  directly), cleared on space switch (#732), and kept current across
+   *  renames and deletes by the name-change bus (#4007). */
   pagesListRef: React.RefObject<Array<{ id: string; title: string }>>
+  /**
+   * Ref to the tags list cache for search — `pagesListRef`'s sibling, with
+   * the same lifecycle (lazy fill in `searchTags`, `onCreateTag` write via
+   * `recordCreatedRow`, space-switch clear, name-change-bus patching).
+   *
+   * #4337 item 4 — exposed for the same reason `pagesListRef` is. Without
+   * it the tags-side cache tests could only assert through `searchTags`'s
+   * IPC call counts, so they failed for reasons other than the guard they
+   * pinned. Read/seed access only BY CONVENTION: creations go through
+   * `onCreateTag`. Exposing it does widen what production code *could*
+   * reach — see `registerCreatedPage` for exactly how far the #4319
+   * guarantee extends, and what to do if a production consumer appears.
+   */
+  tagsListRef: React.RefObject<TagCacheRow[]>
 }
 
 // ── searchPages strategy helpers ────────────────────────────────────────
@@ -270,19 +310,23 @@ async function searchPagesViaCache(
   // placeholder is recomputed per call rather than cached at module scope,
   // because `untitledOr` reads the live i18next instance (#4153) and
   // `changeLanguage` can fire without a remount.
-  const foldedPlaceholder = q ? foldedUntitledPlaceholder() : ''
-  const foldedQuery = q ? foldForSearch(q) : ''
-  const blankRowsMatch = matchesBlankRowFolded(foldedQuery, foldedPlaceholder)
-  const filtered = q
-    ? [
-        ...matchSorter(
-          source.filter((p) => p.title.trim() !== ''),
-          q,
-          { keys: ['title'] },
-        ),
-        ...source.filter((p) => p.title.trim() === '' && blankRowsMatch),
-      ]
-    : source
+  //
+  // #4337 items 1 and 2 — ONE pass over `source`, and ONE statement of the
+  // blank/non-blank branch (`isBlankPageRow`, inside `partitionPageRows`).
+  // This used to be two `.filter` sweeps over the whole space's page list
+  // per keystroke, each re-deriving that branch from `p.title.trim()` —
+  // the same rule written twice here and twice more in `searchPagesViaFts`,
+  // with nothing keeping the four in step.
+  let filtered = source
+  if (q) {
+    const blankRowsMatch = matchesBlankRowFolded(foldForSearch(q), foldedUntitledPlaceholder())
+    const { real, blank } = partitionPageRows(
+      source,
+      () => true,
+      () => blankRowsMatch,
+    )
+    filtered = [...matchSorter(real, q, { keys: ['title'] }), ...blank]
+  }
   // Copy rather than hand back `pagesListRef.current`'s own objects — the
   // dispatcher and the cache seed both read these, and aliasing the ref's
   // entries would let a future consumer mutate the lazily-filled cache.
@@ -341,6 +385,86 @@ function foldedUntitledPlaceholder(): string {
 }
 
 /**
+ * The ONE statement of the picker's blank/non-blank page-row branch.
+ *
+ * #4337 item 1 — this rule used to be restated at every site that needed
+ * it: twice in `searchPagesViaCache`'s two `.filter` sweeps, twice in
+ * `searchPagesViaFts`'s, and once more (in a different form —
+ * `foldForSearch(title)` against a raw `''`) in
+ * `appendCreatePageOptionIfNeeded`. Five statements of one rule, free to
+ * diverge — and #4321 is what it looks like when they do.
+ *
+ * TRIMMED-empty, not `=== ''`, matching `untitledOr`: a whitespace-only
+ * title displays the placeholder, so it must be MATCHED as the placeholder
+ * too. `''` alone would leave `'   '` searchable by neither its own
+ * (unfoldable) whitespace nor the "Untitled" the user can see.
+ */
+function isBlankPageRow(title: string): boolean {
+  return title.trim() === ''
+}
+
+/**
+ * The folded text a page row is MATCHED BY — a blank row by the "Untitled"
+ * placeholder it displays (#4152), a real row by its own title.
+ *
+ * #4321 — `appendCreatePageOptionIfNeeded` used to fold the RAW title here
+ * while the filter folded the placeholder, so the two disagreed about what
+ * a blank row's name is. Querying "Untitled" surfaced the matching blank
+ * page AND offered to create a second one beside it, because
+ * `foldForSearch('')` never equals `foldForSearch('untitled')` and the
+ * exact-match suppression therefore never fired. Both questions — "does
+ * this row match the query" and "is the query already satisfied by this
+ * row" — now read a row's name through this one function, so they can
+ * disagree about the ANSWER (prefix vs. equality, deliberately) but never
+ * about the TEXT.
+ *
+ * `foldedPlaceholder` is passed in rather than computed here because the
+ * blank branch takes no per-row input and callers are per-keystroke loops:
+ * see `foldedUntitledPlaceholder` for why it is recomputed per call and not
+ * cached at module scope.
+ */
+function foldedRowMatchText(title: string, foldedPlaceholder: string): string {
+  return isBlankPageRow(title) ? foldedPlaceholder : foldForSearch(title)
+}
+
+/**
+ * The single pass both filter paths make over a space's cached page list,
+ * splitting it into the real-content rows and the blank rows.
+ *
+ * The two buckets are kept apart because blank rows must NOT go through
+ * `matchSorter` and must NOT be able to outrank a real match — see
+ * `matchesBlankRowFolded`'s docstring for the crowd-out this prevents. The
+ * caller ranks `real` however it likes and concatenates `blank` after it.
+ *
+ * #4337 item 2 — one pass, two buckets, at most one `.trim()` per row.
+ * `searchPagesViaFts` used to allocate three intermediate arrays over the
+ * whole list per keystroke (a `candidates` array plus a `.filter` per
+ * bucket) and `searchPagesViaCache` two, with up to three `.trim()` calls
+ * per row between them.
+ *
+ * Both admit-predicates take the whole row, not just its title, because the
+ * FTS path also has to drop rows already returned by FTS — from BOTH
+ * buckets, which is exactly the kind of half-applied filter a per-bucket
+ * `.filter` chain invites.
+ */
+function partitionPageRows(
+  rows: readonly PageRow[],
+  admitRealRow: (row: PageRow) => boolean,
+  admitBlankRow: (row: PageRow) => boolean,
+): { real: PageRow[]; blank: PageRow[] } {
+  const real: PageRow[] = []
+  const blank: PageRow[] = []
+  for (const row of rows) {
+    if (isBlankPageRow(row.title)) {
+      if (admitBlankRow(row)) blank.push(row)
+    } else if (admitRealRow(row)) {
+      real.push(row)
+    }
+  }
+  return { real, blank }
+}
+
+/**
  * Long-query strategy: FTS5 search filtered to pages. When FTS returns fewer
  * than 5 results and the preloaded cache is non-empty, supplements the result
  * set from cache (deduped, capped at 20 total).
@@ -383,6 +507,18 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
     // interchangeable here and the render site the sole owner of the string.
     .map((b) => ({ id: b.id, title: b.content ?? '' }))
 
+  // #4337 item 3 — KNOWN LIMITATION, deliberately NOT fixed here. This
+  // early return also means a cold cache defeats the placeholder search on
+  // this path: a long query ("untitled") finds no blank row until something
+  // has warmed `pagesListRef`, because unlike `searchPagesViaCache` this
+  // path reads the cache but never fills it. In practice the picker opens
+  // with an empty query and warms it first, so #4152's headline case is
+  // reliably fixed on the short-query path and best-effort on this one —
+  // but an invalidation landing mid-typing reopens the window. Fixing it
+  // means giving this path a fill of its own (and the fill's space /
+  // generation / sequence guards with it), which is a change to the
+  // caching contract rather than to the partitioning #4337 items 1-2 are
+  // about; it is left for a follow-up.
   if (matches.length >= 5 || pagesListRef.current.length === 0) {
     return matches
   }
@@ -410,22 +546,19 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   // can't diverge on the rule: real-content matches first, blank rows only
   // fill the slots real matches don't use.
   //
-  // `foldedPlaceholder` is computed once here, and the blank-row comparison
+  // The placeholder is folded once here, and the blank-row comparison
   // itself (which takes no per-row input) is hoisted to a single value
-  // evaluated once rather than once per blank row inside
+  // (`blankRowsMatch`) evaluated once rather than once per blank row inside
   // `matchesBlankRowFolded`. See `foldedUntitledPlaceholder`'s comment for
   // why the placeholder is recomputed per call rather than cached at module
   // scope.
-  const foldedPlaceholder = foldedUntitledPlaceholder()
-  const foldedQuery = foldForSearch(q)
-  const blankRowsMatch = matchesBlankRowFolded(foldedQuery, foldedPlaceholder)
-  const candidates = pagesListRef.current.filter((p) => !ftsIds.has(p.id))
-  const cacheMatches = [
-    ...candidates.filter((p) => p.title.trim() !== '' && matchesSearchFolded(p.title, q)),
-    ...candidates.filter((p) => p.title.trim() === '' && blankRowsMatch),
-  ]
-    .slice(0, 10)
-    .map((p) => ({ id: p.id, title: p.title }))
+  const blankRowsMatch = matchesBlankRowFolded(foldForSearch(q), foldedUntitledPlaceholder())
+  const { real, blank } = partitionPageRows(
+    pagesListRef.current,
+    (p) => !ftsIds.has(p.id) && matchesSearchFolded(p.title, q),
+    (p) => blankRowsMatch && !ftsIds.has(p.id),
+  )
+  const cacheMatches = [...real, ...blank].slice(0, 10).map((p) => ({ id: p.id, title: p.title }))
   return [...matches, ...cacheMatches].slice(0, 20)
 }
 
@@ -551,14 +684,34 @@ function appendCreatePageOptionIfNeeded(
   // RAW query, so it does not cover a non-empty query that FOLDS to empty.
   // `foldForSearch` strips `U+0300..U+036F`, so a combining-mark-only query
   // (`.trim()` does not remove combining marks) survives the length guard and
-  // folds to `''` — which then compares EQUAL to the `''` title #4138 now
-  // seeds for a NULL-content page, suppressing Create and leaving the picker
-  // with nothing at all (nothing matches such a query either). A query that
-  // folds away entirely carries no name to match on, so it can never be an
-  // "exact match"; offer Create instead.
+  // folds to `''`, and a title made only of combining marks folds to `''`
+  // too — so without this guard such a query would compare EQUAL to such a
+  // row, suppressing Create and leaving the picker with nothing at all
+  // (nothing matches such a query either). A query that folds away entirely
+  // carries no name to match on, so it can never be an "exact match"; offer
+  // Create instead. (The guard used to also be what stopped a folded-empty
+  // query matching the `''` title #4138 seeds for a NULL-content page; since
+  // #4321 that row's match text is the placeholder, so that half is
+  // structurally impossible rather than merely guarded.)
+  //
+  // #4321 — read each row's name through `foldedRowMatchText`, the SAME
+  // match text the filter above uses, so "does this row match" and "is this
+  // query already satisfied by a row" cannot disagree about what a blank
+  // row is called. Folding the RAW title here while the filter folded the
+  // placeholder is what made the picker offer "Create new page: Untitled"
+  // directly beneath the existing blank page it had just matched.
+  //
+  // The `PickerItem` arm (`p.label`, used when `pagesListRef` is cold and
+  // `matches` is the only source available) needs no substitution of its
+  // own: `makePagePickerItem` has already run the label through
+  // `untitledOr`, so a blank row arrives here as the literal placeholder
+  // and `foldedRowMatchText` passes it through unchanged.
+  const foldedPlaceholder = foldedUntitledPlaceholder()
   const exactMatch =
     qFolded !== '' &&
-    allSource.some((p) => foldForSearch('title' in p ? p.title : p.label) === qFolded)
+    allSource.some(
+      (p) => foldedRowMatchText('title' in p ? p.title : p.label, foldedPlaceholder) === qFolded,
+    )
   if (exactMatch) return
   matches.push({
     id: '__create__',
@@ -684,6 +837,56 @@ function applyTagNameChange(list: TagCacheRow[], change: NameChange): TagCacheRo
   return list.map((t) => (t.tag_id === id ? { ...t, name } : t)).toSorted(compareTagRows)
 }
 
+/**
+ * The append+bump pair EVERY creation site owes the picker caches, in one
+ * place so that no call site can perform half of it.
+ *
+ * Two independent invariants, learned separately and each easy to miss:
+ *
+ *  1. Bump the generation (#4275 item 1). A create is a name change. A fill
+ *     issued BEFORE the create resolves after it holding a pre-create
+ *     snapshot that passes the space, generation and #4270 sequence guards
+ *     — all three were captured after that fill was issued, and none of
+ *     them knows a row appeared — and overwrites the cache, so the
+ *     just-created row vanishes from the picker until something else
+ *     invalidates.
+ *
+ *  2. Append ONLY into an already-filled cache (#4008 review notes 1 / 6).
+ *     An EMPTY list is not "a space with no pages/tags", it is the "not
+ *     fetched for this space yet" state that makes the lazy fill re-fetch.
+ *     Appending there flips it to "filled" with a single row and latches
+ *     that one row as the whole space for the rest of the session. #4007
+ *     widened the window: the caches now also empty on every sync / MCP
+ *     invalidation, every restore, and any delete that drops the last row,
+ *     so "invalidate, type a long name, Create" is an ordinary sequence
+ *     that reaches an empty cache at create time.
+ *
+ * They compose, which is why they belong together and why the bump is
+ * unconditional and comes FIRST: skipping the append is only safe BECAUSE
+ * the bump forces the next read to re-fetch, and the empty-cache case is
+ * precisely the one where a racing fill is the only thing that could still
+ * hide the new row. A site that appends without bumping is the #4319 bug; a
+ * site that bumps without the guard is the #4008 latch.
+ *
+ * #4319 — this lived as two copy-pasted lines in `onCreatePage` and
+ * `onCreateTag`, and a third creation site (the date picker's
+ * `handleDateMode`, added later) carried NEITHER: it appended
+ * unconditionally and never bumped. That is the recurring shape — "a new
+ * creation site does not inherit the invariants the existing ones learned"
+ * — so the pair is one function now, and the out-of-hook site reaches it
+ * only through `registerCreatedPage`, never through a raw ref.
+ */
+function recordCreatedRow<Row>(
+  listRef: React.RefObject<Row[]>,
+  generationRef: GenerationRef,
+  row: Row,
+): void {
+  generationRef.current += 1
+  if (listRef.current.length > 0) {
+    listRef.current = [...listRef.current, row]
+  }
+}
+
 export function useBlockResolve(): UseBlockResolveReturn {
   // Subscribe to version so the component re-renders when the cache updates,
   // keeping cacheRef.current fresh for the stable callbacks below.
@@ -695,7 +898,8 @@ export function useBlockResolve(): UseBlockResolveReturn {
 
   // Local ref for pagesListRef used in searchPages caching. Lazily
   // filled by `searchPagesViaCache` (scoped to the space active at
-  // call-time) and appended to by `onCreatePage` and the date picker.
+  // call-time) and written by `onCreatePage` and the date picker's
+  // `registerCreatedPage`, both through `recordCreatedRow`.
   const pagesListRef = useRef<Array<{ id: string; title: string }>>([])
 
   // #3277 — mirrors `pagesListRef`: `searchTags` used to call
@@ -727,6 +931,18 @@ export function useBlockResolve(): UseBlockResolveReturn {
   // a new event kind) for a cost that is small and self-healing on the very
   // next keystroke. Split them only if the extra round trips are ever
   // measured to matter.
+  //
+  // #4337 item 5 — stating the cost the recorded decision above leaves
+  // implicit: the create sites bump this too (via `recordCreatedRow`), and
+  // a user creates pages and tags far more often than they rename or delete
+  // them. So the over-rejection is not a rare bus-event nuisance — every
+  // page created aborts an in-flight `tagsListRef` fill, and every tag
+  // created aborts an in-flight `pagesListRef` fill, leaving THAT call's
+  // picker rendering empty for one keystroke before it re-fetches. Still
+  // accepted (the alternative is two counters that can drift apart, for a
+  // cost that self-heals on the very next keystroke), but it is a
+  // user-visible flicker rather than a round trip, and it is the reason to
+  // revisit if pickers are ever observed to flicker.
   const nameChangeGenerationRef = useRef(0)
 
   // #4270 — per-list monotonic sequence counters gating a fill's write on
@@ -1113,44 +1329,25 @@ export function useBlockResolve(): UseBlockResolveReturn {
       const newId = unwrap(await commands.createPageInSpace(null, label, currentSpaceId))
       // Populate resolve cache so the link chip shows the title immediately
       useResolveStore.getState().set(newId, label, false)
-      // #4275 item 1 — bump the generation, exactly like the name-change-bus
-      // subscriber does for a rename/removal/invalidation. Without this, a
-      // create landing WHILE `pagesListRef` is empty and a fill is in flight
-      // was silently lost: the #4008 guard just below only appends into an
-      // ALREADY-filled cache, so an empty-cache create skips the append —
-      // and the racing fill's pre-create snapshot then passed both the
-      // space and generation guards in `searchPagesViaCache` and won,
-      // leaving the new page absent from the picker until something else
-      // invalidated. Bumping here makes that racing fill's snapshot fail
-      // the generation guard instead, so it is discarded (see the
-      // "guard rejected this fetch" branch) and the NEXT read re-fetches
-      // with this create included.
-      nameChangeGenerationRef.current += 1
-      // #4008 review note 1 — append ONLY into an already-filled cache, the
-      // same guard `onCreateTag` carries below. An EMPTY `pagesListRef` is not
-      // "a space with no pages", it is the "not fetched for this space yet"
-      // state that makes `searchPagesViaCache` re-fetch; appending there flips
-      // it to "filled" with a single row and latches that one page as the
-      // whole space for the rest of the session.
-      //
-      // #4007 widened the window this needs: before, the cache emptied only on
-      // a space switch, and the switch is immediately followed by a fill.
-      // Now it also empties on every sync / MCP invalidation, every restore,
-      // and any delete that drops the last row — and a >2-char query takes the
-      // FTS path, which reads the cache but never fills it. So "invalidation,
-      // then type a long name, then Create new page" is an ordinary sequence
-      // that reaches an empty cache at create time.
-      //
-      // Skipping the append costs nothing: the next short query re-fetches
-      // from the backend, which has already committed this page (awaited above).
-      if (pagesListRef.current.length > 0) {
-        pagesListRef.current = [...pagesListRef.current, { id: newId, title: label }]
-      }
+      // #4319 — the generation bump (#4275 item 1) and the fill-guarded
+      // append (#4008 review note 1) as ONE call, so this site cannot drift
+      // from `onCreateTag`'s or the date picker's. See `recordCreatedRow`
+      // for both invariants and why they compose.
+      recordCreatedRow(pagesListRef, nameChangeGenerationRef, { id: newId, title: label })
       return newId
     } catch (err) {
       logger.error('useBlockResolve', 'onCreatePage failed', { label }, err)
       throw err
     }
+  }, [])
+
+  // #4319 — the only handle a page-creation site OUTSIDE this hook gets on
+  // the page cache. Everything that makes an append correct lives in
+  // `recordCreatedRow`; a caller holding this function cannot skip half of
+  // it, and cannot reach `pagesListRef` to append by hand instead. See
+  // `UseBlockResolveReturn['registerCreatedPage']`.
+  const registerCreatedPage = useCallback((row: { id: string; title: string }): void => {
+    recordCreatedRow(pagesListRef, nameChangeGenerationRef, row)
   }, [])
 
   const onCreateTag = useCallback(async (name: string): Promise<string> => {
@@ -1176,36 +1373,22 @@ export function useBlockResolve(): UseBlockResolveReturn {
       )
       // Populate resolve cache so the tag chip shows the name immediately
       useResolveStore.getState().set(block.id, name, false)
-      // #4275 item 1 — bump the generation. Mirrors `onCreatePage` above:
-      // an empty `tagsListRef` skips the append below (#4008 review note 6),
-      // so without this an in-flight `searchTags` fill's pre-create snapshot
-      // could win the race and hide the just-created tag until something
-      // else invalidated. See `onCreatePage`'s comment for the full mechanism.
-      nameChangeGenerationRef.current += 1
-      // #3277 finding 1 — mirror `onCreatePage`'s `pagesListRef` append.
-      // Without this, a tag created through the SAME `@`-picker session
-      // that already lazily filled `tagsListRef` stayed unfindable by that
-      // picker: `searchTags` only re-fetches when the cache is empty, so a
-      // newly created tag never surfaced until a space switch cleared the
-      // cache (the #732 subscriber above). `usage_count: 0` is correct —
-      // the tag isn't yet applied to any block.
+      // #3277 finding 1 — without the append, a tag created through the SAME
+      // `@`-picker session that already lazily filled `tagsListRef` stayed
+      // unfindable by that picker: `searchTags` only re-fetches when the
+      // cache is empty, so a newly created tag never surfaced until a space
+      // switch cleared it (the #732 subscriber above). `usage_count: 0` is
+      // correct — the tag isn't yet applied to any block.
       //
-      // #4008 review note 6 — append ONLY into an already-filled cache. An
-      // EMPTY `tagsListRef` is not "a space with no tags", it is the
-      // "not fetched for this space yet" state that makes `searchTags`
-      // re-fetch on every call (deliberately, so a zero-tag space is never
-      // latched). Appending there would flip it to "filled" with a single
-      // entry and permanently suppress that re-fetch, hiding every tag
-      // created elsewhere — another window, a sync — for the rest of the
-      // session. Skipping the append costs nothing: the very next
-      // `searchTags` re-fetches from the backend, which has already
-      // committed this tag (the create above is awaited).
-      if (tagsListRef.current.length > 0) {
-        tagsListRef.current = [
-          ...tagsListRef.current,
-          { tag_id: block.id, name, usage_count: 0, updated_at: new Date().toISOString() },
-        ]
-      }
+      // #4319 — the bump (#4275 item 1) and the fill-guarded append (#4008
+      // review note 6) as ONE call, the same one `onCreatePage` makes. See
+      // `recordCreatedRow`.
+      recordCreatedRow(tagsListRef, nameChangeGenerationRef, {
+        tag_id: block.id,
+        name,
+        usage_count: 0,
+        updated_at: new Date().toISOString(),
+      })
       return block.id
     } catch (err) {
       logger.error('useBlockResolve', 'onCreateTag failed', { name }, err)
@@ -1223,6 +1406,8 @@ export function useBlockResolve(): UseBlockResolveReturn {
     searchBlockRefs,
     onCreatePage,
     onCreateTag,
+    registerCreatedPage,
     pagesListRef,
+    tagsListRef,
   }
 }

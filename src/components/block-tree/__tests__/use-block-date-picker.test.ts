@@ -40,7 +40,13 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDatePic
     rovingEditor: {
       editor: null,
     } as { editor: null },
-    pagesListRef: { current: [] as Array<{ id: string; title: string }> },
+    // #4319 — the hook is handed `useBlockResolve().registerCreatedPage`,
+    // not `pagesListRef`. It has no way to reach the picker cache except
+    // through this callback, which is where the generation bump and the
+    // "only append into an already-filled cache" guard live
+    // (`recordCreatedRow`). The invariants themselves are pinned in
+    // `use-block-resolve.test.ts`; these tests pin that this site uses it.
+    registerCreatedPage: vi.fn() as (row: { id: string; title: string }) => void,
     t: vi.fn((key: string) => key) as unknown as TFunction,
     ...overrides,
   }
@@ -375,21 +381,44 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.insertDateLinkFailed')
   })
 
-  it('updates pagesListRef when creating new page', async () => {
+  // #4319 — this used to append to a `pagesListRef` passed straight in, and
+  // so was the one creation site carrying neither the generation bump nor
+  // the empty-cache guard. It reports the create instead; everything that
+  // makes the append correct is `recordCreatedRow`'s.
+  it('hands the created date page to registerCreatedPage (#4319)', async () => {
     mockedInvoke.mockResolvedValueOnce([])
     mockedInvoke.mockResolvedValueOnce('NEW_PAGE')
-    const pagesListRef = { current: [] as Array<{ id: string; title: string }> }
-    const params = makeDefaultParams({ pagesListRef })
+    const registerCreatedPage = vi.fn()
+    const params = makeDefaultParams({ registerCreatedPage })
     const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
 
     await act(async () => {
       await result.current.handleDatePick(new Date(2025, 5, 1))
     })
 
-    expect(pagesListRef.current).toContainEqual({
+    expect(registerCreatedPage).toHaveBeenCalledTimes(1)
+    expect(registerCreatedPage).toHaveBeenCalledWith({
       id: 'NEW_PAGE',
       title: '2025-06-01',
     })
+  })
+
+  // The other arm: a create that did not happen must not be reported.
+  // Reporting one anyway would bump the shared generation for nothing,
+  // aborting whatever page or tag fill was in flight and blanking that
+  // picker (see `nameChangeGenerationRef`'s #4337 item 5 note).
+  it('does not call registerCreatedPage when an existing date page is reused (#4319)', async () => {
+    mockedInvoke.mockResolvedValueOnce([{ id: 'EXISTING_PAGE', content: '2025-06-01' }])
+    const registerCreatedPage = vi.fn()
+    const params = makeDefaultParams({ registerCreatedPage })
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 5, 1))
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('create_page_in_space', expect.anything())
+    expect(registerCreatedPage).not.toHaveBeenCalled()
   })
 })
 
