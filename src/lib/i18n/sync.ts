@@ -147,7 +147,7 @@ export const sync: Record<string, string> = {
   'device.unpairDeviceLabel': 'Unpair device {{name}}',
   'device.unpairButton': 'Unpair',
   'device.loadingMessage': 'Loading device information...',
-  'device.syncingMessage': 'Syncing with device {{id}}...',
+  'device.syncingMessage': 'Syncing with device {{name}}...',
   'device.syncingAllMessage': 'Syncing with all paired devices...',
   'device.syncErrorMessage': 'Sync error: {{error}}',
   'device.retryButton': 'Retry',

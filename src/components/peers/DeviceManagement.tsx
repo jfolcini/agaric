@@ -417,7 +417,7 @@ export function DeviceManagement(): React.ReactElement {
             {loading && !deviceId && t('device.loadingMessage')}
             {syncingPeerId &&
               t('device.syncingMessage', {
-                id: peerDisplayNameOrId(
+                name: peerDisplayNameOrId(
                   peers.find((p) => p.peer_id === syncingPeerId),
                   syncingPeerId,
                 ),
