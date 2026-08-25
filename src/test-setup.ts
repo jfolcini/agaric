@@ -6,11 +6,25 @@ import 'vitest-axe/extend-expect'
 import * as matchers from 'vitest-axe/matchers'
 
 import { takeUnstubbedInvokes } from '@/__tests__/helpers/invoke'
+import {
+  beginOnceResidueTest,
+  installOnceResidueTracking,
+  onceLeakMessage,
+  takeOnceLeaks,
+} from '@/__tests__/helpers/once-residue'
 import '@/lib/i18n'
 import { setLogLevel } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 
 expect.extend(matchers)
+
+// #4211 — instrument `vi.fn`/`vi.spyOn` BEFORE anything creates a mock, so the
+// once-queue ledger covers the shared `invoke` mock created by the
+// `vi.mock('@tauri-apps/api/core', …)` factory further down. `vi.mock` CALLS
+// are hoisted above this line, but their factories run lazily at the mocked
+// module's first import — which is after this setup file's body — so the
+// wrapping is in place by then.
+installOnceResidueTracking()
 
 // #3225 — fail the test if it called a Tauri command nobody stubbed.
 //
@@ -49,6 +63,37 @@ afterEach(() => {
         'to key stubs on the command name instead of call position.',
     )
   }
+})
+
+// #4211 — fail a test that consumes a `*Once` value queued (and never used)
+// by an EARLIER test, naming the line that queued it.
+//
+// `vi.clearAllMocks()` does not drain the once-queue (see
+// `@/__tests__/helpers/once-residue` for the mechanism and the two incidents
+// this comes from), so an unconsumed once-value is handed to whichever test in
+// this file calls the mock next — ahead of both the base implementation and
+// that test's own queued values. Without this the failure surfaces as an
+// unrelated `waitFor` timeout or a nonsense assertion, which is what made
+// #4040 cost a full review cycle.
+//
+// The guard fires on actual cross-test consumption rather than on residue
+// existing at teardown. Residue alone is not a defect: this file's own #4040
+// regression test in `BlockPropertyEditor.test.tsx` leaves residue on purpose
+// to prove its `beforeEach` `mockReset()` drains it, and a residue-at-teardown
+// check fails exactly that kind of already-correct code.
+//
+// REGISTRATION ORDER: this sits immediately after the strict-IPC block above,
+// so it runs immediately BEFORE it (`sequence.hooks: 'stack'` reverses
+// `afterEach` order) and therefore still runs AFTER RTL `cleanup()` — a throw
+// here cannot leak a rendered tree into the next test. It does pre-empt the
+// strict-IPC assertion for a test that also leaked; that is the intended
+// precedence, because a cross-test leak is the more misleading of the two.
+beforeEach(() => {
+  beginOnceResidueTest()
+})
+afterEach(() => {
+  const found = takeOnceLeaks()
+  if (found.length > 0) throw new Error(onceLeakMessage(found))
 })
 
 // Quiet the app logger in tests. It defaults to `debug` under
