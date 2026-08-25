@@ -215,6 +215,14 @@ fn announce_info(
 /// interface. Rather than announce nothing we fall back to `enable_addr_auto()`, which
 /// lets `mdns-sd` enumerate every routable interface: the wider announcement is
 /// accepted only when there is no narrower option.
+///
+/// That fallback is the only path here whose size is not bounded by us, which matters
+/// because `mdns-sd` 0.21.0 caps an outgoing packet at 1452 bytes (down from 8972). The
+/// record we build is one instance name, an SRV, a TXT of two short values (a `device_id`
+/// UUID and a 64-hex `endpoint_id`) and the filtered A-record set — nowhere near the cap,
+/// and upstream splits an oversized response across packets rather than dropping records.
+/// Reaching 1452 bytes via `enable_addr_auto()` would take on the order of eighty
+/// interfaces. Recorded so the next reader does not have to make the upstream trip.
 fn build_service_info(
     device_id: &str,
     endpoint_id: EndpointId,
@@ -492,10 +500,19 @@ pub enum MdnsDaemonSignal {
 ///
 /// So: log `Announced` as an announce that went out, never as an announce that arrived.
 ///
+/// Audited against the locked `mdns-sd` 0.21.0. 0.21.0 caps the outgoing packet at
+/// `MAX_PKT_DEFAULT` (1452 bytes, down from 8972), which rewrites the send path this
+/// paragraph rests on — so it was checked rather than assumed. The claim survives
+/// because `outgoing_addrs` is populated on `announce_service_on_intf` returning
+/// `Ok(true)`, and that is decided by `prepare_announce` yielding a response at all, not
+/// by how many datagrams `send_dns_outgoing` then splits it across. A cap that changes
+/// the packet *count* cannot empty the address set.
+///
 /// # How little `Error` proves — and why it maps to `Degraded`, not "mDNS is off"
 ///
-/// Audited against the locked `mdns-sd` 0.21.0 (re-verified at the 0.20.3 → 0.21.0
-/// bump; 0.21.0's cache-flush refactor did not move any of these):
+/// Audited against the locked `mdns-sd` 0.21.0, re-verified at the 0.20.3 → 0.21.0
+/// bump against all three of that release's changes — the cache-flush refactor, the
+/// outgoing packet-size cap, and the `flume` error re-exports. None moved any of these:
 ///
 /// * `DaemonEvent::Error` has exactly **one** emission site in the whole crate
 ///   (`service_daemon.rs`, `register_service` → `check_service_name_length`). It is not a
