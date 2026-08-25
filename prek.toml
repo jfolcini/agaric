@@ -38,7 +38,15 @@ hooks = [
     { id = "check-toml", stages = [
         "pre-commit",
     ] },
-    { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)", stages = [
+    # `.oxlintrc.json` is JSONC, not JSON: oxlint documents comment support in
+    # its config files (`oxlint --help`: "you can use comments in configuration
+    # files"), and the config's `rules` block has no other place to record WHY
+    # a rule is held at `warn` — oxlint rejects any unknown top-level key, so a
+    # `$comment` sibling is not an option. #4377's react-compiler warn block
+    # needs that rationale inline or the entries read as unexplained
+    # suppressions. `tsconfig.*.json` is excluded for the same reason (it
+    # carries comments too). Same precedent as `.markdownlint-cli2.jsonc`.
+    { id = "check-json", exclude = "(tsconfig.*\\.json$|^\\.oxlintrc\\.json$|\\.sqlx/)", stages = [
         "pre-commit",
     ] },
     { id = "check-merge-conflict", stages = [

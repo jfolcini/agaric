@@ -568,7 +568,7 @@ describe('AtTagPicker real-editor chain result', () => {
 // The toolbar "insert tag" button (see `lib/toolbar-config.ts` →
 // `createRefsAndBlocks`) inserts the `@` trigger (prepending a space when the
 // caret is not already after whitespace, since the picker's
-// `allowedPrefixes: [' ', ' ', '\n']` gate would otherwise ignore a
+// `allowedPrefixes: [' ', '\u00A0', '\n']` gate would otherwise ignore a
 // mid-word `@`). It must OPEN the floating tag menu — the same search/create
 // popup that TYPING `@` opens — not merely type the glyph. The TipTap
 // Suggestion plugin re-detects a trigger match on any transaction (including a

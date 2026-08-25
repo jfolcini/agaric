@@ -95,7 +95,40 @@
           }
         ]
       }
-    ]
+    ],
+
+    // React Compiler rules, new in oxlint 1.79 (#4377). They ship in the
+    // `correctness` category, so the category default above would make every
+    // one of them an `error` on first contact — 296 findings across 139 files
+    // that no commit here has ever been checked against, which would block the
+    // 1.78 -> 1.79 bump outright (#4373).
+    //
+    // They are held at `warn`, deliberately NOT at `off` and NOT behind
+    // file-level disables: the whole point of #4377 is that at least one of
+    // these findings (use-block-zoom.ts, ref mutated inside useMemo) was
+    // independently flagged by a human reviewer on #4370 before this bump
+    // existed, so the signal has already proven itself. `warn` keeps every
+    // finding printed on every run while the burn-down triages them bucket by
+    // bucket; #4377 carries the per-rule counts and the triage state.
+    //
+    // Ratchet: when a rule's count reaches zero, delete its line here — the
+    // `correctness` category default takes over and it becomes `error` again.
+    // This is the same warn -> burn-down -> error ratchet #188 ran for the
+    // biome -> oxc migration.
+    //
+    // NOTE: these rule names do not exist in oxlint <= 1.78, and oxlint
+    // rejects the ENTIRE config file on an unknown rule name ("Rule 'refs' not
+    // found in plugin 'react'"), so this block and the oxlint bump in
+    // package.json must stay in the same commit. Do not land one without the
+    // other.
+    "react/refs": "warn",
+    "react/set-state-in-effect": "warn",
+    "react/immutability": "warn",
+    "react/globals": "warn",
+    "react/incompatible-library": "warn",
+    "react/static-components": "warn",
+    "react/preserve-manual-memoization": "warn",
+    "react/purity": "warn"
   },
   "overrides": [
     {
