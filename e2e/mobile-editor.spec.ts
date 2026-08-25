@@ -92,6 +92,16 @@ async function pickCodeLanguage(page: Page, language: string): Promise<void> {
   // the trigger toggled back shut. "Turn into" is high-priority (94) so it
   // normally survives the narrow viewport's overflow collapse; fall back to the
   // "More" popover if a future layout change pushes it in there.
+  // A pick is not finished until the picker has UNMOUNTED. `applyLanguage`
+  // dispatches the transaction and only then calls `onClose()`, so the popover
+  // outlives the pick by however long React takes to commit the close (~75-100ms
+  // under load). Without this wait the `isVisible()` check below sees the dying
+  // picker, skips the open-click, and drives the one that is going away — which
+  // is the flake fixed in the mermaid spec. Latent here, since this helper's only
+  // caller is preceded by a fence that opens no popover; it stops being latent
+  // the moment a second pick is added.
+  await expect(filter).toHaveCount(0)
+
   await expect(async () => {
     if (!(await filter.isVisible())) {
       const inlineTrigger = toolbar.getByRole('button', { name: 'Turn into', exact: true })

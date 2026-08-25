@@ -127,6 +127,11 @@ test.describe('Mermaid diagram round-trip (#1438)', () => {
     await expect(langInput).toBeVisible()
     await langInput.fill('mermaid')
     await page.getByTestId('use-custom-language').click()
+    // Same contract the helper below enforces: a pick is not done until the
+    // picker has unmounted. Nothing in this test picks again, so it is a
+    // consistency guard rather than a live fix — but a direct pick that does
+    // not honour the rule is how the flake reached the other test.
+    await expect(langInput).toHaveCount(0)
 
     // #2449 (audit finding 45): with the caret INSIDE the block, the node
     // view opens in SOURCE mode — keystrokes must land in visible text, never
