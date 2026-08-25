@@ -22,16 +22,26 @@ version: 2
 # week per ecosystem instead of one per transitive dep. Coupled-dep
 # rules are sourced from AGENTS.md § "Coupled Dependency Updates".
 #
-# Threat-model note: only minor + patch updates are auto-grouped. Major
-# bumps fall outside every `groups:` entry below (groups default to
-# `update-types: [minor, patch]` unless explicitly opened up), so each
-# major lands as its own individual PR for the maintainer to review —
-# which is what we want for breaking-change risk. Two groups opt majors
-# back in, both for the same reason — their members pin each other at an
-# EXACT version, so a split major PR fails `npm ci`/the action resolver
-# before any test runs: `codeql-action` (its sub-actions must move in
-# lockstep at every bump level) and `stryker` (the runner peer-depends on
-# core at an exact pin). See each group's own comment.
+# Majors and grouping — read this before assuming a major arrives alone.
+# A `groups:` entry that omits `update-types` takes **every** level,
+# majors included. That is Dependabot's default, not an oversight, and
+# this repo has the receipts: PR #3401 carried jsdom 29.1.1 -> 30.0.1
+# *inside* the `vitest` group, which sets no `update-types`. So
+# `tauri-apps`, `react`, `tiptap`, `radix-ui`, `vitest`, `playwright`,
+# `lint-and-build` (npm) and the cargo stack groups all group majors too.
+#
+# Only a group that says otherwise narrows the range. Two do, and they
+# are the `*` catch-alls named `minor-and-patch`: a major matching no
+# earlier pattern falls out of them and lands as its own PR. That is the
+# review isolation this file actually buys — for unlisted deps, not for
+# everything.
+#
+# `codeql-action` and `stryker` spell all three levels out explicitly.
+# That is a no-op against the default and deliberately so: their members
+# pin each other at an EXACT version, so a split major fails `npm ci` or
+# the action resolver before any test runs, and the property is too
+# load-bearing to leave resting on a default nobody can see in the file.
+# See each group's own comment.
 
 updates:
   - package-ecosystem: github-actions
