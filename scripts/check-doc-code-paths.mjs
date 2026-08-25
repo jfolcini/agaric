@@ -397,18 +397,43 @@ function isLocalPathCandidate(raw) {
 //
 // The reset above cannot reach that shape (there is no paragraph break to
 // reset AT), so the segment gets a second, LINE-SCOPED pass — the exact
-// pre-#4220 regex, applied per line — whenever some span in it actually
-// crossed a newline. Every yield of both passes is unioned; each caller
-// already dedupes into a Set/Map, so a span both passes see costs nothing.
+// pre-#4220 regex, applied per line — whenever pass 1 ends the segment with
+// an UNRESOLVED opener (`openAt !== -1`). Every yield of both passes is
+// unioned; each caller already dedupes into a Set/Map, so a span both passes
+// see costs nothing.
 //
-// Two properties make this the right shape of backstop:
+// The trigger is the stray backtick, NOT "some span crossed a newline". The
+// wider trigger was tried and rejected: a segment that crosses newlines while
+// staying perfectly balanced is pass 1 pairing correctly, exactly as a
+// CommonMark parser would, and re-scanning it line by line invents citations
+// out of the plain prose sitting between two legitimately-closed spans. That
+// is a guard reddening a VALID doc, which gets the guard suppressed — the one
+// outcome worse than a miss. The long comment inside the loop works the
+// example through. An unresolved `openAt` is the only signal that actually
+// means "a stray backtick is here", which is the only condition under which
+// the line-scoped regex can find something the global pairing did not.
+//
+// What the backstop does and does not buy:
 //   - It can only ADD candidates, never remove one, so it is fail-CLOSED by
 //     construction: the worst case is judging a citation the cross-line
 //     pass would have skipped, and "judged" is the direction a drift guard
 //     must err in. Widening what is SKIPPED would have been the opposite.
-//   - The two passes can only disagree where a span crosses a newline, and
-//     that is precisely the trigger, so the extra pass costs nothing on the
-//     overwhelming majority of paragraphs and no divergence escapes it.
+//   - It does NOT catch every divergence, and claiming otherwise here was a
+//     defect of its own. STRAY BACKTICKS THAT COME IN PAIRS leave the
+//     segment balanced and the backstop unarmed: a stray opener, a citation,
+//     then a second stray opener is four backticks, pass 1 pairs 1-2 and
+//     3-4, the citation is consumed as DELIMITERS rather than yielded as
+//     content, `openAt` ends at -1, and that citation is never judged —
+//     exit 0 where the wider "a span crossed a newline" trigger this one
+//     replaced exited 1 (measured on the fixture, both ways). This is a
+//     KNOWN LIMITATION, kept on purpose because the alternative reds valid
+//     docs, and it is fixture'd (`spanPairingScenarios`, the paired-stray
+//     shape) so it is demonstrated rather than taken on trust.
+//   - The gap is bounded to ONE PARAGRAPH: the ` *`/blank-line reset is
+//     independent of all of this, so an unlucky paragraph hides its own
+//     citations and nothing after it. That bound is what the fixture
+//     asserts; the gap itself is deliberately not pinned green, so closing
+//     it later does not red the suite.
 //
 // @param {string} text
 function* inlineCodeSpans(text) {
@@ -2015,6 +2040,54 @@ function spanPairingScenarios(root) {
       balancedNoStray.status === 0,
       `expected 0, got ${balancedNoStray.status}: ${balancedNoStray.stderr}`,
     )
+
+    // #4291 review, THE RESIDUAL the `openAt !== -1` narrowing leaves open —
+    // fixture'd so it is DEMONSTRATED rather than merely described, because
+    // the header above used to claim "no divergence escapes it" and that was
+    // not true.
+    //
+    // Stray backticks that come in PAIRS leave the segment balanced. A stray
+    // opener, then a citation, then a SECOND stray opener is four backticks:
+    // pass1 pairs 1-2 and 3-4, the citation is consumed as DELIMITERS rather
+    // than yielded as content, `openAt` ends at -1, the backstop never runs,
+    // and the stale path is never judged. The wider "a span crossed a
+    // newline" trigger caught exactly this shape; narrowing it to an
+    // unresolved opener gave that up in exchange for the assertion directly
+    // above (measured on this fixture both ways), and the trade is the right
+    // one — a guard that reds a VALID doc gets suppressed, and a suppressed
+    // guard misses everything, not one paragraph.
+    //
+    // What is ASSERTED here is the part that is not a gap and stays true
+    // however the residual is later resolved: the blast radius. The hole is
+    // one PARAGRAPH wide, because the ` *` reset still fires, so the stale
+    // citation in the NEXT paragraph of the SAME comment is caught normally.
+    // The failure mode is a missed citation, never a wrong verdict on one
+    // that was read.
+    //
+    // Deliberately NOT asserted: that `paired-stray.ts` is absent from the
+    // output. Pinning the gap green would make the defect load-bearing and
+    // turn its eventual fix into a red suite. It is a known limitation, not
+    // a guarantee — the fixture demonstrates it, the comment names it, and
+    // the assertion covers only the bound around it.
+    const pairedStrayFixture = [
+      '/**',
+      ' * A stray opener: the resolver filters `deleted_at',
+      ' * `src/nowhere/paired-stray.ts` names the site, and `WHERE clause',
+      ' *',
+      ' * After the reset: `src/nowhere/after-paired-stray.ts` names it too.',
+      ' */',
+      'export const G = 7',
+      '',
+    ].join('\n')
+    writeFileSync(join(dir, 'src', 'paired-stray.ts'), pairedStrayFixture)
+    git('add', '-A')
+    const pairedStray = run(['--worktree'])
+    record(
+      'the paired-stray-backtick gap is bounded to its own paragraph: the citation after the ` *` reset is still judged (known limitation, documented above — no tracking issue by design)',
+      pairedStray.status === 1 && /after-paired-stray\.ts/.test(pairedStray.stderr),
+      `expected 1 naming after-paired-stray.ts, got ${pairedStray.status}: ${pairedStray.stderr}`,
+    )
+
     return results
   })
 }

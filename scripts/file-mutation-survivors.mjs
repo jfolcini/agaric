@@ -533,13 +533,26 @@ const FIRST_SEEN_PREFIX = /^(\d{4}-\d{2}-\d{2})\t/
  * copy-pasted slicer is how the two would eventually disagree about what
  * counts as a line. `parseChildLinks` keeps its own reader: its lines are
  * `#<number><TAB><area>`, not mutant ids.
+ *
+ * The boundary rule itself is split out into `markerBlockRange` for the same
+ * reason: `parseReanchorNotes` has to ask "is this line INSIDE a block?" and a
+ * second copy of the `indexOf` arithmetic is how that reader and this one would
+ * eventually disagree about where a block ends. One rule, two callers — and in
+ * particular both share the `end < start` case that returns nothing at all,
+ * which is the case a poisoned marker creates.
  */
-function markerBlockLines(body, startMarker, endMarker) {
-  if (!body) return []
+function markerBlockRange(body, startMarker, endMarker) {
+  if (!body) return null
   const start = body.indexOf(startMarker)
   const end = body.indexOf(endMarker)
-  if (start === -1 || end === -1 || end < start) return []
-  const block = body.slice(start + startMarker.length, end)
+  if (start === -1 || end === -1 || end < start) return null
+  return [start + startMarker.length, end]
+}
+
+function markerBlockLines(body, startMarker, endMarker) {
+  const range = markerBlockRange(body, startMarker, endMarker)
+  if (range === null) return []
+  const block = body.slice(range[0], range[1])
   // The block is a fenced code block; strip the ``` fences and blank lines.
   // Only the trailing whitespace is trimmed — a leading trim would eat the
   // first-seen prefix's own separator on a malformed line and silently mint a
@@ -789,10 +802,14 @@ function renderChildBlock(childLinks) {
  * `reanchored` is the re-anchoring history (see `appendReanchorNote`): the
  * filer's own note of the entries it dropped. It renders here, ABOVE the
  * markers and therefore outside everything `parseAcceptedSurvivors` reads —
- * which holds only because `noteSafeId` breaks the marker delimiters first.
- * Position alone does not buy it: the markers are found by `indexOf` over the
- * whole body, so an unsanitised note ABOVE them can move the boundary and put
- * itself INSIDE the block it was meant to sit outside.
+ * which holds only because `noteSafeId` has broken the marker delimiters in
+ * every line spliced in here, whether this run wrote it (`appendReanchorNote`)
+ * or read it out of the previous body (`parseReanchorNotes`). Position alone
+ * does not buy it: the markers are found by `indexOf` over the whole body, so
+ * an unsanitised note ABOVE them can move the boundary and put itself INSIDE
+ * the block it was meant to sit outside. `reanchored` is therefore only ever
+ * the output of those two functions — hand this a raw body line and the
+ * guarantee is gone.
  */
 function renderAcceptedBlock(accepted, acceptedOn, reanchored = []) {
   const lines = [
@@ -853,7 +870,9 @@ const MAX_REANCHOR_NOTES = 5
  *
  * Both directions were reproducible, and the accepted block is hand-edited free
  * text, so an id shaped like a marker only takes a bad paste (re-seeding "the
- * whole block, markers included" INTO the fence is the obvious one):
+ * whole block, markers included" INTO the fence is the obvious one) — or a
+ * maintainer annotating the history by hand, which is the other way a note gets
+ * written and the one this function never sees:
  *
  *   - a note containing `…accepted:begin -->` puts the FIRST start marker
  *     inside the note, so the block read next run starts mid-prose: the note's
@@ -866,29 +885,76 @@ const MAX_REANCHOR_NOTES = 5
  *     every accepted mutant re-reports as new, and the next rewrite renders an
  *     empty block — silently erasing every triage verdict on the page.
  *
- * So the delimiters are broken before an id is written into a note. A stale id
- * is by definition one that matches no observed mutant, so nothing downstream
- * reads these back; the mangling is visible, which is the right signal for a
- * "mutant id" that contains an HTML comment in the first place.
+ * So the delimiters are broken on BOTH paths a note reaches the body by, and
+ * naming only one of them is how this invariant was wrong the first time. This
+ * function is applied when a note is WRITTEN (below) and again when one is READ
+ * back (`parseReanchorNotes`), because a note is carried forward verbatim from
+ * the previous body and only the write path was ever the filer's. The read path
+ * is the reachable one: a maintainer hand-annotating the re-anchoring history —
+ * it renders as ordinary prose in a shape that invites it — quotes a raw end
+ * marker, and from the next run on the accepted block reads EMPTY, the rewrite
+ * renders it empty, and the note is picked back up and re-rendered unchanged, so
+ * it never expires. Guarding the write path alone leaves that entirely open:
+ * position outside the markers was never a proof of safety for text this filer
+ * did not author, which is the whole point of the two cases above.
+ *
+ * Sanitising on read is idempotent — neither `<! --` nor `-- >` contains the
+ * delimiter it came from — so a body that has been through one run is stable,
+ * and a poisoned one converges in exactly one rewrite instead of never.
+ *
+ * A stale id is by definition one that matches no observed mutant, so nothing
+ * downstream reads these back as state; the mangling is visible, which is the
+ * right signal for a "mutant id" that contains an HTML comment in the first
+ * place.
  */
 function noteSafeId(id) {
   return id.replaceAll('<!--', '<! --').replaceAll('-->', '-- >')
 }
 
 /**
- * The re-anchoring notes already in a body, oldest first, capped on READ as
- * well as on write. `appendReanchorNote` slices only when it appends, so a body
- * that somehow holds more than the cap — a paste, a hand-edit, an older
- * revision of this script — would otherwise carry them all forward for ever,
- * and "bounded growth" would hold only for bodies this script had never had to
- * recover.
+ * The re-anchoring notes already in a body, oldest first — SCOPED, SANITISED
+ * and CAPPED on read, because everything this returns is spliced straight back
+ * into the next body by `renderAcceptedBlock`, and none of it was written by
+ * this script. A note survives by being copied forward, so "the filer only
+ * writes safe notes" says nothing about what the filer READS.
+ *
+ * Scoped: only lines that BEGIN outside every marker block count. A note is
+ * prose above the markers; a line in the note shape that begins inside a fence
+ * is hand-edited block content that happens to start with the prefix, and
+ * reading it as a note both duplicated it into the history and left it in the
+ * block, where it is also read as an id. The test is where the line STARTS, not
+ * whether it overlaps: a note whose own tail has been swallowed by a poisoned
+ * marker still starts outside, and dropping it there would lose the record this
+ * whole mechanism exists to keep.
+ *
+ * Sanitised: `noteSafeId` on read as well as on write. `markerBlockRange` finds
+ * both delimiters with a bare `indexOf` over the whole body, so a carried-
+ * forward note quoting a raw marker MOVES the accepted block — see `noteSafeId`
+ * for the two directions. Applied here the poison is defused on the first run
+ * that reads it, which is also what makes recovery converge.
+ *
+ * Capped: `appendReanchorNote` slices only when it appends, so a body that
+ * somehow holds more than the cap — a paste, a hand-edit, an older revision of
+ * this script — would otherwise carry them all forward for ever, and "bounded
+ * growth" would hold only for bodies this script had never had to recover.
  */
 export function parseReanchorNotes(body) {
   if (!body) return []
-  return body
-    .split('\n')
-    .filter((l) => l.startsWith(REANCHOR_NOTE_PREFIX))
-    .slice(-MAX_REANCHOR_NOTES)
+  const blocks = [
+    markerBlockRange(body, MARKER_START, MARKER_END),
+    markerBlockRange(body, ACCEPTED_MARKER_START, ACCEPTED_MARKER_END),
+    markerBlockRange(body, CHILD_MARKER_START, CHILD_MARKER_END),
+  ].filter((r) => r !== null)
+  const notes = []
+  let at = 0
+  for (const line of body.split('\n')) {
+    const startsAt = at
+    at += line.length + 1
+    if (!line.startsWith(REANCHOR_NOTE_PREFIX)) continue
+    if (blocks.some(([from, to]) => startsAt >= from && startsAt < to)) continue
+    notes.push(noteSafeId(line))
+  }
+  return notes.slice(-MAX_REANCHOR_NOTES)
 }
 
 /** Carried-forward notes plus this run's, if this run dropped anything. */
@@ -4025,6 +4091,16 @@ function selfTestAcceptedReanchorTrace({ ok, fail }) {
  * still be readable (the `end` failure zeroes it) AND nothing else may appear
  * (the `begin` failure mints entries). Assert only "no bogus entry" and the
  * erasure passes; assert only "the verdict survives" and the injection does.
+ *
+ * And it needs both PATHS. A note reaches a body two ways — this run wrote it
+ * (`appendReanchorNote`) or this run read it out of the last body
+ * (`parseReanchorNotes`) — and only the first is the filer's own text. Driving
+ * the poison through `appendReanchorNote` alone proves the claim exactly where
+ * it was never in doubt, so the arms below plant it in the INPUT BODY as well,
+ * in the shape a maintainer annotating the history by hand would leave. That
+ * one is the reachable failure and the non-convergent one: the note is copied
+ * forward unchanged every week, so `end` erases the accepted block for ever
+ * rather than for a run.
  */
 function selfTestReanchorNoteCannotParseBack({ ok, fail }) {
   // 14h. A NOTE CAN NEVER PARSE BACK AS A LIVE ACCEPTED ENTRY.
@@ -4058,6 +4134,130 @@ function selfTestReanchorNoteCannotParseBack({ ok, fail }) {
       'a re-anchoring note cannot move the accepted markers or parse back as an entry (#4173)',
       problems.join('; '),
     )
+
+  // 14h (read path). THE SAME CLAIM, ON THE PATH THAT WAS ACTUALLY UNGUARDED.
+  //      The two arms above hand the poison to `appendReanchorNote`, so they
+  //      only ever exercise ids THIS run dropped — text the filer authored,
+  //      which is the half `noteSafeId` already covered. A note reaches the
+  //      next body the other way too: it is READ out of the previous body and
+  //      spliced back in. That path needs no stale mutant at all — the history
+  //      renders as ordinary prose in an inviting `- **Re-anchored …** — …`
+  //      shape, so a maintainer annotating it, or a paste, is enough to put a
+  //      raw marker into a line the next run copies forward verbatim.
+  //
+  //      The composition is production's, from the one place notes are carried:
+  //      `appendReanchorNote(parseReanchorNotes(existingIssue.body), stale,
+  //      today)`. `stale` is EMPTY on purpose — the quiet path, where the write
+  //      path contributes nothing and everything rendered is what was read.
+  //
+  //      The third check is convergence, and it is the one that separates this
+  //      from a run-of-the-mill wrong line: unsanitised, the poisoned note is
+  //      re-rendered unchanged every week, so `end` does not erase the block for
+  //      a run, it erases it for ever. A second round-trip must therefore leave
+  //      the body no worse than the first, and must leave the note itself still
+  //      on the page — deleting the history would satisfy the other checks
+  //      while losing exactly what the mechanism exists to keep.
+  {
+    const readProblems = []
+    for (const [dir, poison] of [
+      ['begin', `${ACCEPTED_MARKER_START} smuggled`],
+      ['end', `smuggled ${ACCEPTED_MARKER_END}`],
+    ]) {
+      const render = (reanchored) =>
+        buildIssueBody({
+          all: [LIVE],
+          resolvedOnes: [],
+          today: '2026-08-15',
+          accepted: [LIVE],
+          acceptedOn: new Map([[LIVE, '2026-07-01']]),
+          reanchored,
+        })
+      // Not `appendReanchorNote`'s output: a hand-written annotation, raw, in
+      // the body the next run will read. This is the input the filer does not
+      // control and never sanitised.
+      const handAnnotated = render([
+        `${REANCHOR_NOTE_PREFIX}2026-08-08** — 1 accepted entry dropped, matching no observed mutant: \`${poison}\``,
+      ])
+      let body = handAnnotated
+      for (const round of ['first', 'second']) {
+        body = render(appendReanchorNote(parseReanchorNotes(body), [], '2026-08-15'))
+        const back = parseAcceptedSurvivors(body)
+        if (!back.has(LIVE))
+          readProblems.push(`${dir}/${round}: the recorded verdict became unreadable`)
+        // `> 1`, not `!== 1`: the empty case is already reported above by the
+        // verdict check, and subtracting from a zero-size set printed
+        // "minted -1 phantom entries" next to it.
+        if (back.size > 1)
+          readProblems.push(
+            `${dir}/${round}: minted ${back.size - 1} phantom entr(y|ies): ${[...back].join(' | ')}`,
+          )
+        if (parseReanchorNotes(body).length !== 1)
+          readProblems.push(`${dir}/${round}: the note itself was lost`)
+      }
+    }
+    if (readProblems.length === 0)
+      ok('a note READ BACK from a hand-edited body cannot move the accepted markers either (#4173)')
+    else
+      fail(
+        'a note READ BACK from a hand-edited body cannot move the accepted markers either (#4173)',
+        readProblems.join('; '),
+      )
+  }
+
+  // 14h (scoping). A NOTE IS PROSE ABOVE THE MARKERS, NOT ANY LINE THAT LOOKS
+  //      LIKE ONE. `parseReanchorNotes` used to scan the whole body, fences
+  //      included, so a line pasted INTO the accepted fence in the note shape —
+  //      the same bad paste that motivates the arms above, re-seeding a whole
+  //      rendered section into the block — was read twice: once as an accepted
+  //      id, which is what it now is, and once as a note, which duplicated it
+  //      into the history above the markers where it then never expired.
+  //
+  //      Pinned on the rendered body rather than on the parser alone, because
+  //      the duplication is the thing that matters: the line must appear
+  //      EXACTLY once in the body the next run would write.
+  {
+    const scopeProblems = []
+    const pasted = `${REANCHOR_NOTE_PREFIX}2026-05-01** — 1 accepted entry dropped: \`m9\``
+    const seeded = buildIssueBody({
+      all: [LIVE],
+      resolvedOnes: [],
+      today: '2026-08-15',
+      accepted: [LIVE, pasted],
+      acceptedOn: new Map([[LIVE, '2026-07-01']]),
+    })
+    const notes = parseReanchorNotes(seeded)
+    if (notes.length > 0)
+      scopeProblems.push(`a line inside the fence was read as ${notes.length} note(s)`)
+    const rewritten = buildIssueBody({
+      all: [LIVE],
+      resolvedOnes: [],
+      today: '2026-08-15',
+      accepted: [LIVE, pasted],
+      acceptedOn: new Map([[LIVE, '2026-07-01']]),
+      reanchored: appendReanchorNote(notes, [], '2026-08-15'),
+    })
+    const copies = rewritten.split(pasted).length - 1
+    if (copies !== 1) scopeProblems.push(`the pasted line appears ${copies} time(s), expected 1`)
+    // The other direction of the same rule, so the scoping cannot be "read
+    // nothing": a genuine note, above the markers, is still read.
+    const genuine = buildIssueBody({
+      all: [LIVE],
+      resolvedOnes: [],
+      today: '2026-08-15',
+      accepted: [LIVE],
+      acceptedOn: new Map([[LIVE, '2026-07-01']]),
+      reanchored: appendReanchorNote([], ['m9'], '2026-05-01'),
+    })
+    if (parseReanchorNotes(genuine).length !== 1)
+      scopeProblems.push('a genuine note above the markers stopped being read')
+    if (scopeProblems.length === 0)
+      ok('only prose outside the marker blocks counts as a re-anchoring note (#4173)')
+    else
+      fail(
+        'only prose outside the marker blocks counts as a re-anchoring note (#4173)',
+        scopeProblems.join('; '),
+      )
+  }
 
   // 14i. BOUNDED GROWTH, on BOTH paths. The history is capped so it cannot eat
   //      the body budget the state block needs, and the cap has to hold on READ
