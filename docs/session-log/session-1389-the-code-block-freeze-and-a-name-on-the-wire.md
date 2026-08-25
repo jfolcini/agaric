@@ -179,13 +179,28 @@ browser knows about". That premise is false. Radix positions with a fixed
 strategy and an empty collision boundary, so floating-ui's clipping rect is the
 viewport rect, and `getViewportRect` reads `visualViewport` — the same
 keyboard-free band `computeKeyboardInset` is derived from. The boundary already
-excluded the keyboard, so the padding subtracted it a second time: `size()`
-telescopes to `clippingHeight - paddingTop - paddingBottom`, and Radix's
-`shift({mainAxis: true})` makes that the cap outright on vertical placements.
+excluded the keyboard, so the padding subtracted it a second time.
+`detectOverflow` folds the padding object into both overflows, so `size()`'s
+`maximumClippingHeight = height - overflow.top - overflow.bottom` telescopes to
+`clippingHeight - paddingTop - paddingBottom`, and `availableHeight =
+min(height - overflow[heightSide], maximumClippingHeight)` picks that
+doubly-subtracted term up through the `min()`.
+
+*(Corrected after the fact: this paragraph originally credited the doubling to
+Radix's `shift({mainAxis: true})` "making that the cap outright on vertical
+placements". That is wrong, and `popover.tsx` now says so in as many words — for
+`top`/`bottom` placements the main shift axis is x, so `shift` never touches the
+height at all. The measurement settles which reading is right: at this geometry
+the "outright" reading predicts 356px and the `min()` reading 310px, against
+311px measured. Worth leaving visible, because it is the same axis fact the file
+then had to correct a second time in a different comment — being wrong about
+`shift` twice in one file was the near miss of the follow-up review.)*
+
 Measured at an iPhone-13 viewport with a 300px keyboard, available height came
 out at **56px** — one row of padding — against 311px without it. A taller
 keyboard drives the expression negative, the `max-height` is discarded as
-invalid, and the cap vanishes altogether.
+invalid, and the cap vanishes altogether — which is why the shipped cap wraps
+the var in a `max(…, 8rem)` floor.
 
 So the reasoning that produced this section's opening paragraph was right about
 `dvh` and wrong about Radix, and being right about the first made the second
@@ -199,6 +214,19 @@ The test carries the correction: it asserts the popover is tall enough to be
 usable, not merely that it clears the keyboard. "Clears the keyboard" is
 satisfied by a 56px box, which is exactly how the double subtraction survived
 the first round.
+
+That floor had a sting in its tail, and the next review round found it. The
+`max(…, 8rem)` guard is 128px; the spec's `MIN_USABLE_POPOVER_HEIGHT` is 120px;
+so replaying the double subtraction now collapsed the cap to 56px, the floor
+lifted the rendered box back to 128px, and all three assertions passed — the
+regression test could no longer see its own regression. The comment on the
+constant even said 8rem was chosen to clear the test's floor, which is the
+dependency backwards: the code had been sized to satisfy the assertion instead
+of the assertion constraining the code. The fix moves the assertion onto the
+resolved `--radix-popover-content-available-height`, the pre-floor cap and the
+quantity the double subtraction actually corrupts, and re-derives the 128px from
+two 44px touch rows plus the primitive's own padding. Neither number depends on
+the other any more.
 
 ## Operational notes
 

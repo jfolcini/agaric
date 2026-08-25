@@ -273,8 +273,10 @@ export function AddFilterPopover({
         // item carries a two-line description). The base PopoverContent caps
         // height at the collision-aware available height and scrolls its own
         // overflow (#1960, #4313), so nothing here has to arrange that — this
-        // only narrows the width and tightens the padding for a menu of rows.
-        className="w-72 p-2"
+        // only tightens the padding for a menu of rows. (No `w-72` either: the
+        // base already sets it, and repeating it just makes twMerge re-resolve
+        // the same class.)
+        className="p-2"
         aria-label={t('pageBrowser.filter.addFilterDialogLabel')}
       >
         {warnManyFilters && (

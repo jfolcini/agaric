@@ -199,10 +199,21 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
    *
    * Two failure modes, two assertions:
    *   - too tall  → the popover runs off the top / under the keyboard (the
-   *     original bug);
+   *     original bug); asserted on the rendered box.
    *   - too short → the keyboard subtracted twice (once by the boundary, once
    *     as bottom `collisionPadding`) collapses the cap to ~one row, which is
    *     just as unusable. Hence the MIN_USABLE_POPOVER_HEIGHT floor.
+   *
+   * The second assertion reads the CAP — the resolved
+   * `--radix-popover-content-available-height` — and NOT the rendered box
+   * height. That distinction is load-bearing. `popover.tsx` wraps the cap in
+   * `max(…, 8rem)` to survive a negative available height, and 8rem (128px) is
+   * larger than MIN_USABLE_POPOVER_HEIGHT (120px): replay the double
+   * subtraction and the cap collapses to 56px, the floor lifts the rendered box
+   * back to 128px, and a rendered-height assertion passes on the very bug it
+   * was written for. The custom property is the pre-floor value, so it stays
+   * falsifiable no matter where the floor sits — and it is also the quantity
+   * that actually broke, rather than a downstream consequence of it.
    *
    * The keyboard is raised BEFORE the popover opens — that is the real sequence
    * (the user is typing, the IME is up, then they tap the toolbar) and it makes
@@ -218,6 +229,9 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
   // Measured on this viewport: 311 px as it stands; 56 px when the keyboard was
   // also passed as bottom `collisionPadding` (664 − 300 clipping band, minus
   // 4 px top and 4 + 300 px bottom padding). The floor sits between the two.
+  // This constant constrains the code; the code's own `max(…, 8rem)` floor is
+  // NOT derived from it (see `popover.tsx`), and the assertion below is taken
+  // on the pre-floor cap precisely so the two cannot collude.
   const MIN_USABLE_POPOVER_HEIGHT = 2 * TOUCH_FLOOR + 32
 
   test('a toolbar popover opened with the keyboard up is fully visible and usable', async ({
@@ -260,7 +274,20 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
     await expect(async () => {
       const geometry = await popover.evaluate((el) => {
         const r = el.getBoundingClientRect()
-        return { top: r.top, bottom: r.bottom, height: r.height, innerHeight: window.innerHeight }
+        return {
+          top: r.top,
+          bottom: r.bottom,
+          innerHeight: window.innerHeight,
+          // The cap Radix computed, BEFORE `popover.tsx`'s `max(…, 8rem)` floor
+          // is applied to it. Radix's `size()` middleware writes
+          // `--radix-popper-available-height` on the popper wrapper and the
+          // popover layer re-exports it under this name; custom properties
+          // substitute at computed-value time, so this reads back as a resolved
+          // `<n>px`. It is empty until `size()` has run once — hence the retry.
+          availableHeight: getComputedStyle(el)
+            .getPropertyValue('--radix-popover-content-available-height')
+            .trim(),
+        }
       })
       // Not clipped off the top of the screen.
       expect(geometry.top, 'popover top').toBeGreaterThanOrEqual(-SLACK)
@@ -268,8 +295,17 @@ test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
       expect(geometry.bottom, 'popover bottom').toBeLessThanOrEqual(
         geometry.innerHeight - KEYBOARD + SLACK,
       )
-      // Not collapsed to an unusable sliver by double-counting the keyboard.
-      expect(geometry.height, 'popover height').toBeGreaterThanOrEqual(MIN_USABLE_POPOVER_HEIGHT)
+      // The cap resolved at all — an empty value means the popover fell back to
+      // `calc(100dvh-4rem)`, i.e. to a cap measured against a screen that still
+      // includes the keyboard, which is the original bug.
+      expect(geometry.availableHeight, 'available-height var').toMatch(/^-?[\d.]+px$/)
+      // ...and it was not collapsed to an unusable sliver by double-counting the
+      // keyboard. Deliberately NOT `getBoundingClientRect().height`: the 8rem
+      // floor would satisfy that check even at a 56px cap. See the note above.
+      expect(
+        Number.parseFloat(geometry.availableHeight),
+        'popover available height',
+      ).toBeGreaterThanOrEqual(MIN_USABLE_POPOVER_HEIGHT)
     }).toPass({ timeout: 5000 })
   })
 })

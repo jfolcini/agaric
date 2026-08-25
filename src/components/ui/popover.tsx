@@ -66,17 +66,39 @@ import { cn } from '@/lib/utils'
 //   to `8rem` in that case, so a cap always survives.
 // - Even in the ordinary, non-negative case, nothing floors how small
 //   `size()` is allowed to shrink the cap near a viewport edge. `max()` puts
-//   a floor under it: the popover never renders shorter than that floor, it
-//   just becomes scrollable (`overflow-y-auto`, already set below) instead of
-//   shrinking further — it can still overflow a genuinely short viewport, and
-//   that's fine, `avoidCollisions`/`shift` still keep it on-screen; it's the
-//   height that stops shrinking, not the position.
+//   a floor under it: the popover stops shrinking at the floor and becomes
+//   scrollable (`overflow-y-auto`, already set below) instead of collapsing
+//   to a sliver.
 //
-// 8rem (128px) is picked against `e2e/formatting-toolbar-mobile.spec.ts`'s own
-// `MIN_USABLE_POPOVER_HEIGHT` (2 coarse-pointer rows of 44px + 32px margin =
-// 120px): 128px clears that with an 8px margin, while staying small enough
-// that it doesn't defeat the cap on a genuinely short viewport (it still
-// leaves most of even a compact landscape-phone viewport free).
+//   That second one is a deliberate TRADEOFF, not a free win, and the
+//   mechanism that would make it free is not wired here. An earlier revision
+//   of this comment claimed `avoidCollisions`/`shift` "still keep it
+//   on-screen" when the floor exceeds the band the popover has to fit in.
+//   They do not: Radix wires `shift({mainAxis: true, crossAxis: false})`, and
+//   for `top`/`bottom` placements the main axis is x — the same fact the
+//   `EDGE_PADDING_PX` note below already turns on — so `shift` never moves
+//   content vertically, and `flip` only swaps sides, it does not make an
+//   over-tall box fit. So on a landscape phone with the IME up (a visible band
+//   of ~190px) a popover anchored mid-band renders at the 128px floor and is
+//   clipped, instead of shrinking to the ~80px that would have fit.
+//   Still strictly better than the `100dvh` cap this replaced — that one
+//   measured against the whole screen, keyboard included, and overshot by
+//   hundreds of px — so the floor stays. But it stays as a documented
+//   tradeoff: the floor buys a usable menu in the common case and pays for it
+//   with clipping in a genuinely tiny band.
+//
+// 8rem (128px) is the smallest box that can still show two coarse-pointer
+// rows: 2 × 44px + this primitive's own `p-4` (32px) + 1px borders = 122px,
+// rounded up to the nearest rem step. It is deliberately NOT derived from
+// `e2e/formatting-toolbar-mobile.spec.ts`'s `MIN_USABLE_POPOVER_HEIGHT`. An
+// earlier revision said 8rem was picked *to clear* that constant, which had
+// the dependency exactly backwards — a floor sized to satisfy an assertion
+// makes the assertion unfalsifiable, and it did: with the floor in place the
+// double subtraction below still rendered a 128px box and the spec's
+// rendered-height check passed. That spec now asserts on the pre-floor
+// `--radix-popover-content-available-height` — the value the double
+// subtraction actually corrupts — so the two numbers are independent again
+// and this floor cannot mask the regression it sits next to.
 const POPOVER_CONTENT_BASE =
   'bg-popover text-popover-foreground z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[max(var(--radix-popover-content-available-height,calc(100dvh-4rem)),8rem)] overflow-y-auto overscroll-contain rounded-md border p-4 shadow-(--shadow-floating) outline-hidden data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2'
 
