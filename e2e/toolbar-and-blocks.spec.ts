@@ -1,4 +1,5 @@
 import {
+  activePopover,
   deleteBlockViaContextMenu,
   dragBlock,
   expect,
@@ -695,5 +696,130 @@ test.describe('Collapse / Expand', () => {
 
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     await expect(firstBlock.locator('[data-testid="collapse-toggle"]')).not.toBeVisible()
+  })
+})
+
+// ===========================================================================
+// 9. Turn-into popover — desktop collision-aware max-height (#4320)
+// ===========================================================================
+
+/**
+ * #4313 replaced `PopoverContent`'s cap (`src/components/ui/popover.tsx`)
+ * with a `--radix-popover-content-available-height`-based one, GLOBALLY,
+ * across every popover call site (~45 of them): an anchor mid-screen now
+ * caps at the collision-aware available height and scrolls internally,
+ * where before it could extend to nearly the full viewport height. The only
+ * e2e coverage that change got was a single MOBILE spec
+ * (`formatting-toolbar-mobile.spec.ts`, keyboard-up case). This is the
+ * desktop twin: the same real popover (Turn into → Code block, ~19 rows —
+ * 17 `CODE_LANGUAGES` + the filter input + the trailing "Plain text" row),
+ * anchored near the vertical MIDDLE of the viewport instead of the bottom
+ * edge, so the collision-aware cap has to shrink against BOTH the top and
+ * the bottom of the screen, not just one.
+ *
+ * Deliberately does NOT assert on `getComputedStyle(...).maxHeight`: the CSS
+ * cap is `max-h-[max(var(--radix-popover-content-available-height,…),8rem)]`
+ * — a `max()` with an 8rem floor — and `max()` resolves at computed-value
+ * time, so a resolved `max-height` can read back as the floor even when the
+ * collision-aware term is what actually shrank. The assertions below read
+ * geometry (`getBoundingClientRect`, `scrollHeight` vs `clientHeight`)
+ * instead, per the review finding on #4313 itself.
+ */
+test.describe('Turn into popover — desktop collision-aware max-height (#4320)', () => {
+  test.use({ viewport: { width: 1280, height: 700 } })
+
+  const SLACK = 1
+
+  test('a genuinely tall popover anchored mid-viewport stays on screen and its full content is reachable by scrolling', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+
+    // Build enough vertical content that a block sits well below the fold, so
+    // its "Turn into" popover opens anchored near the MIDDLE of the viewport
+    // — real usage, and the collision case with room to shrink on BOTH
+    // sides. Filler-block content is irrelevant; only their count/height is.
+    const editor = await focusBlock(page, 0)
+    await page.keyboard.press('End')
+    for (let i = 0; i < 18; i++) {
+      await page.keyboard.press('Enter')
+      await page.keyboard.type(`Filler block ${i}`)
+    }
+    await page.keyboard.press('Escape')
+    await expect(editor).not.toBeVisible()
+
+    const blocks = page.locator('[data-testid="block-static"]')
+    const total = await blocks.count()
+    const middleIndex = Math.floor(total / 2)
+
+    // Force the anchor block to the vertical middle of the (now much taller
+    // than the viewport) page.
+    await blocks.nth(middleIndex).evaluate((el) => el.scrollIntoView({ block: 'center' }))
+    await focusBlock(page, middleIndex)
+
+    await page.getByRole('button', { name: 'Turn into', exact: true }).first().click()
+    // Expand the tallest disclosure — the language list is what overflows.
+    await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
+
+    const popover = activePopover(page)
+    await expect(popover).toBeVisible()
+    const lastRow = page.getByRole('button', { name: 'Plain text', exact: true })
+    await expect(lastRow).toBeVisible()
+
+    // Single DOM pass per attempt, retried until the open animation settles
+    // (mirrors the mobile spec's #4313 regression test).
+    await expect(async () => {
+      const geometry = await popover.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return {
+          top: r.top,
+          bottom: r.bottom,
+          left: r.left,
+          right: r.right,
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+        }
+      })
+      // Fully within the viewport — not clipped off the top OR the bottom
+      // edge. A cap that ignored collision (e.g. the old `100dvh`-only cap)
+      // would run the popover off one edge or the other from a mid-screen
+      // anchor with only ~350px of room on each side.
+      expect(geometry.top, 'popover top').toBeGreaterThanOrEqual(-SLACK)
+      expect(geometry.bottom, 'popover bottom').toBeLessThanOrEqual(geometry.innerHeight + SLACK)
+      expect(geometry.left, 'popover left').toBeGreaterThanOrEqual(-SLACK)
+      expect(geometry.right, 'popover right').toBeLessThanOrEqual(geometry.innerWidth + SLACK)
+      // The full language list does not fit the collision-aware cap: this
+      // must be a SCROLL container (clipping became scrolling), not content
+      // silently truncated with no way to reach the rest.
+      expect(
+        geometry.scrollHeight - geometry.clientHeight,
+        'popover overflow (scrollHeight - clientHeight)',
+      ).toBeGreaterThan(0)
+    }).toPass({ timeout: 5000 })
+
+    // ...and every row is actually reachable by scrolling within the
+    // popover, not merely present in a DOM the layout never exposes.
+    await lastRow.scrollIntoViewIfNeeded()
+    await expect(async () => {
+      const [rowBox, popoverBox] = await Promise.all([
+        lastRow.evaluate((el) => {
+          const r = el.getBoundingClientRect()
+          return { top: r.top, bottom: r.bottom }
+        }),
+        popover.evaluate((el) => {
+          const r = el.getBoundingClientRect()
+          return { top: r.top, bottom: r.bottom }
+        }),
+      ])
+      expect(rowBox.top, 'last row top vs popover top').toBeGreaterThanOrEqual(
+        popoverBox.top - SLACK,
+      )
+      expect(rowBox.bottom, 'last row bottom vs popover bottom').toBeLessThanOrEqual(
+        popoverBox.bottom + SLACK,
+      )
+    }).toPass({ timeout: 5000 })
   })
 })

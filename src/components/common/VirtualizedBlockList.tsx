@@ -59,11 +59,17 @@ const OVERSCAN = 8
 
 /**
  * Height cap for one group's scroll viewport. Reuses the search listbox's
- * expression verbatim (`VirtualizedResultListbox.tsx`): `max(…, 12rem)` floors
- * the viewport-derived cap so that with the Android soft keyboard up — where
- * `100dvh` shrinks far enough that `100dvh - 320px` collapses to a sliver —
- * roughly five rows stay visible. Groups shorter than the cap are unaffected:
- * their intrinsic height is below it either way, so no scrollbar appears.
+ * expression verbatim (`VirtualizedResultListbox.tsx`): `max(…, 12rem)`
+ * floors the viewport-derived cap. This does NOT guard against the Android
+ * soft keyboard — per #4313, Android (edge-to-edge / targetSdk 36) shrinks
+ * only the VISUAL viewport when the IME opens, so `100dvh` (and therefore
+ * `100dvh - 320px`) is unaffected by the keyboard. The floor instead
+ * protects against a genuinely SHORT viewport (a landscape phone, a small
+ * window) where the fixed 320px subtraction leaves little or nothing,
+ * keeping roughly five rows visible. Groups shorter than the cap are
+ * unaffected: their intrinsic height is below it either way, so no
+ * scrollbar appears. See `VirtualizedResultListbox.tsx` for the full
+ * mechanism this floor does NOT protect against.
  */
 const GROUP_VIEWPORT_CLASS = 'max-h-[max(calc(100dvh-320px),12rem)] overflow-y-auto'
 

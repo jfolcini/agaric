@@ -138,11 +138,19 @@ export function VirtualizedResultListbox({
   return (
     <ul
       ref={scrollRef}
-      // `max(…, 12rem)` floors the viewport-derived cap: with the Android
-      // soft keyboard up, `100dvh` shrinks far enough that `100dvh - 320px`
-      // collapses the listbox to a sliver (or 0). The floor keeps ~5 rows
-      // visible; small groups are unaffected (their intrinsic height is
-      // below the cap either way).
+      // `max(…, 12rem)` floors the viewport-derived cap. It does NOT guard
+      // against the Android soft keyboard: per #4313 (see the cap comment on
+      // `PopoverContent` in `src/components/ui/popover.tsx`), Android
+      // (edge-to-edge / targetSdk 36) shrinks only the VISUAL viewport when
+      // the IME opens — `100dvh`, `100vh` and `innerHeight` keep reporting
+      // the full screen, which is the same fact `computeKeyboardInset`
+      // (`lib/keyboard-inset.ts`) is built on. So `100dvh - 320px` is
+      // unaffected by the keyboard either way. What the floor actually
+      // protects against is a genuinely SHORT viewport — a landscape phone,
+      // a small desktop window, an embedded webview — where `100dvh` itself
+      // is small enough that subtracting a fixed 320px leaves little or
+      // nothing. The floor keeps ~5 rows visible in that case; small groups
+      // are unaffected (their intrinsic height is below the cap either way).
       //
       // #737 — in-flow `::before` spacer instead of `height: totalSize` on
       // the `<ul>` itself. The `<ul>` is the SCROLL CONTAINER (max-h cap +
