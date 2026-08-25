@@ -212,8 +212,22 @@ import contextlib
 import os
 import pathlib
 import re
-import sqlite3
 import sys
+
+# `sqlite3` is imported inside the guard, not at module scope, and this is
+# load-bearing rather than stylistic. A python3 built without the `_sqlite3`
+# extension — pyenv, or a source build without libsqlite3-dev, both ordinary
+# Linux dev setups — raises ModuleNotFoundError. At module scope that escapes
+# the `try` around `main()` below, CPython prints a traceback and exits 1, and
+# the caller reads 1 as "confirmed gap" and hard-blocks the push with a
+# traceback under a headline about migrations and a remedy that can never
+# clear it. That is precisely the confusing hard block this whole preflight
+# exists to remove, reproduced by the preflight.
+try:
+    import sqlite3
+except Exception as _e:  # pragma: no cover - depends on the interpreter build
+    print("could not inspect dev.db: %s: %s" % (type(_e).__name__, _e))
+    sys.exit(2)
 
 
 def redact_url_credentials(url):
