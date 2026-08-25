@@ -52,6 +52,28 @@ async function pickCodeLanguage(page: Page, language: string): Promise<void> {
     .getByRole('button', { name: 'Turn into', exact: true })
   const filter = page.getByRole('textbox', { name: 'Code block language' })
 
+  // Wait for any PREVIOUS picker to actually unmount before opening one.
+  //
+  // Picking a language runs `applyLanguage`, which dispatches the ProseMirror
+  // transaction *and then* calls `onClose()` — so the popover is still mounted
+  // while React commits the close. Measured on a throttled desktop run, that
+  // window is ~75-100ms, and it widens with machine load.
+  //
+  // Without this wait the visibility check below is satisfied by the DYING
+  // picker: the helper skips the open-click, and the leftover input unmounts
+  // mid-`fill()` ("element was detached from the DOM, retrying" — then the
+  // locator never re-resolves, because nobody re-opened the picker, and the
+  // fill burns its full timeout). When the fill *does* land first, `Enter`
+  // applies nothing, `toHaveCount(0)` below passes trivially on the unmount
+  // that was already coming, and the caller's next assertion sees no language
+  // change at all. Both shapes were observed on CI (#4314's `playwright (2)`)
+  // and reproduced locally under `Emulation.setCPUThrottlingRate`.
+  //
+  // Raising a timeout cannot fix either shape — the wait is for an element
+  // that is never coming back. The real signal is "no picker on screen", so
+  // wait for that, then open a fresh one.
+  await expect(filter).toHaveCount(0)
+
   // Retry the OPEN, not the pick: the popover's own dismissable layer can eat a
   // pointerdown that lands while a previous pick is still closing it, leaving
   // the trigger toggled back shut. Re-tapping until the picker is actually up
@@ -105,6 +127,11 @@ test.describe('Mermaid diagram round-trip (#1438)', () => {
     await expect(langInput).toBeVisible()
     await langInput.fill('mermaid')
     await page.getByTestId('use-custom-language').click()
+    // Same contract the helper below enforces: a pick is not done until the
+    // picker has unmounted. Nothing in this test picks again, so it is a
+    // consistency guard rather than a live fix — but a direct pick that does
+    // not honour the rule is how the flake reached the other test.
+    await expect(langInput).toHaveCount(0)
 
     // #2449 (audit finding 45): with the caret INSIDE the block, the node
     // view opens in SOURCE mode — keystrokes must land in visible text, never
@@ -190,6 +217,11 @@ test.describe('Mermaid diagram round-trip (#1438)', () => {
     await expect(langInput).toBeVisible()
     await langInput.fill('javascript')
     await page.getByRole('button', { name: 'javascript', exact: true }).click()
+    // This pick is made directly rather than through `pickCodeLanguage`, so it
+    // has to honour the same contract the helper ends on: the picker is not
+    // done until it has unmounted. Leaving it half-closed is what handed the
+    // next `pickCodeLanguage` a dying input to type into.
+    await expect(langInput).toHaveCount(0)
 
     await expect(page.locator('[data-testid="block-editor"] pre')).toBeVisible()
     await expect(plainCodeView(page)).toHaveClass('language-javascript')
