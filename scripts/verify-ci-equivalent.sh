@@ -213,6 +213,7 @@ import os
 import pathlib
 import re
 import sys
+import urllib.parse
 
 # `sqlite3` is imported inside the guard, not at module scope, and this is
 # load-bearing rather than stylistic. A python3 built without the `_sqlite3`
@@ -230,22 +231,66 @@ except Exception as _e:  # pragma: no cover - depends on the interpreter build
     sys.exit(2)
 
 
+_QUERY_CRED_KEY_RE = re.compile(
+    r"(?i)\b(password|pwd|passwd|secret|token|api[_-]?key|access[_-]?token)=[^&#]*"
+)
+
+
 def redact_url_credentials(url):
-    """Redact userinfo (user:password@) from a URL before it is ever
-    printed. Push output gets pasted into issues/chat, and a non-sqlite
-    DATABASE_URL reaching the diagnosis below (e.g.
-    "postgres://user:password@host/db") can carry a real credential.
-    The character class excludes only "/" and not "@", deliberately: a
-    password may itself contain an at-sign, and stopping at the FIRST one
-    ("postgres://u:p@ss@host/db") leaves the tail of the password on
-    screen. Only the "//user:pass@" segment right after the scheme is
-    touched —
-    scheme, host, port, path and query survive untouched, since those are
-    what make the printed line diagnostic in the first place. A URL with
-    no "//...@" segment at all (no userinfo, e.g. "sqlite:dev.db") is
-    returned unchanged.
+    """Redact userinfo (user:password@) AND credential-shaped query
+    parameters from a URL before it is ever printed. Push output gets
+    pasted into issues/chat, and a non-sqlite DATABASE_URL reaching the
+    diagnosis below (e.g. "postgres://user:password@host/db" or
+    "postgres://host/db?password=secret") can carry a real credential.
+
+    Userinfo: the authority is everything right after "//" up to the
+    first "?", "#", or end of string — that span is captured WHOLE
+    (including any "/" inside it), then the LAST "@" in that span (not
+    the first) is treated as the userinfo/host boundary and everything
+    before it becomes "***". Two things that break a narrower approach:
+    a password may itself contain an at-sign, so stopping at the FIRST
+    "@" ("postgres://u:p@ss@host/db") leaves the tail of the password on
+    screen; and a password may contain an unescaped "/"
+    ("postgres://u:p/w@host/db"), so a character class that excludes "/"
+    never reaches the "@" at all and redacts nothing. Taking the last "@"
+    before the authority's own terminator handles both — at the cost of
+    also redacting a stray "@" that happens to appear in a path with no
+    real userinfo at all (e.g. ".../user@company/report"); for a DATABASE_URL
+    that shape is not a realistic input, and over-redacting is the safe
+    direction for a function whose whole job is not leaking a credential.
+    scheme, host, port, path and query survive untouched otherwise, since
+    those are what make the printed line diagnostic in the first place. A
+    URL with no "//" segment at all (e.g. "sqlite:dev.db"), or one with no
+    "@" in its authority, is returned unchanged.
+
+    Query string: kept in the printed line deliberately (see the
+    "not a sqlite: URL" caller) because host/dbname/mode/sslmode etc. are
+    diagnostic — but the query string is its own leak surface, not just
+    the userinfo, since some drivers accept "?password=..." instead of
+    (or in addition to) userinfo. Any query key that looks credential-shaped
+    (password/pwd/passwd/secret/token/api[_-]key/access[_-]token, case
+    insensitive) has its VALUE redacted; every other query key is left
+    alone. This is a heuristic allowlist of key names, not a guarantee —
+    a driver-specific key this list doesn't know about would still print —
+    but it closes the concrete "?password=" shape this preflight can
+    actually receive from a postgres/mysql-style DATABASE_URL.
     """
-    return re.sub(r"//[^/]*@", "//***@", url, count=1)
+
+    def _redact_authority(m):
+        prefix, authority = m.group(1), m.group(2)
+        at = authority.rfind("@")
+        if at == -1:
+            return prefix + authority
+        return prefix + "***" + authority[at:]
+
+    url = re.sub(r"(//)([^?#]*)", _redact_authority, url, count=1)
+
+    q = url.find("?")
+    if q != -1:
+        head, tail = url[: q + 1], url[q + 1 :]
+        tail = _QUERY_CRED_KEY_RE.sub(lambda m: m.group(1) + "=***", tail)
+        url = head + tail
+    return url
 
 
 def main():
@@ -256,13 +301,26 @@ def main():
     # `.env`, dotenvy keeps the FIRST "DATABASE_URL=" line, not the last.
     # Default to "dev.db" (sqlx-cli's own default) when neither is set.
     def resolve_sqlite_path(url):
-        # Mirrors the `url` crate parse that sqlx's SqliteConnectOptions::from_str
-        # relies on: for a non-special scheme, "sqlite://host/path" folds `host`
-        # into the filename (so "sqlite://dev.db" -> "dev.db", NOT the bogus
-        # absolute "//dev.db" a naive strip-and-isabs check would produce),
-        # "sqlite:///abs/path" is the true absolute form (empty host), and a bare
-        # "sqlite:relative.db" has no host at all. A trailing "?...querystring"
-        # (e.g. "?mode=rwc") is never part of the path.
+        # NOT actually routed through `url::Url::path()`/`.host_str()` on the
+        # Rust side, despite appearances: sqlx-sqlite's own
+        # `SqliteConnectOptions::from_str` (options/parse.rs) does
+        # `url.trim_start_matches("sqlite://").trim_start_matches("sqlite:")`
+        # — a PLAIN STRING prefix strip, not a parsed authority/path split —
+        # then splits once on the first "?", then percent-decodes the
+        # remainder as one opaque string via `percent_decode_str(database)
+        # .decode_utf8()`. (`ConnectOptions::from_url` for sqlite round-trips
+        # through `url.as_str()` back into this same `from_str`, so there is
+        # no separate url-crate-driven codepath for the "sqlite://" form
+        # either — ONE rule, not two, is the correct thing to mirror here.)
+        # The host/path split below is kept only because it is functionally
+        # a no-op for that same reason: stripping "//" and rejoining
+        # `host + path` (with no separator between them) reproduces the
+        # original string exactly, since the "/" that split them was never
+        # consumed — so "sqlite://dev.db" -> "dev.db" and
+        # "sqlite:///abs/path" -> "/abs/path" fall out correctly without a
+        # true authority parse. A trailing "?...querystring" (e.g.
+        # "?mode=rwc") is split off first and is never part of the path,
+        # matching sqlx's own `splitn(2, '?')`.
         rest = url[len("sqlite:"):]
         q = rest.find("?")
         if q != -1:
@@ -271,8 +329,19 @@ def main():
             rest = rest[2:]
             slash = rest.find("/")
             host, path = (rest, "") if slash == -1 else (rest[:slash], rest[slash:])
-            return host + path
-        return rest
+            rest = host + path
+        # sqlx percent-decodes this same remainder uniformly regardless of
+        # which prefix form was stripped (see above — there is only one
+        # codepath) "to allow for `?` or `#` in the filename" (its own
+        # comment). Without this, "sqlite:my%20db.db" resolves here to the
+        # literal, nonexistent "my%20db.db" instead of the real "my db.db"
+        # on disk, and a healthy dev.db is hard-blocked as missing
+        # (#4330 review). `unquote`'s default `errors="replace"` mirrors
+        # `decode_utf8`'s own lossy fallback closely enough for a diagnostic
+        # path (an invalid-UTF-8 percent sequence in a filename is not a
+        # case this preflight needs to be exact about); a plain path with no
+        # "%" escapes at all passes through unchanged.
+        return urllib.parse.unquote(rest)
 
     db_rel = "dev.db"
     val = os.environ.get("DATABASE_URL")
@@ -346,6 +415,42 @@ def main():
         print("  Set it to a plain sqlite: URL so this preflight can check it, e.g.:")
         print("    DATABASE_URL=sqlite:dev.db")
         sys.exit(2)
+    # Neither an exported DATABASE_URL nor a `.env` entry for it at all (not
+    # merely empty or ambiguous — genuinely absent from both sources this
+    # preflight checks). sqlx-macros-core resolves the exact same
+    # MacrosEnv.database_url to None in this state — it walks the SAME
+    # manifest-dir-ancestor `.env` search this preflight does
+    # (query/metadata.rs load_env) — and its own match arm is on
+    # `database_url: Some(db_url)`, not on SQLX_OFFLINE. With no
+    # DATABASE_URL anywhere, that arm is never taken; `sqlx::query!` ALWAYS
+    # falls back to the committed src-tauri/.sqlx/ query cache, regardless
+    # of whether SQLX_OFFLINE is true, false, or unset (the offline flag
+    # there only selects which error MESSAGE to give if the cache is
+    # missing, not whether the cache is consulted). So Phase D/D2 never
+    # opens dev.db here — the same premise the SQLX_OFFLINE=true
+    # short-circuit above is built on.
+    #
+    # This does NOT make dev.db's own state irrelevant to REPORT — if it
+    # happens to be caught up, that is still the truth and is reported as
+    # such below exactly like any other invocation (the default "dev.db"
+    # this preflight falls back to checking is itself sqlx-CLI's own
+    # convention, so a developer who never configured DATABASE_URL is
+    # extremely likely to be using that exact filename, and there is no
+    # harm in confirming it is fine). What must NOT happen is treating an
+    # actually-BEHIND dev.db in this state as a CONFIRMED gap worth hard
+    # blocking a push over: the build this push triggers will not touch
+    # that file at all, so its staleness cannot be why Phase D/D2 would
+    # fail. The three "confirmed gap" exit(1) sites below each check this
+    # flag and downgrade to a warn (rc=2) instead, with an added note,
+    # rather than skipping the inspection outright — kept narrow rather
+    # than short-circuiting like SQLX_OFFLINE=true does, since the
+    # documented setup (scripts/setup-dev-db.sh) always writes a `.env`
+    # with DATABASE_URL=sqlite:dev.db and reaching this state at all is
+    # itself unusual for this repo; a developer who DOES have DATABASE_URL
+    # set somewhere this invocation didn't inherit from (a shell profile
+    # the hook's non-interactive shell doesn't source, direnv, etc.) still
+    # benefits from seeing dev.db's real state as a heads-up.
+    database_url_unset = val is None
     if val is not None and not val.startswith("sqlite:"):
         # A DATABASE_URL that actually resolved (exported, or a clean .env
         # assignment — not the env_ambiguous cases above) to something that
@@ -396,6 +501,24 @@ def main():
             print("  it cannot tell whether an in-memory database is caught up")
             print("  with migrations/.")
             sys.exit(2)
+        if db_rel == "":
+            # "sqlite:" or "sqlite://" with nothing after it resolves here
+            # to the empty string (both trim to "", the host/path fold
+            # above is a no-op on an already-empty remainder). Left
+            # unhandled, `os.path.join(src_tauri, "")` yields
+            # "<src_tauri>/" — a DIRECTORY, not a file — and
+            # `os.path.isfile` on that is False, so the "does not exist"
+            # branch below would hard-block (rc=1) with a wrong diagnosis:
+            # it names a directory as a missing "dev.db" (#4330 review).
+            # No filename was actually given at all, which is the same
+            # "cannot tell" category as sqlite::memory: above, not a
+            # confirmed gap.
+            print("DATABASE_URL resolves to an empty sqlite path: %r" % redact_url_credentials(val))
+            print("  There is no filename here for this preflight to check against —")
+            print("  it cannot tell whether your actual database is caught up with")
+            print("  migrations/. Set it to a plain sqlite: URL naming a file, e.g.:")
+            print("    DATABASE_URL=sqlite:dev.db")
+            sys.exit(2)
     db_file = db_rel if os.path.isabs(db_rel) else os.path.join(src_tauri, db_rel)
 
     # Printed as two lines rather than one "cd src-tauri && cargo sqlx migrate
@@ -408,13 +531,33 @@ def main():
         print("    cd src-tauri")
         print("    cargo sqlx migrate run")
 
+    def confirmed_gap_exit():
+        # A migration gap this preflight can see in dev.db is only a
+        # CONFIRMED gap (rc=1, hard block) when Phase D/D2's own build
+        # would actually touch dev.db. With DATABASE_URL unset everywhere
+        # (see `database_url_unset`'s own comment above), it would not —
+        # downgrade to a warn (rc=2) instead: still tell the developer
+        # what dev.db's real state is (that stays useful — the default
+        # filename this preflight fell back to checking is the one
+        # sqlx-cli itself would provision), but don't hard-block a push
+        # over a file the current build does not read.
+        if database_url_unset:
+            print("  (DATABASE_URL is not set anywhere — no export, no .env entry —")
+            print("  so cargo sqlx's query macros resolve from the committed")
+            print("  src-tauri/.sqlx/ query cache and never open this file for THIS")
+            print("  push. This is a heads-up, not a confirmed reason your build")
+            print("  would fail; provision it anyway before you rely on it, e.g. for")
+            print("  `cargo sqlx prepare` or a future push that DOES set DATABASE_URL.)")
+            sys.exit(2)
+        sys.exit(1)
+
     if not os.path.isfile(db_file):
         print("dev.db does not exist: %s" % db_file)
         print("  Provision it (idempotent):")
         print("    bash scripts/setup-dev-db.sh")
         print("  or apply migrations directly:")
         print_remedy()
-        sys.exit(1)
+        confirmed_gap_exit()
 
     expected = {}
     pat = re.compile(r"^(\d+)_.+\.sql$")
@@ -450,7 +593,7 @@ def main():
                 print("dev.db exists but has never been migrated (no _sqlx_migrations table): %s" % db_file)
                 print("  Apply all migrations:")
                 print_remedy()
-                sys.exit(1)
+                confirmed_gap_exit()
             # AND success: a row for a migration whose application did not
             # complete (success=0) is not "applied" — sqlx-cli itself treats
             # it as a hard error requiring `cargo sqlx migrate repair`, not
@@ -469,7 +612,7 @@ def main():
             print("    %s" % expected[v])
         print("  Apply them:")
         print_remedy()
-        sys.exit(1)
+        confirmed_gap_exit()
 
     sys.exit(0)
 
@@ -1599,9 +1742,116 @@ con.commit()
         st_bad "an exported-but-empty DATABASE_URL with no .env key warns, naming emptiness not a bogus URL" "rc=$st_rc out=$st_out"
     fi
 
+    # 55. DATABASE_URL=sqlite: (or sqlite://) with nothing after it resolves
+    #     to an empty path. Falsified against the pre-fix code: `os.path.join
+    #     (src_tauri, "")` yields a DIRECTORY ("<src_tauri>/"), `os.path.isfile`
+    #     on that is False, and the guard hard-blocked with `rc=1` naming that
+    #     directory as a missing "dev.db" — a confirmed-gap block for a URL
+    #     that named no file at all. Must warn (rc=2) instead, same "cannot
+    #     tell" category as sqlite::memory: (case 53).
+    st_devdb_seed dburl-empty-path "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/dburl-empty-path/src-tauri"
+    printf 'DATABASE_URL=sqlite:\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -qi 'empty'; then
+        st_ok "DATABASE_URL=sqlite: (empty path) warns (rc=2), not a hard block naming a directory"
+    else
+        st_bad "DATABASE_URL=sqlite: (empty path) warns (rc=2), not a hard block naming a directory" "rc=$st_rc out=$st_out"
+    fi
+
+    # ── percent-decoding parity with sqlx-sqlite's own parser (#4330 review) ──
+    # 56. sqlx-sqlite percent-decodes the filename it resolves from a
+    #     DATABASE_URL ("% decode to allow for `?` or `#` in the filename",
+    #     options/parse.rs). Falsified against the pre-fix code: the literal,
+    #     undecoded "my%20db.db" was checked on disk, missed the real file
+    #     ("my db.db"), and hard-blocked (rc=1) a dev.db that was actually
+    #     caught up. Must resolve the decoded name and pass SILENTLY, same
+    #     shape as cases 30/50.
+    st_devdb_seed dburl-percent-encoded "0001_initial.sql" "1" 'my db.db'
+    st_dir="$st_devdb_root/dburl-percent-encoded/src-tauri"
+    printf 'DATABASE_URL=sqlite:my%%20db.db\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
+        st_ok "a percent-encoded DATABASE_URL path is decoded before checking dev.db on disk"
+    else
+        st_bad "a percent-encoded DATABASE_URL path is decoded before checking dev.db on disk" "rc=$st_rc out=$st_out"
+    fi
+
+    # ── no DATABASE_URL anywhere: the same premise as SQLX_OFFLINE (#4330 review) ──
+    # 57. Neither an exported DATABASE_URL nor a .env entry for it at all,
+    #     AND dev.db is genuinely missing. Falsified against the pre-fix
+    #     code: db_rel stayed at its "dev.db" default and the guard
+    #     hard-blocked (rc=1, "dev.db does not exist") even though
+    #     `sqlx::query!` in this state never opens dev.db at all — it
+    #     resolves entirely from the committed .sqlx/ cache (same premise as
+    #     the SQLX_OFFLINE=true short-circuit above). Must warn (rc=2), not
+    #     block — but still NAME the real "does not exist" state (kept
+    #     informative, narrower than that short-circuit's silent pass).
+    st_devdb_seed dburl-unset-everywhere "0001_initial.sql" NODB
+    st_dir="$st_devdb_root/dburl-unset-everywhere/src-tauri"
+    rm -f "$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
+        && printf '%s' "$st_out" | grep -qi 'DATABASE_URL is not set anywhere'; then
+        st_ok "no DATABASE_URL anywhere (no export, no .env entry) warns instead of hard-blocking on the dev.db default"
+    else
+        st_bad "no DATABASE_URL anywhere (no export, no .env entry) warns instead of hard-blocking on the dev.db default" "rc=$st_rc out=$st_out"
+    fi
+
+    # 57b. Companion property: when DATABASE_URL IS explicitly configured
+    #      (the documented, normal case), a genuinely missing dev.db must
+    #      STILL hard-block (rc=1) exactly as before — case 57 narrows the
+    #      policy for the unconfigured state only, it must not weaken the
+    #      confirmed-gap block for the configured one.
+    st_devdb_seed dburl-configured-missing "0001_initial.sql" NODB
+    st_dir="$st_devdb_root/dburl-configured-missing/src-tauri"
+    printf 'DATABASE_URL=sqlite:dev.db\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 1 ] && printf '%s' "$st_out" | grep -q 'does not exist' \
+        && ! printf '%s' "$st_out" | grep -qi 'DATABASE_URL is not set'; then
+        st_ok "a missing dev.db still hard-blocks (rc=1) when DATABASE_URL is explicitly configured"
+    else
+        st_bad "a missing dev.db still hard-blocks (rc=1) when DATABASE_URL is explicitly configured" "rc=$st_rc out=$st_out"
+    fi
+
+    # ── credential redaction: the two shapes the userinfo-only regex missed (#4330 review) ──
+    # 58. A password containing a raw, unescaped "/" defeats a character
+    #     class that excludes "/" from the userinfo match entirely — the
+    #     regex never reaches the "@" and redacts nothing. Falsified against
+    #     the pre-fix code: the full "u:p/w@" printed verbatim. Must redact
+    #     the password and keep the host visible.
+    st_devdb_seed dburl-credentials-slash "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/dburl-credentials-slash/src-tauri"
+    printf 'DATABASE_URL=postgres://dbuser:sup3r/Secr3t@localhost:5432/agaric\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'sup3r/Secr3t' \
+        && printf '%s' "$st_out" | grep -q 'localhost'; then
+        st_ok "a DATABASE_URL password containing a raw '/' is still redacted, not left unmatched"
+    else
+        st_bad "a DATABASE_URL password containing a raw '/' is still redacted, not left unmatched" "rc=$st_rc out=$st_out"
+    fi
+
+    # 59. Credentials in the QUERY STRING (e.g. "?password=...") are a second
+    #     leak surface distinct from userinfo — the query string is kept in
+    #     the printed line deliberately for diagnosability, but that does not
+    #     make a "password=" parameter safe to print. Falsified against the
+    #     pre-fix code: "?password=hunter2" printed verbatim. Must redact the
+    #     credential-shaped query VALUE while leaving an ordinary query key
+    #     (sslmode) visible.
+    st_devdb_seed dburl-credentials-query "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/dburl-credentials-query/src-tauri"
+    printf 'DATABASE_URL=postgres://localhost:5432/agaric?password=hunter2&sslmode=require\n' >"$st_dir/.env"
+    st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
+    if [ "$st_rc" -eq 2 ] && ! printf '%s' "$st_out" | grep -q 'hunter2' \
+        && printf '%s' "$st_out" | grep -q 'sslmode=require'; then
+        st_ok "a credential-shaped query-string parameter is redacted; an ordinary query key is not"
+    else
+        st_bad "a credential-shaped query-string parameter is redacted; an ordinary query key is not" "rc=$st_rc out=$st_out"
+    fi
+
     rm -rf "$st_devdb_root"
 
-    # 55. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A —
+    # 60. Ratchet: the preflight must be WIRED, and wired BEFORE Phase A —
     #     same failure shape as case 14 (diagnosing after the fact is the
     #     state being fixed). Reuses ST_PHASE_A_ANCHOR and st_order_check
     #     from the node-deps section above.
