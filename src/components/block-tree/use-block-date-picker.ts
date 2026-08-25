@@ -25,7 +25,16 @@ export interface UseBlockDatePickerParams {
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
   rovingEditor: Pick<RovingEditorHandle, 'editor'>
-  pagesListRef: RefObject<Array<{ id: string; title: string }>>
+  /**
+   * #4319 — `useBlockResolve().registerCreatedPage`. This used to be
+   * `pagesListRef` itself, and `handleDateMode` appended to it by hand —
+   * without the generation bump an in-flight picker fill needs to lose the
+   * race, and without the "only append into an already-filled cache" guard
+   * that keeps an empty cache meaning "not fetched yet". Neither invariant
+   * is stated here any more: this hook cannot reach the cache except
+   * through the one function that carries both.
+   */
+  registerCreatedPage: (row: { id: string; title: string }) => void
   t: TFn
 }
 
@@ -48,7 +57,8 @@ interface DatePickContext {
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
   rovingEditor: Pick<RovingEditorHandle, 'editor'>
-  pagesListRef: RefObject<Array<{ id: string; title: string }>>
+  /** See `UseBlockDatePickerParams['registerCreatedPage']`. */
+  registerCreatedPage: (row: { id: string; title: string }) => void
   t: TFn
   /** ISO date string: YYYY-MM-DD. */
   dateStr: string
@@ -170,10 +180,10 @@ async function handleDateMode(ctx: DatePickContext): Promise<void> {
       const newPageId = unwrap(await commands.createPageInSpace(null, ctx.dateStr, currentSpaceId))
       datePageId = newPageId
       useResolveStore.getState().set(newPageId, ctx.dateStr, false)
-      ctx.pagesListRef.current = [
-        ...ctx.pagesListRef.current,
-        { id: newPageId, title: ctx.dateStr },
-      ]
+      // #4319 — the third page-creation site, now routed through the same
+      // `recordCreatedRow` pair as `onCreatePage` / `onCreateTag` instead of
+      // appending to `pagesListRef` by hand. See `registerCreatedPage`.
+      ctx.registerCreatedPage({ id: newPageId, title: ctx.dateStr })
     }
 
     if (ctx.rovingEditor.editor && datePageId) {
@@ -211,7 +221,7 @@ export function useBlockDatePicker({
   rootParentId,
   pageStore,
   rovingEditor,
-  pagesListRef,
+  registerCreatedPage,
   t,
 }: UseBlockDatePickerParams): UseBlockDatePickerReturn {
   const [datePickerOpen, setDatePickerOpen] = useState(false)
@@ -231,7 +241,7 @@ export function useBlockDatePicker({
   const tRef = useRef(t)
   tRef.current = t
 
-  // `t` is read via `tRef` (invariant above) so it is intentionally not listed. `pageStore` (a Zustand StoreApi) and `pagesListRef` (a ref object) are stable across renders, so listing them is safe and adds no extra runs — `handleDatePick` is only consumed as an event handler (BlockTree onSelect), never as another hook's dependency.
+  // `t` is read via `tRef` (invariant above) so it is intentionally not listed. `pageStore` (a Zustand StoreApi) and `registerCreatedPage` (a `useCallback` with an empty dep list, #4319) are stable across renders, so listing them is safe and adds no extra runs — `handleDatePick` is only consumed as an event handler (BlockTree onSelect), never as another hook's dependency.
   const handleDatePick = useCallback(
     async (d: Date) => {
       setDatePickerOpen(false)
@@ -240,14 +250,14 @@ export function useBlockDatePicker({
         rootParentId,
         pageStore,
         rovingEditor: rovingEditorRef.current,
-        pagesListRef,
+        registerCreatedPage,
         t: tRef.current,
         dateStr: formatIsoDate(d),
         legacyStr: formatLegacyDate(d),
       }
       await MODE_HANDLERS[datePickerMode](ctx)
     },
-    [datePickerMode, focusedBlockId, rootParentId, pageStore, pagesListRef],
+    [datePickerMode, focusedBlockId, rootParentId, pageStore, registerCreatedPage],
   )
 
   return {
