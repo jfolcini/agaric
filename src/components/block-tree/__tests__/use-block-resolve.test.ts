@@ -4865,6 +4865,66 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P_NEWER', title: 'Newer Page' }])
   })
 
+  // #4344 part 2 review — the THIRD pairing, and the one no existing test
+  // covered: the winner resolves and persists FIRST (as in the very first
+  // test in this group), and the loser resolves SECOND — but that first
+  // test only ever asserted `pagesListRef.current`, never the LOSER's own
+  // resolved value, which is exactly what `searchPages` hands its caller.
+  // The middle arm used to read its own already-fetched `source` — an older
+  // snapshot — even though `pagesListRef.current` was sitting right there,
+  // freshly overwritten with the winner's newer rows. The loser must return
+  // those fresher ref rows instead of its own stale ones.
+  it('pagesListRef: the #4270 tie-break loser returns the fresher ref rows when the winner already persisted (#4344 part 2)', async () => {
+    let resolveFirst: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    let resolveSecond: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight1: Promise<Awaited<ReturnType<typeof result.current.searchPages>>> =
+      Promise.resolve([])
+    let inFlight2: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight1 = result.current.searchPages('')
+    })
+    act(() => {
+      inFlight2 = result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+
+    // The later-issued fill (the #4270 winner) resolves FIRST and persists.
+    await act(async () => {
+      resolveSecond([pageRow('P_NEWER', 'Newer Page')])
+      await inFlight2
+    })
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_NEWER', title: 'Newer Page' }])
+
+    // The earlier-issued fill (the tie-break loser) resolves SECOND, with
+    // its own OLDER snapshot — but the ref already holds the winner's
+    // fresher rows. The loser must hand those back, not its own stale ones.
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      resolveFirst([pageRow('P_OLDER', 'Older Page')])
+      items = await inFlight1
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_NEWER'])
+    // Still must not PERSIST over the winner's rows.
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_NEWER', title: 'Newer Page' }])
+  })
+
   // The line #4344 part 2 must NOT cross. "Lost the tie-break" is a
   // FRESHNESS verdict, so the rows may still be returned; a space switch and
   // a name-change-bus event are CORRECTNESS verdicts, so they may not. These
@@ -5074,6 +5134,68 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
       resolveSecond([tagRow('T_NEWER', 'newer')])
       await inFlight2
     })
+    expect(result.current.tagsListRef.current.map((tg) => tg.tag_id)).toEqual(['T_NEWER'])
+  })
+
+  // #4344 part 2 review, tags side — the mirror of the `pagesListRef` test
+  // just above: the THIRD pairing, where the winner resolves and persists
+  // FIRST and the loser resolves SECOND. The very first test in this group
+  // only ever asserted `tagsListRef.current`, never the LOSER's own
+  // resolved value, which is exactly what `searchTags` hands its caller.
+  // The middle arm used to leave `tags` as its own already-fetched
+  // `fetched` — an older snapshot — even though `tagsListRef.current` was
+  // sitting right there, freshly overwritten with the winner's newer rows.
+  // The loser must return those fresher ref rows instead of its own stale
+  // ones.
+  it('tagsListRef: the #4270 tie-break loser returns the fresher ref rows when the winner already persisted (#4344 part 2)', async () => {
+    let resolveFirst: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    let resolveSecond: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight1: Promise<Awaited<ReturnType<typeof result.current.searchTags>>> = Promise.resolve(
+      [],
+    )
+    let inFlight2: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight1 = result.current.searchTags('')
+    })
+    act(() => {
+      inFlight2 = result.current.searchTags('')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+
+    // The later-issued fill (the #4270 winner) resolves FIRST and persists.
+    await act(async () => {
+      resolveSecond([tagRow('T_NEWER', 'newer')])
+      await inFlight2
+    })
+    expect(result.current.tagsListRef.current.map((tg) => tg.tag_id)).toEqual(['T_NEWER'])
+
+    // The earlier-issued fill (the tie-break loser) resolves SECOND, with
+    // its own OLDER snapshot — but the ref already holds the winner's
+    // fresher rows. The loser must hand those back, not its own stale ones.
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      resolveFirst([tagRow('T_OLDER', 'older')])
+      items = await inFlight1
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['T_NEWER'])
+    // Still must not PERSIST over the winner's rows.
     expect(result.current.tagsListRef.current.map((tg) => tg.tag_id)).toEqual(['T_NEWER'])
   })
 

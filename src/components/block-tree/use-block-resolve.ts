@@ -312,13 +312,18 @@ async function searchPagesViaCache(
     if (spaceStillActive && generationUnchanged && isLatestFill) {
       pagesListRef.current = source
     } else if (spaceStillActive && generationUnchanged) {
-      // #4344 part 2 — LOST THE #4270 TIE-BREAK, and nothing else. The space
-      // is unchanged and no name-change-bus event has landed, so `source` is
-      // a valid snapshot of THIS space at THIS generation: it is merely not
-      // the freshest one, and a newer fill has been ISSUED that should own
-      // the cache. So: do not PERSIST it (that is #4270's whole point — the
-      // earlier-issued fill must not overwrite the later-issued one), but DO
-      // RETURN it.
+      // LOST THE #4270 TIE-BREAK, but still SERVABLE: return the freshest
+      // rows in hand, without persisting. "Freshest in hand" is
+      // `pagesListRef.current` when the #4270 winner has already filled it,
+      // and this fill's own `source` otherwise — see the assignment at the
+      // end of this branch. Full rationale follows.
+      //
+      // #4344 part 2 — the space is unchanged and no name-change-bus event
+      // has landed, so `source` is a valid snapshot of THIS space at THIS
+      // generation: it is merely not the freshest one, and a newer fill has
+      // been ISSUED that should own the cache. So: do not PERSIST it (that
+      // is #4270's whole point — the earlier-issued fill must not overwrite
+      // the later-issued one), but DO RETURN something usable.
       //
       // This branch used to fall through to `source = pagesListRef.current`
       // below, together with the genuinely-unsafe cases. On the common
@@ -335,8 +340,17 @@ async function searchPagesViaCache(
       // correctness guards, not freshness ones. A space switch must never
       // leak the previous space's pages into the new space's picker, and a
       // rename/removal/invalidation means `source` carries exactly the
-      // stale/deleted row #4055 exists to keep out. `source` is left as the
-      // fetched rows here and ONLY here.
+      // stale/deleted row #4055 exists to keep out.
+      //
+      // #4344 part 2 review — plain `source` was still wrong in the OTHER
+      // resolution order, which no test asserted: when the later-issued
+      // fill (the #4270 winner) resolves FIRST and persists, THIS fill —
+      // the earlier-issued loser, resolving second — used to hand back its
+      // own older `source` even though `pagesListRef.current` had just been
+      // overwritten with the winner's fresher rows sitting right there.
+      // Prefer the ref whenever the winner has already filled it; fall back
+      // to `source` only when it hasn't (the in-order case above).
+      source = pagesListRef.current.length > 0 ? pagesListRef.current : source
     } else {
       // The fetch was rejected for a reason that also makes it unsafe to
       // RETURN. Two of those, both requiring the discarded `source` to be
@@ -1207,11 +1221,16 @@ export function useBlockResolve(): UseBlockResolveReturn {
           if (isLatestFill) {
             tagsListRef.current = fetched
           } else {
-            // #4344 part 2 — LOST THE #4270 TIE-BREAK, and nothing else: a
-            // newer fill has been ISSUED that should own the cache. So do
-            // not PERSIST (that is #4270's whole point — the earlier-issued
-            // fill must not overwrite the later-issued one), but DO RETURN,
-            // which is what leaving `tags` as `fetched` does.
+            // LOST THE #4270 TIE-BREAK, but still SERVABLE: return the
+            // freshest rows in hand, without persisting. "Freshest in hand"
+            // is `tagsListRef.current` when the #4270 winner has already
+            // filled it, and this fill's own `fetched` otherwise — see the
+            // assignment at the end of this branch. Full rationale follows.
+            //
+            // #4344 part 2 — a newer fill has been ISSUED that should own
+            // the cache. So do not PERSIST (that is #4270's whole point —
+            // the earlier-issued fill must not overwrite the later-issued
+            // one), but DO RETURN something usable.
             //
             // Same defect, same fix, as `searchPagesViaCache` above: this
             // used to fall through to `tags = tagsListRef.current` together
@@ -1222,12 +1241,34 @@ export function useBlockResolve(): UseBlockResolveReturn {
             // ref yet — the `#` picker rendered EMPTY for one round trip on
             // exactly the fast-typing-into-a-cold-cache path, discarding a
             // snapshot whose only flaw was being one keystroke old.
+            //
+            // #4344 part 2 review — plain `fetched` was still wrong in the
+            // OTHER resolution order, which no test asserted: when the
+            // later-issued fill (the #4270 winner) resolves FIRST and
+            // persists, THIS fill — the earlier-issued loser, resolving
+            // second — used to hand back its own older `fetched` even
+            // though `tagsListRef.current` had just been overwritten with
+            // the winner's fresher rows sitting right there. Prefer the ref
+            // whenever the winner has already filled it; fall back to
+            // `fetched` only when it hasn't (the in-order case above).
+            //
+            // The `batchSet` seed just below stays keyed on this fill's own
+            // `fetched`, not this freshened `tags` — deliberately: `batchSet`
+            // is a per-id upsert (never a wholesale replace, confirmed
+            // against `@/stores/resolve.ts`), so seeding from a stale
+            // snapshot cannot un-seed an id the winner already wrote, and
+            // for any id BOTH snapshots share the value is identical anyway
+            // (the generation guard above rules out a rename between the
+            // two dispatches). Rekeying it to `tags` would add a second
+            // meaning of "freshest" to track for zero behavioural gain.
+            tags = tagsListRef.current.length > 0 ? tagsListRef.current : fetched
           }
           // Populate the resolve cache so tag_ref nodes can resolve the
           // name after the block is saved (serialized as #[ULID]) and
-          // reloaded. Only on the FILL — a cache-served keystroke re-seeds
-          // nothing new, so re-running the diff every keystroke bought
-          // nothing (#3277).
+          // reloaded. Only on a SERVABLE fill, not merely "the fill" — see
+          // #4344 part 2 just below: a servable-but-losing fill also seeds.
+          // Either way a cache-served keystroke re-seeds nothing new, so
+          // re-running the diff every keystroke bought nothing (#3277).
           //
           // #4344 part 2 — the seed is gated on SERVABLE, not on PERSISTING.
           // It has to be: `searchTags` now returns the tie-break loser's
