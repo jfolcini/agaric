@@ -289,8 +289,10 @@ updates:
   # ever produce a `src-tauri/fuzz/Cargo.lock`-only diff.
   #
   # What we keep: the entry's actual purpose — refreshing the fuzz lock for
-  # versions the manifests already allow (e.g. the mdns-sd 0.20.2 → 0.20.3
-  # bugfix, which `mdns-sd = "0.20"` accepts). What we give up: a
+  # versions the manifests already allow (e.g. a patch bugfix inside the
+  # caret/tilde range a parent manifest already declares — the mdns-sd
+  # 0.20.2 → 0.20.3 bump under `mdns-sd = "0.20"` was the motivating case;
+  # both manifests have since moved to "0.21"). What we give up: a
   # libfuzzer-sys `0.4` → `0.5` bump would need editing
   # `src-tauri/fuzz/Cargo.toml` and so is now skipped here. That is an
   # acceptable trade: libfuzzer-sys majors are coupled to the cargo-fuzz CLI
