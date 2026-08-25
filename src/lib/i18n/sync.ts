@@ -44,7 +44,19 @@ export const sync: Record<string, string> = {
   'pairing.proofRejectedError': 'The passphrase did not match. Check it and try again.',
   // #3469 — the pending-marker TTL elapsed with no peer appearing and no
   // rejection observed. Bounds the wait instead of hanging indefinitely.
-  'pairing.waitTimedOut': 'No response from the other device. The pairing code may have expired.',
+  // #3952 — this string used to assert a single cause ("the code may have
+  // expired"), which is a diagnosis this code path cannot make. The timeout
+  // fires after PAIRING_TIMEOUT_SECONDS whether the code expired OR the two
+  // devices never discovered each other, and the second case is the common
+  // one on a multicast-hostile network (AP client isolation, guest WiFi,
+  // separate subnets). `MdnsDisabled` does NOT cover that: it fires only when
+  // the mDNS socket cannot be created, and on those networks the socket binds
+  // fine and the packets are simply dropped — so no hint is shown at all.
+  // A user told the code expired retries with a fresh code, which fails
+  // identically, for ever. Naming both causes is what makes the second one
+  // actionable. The transport gap itself is #4037.
+  'pairing.waitTimedOut':
+    'No response from the other device. Either the pairing code expired, or the two devices could not find each other on this network — some guest and corporate WiFi networks block the discovery pairing needs.',
   // #3852 \u2014 the OS is dropping this app's packets (Android 15+'s per-uid
   // background firewall fires the moment the screen sleeps, even with the app
   // top-of-stack). This is the ONLY wording for that banner: the daemon sends
