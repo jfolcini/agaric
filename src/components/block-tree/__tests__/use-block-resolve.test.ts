@@ -1619,6 +1619,151 @@ describe('searchPages — "Create new" option', () => {
     expect(items.find((i) => i.isCreate)).toBeUndefined()
   })
 
+  // ── #4354 — create-suppression compares the FULL TITLE, both arms ─────
+  //
+  // `makePagePickerItem` runs every title through `formatNamespacedLabel`,
+  // which keeps only the LEAF of a namespaced path. The cold-cache arm of
+  // `appendCreatePageOptionIfNeeded` used to read that already-rendered
+  // `PickerItem.label`, while the warm arm read `pagesListRef`'s raw rows —
+  // so for a page titled `Engineering/Platform/Observability` the two arms
+  // compared DIFFERENT STRINGS (`Observability` vs. the full path) and the
+  // picker answered the same query two different ways depending on nothing
+  // but cache timing.
+  //
+  // The property is symmetric, so all four cells are pinned: {warm, cold} x
+  // {query is the leaf, query is the full path}. Pinning only the leaf
+  // direction would leave the half that regresses — Create offered for a
+  // page that already exists — completely uncovered.
+  //
+  // A page is identified by its full path, and the create option creates a
+  // PAGE, so the full title is the right comparand: a leaf query is NOT
+  // satisfied by a page that merely ends that way (Create must be offered),
+  // and a full-path query IS (Create must be suppressed).
+  const NAMESPACED_TITLE = 'Engineering/Platform/Observability'
+
+  function namespacedFtsPage() {
+    return {
+      id: 'P_NS',
+      block_type: 'page',
+      content: NAMESPACED_TITLE,
+      parent_id: null,
+      position: null,
+      deleted_at: null,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+      page_id: null,
+    }
+  }
+
+  it('WARM cache, LEAF query: offers Create — a namespaced page does not satisfy its own leaf (#4354)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P_NS', title: NAMESPACED_TITLE }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('Observability')
+    })
+
+    // The page is listed (it matches as a substring) — which is what makes
+    // suppressing Create here wrong rather than merely unhelpful: the row
+    // offered instead is a DIFFERENT page from the one being named.
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_NS'])
+    expect(items.find((i) => i.isCreate)).toEqual({
+      id: '__create__',
+      label: 'Observability',
+      isCreate: true,
+    })
+  })
+
+  it('WARM cache, FULL-PATH query: suppresses Create — the page already exists (#4354)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P_NS', title: NAMESPACED_TITLE }]
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages(NAMESPACED_TITLE)
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_NS'])
+    expect(items.find((i) => i.isCreate)).toBeUndefined()
+  })
+
+  it('COLD cache, LEAF query: still offers Create — the arm compared the namespaced LEAF (#4354)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [namespacedFtsPage()],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Cache deliberately left EMPTY, so the cold arm is the one under test.
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('Observability')
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([])
+    // The rendered label really is the leaf — the string the arm used to
+    // compare, so this is the precondition of the bug, not the assertion.
+    expect(items.filter((i) => !i.isCreate)).toEqual([
+      expect.objectContaining({ id: 'P_NS', label: 'Observability' }),
+    ])
+    // Before #4354 the leaf label matched the query exactly and Create was
+    // suppressed, leaving the user unable to create the page they named.
+    expect(items.find((i) => i.isCreate)).toEqual({
+      id: '__create__',
+      label: 'Observability',
+      isCreate: true,
+    })
+  })
+
+  it('COLD cache, FULL-PATH query: suppresses Create — same answer the warm arm gives (#4354)', async () => {
+    mockedSearchBlocks.mockResolvedValueOnce({
+      items: [namespacedFtsPage()],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages(NAMESPACED_TITLE)
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([])
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_NS'])
+    // Before #4354 the label compared was only `Observability`, so this
+    // offered "Create new page: Engineering/Platform/Observability" for a
+    // page that already exists.
+    expect(items.find((i) => i.isCreate)).toBeUndefined()
+  })
+
   it('does NOT append "Create new" when query exactly matches (different case)', async () => {
     const { result } = renderHook(() => useBlockResolve())
 
@@ -4658,6 +4803,141 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P_NEWER', title: 'Newer Page' }])
   })
 
+  // #4344 part 2 — the OTHER resolution order of the test above, and the
+  // COMMON one: with in-order IPC on a cold cache the EARLIER-issued fill
+  // resolves FIRST. It fails the #4270 sequence guard (a newer fill has been
+  // ISSUED), and the rejection branch used to serve
+  // `pagesListRef.current` — which no fill has written yet, because the
+  // winner has only been issued, not resolved. So the call returned ZERO
+  // pages where its own valid, only-marginally-older snapshot was sitting
+  // right there: a flash-of-empty picker on exactly the cold-cache
+  // fast-typing path. "Lost the tie-break" means the data must not be
+  // PERSISTED; it says nothing about whether it may be RETURNED.
+  it('pagesListRef: the #4270 tie-break loser serves its OWN rows when it resolves first (#4344 part 2)', async () => {
+    let resolveFirst: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    let resolveSecond: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight1: Promise<Awaited<ReturnType<typeof result.current.searchPages>>> =
+      Promise.resolve([])
+    let inFlight2: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight1 = result.current.searchPages('')
+    })
+    act(() => {
+      inFlight2 = result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+
+    // In-order IPC: the EARLIER-issued fill resolves FIRST, while the
+    // later-issued one is still in flight and the ref is still untouched.
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      resolveFirst([pageRow('P_OLDER', 'Older Page')])
+      items = await inFlight1
+    })
+
+    // #4270 is intact: it lost the tie-break, so it did NOT persist.
+    expect(result.current.pagesListRef.current).toEqual([])
+    // #4344 part 2: but it still SERVED its own snapshot. Before the fix
+    // this read the untouched ref and returned nothing at all.
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_OLDER'])
+
+    // …and the later-issued fill still wins the cache when it lands.
+    await act(async () => {
+      resolveSecond([pageRow('P_NEWER', 'Newer Page')])
+      await inFlight2
+    })
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_NEWER', title: 'Newer Page' }])
+  })
+
+  // The line #4344 part 2 must NOT cross. "Lost the tie-break" is a
+  // FRESHNESS verdict, so the rows may still be returned; a space switch and
+  // a name-change-bus event are CORRECTNESS verdicts, so they may not. These
+  // two pin that the relaxation is scoped to the sequence guard alone —
+  // without them, "return `source` when the guard rejects" would read as a
+  // blanket rule and quietly leak the previous space's pages into the new
+  // space's picker.
+  it("pagesListRef: a mid-flight SPACE SWITCH still refuses to serve the old space's rows (#4344 part 2)", async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<Awaited<ReturnType<typeof result.current.searchPages>>> = Promise.resolve(
+      [],
+    )
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      resolveFetch([pageRow('P_OLD_SPACE', 'Old Space Page')])
+      items = await inFlight
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([])
+    expect(items.filter((i) => !i.isCreate)).toEqual([])
+  })
+
+  it('pagesListRef: a mid-flight INVALIDATION still refuses to serve the stale rows (#4344 part 2)', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<Awaited<ReturnType<typeof result.current.searchPages>>> = Promise.resolve(
+      [],
+    )
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    // `sync:complete` lands mid-flight — the space is unchanged, so ONLY the
+    // generation guard can reject this one.
+    act(() => {
+      invalidateNameCaches()
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      resolveFetch([pageRow('P_STALE', 'Stale Page')])
+      items = await inFlight
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([])
+    expect(items.filter((i) => !i.isCreate)).toEqual([])
+  })
+
   // PR #4295 review, finding 6 — the test above pins `pagesRequestSeqRef`;
   // `tagsRequestSeqRef` (the mirror-image counter `searchTags` uses to fill
   // `tagsListRef`, per `RequestSeqRef`'s own comment: "a separate one for
@@ -4730,6 +5010,228 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
     expect(ids).toContain('T_NEWER')
     expect(ids).not.toContain('T_OLDER')
+  })
+
+  // #4344 part 2, tags side — the mirror of the three `pagesListRef` tests
+  // above, because `searchTags`'s inline fill carried the identical defect.
+  // The test just above pins the resolution order where the LATER-issued
+  // fill lands first; this one pins the OTHER order, and the COMMON one:
+  // with in-order IPC on a cold cache the EARLIER-issued fill resolves
+  // FIRST. It fails the #4270 sequence guard, and the rejection branch used
+  // to serve `tagsListRef.current` — which no fill has written yet, because
+  // the winner has only been ISSUED, not resolved. So the call returned
+  // ZERO tags where its own valid, only-marginally-older snapshot was
+  // sitting right there: a flash-of-empty `#` picker on exactly the
+  // cold-cache fast-typing path. "Lost the tie-break" means the data must
+  // not be PERSISTED; it says nothing about whether it may be RETURNED.
+  it('tagsListRef: the #4270 tie-break loser serves its OWN rows when it resolves first (#4344 part 2)', async () => {
+    let resolveFirst: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    let resolveSecond: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight1: Promise<Awaited<ReturnType<typeof result.current.searchTags>>> = Promise.resolve(
+      [],
+    )
+    let inFlight2: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight1 = result.current.searchTags('')
+    })
+    act(() => {
+      inFlight2 = result.current.searchTags('')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+
+    // In-order IPC: the EARLIER-issued fill resolves FIRST, while the
+    // later-issued one is still in flight and the ref is still untouched.
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      resolveFirst([tagRow('T_OLDER', 'older')])
+      items = await inFlight1
+    })
+
+    // #4270 is intact: it lost the tie-break, so it did NOT persist.
+    expect(result.current.tagsListRef.current).toEqual([])
+    // #4344 part 2: but it still SERVED its own snapshot. Before the fix
+    // this read the untouched ref and returned nothing at all.
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['T_OLDER'])
+
+    // …and the later-issued fill still wins the cache when it lands.
+    await act(async () => {
+      resolveSecond([tagRow('T_NEWER', 'newer')])
+      await inFlight2
+    })
+    expect(result.current.tagsListRef.current.map((tg) => tg.tag_id)).toEqual(['T_NEWER'])
+  })
+
+  // #4344 part 2, tags side — the rows the loser SERVES must also be SEEDED.
+  //
+  // The pages half of this fix gets that for free: `populatePageResolveCache`
+  // runs in `searchPages`, OUTSIDE `searchPagesViaCache`'s guard, over
+  // whatever the guard returned. The tags half fills inline, and the
+  // `batchSet` sits inside the PERSISTING branch — so serving the tie-break
+  // loser's rows without seeding them creates a state that could not exist
+  // before #4344 part 2: every tag `searchTags` could return used to come
+  // from a fill that had both persisted AND seeded.
+  //
+  // Why that matters: a `tag_ref` chip resolves its name ONLY through the
+  // resolve store (`useRichContentCallbacks.resolveTagName`), and there is no
+  // lazy per-id fallback for `#[ULID]` the way `fetchAndCacheLinks` provides
+  // one for `[[ULID]]`. An unseeded tag picked out of the loser's list
+  // renders as `#01ABCDE...` instead of its name.
+  //
+  // "The winner is in flight and will seed it" is not a guarantee — the
+  // second half of this test is the counter-example: the winner is itself
+  // rejected by a bus event landing while IT is in flight (the routine
+  // `sync:complete` / `blocks:changed` window #4055 exists for), so it takes
+  // the correctness branch and seeds nothing. Without the loser's own seed,
+  // the tag the user just picked is in NO cache at all.
+  it('tagsListRef: the #4270 tie-break loser SEEDS the tags it serves (#4344 part 2)', async () => {
+    let resolveFirst: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    let resolveSecond: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight1: Promise<Awaited<ReturnType<typeof result.current.searchTags>>> = Promise.resolve(
+      [],
+    )
+    let inFlight2: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight1 = result.current.searchTags('')
+    })
+    act(() => {
+      inFlight2 = result.current.searchTags('')
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      resolveFirst([tagRow('T_OLDER', 'older')])
+      items = await inFlight1
+    })
+
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['T_OLDER'])
+    // Served ⇒ seeded, under THIS space's key (the loser only reaches this
+    // branch while the space it was issued for is still active).
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'T_OLDER'))).toEqual({
+      title: 'older',
+      deleted: false,
+    })
+
+    // The winner is rejected in turn: a bus event lands while it is in
+    // flight, so it neither persists nor seeds. Nothing else will seed
+    // `T_OLDER` — the loser's own seed is the only one there is.
+    act(() => {
+      invalidateNameCaches()
+    })
+    await act(async () => {
+      resolveSecond([tagRow('T_NEWER', 'newer')])
+      await inFlight2
+    })
+    expect(result.current.tagsListRef.current).toEqual([])
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'T_NEWER'))).toBeUndefined()
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'T_OLDER'))).toEqual({
+      title: 'older',
+      deleted: false,
+    })
+  })
+
+  // The line #4344 part 2 must NOT cross on the tags side either. "Lost the
+  // tie-break" is a FRESHNESS verdict, so the rows may still be returned; a
+  // space switch and a name-change-bus event are CORRECTNESS verdicts, so
+  // they may not. These two pin that the relaxation is scoped to the
+  // sequence guard alone — without them, "return `fetched` when the guard
+  // rejects" would read as a blanket rule and quietly leak the previous
+  // space's tags into the new space's picker.
+  it("tagsListRef: a mid-flight SPACE SWITCH still refuses to serve the old space's rows (#4344 part 2)", async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<Awaited<ReturnType<typeof result.current.searchTags>>> = Promise.resolve(
+      [],
+    )
+    act(() => {
+      inFlight = result.current.searchTags('')
+    })
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      resolveFetch([tagRow('T_OLD_SPACE', 'old-space-tag')])
+      items = await inFlight
+    })
+
+    expect(result.current.tagsListRef.current).toEqual([])
+    expect(items.filter((i) => !i.isCreate)).toEqual([])
+  })
+
+  it('tagsListRef: a mid-flight INVALIDATION still refuses to serve the stale rows (#4344 part 2)', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof tagRow>>) => void = () => {}
+    mockedListAllTagsInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<Awaited<ReturnType<typeof result.current.searchTags>>> = Promise.resolve(
+      [],
+    )
+    act(() => {
+      inFlight = result.current.searchTags('')
+    })
+
+    // `sync:complete` lands mid-flight — the space is unchanged, so ONLY
+    // the generation guard can reject this one.
+    act(() => {
+      invalidateNameCaches()
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      resolveFetch([tagRow('T_STALE', 'stale-tag')])
+      items = await inFlight
+    })
+
+    expect(result.current.tagsListRef.current).toEqual([])
+    expect(items.filter((i) => !i.isCreate)).toEqual([])
   })
 })
 
