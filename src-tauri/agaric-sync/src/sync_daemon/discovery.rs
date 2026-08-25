@@ -19,6 +19,59 @@ use agaric_store::peer_refs::PeerRef;
 /// longhand, which is four places to keep in step the day the stamp changes.
 pub type DiscoveredPeers = HashMap<String, (DiscoveredPeer, tokio::time::Instant)>;
 
+/// How long an entry survives in [`DiscoveredPeers`] without a fresh mDNS
+/// announcement before `daemon_loop`'s periodic-resync branch evicts it.
+///
+/// Named rather than left as the literal it was, because #4299 gave the same
+/// number a second reader: an entry that is still in the map *is* an entry mDNS
+/// has refreshed inside this window, which makes this constant the daemon's
+/// existing, in-tree definition of "this peer is still announcing itself to us".
+/// [`mdns_is_reaching_us`] gates the egress probe on exactly that definition
+/// rather than on a second, invented freshness window that could disagree with
+/// the eviction sweep.
+pub const MDNS_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// When mDNS last resolved this peer, if it is in the discovered map at all.
+///
+/// `None` for a peer that only exists as a `peer_refs` row — the
+/// [`build_fallback_peer`] path, where there is no announcement and therefore no
+/// evidence about whether the peer is on the link right now.
+#[must_use]
+pub fn mdns_last_seen(discovered: &DiscoveredPeers, peer_id: &str) -> Option<tokio::time::Instant> {
+    discovered.get(peer_id).map(|(_, seen_at)| *seen_at)
+}
+
+/// Is mDNS *currently* reaching us from this peer? (#4299)
+///
+/// The guard on the egress probe. Multicast-in while unicast-out fails is the
+/// distinctive shape of a captured LAN — a peer that is demonstrably on the link
+/// and demonstrably unreachable — and it is what keeps the probe off the ordinary
+/// sleeping-peer path, where a dial timeout means exactly what it says.
+///
+/// The window is [`MDNS_STALE_AFTER`], reused rather than chosen: it is already
+/// the daemon's answer to "is this announcement still live", and a second number
+/// here would only create a band in which the map says a peer is present and this
+/// predicate says it is not.
+///
+/// A generous window is the right direction because this predicate cannot produce
+/// a false diagnosis on its own — it only decides whether two syscalls run. A
+/// peer that fell asleep four minutes ago still gets probed, and the probe then
+/// finds its routing perfectly healthy and says nothing.
+///
+/// That last sentence used to hold only on a single-homed host (#4299 review).
+/// While [`crate::transport::egress_probe::compare`] tested the probed source for
+/// *equality* with the bound address, an ordinary WiFi-plus-`br0` machine could
+/// answer `RoutedElsewhere` for a peer that was merely asleep: the kernel's route
+/// for that peer named the bridge's `prefsrc` while the endpoint was bound to the
+/// WiFi address — two addresses on the same LAN, both of which reach the peer.
+/// `compare` now asks whether the selected source falls inside the bound
+/// interface's own prefix, so benign multi-homing answers `SameEgress` and the
+/// sentence above is true on any host, not just an incidentally lucky one.
+#[must_use]
+pub fn mdns_is_reaching_us(seen_at: Option<tokio::time::Instant>) -> bool {
+    seen_at.is_some_and(|at| at.elapsed() <= MDNS_STALE_AFTER)
+}
+
 /// Determine whether a discovered mDNS peer should trigger an immediate
 /// sync attempt.
 ///

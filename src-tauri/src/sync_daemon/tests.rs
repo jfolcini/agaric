@@ -841,8 +841,9 @@ async fn try_sync_with_peer_respects_backoff_gate() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
-    try_sync_with_peer(&ctx, &peer, &refs).await;
+    try_sync_with_peer(&ctx, &peer, &refs, None).await;
 
     // No events — backoff gate prevents any progress
     assert_eq!(
@@ -888,11 +889,12 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
     // Wrap in a timeout to prevent the test from hanging if the dial blocks.
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await;
 
@@ -1038,10 +1040,11 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
             event_sink: &event_sink,
             cancel: &cancel,
             endpoint: &harness.client_endpoint,
+            bind_prefix_len: None,
         };
         tokio::time::timeout(
             std::time::Duration::from_secs(60),
-            try_sync_with_peer(&ctx, &peer, &refs),
+            try_sync_with_peer(&ctx, &peer, &refs, None),
         )
         .await
         .expect("the dial must exhaust its own budget well inside the test timeout");
@@ -1222,8 +1225,9 @@ async fn the_pinned_identity_refusal_is_wired_into_try_sync_with_peer_4203() {
                 event_sink: &event_sink,
                 cancel: &cancel,
                 endpoint: &harness.client_endpoint,
+                bind_prefix_len: None,
             };
-            try_sync_with_peer(&ctx, &peer, &refs).await;
+            try_sync_with_peer(&ctx, &peer, &refs, None).await;
         }
 
         let events = sink.events();
@@ -1405,8 +1409,9 @@ async fn try_sync_with_peer_skips_peer_it_cannot_dial() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
-    try_sync_with_peer(&ctx, &peer, &refs).await;
+    try_sync_with_peer(&ctx, &peer, &refs, None).await;
 
     // #3511: and it is skipped before the per-peer lock too, not after it. The key is
     // derived from the endpoint id, so resolving that had to move above the lock —
@@ -1487,10 +1492,11 @@ async fn try_sync_with_peer_skips_a_peer_with_no_device_id() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
     let cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await
     .expect("try_sync_with_peer must complete within the timeout");
@@ -1543,8 +1549,9 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
-    try_sync_with_peer(&ctx, &peer, &refs).await;
+    try_sync_with_peer(&ctx, &peer, &refs, None).await;
 
     assert_eq!(
         sink.events().len(),
@@ -1590,10 +1597,11 @@ async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await;
 
@@ -1658,8 +1666,9 @@ async fn s11_cancel_preserved_on_backoff_early_exit() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
-    try_sync_with_peer(&ctx, &peer, &refs).await;
+    try_sync_with_peer(&ctx, &peer, &refs, None).await;
 
     assert!(
         cancel.load(Ordering::Acquire),
@@ -1701,8 +1710,9 @@ async fn s11_cancel_preserved_on_already_syncing_early_exit() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
-    try_sync_with_peer(&ctx, &peer, &refs).await;
+    try_sync_with_peer(&ctx, &peer, &refs, None).await;
 
     assert!(
         cancel.load(Ordering::Acquire),
@@ -1743,8 +1753,9 @@ async fn s11_cancel_preserved_on_undiallable_peer_early_exit() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
-    try_sync_with_peer(&ctx, &peer, &refs).await;
+    try_sync_with_peer(&ctx, &peer, &refs, None).await;
 
     assert!(
         cancel.load(Ordering::Acquire),
@@ -2074,10 +2085,11 @@ async fn inbound_is_refused_while_outbound_holds_the_same_peer_3511() {
                 event_sink: &event_sink,
                 cancel: &cancel,
                 endpoint: &endpoint,
+                bind_prefix_len: None,
             };
             // An empty ref list, so the step-4 pinned-key check cannot be what stops
             // (or fails to stop) anything here.
-            try_sync_with_peer(&ctx, &peer, &[]).await
+            try_sync_with_peer(&ctx, &peer, &[], None).await
         }
     });
 
@@ -8081,10 +8093,11 @@ async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_pr
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await
     .expect("must complete within timeout");
@@ -8132,8 +8145,9 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
-    let result = try_sync_with_peer(&ctx, &peer, &refs).await;
+    let result = try_sync_with_peer(&ctx, &peer, &refs, None).await;
 
     assert!(!result, "backoff early-exit must return false, got true");
     materializer.shutdown();
@@ -8199,8 +8213,9 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
                 event_sink: &event_sink,
                 cancel: &cancel,
                 endpoint: &endpoint,
+                bind_prefix_len: None,
             };
-            try_sync_with_peer(&ctx, &early_peer, &early_refs).await
+            try_sync_with_peer(&ctx, &early_peer, &early_refs, None).await
         })
     };
 
@@ -8285,11 +8300,12 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
 
     let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await
     .expect("try_sync_with_peer must complete within timeout");
@@ -8379,11 +8395,12 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
 
     let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await
     .expect("try_sync_with_peer must complete within timeout");
@@ -9844,11 +9861,12 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
 
     let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await
     .expect("try_sync_with_peer must complete within timeout");
@@ -10084,13 +10102,14 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
         event_sink: &init_sink_dyn,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
     let peer = discovered_service_peer(RESP_DEV, &harness);
     let refs = vec![make_peer_ref(RESP_DEV)];
 
     let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await
     .expect("try_sync_with_peer timed out");
@@ -10241,11 +10260,12 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
         event_sink: &event_sink,
         cancel: &cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
 
     let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        try_sync_with_peer(&ctx, &peer, &refs),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await
     .expect("try_sync_with_peer must complete within timeout");
@@ -10642,10 +10662,11 @@ async fn drive_two_device_pairing_windowed_3507(
         event_sink: &joiner_sink_dyn,
         cancel: &joiner_cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
     let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        try_sync_with_peer(&ctx, &peer, &joiner_refs),
+        try_sync_with_peer(&ctx, &peer, &joiner_refs, None),
     )
     .await
     .expect("try_sync_with_peer must finish inside its own connect budget");
@@ -11248,11 +11269,12 @@ async fn drive_pairing_claim_4230(
         event_sink: &joiner_sink_dyn,
         cancel: &joiner_cancel,
         endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
     };
     let peer = discovered_service_peer(HOST_DEV_4230, &harness);
     let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        try_sync_with_peer(&ctx, &peer, &[]),
+        try_sync_with_peer(&ctx, &peer, &[], None),
     )
     .await
     .expect("try_sync_with_peer must finish inside its own connect budget");

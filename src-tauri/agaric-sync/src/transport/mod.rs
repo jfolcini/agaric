@@ -46,6 +46,13 @@ pub mod driver;
 /// drive them — see [`driver`] for that.
 pub mod service;
 
+/// Would traffic to a given peer leave by the interface this endpoint bound?
+///
+/// A connected-UDP-socket route probe — no packets, two syscalls — that
+/// distinguishes "the peer is asleep" from "a tunnel is swallowing the LAN", the
+/// two states that produce byte-identical dial timeouts today (#4299).
+pub mod egress_probe;
+
 /// This device's long-lived iroh secret key, and its persistence.
 ///
 /// Separate from [`endpoint`] because the key outlives any one endpoint and, unlike
