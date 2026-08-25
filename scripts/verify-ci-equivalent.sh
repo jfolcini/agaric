@@ -235,13 +235,17 @@ def redact_url_credentials(url):
     printed. Push output gets pasted into issues/chat, and a non-sqlite
     DATABASE_URL reaching the diagnosis below (e.g.
     "postgres://user:password@host/db") can carry a real credential.
-    Only the "//user:pass@" segment right after the scheme is touched —
+    The character class excludes only "/" and not "@", deliberately: a
+    password may itself contain an at-sign, and stopping at the FIRST one
+    ("postgres://u:p@ss@host/db") leaves the tail of the password on
+    screen. Only the "//user:pass@" segment right after the scheme is
+    touched —
     scheme, host, port, path and query survive untouched, since those are
     what make the printed line diagnostic in the first place. A URL with
     no "//...@" segment at all (no userinfo, e.g. "sqlite:dev.db") is
     returned unchanged.
     """
-    return re.sub(r"//[^/@]*@", "//***@", url, count=1)
+    return re.sub(r"//[^/]*@", "//***@", url, count=1)
 
 
 def main():
