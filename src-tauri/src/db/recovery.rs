@@ -1183,7 +1183,7 @@ struct ReplayDiagnostics {
 /// STRUCTURAL, not semantic. An entry means "this walk was cut off", never
 /// "the cut changed the answer" — the two probes below cannot tell those apart
 /// without the unbounded walk this replay deliberately does not have (see
-/// [`descendant_cascade_truncated`] for the three shapes that report despite a
+/// [`materialize_cascade_cohort`] for the three shapes that report despite a
 /// provably correct result). Read an entry as "verify this subtree", not as
 /// "this subtree is wrong".
 ///
@@ -1200,7 +1200,7 @@ struct ReplayDiagnostics {
 /// once everything else has failed. Reported, not logged, for the same #3269 R5
 /// reason as every other entry here: the replay may run twice.
 ///
-/// # No per-entry depth (#4290)
+/// # No per-entry depth (#4289)
 ///
 /// There is deliberately no `depth` field. The depth a walk stops at is
 /// [`DESCENDANT_DEPTH_CAP`] for EVERY entry — invariant by construction, not
@@ -1565,6 +1565,13 @@ async fn materialize_cascade_cohort(
     executor: &mut sqlx::SqliteConnection,
     seed: &str,
 ) -> Result<bool, sqlx::Error> {
+    // `IF NOT EXISTS`, re-issued on EVERY cascade op rather than once per
+    // replay. Hoisting it to the top of `recover_blocks_from_op_log` was
+    // considered and not taken: it would make every cascade arm depend on a
+    // setup step that runs far away from it, for one no-op DDL round trip on a
+    // path that only runs during recovery. The self-contained form is what lets
+    // this function be called from any arm — and from a test — with no
+    // precondition.
     // dynamic-sql: DDL, which the `query!` family cannot express at all.
     sqlx::query(CASCADE_COHORT_DDL)
         .execute(&mut *executor)
@@ -1610,9 +1617,14 @@ async fn materialize_cascade_cohort(
 /// Only meaningful straight after a [`materialize_cascade_cohort`] call that
 /// returned `true`, and only BEFORE the cascade's own DML has run (the purge
 /// arm deletes the very rows this joins through). Rows that are themselves in
-/// the cohort — which a `parent_id` cycle produces — are NOT filtered out here;
-/// [`purge_truncated_tails`]'s still-orphaned guard drops them instead, because
-/// the purge will already have deleted them.
+/// the cohort — which a `parent_id` cycle produces — are NOT filtered out here.
+/// [`purge_truncated_tails`] absorbs them without a guard of its own: the
+/// cascade that named such an id has already deleted it, so re-seeding from it
+/// materialises an empty cohort, its step removes no rows, and the
+/// `step.rows_removed == 0` skip drops it before it can be recorded as a
+/// finished head or contribute successors. (The retired `still_orphaned` guard
+/// is what used to do this in the post-loop version — see that function's
+/// "Why this runs INSIDE the replay loop" for why it went.)
 async fn cascade_cohort_unreached_children(
     executor: &mut sqlx::SqliteConnection,
 ) -> Result<Vec<String>, sqlx::Error> {
@@ -1768,6 +1780,15 @@ async fn purge_truncated_tails(
     let mut pending = dedup_preserving_order(frontier.iter().cloned());
     while !pending.is_empty() {
         let mut next: Vec<String> = Vec::new();
+        // One `purge_cascade_step` — four statements — per seed, so a WIDE
+        // frontier costs 4xN round trips per level. Batching was considered and
+        // deliberately not taken: seeding the cohort from a whole round at once
+        // (`SELECT id, 0 FROM blocks WHERE id IN (…)`) would collapse each level
+        // to a single step, but it also merges the per-seed answers this loop
+        // reads apart — `rows_removed == 0` is what distinguishes a seed that
+        // was really purged from one already gone, and `heads` names seeds
+        // individually. Recovery replay is rare and runs once per boot at worst,
+        // so the clearer per-seed shape wins over the round-trip saving.
         for seed in pending {
             let step = purge_cascade_step(&mut *executor, &seed).await?;
             // A seed that no longer exists yields an empty cohort. Reporting it
@@ -2169,8 +2190,10 @@ async fn recover_blocks_from_op_log(
                 // statement, off the same CTE. `ancestors` is a recursive CTE,
                 // which SQLite materialises once, so both subqueries below read
                 // one walk — where #4232's separate `ancestor_probe_truncated`
-                // climbed the whole chain a second time, and the two answers
-                // were only textually guaranteed to agree. The extra level is
+                // (deleted by #4289; named here only as the shape this
+                // replaced) climbed the whole chain a second time, and the two
+                // answers were only textually guaranteed to agree. The extra
+                // level is
                 // asked for in the outer query, exactly as the descendant
                 // cohort asks it (see [`materialize_cascade_cohort`]): does the
                 // ancestor at exactly the cap still have a parent? That parent
@@ -2507,8 +2530,12 @@ async fn recover_blocks_from_op_log(
     // but this connection goes back to the pool and then serves normal app
     // traffic, carrying the last cascade's rows in its temp schema for the rest
     // of the process. Drop it rather than leave recovery-scoped residue on a
-    // live connection. Not correctness-critical: every read of it is preceded
-    // by a `DELETE` and a re-materialise.
+    // live connection. Not correctness-critical, which is also why it is not
+    // guarded against the early returns: every `?` above leaves the table
+    // behind, and a later `materialize_cascade_cohort` on that connection
+    // still reads exactly its own walk, because every read is preceded by a
+    // `DELETE` and a re-materialise. The drop is hygiene, not an invariant, so
+    // it does not need a scope guard or a `finally` shape.
     // dynamic-sql: DDL, which the `query!` family cannot express at all.
     sqlx::query("DROP TABLE IF EXISTS recovery_cascade_cohort")
         .execute(&mut *executor)
@@ -4759,8 +4786,9 @@ mod tests {
     /// fires, and nothing is reported.
     ///
     /// What this pins is the SWEEP at the cap boundary, not the truncation
-    /// probe. Because the tombstone is found, `ancestor_probe_truncated` is
-    /// never consulted here at all, so this case is blind to both an off-by-one
+    /// probe. Because the tombstone is found, the climb's
+    /// `ancestor_climb_truncated` answer is never consulted here at all, so this
+    /// case is blind to both an off-by-one
     /// in that probe and to the loss of the `is_none()` suppression guard — the
     /// two shapes it reads as if it rejected. Those are pinned by
     /// `recover_move_ancestor_probe_at_exactly_the_cap_with_no_tombstone_reports_nothing`
@@ -4874,7 +4902,7 @@ mod tests {
     ///
     /// `c{CAP}` is tombstoned as a descendant of `delete_block(c{CAP - 1})`, so
     /// `X`'s nearest tombstoned ancestor is at depth 1 — while `c0` sits at
-    /// depth `CAP + 1`, exactly the level `ancestor_probe_truncated` reports on.
+    /// depth `CAP + 1`, exactly the level `ancestor_climb_truncated` reports on.
     /// Dropping the `tombstoned_ancestor.is_none()` guard turns this red; with
     /// it, the answer could not have changed and the report would be noise.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4961,7 +4989,8 @@ mod tests {
             diagnostics.cascade_truncations,
             vec![truncation(CASCADE_MOVE_SWEEP_ANCESTOR_PROBE, "X")],
             "structural, not semantic: the climb ran out of rope, which is all the report \
-             claims — see `descendant_cascade_truncated`'s \"What this does NOT establish\""
+             claims — see `materialize_cascade_cohort`'s \"What the truncation flag does NOT \
+             establish\""
         );
     }
 

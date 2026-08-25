@@ -7308,6 +7308,154 @@ async fn set_property_batch_rejects_invalid_reserved_value() {
     );
 }
 
+// ======================================================================
+// #3264 — set_property_batch's recurrence-skip warning
+// ======================================================================
+
+/// Thread-safe buffered writer for in-process log capture (mirrors the helper
+/// in `commands/blocks/crud.rs`; per tests/AGENTS.md "Test helper duplication
+/// is intentional"). Paired with a current-thread runtime (`#[tokio::test]`)
+/// so `set_default`'s thread-local guard covers every `.await` point — a
+/// multi-thread runtime could migrate the task off the thread that installed
+/// the subscriber and miss the warn.
+#[derive(Clone, Default)]
+struct WarnBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for WarnBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for WarnBuf {
+    type Writer = WarnBuf;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+fn warn_capture() -> (WarnBuf, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt;
+    let buf = WarnBuf::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("warn"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(buf.clone())
+                .with_ansi(false),
+        );
+    let guard = tracing::subscriber::set_default(subscriber);
+    (buf, guard)
+}
+fn warn_log(buf: &WarnBuf) -> String {
+    String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned()
+}
+
+/// #3264: `set_property_batch_inner`'s OWN call into
+/// `warn_if_batch_skips_recurrence` must fire — the half of #3264 that had no
+/// test after the helper was extracted (the sibling
+/// `set_todo_state_batch_inner` call site was the only one exercised, and it
+/// emits the same target, so an assertion on the target alone would pass with
+/// this call site deleted).
+///
+/// The assertion is therefore pinned to `command="set_property_batch_inner"`,
+/// the field the helper's doc names as the caller discriminator, and the test
+/// never touches `set_todo_state_batch_inner` — deleting the call in
+/// `set_property_batch_inner` turns this red.
+///
+/// The `repeat` row is planted with direct SQL (the probe reads
+/// `block_properties` inside the command tx), so the fixture does not depend
+/// on any materializer background work.
+#[tokio::test]
+async fn set_property_batch_warns_when_batch_skips_recurrence_3264() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "repeating task".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         VALUES (?, 'repeat', 'daily')",
+    )
+    .bind(b.id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Control: a non-recurring allowlisted key must NOT probe/warn — the call
+    // site is gated on the KEY, so this pins the gate as well as the call.
+    let (quiet_buf, quiet_guard) = warn_capture();
+    set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b.id.clone()],
+        "priority".into(),
+        Some("2".into()),
+    )
+    .await
+    .unwrap();
+    drop(quiet_guard);
+    let quiet = warn_log(&quiet_buf);
+    assert!(
+        !quiet.contains("agaric::batch_recurrence_skip"),
+        "a non-todo_state batch key must not emit the recurrence-skip warn, got: {quiet:?}"
+    );
+
+    // The path under test: key = "todo_state" over a `repeat`-carrying block.
+    let (buf, guard) = warn_capture();
+    let updated = set_property_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![b.id.clone()],
+        "todo_state".into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
+    drop(guard);
+    assert_eq!(updated, 1, "the one live block must be updated");
+
+    let out = warn_log(&buf);
+    assert!(
+        out.contains("agaric::batch_recurrence_skip"),
+        "set_property_batch_inner must emit the #3264 recurrence-skip warn on \
+         its own target, got: {out:?}"
+    );
+    assert!(
+        out.contains("command=\"set_property_batch_inner\""),
+        "the warn must be attributed to THIS call site (not the \
+         set_todo_state_batch_inner sibling, which emits the same target), \
+         got: {out:?}"
+    );
+    assert!(
+        !out.contains("set_todo_state_batch_inner"),
+        "this test must not be observing the sibling call site, got: {out:?}"
+    );
+    assert!(
+        out.contains("repeat_carrier_count=1"),
+        "the warn must report the one `repeat`-carrying block in the batch, \
+         got: {out:?}"
+    );
+    assert!(
+        out.contains(b.id.as_str()),
+        "the warn must name the repeat-carrying block as the example, got: {out:?}"
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_ref_cross_space_rejected() {
     // A ref-type property whose target lives in a different

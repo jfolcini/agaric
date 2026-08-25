@@ -240,22 +240,29 @@ fn book_failure<'a>(
     state
 }
 
-/// Make room for a *new* `peer_id` in `backoff`, evicting the
-/// least-recently-touched entry once the map is at [`MAX_BACKOFF_PEERS`]
-/// (#4231).
+/// Make room for a *new* `peer_id` in `backoff`, evicting the entry with the
+/// earliest `next_retry_at` once the map is at [`MAX_BACKOFF_PEERS`] (#4231).
 ///
 /// A no-op when `peer_id` already has an entry (booking another failure for a
 /// peer already in the map cannot grow it) or when the map is below the cap —
 /// so on a real LAN, where the peer count is single digits, this never runs.
 ///
-/// # Why "least-recently-touched" is measured by `next_retry_at`
+/// # What the `next_retry_at` order does and does not say
 ///
 /// [`book_failure`] rewrites `next_retry_at` to `now + backoff` on every
-/// failure, so it is a monotone stamp of the last touch, offset by a ladder
-/// value that is capped at [`MAX_BACKOFF`]. The ordering it induces therefore
-/// agrees with true touch order except within one 60s window — an accuracy
-/// this decision does not need, and cheaper than carrying a second `Instant`
-/// whose only reader would be this function.
+/// failure, so the earliest stamp is a *rough* proxy for the least recently
+/// touched entry — and rough is all this claims. The stamp is the touch time
+/// offset by a ladder value, so it separates peers on different rungs (one
+/// still at `2s` sorts ahead of one at `60s` however they were touched), but
+/// once entries have saturated at [`MAX_BACKOFF`] every offset is 60s ±10 % —
+/// a ~12s spread that swamps the true touch-time spread of peers that failed
+/// close together. Within one such saturated cohort the victim is effectively
+/// **arbitrary**, not least-recently-touched.
+///
+/// The decision does not rest on picking the right victim: by the section
+/// below, evicting *any* entry costs at most one premature retry, so a true
+/// LRU order would buy nothing here and would cost a second `Instant` per
+/// entry whose only reader is this function.
 ///
 /// # Why evicting is safe
 ///
@@ -281,7 +288,7 @@ fn evict_for_new_peer(backoff: &mut HashMap<String, BackoffState>, peer_id: &str
             evicted_peer = %victim,
             for_peer = %peer_id,
             cap = MAX_BACKOFF_PEERS,
-            "sync scheduler: backoff map at cap; evicting the least-recently-touched \
+            "sync scheduler: backoff map at cap; evicting the earliest-retry \
              peer's retry hint (#4231)"
         );
         backoff.remove(&victim);
@@ -374,6 +381,20 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// legitimate and is expected never to bind in production. It exists so the
 /// growth is *bounded* — see [`evict_for_new_peer`] for why exceeding it costs
 /// at most one premature retry.
+///
+/// # The cost is attacker-influenceable, not merely incidental
+///
+/// Since the key set comes from mDNS announcements, *anyone on the LAN* can
+/// keep the map at the cap by announcing more than 64 device ids. Every new
+/// announcer then evicts an entry, and a legitimate peer's retry hint can be
+/// evicted again as fast as it is re-created — indefinitely, for as long as
+/// the flood lasts. That peer is then retried on the pre-backoff cadence
+/// rather than on its accumulated wait: the "noisier, never quieter"
+/// direction [`evict_for_new_peer`] documents, and exactly what this code did
+/// before #4231, so it is not a regression this cap introduced. It is stated
+/// here so nobody reads the paragraph above as a promise that only incidental
+/// LAN churn can reach the cap — the trigger can be chosen by someone else,
+/// and only the *consequence* is bounded.
 const MAX_BACKOFF_PEERS: usize = 64;
 const DEFAULT_DEBOUNCE: Duration = Duration::from_secs(3);
 const DEFAULT_RESYNC: Duration = Duration::from_secs(60);
