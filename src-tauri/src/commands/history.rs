@@ -1649,6 +1649,30 @@ async fn revert_ops_in_tx(
 /// `add_attachment` is gone) are skipped uniformly. The restore completes and
 /// reverses everything that CAN be reversed.
 ///
+/// # Attachment ops in the ops-to-revert SELECT
+///
+/// Correcting the #4277 commit message's framing (`restore_page_to_op_inner
+/// is exempt by construction`): the page-scoped branch below DOES carry an
+/// attachment disjunct — `o.op_type IN ('delete_attachment',
+/// 'rename_attachment') AND EXISTS (...)` — just a narrower one than the
+/// two-probe idiom `list_page_history` and the three undo queries share
+/// (`#4278`). Only the live-`attachments` probe is here; there is no second,
+/// paired-`add_attachment` probe for an already-deleted row. That is fine,
+/// not a residual bug: every row this SELECT returns is filtered again a
+/// few lines below, by op-type, through
+/// `reverse::is_statically_non_reversible` — and `delete_attachment` is
+/// STATICALLY on that list. So whether or not the missing second probe
+/// admits a given `delete_attachment` row changes only whether that row
+/// gets counted into `static_non_reversible_skipped`; it never changes
+/// whether the op is reverted, because the static filter throws every
+/// admitted `delete_attachment` away regardless.
+/// `rename_attachment` is what the single probe actually needs to resolve,
+/// and its owning block IS the live `attachments` row (a rename never
+/// deletes it), so one probe suffices. Ops here are addressed by
+/// `(device_id, seq)`, never by list position, so — unlike
+/// `list_page_history`'s `#4278` fix — there is no positional-mapping
+/// invariant this disjunct's exact shape could get wrong.
+///
 /// # Snapshot semantics — atomic read+revert (#1551)
 ///
 /// The ops-to-revert membership SELECT runs **inside** the same
@@ -4681,5 +4705,172 @@ mod tests {
             SAFE_RENAME,
             "a safe filename must survive the RenameAttachment reverse arm verbatim"
         );
+    }
+
+    /// #4277 — the SECOND consumer of the `list_page_history` index space.
+    ///
+    /// `undoDeleteOfImpl` (`src/stores/undo.ts`) finds the `delete_block`
+    /// entry in `list_page_history`'s result and feeds that ARRAY INDEX
+    /// straight into `undo_page_op`'s `undo_depth`. The two only agree if
+    /// both queries admit the same op-log rows.
+    ///
+    /// #4278 gave the three positional-undo queries a paired-`add_attachment`
+    /// probe and deliberately left `list_page_history` without one, so the
+    /// skew became one-sided: every `delete_attachment` newer than the
+    /// target that the undo path admits and the history list does not shifts
+    /// the mapping down by one. With TWO such deletes both probes in the
+    /// FE's `[index, index + 1]` window miss, each mis-undo is rolled back
+    /// via `redoPageOp`, and the swipe-delete undo reports failure.
+    ///
+    /// This test IS that consumer: resolve the index the way the FE does,
+    /// then assert `undo_page_op_inner` at that depth reverses the very op
+    /// the index named. RED before the fix (depth 0 lands on the newer
+    /// `delete_attachment`).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_page_history_index_matches_undo_depth_with_attachment_deletes_4277() {
+        use agaric_store::op::{AddAttachmentPayload, DeleteAttachmentPayload, DeleteBlockPayload};
+
+        let (pool, _dir) = test_pool().await;
+        let page_id = BlockId::test_id("PAGE1");
+        let child_id = BlockId::test_id("CHILD1");
+        let swiped_id = BlockId::test_id("CHILD2");
+        let att_a = BlockId::test_id("ATTA");
+        let att_b = BlockId::test_id("ATTB");
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'P', 0)",
+        )
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (id, pos) in [(&child_id, 0), (&swiped_id, 1)] {
+            sqlx::query(
+                "INSERT INTO blocks (id, parent_id, block_type, content, position) \
+                 VALUES (?, ?, 'content', 'v1', ?)",
+            )
+            .bind(id.as_str())
+            .bind(page_id.as_str())
+            .bind(pos)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        for (id, ts) in [(&child_id, FIXED_TS), (&swiped_id, FIXED_TS + 1000)] {
+            let create = OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: id.clone(),
+                block_type: "content".into(),
+                parent_id: Some(page_id.clone()),
+                position: None,
+                index: Some(0),
+                content: "v1".into(),
+            });
+            append_local_op_at(&pool, DEV, create, ts).await.unwrap();
+        }
+
+        // Two attachments added to the surviving child, then removed AFTER
+        // the swipe-delete — the exact ordering the maintainer described.
+        for (att, ts) in [(&att_a, FIXED_TS + 2000), (&att_b, FIXED_TS + 3000)] {
+            let add = OpPayload::AddAttachment(AddAttachmentPayload {
+                attachment_id: att.clone(),
+                block_id: child_id.clone(),
+                mime_type: "image/png".into(),
+                filename: "f.png".into(),
+                size_bytes: 1,
+                fs_path: format!("attachments/{att}.png"),
+            });
+            append_local_op_at(&pool, DEV, add, ts).await.unwrap();
+        }
+
+        // The op the user asks to undo.
+        let del_block = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: swiped_id.clone(),
+        });
+        let deleted = append_local_op_at(&pool, DEV, del_block, FIXED_TS + 4000)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+            .bind(FIXED_TS)
+            .bind(swiped_id.as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Two `delete_attachment` ops NEWER than the swipe-delete. Their
+        // `attachments` rows are hard-deleted in the same transaction that
+        // appends the op, so only the paired `add_attachment` op-log row can
+        // resolve their owning block.
+        for (att, ts) in [(&att_a, FIXED_TS + 5000), (&att_b, FIXED_TS + 6000)] {
+            let del = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+                attachment_id: att.clone(),
+                fs_path: format!("attachments/{att}.png"),
+                filename: "f.png".into(),
+            });
+            append_local_op_at(&pool, DEV, del, ts).await.unwrap();
+        }
+
+        // ── The FE's half of the mapping ──────────────────────────────
+        let history = list_page_history_inner(
+            &pool,
+            page_id.to_string(),
+            None,
+            &SpaceScope::Global,
+            None,
+            Some(50),
+        )
+        .await
+        .unwrap();
+        let index = history
+            .items
+            .iter()
+            .position(|e| e.op_type == "delete_block" && e.payload.contains(swiped_id.as_str()))
+            .expect("the delete_block must be findable in the page history");
+        let target = &history.items[index];
+        assert_eq!(
+            (target.device_id.as_str(), target.seq),
+            (deleted.device_id.as_str(), deleted.seq),
+            "the index must name the swipe-delete's own op-log row"
+        );
+
+        // ── The backend's half ────────────────────────────────────────
+        let mat = Materializer::new(pool.clone());
+        let undo_depth =
+            i64::try_from(index).expect("a history index must fit in the undo depth type");
+        let res = undo_page_op_inner(&pool, DEV, &mat, page_id.to_string(), undo_depth)
+            .await
+            .expect("undo at the index list_page_history reported must resolve");
+
+        let listed: Vec<&str> = history.items.iter().map(|e| e.op_type.as_str()).collect();
+        assert_eq!(
+            (res.reversed_op.device_id.as_str(), res.reversed_op.seq),
+            (deleted.device_id.as_str(), deleted.seq),
+            "#4277: `undo_page_op` must act on the op `list_page_history` \
+             indexed. Two newer delete_attachment ops the history list drops \
+             but the undo query admits shift the mapping by two — the FE's \
+             [index, index + 1] probe window then misses entirely and \
+             swipe-delete undo reports failure. History listed {listed:?}, \
+             index {index}, reversed {}",
+            res.reversed_op_type
+        );
+
+        // The appended reverse op must name the same target — the FE reads
+        // `new_op_ref` back into `redoPageOp` when a probe misses, so the
+        // two must describe one op, not two.
+        let reversing: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log \
+             WHERE is_undo = 1 AND reverses_device_id = ? AND reverses_seq = ?",
+        )
+        .bind(deleted.device_id.as_str())
+        .bind(deleted.seq)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            reversing, 1,
+            "exactly one reverse op, pointing at the indexed delete_block"
+        );
+
+        mat.shutdown();
     }
 }

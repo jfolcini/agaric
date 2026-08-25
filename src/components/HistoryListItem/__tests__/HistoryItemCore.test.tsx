@@ -88,6 +88,57 @@ describe('HistoryItemCore', () => {
     expect(preview?.textContent).toContain('→ high')
   })
 
+  // -- #4335 review items 4 & 5: attachment rows show a filename, as plain
+  // text (not run through renderRichContent's tag/link chip parsing) --
+
+  it('renders the filename for an add_attachment row', () => {
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'add_attachment', {
+          attachment_id: 'ATT1',
+          block_id: 'BLK1',
+          mime_type: 'application/pdf',
+          filename: 'notes.pdf',
+          size_bytes: 100,
+          fs_path: 'attachments/x',
+        })}
+      />,
+    )
+    expect(screen.getByText('notes.pdf')).toBeInTheDocument()
+  })
+
+  it('renders the old → new transition for a rename_attachment row', () => {
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'rename_attachment', {
+          attachment_id: 'ATT1',
+          old_filename: 'draft.txt',
+          new_filename: 'final.txt',
+        })}
+      />,
+    )
+    expect(screen.getByText('draft.txt → final.txt')).toBeInTheDocument()
+  })
+
+  it('renders an attachment filename as plain text, not a clickable tag chip, even when it looks like a token', () => {
+    // The markdown grammar's tag token is a bracket-wrapped 26-char ULID
+    // (`#[ULID]`) — an attachment filename that happens to contain that
+    // exact shape must still render as inert text, matching how property
+    // VALUES (also arbitrary user data) are deliberately rendered plain via
+    // `formatPropertyName` rather than through `renderRichContent`.
+    renderCore(
+      <HistoryItemCore
+        entry={makeEntry(1, 'delete_attachment', {
+          attachment_id: 'ATT1',
+          fs_path: 'attachments/x',
+          filename: '#[01ARZ3NDEKTSV4RRFFQ69G5FAV]-report.pdf',
+        })}
+      />,
+    )
+    expect(screen.getByText('#[01ARZ3NDEKTSV4RRFFQ69G5FAV]-report.pdf')).toBeInTheDocument()
+    expect(screen.queryByTestId('tag-ref-chip')).not.toBeInTheDocument()
+  })
+
   it('hides the diff-toggle button when onToggleDiff is not supplied', () => {
     renderCore(<HistoryItemCore entry={makeEntry(1, 'edit_block', { to_text: 'hi' })} />)
     expect(screen.queryByRole('button')).not.toBeInTheDocument()

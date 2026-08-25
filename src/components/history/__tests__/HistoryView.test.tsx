@@ -29,6 +29,10 @@ import { axe } from 'vitest-axe'
 import { makeHistoryEntry } from '@/__tests__/fixtures'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { HistoryView } from '@/components/history/HistoryView'
+import {
+  _resetAttachmentInvalidationForTest,
+  getAttachmentInvalidationKey,
+} from '@/lib/attachment-invalidation'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
@@ -58,6 +62,7 @@ const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: 
 
 beforeEach(() => {
   vi.clearAllMocks()
+  _resetAttachmentInvalidationForTest()
 })
 
 describe('HistoryView', () => {
@@ -802,6 +807,39 @@ describe('HistoryView', () => {
 
     // New data should be visible
     expect(await screen.findByText('reverse op')).toBeInTheDocument()
+  })
+
+  // #4335 review — a revert can mutate `attachments` directly
+  // (`rename_attachment` is now revertible), and `AttachmentList` has no
+  // query key this view's `resetQueries` reaches. `reloadAfterMutation`
+  // must also bump the cross-tree attachment-invalidation counter so a
+  // concurrently-mounted `AttachmentList` picks up the change.
+  it('bumps the attachment-invalidation counter after a successful revert', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [makeHistoryEntry(1, 'rename_attachment', { new_filename: 'b.txt' }, 1736942400000)],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page1) // initial load
+      .mockResolvedValueOnce([]) // revertOps succeeds
+      .mockResolvedValueOnce(page1) // reload after revert
+
+    render(<HistoryView />)
+    await screen.findByText('b.txt')
+
+    const keyBefore = getAttachmentInvalidationKey()
+
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(getAttachmentInvalidationKey()).toBe(keyBefore + 1)
+    })
   })
 
   it('preserves selection when revert fails', async () => {

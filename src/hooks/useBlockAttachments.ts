@@ -1,7 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 
 import { useBatchAttachments, useBatchAttachmentsLoading } from '@/hooks/useBatchAttachments'
 import { unwrap } from '@/lib/app-error'
+import {
+  getAttachmentInvalidationKey,
+  subscribeToAttachmentInvalidation,
+} from '@/lib/attachment-invalidation'
 import type { AttachmentRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
@@ -38,6 +42,18 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
   const batchLoading = useBatchAttachmentsLoading()
   const batchRows = batchProvider?.get(blockId ?? '')
 
+  // #4335 review — a revert/restore issued from the History view mutates
+  // `attachments` directly, bypassing `handleDeleteAttachment` /
+  // `handleRenameAttachment` below (and the `batchProvider?.invalidate`
+  // calls they make). This counter bumps when that happens; depending on
+  // it below re-runs the non-batch fetch. The batch-active branch doesn't
+  // need it here — `BatchAttachmentsProvider` subscribes on its own — but
+  // is left dependent for symmetry with the non-batch effect below.
+  const attachmentInvalidationKey = useSyncExternalStore(
+    subscribeToAttachmentInvalidation,
+    getAttachmentInvalidationKey,
+  )
+
   // Load attachments when blockId changes
   useEffect(() => {
     setAttachments([])
@@ -69,7 +85,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
         notify.error(i18n.t('attachments.loadFailed'), { id: 'attachments-load-failed' })
       })
       .finally(() => setLoading(false))
-  }, [blockId, batchActive, batchLoading, batchRows])
+  }, [blockId, batchActive, batchLoading, batchRows, attachmentInvalidationKey])
 
   const handleDeleteAttachment = useCallback(
     async (attachmentId: string) => {

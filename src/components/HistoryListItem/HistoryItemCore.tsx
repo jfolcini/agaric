@@ -44,6 +44,25 @@ import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 
 // ---------------------------------------------------------------------------
+// Attachment ops
+// ---------------------------------------------------------------------------
+
+/**
+ * True for the three attachment op types (#4277/#4335). Their
+ * `getPayloadRawContent` value is a filename or a filename transition, not
+ * editor content, so it is rendered as plain text (like a property
+ * payload's `formatPropertyName(key)`), not run through
+ * `renderRichContent` — a filename such as `#budget.png` or
+ * `[[notes]].pdf` would otherwise render as a clickable tag/link chip
+ * instead of literal text (#4335 review item 5).
+ */
+function isAttachmentOpType(opType: string): boolean {
+  return (
+    opType === 'add_attachment' || opType === 'delete_attachment' || opType === 'rename_attachment'
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Badge colour mapping
 // ---------------------------------------------------------------------------
 
@@ -68,7 +87,17 @@ function opBadgeClasses(opType: string): string {
   ) {
     return 'bg-op-tag text-op-tag-foreground'
   }
-  if (opType.startsWith('attachment') || opType === 'add_attachment') {
+  // #4277 — `rename_attachment` reaches the History list for the first
+  // time now that `list_page_history` admits it, so it needs a tone of its
+  // own; without one it fell through to the generic `bg-secondary`.
+  // `delete_attachment` deliberately does NOT land here: the
+  // `startsWith('delete')` branch above claims it first and the destructive
+  // tone is the right read for a removal.
+  if (
+    opType.startsWith('attachment') ||
+    opType === 'add_attachment' ||
+    opType === 'rename_attachment'
+  ) {
     return 'bg-muted text-muted-foreground'
   }
   return 'bg-secondary text-secondary-foreground'
@@ -85,7 +114,16 @@ export function opIcon(opType: string): LucideIcon {
   if (opType.startsWith('move')) return ArrowRight
   if (opType === 'add_tag' || opType === 'remove_tag') return Tag
   if (opType === 'set_property' || opType === 'delete_property') return Settings
-  if (opType === 'add_attachment' || opType === 'delete_attachment') return Paperclip
+  // #4277 — all three attachment ops share the paperclip so the family is
+  // recognisable in a mixed list; the badge text carries the verb. Listed
+  // before the `startsWith('delete')` branch so `delete_attachment` keeps
+  // the paperclip rather than the generic trash can.
+  if (
+    opType === 'add_attachment' ||
+    opType === 'delete_attachment' ||
+    opType === 'rename_attachment'
+  )
+    return Paperclip
   if (opType.startsWith('delete') || opType.startsWith('purge')) return Trash2
   return Circle
 }
@@ -112,6 +150,7 @@ export function HistoryItemCore({
   const { t } = useTranslation()
   const rawContent = getPayloadRawContent(entry)
   const propPayload = getPropertyPayload(entry)
+  const isAttachmentOp = isAttachmentOpType(entry.op_type)
   const richCallbacks = useRichContentCallbacks()
   const onTagClick = useTagClickHandler()
 
@@ -122,12 +161,14 @@ export function HistoryItemCore({
   // `useRichContentCallbacks`/`useTagClickHandler`); `resolveVersion` drives
   // re-resolution when the cache updates. Mirrors the at-rest
   // `StaticBlock`/`BlockListItem` memo. Skipped entirely for property-payload
-  // rows (they render plain formatted text, not rich content).
+  // rows (they render plain formatted text, not rich content) and for
+  // attachment rows (a filename, plain text for the same reason — see
+  // `isAttachmentOpType`).
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, resolveTagStatus } = richCallbacks
   const resolveVersion = useResolveStore((s) => s.version)
   const previewContent = useMemo(
     () =>
-      !propPayload && rawContent
+      !propPayload && !isAttachmentOp && rawContent
         ? renderRichContent(rawContent, {
             interactive: true,
             // Preview lives inside an inline, clamping <span>; inline mode
@@ -145,6 +186,7 @@ export function HistoryItemCore({
     [
       rawContent,
       propPayload,
+      isAttachmentOp,
       onTagClick,
       resolveBlockTitle,
       resolveBlockStatus,
@@ -217,7 +259,15 @@ export function HistoryItemCore({
             {propPayload.value != null && ` → ${propPayload.value}`}
           </span>
         )}
-        {!propPayload && rawContent && (
+        {/* Attachment rows (#4335 review item 5): the raw content is a
+            filename or a filename transition, not editor content — plain
+            text, same treatment as the property-payload branch above, so a
+            filename like `#budget.png` renders as literal text instead of
+            a clickable tag chip. */}
+        {!propPayload && isAttachmentOp && rawContent && (
+          <span className="history-item-preview text-sm line-clamp-2">{rawContent}</span>
+        )}
+        {!propPayload && !isAttachmentOp && rawContent && (
           <span className="history-item-preview text-sm line-clamp-2">{previewContent}</span>
         )}
       </div>

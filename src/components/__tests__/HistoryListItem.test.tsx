@@ -581,6 +581,10 @@ describe('HistoryListItem', () => {
       ['delete_property', Settings],
       ['add_attachment', Paperclip],
       ['delete_attachment', Paperclip],
+      // #4277 — rename_attachment reaches the History list for the first
+      // time now that `list_page_history` admits it; before, it fell
+      // through to the generic Circle.
+      ['rename_attachment', Paperclip],
       ['unknown_op', Circle],
     ])('returns correct icon for %s', (opType, expectedIcon) => {
       expect(opIcon(opType)).toBe(expectedIcon)
@@ -610,6 +614,7 @@ describe('HistoryListItem', () => {
       ['delete_property', { key: 'k' }],
       ['add_attachment', { name: 'f.txt' }],
       ['delete_attachment', { name: 'f.txt' }],
+      ['rename_attachment', { attachment_id: 'A1', new_filename: 'g.txt' }],
       ['unknown_op', {}],
     ] as const)('renders an icon in badge for %s', (opType, payload) => {
       renderInListbox(
@@ -780,6 +785,64 @@ describe('HistoryListItem', () => {
 
       // Should render content through renderRichContent
       expect(screen.getByText('some text')).toBeInTheDocument()
+    })
+  })
+
+  // -- Attachment op display (#4335 review) --------------------------------
+
+  describe('attachment op display', () => {
+    it('renders the filename for a delete_attachment row', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'delete_attachment', {
+            attachment_id: 'ATT1',
+            fs_path: 'attachments/x',
+            filename: 'notes.pdf',
+          }),
+        }),
+      )
+
+      expect(screen.getByText('notes.pdf')).toBeInTheDocument()
+    })
+
+    it('renders the old → new transition for a rename_attachment row', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'rename_attachment', {
+            attachment_id: 'ATT1',
+            old_filename: 'draft.txt',
+            new_filename: 'final.txt',
+          }),
+        }),
+      )
+
+      expect(screen.getByText('draft.txt → final.txt')).toBeInTheDocument()
+    })
+
+    it('does not render a broken string for a delete_attachment row missing filename', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'delete_attachment', { attachment_id: 'ATT1' }),
+        }),
+      )
+
+      // Still identifiable via the badge; no "undefined" / "[object Object]"
+      // leaking into the row.
+      expect(screen.getByTestId('history-type-badge')).toHaveTextContent('delete_attachment')
+      expect(screen.queryByText('undefined')).not.toBeInTheDocument()
+      expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
+      expect(document.body.textContent).not.toMatch(/undefined|\[object Object\]/)
+    })
+
+    it('does not render a broken string for a rename_attachment row missing both filenames', () => {
+      renderInListbox(
+        defaultProps({
+          entry: makeEntry(1, 'rename_attachment', { attachment_id: 'ATT1' }),
+        }),
+      )
+
+      expect(screen.getByTestId('history-type-badge')).toHaveTextContent('rename_attachment')
+      expect(document.body.textContent).not.toMatch(/undefined|\[object Object\]/)
     })
   })
 })

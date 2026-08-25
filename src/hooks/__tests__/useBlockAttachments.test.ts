@@ -19,6 +19,10 @@ import type { StoreApi } from 'zustand'
 
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
 import { useBlockAttachments } from '@/hooks/useBlockAttachments'
+import {
+  _resetAttachmentInvalidationForTest,
+  recordAttachmentInvalidation,
+} from '@/lib/attachment-invalidation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -54,6 +58,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedInvoke.mockResolvedValue([])
   pageStore = createPageBlockStore('PAGE_1')
+  _resetAttachmentInvalidationForTest()
 })
 
 // ---------------------------------------------------------------------------
@@ -94,6 +99,40 @@ describe('useBlockAttachments loading', () => {
     expect(result.current.attachments).toHaveLength(0)
     const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments')
     expect(listCalls).toHaveLength(0)
+  })
+
+  // #4335 review — an out-of-band mutation (a History-view revert/restore)
+  // bypasses `handleDeleteAttachment`/`handleRenameAttachment` entirely, so
+  // this hook (outside a BatchAttachmentsProvider) needs the cross-tree bus
+  // to know it should refetch.
+  it('refetches when the cross-tree attachment-invalidation bus fires', async () => {
+    let callCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_attachments') {
+        callCount += 1
+        return callCount === 1
+          ? [makeAttachmentRow('ATT_1', 'BLOCK_1', 'draft.txt')]
+          : [makeAttachmentRow('ATT_1', 'BLOCK_1', 'final.txt')]
+      }
+      return []
+    })
+
+    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.attachments[0]?.filename).toBe('draft.txt')
+    })
+
+    act(() => {
+      recordAttachmentInvalidation()
+    })
+
+    await waitFor(() => {
+      expect(result.current.attachments[0]?.filename).toBe('final.txt')
+    })
+
+    const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments')
+    expect(listCalls).toHaveLength(2)
   })
 
   it('shows toast error when loading attachments fails', async () => {

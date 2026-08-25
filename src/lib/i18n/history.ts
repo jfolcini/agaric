@@ -19,6 +19,7 @@ export const history: Record<string, string> = {
   'history.opTypeDeleteProperty': 'Delete property',
   'history.opTypeAddAttachment': 'Add attachment',
   'history.opTypeRemoveAttachment': 'Remove attachment',
+  'history.opTypeRenameAttachment': 'Rename attachment',
   'history.opTypeRestore': 'Restore',
   'history.opTypePurge': 'Purge',
   'history.opTypeDescription.editBlock': 'Block content was edited',
@@ -31,6 +32,7 @@ export const history: Record<string, string> = {
   'history.opTypeDescription.deleteProperty': 'A property was removed from a block',
   'history.opTypeDescription.addAttachment': 'An attachment was added to a block',
   'history.opTypeDescription.deleteAttachment': 'An attachment was removed from a block',
+  'history.opTypeDescription.renameAttachment': 'An attachment was renamed',
   'history.opTypeDescription.restoreBlock': 'A soft-deleted block was restored',
   'history.opTypeDescription.purgeBlock': 'A block was permanently deleted',
   'history.opTypeLegendLabel': 'Op type legend',
@@ -177,6 +179,10 @@ export const history: Record<string, string> = {
   'undo.op.removeTag': 'Undid tag',
   'undo.op.addAttachment': 'Undid attachment',
   'undo.op.deleteAttachment': 'Undid attachment',
+  // #4277 — reached via `undo.op.${snakeToCamel(reversed_op_type)}` in
+  // `useUndoShortcuts.performPageUndo`; without it the rename fell back to
+  // the generic "Undone".
+  'undo.op.renameAttachment': 'Undid attachment rename',
   'redo.op.createBlock': 'Redid create block',
   'redo.op.editBlock': 'Redid edit',
   'redo.op.deleteBlock': 'Redid delete',
@@ -188,6 +194,7 @@ export const history: Record<string, string> = {
   'redo.op.removeTag': 'Redid tag',
   'redo.op.addAttachment': 'Redid attachment',
   'redo.op.deleteAttachment': 'Redid attachment',
+  'redo.op.renameAttachment': 'Redid attachment rename',
   'history.errorServer':
     'The local backend returned an error while fetching history. Retry, or restart the app if it persists.',
   'history.errorUnknown':
