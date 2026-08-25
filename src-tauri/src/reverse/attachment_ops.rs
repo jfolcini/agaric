@@ -145,8 +145,11 @@ fn build_reverse_add_attachment_from_payload(
         // unlink it and so a REDO of this undo reconstructs the right path.
         fs_path,
         // #4262: an empty `filename` is the legacy "nothing was recorded"
-        // sentinel `adopt_delete_time_state` reads, so a freshly-minted op
-        // must never carry one.
+        // sentinel `adopt_delete_time_state` reads. A live row always supplies
+        // a real one — but the row-is-gone arm forwards the add payload's
+        // `filename` verbatim, so a legacy add op carrying an empty one still
+        // mints an empty one. Same as before #4259; not a guarantee this
+        // constructor can make on its own.
         filename,
     })
 }
@@ -285,9 +288,23 @@ pub async fn reverse_add_attachment(
 /// [`build_reverse_add_attachment`] now reads the live row, so the synthetic
 /// delete carries the same post-repoint `fs_path` a real one would and this
 /// function has the blob path to adopt. The invariant to preserve: **both
-/// producers of a `DeleteAttachmentPayload` describe the LIVE row, never the
-/// row's creation-time values.** A future change that makes the synthetic
-/// producer a pure payload transform again reopens exactly this.
+/// producers of a `DeleteAttachmentPayload` describe the live row as of
+/// reverse-COMPUTATION time, never the row's creation-time values.** A future
+/// change that makes the synthetic producer a pure payload transform again
+/// reopens exactly this.
+///
+/// The "as of computation time" qualifier is load-bearing for batches, not
+/// pedantry. `revert_ops_in_tx` computes every reverse up front against the
+/// pool and only then applies them newest-first inside the transaction, so
+/// undoing `[add_attachment A, rename_attachment A]` mints the synthetic
+/// delete carrying the pre-batch (renamed) `filename`, while the rename's
+/// reverse restores the original name before the delete lands. A real
+/// `delete_attachment` at that instant would have captured the original.
+/// Not a regression — the creation-time name this replaced was equally stale —
+/// and `fs_path` is unaffected, since no reverse mutates `attachments.fs_path`.
+/// This is also the only prefetch in `compute_reverse_batch` that reads
+/// mutable materialized state rather than the append-only `op_log`, which is
+/// why it is the only one exposed to the gap.
 fn adopt_delete_time_fs_path(
     delete_fs_path: &str,
     add_payload: &mut agaric_store::op::AddAttachmentPayload,
