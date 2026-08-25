@@ -434,6 +434,20 @@ function looksLikeAbsorbedTableSeparator(cells: readonly string[]): boolean {
  *    delimiter surviving as an escaped `\---` data row — the canonical
  *    normalization pinned in `markdown-roundtrip-fidelity.test.ts`. Ugly, but
  *    it keeps every row the author wrote, which the alternative does not.
+ *
+ *    That is the DECIDED end state for this shape, not a question still open
+ *    on #4012 item 1. Both alternatives are worse, and neither is a matter of
+ *    taste: splitting anyway is the guess ruled out two paragraphs above (it
+ *    corrupts a valid GFM table that merely uses `---` as a placeholder), and
+ *    merging while DROPPING the absorbed row is the silent data loss #3274
+ *    exists to prevent. It is also not a table-specific wart. It is the same
+ *    rule that makes two sibling blockquotes reparse as ONE blockquote with
+ *    two paragraphs, and a callout absorb the plain quote written under it —
+ *    both pinned beside it in that same suite. Sibling blocks of one kind,
+ *    written with no blank line between them, come back as one block; the
+ *    only thing that would change this case is changing how the SERIALIZER
+ *    separates sibling blocks in general, which is a different decision about
+ *    every one of those shapes and not a parser heuristic at all.
  *  - the scan starts at `k = 3`, never 2. An absorbed table's delimiter is
  *    index 1 OF ITS OWN table, so the earliest one can sit in a run is index
  *    3 (`header, delimiter, header, delimiter`). At `k = 2` the split point

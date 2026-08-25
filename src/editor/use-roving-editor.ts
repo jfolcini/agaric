@@ -196,6 +196,89 @@ export const HeadingWithoutDefaultShortcuts = Heading.extend({
   },
 })
 
+/**
+ * `name → value` for every attribute on `el`. Used to snapshot what a spec
+ * render produced, so a later sync can tell the node view's OWN attributes
+ * apart from whatever else has since written to the live element (#4356).
+ */
+function attributeMap(el: Element): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const name of el.getAttributeNames()) out[name] = el.getAttribute(name) ?? ''
+  return out
+}
+
+/** Split a `class` attribute value into its tokens (`''`/`undefined` → none). */
+function classTokens(value: string | undefined): string[] {
+  return value ? value.split(/\s+/).filter(Boolean) : []
+}
+
+/**
+ * Move `el`'s `class` from the token set `prev` to the token set `next`,
+ * touching nothing else. `class` on a node view's outer element is shared with
+ * prosemirror-view (`ProseMirror-selectednode`, node-decoration classes), which
+ * adds and removes single tokens; a whole-attribute write would drop them.
+ */
+function patchClassTokens(el: Element, prev: string | undefined, next: string | undefined): void {
+  if (prev === next) return
+  const prevTokens = classTokens(prev)
+  const nextTokens = classTokens(next)
+  for (const token of prevTokens) if (!nextTokens.includes(token)) el.classList.remove(token)
+  for (const token of nextTokens) if (!prevTokens.includes(token)) el.classList.add(token)
+  // `classList.remove` leaves `class=""` behind where the spec render would
+  // have emitted no attribute at all; drop it so the live DOM still matches
+  // what `getHTML()` serializes (the `class: null` parity #4316 pinned).
+  //
+  // This fires unconditionally, so it can't distinguish that case from a spec
+  // that legitimately renders `class: ''` (as opposed to `class: null`): the
+  // live `<pre>` would lose the attribute while `renderSpec` still emits
+  // `class=""`, the same live-vs-`getHTML()` divergence this line exists to
+  // prevent, just in the other direction. Only reachable on a non-empty→empty
+  // transition, no in-tree writer produces `''` today, and the sibling sweep
+  // in `syncContentAttributes` (which sets any non-`null` value, `class=""`
+  // included) would disagree with this one if it ever became reachable. Not
+  // fixed here — the right fix direction isn't obvious and it's unreachable.
+  if (el.getAttribute('class') === '') el.removeAttribute('class')
+}
+
+// Reused across every `styleProperties` call instead of allocating a fresh
+// `<div>` each time: it is never attached to the document (so it never
+// affects layout/paint or is observable from outside this module), and each
+// call immediately overwrites `cssText` in full before reading it back — no
+// state survives between calls for a second caller to see.
+const styleProbe = document.createElement('div')
+
+/** The CSS property names set by a `style` attribute value. */
+function styleProperties(value: string | undefined): string[] {
+  if (!value) return []
+  styleProbe.style.cssText = value
+  return Array.from(styleProbe.style)
+}
+
+/**
+ * The `style` counterpart of {@link patchClassTokens}: prosemirror-view appends
+ * decoration styles onto the same element's `cssText`, so the sync is per
+ * PROPERTY — drop the properties the previous spec render set and no longer
+ * does, then write the current ones.
+ */
+function patchStyleProperties(
+  el: HTMLElement,
+  prev: string | undefined,
+  next: string | undefined,
+): void {
+  if (prev === next) return
+  const nextProps = styleProperties(next)
+  for (const prop of styleProperties(prev)) {
+    if (!nextProps.includes(prop)) el.style.removeProperty(prop)
+  }
+  if (next) el.style.cssText += `;${next}`
+  // Same unconditional cleanup as `patchClassTokens`, with the same latent
+  // hole: a spec legitimately rendering `style: ''` (vs. `style: null`) would
+  // lose the attribute here while `renderSpec` still emits `style=""`. Only
+  // reachable on a non-empty→empty transition, no in-tree writer produces
+  // `''` today. Left as-is — see the comment in `patchClassTokens`.
+  if (el.getAttribute('style') === '') el.removeAttribute('style')
+}
+
 /** CodeBlockLowlight with configurable shortcut to toggle code blocks. @internal Exported for testing. */
 export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   addKeyboardShortcuts() {
@@ -339,18 +422,14 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
 
       const { dom, contentDOM } = renderFromSpec(props.node)
 
-      // `update()` re-derives the content hole's attributes from the same spec
-      // instead of re-rendering into it: `renderSpec` builds a FRESH element
+      // `update()` re-derives attributes from the same spec instead of
+      // re-rendering into the live tree: `renderSpec` builds a FRESH element
       // tree (a `createElement` per tag plus a `setAttribute` loop — cheap, but
-      // new objects), and a node view may not swap its `contentDOM` after mount
-      // without discarding the ProseMirror-managed children and the selection
-      // inside them. So the throwaway render is used as the source of truth for
-      // attributes only. The outer `<pre>` is set once at mount because
-      // prosemirror-view owns that element's attributes afterwards (node
-      // decorations, the selected-node class); `language` — the only attr the UI
-      // can change — renders onto the `<code>`.
-      const syncContentAttributes = (node: PMNode): void => {
-        const fresh = renderFromSpec(node).contentDOM
+      // new objects), and a node view may not swap its `dom` or `contentDOM`
+      // after mount without discarding the ProseMirror-managed children and the
+      // selection inside them. So the throwaway render is used as the source of
+      // truth for attributes only.
+      const syncContentAttributes = (fresh: HTMLElement): void => {
         for (const name of contentDOM.getAttributeNames()) {
           if (!fresh.hasAttribute(name)) contentDOM.removeAttribute(name)
         }
@@ -362,6 +441,63 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
         }
       }
 
+      // #4356 — the outer `<pre>` needs the same treatment as the content hole,
+      // but it CANNOT be swept the way `contentDOM` is: after mount the `<pre>`
+      // is shared. prosemirror-view writes its own attributes there (node
+      // decorations via `patchOuterDeco`, `ProseMirror-selectednode` via
+      // `selectNode`), so "remove everything the spec did not produce" would
+      // delete them. What this node view owns is exactly the set of names the
+      // SPEC produced, which is why the sweep below is driven by
+      // `specAttrs` — the previous spec render's attributes — rather than by
+      // the live element.
+      //
+      // `specAttrs` rolls forward on every sync rather than being frozen at
+      // mount: an attribute the spec only starts producing on a later render
+      // (a global attribute that renders nothing while its node attr is null)
+      // must become removable too, and a name the spec just produced is by
+      // construction not one of prosemirror-view's.
+      //
+      // NOT a name allowlist alone, which is what a first reading suggests.
+      // `class` and `style` are SHARED namespaces, not owned attributes:
+      // prosemirror-view merges into them token-wise (`classList.add/remove`,
+      // `style.cssText +=`) and, once decorations stop changing,
+      // `updateOuterDeco` short-circuits and never re-applies them — so a
+      // blanket `setAttribute('class', …)` here would silently drop
+      // `ProseMirror-selectednode` and every decoration class with no second
+      // chance to restore them. Both are therefore diffed at the token /
+      // property level, spec-render against spec-render, exactly as
+      // prosemirror-view diffs its own: whatever this node view put there last
+      // time is removed, whatever the spec produces now is added, and anything
+      // another writer contributed is left alone.
+      //
+      // The one case that is NOT left alone is a token/property BOTH writers
+      // contributed — neither side refcounts, so the spec dropping `foo` removes
+      // the `foo` a decoration also wanted. prosemirror-view's `patchAttributes`
+      // has the identical hole in the other direction; sharing a namespace
+      // without a refcount cannot do better, and no writer here shares a name.
+      let specAttrs = attributeMap(dom)
+      const syncOuterAttributes = (fresh: HTMLElement): void => {
+        const next = attributeMap(fresh)
+        for (const [name, value] of Object.entries(next)) {
+          if (name === 'class' || name === 'style') continue
+          if (dom.getAttribute(name) !== value) dom.setAttribute(name, value)
+        }
+        for (const name of Object.keys(specAttrs)) {
+          if (name === 'class' || name === 'style') continue
+          // `Object.hasOwn`, not `name in next`: `next` is an ordinary object
+          // keyed by extension-supplied attribute NAMES, and `in` walks the
+          // prototype chain — so a `<pre constructor="…">` the spec has STOPPED
+          // producing reads as still-produced (`'constructor' in {}` is true)
+          // and is never removed, which is the exact staleness this sync exists
+          // to fix. (prosemirror-view's own `patchAttributes` uses `in` here and
+          // has the same hole.)
+          if (!Object.hasOwn(next, name)) dom.removeAttribute(name)
+        }
+        patchClassTokens(dom, specAttrs['class'], next['class'])
+        patchStyleProperties(dom, specAttrs['style'], next['style'])
+        specAttrs = next
+      }
+
       return {
         dom,
         contentDOM,
@@ -369,7 +505,14 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
           // A switch to/from mermaid needs the other node view: refuse the
           // update so prosemirror rebuilds this one.
           if (node.type !== props.node.type || isMermaid(node)) return false
-          syncContentAttributes(node)
+          // One render serves both syncs: `contentDOM` is the content hole
+          // INSIDE `dom` from this same `renderFromSpec` call, and both
+          // helpers only read attribute names/values off the fresh tree —
+          // neither mutates it — so there's nothing for a second render to
+          // provide that this one doesn't already have.
+          const fresh = renderFromSpec(node)
+          syncContentAttributes(fresh.contentDOM)
+          syncOuterAttributes(fresh.dom)
           return true
         },
       }

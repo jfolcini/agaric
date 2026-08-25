@@ -6,6 +6,8 @@ import HardBreak from '@tiptap/extension-hard-break'
 import History from '@tiptap/extension-history'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -2309,5 +2311,298 @@ describe('code block node view derives its DOM from the node spec', () => {
 
     editor.commands.updateAttributes('codeBlock', { language: null })
     expect(code()?.hasAttribute('class')).toBe(false)
+  })
+})
+
+// -- The <pre> keeps following the spec after mount (#4356) --------------------
+//
+// #4316 (above) made the FIRST render spec-derived. `update()` then re-derived
+// only the content hole — the `<code>` — so a global attribute that renders onto
+// the outer `<pre>` AND derives from a mutable node attribute was correct at
+// mount and stale forever after: the node changes, the `<code>` re-syncs, the
+// `<pre>` keeps its mount-time value. `language` happens to render onto the
+// `<code>`, which is the only reason #4316's own tests did not catch it.
+//
+// The `<pre>` cannot be swept the way the `<code>` is, because after mount it is
+// SHARED with prosemirror-view (node decorations, `ProseMirror-selectednode`).
+// The last two tests here pin that half: they pass against the token/property
+// diff and fail against the "allowlist of names + setAttribute" reading, because
+// `class` and `style` are merged into rather than owned.
+describe('code block node view re-syncs the <pre> after an attribute-only edit', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+  })
+
+  /**
+   * A global attribute that renders onto the `<pre>` (everything
+   * `addGlobalAttributes` contributes reaches `renderHTML`'s `HTMLAttributes`,
+   * which `CodeBlock` spreads onto the outer element) and derives from a
+   * MUTABLE node attribute — the exact shape #4356 is about. `language`, the
+   * only attribute the app's own UI changes today, renders onto the `<code>`.
+   */
+  const LabelledCodeBlock = Extension.create({
+    name: 'labelledCodeBlock',
+    addGlobalAttributes() {
+      return [
+        {
+          types: ['codeBlock'],
+          attributes: {
+            codeLabel: {
+              default: 'snippet',
+              renderHTML: (attributes: Record<string, unknown>) => ({
+                'data-code-label': attributes['codeLabel'],
+              }),
+            },
+          },
+        },
+      ]
+    },
+  })
+
+  /** As above, but rendering into the SHARED `class` attribute. */
+  const ClassLabelledCodeBlock = Extension.create({
+    name: 'classLabelledCodeBlock',
+    addGlobalAttributes() {
+      return [
+        {
+          types: ['codeBlock'],
+          attributes: {
+            codeLabel: {
+              default: 'snippet',
+              renderHTML: (attributes: Record<string, unknown>) => ({
+                // `null` for a cleared attribute, mirroring `CodeBlock`'s own
+                // `class: node.attrs.language ? … : null` — `renderSpec` emits
+                // no attribute at all for a null value.
+                class:
+                  attributes['codeLabel'] == null
+                    ? null
+                    : `label-${String(attributes['codeLabel'])}`,
+              }),
+            },
+          },
+        },
+      ]
+    },
+  })
+
+  /** As above, but rendering into the SHARED `style` attribute. */
+  const AccentedCodeBlock = Extension.create({
+    name: 'accentedCodeBlock',
+    addGlobalAttributes() {
+      return [
+        {
+          types: ['codeBlock'],
+          attributes: {
+            accent: {
+              default: 'red',
+              renderHTML: (attributes: Record<string, unknown>) => ({
+                style:
+                  attributes['accent'] == null ? null : `color: ${String(attributes['accent'])}`,
+              }),
+            },
+          },
+        },
+      ]
+    },
+  })
+
+  /**
+   * A global attribute that renders NOTHING while its node attribute is null —
+   * so the spec does not produce `data-late` at mount and only starts on a
+   * later render. The shape the rolling `specAttrs` exists for.
+   */
+  const LateLabelledCodeBlock = Extension.create({
+    name: 'lateLabelledCodeBlock',
+    addGlobalAttributes() {
+      return [
+        {
+          types: ['codeBlock'],
+          attributes: {
+            lateLabel: {
+              default: null,
+              renderHTML: (attributes: Record<string, unknown>) =>
+                attributes['lateLabel'] == null
+                  ? {}
+                  : { 'data-late': String(attributes['lateLabel']) },
+            },
+          },
+        },
+      ]
+    },
+  })
+
+  /**
+   * A REAL node decoration — the production writer the sync has to coexist
+   * with, rather than a hand-written token standing in for one. Carries one
+   * attribute in each of the three namespaces the sync treats differently:
+   * a plain name, a `class` token, a `style` property.
+   */
+  const DecoratedCodeBlock = Extension.create({
+    name: 'decoratedCodeBlock',
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          key: new PluginKey('codeBlockTestDecorations'),
+          props: {
+            decorations(state) {
+              const decorations: Decoration[] = []
+              state.doc.descendants((node, pos) => {
+                if (node.type.name !== 'codeBlock') return
+                decorations.push(
+                  Decoration.node(pos, pos + node.nodeSize, {
+                    'data-deco': 'yes',
+                    class: 'deco-class',
+                  }),
+                )
+              })
+              return DecorationSet.create(state.doc, decorations)
+            },
+          },
+        }),
+      ]
+    },
+  })
+
+  const livePre = (): HTMLElement | null => editor.view.dom.querySelector('pre')
+
+  it('a <pre>-rendered global attribute follows a change to the node attribute it derives from', () => {
+    editor = createCodeBlockEditor({}, [LabelledCodeBlock])
+    expect(livePre()?.getAttribute('data-code-label')).toBe('snippet')
+
+    // Attribute-only edit on the SAME node type: `update()` handles it, no
+    // rebuild, so the `<pre>` is only correct if `update()` re-syncs it.
+    editor.commands.updateAttributes('codeBlock', { codeLabel: 'renamed' })
+
+    expect(livePre()?.getAttribute('data-code-label')).toBe('renamed')
+  })
+
+  it('a <pre> attribute the spec stops producing is removed, not left at its old value', () => {
+    editor = createCodeBlockEditor({}, [LabelledCodeBlock])
+    expect(livePre()?.hasAttribute('data-code-label')).toBe(true)
+
+    // `renderHTML` yields `{'data-code-label': null}`, and `renderSpec` emits no
+    // attribute for a null value — so the live `<pre>` must lose it too. The
+    // other half of the pair: the test above pins the value CHANGING, this one
+    // pins it GOING AWAY, which a set-only sync would leave stale.
+    editor.commands.updateAttributes('codeBlock', { codeLabel: null })
+
+    expect(livePre()?.hasAttribute('data-code-label')).toBe(false)
+  })
+
+  it('the live <pre> and the serialized HTML still agree after an attribute-only edit', () => {
+    editor = createCodeBlockEditor({ HTMLAttributes: { 'data-code-block': 'yes' } }, [
+      LabelledCodeBlock,
+    ])
+    editor.commands.updateAttributes('codeBlock', { codeLabel: 'renamed', language: 'rust' })
+
+    // The same parity check #4316 pins at mount, re-run after the edit: this is
+    // the invariant, and the two tests above are the two ways of breaking it.
+    const serialized = new DOMParser().parseFromString(editor.getHTML(), 'text/html')
+    expect(attributesOf(livePre())).toEqual(attributesOf(serialized.querySelector('pre')))
+  })
+
+  it('re-syncing the <pre> swaps the spec class token and leaves a foreign one alone', () => {
+    editor = createCodeBlockEditor({ HTMLAttributes: { class: 'code-block' } }, [
+      ClassLabelledCodeBlock,
+    ])
+    const pre = livePre() as HTMLElement
+    expect(pre.className).toBe('code-block label-snippet')
+
+    // Exactly what prosemirror-view's `selectNode` does — `nodeDOM.classList
+    // .add('ProseMirror-selectednode')` — written directly rather than by
+    // selecting the node, because `setNodeMarkup` (what `updateAttributes`
+    // dispatches) remaps a NodeSelection to a TextSelection, so prosemirror-view
+    // would deselect and drop the class on its own before this sync ever ran.
+    // The rule under test is the sharing, not who wrote the token.
+    pre.classList.add('ProseMirror-selectednode')
+
+    editor.commands.updateAttributes('codeBlock', { codeLabel: 'renamed' })
+
+    // `class` is a shared namespace: prosemirror-view adds and removes single
+    // TOKENS there and, once decorations stop changing, `updateOuterDeco`
+    // short-circuits and never re-applies them. A whole-attribute write of the
+    // spec's `class` would drop this token with no second chance to restore it.
+    expect(pre.classList.contains('ProseMirror-selectednode')).toBe(true)
+    // …and the spec-owned tokens still track the node: the stale one gone, the
+    // new one present, the static one untouched.
+    expect(pre.classList.contains('label-renamed')).toBe(true)
+    expect(pre.classList.contains('label-snippet')).toBe(false)
+    expect(pre.classList.contains('code-block')).toBe(true)
+  })
+
+  it('re-syncing the <pre> updates the spec style property and leaves a foreign one alone', () => {
+    editor = createCodeBlockEditor({}, [AccentedCodeBlock, LabelledCodeBlock])
+    const pre = livePre() as HTMLElement
+    expect(pre.style.color).toBe('red')
+
+    // What `patchOuterDeco` does for a node decoration carrying a style: append
+    // onto the SAME element's `cssText`. Written directly so the test pins the
+    // sharing rule rather than a decoration plugin's own behaviour.
+    pre.style.cssText += ';outline: 1px solid green'
+
+    editor.commands.updateAttributes('codeBlock', { accent: 'blue' })
+
+    expect(pre.style.color).toBe('blue')
+    expect(pre.style.outline).toBe('green solid 1px')
+  })
+
+  it('a spec class/style that goes away leaves no empty attribute behind', () => {
+    editor = createCodeBlockEditor({}, [ClassLabelledCodeBlock, AccentedCodeBlock])
+    const pre = livePre() as HTMLElement
+    expect(pre.getAttribute('class')).toBe('label-snippet')
+    expect(pre.style.color).toBe('red')
+
+    editor.commands.updateAttributes('codeBlock', { codeLabel: null, accent: null })
+
+    // The other half of the token/property pair: removing the LAST spec token
+    // empties `class`/`style` rather than deleting them, and `<pre class="">`
+    // is exactly the divergence from `getHTML()` that #4316's `class: null`
+    // parity test pins on the `<code>`.
+    expect(pre.hasAttribute('class')).toBe(false)
+    expect(pre.hasAttribute('style')).toBe(false)
+    expect(attributesOf(pre)).toEqual(
+      attributesOf(
+        new DOMParser().parseFromString(editor.getHTML(), 'text/html').querySelector('pre'),
+      ),
+    )
+  })
+
+  it("a real node decoration's own attributes survive the sync, in every namespace", () => {
+    editor = createCodeBlockEditor({}, [LabelledCodeBlock, DecoratedCodeBlock])
+    const pre = livePre() as HTMLElement
+    expect(pre.getAttribute('data-deco')).toBe('yes')
+
+    editor.commands.updateAttributes('codeBlock', { codeLabel: 'renamed' })
+
+    // The reason the sweep is driven by `specAttrs` — the PREVIOUS SPEC
+    // RENDER's attributes — and not by the live element the way `contentDOM`'s
+    // is. Sweeping the live `<pre>` ("remove whatever the spec did not
+    // produce") deletes `data-deco` on every attribute-only edit, and
+    // `updateOuterDeco` short-circuits on an unchanged decoration set, so it
+    // never comes back. The two tests above pin the same rule for the shared
+    // namespaces using hand-written tokens; this one pins it on the real
+    // writer, end to end.
+    expect(pre.getAttribute('data-deco')).toBe('yes')
+    expect(pre.classList.contains('deco-class')).toBe(true)
+    expect(pre.getAttribute('data-code-label')).toBe('renamed')
+  })
+
+  it('an attribute the spec only STARTS producing later is still removable later', () => {
+    editor = createCodeBlockEditor({}, [LateLabelledCodeBlock])
+    const pre = livePre() as HTMLElement
+    expect(pre.hasAttribute('data-late')).toBe(false)
+
+    editor.commands.updateAttributes('codeBlock', { lateLabel: 'v1' })
+    expect(pre.getAttribute('data-late')).toBe('v1')
+
+    // Why `specAttrs` ROLLS FORWARD instead of freezing at mount: `data-late`
+    // is not in the mount-time render, so a frozen allowlist never learns the
+    // name and leaves `data-late="v1"` on screen forever. Every other test here
+    // passes against the frozen variant, which is what makes this the one that
+    // pins the choice.
+    editor.commands.updateAttributes('codeBlock', { lateLabel: null })
+    expect(pre.hasAttribute('data-late')).toBe(false)
   })
 })
