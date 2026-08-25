@@ -1159,10 +1159,15 @@ struct ReplayDiagnostics {
     /// and at what depth.
     cascade_truncations: Vec<CascadeTruncation>,
     /// #4287: the heads of the subtrees a truncated `purge_block` cascade could
-    /// not reach, which the post-loop cleanup finished purging instead of
-    /// adopting as live top-level blocks. One entry per unreached FRONTIER
-    /// child (the row at `DESCENDANT_DEPTH_CAP + 1`), not per removed block —
-    /// see [`purge_truncated_tails`] for why the tail cannot simply be NULLed.
+    /// not reach, which the replay finished purging instead of leaving for the
+    /// orphan cleanup to adopt as live top-level blocks. One entry per
+    /// re-anchored FRONTIER child (a row at `DESCENDANT_DEPTH_CAP + 1` relative
+    /// to its own step's seed), not per removed block — see
+    /// [`purge_truncated_tails`] for why the tail cannot simply be NULLed.
+    ///
+    /// Only heads whose step actually removed rows appear. A diagnostic that
+    /// also named the seeds it skipped would send a post-mortem reader after
+    /// ids that are still alive in the vault.
     purge_tails_finished: Vec<String>,
     /// #4287: how many rows those follow-up cascades removed, i.e. the size of
     /// the hard-purged content that would otherwise have been resurrected. The
@@ -1662,8 +1667,36 @@ async fn purge_cascade_step(
     })
 }
 
-/// #4287: finish the purges the depth cap cut short, instead of letting the
-/// orphan cleanup adopt their survivors.
+/// What [`purge_truncated_tails`] actually did, as opposed to what it was asked
+/// to do. The two differ whenever a seed no longer exists by the time its step
+/// runs, and a diagnostic that conflated them would name ids the reader can
+/// still find in the vault (#4287 review).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PurgeTailRepair {
+    /// The frontier heads this REALLY re-anchored from and purged — never a
+    /// seed whose step removed nothing.
+    heads: Vec<String>,
+    /// Rows those follow-up cascades removed. The count and [`Self::heads`] say
+    /// different things — a single unreachable frontier child can carry an
+    /// arbitrarily large subtree — and a post-mortem reader needs both.
+    rows_removed: u64,
+}
+
+/// First occurrence wins, order preserved.
+///
+/// The cohort table keeps duplicate rows by design, so one frontier child can
+/// be named more than once by a single walk; re-running a step for an id
+/// already purged would be wasted work and, worse, would report the same head
+/// twice.
+fn dedup_preserving_order(ids: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    ids.into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect()
+}
+
+/// #4287: finish the purge the depth cap cut short, instead of letting the
+/// orphan cleanup adopt its survivors.
 ///
 /// A `purge_block` whose subtree is deeper than the cap deletes rows 0..=CAP
 /// and leaves the row at `CAP + 1` — plus everything under it — in the table,
@@ -1694,49 +1727,62 @@ async fn purge_cascade_step(
 /// needing the unbounded walk this pre-migration pass deliberately does not
 /// have. Termination: a seed that still exists costs at least its own row, and
 /// a seed that does not yields an empty cohort and hence no successors, so the
-/// row count strictly decreases while `pending` is non-empty.
+/// row count strictly decreases while `pending` is non-empty. A `parent_id`
+/// cycle terminates for the same reason — its members are inside the cohort and
+/// are deleted by the step that named them.
 ///
-/// The still-orphaned guard is what keeps this from over-reaching. A frontier
-/// child is purged only while its `parent_id` is STILL dangling at cleanup
-/// time: a later `move_block` that re-parented it under a live block, or a
-/// later `create_block` that re-made the id it pointed at, means the op_log
-/// itself says the block survived, and the log wins over a frontier captured
-/// mid-replay. It also drops the `parent_id`-cycle case for free — a cycle's
-/// members are inside the cohort and were deleted by the step that named them.
+/// # Why this runs INSIDE the replay loop (#4287 review)
+///
+/// It must observe the tree as the purge left it, not as the end of the replay
+/// left it. Deferring the frontier to a post-loop pass was wrong in BOTH
+/// directions, because `create_block` (`INSERT OR IGNORE`, no parent-existence
+/// check) and `move_block` (an unconditional `UPDATE`) both accept a
+/// `parent_id` that does not exist, so ops replayed after the purge can still
+/// restructure the surviving tail:
+///
+/// * **Over-delete.** A later op parking a live block `X` under the surviving
+///   tail made `X` — and its whole subtree — part of the re-anchored cascade,
+///   hard-deleting content that was never purged and that an unbounded cascade
+///   would have left alone (it would have been orphaned at purge time and then
+///   adopted by the cleanup).
+/// * **Under-delete.** A later op moving a row OUT of the tail let it escape
+///   the cascade entirely, leaving hard-purged content live and FTS-indexed —
+///   the exact resurrection this function exists to prevent. Under an unbounded
+///   cascade that row was already gone, and the later op would have matched no
+///   rows at all.
+///
+/// Running here, immediately after the arm's own cascade, both holes close by
+/// construction: nothing has happened in between. It also retires the
+/// `still_orphaned` guard the post-loop version needed — a frontier child at
+/// `CAP + 1` is necessarily orphaned the instant the cascade above it commits,
+/// so the guard could only ever have been trivially true, or wrongly false
+/// after some later op had already corrupted the answer.
 ///
 /// Reports rather than logs, like every other [`ReplayDiagnostics`] entry: the
 /// replay may run twice (#3269 R5).
 async fn purge_truncated_tails(
     executor: &mut sqlx::SqliteConnection,
     frontier: &[String],
-) -> Result<u64, sqlx::Error> {
-    let mut rows_removed = 0u64;
-    let mut pending: Vec<String> = frontier.to_vec();
+) -> Result<PurgeTailRepair, sqlx::Error> {
+    let mut repair = PurgeTailRepair::default();
+    let mut pending = dedup_preserving_order(frontier.iter().cloned());
     while !pending.is_empty() {
         let mut next: Vec<String> = Vec::new();
         for seed in pending {
-            // dynamic-sql: era-varying `blocks` at the pre-migration era.
-            let still_orphaned = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS ( \
-                     SELECT 1 FROM blocks \
-                      WHERE id = ?1 \
-                        AND parent_id IS NOT NULL \
-                        AND parent_id NOT IN (SELECT id FROM blocks) \
-                 )",
-            )
-            .bind(&seed)
-            .fetch_one(&mut *executor)
-            .await?;
-            if !still_orphaned {
+            let step = purge_cascade_step(&mut *executor, &seed).await?;
+            // A seed that no longer exists yields an empty cohort. Reporting it
+            // as "finished" would name an id a post-mortem reader could still
+            // find alive, so only seeds this actually purged are recorded.
+            if step.rows_removed == 0 {
                 continue;
             }
-            let step = purge_cascade_step(&mut *executor, &seed).await?;
-            rows_removed += step.rows_removed;
+            repair.rows_removed += step.rows_removed;
+            repair.heads.push(seed);
             next.extend(step.unreached);
         }
-        pending = next;
+        pending = dedup_preserving_order(next);
     }
-    Ok(rows_removed)
+    Ok(repair)
 }
 
 /// Replay block-level ops from `op_log` into an existing (temporary)
@@ -1786,11 +1832,6 @@ async fn recover_blocks_from_op_log(
         > 0;
 
     let mut diagnostics = ReplayDiagnostics::default();
-    // #4287: the frontier rows a truncated `purge_block` cascade could not
-    // reach, accumulated across the whole replay and finished off by
-    // [`purge_truncated_tails`] BEFORE the blanket orphan cleanup below — which
-    // would otherwise adopt them as live top-level blocks.
-    let mut purge_truncation_frontier: Vec<String> = Vec::new();
 
     if !op_log_exists {
         diagnostics.op_log_missing = true;
@@ -2388,12 +2429,14 @@ async fn recover_blocks_from_op_log(
                 // `parent_id`.
                 //
                 // #4287: which is why this arm does not just report it. The
-                // frontier the walk could not reach is carried to
-                // [`purge_truncated_tails`], run before the blanket orphan
-                // cleanup, so that cleanup never NULLs a `parent_id` whose
+                // frontier the walk could not reach is finished off by
+                // [`purge_truncated_tails`] right here, so the blanket orphan
+                // cleanup after this loop never NULLs a `parent_id` whose
                 // ancestor was purged in this same replay — the promotion that
                 // turned user-destroyed data back into a live, searchable
-                // top-level block.
+                // top-level block. Right here, and not after the loop, because
+                // ops replayed later can still move rows into or out of the
+                // surviving tail; see that function's doc.
                 let step = purge_cascade_step(&mut *executor, block_id).await?;
                 if step.truncated {
                     diagnostics.cascade_truncations.push(CascadeTruncation {
@@ -2401,7 +2444,12 @@ async fn recover_blocks_from_op_log(
                         block_id: block_id.to_owned(),
                     });
                 }
-                purge_truncation_frontier.extend(step.unreached);
+                // #4287: finish the tail NOW, while the tree still looks the
+                // way this purge left it. See [`purge_truncated_tails`] for why
+                // a post-loop pass was wrong in both directions.
+                let repair = purge_truncated_tails(&mut *executor, &step.unreached).await?;
+                diagnostics.purge_tail_rows_removed += repair.rows_removed;
+                diagnostics.purge_tails_finished.extend(repair.heads);
             }
             _ => {
                 // set_property / delete_property / add_tag are handled
@@ -2410,17 +2458,13 @@ async fn recover_blocks_from_op_log(
         }
     }
 
-    // #4287: finish the purges the depth cap cut short FIRST. The cleanup below
-    // cannot tell "orphaned by a truncated purge" from "orphaned by legitimate
-    // historical damage" — it sees only a dangling `parent_id` — and adopting
-    // the first kind resurrects hard-purged content as a live, FTS-indexed,
-    // untrashable top-level block. #4232's truncation signal is what makes the
-    // two distinguishable; see [`purge_truncated_tails`].
-    if !purge_truncation_frontier.is_empty() {
-        diagnostics.purge_tail_rows_removed =
-            purge_truncated_tails(&mut *executor, &purge_truncation_frontier).await?;
-        diagnostics.purge_tails_finished = purge_truncation_frontier.clone();
-    }
+    // #4287: the truncated purges were already finished in the loop above, each
+    // one immediately after its own cascade. That ordering matters: the cleanup
+    // below cannot tell "orphaned by a truncated purge" from "orphaned by
+    // legitimate historical damage" — it sees only a dangling `parent_id` — and
+    // adopting the first kind resurrects hard-purged content as a live,
+    // FTS-indexed, untrashable top-level block. By the time control reaches
+    // here there is no such orphan left for it to adopt.
 
     // Clean up orphaned parent_ids so migration 73's INSERT into _new_blocks
     // doesn't fail on dangling FK references (e.g. parent created on another
@@ -2458,6 +2502,17 @@ async fn recover_blocks_from_op_log(
             break;
         }
     }
+
+    // #4287 review: the cohort table is TEMP, so it dies with the connection —
+    // but this connection goes back to the pool and then serves normal app
+    // traffic, carrying the last cascade's rows in its temp schema for the rest
+    // of the process. Drop it rather than leave recovery-scoped residue on a
+    // live connection. Not correctness-critical: every read of it is preceded
+    // by a `DELETE` and a re-materialise.
+    // dynamic-sql: DDL, which the `query!` family cannot express at all.
+    sqlx::query("DROP TABLE IF EXISTS recovery_cascade_cohort")
+        .execute(&mut *executor)
+        .await?;
 
     Ok(diagnostics)
 }
@@ -4255,6 +4310,194 @@ mod tests {
         assert_eq!(
             diagnostics.purge_tail_rows_removed, 2,
             "#4287: the frontier row AND the subtree hanging off it"
+        );
+    }
+
+    /// #4287 review, over-delete direction: the tail repair must not sweep up
+    /// blocks that were never purged.
+    ///
+    /// `create_block` (`INSERT OR IGNORE`) and `move_block` (an unconditional
+    /// `UPDATE`) both accept a `parent_id` that does not exist, so an op
+    /// replayed AFTER a truncated purge can park a live block under the
+    /// surviving tail — the everyday "peer B edited under a subtree peer A
+    /// purged" merge. A repair deferred to the end of the replay would then
+    /// walk that block into its cascade and hard-delete it, with no trash row
+    /// and no op naming it.
+    ///
+    /// The unbounded cascade this repair emulates would have removed the tail
+    /// at purge time, leaving the later `move_block` to point `x` at an id that
+    /// no longer exists — an orphan, which the blanket cleanup adopts as a live
+    /// top-level block. So `x` SURVIVES, and the purged chain does not.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn truncated_purge_repair_spares_a_block_moved_under_the_tail_afterwards() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        let cap = depth_cap();
+        let tail = format!("c{}", cap + 1);
+
+        // The chain to be purged, plus an unrelated live block with a child.
+        let mut seq = seed_chain(&pool, "c", cap + 1, T0, 1).await;
+        seed_create_op(&pool, seq, "x", None, T0 + seq).await;
+        seq += 1;
+        seed_create_op(&pool, seq, "xkid", Some("x"), T0 + seq).await;
+        seq += 1;
+        seed_replay_op(
+            &pool,
+            seq,
+            "purge_block",
+            &serde_json::json!({ "block_id": "c0" }),
+            T0 + seq,
+        )
+        .await;
+        seq += 1;
+        // Replayed after the purge: parks `x` under the row the cascade could
+        // not reach.
+        seed_replay_op(
+            &pool,
+            seq,
+            "move_block",
+            &serde_json::json!({ "block_id": "x", "new_parent_id": tail, "new_index": 0 }),
+            T0 + seq,
+        )
+        .await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![truncation(CASCADE_PURGE, "c0")],
+            "premise: the cascade really was cut off by the depth cap"
+        );
+        assert!(
+            block_exists(&pool, "x").await && block_exists(&pool, "xkid").await,
+            "#4287 review: `x` was never purged — the repair must not follow a \
+             parent link created after the purge and destroy it"
+        );
+        assert_eq!(
+            parent_of(&pool, "x").await,
+            None,
+            "and it lands where an unbounded cascade would have left it: orphaned \
+             by the vanished parent, then adopted by the blanket cleanup"
+        );
+        assert!(
+            !block_exists(&pool, &tail).await && !block_exists(&pool, "c0").await,
+            "the purged chain itself is still gone"
+        );
+        assert_eq!(
+            diagnostics.purge_tail_rows_removed, 1,
+            "exactly the one unreached row — not `x`, and not `xkid`"
+        );
+    }
+
+    /// #4287 review, under-delete direction: a row moved OUT of the tail before
+    /// the end of the replay must not escape the repair.
+    ///
+    /// Mirror of the case above, and the one that breaks #4287's own acceptance
+    /// criterion. With the repair deferred to the end of the replay, the
+    /// re-anchored cascade from the frontier head saw a subtree its child had
+    /// already left, so hard-purged content stayed live and FTS-indexed under a
+    /// surviving parent. Under an unbounded cascade that row was gone at purge
+    /// time and the later `move_block` would have matched no rows at all.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn truncated_purge_repair_catches_a_row_moved_out_of_the_tail_afterwards() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+        const MARKER: &str = "escapemarker4287";
+        let cap = depth_cap();
+        // Two past the cap, so the frontier head at `cap + 1` has a child of
+        // its own to lose.
+        let escapee = format!("c{}", cap + 2);
+
+        let mut seq = 1i64;
+        for level in 0..=(cap + 2) {
+            let id = format!("c{level}");
+            let parent = (level > 0).then(|| format!("c{}", level - 1));
+            seed_replay_op(
+                &pool,
+                seq,
+                "create_block",
+                &serde_json::json!({
+                    "block_id": id,
+                    "block_type": "content",
+                    "parent_id": parent,
+                    "index": 0,
+                    "content": format!("{MARKER} level {level}"),
+                }),
+                T0 + seq,
+            )
+            .await;
+            seq += 1;
+        }
+        // A live block outside the purged chain, to move the escapee under.
+        seed_create_op(&pool, seq, "keeper", None, T0 + seq).await;
+        seq += 1;
+        seed_replay_op(
+            &pool,
+            seq,
+            "purge_block",
+            &serde_json::json!({ "block_id": "c0" }),
+            T0 + seq,
+        )
+        .await;
+        seq += 1;
+        seed_replay_op(
+            &pool,
+            seq,
+            "move_block",
+            &serde_json::json!({ "block_id": escapee, "new_parent_id": "keeper", "new_index": 0 }),
+            T0 + seq,
+        )
+        .await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            diagnostics.cascade_truncations,
+            vec![truncation(CASCADE_PURGE, "c0")],
+            "premise: the cascade really was cut off by the depth cap"
+        );
+        assert!(
+            !block_exists(&pool, &escapee).await,
+            "#4287 review: `{escapee}` is inside the purged subtree — a later \
+             `move_block` must not be able to carry it back out alive"
+        );
+
+        agaric_store::fts::rebuild_fts_index(&pool).await.unwrap();
+        let hits = crate::commands::queries::search_blocks_inner(
+            &pool,
+            MARKER.to_string(),
+            None,
+            None,
+            agaric_store::search_types::SearchFilter::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        let ids: Vec<&str> = hits.items.iter().map(|r| r.id.as_str()).collect();
+        assert!(
+            ids.is_empty(),
+            "#4287: NOTHING the user hard-purged may come back as a searchable block; \
+             search returned {ids:?}"
+        );
+        assert!(
+            block_exists(&pool, "keeper").await,
+            "the block it was moved under is untouched"
         );
     }
 

@@ -4,7 +4,7 @@
 |----------|-------|
 | **Date** | 2026-08-25 |
 | **Issues closed** | `#4287`, `#4289`, `#4290` |
-| **Subagents** | 1 builder, 1 reviewer |
+| **Subagents** | 1 builder, 1 adversarial reviewer |
 | **Branch** | `claude/recovery-cascade-4287` |
 
 **Summary:** the session opened on an inherited working tree — 916 lines of uncommitted
@@ -57,6 +57,42 @@ Worth recording because of what it implies about the inherited state: a diff can
 complete, documented, formatted and internally consistent and still be inert. The tests
 are what caught it — nothing about reading the diff would have.
 
+## The review's two findings — the repair had to move inside the loop
+
+An adversarial review of the finished diff found the repair was correct only for a
+replay in which nothing else happened. It ran as a post-loop pass over a frontier
+captured during the loop, and both `create_block` (`INSERT OR IGNORE`) and `move_block`
+(an unconditional `UPDATE`) accept a `parent_id` that does not exist — so ops replayed
+after the purge could still restructure the surviving tail. That was wrong in **both**
+directions:
+
+- **Over-delete.** A later op parking a live block `X` under the surviving tail made `X`
+  and its whole subtree part of the re-anchored cascade — hard-deleting content that was
+  never purged, with no trash row and no op naming it. This is the everyday "peer B
+  edited under a subtree peer A purged" merge, and an unbounded cascade would have left
+  `X` alone: orphaned at purge time, then adopted by the cleanup.
+- **Under-delete.** A later op moving a row *out* of the tail let it escape the cascade
+  entirely, leaving hard-purged content live and FTS-indexed — the exact resurrection
+  #4287 exists to stop, reintroduced by its own fix.
+
+Both collapse to one cause, so both take one fix: run the re-anchoring immediately after
+the purge arm's own cascade, inside the replay loop, where nothing has happened in
+between. That also retires the `still_orphaned` guard the deferred version needed — a
+frontier child at `CAP + 1` is necessarily orphaned the instant the cascade above it
+commits, so the guard could only ever be trivially true, or wrongly *false* after a later
+op had already corrupted the answer.
+
+**The two new regression tests were falsified against the old structure**, which is what
+makes them worth having: with the deferred version restored, both fail and the two
+original #4287 tests still pass. The defects would have shipped green.
+
+Two smaller review points went in with them. `purge_tails_finished` reported the raw
+captured frontier rather than the heads actually purged, so a seed the guard skipped was
+still logged as "finished" — sending a post-mortem reader after an id still alive in the
+vault; it now records only heads whose step removed rows. And the TEMP cohort table is
+now dropped at the end of the replay instead of riding a pooled connection back into
+normal app traffic.
+
 ## #4289 — the probe doubled every cascade's walk, and its site list was unbounded
 
 Both halves are about the cost of #4232's truncation reporting on exactly the vault that
@@ -98,9 +134,17 @@ behaviour: exactly one test failed — the new "live plain log wins" case — wh
 two existing tests stayed green, which is the evidence that the change fixes the inverse
 case without loosening the original guarantee. Restored immediately.
 
-**Verification:** 429 tests green across the `recovery|cascade|truncat|purge|recent_errors`
-filters, including the 22 new and changed ones run explicitly by name; `cargo clippy
---all-targets --workspace` clean; `cargo fmt` applied. Test runs were capped to 6 cores
-under `nice` throughout — the machine was shared with the user's own work.
+**Verification:** 348 tests green across the `recovery|cascade|truncat|purge|recent_errors`
+filters, run against a base rebased onto 37 newer commits (the first post-rebase run
+failed to build against a stale local dev DB — `SQLX_OFFLINE=true` pins it to the
+checked-in `.sqlx` cache, which is what CI uses). `cargo clippy --all-targets --workspace`
+clean; `cargo fmt` applied; the `check-dynamic-sql` baseline re-anchored 46 → 50 for
+`recovery.rs`, entry count preserved at 62 so nothing new was grandfathered. Test runs
+were capped to 6 cores under `nice`/`taskset` throughout — the machine was shared with
+the user's own work.
+
+**Every behavioural claim here was falsified before it was trusted:** #4287's two tests
+by the `if false`, #4290's by stubbing the recency comparison, and the review's two by
+restoring the deferred structure.
 
 **Commit plan:** one commit, three `Closes` lines.
