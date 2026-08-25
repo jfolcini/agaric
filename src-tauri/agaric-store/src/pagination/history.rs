@@ -175,8 +175,22 @@ pub async fn list_block_history(
 /// Residual divergence NOT closed here (out of scope, positional mapping
 /// unchanged): this query has no `is_undo = 0` / `is_replicated = 0`
 /// filter while the three undo queries do, so reverse ops and foreign
-/// audit rows (migration 0099) are listed but not undoable. That skew
-/// predates #4277 and is independent of attachments.
+/// audit rows (migration 0099) are listed but not undoable.
+///
+/// That skew predates #4277, but this PR GROWS its population (#4335
+/// review): reversing an `add_attachment` op appends an `is_undo = 1`
+/// `delete_attachment` row (`reverse_add_attachment`,
+/// `src/reverse/attachment_ops.rs`), and probe 2 above now admits that row
+/// into this list — via `src_add.block_id IN (...)`, which the reverse row
+/// itself satisfies once its `add_attachment` source is resolved — while
+/// `undo_page_op_inner` still excludes it via its own `AND ol.is_undo = 0`.
+/// So each such reversal adds +1 to this positional skew going forward,
+/// where before #4277 the row was invisible to both queries alike (no
+/// `block_id`, admitted by neither) and contributed no divergence at all.
+/// `undoDeleteOfImpl` (`src/stores/undo.ts`) tolerates only a skew of
+/// one — its retry window is `[index, index + 1]` — so this is not
+/// slack the growing population can safely eat. Strengthens the case for
+/// #4328.
 pub async fn list_page_history(
     pool: &SqlitePool,
     page_id: &str,
@@ -293,6 +307,67 @@ pub async fn list_page_history(
         });
     }
 
+    // IX3 (#4335 review item 2) — EQP-verified (sqlite3 3.50.6, real
+    // migrations applied, `ANALYZE`'d, op_log seeded to 6 000 and 50 000
+    // rows across 41 pages / ~660 blocks, one target page with a realistic
+    // share of the ops, one page with ZERO matching ops):
+    //
+    // Before this attachment-probe OR was added, `ol.block_id IN (SELECT
+    // id FROM page_blocks)` was the query's only top-level predicate and
+    // planned as `SEARCH ol USING INDEX idx_op_log_block_id (block_id=?)`
+    // — an indexed seek, ~0.03–1.6 ms regardless of whether the page had
+    // matching rows. With this OR in place it plans as `SCAN ol USING
+    // INDEX idx_op_log_created` (the index only avoids the `ORDER BY`
+    // sort; every op_log row is still visited and the OR + two
+    // correlated `EXISTS` subqueries evaluated against it) — a full
+    // table scan, exactly as this comment's sibling note predicted for
+    // the `__all__` branch. Note the premise correction: the plausible
+    // fallback index, `idx_op_log_device_op_type(device_id, op_type)`
+    // (migration 0008), was DROPPED in migration 0072 (PEND-103, dead
+    // code after the diffy→Loro migration) and never recreated — there
+    // is currently no op_type-leading index at all, not merely a
+    // wrong-leading-column one.
+    //
+    // Because the scan walks in `created_at DESC` order (already the
+    // `ORDER BY`), `LIMIT 51` lets it short-circuit as soon as 51
+    // matches are found, so the COMMON case (a page with actual recent
+    // history) stays cheap: 0.35 ms @ 6 000 rows / 189 matches, 0.64 ms
+    // @ 50 000 rows / 1 492 matches — both faster than the old indexed
+    // seek, because the seek then still had to sort its full match set
+    // in a temp B-tree while the scan doesn't. The WORST case (a page
+    // with no matching ops at all — e.g. freshly created, or all
+    // attachments deleted by other devices) cannot short-circuit and
+    // pays the full scan: 21.8 ms @ 50 000 rows / 0 matches, ~870× the
+    // old plan's 0.025 ms for the identical empty-page query.
+    //
+    // A candidate partial index, `idx_op_log_attachment_ops ON
+    // op_log(op_type) WHERE op_type IN ('delete_attachment',
+    // 'rename_attachment')`, was built and measured (not shipped — no
+    // migration added on this hunch). It does change the plan, to
+    // `MULTI-INDEX OR` (`idx_op_log_block_created` for the block_id arm,
+    // the new index for the op_type arm) + `USE TEMP B-TREE FOR ORDER
+    // BY` (multi-index OR can't stream in `ORDER BY` order the way the
+    // plain scan could, so the temp-B-tree sort this branch avoided
+    // above comes back). Measured effect @ 50 000 rows: the worst case
+    // improves 21.8 ms → 8.9 ms (~2.4×), but the COMMON case regresses
+    // 0.64 ms → 8.4 ms (~13× slower) — the index trades away the
+    // LIMIT short-circuit for every page that actually has history, to
+    // buy a partial win on the rare empty/sparse page. Net: worse for
+    // the typical History-panel open. Not added.
+    //
+    // Judgement: accept the scan. History is a panel a user opens, not
+    // a hot path (unlike the sync/apply paths op_log's other indexes
+    // serve), tens-of-ms worst case at these row counts is within that
+    // budget, and the identical predicate shape already shipped in
+    // `undo_page_op_inner` via #4278 (see the doc block above), so
+    // swipe-undo already pays this cost — this change extends the SAME
+    // trade to the History panel, it doesn't introduce a new one.
+    // op_log is append-only and grows unboundedly, so this scan's cost
+    // grows with total vault history, not with page size — worth
+    // re-measuring if op_log reaches the hundreds of thousands of rows
+    // and opening History on a new/sparse page becomes a reported
+    // complaint, but not warranted today.
+    //
     // Recursive CTE with `depth < 100` to bound the walk against
     // runaway recursion on corrupted data (invariant #9).
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
