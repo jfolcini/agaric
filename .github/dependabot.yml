@@ -26,9 +26,12 @@ version: 2
 # bumps fall outside every `groups:` entry below (groups default to
 # `update-types: [minor, patch]` unless explicitly opened up), so each
 # major lands as its own individual PR for the maintainer to review —
-# which is what we want for breaking-change risk. Sole exception:
-# `codeql-action` below opts majors in, because its sub-actions must
-# move in lockstep at every bump level (see that group's comment).
+# which is what we want for breaking-change risk. Two groups opt majors
+# back in, both for the same reason — their members pin each other at an
+# EXACT version, so a split major PR fails `npm ci`/the action resolver
+# before any test runs: `codeql-action` (its sub-actions must move in
+# lockstep at every bump level) and `stryker` (the runner peer-depends on
+# core at an exact pin). See each group's own comment.
 
 updates:
   - package-ecosystem: github-actions
