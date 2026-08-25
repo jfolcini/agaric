@@ -1826,9 +1826,17 @@ describe('PairingDialog', () => {
         // again, not a dead end.
         expect(screen.queryByTestId('pairing-waiting-state')).not.toBeInTheDocument()
         expect(screen.getByLabelText('Passphrase word 1')).toBeInTheDocument()
-        expect(screen.getByRole('alert')).toHaveTextContent(
-          'No response from the other device. The pairing code may have expired.',
-        )
+        // #3952 — the message must name BOTH causes. The timeout cannot tell
+        // an expired code from a discovery failure, and on a multicast-hostile
+        // network the second is the common one and gets no other hint (the
+        // `MdnsDisabled` banner needs a socket that failed to open, not one
+        // whose packets were dropped). Asserting only "no response" would let
+        // the single-cause wording back in, so both halves are pinned.
+        const timeoutAlert = screen.getByRole('alert')
+        expect(timeoutAlert).toHaveTextContent('No response from the other device')
+        expect(timeoutAlert).toHaveTextContent(/pairing code expired/i)
+        expect(timeoutAlert).toHaveTextContent(/could not find each other/i)
+        expect(timeoutAlert).not.toHaveTextContent(/may have expired/i)
         expect(vi.mocked(announce)).toHaveBeenCalledWith(
           'Pairing timed out waiting for the other device',
         )
