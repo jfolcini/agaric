@@ -960,9 +960,9 @@ describe('searchPages — short query (<=2 chars)', () => {
     expect(result.current.pagesListRef.current).toEqual([{ id: 'P30', title: '' }])
   })
 
-  // PR #4295 review, finding 1 — this is the FTS path's "item 1 regression"
-  // test (below, in the long-query describe block) mirrored for the
-  // SHORT-query cache path, which the PR's last commit deliberately left
+  // PR #4295 review, finding 1 — this mirrors the FTS-path crowd-out test
+  // below (`#4295 review, finding 1`, in the long-query describe block) for
+  // the SHORT-query cache path, which the PR's last commit deliberately left
   // untouched on the claim that `matchSorter`'s own ranking of the
   // "Untitled" placeholder text lands at "a fixed, low rank" that can only
   // crowd out a match no better than CONTAINS. That claim is wrong for
@@ -973,9 +973,9 @@ describe('searchPages — short query (<=2 chars)', () => {
   // value — "Untitled" sorts before "Unusual", so it wins the tie too. A
   // genuine CONTAINS-tier match (e.g. "My Fun Page") loses outright, never
   // even tying. Past `.slice(0, 20)`, a run of blank pages crowds a genuine
-  // match out entirely — the exact bug `matchesPageRowFolded` was narrowed
-  // to fix on the FTS path, just reached through this path's own ranking
-  // instead of an unranked array slice.
+  // match out entirely — the exact bug the prefix-only narrowing
+  // (`matchesBlankRowFolded`) was meant to fix on the FTS path, just reached
+  // through this path's own ranking instead of an unranked array slice.
   it('does not let "Untitled"-placeholder ranking crowd out a genuine cache match (#4295 review, finding 1)', async () => {
     const { result } = renderHook(() => useBlockResolve())
 
@@ -1204,16 +1204,16 @@ describe('searchPages — long query (>2 chars)', () => {
     expect(nonCreateIds).not.toContain('C_OTHER')
   })
 
-  // Regression for the #4152 fix's own side effect: `untitledOr(p.title)`
-  // turns EVERY NULL-content page's placeholder into "Untitled", and a
-  // plain folded-substring test (`matchesSearchFolded`) matches "Untitled"
-  // against any of its substrings — not just "untitled" itself, but also
-  // "unt", "tit", "itl", "led", "title", etc. A realistic query like
-  // "title" is one of those substrings. Because NULL-content pages sort
-  // first (#4138 — empty title sorts before any real one), a run of them
-  // fills the `.slice(0, 10)` supplement budget before a genuine cache-only
-  // match ever gets a look-in. This must still surface the genuine match.
-  it('does not let "Untitled"-placeholder substring noise crowd out a genuine cache-only match (item 1 regression)', async () => {
+  // `matchesBlankRowFolded` matches a blank row's "Untitled" placeholder by
+  // PREFIX only, not substring — see its docstring for why. "title" is a
+  // substring of "Untitled" but not a prefix of it, so it is the case that
+  // rule exists to reject: a substring test would wrongly admit every
+  // NULL-content row here (and, pre-#4152's crowd-out fix, let a run of them
+  // consume the `.slice(0, 10)` supplement budget ahead of a genuine match —
+  // see the sibling `finding 1` test below for that scenario, which uses
+  // "unt", an actual prefix). This test guards the prefix rule itself: none
+  // of the ten NULL-content rows may appear, only the genuine match.
+  it('does not match a blank row on a substring of "Untitled" that is not a prefix', async () => {
     mockedSearchBlocks.mockResolvedValueOnce({
       items: [],
       next_cursor: null,
@@ -1240,13 +1240,14 @@ describe('searchPages — long query (>2 chars)', () => {
 
     const nonCreateIds = items.filter((i) => !i.isCreate).map((i) => i.id)
     expect(nonCreateIds).toContain('GENUINE')
+    expect(nonCreateIds.filter((id) => id.startsWith('NULL'))).toHaveLength(0)
   })
 
-  // PR #4295 review, finding 1 — the test above (`item 1 regression`) queries
-  // "title", which the prefix-only `matchesPageRowFolded` now excludes from
-  // matching a blank row at all, so it no longer exercises the crowd-out it
-  // was written for. A genuine PREFIX of "Untitled" — "unt" here — still
-  // matches every blank row (prefix test), and `searchPagesViaFts` never got
+  // PR #4295 review, finding 1 — the test above queries "title", which the
+  // prefix-only `matchesBlankRowFolded` excludes from matching a blank row
+  // at all, so it cannot exercise the crowd-out this test is written for. A
+  // genuine PREFIX of "Untitled" — "unt" here — still matches every blank
+  // row (prefix test), and `searchPagesViaFts` never got
   // the same real-content-first partition `searchPagesViaCache` did: it
   // hands the unpartitioned, pagesListRef-ordered (blanks-first, #4138) list
   // straight to `.slice(0, 10)`, so ten blank rows fill the entire supplement
@@ -1264,7 +1265,7 @@ describe('searchPages — long query (>2 chars)', () => {
     // Ten NULL-content ("Untitled") pages, sorted first as #4138 dictates,
     // followed by one genuine page whose real title contains "unt" as a
     // substring (not itself a prefix match, so it only ever surfaces via
-    // the substring branch of `matchesPageRowFolded`).
+    // `matchesSearchFolded`'s ordinary substring test).
     const placeholders = Array.from({ length: 10 }, (_, i) => ({ id: `NULL${i}`, title: '' }))
     act(() => {
       result.current.pagesListRef.current = [...placeholders, { id: 'GENUINE', title: 'Countdown' }]

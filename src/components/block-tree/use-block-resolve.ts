@@ -258,19 +258,21 @@ async function searchPagesViaCache(
   // same-tier ties fall back to `localeCompare`, which "Untitled" wins against
   // most real titles starting "Un". So blank rows crowd real matches out of
   // the slice budget. Instead: rank real content, admit blank rows by
-  // `matchesPageRowFolded`'s prefix test (the same predicate the FTS path
+  // `matchesBlankRowFolded`'s prefix test (the same predicate the FTS path
   // uses), and place real matches first unconditionally, so a placeholder row
   // can only fill a slot no real match wanted.
   //
   // Only for a non-empty query. An empty `q` means "everything matches", and
   // `source` is already in #4138's title-sort order with blank rows FIRST.
   // Partitioning unconditionally would silently reorder that listing.
-  // Both sides of the blank-row comparison are hoisted out of the per-row
-  // call: the placeholder is recomputed per call rather than cached at module
-  // scope, because `untitledOr` reads the live i18next instance (#4153) and
+  // The blank-row comparison takes no per-row input, so it is hoisted to a
+  // single value evaluated once rather than once per blank row: the
+  // placeholder is recomputed per call rather than cached at module scope,
+  // because `untitledOr` reads the live i18next instance (#4153) and
   // `changeLanguage` can fire without a remount.
   const foldedPlaceholder = q ? foldedUntitledPlaceholder() : ''
   const foldedQuery = q ? foldForSearch(q) : ''
+  const blankRowsMatch = matchesBlankRowFolded(foldedQuery, foldedPlaceholder)
   const filtered = q
     ? [
         ...matchSorter(
@@ -278,9 +280,7 @@ async function searchPagesViaCache(
           q,
           { keys: ['title'] },
         ),
-        ...source.filter(
-          (p) => p.title.trim() === '' && matchesBlankRowFolded(foldedQuery, foldedPlaceholder),
-        ),
+        ...source.filter((p) => p.title.trim() === '' && blankRowsMatch),
       ]
     : source
   // Copy rather than hand back `pagesListRef.current`'s own objects — the
@@ -290,23 +290,24 @@ async function searchPagesViaCache(
 }
 
 /**
- * Decides whether a page row matches a picker query, given the folded
- * placeholder text for blank rows.
+ * Decides whether a blank (NULL-content) page row matches a picker query,
+ * given both sides already folded so neither is recomputed per row.
  *
- * A row with real content uses the ordinary folded SUBSTRING test. A row with
- * no content has no searchable text of its own — only the "Untitled"
- * placeholder it displays (#4152) — and matches that by PREFIX, not substring.
+ * A blank row has no searchable text of its own — only the "Untitled"
+ * placeholder it displays (#4152) — and matches that by PREFIX, not
+ * substring.
  *
- * The prefix rule is the whole point. A substring test against the placeholder
- * makes every blank row match every substring of it ("unt", "tit", "led",
- * "title"), and because blank titles sort first (#4138) a run of them fills a
- * result budget before any genuine match is considered. `title` is a realistic
- * query.
+ * The prefix rule is the whole point. A substring test against the
+ * placeholder makes every blank row match every substring of it ("unt",
+ * "tit", "led", "title"), and because blank titles sort first (#4138) a run
+ * of them fills a result budget before any genuine match is considered.
+ * `title` is a realistic query.
  *
- * Both filter paths route blank rows through this one function, so they cannot
- * disagree about which rows a blank page's match text qualifies for. They did
- * once: a user typing progressively saw blank pages appear and then vanish as
- * the query crossed the length threshold between them.
+ * Both filter paths (`searchPagesViaCache` and `searchPagesViaFts`'s cache
+ * supplement) route blank rows through this one function, so they cannot
+ * disagree about which rows a blank page's match text qualifies for. They
+ * did once: a user typing progressively saw blank pages appear and then
+ * vanish as the query crossed the length threshold between them.
  *
  * This is about MATCH text only. Where the displayed label comes from is
  * `untitledOr` / `makePagePickerItem` — a separate question, and the one
@@ -314,17 +315,6 @@ async function searchPagesViaCache(
  *
  * Known limitation: prefix-only means a multi-word localised placeholder
  * (fr "Sans titre") is unreachable by its second word. Only `en` ships today.
- */
-function matchesPageRowFolded(title: string, q: string, foldedPlaceholder: string): boolean {
-  if (title.trim() === '') {
-    return matchesBlankRowFolded(foldForSearch(q), foldedPlaceholder)
-  }
-  return matchesSearchFolded(title, q)
-}
-
-/**
- * The blank-row half of {@link matchesPageRowFolded}, taking both sides
- * already folded so neither is recomputed per row.
  *
  * The empty-query guard is load-bearing: a RAW query that is non-empty but
  * folds to `''` — one made entirely of combining marks, which `foldForSearch`
@@ -336,8 +326,8 @@ function matchesBlankRowFolded(foldedQuery: string, foldedPlaceholder: string): 
 }
 
 /**
- * The once-per-call value `matchesPageRowFolded` needs for every blank row it
- * is asked about. Recomputed on every call
+ * The once-per-call value `matchesBlankRowFolded` needs for every blank row
+ * it is asked about. Recomputed on every call
  * (never cached at module scope): `untitledOr` resolves through the live
  * i18next instance (#4153's "routes the placeholder through the live i18n
  * instance, not a hardcoded literal"), and the active locale can change at
@@ -397,42 +387,42 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
     return matches
   }
   const ftsIds = new Set(matches.map((m) => m.id))
-  // #4152 / item 1 of #4295's review — `matchesPageRowFolded` matches the
-  // DISPLAYED "Untitled" placeholder for a NULL-content row (prefix-only,
-  // see its own docstring for why substring is too noisy here) and, for a
-  // row with real content, defers to `matchesSearchFolded`'s ordinary
-  // folded-SUBSTRING test — including its Unicode-aware fold and ASCII fast
-  // path, which keeps this hot cache-lookup cheap when the query is ASCII.
-  // `p.title` in the returned row (the `.map` below) stays raw either way.
+  // #4152 / item 1 of #4295's review — a row with real content is matched by
+  // `matchesSearchFolded`'s ordinary folded-SUBSTRING test — including its
+  // Unicode-aware fold and ASCII fast path, which keeps this hot
+  // cache-lookup cheap when the query is ASCII. A NULL-content row instead
+  // matches the DISPLAYED "Untitled" placeholder, prefix-only, via
+  // `matchesBlankRowFolded` (see its own docstring for why substring is too
+  // noisy here). `p.title` in the returned row (the `.map` below) stays raw
+  // either way.
   //
   // #4152 — an earlier round partitioned
   // `searchPagesViaCache`'s ranking (real-content rows first, blank rows
   // only filling what's left) but left THIS supplement as a flat filter +
   // `.slice(0, 10)` over `pagesListRef.current`'s own order, which is
   // blanks-first (#4138: an empty title sorts before any real one). A
-  // prefix of "Untitled" (`unt` and longer) matches every blank row via the
-  // prefix branch above, so ten of them fill the entire supplement budget
-  // before a genuine cache-only match is ever considered — the exact
-  // crowd-out `matchesPageRowFolded` was narrowed to fix, just reached
+  // prefix of "Untitled" (`unt` and longer) matches every blank row via
+  // `matchesBlankRowFolded`, so ten of them fill the entire supplement
+  // budget before a genuine cache-only match is ever considered — the exact
+  // crowd-out the prefix-only narrowing was meant to fix, just reached
   // through this path's unranked slice instead of `matchSorter`'s ranking.
   // Partitioned the same way as `searchPagesViaCache`, so the two paths
   // can't diverge on the rule: real-content matches first, blank rows only
   // fill the slots real matches don't use.
   //
-  // `foldedPlaceholder` is computed once here,
-  // not once per blank row inside `matchesPageRowFolded`. See
-  // `foldedUntitledPlaceholder`'s comment for why it's recomputed per call
-  // rather than cached at module scope.
+  // `foldedPlaceholder` is computed once here, and the blank-row comparison
+  // itself (which takes no per-row input) is hoisted to a single value
+  // evaluated once rather than once per blank row inside
+  // `matchesBlankRowFolded`. See `foldedUntitledPlaceholder`'s comment for
+  // why the placeholder is recomputed per call rather than cached at module
+  // scope.
   const foldedPlaceholder = foldedUntitledPlaceholder()
   const foldedQuery = foldForSearch(q)
+  const blankRowsMatch = matchesBlankRowFolded(foldedQuery, foldedPlaceholder)
   const candidates = pagesListRef.current.filter((p) => !ftsIds.has(p.id))
   const cacheMatches = [
-    ...candidates.filter(
-      (p) => p.title.trim() !== '' && matchesPageRowFolded(p.title, q, foldedPlaceholder),
-    ),
-    ...candidates.filter(
-      (p) => p.title.trim() === '' && matchesBlankRowFolded(foldedQuery, foldedPlaceholder),
-    ),
+    ...candidates.filter((p) => p.title.trim() !== '' && matchesSearchFolded(p.title, q)),
+    ...candidates.filter((p) => p.title.trim() === '' && blankRowsMatch),
   ]
     .slice(0, 10)
     .map((p) => ({ id: p.id, title: p.title }))
