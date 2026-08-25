@@ -167,7 +167,6 @@ type AnyFn = (...args: never[]) => unknown
 interface InstrumentedMock {
   mockImplementationOnce: (impl: AnyFn) => unknown
   mockReset: () => unknown
-  mockRestore: () => unknown
   getMockName?: () => string
 }
 

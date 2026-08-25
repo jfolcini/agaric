@@ -137,7 +137,7 @@ describe('once-residue guard', () => {
       // `queuedIn === undefined` is the module-scope / `beforeAll` case: such a
       // stub is *meant* to be consumed by a later test, so consuming it here —
       // in a test that plainly did not queue it — must still report nothing.
-      // `moduleScopedOnce` is queued at the top of this file, i.e. genuinely
+      // `moduleScopedDep` is queued at the top of this file, i.e. genuinely
       // before any test ran, which is the condition under test.
       expect(moduleScopedDep()).toBe('QUEUED-AT-MODULE-SCOPE')
       expect(takeOnceLeaks()).toEqual([])

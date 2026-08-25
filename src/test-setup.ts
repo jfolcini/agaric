@@ -88,7 +88,20 @@ afterEach(() => {
 // here cannot leak a rendered tree into the next test. It does pre-empt the
 // strict-IPC assertion for a test that also leaked; that is the intended
 // precedence, because a cross-test leak is the more misleading of the two.
+//
+// It does NOT, however, run before the Radix a11y guard below: that one is
+// registered THIRD, so under 'stack' its `afterEach` runs BEFORE this one's.
+// A test that both renders an undescribed Radix surface and leaks a once-value
+// throws there first, which aborts the chain and skips the `afterEach` below
+// — so this hook's own drain never runs for that test, and the leaked entry
+// sits in the module-level array waiting for whichever test calls the mock
+// next. Draining it here, in `beforeEach`, closes that hole exactly like the
+// strict-IPC and Radix guards close theirs: a leak orphaned by an aborted
+// chain is dropped silently (its test already failed via the other guard)
+// instead of being blamed on the following test — which would reproduce, in
+// this guard, the very misattribution it exists to fix.
 beforeEach(() => {
+  takeOnceLeaks()
   beginOnceResidueTest()
 })
 afterEach(() => {
