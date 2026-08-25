@@ -84,7 +84,7 @@ import { useInPageFindStore } from '@/stores/useInPageFindStore'
  * changes scale, pinch zoom always does. Treat a zoomed viewport as "no
  * keyboard" and return 0. (`undefined > 1` is false, so WebViews lacking
  * `scale` keep the plain keyboard math.) Mirrors the #760 guard in
- * `useSoftKeyboardInset` (src/components/ui/sheet.tsx).
+ * `useSoftKeyboardInset` (src/hooks/useSoftKeyboardInset.ts).
  */
 function computeViewportOffset(): number {
   const vv = (typeof window !== 'undefined' && window.visualViewport) || null

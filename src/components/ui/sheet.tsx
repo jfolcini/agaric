@@ -2,12 +2,11 @@
 
 import { Dialog as SheetPrimitive } from 'radix-ui'
 import type * as React from 'react'
-import { useEffect, useState } from 'react'
 
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
 import { DIALOG_BODY_VIEWPORT_CLASS } from '@/components/ui/dialog-shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { computeKeyboardInset } from '@/lib/keyboard-inset'
+import { useSoftKeyboardInset } from '@/hooks/useSoftKeyboardInset'
 import { cn } from '@/lib/utils'
 
 // PERF: hoisted from an inline string in render — twMerge then only re-parses
@@ -57,46 +56,6 @@ const SheetOverlay = ({
 )
 
 SheetOverlay.displayName = 'SheetOverlay'
-
-/**
- * Soft-keyboard inset for bottom sheets (#760).
- *
- * On Android (edge-to-edge / targetSdk 36) the theme-level `adjustResize`
- * is largely neutered: the layout viewport does NOT shrink when the IME
- * opens, so a `bottom-0`-anchored sheet — and any input focused inside it
- * — sits underneath the keyboard. `window.visualViewport` is the only
- * signal that survives edge-to-edge; this mirrors the tracking that
- * `InPageFind` (overlay variant) and `JournalCalendarDropdown` already do.
- *
- * Returns the keyboard overlap in px (0 when the keyboard is hidden, the
- * API is unavailable — jsdom, older WebViews — or `enabled` is false, so
- * desktop and Playwright behavior is byte-identical to before). A
- * pinch-zoomed viewport (`visualViewport.scale > 1`) also reports 0 —
- * zoom shrinks `vv.height` exactly like the IME does, but lifting the
- * sheet would be wrong there (desktop trackpad/touchscreen zoom).
- */
-function useSoftKeyboardInset(enabled: boolean): number {
-  const [inset, setInset] = useState(0)
-  useEffect(() => {
-    if (!enabled) {
-      setInset(0)
-      return
-    }
-    const vv = typeof window !== 'undefined' ? window.visualViewport : null
-    if (!vv) return
-    const update = () => {
-      setInset(computeKeyboardInset(vv))
-    }
-    update()
-    vv.addEventListener('resize', update)
-    vv.addEventListener('scroll', update)
-    return () => {
-      vv.removeEventListener('resize', update)
-      vv.removeEventListener('scroll', update)
-    }
-  }, [enabled])
-  return inset
-}
 
 const SheetContent = ({
   ref,
