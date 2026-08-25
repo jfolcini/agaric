@@ -1836,7 +1836,15 @@ describe('PairingDialog', () => {
         expect(timeoutAlert).toHaveTextContent('No response from the other device')
         expect(timeoutAlert).toHaveTextContent(/pairing code expired/i)
         expect(timeoutAlert).toHaveTextContent(/could not find each other/i)
-        expect(timeoutAlert).not.toHaveTextContent(/may have expired/i)
+        // Pin the DEFECT, not the hedge: the old string asserted a single
+        // cause. Rejecting /may have expired/ would also redden a legitimate
+        // future rewording that names both ("the code may have expired, or
+        // the two devices could not find each other"), so reject the whole
+        // old sentence instead. The three positive assertions above carry
+        // the real guarantee.
+        expect(timeoutAlert).not.toHaveTextContent(
+          'No response from the other device. The pairing code may have expired.',
+        )
         expect(vi.mocked(announce)).toHaveBeenCalledWith(
           'Pairing timed out waiting for the other device',
         )
