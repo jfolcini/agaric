@@ -104,7 +104,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # the iroh cutover (#3464), as did `base64` (PEM decoding) and `sha2` (cert
 # fingerprints). QUIC brings its own crypto via the pinned `iroh`.
 # LAN discovery: mDNS announce/browse + private-interface enumeration.
-mdns-sd = "0.20"
+mdns-sd = "0.21"
 if-addrs = "0.15"
 # device-pairing QR code rendering (pairing.rs).
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }

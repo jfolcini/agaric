@@ -353,7 +353,7 @@ agaric-sync = { path = "agaric-sync", version = "0.1.0", features = ["test-util"
 # (unified with agaric-sync's production copy by cargo). The mTLS-era siblings
 # (tokio-tungstenite, rcgen, x509-parser) went with `src/sync_net/tests.rs` in
 # the iroh cutover (#3464).
-mdns-sd = "0.20"
+mdns-sd = "0.21"
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 # The `opentelemetry_sdk` `testing` dev-dep (InMemory{Span,Log,Metric}Exporter)
 # moved to `agaric-observability` with the pipeline tests it backed (#2878); no
