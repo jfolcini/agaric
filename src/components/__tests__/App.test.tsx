@@ -1826,12 +1826,10 @@ describe('App', () => {
       // the test does not depend on runtime CSS resolution (jsdom does
       // not compute `env()` values).
       const cls = main?.getAttribute('class') ?? ''
-      // The VARIABLE, not `env()` directly. Android's WebView reports
-      // `env(safe-area-inset-*)` for display cutouts only and never for the
-      // system bars, so `index.css` declares `--safe-area-*` with `env()` as
-      // the fallback and `MainActivity.kt` overrides it (#4301). An element
-      // that reaches for `env()` here opts itself back out of that fix, so
-      // asserting the variable is what keeps this honest.
+      // The VARIABLE, not `env()` directly: `index.css` declares
+      // `--safe-area-*` with `env()` as the fallback so the inset has exactly
+      // one definition site to override. Asserting the variable is what keeps
+      // consumers going through it.
       expect(cls).toContain('var(--safe-area-bottom)')
       expect(cls).toContain('pb-[calc(1rem+var(--safe-area-bottom))]')
       expect(cls).not.toContain('env(safe-area-inset-bottom)')

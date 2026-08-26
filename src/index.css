@@ -945,15 +945,16 @@
   /* Safe-area insets, indirected through variables so ONE platform can
    * override them.
    *
-   * `env(safe-area-inset-*)` is the right source everywhere except Android,
-   * whose WebView reports it for display CUTOUTS ONLY — never for the status
-   * or navigation bar. On a handset without a notch every value resolves to
-   * `0px` and the app paints under the system clock (#4301). `MainActivity.kt`
-   * therefore pushes the real insets in as an INLINE style on
-   * `documentElement`, which outranks this rule without needing `!important`.
+   * `env(safe-area-inset-*)` carries the iOS notch / home-indicator insets and
+   * resolves to `0px` on desktop, which is what these variables are for.
    *
-   * Consumers must read `var(--safe-area-*)`, never `env()` directly, or they
-   * opt themselves back out of the Android fix. */
+   * Android is NOT one of the platforms this expresses, and cannot be: its
+   * WebView reports `env()` for display CUTOUTS only, never for the status or
+   * navigation bar, so on a handset without a notch every value is `0px` while
+   * the app paints under the system clock (#4301). That is fixed one layer
+   * down instead — `MainActivity.kt` insets the webview itself by the
+   * system-bar insets, so the webview never overlaps a bar and `env()` is
+   * legitimately `0px` here. Nothing on the web side needs an Android branch. */
   :root {
     --safe-area-top: env(safe-area-inset-top);
     --safe-area-bottom: env(safe-area-inset-bottom);
