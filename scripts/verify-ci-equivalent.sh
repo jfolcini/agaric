@@ -30,8 +30,12 @@
 #
 #   Phase F — `agaric-mcp` release build + MCP UDS smoke + externalBin
 #             host-triple verify. **Only when MCP paths change**
-#             (`src-tauri/src/mcp/`, `src-tauri/src/commands/mcp.rs`,
+#             (`src-tauri/src/mcp/**/*.rs`, `src-tauri/src/commands/mcp.rs`,
 #             `src-tauri/src/bin/agaric-mcp.rs`, `src-tauri/binaries/`).
+#             The directory arm is anchored to `.rs` (#4419): the bare
+#             prefix also matched `mcp/AGENTS.md` and the `.snap`
+#             fixtures, so a docs-only edit paid a full release build.
+#             See MCP_PATH_RE for the authoritative pattern.
 #             Skipped for unrelated pushes — the release build is the
 #             slowest non-test step and most pushes don't touch MCP.
 #
@@ -87,6 +91,82 @@ sqlx_probe_dir_cleanup() {
     [ -n "${1:-}" ] && rm -rf "$1"
     return 0
 }
+
+# ── MCP change classifier (#4419) ──────────────────────────────────
+# Which changed paths force Phase F (the `agaric-mcp` RELEASE build, the
+# UDS smoke and the externalBin pin verification). Only things that end
+# up IN that binary belong here.
+#
+# The directory arm is anchored to `.rs` on purpose. It used to be a bare
+# `^src-tauri/src/mcp/`, which also matched `src-tauri/src/mcp/AGENTS.md`
+# and the `tools_*/snapshots/*.snap` fixtures — neither of which is
+# compiled into anything. Editing one sentence of that AGENTS.md made
+# push.sh spend ~12 minutes on a release build of `agaric_lib`, observed
+# 2026-08-26. Snapshots are test fixtures; a `.snap`-only change cannot
+# alter the binary, and any `.rs` edit that DID alter it matches the arm
+# below anyway.
+#
+# `^src-tauri/binaries/` stays a bare prefix: it holds the prebuilt
+# artifacts themselves, which are not `.rs` and must still trigger.
+#
+# Defined up here so `--self-test` below can drive it directly.
+MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-tauri/src/bin/agaric-mcp\.rs$|^src-tauri/binaries/'
+
+# ── CI/tooling change classifier ────────────────────────────────────
+# Workflows, the lint-tool configs the CI `lint` job keys on, and the
+# repo's own shell tooling under `scripts/`.
+#
+# `^scripts/.*\.sh$` is deliberate. Without it a shell-only change fell
+# through to the fail-closed arm below — "a build/toolchain change we
+# cannot attribute to a suite" — which pins frontend+backend+ci and makes
+# a two-file YAML+shell diff pay the FULL Rust suite. That is not merely
+# slow: it made four consecutive pushes of exactly such a diff unusable
+# (2026-08-26).
+#
+# It IS attributable. `scripts/*.sh` is covered by Phase A: shellcheck
+# plus the per-script self-test hooks (`push.sh self-test`,
+# `verify-ci-equivalent-selftest`, `SKIP_CI_VERIFY bypass guard test`,
+# and the rest), which are precisely the suite for this category.
+#
+# Deliberately NOT widened: a ROOT-level `*.sh`, `rust-toolchain.toml`,
+# `.cargo/config.toml` and friends still hit fail-closed. Those change how
+# everything is built, and no per-category suite covers them.
+#
+# Defined up here so `--self-test` below can drive it directly.
+CI_PATH_RE='^\.github/|^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
+
+# Shell scripts the RUST phases depend on. These are CI-attributable for
+# Phase A purposes (shellcheck + their self-tests still run), but a change to
+# one also has to re-run the Rust phases, because each determines what those
+# phases DO:
+#
+#   setup-dev-db.sh          provisions the dev.db that Phase D/D2's online
+#                            `sqlx::query!` macros compile against
+#   check-sqlx-cache-drift.sh  drives Phase E's cache-drift semantics
+#   test-related-rust.sh     selects WHICH Rust tests Phase D runs
+#
+# Without this, attributing `scripts/*.sh` to CI silently skipped the dev.db
+# migration-gap preflight — which is gated on HAS_RS — for the very script
+# that provisions dev.db.
+RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.sh$'
+
+# Scripts whose ONLY prek hook lives in a category the SKIP list can drop, and
+# which have no `--self-test` hook of their own. `CI_PATH_RE`'s rationale is
+# "covered by Phase A: shellcheck plus the per-script self-tests" — true for
+# most of `scripts/`, but NOT for these three: editing one would otherwise
+# run shellcheck alone, where the old fail-closed arm ran its hook.
+# (Careful reflowing this: a comment line STARTING with the word after `# `
+#  being "shellcheck" is parsed as a shellcheck DIRECTIVE, and prose then
+#  fails SC1072/SC1073. That is how this very comment broke a commit.)
+#
+#   check-unsafe-allowlist.sh   -> hook `unsafe-allowlist`  (dropped when HAS_RS=0)
+#   check-axe-presence.sh       -> hook `axe-presence`      (dropped when HAS_TS=0)
+#   check-test-file-naming.sh   -> hook `test-file-naming`  (dropped when HAS_TS=0)
+#
+# Others are fine: check-migrations-immutable.sh, check-session-log-numbering.sh
+# and cargo-audit-guard.sh each have a self-test hook outside every skip list.
+HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
@@ -866,6 +946,109 @@ if [ "${1:-}" = "--self-test" ]; then
     else
         st_bad "cleanup removes the probe dir including -wal/-shm siblings" \
             "$(ls -A "$d1" 2>/dev/null | tr '\n' ' ')"
+    fi
+
+    # 4b. MCP classifier (#4419): the gate decides whether a push pays for
+    #     a full `agaric-mcp` RELEASE build. Drive the real pattern against
+    #     sample paths — a string ratchet would pass against a dead
+    #     constant, so this applies MCP_PATH_RE the way the classifier does.
+    st_mcp() {  # <path> <expected: yes|no> <label>
+        local got=no
+        printf '%s\n' "$1" | grep -qE "$MCP_PATH_RE" && got=yes
+        if [ "$got" = "$2" ]; then
+            st_ok "MCP gate: $3"
+        else
+            st_bad "MCP gate: $3" "path '$1' matched=$got, expected $2"
+        fi
+    }
+    # MUST trigger — these end up in the binary.
+    st_mcp 'src-tauri/src/mcp/server.rs'            yes 'a .rs file in the mcp module triggers'
+    st_mcp 'src-tauri/src/mcp/server/tests.rs'      yes 'a nested .rs file triggers'
+    st_mcp 'src-tauri/src/commands/mcp.rs'          yes 'the Tauri command wrapper triggers'
+    st_mcp 'src-tauri/src/bin/agaric-mcp.rs'        yes 'the binary entry point triggers'
+    st_mcp 'src-tauri/binaries/agaric-mcp-x86_64'   yes 'a prebuilt artifact triggers (not .rs)'
+    # MUST NOT trigger — nothing here is compiled into anything. Each of
+    # these matched the old bare `^src-tauri/src/mcp/` prefix, so they are
+    # the cases that fail if it is ever restored.
+    st_mcp 'src-tauri/src/mcp/AGENTS.md'            no  'docs in the mcp module do NOT trigger'
+    st_mcp 'src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_descriptions.snap' \
+                                                    no  'a .snap fixture does NOT trigger'
+    st_mcp 'docs/mcp.md'                            no  'an unrelated doc does NOT trigger'
+
+    # 4c. CI classifier: decides whether a path is attributable to the CI
+    #     category or falls through to the fail-closed arm that pins EVERY
+    #     suite. Drives the real constant, and asserts the fail-closed arm
+    #     reuses it — those two were verbatim copies, so a change to one
+    #     silently left the other behind.
+    st_ci() {  # <path> <expected: yes|no> <label>
+        local got=no
+        printf '%s\n' "$1" | grep -qE "$CI_PATH_RE" && got=yes
+        if [ "$got" = "$2" ]; then
+            st_ok "CI gate: $3"
+        else
+            st_bad "CI gate: $3" "path '$1' matched=$got, expected $2"
+        fi
+    }
+    st_ci 'scripts/verify-ci-equivalent.sh' yes 'a scripts/*.sh change is CI (covered by shellcheck + its self-tests)'
+    st_ci 'scripts/push.sh'                 yes 'ditto for push.sh'
+    st_ci '.github/workflows/release.yml'   yes 'a workflow is CI'
+    st_ci 'prek.toml'                       yes 'the hook config is CI'
+    # MUST NOT be CI — these change how everything is built, no per-category
+    # suite covers them, and they must keep hitting the fail-closed arm.
+    st_ci 'rust-toolchain.toml'             no  'the toolchain pin is NOT CI (must fail closed)'
+    st_ci '.cargo/config.toml'              no  'cargo config is NOT CI (must fail closed)'
+    st_ci 'bootstrap.sh'                    no  'a ROOT-level *.sh is NOT CI (must fail closed)'
+    st_ci 'src-tauri/src/lib.rs'            no  'Rust is not CI'
+    # A CI-attributed script may ALSO need the Rust phases. Attribution and
+    # Rust-relevance are independent: these are CI (so Phase A runs their
+    # self-tests) AND set HAS_RS (so the phases they govern re-run).
+    st_rs() {  # <path> <expected: yes|no> <label>
+        local got=no
+        printf '%s\n' "$1" | grep -qE "$RS_SCRIPT_RE" && got=yes
+        if [ "$got" = "$2" ]; then st_ok "RS-script gate: $3"
+        else st_bad "RS-script gate: $3" "path '$1' matched=$got, expected $2"; fi
+    }
+    st_rs 'scripts/setup-dev-db.sh'          yes 'provisions the dev.db Phase D/E compile against'
+    st_rs 'scripts/check-sqlx-cache-drift.sh' yes 'drives Phase E cache-drift semantics'
+    st_rs 'scripts/test-related-rust.sh'     yes 'selects which Rust tests Phase D runs'
+    st_rs 'scripts/push.sh'                  no  'a plain shell script does NOT force the Rust phases'
+    st_rs 'scripts/verify-ci-equivalent.sh'  no  'nor does this verifier itself'
+    # A script whose ONLY hook lives in a skippable category must re-enable that
+    # category, or attributing it to CI leaves it covered by shellcheck alone.
+    st_hook() {  # <path> <re-var> <expected> <label>
+        local got=no
+        printf '%s\n' "$1" | grep -qE "$2" && got=yes
+        if [ "$got" = "$3" ]; then st_ok "hook-owner gate: $4"
+        else st_bad "hook-owner gate: $4" "path '$1' matched=$got, expected $3"; fi
+    }
+    st_hook 'scripts/check-unsafe-allowlist.sh'  "$HOOK_OWNER_RS_RE" yes 'unsafe-allowlist re-enables HAS_RS'
+    st_hook 'scripts/check-axe-presence.sh'      "$HOOK_OWNER_TS_RE" yes 'axe-presence re-enables HAS_TS'
+    st_hook 'scripts/check-test-file-naming.sh'  "$HOOK_OWNER_TS_RE" yes 'test-file-naming re-enables HAS_TS'
+    st_hook 'scripts/push.sh'                    "$HOOK_OWNER_RS_RE" no  'a self-tested script does not'
+    st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor one with its own self-test hook'
+    for _v in HOOK_OWNER_RS_RE:HAS_RS HOOK_OWNER_TS_RE:HAS_TS; do
+        _re="${_v%%:*}"; _flag="${_v##*:}"
+        if grep -qE "^[[:space:]]*has_match \"\\\$$_re\" && $_flag=1\$" "${BASH_SOURCE[0]}"; then
+            st_ok "hook-owner gate: the classifier consults $_re"
+        else
+            st_bad "hook-owner gate: the classifier consults $_re" "no has_match call found"
+        fi
+    done
+    # ...and the classifier must actually CONSULT it. Driving the constant
+    # alone would pass against a constant nothing reads — the exact shape of
+    # the `unrec_ci` copy this file already got wrong once.
+    if grep -qE '^[[:space:]]*has_match "\$RS_SCRIPT_RE" && HAS_RS=1$' "${BASH_SOURCE[0]}"; then
+        st_ok "RS-script gate: the classifier consults RS_SCRIPT_RE"
+    else
+        st_bad "RS-script gate: the classifier consults RS_SCRIPT_RE" "no has_match call found"
+    fi
+
+    # The fail-closed arm must not carry its own copy of the pattern.
+    if grep -qE '^[[:space:]]*unrec_ci="\$CI_PATH_RE"$' "${BASH_SOURCE[0]}"; then
+        st_ok "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it"
+    else
+        st_bad "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it" \
+            "$(grep -nE '^[[:space:]]*unrec_ci=' "${BASH_SOURCE[0]}" | tr '\n' ' ')"
     fi
 
     # 5. Ratchet: the fixed machine-global path must not come back. Guards
@@ -2160,19 +2343,34 @@ if [ "$CHANGED_OK" = "0" ]; then
 else
     # Backend: Rust sources, the crate manifests/lockfile, shipped migrations.
     has_match '\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$' && HAS_RS=1
+    # ...and the shell scripts the Rust phases depend on (see RS_SCRIPT_RE).
+    has_match "$RS_SCRIPT_RE" && HAS_RS=1
+    # ...and scripts whose only hook would otherwise be skipped (HOOK_OWNER_*).
+    has_match "$HOOK_OWNER_RS_RE" && HAS_RS=1
     # Frontend: TS/JS/CSS sources, e2e specs, and the FE build/config surface.
     has_match '^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$' && HAS_TS=1
+    has_match "$HOOK_OWNER_TS_RE" && HAS_TS=1
     # CI/tooling: workflows plus the lint-tool configs the CI lint job keys on.
-    has_match '^\.github/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$' && HAS_CI=1
+    has_match "$CI_PATH_RE" && HAS_CI=1
     # Docs: any Markdown file plus the docs/ tree.
     has_match '\.md$|^docs/' && HAS_DOCS=1
     # MCP gate: only the binary, its module, the Tauri command wrapper, and
     # the prebuilt-binary directory. Catches the surface that affects the
     # agaric-mcp release build + UDS smoke + externalBin pin verification.
-    has_match '^src-tauri/src/mcp/|^src-tauri/src/commands/mcp\.rs$|^src-tauri/src/bin/agaric-mcp\.rs$|^src-tauri/binaries/' && HAS_MCP=1
+    has_match "$MCP_PATH_RE" && HAS_MCP=1
 
-    # Fail-closed for UNRECOGNIZED non-docs paths (mirrors _validate.yml's
-    # classifier): a changed file matching neither docs nor any known category
+    # Fail-closed for UNRECOGNIZED non-docs paths.
+    #
+    # DIVERGENCE FROM `_validate.yml` (#4419, 2026-08-26): this classifier
+    # attributes `scripts/*.sh` to CI (see CI_PATH_RE); `_validate.yml`'s
+    # `ci_re` does NOT, and its comment still names a root `*.sh` as
+    # unrecognized. So a shell-only push runs Phase A locally while CI runs
+    # the full suite. That asymmetry is deliberate and in the SAFE direction
+    # — CI does strictly more than the local gate, never less — but it means
+    # this is no longer a mirror, and nothing ratchets the parity. Widening
+    # `_validate.yml` to match is a separate change with its own blast radius.
+    #
+    # Otherwise mirrors `_validate.yml`'s classifier: a changed file matching neither docs nor any known category
     # (frontend/backend/ci) — e.g. rust-toolchain.toml, .cargo/config.toml, a
     # root *.sh — is a build/toolchain change we cannot attribute to a suite.
     # Without this the per-category SKIP below would drop nearly every hook for
@@ -2186,7 +2384,12 @@ else
     unrec_docs='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
     unrec_fe='^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$'
     unrec_be='\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$'
-    unrec_ci='^\.github/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
+    # Reuse the SAME constant the classifier uses. This was a verbatim copy,
+    # so narrowing or widening one arm silently left the other behind — and
+    # the fail-closed check is the one that decides whether a category-less
+    # path pins every suite. A shell-only change would have kept paying the
+    # full Rust suite here even after the classifier learned to attribute it.
+    unrec_ci="$CI_PATH_RE"
     while IFS= read -r f; do
         [ -z "$f" ] && continue
         if [[ "$f" =~ $unrec_docs || "$f" =~ $unrec_fe || "$f" =~ $unrec_be || "$f" =~ $unrec_ci ]]; then
@@ -2241,7 +2444,8 @@ fi
 # --range below) AND, category-aware, the hooks whose category did NOT change.
 #
 # This mirrors the CI `lint` job's per-category plan (an audit produced the
-# exact lists): a hook is skipped only when the category it guards is absent
+# exact lists), with the documented `scripts/*.sh` divergence — see the note
+# on CI_PATH_RE: a hook is skipped only when the category it guards is absent
 # from this push. The nightly `full-suite` job in
 # .github/workflows/scheduled-deep-checks.yml runs the FULL unskipped prek
 # suite over the whole tree as the backstop, so this trades per-push

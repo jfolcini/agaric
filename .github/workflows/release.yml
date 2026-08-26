@@ -470,10 +470,33 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04'
         env:
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
-          # Long enough to get well past window creation and the setup hook
-          # (init_logging, deep-link router, DB open), short enough not to
-          # matter on a job that already spent minutes compiling.
-          BOOT_SECONDS: '20'
+          # CEILING, not a sleep: the step polls and exits as soon as the
+          # boot artifact appears, so a healthy boot pays ~1s regardless of
+          # this number and only a genuinely stuck boot pays the full budget.
+          #
+          # Raised 20 -> 90 (#4418). An earlier revision of this comment
+          # argued the opposite — that 20s was ~250x the ~60ms boot measured
+          # locally, so a failure "is a hang, not a slow boot". That
+          # measurement was taken in a container where the boot IS fast, and
+          # generalising it to the runner was wrong: 0.9.9 failed twice
+          # identically with exit 124 (ALIVE at the deadline) and nothing in
+          # boot.log but an AT-SPI dbus failure. A dbus call's default timeout
+          # is 25s — longer than the old budget — so a boot stalled on one was
+          # being killed seconds before it would have finished. 90s covers
+          # that and several retries of it.
+          BOOT_SECONDS: '90'
+          # How long the app must SURVIVE after the boot artifact appears. This
+          # is the half of the old `timeout 20s` + exit-124 contract that covers
+          # boot phases 2+ (`.setup()`, `init_persistence`, `recover_and_bootstrap`,
+          # GTK/WebKit, window creation) — all of which run after `init_logging`.
+          MIN_ALIVE_SECONDS: '20'
+          # Annotate (not fail) a boot slower than this. The ceiling bounds how
+          # long we WAIT; this bounds how long we stay QUIET about it.
+          SLOW_BOOT_WARN_SECONDS: '10'
+          # Attempts before calling it a real failure. See the rationale on
+          # the retry driver below: the underlying launch is flaky, and a
+          # single attempt gates publication of the whole release on it.
+          MAX_BOOT_ATTEMPTS: '3'
         shell: bash
         run: |
           set -euo pipefail
@@ -485,138 +508,432 @@ jobs:
           fi
           APPIMAGE_BIN="${appimages[0]}"
 
-          # Throwaway vault. `AGARIC_E2E_SANDBOX=1` makes the relocation
-          # MANDATORY (app_paths.rs), so if the override were ever dropped the
-          # app fails loudly here instead of quietly opening a real vault —
-          # the runner being ephemeral is not the thing keeping this safe.
-          SANDBOX="$(mktemp -d)"
-          export AGARIC_DATA_DIR="$SANDBOX/data"
-          export AGARIC_E2E_SANDBOX=1
-          mkdir -p "$AGARIC_DATA_DIR"
+          # One attempt. Returns 0 on a proven boot, 1 otherwise.
+          boot_attempt() {
+            echo "===== boot smoke: attempt ${attempt:-1} of $MAX_BOOT_ATTEMPTS ====="
+            # Throwaway vault. `AGARIC_E2E_SANDBOX=1` makes the relocation
+            # MANDATORY (app_paths.rs), so if the override were ever dropped the
+            # app fails loudly here instead of quietly opening a real vault —
+            # the runner being ephemeral is not the thing keeping this safe.
+            SANDBOX="$(mktemp -d)"
+            export AGARIC_DATA_DIR="$SANDBOX/data"
+            export AGARIC_E2E_SANDBOX=1
+            mkdir -p "$AGARIC_DATA_DIR"
 
-          # ubuntu-24.04 runners have no libfuse2, so the AppImage cannot
-          # self-mount. Extract-and-run still exercises the real AppRun, the
-          # bundled libraries and the real binary — it does NOT cover the
-          # squashfs mount path, which is the one launch failure this step
-          # cannot see.
-          export APPIMAGE_EXTRACT_AND_RUN=1
+            # ubuntu-24.04 runners have no libfuse2, so the AppImage cannot
+            # self-mount. Extract-and-run still exercises the real AppRun, the
+            # bundled libraries and the real binary — it does NOT cover the
+            # squashfs mount path, which is the one launch failure this step
+            # cannot see.
+            export APPIMAGE_EXTRACT_AND_RUN=1
 
-          set +e
-          timeout --signal=TERM --kill-after=10s "${BOOT_SECONDS}s" \
-            xvfb-run -a "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1
-          code=$?
-          set -e
+            # #4418 — POLL for the boot artifact instead of sleeping the whole
+            # budget, and give the boot room to be slow rather than assuming
+            # it is fast.
+            #
+            # The 0.9.9 failure was exit 124 (ALIVE at the deadline) with only
+            # an AT-SPI dbus failure in boot.log — which is equally consistent
+            # with a boot BLOCKED on a dbus call as with one hung forever. A
+            # dbus method call's default timeout is 25s, i.e. LONGER than the
+            # old 20s budget, so a boot stalled on one was being killed a few
+            # seconds before it would have completed. Polling costs nothing
+            # when the boot is fast (it exits within ~1s of the log appearing,
+            # measured at ~60ms locally) and costs only wall-clock when it is
+            # slow, so the budget can be generous without slowing the job down.
+            #
+            # `dbus-run-session` gives the app a real session bus so the a11y
+            # lookup resolves instead of stalling. It is the one concrete
+            # anomaly CI shows, so it is worth providing rather than guessing
+            # at graphics flags; if the runner image ever drops it we fall back
+            # rather than fail, since it is a mitigation and not a requirement.
+            if command -v dbus-run-session >/dev/null 2>&1; then
+              launcher=(dbus-run-session --)
+            else
+              echo "::warning::dbus-run-session unavailable on this runner; booting without a session bus. The a11y/dbus stall this mitigates is unguarded for this run." >&2
+              launcher=()
+            fi
 
-          echo "----- first 200 lines of boot output -----"
-          sed -n '1,200p' "$SANDBOX/boot.log" || true
-          echo "------------------------------------------"
+            set +e
+            # `setsid` so the whole tree — xvfb-run -> dbus-run-session -> AppRun
+            # -> the app — lands in one process group. Killing `$!` alone would
+            # only reap `xvfb-run`, two levels above the process that hung, and
+            # a hung app would survive into the next attempt and outlive the step.
+            # Echo the env from INSIDE the child before exec'ing the AppImage.
+            # `xvfb-run` and `dbus-run-session` set DISPLAY / DBUS_SESSION_BUS_ADDRESS
+            # only for their child, so printing them from the step shell reported
+            # `<unset>` on every failure — reading as "the dbus mitigation never
+            # applied" when it may have worked perfectly. A diagnostic that always
+            # says the same thing tells you nothing.
+            # shellcheck disable=SC2016  # single quotes are REQUIRED: these must
+            # expand inside the child, after xvfb-run/dbus-run-session have set
+            # them. Expanding here would print the step shell's values — the bug.
+            setsid xvfb-run -a "${launcher[@]}" \
+              bash -c 'echo "[child-env] DISPLAY=${DISPLAY:-<unset>} DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<unset>}"; exec "$0"' \
+              "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1 &
+            app_pid=$!
+            # `$!` is the pid bash FORKED; it only becomes a group leader once it
+            # has execve'd setsid AND the setsid() syscall has returned. This `ps`
+            # races that. If it wins, `pgid` is OUR OWN group — and the reap below
+            # would then SIGKILL the step's shell and everything sharing its group
+            # (the runner does not setsid the step shell, so that reaches upward).
+            # It runs on EVERY attempt, including a fully successful boot, and the
+            # retry loop cannot recover because the shell running it is what died.
+            # The child normally wins this race; the guard is here because the
+            # consequence is severe, it reads as unexplained infra failure rather
+            # than a test failure, and a stubbed xvfb-run always execs fast enough
+            # to hide it — so no local verification can cover it.
+            own_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+            pgid=$(ps -o pgid= -p "$app_pid" 2>/dev/null | tr -d ' ')
+            if [ -z "$own_pgid" ]; then
+              # We could not read our OWN group, so the comparison below can never
+              # fire and the guard would be inert precisely when it cannot verify
+              # safety. Refuse the group kill outright rather than trust it.
+              pgid=""
+            elif [ -z "$pgid" ] || [ "$pgid" = "$own_pgid" ]; then
+              pgid=""   # setsid had not taken effect yet — never kill our own group
+            fi
 
-          # CHECK 1 — positive proof that the setup hook ran.
+            code=""
+            booted=0
+            waited=0
+            while [ "$waited" -lt "$BOOT_SECONDS" ]; do
+              # Poll for the LOG LINE, not the file. `RollingFileAppender::builder()
+              # .build()` opens the file EAGERLY — before `try_init()` and before the
+              # `info!` — and the sink is `tracing_appender::non_blocking`, so the
+              # write lands from a worker thread. Breaking on mere existence can beat
+              # that write, and CHECK 1 (which greps for the line) would then report
+              # "exists but carries no boot line" on every attempt: a false RED.
+              # Polling the same predicate CHECK 1 asserts removes the mismatch.
+              # `/dev/null` as a second operand is load-bearing: `nullglob` is on,
+              # so before the log exists the glob expands to ZERO words and a bare
+              # `grep -qs PATTERN` would read the step's STDIN. That is benign only
+              # because hosted runners close it; given an open stdin the first poll
+              # blocks forever and the job burns its timeout — the exact outcome
+              # this step exists to prevent.
+              if grep -qs "log directory initialized" "$AGARIC_DATA_DIR"/logs/agaric.log* /dev/null 2>/dev/null; then
+                booted=1
+                break
+              fi
+              if ! kill -0 "$app_pid" 2>/dev/null; then
+                wait "$app_pid"; code="exited:$?"
+                break
+              fi
+              sleep 1
+              waited=$((waited + 1))
+            done
+
+            # DWELL. Reaching init_logging is phase 1 of the boot; `tauri::Builder`,
+            # `.setup()`, `init_persistence`, `recover_and_bootstrap`, GTK/WebKit and
+            # window+webview creation all come AFTER it. Breaking out the instant the
+            # artifact appears (~1s) and killing the app would drop every one of them
+            # — a panic in `init_persistence` at t≈2-4s used to exit 134 and redden
+            # this step, and would instead have read as a pass. The AT-SPI/WebKit hang
+            # this step exists to catch also lives after init_logging, so the short
+            # window would have called that green too.
+            #
+            # WHAT THE DWELL DOES NOT DO: catch a hang. It detects an EXIT. A
+            # process that wedges after init_logging but stays alive ends the
+            # dwell with code=alive and passes both checks — the same blind spot
+            # the old exit-124 contract had, and the one CHECK 1's retained
+            # "Scope limit" note describes. The 0.9.9 hang is caught because it
+            # wedges BEFORE init_logging, so no artifact appears at all. Saying
+            # otherwise would put a false claim in the file this PR's sibling
+            # (#4420) exists to de-drift.
+            #
+            # So: keep the poll (it is what makes a NEVER-boots case fail fast and
+            # lets BOOT_SECONDS be generous), then hold for MIN_ALIVE_SECONDS and
+            # re-assert liveness. That restores the survival half of the old
+            # `timeout 20s` + exit-124 contract without giving back the fast path.
+            if [ "$booted" = "1" ]; then
+              echo "boot artifact after ${waited}s; holding ${MIN_ALIVE_SECONDS}s to prove it stays up"
+              # A ceiling bounds failure, not latency. Measured boot-to-log is
+              # ~60ms locally, so anything past a few seconds is a regression the
+              # 90s ceiling would otherwise swallow silently. Same argument as the
+              # retry annotation: a slow pass is still a signal.
+              if [ "$waited" -ge "${SLOW_BOOT_WARN_SECONDS:-10}" ]; then
+                echo "::warning::AppImage boot took ${waited}s to reach init_logging (locally ~60ms). Passing, but this is a latency regression worth investigating — see #4418."
+              fi
+              held=0
+              while [ "$held" -lt "$MIN_ALIVE_SECONDS" ]; do
+                if ! kill -0 "$app_pid" 2>/dev/null; then
+                  wait "$app_pid"; code="exited-after-boot:$?"
+                  break
+                fi
+                sleep 1
+                held=$((held + 1))
+              done
+              # One final probe AFTER the last sleep. Without it the dwell's last
+              # `kill -0` ran a second early and an exit inside that final second
+              # read as a pass — the comment above promises a re-assertion, so
+              # make it literally true.
+              if [ -z "$code" ] && ! kill -0 "$app_pid" 2>/dev/null; then
+                wait "$app_pid"; code="exited-after-boot:$?"
+              fi
+              [ -z "$code" ] && code="alive" && \
+                echo "OK: still alive ${held}s after the boot artifact appeared"
+            fi
+            [ -z "$code" ] && code="timeout"
+
+            # #4418 note 1 — SNAPSHOT PROCESS STATE BEFORE KILLING ANYTHING.
+            # The diagnostics below used to `pgrep` after the reap, so in the
+            # `timeout` (hang) case — the one `wchan` exists for — the target was
+            # already dead and it printed "(no processes remain)". This step's
+            # whole justification is that 0.9.9 gave us no kernel-level datum;
+            # capturing after the kill would have reproduced exactly that.
+            #
+            # `wchan` is the payload: for a process blocked rather than crashed,
+            # the kernel function it is waiting in names the cause.
+            # ONE comma-separated argument, not word-split bare pids: procps may
+            # reject the split form, and because the call is guarded by `|| true`
+            # a rejection would leave PROC_SNAPSHOT empty — silently dropping the
+            # `wchan` capture that is this whole change's payload. A diagnostic
+            # that can fail quietly is the failure it was added to prevent.
+            snap_pids="$(pgrep -f 'agaric|[Xx]vfb|dbus-run-session' | paste -sd, - || true)"
+            if [ -n "$snap_pids" ]; then
+              PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p "$snap_pids" 2>&1)" \
+                || PROC_SNAPSHOT="(ps failed for pids '$snap_pids': $PROC_SNAPSHOT)"
+            else
+              PROC_SNAPSHOT="(no agaric/Xvfb/dbus processes matched at snapshot time)"
+            fi
+
+            # #4418 note 5 — re-probe the group before giving up on it. The guard
+            # above clears `pgid` when `ps` beat setsid()'s return, but by now the
+            # child HAS execve'd into the new group, so a second read usually finds
+            # it. Killing `$app_pid` alone in that window would orphan
+            # dbus-run-session -> AppRun -> app into the next attempt and past the
+            # step — leaking the very tree the reap exists to collect.
+            # Only re-probe when we can still VERIFY the answer. If `own_pgid` is
+            # unreadable the comparison below can never fire, so re-probing would
+            # silently undo the refusal set above and let the group kill proceed
+            # unverified — these two guards, added in separate review rounds,
+            # were cancelling each other out.
+            if [ -z "$pgid" ] && [ -n "$own_pgid" ]; then
+              pgid=$(ps -o pgid= -p "$app_pid" 2>/dev/null | tr -d ' ')
+              [ "$pgid" = "$own_pgid" ] && pgid=""
+            fi
+
+            # Reap the GROUP, not just the leader.
+            if [ -n "$pgid" ]; then
+              kill -TERM "-$pgid" 2>/dev/null
+              sleep 1
+              kill -KILL "-$pgid" 2>/dev/null
+            else
+              # No usable group: still reap the leader so a hung app cannot leak
+              # into the next attempt or outlive the step.
+              kill -TERM "$app_pid" 2>/dev/null
+              sleep 1
+              kill -KILL "$app_pid" 2>/dev/null
+            fi
+            wait "$app_pid" 2>/dev/null
+            set -e
+
+            echo "----- first 200 lines of boot output -----"
+            sed -n '1,200p' "$SANDBOX/boot.log" || true
+            echo "------------------------------------------"
+
+            # CHECK 1 — positive proof that the setup hook ran.
+            #
+            # Staying alive is NOT proof of a completed boot, so this check looks
+            # for a positive artifact instead of liveness.
+            #
+            # Note what does NOT justify it here. The measurement behind this
+            # check (an intentionally-broken AGARIC_E2E_SANDBOX=1 with no
+            # AGARIC_DATA_DIR sitting at a fatal dialog for the full timeout) was
+            # taken LOCALLY, without CI set. On a runner that path does not
+            # happen: `show_fatal_error_dialog` treats CI as headless, skips the
+            # dialog and returns, and the handler then exits 1 — which CHECK 2
+            # already catches. CHECK 1 earns its place as positive proof that
+            # boot reached the logging phase, not as the only net under a dialog.
+            #
+            # Scope limit: it proves phase 1 only. `init_persistence`,
+            # `recover_and_bootstrap` and window creation all come after
+            # `init_logging`. A boot that HANGS after this line while the process
+            # stays alive still reads as green here.
+            #
+            # `init_logging` creates this file and writes "log directory
+            # initialized" into it, so its presence means boot got past the
+            # phase that aborted in 0.9.7 — and it lands under the throwaway
+            # AGARIC_DATA_DIR, so finding it also proves the sandbox override
+            # took effect and the run never touched a real vault.
+            # NOTE the glob. `build_log_file_appender` uses a DAILY rotation with
+            # `filename_prefix("agaric.log")`, so tracing-appender appends the
+            # date: the file on disk is `agaric.log.YYYY-MM-DD`, never plain
+            # `agaric.log`. A hardcoded `agaric.log` here would fail every
+            # release with a message blaming boot for a naming mistake.
+            app_logs=("$AGARIC_DATA_DIR"/logs/agaric.log*)
+            if [ ${#app_logs[@]} -eq 0 ]; then
+              echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${waited}s" >&2
+              echo "       (budget ${BOOT_SECONDS}s; a shorter time means the process ended" >&2
+              echo "       early rather than the budget expiring)." >&2
+              echo "       Outcome was '$code' (alive = still running, timeout = never" >&2
+              echo "       produced the artifact, exited:N = ended on its own with code N)." >&2
+              echo "       Read the boot output dumped above FIRST: if it shows xvfb-run or" >&2
+              echo "       the AppImage failing to start, the process never reached Rust at" >&2
+              echo "       all and none of the boot-phase readings below apply." >&2
+              echo "       Otherwise the code is the tell: 134 (or 101 on an unwinding" >&2
+              echo "       build) means it panicked before" >&2
+              echo "       init_logging, 124 means it was alive but never got there, anything" >&2
+              echo "       else means it exited early. Or the sandbox override was not" >&2
+              echo "       honoured. Sandbox tree:" >&2
+              find "$SANDBOX" -maxdepth 3 >&2 || true
+              # #4418 — the 0.9.9 failure left nothing to diagnose with: the
+              # captured boot.log held one dbus warning and the step stopped.
+              # Dump what distinguishes "hung before graphics init" from
+              # "hung after" so the NEXT occurrence is answerable without a
+              # local reproduction (which did not reproduce it).
+              echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
+              cat "$SANDBOX/boot.log" >&2 || true
+              echo "       --- environment ---" >&2
+              echo "       (the app's own DISPLAY/DBUS are on the [child-env] line of" >&2
+              echo "        boot.log above — the step shell's values are NOT the app's)" >&2
+              echo "       --- process state captured BEFORE the reap ---" >&2
+              printf '%s\n' "$PROC_SNAPSHOT" | sed 's/^/       /' >&2
+              return 1
+            fi
+            if ! grep -qh "log directory initialized" "${app_logs[@]}"; then
+              echo "ERROR: ${app_logs[*]} exists but carries no boot line from init_logging." >&2
+              head -c 4000 "${app_logs[@]}" >&2 || true
+              # #4418 note 6 — this branch is reachable in the HANG case, not just
+              # the never-wrote-anything case: `RollingFileAppender` opens the file
+              # eagerly, so an app that then blocks before the `info!` flushes lands
+              # here with `code=timeout`. Returning on the app log alone would skip
+              # CHECK 2's "a hang, not a crash" message AND the boot.log / DISPLAY /
+              # DBUS / process-state block below — the diagnostics that make #4418
+              # answerable. Route the alive case to them instead of returning thin.
+              if [ "$code" = "timeout" ]; then
+                echo "       Process was ALIVE at the deadline with the log file open" >&2
+                echo "       but no boot line — it hung between opening the appender" >&2
+                echo "       and flushing init_logging. Full diagnostics:" >&2
+                echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
+                cat "$SANDBOX/boot.log" >&2 || true
+                echo "       DISPLAY=${DISPLAY:-<unset>} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>}" >&2
+                echo "       DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<unset>}" >&2
+                echo "       --- process state captured BEFORE the reap ---" >&2
+                printf '%s\n' "$PROC_SNAPSHOT" | sed 's/^/       /' >&2
+              fi
+              return 1
+            fi
+            echo "OK: init_logging completed and wrote ${app_logs[*]}"
+
+            # CHECK 2 — and it did not exit on its own.
+            #
+            # A desktop app that really booted stays up. Every "exited"
+            # outcome is a failure however tidy the code, **exit 0 included**:
+            # a silent, instant, successful-looking exit is precisely the shape
+            # a false green takes here — a single-instance handoff produces
+            # exactly that, and did, when this check was first tried by hand
+            # against 0.9.8.
+            #
+            # The old form asserted this by requiring `timeout` to report 124.
+            # Polling asserts the same property directly (`kill -0` at the
+            # moment the artifact appears), which is strictly sharper: 124 only
+            # said "alive at 20s", whereas this says "alive at the moment it
+            # finished booting", and it no longer conflates "still healthy"
+            # with "we waited the full budget".
+            case "$code" in
+              alive)
+                : # artifact appeared AND the app survived MIN_ALIVE_SECONDS past it
+                ;;
+              exited-after-boot:*)
+                # Reached init_logging, then died during a LATER boot phase —
+                # `.setup()`, `init_persistence`, `recover_and_bootstrap`, or
+                # window/webview creation. This is the case the dwell exists to
+                # catch; without it the run would have been reported green.
+                echo "ERROR: booted past init_logging, then exited (${code#exited-after-boot:})" >&2
+                echo "       within ${MIN_ALIVE_SECONDS}s. A later boot phase failed —" >&2
+                echo "       134 = SIGABRT under panic=abort." >&2
+                # The dump above is capped at 200 lines, and the interesting output
+                # of a late-phase failure is at the END. This is the case the dwell
+                # was added to catch, so give it the whole log.
+                echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
+                cat "$SANDBOX/boot.log" >&2 || true
+                return 1
+                ;;
+              timeout)
+                echo "ERROR: no boot artifact after ${BOOT_SECONDS}s and the process was" >&2
+                echo "       still alive — a hang, not a crash and not a slow boot." >&2
+                echo "       Diagnostics were dumped by CHECK 1 above." >&2
+                return 1
+                ;;
+              exited:0)
+                echo "ERROR: exited 0 before producing a boot artifact. A booted app stays" >&2
+                echo "       up; a quiet immediate success here means it never really started." >&2
+                return 1
+                ;;
+              exited:134 | exited:101)
+                # 134 is the one that actually fires for a RELEASE AppImage:
+                # `[profile.release]` sets `panic = "abort"`, so a panic raises
+                # SIGABRT and the shell reports 128+6 = 134, never 101. 101 is
+                # kept for a debug/unwinding build run through this by hand.
+                echo "ERROR: Rust panic during boot (${code#exited:} — 134 = SIGABRT under" >&2
+                echo "       panic=abort, 101 = an unwinding build)." >&2
+                return 1
+                ;;
+              exited:137)
+                echo "ERROR: killed by SIGKILL (137); an OOM kill on the runner is the usual" >&2
+                echo "       cause." >&2
+                return 1
+                ;;
+              *)
+                echo "ERROR: process ended unexpectedly (${code})" >&2
+                return 1
+                ;;
+            esac
+
+            # Success only: a failed attempt already returned above and keeps its
+            # tree so the diagnostics stay inspectable.
+            rm -rf "$SANDBOX"
+            return 0
+          }
+
+          # #4418 — retry, because a single attempt gates the release on an
+          # operation that is demonstrably flaky.
           #
-          # Staying alive is NOT proof of a completed boot, so this check looks
-          # for a positive artifact instead of liveness.
+          # This step is not the only place the real GUI is launched under
+          # Xvfb on a runner: `e2e-tauri-weekly.yml`'s "Run WebdriverIO
+          # real-backend smoke (Xvfb)" does the same thing and failed 3 of its
+          # last 5 runs (2026-08-10, 08-17, 08-24). The 0.9.9 release then hit
+          # the same shape here on this step's FIRST ever release run — #4081
+          # landed 2026-08-18, one day after the 0.9.8 bump, so no earlier
+          # release exercised it.
           #
-          # Note what does NOT justify it here. The measurement behind this
-          # check (an intentionally-broken AGARIC_E2E_SANDBOX=1 with no
-          # AGARIC_DATA_DIR sitting at a fatal dialog for the full timeout) was
-          # taken LOCALLY, without CI set. On a runner that path does not
-          # happen: `show_fatal_error_dialog` treats CI as headless, skips the
-          # dialog and returns, and the handler then exits 1 — which CHECK 2
-          # already catches. CHECK 1 earns its place as positive proof that
-          # boot reached the logging phase, not as the only net under a dialog.
+          # What that failure cost is why this matters more than a red check:
+          # `generate-latest-json`, `android-build-and-release` and
+          # `publish-release` all gate on `build-and-release` succeeding, and
+          # the 24 steps after this one in THIS job — the repacked-AppImage
+          # replacement, every minisign updater signature, the SBOMs and the
+          # SLSA attestations for Linux AND Windows AND macOS — are skipped
+          # too. One flaky launch left 0.9.9 unpublishable.
           #
-          # Scope limit: it proves phase 1 only. `init_persistence`,
-          # `recover_and_bootstrap` and window creation all come after
-          # `init_logging`. A boot that HANGS after this line while the process
-          # stays alive still reads as green here.
-          #
-          # `init_logging` creates this file and writes "log directory
-          # initialized" into it, so its presence means boot got past the
-          # phase that aborted in 0.9.7 — and it lands under the throwaway
-          # AGARIC_DATA_DIR, so finding it also proves the sandbox override
-          # took effect and the run never touched a real vault.
-          # NOTE the glob. `build_log_file_appender` uses a DAILY rotation with
-          # `filename_prefix("agaric.log")`, so tracing-appender appends the
-          # date: the file on disk is `agaric.log.YYYY-MM-DD`, never plain
-          # `agaric.log`. A hardcoded `agaric.log` here would fail every
-          # release with a message blaming boot for a naming mistake.
-          app_logs=("$AGARIC_DATA_DIR"/logs/agaric.log*)
-          if [ ${#app_logs[@]} -eq 0 ]; then
-            echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${BOOT_SECONDS}s." >&2
-            echo "       Process exit code was $code (124 = still running at the deadline)." >&2
-            echo "       Read the boot output dumped above FIRST: if it shows xvfb-run or" >&2
-            echo "       the AppImage failing to start, the process never reached Rust at" >&2
-            echo "       all and none of the boot-phase readings below apply." >&2
-            echo "       Otherwise the code is the tell: 134 (or 101 on an unwinding" >&2
-            echo "       build) means it panicked before" >&2
-            echo "       init_logging, 124 means it was alive but never got there, anything" >&2
-            echo "       else means it exited early. Or the sandbox override was not" >&2
-            echo "       honoured. Sandbox tree:" >&2
-            find "$SANDBOX" -maxdepth 3 >&2 || true
-            exit 1
+          # The hang itself is NOT fixed here and this does not pretend to.
+          # Reproducing the CI failure locally did not work: in an ubuntu-24.04
+          # container with the release job's own runtime deps, this exact
+          # invocation boots in ~60ms, with or without the WebKitGTK headless
+          # flags. The one asymmetry worth recording for whoever does chase it
+          # is that CI's boot.log contained ONLY the AT-SPI dbus warning — no
+          # libEGL lines at all — so CI hung EARLIER than graphics init, before
+          # anything the local reproduction reached. Root-causing that belongs
+          # with the weekly-e2e flake; they are very likely the same bug.
+          attempt=1
+          until boot_attempt; do
+            if [ "$attempt" -ge "$MAX_BOOT_ATTEMPTS" ]; then
+              echo "ERROR: boot smoke failed on all $MAX_BOOT_ATTEMPTS attempts." >&2
+              echo "       Not a flake at this point — treat it as a real boot failure." >&2
+              exit 1
+            fi
+            echo "--- attempt $attempt failed; retrying ($((attempt + 1))/$MAX_BOOT_ATTEMPTS) ---" >&2
+            attempt=$((attempt + 1))
+          done
+          if [ "$attempt" -gt 1 ]; then
+            # #4418 note 5 — a retry that succeeds is still a signal. Without an
+            # annotation, a launch failing one attempt in two reports green ~87%
+            # of the time and the only trace is buried in the raw step log. The
+            # flake this step exists to survive would then be invisible, which is
+            # how e2e-tauri-weekly's 3-in-5 failure rate went unnoticed.
+            echo "::warning::AppImage boot smoke needed $attempt attempts (of $MAX_BOOT_ATTEMPTS). The launch is flaky on this runner even though the step passed — see #4418."
           fi
-          if ! grep -qh "log directory initialized" "${app_logs[@]}"; then
-            echo "ERROR: ${app_logs[*]} exists but carries no boot line from init_logging." >&2
-            head -c 4000 "${app_logs[@]}" >&2 || true
-            exit 1
-          fi
-          echo "OK: init_logging completed and wrote ${app_logs[*]}"
+          echo "OK: boot smoke passed on attempt $attempt of $MAX_BOOT_ATTEMPTS"
 
-          # CHECK 2 — and it was still running when the deadline fired.
-          #
-          # 124 is the only pass. Every other code means it exited on its own,
-          # which for a desktop app that just booted is a failure however tidy
-          # the code — exit 0 included. A silent, instant, successful-looking
-          # exit is precisely the shape a false green takes here: a
-          # single-instance handoff produces exactly that, and did, when this
-          # check was first tried by hand against 0.9.8.
-          case "$code" in
-            124)
-              # 124 is "timeout fired", which covers both a clean SIGTERM exit
-              # and the --kill-after escalation to SIGKILL (timeout reports its
-              # own status, not the child's, whenever it timed out). Either way
-              # the app was still alive at the deadline, which is what we assert.
-              echo "OK: still running at ${BOOT_SECONDS}s; reaped by timeout"
-              ;;
-            137)
-              # NOT "ignored SIGTERM": GNU timeout reports EXIT_TIMEDOUT (124)
-              # whenever it timed out, including when --kill-after had to
-              # escalate to SIGKILL. So a 137 arriving here came from an
-              # EXTERNAL SIGKILL — an OOM kill on the runner being the likely
-              # one — not from the app outlasting our own TERM.
-              echo "ERROR: killed by an external SIGKILL (exit 137); OOM on the runner is" >&2
-              echo "       the usual cause. Not a SIGTERM-ignored timeout — that reports 124." >&2
-              exit 1
-              ;;
-            101 | 134)
-              # 134 is the one that actually fires for a RELEASE AppImage:
-              # `[profile.release]` sets `panic = "abort"` (Cargo.toml), so a
-              # panic raises SIGABRT and the shell reports 128+6 = 134, never
-              # 101. 101 is kept for a debug/unwinding build run through this
-              # same step by hand.
-              #
-              # Either code is reachable only when a panic still let
-              # init_logging write its line first; a panic BEFORE that (the
-              # literal 0.9.7 shape) trips CHECK 1 above and never reaches this
-              # case. Note WHICH branch of CHECK 1 it trips:
-              # `RollingFileAppender::builder().build()` opens the file eagerly,
-              # before the `.init()` that panicked in 0.9.7, so the file EXISTS
-              # and it is the grep that fails — the operator sees "exists but
-              # carries no boot line", not "no log file".
-              echo "ERROR: Rust panic during boot (exit $code — 134 = SIGABRT under" >&2
-              echo "       panic=abort, 101 = an unwinding build), after init_logging ran" >&2
-              exit 1
-              ;;
-            0)
-              echo "ERROR: exited 0 before ${BOOT_SECONDS}s. A booted app stays up; a quiet" >&2
-              echo "       immediate success here means it never really started." >&2
-              exit 1
-              ;;
-            *)
-              echo "ERROR: exited with code $code before ${BOOT_SECONDS}s" >&2
-              exit 1
-              ;;
-          esac
 
       - name: Replace AppImage on draft release with repacked build
         if: matrix.platform == 'ubuntu-24.04'
