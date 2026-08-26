@@ -485,6 +485,11 @@ jobs:
           # being killed seconds before it would have finished. 90s covers
           # that and several retries of it.
           BOOT_SECONDS: '90'
+          # How long the app must SURVIVE after the boot artifact appears. This
+          # is the half of the old `timeout 20s` + exit-124 contract that covers
+          # boot phases 2+ (`.setup()`, `init_persistence`, `recover_and_bootstrap`,
+          # GTK/WebKit, window creation) — all of which run after `init_logging`.
+          MIN_ALIVE_SECONDS: '20'
           # Attempts before calling it a real failure. See the rationale on
           # the retry driver below: the underlying launch is flaky, and a
           # single attempt gates publication of the whole release on it.
@@ -541,27 +546,32 @@ jobs:
             if command -v dbus-run-session >/dev/null 2>&1; then
               launcher=(dbus-run-session --)
             else
-              echo "NOTE: dbus-run-session unavailable; booting without a session bus" >&2
+              echo "::warning::dbus-run-session unavailable on this runner; booting without a session bus. The a11y/dbus stall this mitigates is unguarded for this run." >&2
               launcher=()
             fi
 
             set +e
-            xvfb-run -a "${launcher[@]}" "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1 &
+            # `setsid` so the whole tree — xvfb-run -> dbus-run-session -> AppRun
+            # -> the app — lands in one process group. Killing `$!` alone would
+            # only reap `xvfb-run`, two levels above the process that hung, and
+            # a hung app would survive into the next attempt and outlive the step.
+            setsid xvfb-run -a "${launcher[@]}" "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1 &
             app_pid=$!
+            pgid=$(ps -o pgid= -p "$app_pid" 2>/dev/null | tr -d ' ')
+
             code=""
+            booted=0
             waited=0
             while [ "$waited" -lt "$BOOT_SECONDS" ]; do
-              if compgen -G "$AGARIC_DATA_DIR/logs/agaric.log*" > /dev/null; then
-                # Artifact present. Assert the process is STILL ALIVE — the
-                # old CHECK 2 intent: a desktop app that booted stays up, and
-                # a quiet immediate exit (a single-instance handoff, exit 0
-                # included) is exactly the shape a false green takes here.
-                if kill -0 "$app_pid" 2>/dev/null; then
-                  echo "OK: boot artifact appeared after ${waited}s and the process is alive"
-                  code="alive"
-                else
-                  wait "$app_pid"; code="exited:$?"
-                fi
+              # Poll for the LOG LINE, not the file. `RollingFileAppender::builder()
+              # .build()` opens the file EAGERLY — before `try_init()` and before the
+              # `info!` — and the sink is `tracing_appender::non_blocking`, so the
+              # write lands from a worker thread. Breaking on mere existence can beat
+              # that write, and CHECK 1 (which greps for the line) would then report
+              # "exists but carries no boot line" on every attempt: a false RED.
+              # Polling the same predicate CHECK 1 asserts removes the mismatch.
+              if grep -qs "log directory initialized" "$AGARIC_DATA_DIR"/logs/agaric.log* 2>/dev/null; then
+                booted=1
                 break
               fi
               if ! kill -0 "$app_pid" 2>/dev/null; then
@@ -571,10 +581,42 @@ jobs:
               sleep 1
               waited=$((waited + 1))
             done
+
+            # DWELL. Reaching init_logging is phase 1 of the boot; `tauri::Builder`,
+            # `.setup()`, `init_persistence`, `recover_and_bootstrap`, GTK/WebKit and
+            # window+webview creation all come AFTER it. Breaking out the instant the
+            # artifact appears (~1s) and killing the app would drop every one of them
+            # — a panic in `init_persistence` at t≈2-4s used to exit 134 and redden
+            # this step, and would instead have read as a pass. The AT-SPI/WebKit hang
+            # this step exists to catch also lives after init_logging, so the short
+            # window would have called that green too.
+            #
+            # So: keep the poll (it is what makes a NEVER-boots case fail fast and
+            # lets BOOT_SECONDS be generous), then hold for MIN_ALIVE_SECONDS and
+            # re-assert liveness. That restores the survival half of the old
+            # `timeout 20s` + exit-124 contract without giving back the fast path.
+            if [ "$booted" = "1" ]; then
+              echo "boot artifact after ${waited}s; holding ${MIN_ALIVE_SECONDS}s to prove it stays up"
+              held=0
+              while [ "$held" -lt "$MIN_ALIVE_SECONDS" ]; do
+                if ! kill -0 "$app_pid" 2>/dev/null; then
+                  wait "$app_pid"; code="exited-after-boot:$?"
+                  break
+                fi
+                sleep 1
+                held=$((held + 1))
+              done
+              [ -z "$code" ] && code="alive" && \
+                echo "OK: still alive ${held}s after the boot artifact appeared"
+            fi
             [ -z "$code" ] && code="timeout"
-            kill -TERM "$app_pid" 2>/dev/null
-            sleep 1
-            kill -KILL "$app_pid" 2>/dev/null
+
+            # Reap the GROUP, not just the leader.
+            if [ -n "$pgid" ]; then
+              kill -TERM "-$pgid" 2>/dev/null
+              sleep 1
+              kill -KILL "-$pgid" 2>/dev/null
+            fi
             wait "$app_pid" 2>/dev/null
             set -e
 
@@ -656,6 +698,9 @@ jobs:
               return 1
             fi
             echo "OK: init_logging completed and wrote ${app_logs[*]}"
+            # Cleaned only on the success path; a failed attempt keeps its tree
+            # so the diagnostics above stay inspectable.
+            trap 'rm -rf "$SANDBOX"' RETURN
 
             # CHECK 2 — and it did not exit on its own.
             #
@@ -674,7 +719,17 @@ jobs:
             # with "we waited the full budget".
             case "$code" in
               alive)
-                : # CHECK 1 + the liveness assertion above both passed
+                : # artifact appeared AND the app survived MIN_ALIVE_SECONDS past it
+                ;;
+              exited-after-boot:*)
+                # Reached init_logging, then died during a LATER boot phase —
+                # `.setup()`, `init_persistence`, `recover_and_bootstrap`, or
+                # window/webview creation. This is the case the dwell exists to
+                # catch; without it the run would have been reported green.
+                echo "ERROR: booted past init_logging, then exited (${code#exited-after-boot:})" >&2
+                echo "       within ${MIN_ALIVE_SECONDS}s. A later boot phase failed —" >&2
+                echo "       134 = SIGABRT under panic=abort. See boot.log above." >&2
+                return 1
                 ;;
               timeout)
                 echo "ERROR: no boot artifact after ${BOOT_SECONDS}s and the process was" >&2
