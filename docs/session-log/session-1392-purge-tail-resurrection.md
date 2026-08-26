@@ -35,10 +35,13 @@ only option that keeps the FK check satisfiable: leaving the dangling `parent_id
 fail the deferred check at COMMIT and drop the whole rebuild into the #3269 scaffold
 fallback, which has no FK constraints at all and resurrects the tail unconditionally.
 
-The `still_orphaned` guard is what stops it over-reaching — a frontier child is purged
-only while its `parent_id` is *still* dangling at cleanup time, so a later `move_block`
-that re-parented it, or a `create_block` that re-made the id it pointed at, means the
-op_log says the block survived and the log wins over a frontier captured mid-replay.
+*As first written* — this is the pre-review design, superseded later in the session; see
+"The review's two findings" below — the repair ran as a post-loop pass, and a
+`still_orphaned` guard was what stopped it over-reaching: a frontier child was purged
+only while its `parent_id` was *still* dangling at cleanup time, so a later `move_block`
+that re-parented it, or a `create_block` that re-made the id it pointed at, meant the
+op_log said the block survived and the log won over a frontier captured mid-replay. The
+review retired both the post-loop pass and that guard.
 
 **The test asserts on the search path, not the table.** The table state is what makes
 the resurrection plausible; the search hit is what makes it a broken deletion guarantee.
@@ -109,12 +112,14 @@ benign trigger: on a merged tree deeper than the cap with no tombstone, *every*
 most likely to matter was the one most likely to be flooded. `bounded_site_list` keeps a
 head-N window with an `…and N more` suffix carrying the true total.
 
-`CascadeTruncation::depth` went too (the second half of #4290). It was populated from
+`CascadeTruncation::depth` went with them, also under #4289 (an earlier draft filed it
+under #4290; that issue is the unrelated bug-report log-rotation one below). It was
+populated from
 `DESCENDANT_DEPTH_CAP` at every construction site — invariant by construction, not
 merely constant in practice, since the cap is a literal in the single recursive arm. The
 number is still named, once, by `emit`'s `depth_cap` field rather than copied per record.
 
-## #4290 part 1 — the plain-log fallback was preempted by the files it exists to outlive
+## #4290 — the plain-log fallback was preempted by the files it exists to outlive
 
 `recent_errors_from_log_dir_at` consulted a plain `agaric.log` only when no usable
 in-window dated file existed. The comment justified the fallback as tolerance for a
