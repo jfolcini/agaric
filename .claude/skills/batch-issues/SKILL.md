@@ -13,7 +13,7 @@ Detailed material lives in `references/` — load it only when the trigger fires
 - `references/pitfalls.md` — the war-story failure modes (git-stash scramble, oxfmt
   comment detach, role-swap test breaks, cargo-check-all-targets, dev.db schema drift,
   timestamp-column coupling, chained-PR ordering).
-- `references/session-log.md` — the session-log template + plan-issue bookkeeping.
+- `references/session-log.md` — session-log numbering, format, and plan-issue bookkeeping.
 - `references/codegen-and-sql.md` — `.sqlx` regen, specta bindings, SQL migration recipe,
   architectural invariants.
 
@@ -420,7 +420,7 @@ files between trees. Only the chained-PR case needs special ordering — see pit
 ## 6. LOG
 
 Create `docs/session-log/session-NNN-<slug>.md` (one file per session, never appended).
-Use the template and plan-issue bookkeeping in **`references/session-log.md`**. Keep
+Use the numbering rules, format, and plan-issue bookkeeping in **`references/session-log.md`**. Keep
 `docs/FEATURE-MAP.md` in sync when new commands/components/hooks/stores/tables ship.
 
 ## 7. COMMIT AND PUSH
