@@ -28,7 +28,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 20. [Filters](#filters)
 21. [Android](#android)
 22. [State Files](#state-files)
-23. [MCP Tools: code-review-graph](#mcp-tools-code-review-graph)
+23. [Code Navigation](#code-navigation)
 
 ## Documentation Map
 
@@ -397,7 +397,7 @@ During development, run only the relevant check:
 
 For UI work where unit tests can't fully prove behavior — toolbar buttons, pickers, overflow, popovers, editor round-trips — **drive the real app** instead of deferring. The Playwright e2e harness runs the actual frontend against the in-memory **tauri mock backend**, no native build required:
 
-- `playwright.config.ts` auto-starts the dev server (`webServer: npm run dev`); the mock backend auto-activates in dev (`main.tsx` → `setupMock()` when `!import.meta.env.PROD && !window.__TAURI_INTERNALS__`). No flag needed.
+- `playwright.config.ts` auto-builds and serves a **static production bundle** (`webServer: npm run build:e2e && npm run preview:e2e`) — #1458 replaced the old `npm run dev` server, which stalled under sharded CI load and failed every test on the shard. The tauri mock survives the production build because `main.tsx` gates it on `(!import.meta.env.PROD || import.meta.env.VITE_E2E) && !window.__TAURI_INTERNALS__`, and `build:e2e` sets `VITE_E2E=1`. See [e2e/AGENTS.md](e2e/AGENTS.md).
 - Run one spec: `npx playwright test e2e/<file>.spec.ts --workers=1 --reporter=list` (~60s incl. boot; chromium is installed).
 - Helpers in `e2e/helpers.ts` (`waitForBoot`, `openPage(page, 'Getting Started')`, `focusBlock`, `saveBlock`, `selectEditorRange`); seed data documented in `src/lib/tauri-mock/` and spec headers. Click controls by accessible name (`getByRole('button', { name: 'Divider' })`); assert the static render via `[data-testid="sortable-block"]` + markers (`horizontal-rule`, `callout-block`, `<ol>`, …). For visual checks, `await page.screenshot({ path })` and read the image.
 - **Make the verification permanent:** land the spec in the PR. A one-off manual check rots; an e2e spec guards the behavior in CI. This workflow caught a real round-trip bug (#258) while verifying #253 — exactly the class of defect unit tests miss.
@@ -483,41 +483,35 @@ Cross-surface filter contract. Detail and rationale live in [`docs/architecture/
 
 For orchestrator workflow details, see [the `batch-issues` skill § 2. BUILD](.claude/skills/batch-issues/SKILL.md).
 
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+<!-- code navigation -->
+## Code Navigation
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+**This project runs the [Serena](https://github.com/oraios/serena) MCP server. Its symbol
+tools are the primary way to read and edit code** — they are cheaper than file scanning and
+resolve symbols rather than text:
 
-### When to use graph tools FIRST
+| Task | Tool |
+| ---- | ---- |
+| A file's structure | `get_symbols_overview` |
+| A specific symbol's body | `find_symbol` (`include_body=true`) |
+| Callers / references | `find_referencing_symbols` |
+| Declarations / implementations | `find_declaration` / `find_implementations` |
+| Edit a symbol in place | `replace_symbol_body` |
+| Insert near a symbol | `insert_before_symbol` / `insert_after_symbol` |
+| Rename / move / delete | `rename` / `move` / `safe_delete_symbol` |
 
-- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
-- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
-- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
-- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview` + `list_communities`
+Fall back to Grep/Glob/Read when Serena fails on the target, when the file is not parseable
+as code, when you need a regex sweep across many files that the symbolic tools cannot express
+(fine as a *discovery* step — follow up with Serena for the reads and edits), or when a
+handful of lines is genuinely all you need.
 
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+**Serena's root is the MAIN checkout.** A subagent working in a git worktree that uses
+Serena's *editing* tools writes into the main checkout, not the worktree. Reads are safe;
+edits from a worktree must go through Read/Write/Edit with absolute paths.
 
-### Key Tools
-
-| Tool | Use when |
-| ------ | ---------- |
-| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context` | Need source snippets for review — token-efficient |
-| `get_impact_radius` | Understanding blast radius of a change |
-| `get_affected_flows` | Finding which execution paths are impacted |
-| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes` | Finding functions/classes by name or keyword |
-| `get_architecture_overview` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
-
-### Workflow
-
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes` for code review.
-3. Use `get_affected_flows` to understand impact.
-4. Use `query_graph` pattern="tests_for" to check coverage.
+> **A note on `code-review-graph`.** `.mcp.json` declares a `code-review-graph` server, but it
+> is listed in `disabledMcpjsonServers` in `.claude/settings.local.json` and is **not
+> available** in sessions. This section previously instructed agents to always prefer its
+> tools over Grep/Glob/Read, and claimed the graph auto-updated via hooks — there is no such
+> hook (the only entry in `.claude/settings.json` is `SessionStart`). Do not attempt those
+> tools unless the server is re-enabled.

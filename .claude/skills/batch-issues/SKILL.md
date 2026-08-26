@@ -81,7 +81,7 @@ for `--admin` merges too (§8 spells out the exact commands and the #2763/#2767 
 Do NOT re-poll PR CI between these checkpoints — not on every
 wake-up, not after every subagent completion (maintainer feedback 2026-06-10: "reconciling
 PRs all the time is not necessary"). Green PRs can sit until the next batch boundary or
-until the 5-PR cap needs a slot; nothing rots in an hour. **Any red is yours to fix** —
+until the 10-PR cap needs a slot; nothing rots in an hour. **Any red is yours to fix** —
 even a failure *inherited from `main`* (a lint/zizmor finding that landed on `main` and
 now reds every PR). "Not from my diff" is NOT a reason to skip it: a red check blocks
 otherwise-green merges and stalls the loop. Diagnose from
@@ -178,7 +178,7 @@ directly, update docs, or pre-read sources for the next batch.
 
 **Never idle-wait on a slow subagent — run another issue concurrently.** When the active
 issue's subagents are busy (a Tauri/Rust compile runs minutes), start another independent
-issue rather than scheduling a long wakeup. **Up to 5 PRs may be open at once** (maintainer
+issue rather than scheduling a long wakeup. **Up to 10 PRs may be open at once** (maintainer
 preference, 2026-06-06) — keep enough in flight to fill idle windows while keeping real
 oversight; don't exceed 5.
 
@@ -503,7 +503,7 @@ async over many minutes. Instead:
    `origin/main` (prior commits may not have landed — fine; if the new batch genuinely
    depends on them, branch from the prior batch's branch and merge the chain bottom-up).
 3. **Reconcile open PRs ONLY at batch boundaries** — the §1 sweep at the start of the
-   next batch (same checkpoint as "END of the current batch"), or early only if the 5-PR
+   next batch (same checkpoint as "END of the current batch"), or early only if the 10-PR
    cap blocks a new PR. One sweep, all PRs at once; never poll CI per-wake-up or
    per-subagent-completion (maintainer feedback 2026-06-10):
    - `gh pr checks <prevPR>`. All green + mergeable → **read the full review before
@@ -528,8 +528,8 @@ async over many minutes. Instead:
    - `CHANGES_REQUESTED` blocks the merge outright until the request is resolved.
    This applies to **already-merged** PRs too: when sweeping recently-merged PRs, read
    their review bodies and open follow-up commits/issues for anything left unaddressed.
-4. **Keep the pending-PR list bounded** (up to **5** open PRs — maintainer preference,
-   2026-06-06). `gh pr list --author @me --state open` shows what's outstanding if you lose
+4. **Keep the pending-PR list bounded** (up to **10** open PRs — maintainer preference,
+   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). `gh pr list --author @me --state open` shows what's outstanding if you lose
    track. Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs;
    for own green PRs blocked only by `REVIEW_REQUIRED`, `--admin` is sanctioned — but only
    when the required checks (`validate-all`, `dco`) are green.
