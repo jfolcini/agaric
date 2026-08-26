@@ -61,8 +61,6 @@ vi.mock('@/lib/tauri', () => ({
   queryByProperty: vi.fn(),
   paginationLimit: (n: number) => n,
   getBlock: vi.fn(),
-  setDueDate: vi.fn(),
-  setScheduledDate: vi.fn(),
 }))
 
 vi.mock('@/lib/bindings', async (importOriginal) => {

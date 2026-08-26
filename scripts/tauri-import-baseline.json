@@ -33,8 +33,6 @@
   "src/hooks/useAutocompleteSources.ts",
   "src/hooks/useBacklinkGroups.ts",
   "src/hooks/useBlockPropertyIpc.ts",
-  "src/hooks/useBlockReschedule.ts",
-  "src/hooks/useCheckboxSyntax.ts",
   "src/hooks/useDeepLinkRouter.ts",
   "src/hooks/useDuePanelData.ts",
   "src/hooks/useExtraBlockProperties.ts",

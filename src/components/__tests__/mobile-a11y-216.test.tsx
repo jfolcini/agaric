@@ -34,8 +34,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 // stub the IPC surface so the module loads under happy-dom.
 vi.mock('@/lib/tauri', () => ({
   getBlock: vi.fn(),
-  setDueDate: vi.fn(),
-  setScheduledDate: vi.fn(),
   reschedule: vi.fn(),
 }))
 

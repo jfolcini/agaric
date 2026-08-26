@@ -2,7 +2,7 @@
  * useBlockReschedule — typed wrappers around setDueDate / setScheduledDate.
  *
  * Centralizes the per-block reschedule IPC calls so consumers don't
- * import directly from `src/lib/tauri`. Each callback wraps the IPC
+ * call the generated bindings directly. Each callback wraps the IPC
  * with structured logger.warn on failure (no silent .catch()) and
  * re-throws so callers retain their existing error handling.
  *
@@ -20,8 +20,9 @@
 
 import { useCallback } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { getBlock, setDueDate, setScheduledDate } from '@/lib/tauri'
 
 export type RescheduleField = 'due_date' | 'scheduled_date'
 
@@ -55,7 +56,7 @@ export interface UseBlockRescheduleReturn {
 export function useBlockReschedule(): UseBlockRescheduleReturn {
   const setDue = useCallback(async (blockId: string, date: string | null) => {
     try {
-      await setDueDate(blockId, date)
+      unwrap(await commands.setDueDate(blockId, date))
     } catch (err) {
       logger.warn('useBlockReschedule', 'setDueDate failed', { blockId, date }, err)
       throw err
@@ -64,7 +65,7 @@ export function useBlockReschedule(): UseBlockRescheduleReturn {
 
   const setScheduled = useCallback(async (blockId: string, date: string | null) => {
     try {
-      await setScheduledDate(blockId, date)
+      unwrap(await commands.setScheduledDate(blockId, date))
     } catch (err) {
       logger.warn('useBlockReschedule', 'setScheduledDate failed', { blockId, date }, err)
       throw err
@@ -75,7 +76,7 @@ export function useBlockReschedule(): UseBlockRescheduleReturn {
     async (blockId: string, date: string): Promise<RescheduleResult> => {
       let useScheduledDate = false
       try {
-        const block = await getBlock(blockId)
+        const block = unwrap(await commands.getBlock(blockId))
         if (block.scheduled_date && !block.due_date) {
           useScheduledDate = true
         }

@@ -37,15 +37,28 @@ vi.mock('@/hooks/useIsTouch', () => ({
   useIsTouch: mockUseIsTouch,
 }))
 
-// Mock tauri IPC functions used by handleDateSelect
+// Mock the IPC commands used by handleDateSelect.
+//
+// #2927 — `useBlockReschedule` calls the generated bindings directly, so the
+// seam this suite stubs is `commands.*`, not the retired `@/lib/tauri`
+// wrapper. Spreading `actual.commands` keeps every other command real, and
+// the stubs resolve the `{ status, data }` envelope so the production
+// `unwrap` runs for real instead of being bypassed by a wrapper-level mock.
 const mockGetBlock = vi.fn()
 const mockSetDueDate = vi.fn()
 const mockSetScheduledDate = vi.fn()
-vi.mock('@/lib/tauri', () => ({
-  getBlock: (...args: unknown[]) => mockGetBlock(...args),
-  setDueDate: (...args: unknown[]) => mockSetDueDate(...args),
-  setScheduledDate: (...args: unknown[]) => mockSetScheduledDate(...args),
-}))
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getBlock: (...args: unknown[]) => mockGetBlock(...args),
+      setDueDate: (...args: unknown[]) => mockSetDueDate(...args),
+      setScheduledDate: (...args: unknown[]) => mockSetScheduledDate(...args),
+    },
+  }
+})
 
 // Mock Calendar to capture onSelect for simulated date selection
 let mockCalendarOnSelect: ((day: Date | undefined) => void) | undefined
@@ -694,11 +707,10 @@ describe('BlockListItem — reschedule button', () => {
 describe('BlockListItem — handleDateSelect', () => {
   it('calls getBlock then setDueDate on date selection (block has due_date)', async () => {
     mockGetBlock.mockResolvedValue({
-      id: 'block-1',
-      due_date: '2025-01-01',
-      scheduled_date: null,
+      status: 'ok',
+      data: { id: 'block-1', due_date: '2025-01-01', scheduled_date: null },
     })
-    mockSetDueDate.mockResolvedValue({})
+    mockSetDueDate.mockResolvedValue({ status: 'ok', data: {} })
 
     render(
       <ul>
@@ -721,11 +733,10 @@ describe('BlockListItem — handleDateSelect', () => {
 
   it('calls setScheduledDate when block has scheduled_date and no due_date', async () => {
     mockGetBlock.mockResolvedValue({
-      id: 'block-1',
-      due_date: null,
-      scheduled_date: '2025-01-01',
+      status: 'ok',
+      data: { id: 'block-1', due_date: null, scheduled_date: '2025-01-01' },
     })
-    mockSetScheduledDate.mockResolvedValue({})
+    mockSetScheduledDate.mockResolvedValue({ status: 'ok', data: {} })
 
     render(
       <ul>
@@ -747,11 +758,10 @@ describe('BlockListItem — handleDateSelect', () => {
 
   it('shows success toast on successful reschedule', async () => {
     mockGetBlock.mockResolvedValue({
-      id: 'block-1',
-      due_date: '2025-01-01',
-      scheduled_date: null,
+      status: 'ok',
+      data: { id: 'block-1', due_date: '2025-01-01', scheduled_date: null },
     })
-    mockSetDueDate.mockResolvedValue({})
+    mockSetDueDate.mockResolvedValue({ status: 'ok', data: {} })
 
     render(
       <ul>
@@ -793,9 +803,8 @@ describe('BlockListItem — handleDateSelect', () => {
 
   it('shows error toast when setDueDate fails', async () => {
     mockGetBlock.mockResolvedValue({
-      id: 'block-1',
-      due_date: '2025-01-01',
-      scheduled_date: null,
+      status: 'ok',
+      data: { id: 'block-1', due_date: '2025-01-01', scheduled_date: null },
     })
     mockSetDueDate.mockRejectedValue(new Error('set due failed'))
 
@@ -842,11 +851,10 @@ describe('BlockListItem — handleDateSelect', () => {
   // Screen-reader announcement after successful date pick
   it('announces task rescheduled after successful date pick', async () => {
     mockGetBlock.mockResolvedValue({
-      id: 'block-1',
-      due_date: '2025-01-01',
-      scheduled_date: null,
+      status: 'ok',
+      data: { id: 'block-1', due_date: '2025-01-01', scheduled_date: null },
     })
-    mockSetDueDate.mockResolvedValue({})
+    mockSetDueDate.mockResolvedValue({ status: 'ok', data: {} })
 
     render(
       <ul>

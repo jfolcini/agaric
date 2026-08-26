@@ -28,8 +28,6 @@ vi.mock('@/lib/tauri', () => ({
   queryByProperty: vi.fn(),
   batchResolve: vi.fn(),
   getBlock: vi.fn(),
-  setDueDate: vi.fn(),
-  setScheduledDate: vi.fn(),
 }))
 
 // perf-review Tier 2 #6 (2026-05-14) — mirror the PageBrowser mock so

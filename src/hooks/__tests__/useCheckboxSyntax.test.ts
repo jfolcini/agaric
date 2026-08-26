@@ -17,16 +17,28 @@ import { createStore, type StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
+import { commands } from '@/lib/bindings'
+import type { AppError } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { getProperty, setTodoState } from '@/lib/tauri'
 import type { PageBlockState } from '@/stores/page-blocks'
 
-vi.mock('@/lib/tauri', () => ({
-  setTodoState: vi.fn(),
-  // Checkbox-syntax DONE path now reads
-  // `blocked_by` via the single-key `getProperty` command.
-  getProperty: vi.fn(),
-}))
+// #2927 — the hook calls the generated bindings directly, so the seam this
+// suite stubs is `commands.*` rather than the retired `@/lib/tauri` wrapper.
+// Spreading `actual.commands` keeps every other command real, and stubbing at
+// the envelope level means the production `unwrap` runs for real.
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setTodoState: vi.fn(),
+      // Checkbox-syntax DONE path reads `blocked_by` via the single-key
+      // `get_property` command.
+      getProperty: vi.fn(),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -50,8 +62,8 @@ vi.mock('@/stores/undo', () => ({
   },
 }))
 
-const mockedSetTodoState = vi.mocked(setTodoState)
-const mockedGetProperty = vi.mocked(getProperty)
+const mockedSetTodoState = vi.mocked(commands.setTodoState)
+const mockedGetProperty = vi.mocked(commands.getProperty)
 const mockedLoggerError = vi.mocked(logger.error)
 const mockedToastError = vi.mocked(toast.error)
 
@@ -94,6 +106,47 @@ describe('useCheckboxSyntax', () => {
       { focusedBlockId: 'B1', state: 'DONE' },
       failure,
     )
+    expect(mockedToastError).toHaveBeenCalledWith('blockTree.setTaskStateFailed')
+  })
+
+  it('treats a { status: "error" } envelope as a failure, not a silent success (#2927)', async () => {
+    // The retired `@/lib/tauri` wrapper owned the `unwrap`; the call site now
+    // does. `commands.*` RESOLVES a `{ status: 'error' }` envelope instead of
+    // rejecting, so a call site that dropped `unwrap` would run the SUCCESS
+    // branch on a backend failure. No rejection-based test can see that — a
+    // rejected mock takes the `.catch` arm whether or not `unwrap` is there.
+    const appError: AppError = { kind: 'validation', message: 'bad state' }
+    mockedSetTodoState.mockResolvedValue({ status: 'error', error: appError })
+
+    const pageStore = {
+      getState: () => ({ blocks: [], blocksById: new Map() }),
+      setState: vi.fn(),
+    } as unknown as StoreApi<PageBlockState>
+
+    const { result } = renderHook(() =>
+      useCheckboxSyntax({
+        focusedBlockId: 'B1',
+        rootParentId: 'R1',
+        pageStore,
+        t: ((k: string) => k) as unknown as TFunction,
+      }),
+    )
+
+    await act(async () => {
+      result.current('DONE')
+      await Promise.resolve()
+    })
+
+    // Also pins the positional argument order of the migrated call.
+    expect(mockedSetTodoState).toHaveBeenCalledWith('B1', 'DONE')
+    await waitFor(() => {
+      expect(mockedLoggerError).toHaveBeenCalledWith(
+        'useCheckboxSyntax',
+        'setTodoState failed',
+        { focusedBlockId: 'B1', state: 'DONE' },
+        appError,
+      )
+    })
     expect(mockedToastError).toHaveBeenCalledWith('blockTree.setTaskStateFailed')
   })
 
@@ -175,9 +228,12 @@ describe('useCheckboxSyntax', () => {
 
   it('allows a subsequent invocation after the first settles (guard resets via .finally) (#1341)', async () => {
     // First call resolves so the guard resets; second call is then allowed.
-    mockedSetTodoState.mockResolvedValue(makeBlock({ id: 'B1', todo_state: 'DONE' }))
+    mockedSetTodoState.mockResolvedValue({
+      status: 'ok',
+      data: makeBlock({ id: 'B1', todo_state: 'DONE' }),
+    })
     // DONE path reads `blocked_by` via `getProperty`; resolve it (no deps).
-    mockedGetProperty.mockResolvedValue(null)
+    mockedGetProperty.mockResolvedValue({ status: 'ok', data: null })
 
     const pageStore = {
       getState: () => ({ blocks: [], blocksById: new Map() }),
