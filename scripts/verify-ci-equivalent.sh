@@ -1029,12 +1029,25 @@ if [ "${1:-}" = "--self-test" ]; then
 
     # RATCHET the documented divergence from `_validate.yml`'s `ci_re`. The
     # comment this replaces ("mirrors _validate.yml's classifier") went stale
-    # precisely because nothing checked it. Assert the difference is EXACTLY
-    # the `scripts/*.sh` arm: shell scripts are CI here and not there, while
-    # every other CI path agrees. If someone widens `_validate.yml` to match,
-    # this fails and the stale note gets updated with it.
-    _vy=".github/workflows/_validate.yml"
-    if [ -f "$_vy" ]; then
+    # precisely because nothing checked it. Assert the difference is EXACTLY:
+    #   (a) the `scripts/*.sh` arm — shell scripts are CI here, not there.
+    #   (b) the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
+    #       `.gitleaks.toml`) are anchored to the repo root in
+    #       `_validate.yml` (`^prek\.toml$`, …) but UNANCHORED here
+    #       (`prek\.toml$`, …), so a NESTED copy of one of those filenames
+    #       (e.g. `docs/prek.toml`) is CI here and not there too.
+    # Every other CI path — including these same filenames at the repo TOP
+    # LEVEL, where anchored and unanchored agree — must still agree with
+    # _validate.yml, or the divergence is wider than documented.
+    #
+    # `_vy` is resolved via `${BASH_SOURCE[0]}`, not a bare relative path:
+    # this self-test runs BEFORE the `cd "$REPO_ROOT"` further down, so a
+    # relative path would silently vanish (and this whole ratchet with it)
+    # when invoked from any directory other than the repo root.
+    _vy="$(dirname "${BASH_SOURCE[0]}")/../.github/workflows/_validate.yml"
+    if [ ! -f "$_vy" ]; then
+        st_bad "divergence ratchet: found _validate.yml" "no such file: $_vy"
+    else
         _vci=$(sed -n "s/^[[:space:]]*ci_re='\(.*\)'[[:space:]]*$/\1/p" "$_vy" | head -1)
         if [ -z "$_vci" ]; then
             st_bad "divergence ratchet: found _validate.yml's ci_re" "no ci_re= line matched"
@@ -1048,8 +1061,24 @@ if [ "${1:-}" = "--self-test" ]; then
                 st_bad "divergence ratchet: scripts/*.sh is CI here and NOT in _validate.yml" \
                     "ours=$_ours theirs=$_theirs — if _validate.yml gained a scripts/ arm, update the divergence note"
             fi
-            # ...and every OTHER CI path must still agree, or the divergence is
-            # wider than documented.
+            # The four toml arms are unanchored here but anchored there — a
+            # NESTED copy of each filename must diverge the same documented
+            # way scripts/*.sh does above.
+            for _p in docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml; do
+                _a=no; _b=no
+                printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _a=yes
+                printf '%s\n' "$_p" | grep -qE "$_vci" && _b=yes
+                if [ "$_a" = yes ] && [ "$_b" = no ]; then
+                    st_ok "divergence ratchet: nested $_p is CI here and NOT in _validate.yml (documented, unanchored-toml divergence)"
+                else
+                    st_bad "divergence ratchet: nested $_p is CI here and NOT in _validate.yml" \
+                        "ours=$_a theirs=$_b — if the toml arms got (un)anchored to match, update the divergence note"
+                fi
+            done
+            # ...and every OTHER CI path — including these same filenames at
+            # the repo TOP LEVEL, where anchored and unanchored agree — must
+            # still agree with _validate.yml, or the divergence is wider
+            # than documented.
             _mismatch=""
             for _p in .github/workflows/ci.yml prek.toml .taplo.toml lychee.toml .gitleaks.toml; do
                 _a=no; _b=no
@@ -1058,9 +1087,9 @@ if [ "${1:-}" = "--self-test" ]; then
                 [ "$_a" = "$_b" ] || _mismatch="$_mismatch $_p(ours=$_a,theirs=$_b)"
             done
             if [ -z "$_mismatch" ]; then
-                st_ok "divergence ratchet: every non-scripts CI path agrees with _validate.yml"
+                st_ok "divergence ratchet: every top-level non-scripts CI path agrees with _validate.yml"
             else
-                st_bad "divergence ratchet: every non-scripts CI path agrees with _validate.yml" "$_mismatch"
+                st_bad "divergence ratchet: every top-level non-scripts CI path agrees with _validate.yml" "$_mismatch"
             fi
         fi
     fi

@@ -171,6 +171,11 @@ jobs:
         # that cannot serve the index no longer reds this job as a code
         # failure; the INSTALL decides. Measured trace + exit codes in
         # .github/actions/apt-install/action.yml.
+        #
+        # `dbus-run-session` (in the `dbus-x11` package below) lives here.
+        # Without it the smoke step's dbus mitigation silently degrades on
+        # every run (it warns and boots without a session bus), making the
+        # mitigation depend on whatever the runner image happens to ship.
         uses: ./.github/actions/apt-install
         with:
           packages: >-
@@ -183,10 +188,6 @@ jobs:
             patchelf
             pkg-config
             xvfb
-            # `dbus-run-session` lives here. Without it the smoke step's dbus
-            # mitigation silently degrades on every run (it warns and boots
-            # without a session bus), making the mitigation depend on whatever
-            # the runner image happens to ship.
             dbus-x11
 
       - name: Setup Node.js
@@ -706,12 +707,25 @@ jobs:
             # workspace is /home/runner/work/agaric/agaric, so an unanchored
             # match sweeps in every process whose cmdline embeds the repo path
             # and buries the wchan rows that are the point of this capture.
-            snap_pids="$(pgrep -f "$(basename "$APPIMAGE_BIN")|[Xx]vfb|dbus-run-session" | paste -sd, - || true)"
+            #
+            # That basename arm alone only matches the top-level AppImage
+            # runtime wrapper. With APPIMAGE_EXTRACT_AND_RUN=1 the runtime
+            # extracts to /tmp/appimage_extracted_<hex> and execs
+            # <dir>/AppRun, which execs <dir>/usr/bin/agaric — neither
+            # cmdline contains the AppImage's basename, so the real app
+            # process (the one the wchan capture exists for) was silently
+            # dropped from the snapshot. Add an `appimage_extracted` arm to
+            # catch AppRun and the app under it. It stays as narrow as the
+            # basename arm: that substring is distinctive to the extraction
+            # tmpdir and never appears in the runner's own workspace path
+            # (/home/runner/work/agaric/agaric), so it does not reopen the
+            # noise problem the basename-only match was introduced to close.
+            snap_pids="$(pgrep -f "$(basename "$APPIMAGE_BIN")|appimage_extracted|[Xx]vfb|dbus-run-session" | paste -sd, - || true)"
             if [ -n "$snap_pids" ]; then
               PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p "$snap_pids" 2>&1)" \
                 || PROC_SNAPSHOT="(ps failed for pids '$snap_pids': $PROC_SNAPSHOT)"
             else
-              PROC_SNAPSHOT="(no agaric/Xvfb/dbus processes matched at snapshot time)"
+              PROC_SNAPSHOT="(no agaric/appimage_extracted/Xvfb/dbus processes matched at snapshot time)"
             fi
 
             # #4418 note 5 — re-probe the group before giving up on it. The guard
