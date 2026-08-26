@@ -1601,6 +1601,71 @@ mod tests {
         );
     }
 
+    /// #4018 — pins the classifier's actual input, not just its output.
+    ///
+    /// [`is_write_contention`] only ever sees whatever crosses the `?` at
+    /// `purge_blocks_by_ids_inner`'s `CommandTx::begin_immediate(..).await?`
+    /// UNWRAPPED. Every other #4018 test in this file drives the classifier
+    /// with either a hand-built `AppError` or a real error observed several
+    /// frames away from that boundary (`purge_roots_one_at_a_time`,
+    /// `tombstone_purge`). None of them would notice a future change that
+    /// rewraps the error AT that boundary — e.g. into `AppError::Internal`
+    /// — which would make the classifier silently start returning `false`
+    /// for the exact busy/locked shape it exists to catch, and every caller
+    /// would fall back into the write-lock storm this whole mechanism was
+    /// built to prevent.
+    ///
+    /// Drives a REAL `SQLITE_BUSY` through `purge_blocks_by_ids_inner`
+    /// itself and asserts the concrete `AppError` variant it crosses the
+    /// boundary as — not merely that [`is_write_contention`] accepts it,
+    /// which a rewrap could still satisfy by accident for the wrong reason.
+    #[tokio::test]
+    async fn purge_blocks_by_ids_inner_surfaces_unwrapped_contention_at_the_boundary_4018() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let setup = crate::db::init_pool(&db_path).await.unwrap();
+
+        let busy_opts = agaric_store::db::base_connect_options(&db_path)
+            .busy_timeout(std::time::Duration::from_millis(50));
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(busy_opts)
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        // Another connection holds the single SQLite write lock, so
+        // `purge_blocks_by_ids_inner`'s own `BEGIN IMMEDIATE` — its very
+        // first statement — fails busy before it ever reads `block_ids`.
+        let holder = setup.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+        let err = crate::commands::blocks::crud::purge_blocks_by_ids_inner(
+            &pool,
+            "test-device",
+            &mat,
+            vec!["PBBIBUSY".to_string()]
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        )
+        .await
+        .expect_err("BEGIN IMMEDIATE must fail while another connection holds the write lock");
+        drop(holder);
+
+        assert!(
+            matches!(err, AppError::Database(sqlx::Error::Database(_))),
+            "the boundary must surface the sqlx driver error UNWRAPPED as \
+             `AppError::Database` — a future rewrap (e.g. into `AppError::Internal`) \
+             would make `is_write_contention` start returning false for the exact \
+             failure it exists to catch; got {err:?}"
+        );
+        assert!(
+            is_write_contention(&err),
+            "and the classifier must actually accept the shape this boundary \
+             produces; got {err}"
+        );
+    }
+
     /// Issue #157 sub-item I — `loro_snapshot_if_dirty` is safe to
     /// call when the loro shared state has not been initialised.
     #[tokio::test]

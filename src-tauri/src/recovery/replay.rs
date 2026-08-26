@@ -279,6 +279,18 @@ pub(super) async fn compacted_floor_above(
 /// stop being refreshed, the frozen-`MIN` boot stall of #3309 comes back;
 /// fix that at the source (the persist path), not by narrowing this bound.
 ///
+/// # Logging trade-off (#4018)
+///
+/// A gap of exactly one op (`cursor - reset_to == 1`, snapshot present) logs
+/// at `debug` rather than `warn` (see `routine_one_op_rewind` below) because
+/// that is the routine healthy-boot signature. But the same gap is also what
+/// a crash that loses exactly one materialised op produces — the two cases
+/// are indistinguishable from this function's inputs, so the downgrade
+/// silently covers both. The rewind still runs and the state is still fully
+/// repaired either way; this is an accepted logging trade-off (a genuinely
+/// one-op-stale snapshot goes unremarked at boot), not a defect. Anything
+/// wider than one op is still a loud `warn`.
+///
 /// MUST be called at boot only (after snapshot rehydrate, before the
 /// replay walk).
 ///

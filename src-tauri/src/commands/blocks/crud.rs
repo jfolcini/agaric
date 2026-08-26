@@ -2542,10 +2542,12 @@ pub async fn purge_blocks_by_ids_inner(
     // at that point is to seed `block_cleanup::purge_subtree_tables` from an
     // unbounded cohort rather than from `cte`, not to weaken the refusal — in
     // BOTH CTE-seeded variants (here and `purge_block_inner`, which carries
-    // the same `>= 99` refusal). `purge_all_deleted_inner` is unaffected: it
-    // shares the cascade helper but seeds it from the FLAT
-    // `deleted_at IS NOT NULL` selection, so it has no depth cap to saturate
-    // and carries no probe.
+    // the same `>= 99` refusal). `purge_all_deleted_inner` is unaffected: its
+    // roots come from its own op-log-derived query (structural fallback and
+    // all, see the comment above it), but the satellite-table cascade it
+    // hands to `purge_subtree_tables` is seeded from a flat "every
+    // soft-deleted block" selection rather than a recursive CTE — so that
+    // cascade has no depth cap to saturate and carries no probe.
     let max_depth: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(sqlx::AssertSqlSafe(
         format!("{cte}SELECT MAX(depth) FROM descendants"),
     ))

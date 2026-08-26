@@ -522,27 +522,33 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// must not turn into a reason for the surrounding snapshot pass to fail.
 /// Returns the number of rows advanced.
 ///
-/// ## The RESET guard (#4020)
+/// ## The generation guard (#4020)
 ///
 /// `registry` + `generation` are the caller's pre-collect clear-generation
 /// capture (#607). Every premise above is a statement about the generation
-/// the enclosing pass observed, so a [`LoroEngineRegistry::clear`] (snapshot
-/// RESET) landing in between invalidates all of them at once: `attempted` and
-/// `installed` describe engines that no longer exist, and the rows they would
-/// vouch for belong to a wiped table. This used to be inherited from
+/// the enclosing pass observed, so either a [`LoroEngineRegistry::clear`]
+/// (snapshot RESET) or a [`LoroEngineRegistry::evict_space`] (a purged
+/// space's engine dropped mid-pass, #2910) landing in between invalidates
+/// all of them at once: `attempted` and `installed` describe engines that
+/// may no longer exist, and the rows they would vouch for may belong to a
+/// wiped or shrunk table. This used to be inherited from
 /// [`save_all_engines`]' per-pair check, which does not run when the dirty set
 /// is EMPTY — the exact quiescent case this function was written for. Checking
 /// it here at entry makes the exclusion a property of this function rather
 /// than of the caller's control flow.
 ///
-/// The pre-#4020 code was not observably broken: a RESET wipes every
-/// `loro_doc_state` row inside its own transaction, so the UPDATEs matched
-/// zero rows anyway. That is a property of the reset's shape, not of this
-/// function, and it is not the kind of thing to leave load-bearing. For the
-/// same reason the check is NOT repeated per UPDATE the way the enclosing
-/// loop repeats it around its `INSERT OR REPLACE`: that loop writes BLOBS,
-/// which a wiped table would resurrect, whereas every write here is an
-/// `UPDATE … WHERE space_id = ?` that matches nothing once the rows are gone.
+/// Neither cause was observably broken pre-#4020: a RESET wipes every
+/// `loro_doc_state` row inside its own transaction, and an eviction is
+/// preceded, in that SAME transaction, by the deletion of that one space's
+/// row (`purge_block_sql_cascade`, #2910) — so the UPDATEs matched zero
+/// rows for the affected space(s) either way. That is a property of the two
+/// callers' shapes, not of this function, and it is not the kind of thing to
+/// leave load-bearing. For the same reason the check is NOT repeated per
+/// UPDATE the way the enclosing loop repeats it around its
+/// `INSERT OR REPLACE`: that loop writes BLOBS, which a wiped or
+/// re-created row would resurrect, whereas every write here is an
+/// `UPDATE … WHERE space_id = ?` that matches nothing once the row backing
+/// it is gone.
 async fn advance_clean_space_watermarks(
     pool: &SqlitePool,
     applied_through_seq: i64,
@@ -558,9 +564,10 @@ async fn advance_clean_space_watermarks(
     }
     if registry.generation() != generation {
         tracing::warn!(
-            "loro:save_all_engines: registry cleared before the clean-space \
-             watermark refresh (snapshot RESET, #607/#4020); skipping it — the \
-             rows it would advance belong to the pre-reset generation",
+            "loro:save_all_engines: registry generation changed before the clean-space \
+             watermark refresh (snapshot RESET or space eviction, #607/#4020/#2910); \
+             skipping it — the rows it would advance belong to a generation this pass \
+             no longer observes",
         );
         return 0;
     }

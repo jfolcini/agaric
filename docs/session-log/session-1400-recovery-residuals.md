@@ -99,5 +99,9 @@ all clean. 455 recovery/tombstone/attachment/replay/maintenance tests pass; plus
 `agaric-engine` and 193 in `agaric` under narrower filters, because the required filter does
 not reach the engine crate's new test.
 
-Final diff is 1066 insertions against the inherited 549 — the growth is **entirely tests**.
-Production code net shrank.
+Against `main`, this is a single pure-addition diff: 1066 insertions, 38 deletions across 7
+files in `src-tauri` (1169/38 across 8 once this session log is counted). The `if false &&`
+stub described above lived only in the uncommitted working tree this session started from —
+`main` carries none of it, and this branch has no earlier commit to diff against — so there
+is no prior baseline to subtract and no "production code net shrank" comparison to make here.
+`is_write_contention`, both bail-out arms, and every falsification test in this diff are new.
