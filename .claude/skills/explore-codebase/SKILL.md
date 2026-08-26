@@ -5,7 +5,15 @@ description: Navigate and understand codebase structure using the knowledge grap
 
 ## Explore Codebase
 
-Use the code-review-graph MCP tools to explore and understand the codebase.
+> **Requires the optional `code-review-graph` MCP server.** Every tool named below
+> (`detect_changes`, `query_graph`, `semantic_search_nodes`, `refactor_tool`, …) comes from
+> it. It is declared in [`.mcp.json`](../../../.mcp.json) but is **not** started unless
+> `uvx` is installed, and a client may disable it — so confirm the tools respond before
+> following these steps. If they do not, fall back to symbol-aware tools if your agent has
+> them (see [AGENTS.md § Code Navigation](../../../AGENTS.md#code-navigation)) or to
+> Grep/Glob/Read. Do not retry a tool that is simply absent.
+
+Use the code-review-graph MCP tools to explore and understand the codebase, **when that server is available** (see the note above).
 
 ### Steps
 

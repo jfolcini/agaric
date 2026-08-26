@@ -486,9 +486,19 @@ For orchestrator workflow details, see [the `batch-issues` skill § 2. BUILD](.c
 <!-- code navigation -->
 ## Code Navigation
 
-**This project runs the [Serena](https://github.com/oraios/serena) MCP server. Its symbol
-tools are the primary way to read and edit code** — they are cheaper than file scanning and
-resolve symbols rather than text:
+**Prefer symbol-aware navigation over text scanning when your agent has it.** Symbol tools
+resolve definitions and references instead of matching strings, so they are both cheaper and
+correct across renames, re-exports and same-named symbols.
+
+Two servers are relevant, and they differ in where they are configured:
+
+- **`code-review-graph`** is the one this repo declares, in [`.mcp.json`](.mcp.json). It is
+  **optional** — see [CONTRIBUTING.md](CONTRIBUTING.md#optional-code-review-graph-mcp) for
+  how to enable it. It is not started unless `uvx` is present, and a client may disable it,
+  so **do not assume it is available**: probe, and fall back rather than stalling.
+- **[Serena](https://github.com/oraios/serena)** is configured *client-side* (in the agent's
+  own MCP config, not in this repo), so whether it is present depends on who is driving. When
+  it is, its symbol tools are the primary read/edit path:
 
 | Task | Tool |
 | ---- | ---- |
@@ -498,20 +508,22 @@ resolve symbols rather than text:
 | Declarations / implementations | `find_declaration` / `find_implementations` |
 | Edit a symbol in place | `replace_symbol_body` |
 | Insert near a symbol | `insert_before_symbol` / `insert_after_symbol` |
-| Rename / move / delete | `rename` / `move` / `safe_delete_symbol` |
+| Rename a symbol | `rename_symbol` |
+| Delete a symbol safely | `safe_delete_symbol` |
 
-Fall back to Grep/Glob/Read when Serena fails on the target, when the file is not parseable
-as code, when you need a regex sweep across many files that the symbolic tools cannot express
-(fine as a *discovery* step — follow up with Serena for the reads and edits), or when a
-handful of lines is genuinely all you need.
+Use Grep/Glob/Read when no symbol server is available, when the tool fails on the target,
+when the file is not parseable as code, when you need a regex sweep the symbolic tools cannot
+express (fine as a *discovery* step — follow up symbolically for the reads and edits), or
+when a handful of lines is genuinely all you need. **Neither server is a prerequisite for
+building, testing or contributing.**
 
-**Serena's root is the MAIN checkout.** A subagent working in a git worktree that uses
-Serena's *editing* tools writes into the main checkout, not the worktree. Reads are safe;
-edits from a worktree must go through Read/Write/Edit with absolute paths.
+**A symbol server's root is the MAIN checkout.** A subagent working in a git worktree that
+uses *editing* tools writes into the main checkout, not the worktree. Reads are safe; edits
+from a worktree must go through Read/Write/Edit with absolute paths.
 
-> **A note on `code-review-graph`.** `.mcp.json` declares a `code-review-graph` server, but it
-> is listed in `disabledMcpjsonServers` in `.claude/settings.local.json` and is **not
-> available** in sessions. This section previously instructed agents to always prefer its
-> tools over Grep/Glob/Read, and claimed the graph auto-updated via hooks — there is no such
-> hook (the only entry in `.claude/settings.json` is `SessionStart`). Do not attempt those
-> tools unless the server is re-enabled.
+> **History.** This section previously told agents to **always** use the `code-review-graph`
+> tools before Grep/Glob/Read, and stated that the graph "auto-updates on file changes (via
+> hooks)". The hook claim is not backed by anything in the tree — the only entry in
+> [`.claude/settings.json`](.claude/settings.json) is `SessionStart` — and the unconditional
+> instruction is wrong for an optional server that is frequently absent or disabled, which
+> made the file's most emphatic rule its least reliable one.

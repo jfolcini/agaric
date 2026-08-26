@@ -59,7 +59,7 @@ Opening the repo in VS Code prompts you to install the workspace-recommended ext
 
 ### Optional: code-review-graph MCP
 
-[AGENTS.md](AGENTS.md) asks AI agents working in this repo to prefer the **code-review-graph** MCP tools (graph queries, impact radius, review context) over raw Grep/Glob/Read. That MCP is **optional** — it is only needed if you drive the repo with an MCP-aware agent, and human contributors can skip it entirely.
+[AGENTS.md § Code Navigation](AGENTS.md#code-navigation) asks AI agents working in this repo to prefer symbol-aware navigation over raw Grep/Glob/Read **where it is available** — the **code-review-graph** MCP tools (graph queries, impact radius, review context) are one such option. That MCP is **optional** — it is only needed if you drive the repo with an MCP-aware agent, and human contributors can skip it entirely.
 
 It is wired in the tracked [`.mcp.json`](.mcp.json), which launches the server via [`uvx`](https://docs.astral.sh/uv/) (part of the `uv` Python tool runner):
 
@@ -69,7 +69,7 @@ It is wired in the tracked [`.mcp.json`](.mcp.json), which launches the server v
 uvx code-review-graph serve
 ```
 
-`uvx` fetches and runs `code-review-graph` without a separate global install, so once `uv` is on your `PATH` no extra setup is required. The server must be **running** for the AGENTS.md "use the graph first" workflow to apply; if it is not available, agents simply fall back to Grep/Glob/Read.
+`uvx` fetches and runs `code-review-graph` without a separate global install, so once `uv` is on your `PATH` no extra setup is required. The server must be **running** for the graph tools to be usable at all; if it is not available, agents simply fall back to Grep/Glob/Read.
 
 ## Development workflow
 

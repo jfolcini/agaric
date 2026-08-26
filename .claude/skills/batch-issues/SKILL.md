@@ -179,8 +179,8 @@ directly, update docs, or pre-read sources for the next batch.
 **Never idle-wait on a slow subagent — run another issue concurrently.** When the active
 issue's subagents are busy (a Tauri/Rust compile runs minutes), start another independent
 issue rather than scheduling a long wakeup. **Up to 10 PRs may be open at once** (maintainer
-preference, 2026-06-06) — keep enough in flight to fill idle windows while keeping real
-oversight; don't exceed 5.
+preference, raised from 5 on 2026-06-19; reconfirmed 2026-08-26) — keep enough in flight to
+fill idle windows while keeping real oversight; don't exceed 10.
 
 - Choose a second issue whose files don't overlap, ideally a different toolchain (frontend
   while Rust compiles) so builds don't contend on the cargo target lock.
@@ -532,7 +532,9 @@ async over many minutes. Instead:
    raised from 5 on 2026-06-19; reconfirmed 2026-08-26). `gh pr list --author @me --state open` shows what's outstanding if you lose
    track. Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs;
    for own green PRs blocked only by `REVIEW_REQUIRED`, `--admin` is sanctioned — but only
-   when the required checks (`validate-all`, `dco`) are green.
+   when the required checks (`validate-all`, `dco`) are green. Those are the
+   branch-protection CONTEXT names; `statusCheckRollup` reports the first as
+   `validate / validate-all`, so match on the suffix — see the recipe above.
 
 **An ABSENT check is not a passing check.** On a freshly-pushed PR the required checks do
 not exist yet, and that is exactly when you poll. A filter like
@@ -543,12 +545,41 @@ as success. A watcher built this way reported `ALL_SETTLED` while four PRs still
 queued (2026-08-26). Distinguish three states, and require a second independent condition:
 
 ```bash
-raw=$(gh pr checks "$pr" --json name,state,conclusion)
-va=$(jq -r '[.[]|select(.name=="validate-all")] | if length==0 then "ABSENT"
-            else (.[0].conclusion // "RUNNING") end' <<<"$raw")
-still=$(jq -r '[.[]|select(.state!="COMPLETED")]|length' <<<"$raw")
-# settled ONLY when va is terminal AND still == 0
+# `gh pr view --json statusCheckRollup` — NOT `gh pr checks`, which has no
+# --json flag at all in gh 2.45 ("unknown flag: --json").
+raw=$(gh pr view "$pr" --json statusCheckRollup \
+        --jq '[.statusCheckRollup[] | {n: (.name // .context), s: (.conclusion // .state)}]')
+[ -z "$raw" ] || [ "$raw" = "[]" ] && { echo "$pr: NO CHECKS YET — not a pass"; return; }
+# Match the SUFFIX: the check is reported as `validate / validate-all`
+# (job name + `/`), never bare `validate-all`.
+va=$(jq -r '[.[] | select(.n | test("validate-all$"))]
+            | if length == 0 then "ABSENT" else .[0].s end' <<<"$raw")
+pend=$(jq -r '[.[] | select(.s | IN("PENDING","IN_PROGRESS","QUEUED","EXPECTED",""))] | length' <<<"$raw")
+bad=$(jq -r '[.[] | select(.s | IN("FAILURE","TIMED_OUT","ERROR","CANCELLED")) | .n] | unique | join(",")' <<<"$raw")
+echo "$pr: validate-all=$va pending=$pend failing=${bad:-none}"
+# green ONLY when: va == SUCCESS AND pend == 0 AND bad is empty
 ```
+
+Real output, run against this PR and its sibling while the sibling's CI had not yet
+dispatched — the second line is the failure mode this whole section is about:
+
+```text
+4420: validate-all=SUCCESS pending=0 failing=none
+4421: NO CHECKS YET — not a pass
+```
+
+Three traps, every one of which an earlier draft of this very recipe fell into:
+
+1. **`gh pr checks` has no `--json`** in gh 2.45 — it exits `unknown flag: --json`, `raw`
+   comes back empty, and every downstream `jq` yields the empty string, so the guard reads
+   as "nothing failing". `.conclusion` and a `COMPLETED` status belong to
+   `gh pr view --json statusCheckRollup`; do not mix fields between the two commands.
+2. **The check is named `validate / validate-all`.** `ci.yml` calls `_validate.yml` from a
+   job named `validate`, so the reported name carries that prefix. An `== "validate-all"`
+   match is permanently `ABSENT`.
+3. **`state` is never `COMPLETED`** — it is `SUCCESS`/`FAILURE`/`IN_PROGRESS`/`SKIPPED`/
+   `NEUTRAL`. A `!= "COMPLETED"` filter counts every check, so a "nothing outstanding"
+   condition written that way can never become true.
 
 Treat `ABSENT` as *not started* — a reason to keep waiting. More generally: an empty result
 set is absence of evidence, never evidence of success. Before merging on a scripted green,

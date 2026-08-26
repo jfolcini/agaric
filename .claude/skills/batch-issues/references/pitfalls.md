@@ -109,8 +109,13 @@ git show --stat HEAD                    # after ANY reset-and-recommit
 git diff --stat origin/main...HEAD      # deletions you can't explain == a revert
 ```
 
-Same exposure applies to `git rebase origin/main`, `git merge origin/main` and
-`git checkout origin/main -- <path>` in a shared-`.git` worktree. If a batch outlives a
+The signature above — unexplained DELETIONS — is specific to moving HEAD forward while
+keeping an older tree. `git reset --soft` does exactly that; `git rebase origin/main` can
+produce it too, by replaying your commits onto a base whose newer content they then
+overwrite. A `git merge origin/main` does NOT: it records both parents and keeps the merged
+content. Nor does `git checkout origin/main -- <path>`, which stages main's *newer* version
+of that path. Those two are still worth care in a shared-`.git` worktree — they read a ref a
+concurrent agent can move — but they fail in other ways, not this one. If a batch outlives a
 merge cycle, capture the base SHA at start and use the SHA thereafter.
 
 ## Lint / format

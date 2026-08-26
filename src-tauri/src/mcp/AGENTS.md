@@ -4,7 +4,7 @@
 
 ## Production framing = `rmcp` adapter
 
-The production path for MCP `tools/list` and `tools/call` dispatch is **`RmcpAdapter`** in `rmcp_adapter.rs` (renamed from `RmcpReadOnlyAdapter` in #693 — it serves BOTH surfaces, parameterised on `McpSurface` so `get_info` advertises the surface it actually fronts). The historical hand-rolled JSON-RPC framing in `server.rs` (`make_success`, `parse_request`, `dispatch`, `handle_*`) was deleted when MAINT-111 landed (`60c15329b`, "rmcp adapter is the sole MCP server"). **Do not reintroduce hand-rolled framing**; if you need a new MCP method, add it via `rmcp`'s `ServerHandler` trait impl.
+The production path for MCP `tools/list` and `tools/call` dispatch is **`RmcpAdapter`** in `rmcp_adapter.rs` (renamed from `RmcpReadOnlyAdapter` in #693 — it serves BOTH surfaces, parameterised on `McpSurface` so `get_info` advertises the surface it actually fronts). The historical hand-rolled JSON-RPC framing in `server.rs` (`make_success`, `parse_request`, `dispatch`, `handle_*`) was deleted when MAINT-111 landed (commit `60c15329b`, "chore(mcp): close MAINT-111 — rmcp adapter is the sole MCP server"). That work predates this repo's PR workflow, so there is no `#NNNN` to cite; the SHA will not resolve in a shallow (`--depth 1`) clone. **Do not reintroduce hand-rolled framing**; if you need a new MCP method, add it via `rmcp`'s `ServerHandler` trait impl.
 
 `run_connection` in `server.rs` is the per-connection lifecycle wrapper: it owns the disconnect grace period + `McpLifecycle::active_connections` counter, then delegates the wire loop to `adapter.serve(stream)`. **Touch the lifecycle wrapper for connection-level concerns (grace, listener teardown); touch the adapter for tool dispatch.**
 
