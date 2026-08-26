@@ -135,6 +135,21 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # Defined up here so `--self-test` below can drive it directly.
 CI_PATH_RE='^\.github/|^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
 
+# Shell scripts the RUST phases depend on. These are CI-attributable for
+# Phase A purposes (shellcheck + their self-tests still run), but a change to
+# one also has to re-run the Rust phases, because each determines what those
+# phases DO:
+#
+#   setup-dev-db.sh          provisions the dev.db that Phase D/D2's online
+#                            `sqlx::query!` macros compile against
+#   check-sqlx-cache-drift.sh  drives Phase E's cache-drift semantics
+#   test-related-rust.sh     selects WHICH Rust tests Phase D runs
+#
+# Without this, attributing `scripts/*.sh` to CI silently skipped the dev.db
+# migration-gap preflight — which is gated on HAS_RS — for the very script
+# that provisions dev.db.
+RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.sh$'
+
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
 # tracked path, and the convention here is to symlink it from the main
@@ -966,6 +981,29 @@ if [ "${1:-}" = "--self-test" ]; then
     st_ci '.cargo/config.toml'              no  'cargo config is NOT CI (must fail closed)'
     st_ci 'bootstrap.sh'                    no  'a ROOT-level *.sh is NOT CI (must fail closed)'
     st_ci 'src-tauri/src/lib.rs'            no  'Rust is not CI'
+    # A CI-attributed script may ALSO need the Rust phases. Attribution and
+    # Rust-relevance are independent: these are CI (so Phase A runs their
+    # self-tests) AND set HAS_RS (so the phases they govern re-run).
+    st_rs() {  # <path> <expected: yes|no> <label>
+        local got=no
+        printf '%s\n' "$1" | grep -qE "$RS_SCRIPT_RE" && got=yes
+        if [ "$got" = "$2" ]; then st_ok "RS-script gate: $3"
+        else st_bad "RS-script gate: $3" "path '$1' matched=$got, expected $2"; fi
+    }
+    st_rs 'scripts/setup-dev-db.sh'          yes 'provisions the dev.db Phase D/E compile against'
+    st_rs 'scripts/check-sqlx-cache-drift.sh' yes 'drives Phase E cache-drift semantics'
+    st_rs 'scripts/test-related-rust.sh'     yes 'selects which Rust tests Phase D runs'
+    st_rs 'scripts/push.sh'                  no  'a plain shell script does NOT force the Rust phases'
+    st_rs 'scripts/verify-ci-equivalent.sh'  no  'nor does this verifier itself'
+    # ...and the classifier must actually CONSULT it. Driving the constant
+    # alone would pass against a constant nothing reads — the exact shape of
+    # the `unrec_ci` copy this file already got wrong once.
+    if grep -qE '^[[:space:]]*has_match "\$RS_SCRIPT_RE" && HAS_RS=1$' "${BASH_SOURCE[0]}"; then
+        st_ok "RS-script gate: the classifier consults RS_SCRIPT_RE"
+    else
+        st_bad "RS-script gate: the classifier consults RS_SCRIPT_RE" "no has_match call found"
+    fi
+
     # The fail-closed arm must not carry its own copy of the pattern.
     if grep -qE '^[[:space:]]*unrec_ci="\$CI_PATH_RE"$' "${BASH_SOURCE[0]}"; then
         st_ok "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it"
@@ -2266,6 +2304,8 @@ if [ "$CHANGED_OK" = "0" ]; then
 else
     # Backend: Rust sources, the crate manifests/lockfile, shipped migrations.
     has_match '\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$' && HAS_RS=1
+    # ...and the shell scripts the Rust phases depend on (see RS_SCRIPT_RE).
+    has_match "$RS_SCRIPT_RE" && HAS_RS=1
     # Frontend: TS/JS/CSS sources, e2e specs, and the FE build/config surface.
     has_match '^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$' && HAS_TS=1
     # CI/tooling: workflows plus the lint-tool configs the CI lint job keys on.
@@ -2277,8 +2317,18 @@ else
     # agaric-mcp release build + UDS smoke + externalBin pin verification.
     has_match "$MCP_PATH_RE" && HAS_MCP=1
 
-    # Fail-closed for UNRECOGNIZED non-docs paths (mirrors _validate.yml's
-    # classifier): a changed file matching neither docs nor any known category
+    # Fail-closed for UNRECOGNIZED non-docs paths.
+    #
+    # DIVERGENCE FROM `_validate.yml` (#4419, 2026-08-26): this classifier
+    # attributes `scripts/*.sh` to CI (see CI_PATH_RE); `_validate.yml`'s
+    # `ci_re` does NOT, and its comment still names a root `*.sh` as
+    # unrecognized. So a shell-only push runs Phase A locally while CI runs
+    # the full suite. That asymmetry is deliberate and in the SAFE direction
+    # — CI does strictly more than the local gate, never less — but it means
+    # this is no longer a mirror, and nothing ratchets the parity. Widening
+    # `_validate.yml` to match is a separate change with its own blast radius.
+    #
+    # Otherwise mirrors `_validate.yml`'s classifier: a changed file matching neither docs nor any known category
     # (frontend/backend/ci) — e.g. rust-toolchain.toml, .cargo/config.toml, a
     # root *.sh — is a build/toolchain change we cannot attribute to a suite.
     # Without this the per-category SKIP below would drop nearly every hook for

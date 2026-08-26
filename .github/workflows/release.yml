@@ -632,6 +632,34 @@ jobs:
             fi
             [ -z "$code" ] && code="timeout"
 
+            # #4418 note 1 — SNAPSHOT PROCESS STATE BEFORE KILLING ANYTHING.
+            # The diagnostics below used to `pgrep` after the reap, so in the
+            # `timeout` (hang) case — the one `wchan` exists for — the target was
+            # already dead and it printed "(no processes remain)". This step's
+            # whole justification is that 0.9.9 gave us no kernel-level datum;
+            # capturing after the kill would have reproduced exactly that.
+            #
+            # `wchan` is the payload: for a process blocked rather than crashed,
+            # the kernel function it is waiting in names the cause.
+            snap_pids="$(pgrep -f 'agaric|[Xx]vfb|dbus-run-session' | tr '\n' ' ' || true)"
+            if [ -n "$snap_pids" ]; then
+              # shellcheck disable=SC2086  # deliberate split into -p arguments
+              PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p $snap_pids 2>/dev/null || true)"
+            else
+              PROC_SNAPSHOT="(no agaric/Xvfb/dbus processes)"
+            fi
+
+            # #4418 note 5 — re-probe the group before giving up on it. The guard
+            # above clears `pgid` when `ps` beat setsid()'s return, but by now the
+            # child HAS execve'd into the new group, so a second read usually finds
+            # it. Killing `$app_pid` alone in that window would orphan
+            # dbus-run-session -> AppRun -> app into the next attempt and past the
+            # step — leaking the very tree the reap exists to collect.
+            if [ -z "$pgid" ]; then
+              pgid=$(ps -o pgid= -p "$app_pid" 2>/dev/null | tr -d ' ')
+              [ "$pgid" = "$own_pgid" ] && pgid=""
+            fi
+
             # Reap the GROUP, not just the leader.
             if [ -n "$pgid" ]; then
               kill -TERM "-$pgid" 2>/dev/null
@@ -706,25 +734,31 @@ jobs:
               echo "       --- environment ---" >&2
               echo "       DISPLAY=${DISPLAY:-<unset>} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>}" >&2
               echo "       DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<unset>}" >&2
-              echo "       --- lingering agaric/Xvfb processes ---" >&2
-              # `wchan` is the point of this: for a process that hung rather
-              # than crashed, the kernel function it is blocked in is the
-              # single most useful datum, and 0.9.9 gave us none of it.
-              # `|| true`: pgrep exits 1 when nothing matches and `pipefail` is on.
-              # Harmless at the current call site (errexit is suppressed inside an
-              # `until` condition) but not if this function is ever called directly.
-              boot_pids="$(pgrep -f 'agaric|[Xx]vfb' | tr '\n' ' ' || true)"
-              if [ -n "$boot_pids" ]; then
-                # shellcheck disable=SC2086  # deliberate split into -p args
-                ps -o pid,stat,etimes,wchan:24,comm -p $boot_pids >&2 || true
-              else
-                echo "       (no agaric/Xvfb processes remain)" >&2
-              fi
+              echo "       --- process state captured BEFORE the reap ---" >&2
+              printf '%s\n' "$PROC_SNAPSHOT" | sed 's/^/       /' >&2
               return 1
             fi
             if ! grep -qh "log directory initialized" "${app_logs[@]}"; then
               echo "ERROR: ${app_logs[*]} exists but carries no boot line from init_logging." >&2
               head -c 4000 "${app_logs[@]}" >&2 || true
+              # #4418 note 6 — this branch is reachable in the HANG case, not just
+              # the never-wrote-anything case: `RollingFileAppender` opens the file
+              # eagerly, so an app that then blocks before the `info!` flushes lands
+              # here with `code=timeout`. Returning on the app log alone would skip
+              # CHECK 2's "a hang, not a crash" message AND the boot.log / DISPLAY /
+              # DBUS / process-state block below — the diagnostics that make #4418
+              # answerable. Route the alive case to them instead of returning thin.
+              if [ "$code" = "timeout" ]; then
+                echo "       Process was ALIVE at the deadline with the log file open" >&2
+                echo "       but no boot line — it hung between opening the appender" >&2
+                echo "       and flushing init_logging. Full diagnostics:" >&2
+                echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
+                cat "$SANDBOX/boot.log" >&2 || true
+                echo "       DISPLAY=${DISPLAY:-<unset>} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>}" >&2
+                echo "       DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<unset>}" >&2
+                echo "       --- process state captured BEFORE the reap ---" >&2
+                printf '%s\n' "$PROC_SNAPSHOT" | sed 's/^/       /' >&2
+              fi
               return 1
             fi
             echo "OK: init_logging completed and wrote ${app_logs[*]}"
