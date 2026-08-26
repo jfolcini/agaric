@@ -2428,14 +2428,26 @@ else
 
     # Fail-closed for UNRECOGNIZED non-docs paths.
     #
-    # DIVERGENCE FROM `_validate.yml` (#4419, 2026-08-26): this classifier
-    # attributes `scripts/*.sh` to CI (see CI_PATH_RE); `_validate.yml`'s
-    # `ci_re` does NOT, and its comment still names a root `*.sh` as
-    # unrecognized. So a shell-only push runs Phase A locally while CI runs
-    # the full suite. That asymmetry is deliberate and in the SAFE direction
-    # — CI does strictly more than the local gate, never less — but it means
-    # this is no longer a mirror, and nothing ratchets the parity. Widening
-    # `_validate.yml` to match is a separate change with its own blast radius.
+    # DIVERGENCE FROM `_validate.yml` (#4419, 2026-08-26; ratcheted by the
+    # "divergence ratchet" --self-test checks below, #4424): this classifier
+    # differs from `_validate.yml`'s `ci_re` in two documented ways.
+    #   (a) `scripts/*.sh` is CI here (see CI_PATH_RE); `_validate.yml`'s
+    #       `ci_re` does NOT attribute it, and its comment still names a
+    #       root `*.sh` as unrecognized. So a shell-only push runs Phase A
+    #       locally while CI runs the full suite.
+    #   (b) the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
+    #       `.gitleaks.toml`) are anchored to the repo root in
+    #       `_validate.yml` (`^prek\.toml$`, …) but UNANCHORED here
+    #       (`prek\.toml$`, …), so a nested copy of one of those filenames
+    #       (e.g. `docs/prek.toml`) is CI here and not there too.
+    # Both asymmetries are deliberate and in the SAFE direction — CI does
+    # strictly more than the local gate, never less — so this is no longer a
+    # mirror. Unlike the stale version of this note, the parity IS now
+    # ratcheted: the --self-test divergence-ratchet checks fail closed if
+    # either gap widens, narrows, or a new one opens anywhere else, so this
+    # note itself is what they mean by "update the divergence note" on
+    # failure. Widening `_validate.yml` to match is a separate change with
+    # its own blast radius.
     #
     # Otherwise mirrors `_validate.yml`'s classifier: a changed file matching neither docs nor any known category
     # (frontend/backend/ci) — e.g. rust-toolchain.toml, .cargo/config.toml, a

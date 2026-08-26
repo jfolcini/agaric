@@ -172,10 +172,24 @@ jobs:
         # failure; the INSTALL decides. Measured trace + exit codes in
         # .github/actions/apt-install/action.yml.
         #
-        # `dbus-run-session` (in the `dbus-x11` package below) lives here.
-        # Without it the smoke step's dbus mitigation silently degrades on
-        # every run (it warns and boots without a session bus), making the
-        # mitigation depend on whatever the runner image happens to ship.
+        # `dbus-run-session` lives here, in `dbus-daemon` (pinned below), NOT
+        # in `dbus-x11`. Verified against the noble package index and this
+        # runner's own image: `dbus-x11` ships only `dbus-launch`
+        # (`/usr/bin/dbus-launch`) and reaches `dbus-run-session` only
+        # transitively, via `Depends: dbus-bin (= …), dbus-daemon (= …)`.
+        # Pin `dbus-daemon` directly so the guarantee is the package that
+        # actually contains the binary, not a dependency edge of a package
+        # we'd otherwise pull in for no reason (nothing here uses
+        # `dbus-launch`).
+        #
+        # This is defence against runner-image drift, not a fix for a live
+        # failure: ubuntu-24.04's published image manifest already lists the
+        # `dbus` metapackage, which itself `Depends: dbus-daemon (= …)`, so
+        # `command -v dbus-run-session` was already succeeding before this
+        # line existed and the smoke step's fallback branch was almost
+        # certainly never taken. Explicitly pinning `dbus-daemon` stops that
+        # from being an unstated assumption about what the image happens to
+        # ship today.
         uses: ./.github/actions/apt-install
         with:
           packages: >-
@@ -188,7 +202,7 @@ jobs:
             patchelf
             pkg-config
             xvfb
-            dbus-x11
+            dbus-daemon
 
       - name: Setup Node.js
         # No package-manager cache on a publishing lane (#3573). The
@@ -720,6 +734,22 @@ jobs:
             # tmpdir and never appears in the runner's own workspace path
             # (/home/runner/work/agaric/agaric), so it does not reopen the
             # noise problem the basename-only match was introduced to close.
+            #
+            # Unverifiable from this repo: this arm assumes the AppImage's
+            # generated AppRun execs the app by ABSOLUTE path, so the child
+            # process's cmdline still contains the extraction tmpdir and
+            # matches `appimage_extracted` here. That is what Tauri's
+            # bundled AppRun does today. If it ever exec'd the binary by a
+            # RELATIVE path instead, only the AppRun process itself would
+            # match this pattern — not `usr/bin/agaric`, the process this
+            # whole snapshot exists to capture `wchan` for — and that gap
+            # would not be visible from this file alone.
+            #
+            # The basename is interpolated below unescaped into this ERE, so
+            # version dots (`Agaric_X.Y.Z_amd64.AppImage`) act as `.`
+            # wildcards rather than literal dots. Harmless today — the
+            # AppImage naming scheme has no other regex metacharacters — but
+            # it is a regex built from a glob result, not a literal match.
             snap_pids="$(pgrep -f "$(basename "$APPIMAGE_BIN")|appimage_extracted|[Xx]vfb|dbus-run-session" | paste -sd, - || true)"
             if [ -n "$snap_pids" ]; then
               PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p "$snap_pids" 2>&1)" \
@@ -797,8 +827,7 @@ jobs:
               echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${waited}s" >&2
               echo "       (budget ${BOOT_SECONDS}s; a shorter time means the process ended" >&2
               echo "       early rather than the budget expiring)." >&2
-              echo "       Outcome was '$code' (alive = still running, timeout = never" >&2
-              echo "       produced the artifact, exited:N = ended on its own with code N)." >&2
+              echo "       Outcome was '$code' — see below for the full vocabulary." >&2
               echo "       Read the boot output dumped above FIRST: if it shows xvfb-run or" >&2
               echo "       the AppImage failing to start, the process never reached Rust at" >&2
               echo "       all and none of the boot-phase readings below apply." >&2
@@ -818,6 +847,9 @@ jobs:
               echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
               cat "$SANDBOX/boot.log" >&2 || true
               echo "       --- environment ---" >&2
+              echo "       XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>} (step shell's own value —" >&2
+              echo "        carried here in case the child never reached its [child-env] echo" >&2
+              echo "        in the boot.log dump above, e.g. xvfb-run itself failed to start)" >&2
               echo "       (the app's own DISPLAY/DBUS are on the [child-env] line of" >&2
               echo "        boot.log above — the step shell's values are NOT the app's)" >&2
               echo "       --- process state captured BEFORE the reap ---" >&2
