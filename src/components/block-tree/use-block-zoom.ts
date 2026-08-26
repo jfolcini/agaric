@@ -190,6 +190,35 @@ export function useBlockZoom(
     // missed on its `block` prop and the whole pane re-rendered — throwing
     // away the byte-for-byte reference stability the store preserves upstream
     // (#2527). The cache is rebuilt per run so it never outgrows the pane.
+    //
+    // #4377 — `react/refs` (oxlint 1.79) flags the read below and the write at
+    // the end of this memo as render-phase ref access. Both are DELIBERATE and
+    // safe, for a reason worth stating because it is the reason and not merely
+    // "it works today":
+    //
+    //   1. The read is REVALIDATED. A cache entry is only consumed when its
+    //      stored `src` is `===` this run's `block` AND its `depthOffset`
+    //      matches, both re-derived from this run's own inputs. A hit's `out`
+    //      is therefore value-identical to what the miss branch one line below
+    //      would compute. A miss is a clone, never a stale read.
+    //   2. The write is IDEMPOTENT. Running this factory twice back-to-back on
+    //      the same inputs (StrictMode's double invoke) leaves the ref in the
+    //      same state and returns the same rows: the second pass hits on every
+    //      entry the first pass just wrote. A render React discards can
+    //      likewise only leave behind entries that a later run will either
+    //      revalidate (correct to reuse) or bypass (re-cloned).
+    //
+    // What it costs: this makes the pane depend on the store's copy-on-write
+    // discipline. A `FlatBlock` mutated IN PLACE inside a NEW `blocks` array
+    // is a cache HIT (`cached.src === block` still holds) and the pane would
+    // re-emit the row built from the block's OLD fields — a stale zoomed pane
+    // beside a correct unzoomed tree. `FlatBlock` is not `readonly`, so that
+    // invariant is convention plus tests; the one this cache leans on hardest
+    // (a depth-shifting reparent must not write `depth` through) is pinned in
+    // `page-blocks.move-reparent.test.ts` under `#4377`. Do NOT weaken the hit
+    // condition to an id comparison, and do NOT move the write into an effect:
+    // this cache is built and consumed within the same run, so a commit-time
+    // write would leave it empty exactly when it is read.
     const prevRebased = rebaseCacheRef.current as RebaseCache
     const nextRebased: RebaseCache = new Map()
     const result: FlatBlock[] = []

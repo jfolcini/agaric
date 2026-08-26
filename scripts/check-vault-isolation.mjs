@@ -44,7 +44,7 @@ const WDIO_CONF = 'wdio.conf.ts'
 // ─── A. the Rust seam ────────────────────────────────────────────────
 
 /**
- * Strip `//` line comments and `/* *​/` block comments so a documented or
+ * Strip `//` line comments and `/* *\/` block comments so a documented or
  * commented-out call is not a violation. Rust string literals are not
  * parsed: the pattern we look for is a method-call chain, which never
  * appears inside a literal in this codebase, and a false positive here

@@ -83,7 +83,7 @@ const IMPORT_RE =
  * specifier and breaks cycle detection. So the blanking must be
  * context-aware: it replaces the contents of
  *   - line comments (`// …`),
- *   - block comments (`/* … *​/`), and
+ *   - block comments (`/* … *\/`), and
  *   - template literals (backticks, including any `${…}` interpolation)
  * with spaces (length-preserving so error offsets stay meaningful), while
  * leaving ordinary single/double-quoted strings intact. The import regex is
@@ -155,7 +155,7 @@ function emitCode(cx, ch) {
   cx.i++
 }
 
-/** Blank a 2-char delimiter (`//`, `/*`, `*​/`) as code and advance. */
+/** Blank a 2-char delimiter (`//`, `/*`, `*\/`) as code and advance. */
 function blankDelimiter(cx) {
   cx.out[cx.i] = ' '
   cx.out[cx.i + 1] = ' '

@@ -307,6 +307,57 @@ describe('PageBlockStore', () => {
       expect(state.blocksById.get('P')).not.toBe(pRefBefore)
     })
 
+    it('#4377 — a depth-SHIFTING reparent re-allocates the subtree instead of writing `depth` through to the objects the caller still holds', async () => {
+      // The delta === 0 test above pins the reuse fast path, and the existing
+      // "multiple levels shallower" test pins the delta !== 0 arm's OUTPUT.
+      // Neither pins the other half of the pair for delta !== 0: that the
+      // objects handed IN are not the objects written to. An in-place
+      // `b.depth += delta` would satisfy every assertion in both of them —
+      // `blocksById.get('E')?.depth` reads the new value either way.
+      //
+      // That half is load-bearing, not tidiness. `useBlockZoom`'s #3253 rebase
+      // cache (`use-block-zoom.ts`) memoizes each zoomed-pane row on
+      // `cached.src === block`, so a block mutated in place inside a NEW
+      // `blocks` array is a cache HIT: the pane re-emits the row it built from
+      // the OLD field values and renders a stale depth while the unzoomed tree
+      // renders the new one. The cache is safe ONLY because this reducer (and
+      // its siblings) copy on write — the dependency a #4370 reviewer named by
+      // hand and oxlint 1.79's `react/refs` then flagged mechanically (#4377).
+      // `FlatBlock` is not `readonly`, so nothing but this test refuses the
+      // "optimisation".
+      const g = makeBlock({ id: 'G', position: 0, parent_id: null, depth: 0 })
+      const m = makeBlock({ id: 'M', position: 0, parent_id: 'G', depth: 1 })
+      const d = makeBlock({ id: 'D', position: 0, parent_id: 'M', depth: 2 })
+      const e = makeBlock({ id: 'E', position: 0, parent_id: 'D', depth: 3 })
+      store.setState({ blocks: [g, m, d, e] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'D',
+        new_parent_id: 'G',
+        new_position: 1,
+      })
+
+      // D moves from M up to G: depth 2 -> 1, so the subtree rides a -1 delta
+      // and E goes 3 -> 2. Both are re-allocated, D because its own parent
+      // changed and E because delta !== 0.
+      await store.getState().moveToParent('D', 'G', 1)
+
+      const state = store.getState()
+      expect(state.blocks.map((b) => b.id)).toEqual(['G', 'M', 'D', 'E'])
+      expect(state.blocksById.get('D')?.depth).toBe(1)
+      expect(state.blocksById.get('E')?.depth).toBe(2)
+      // Arm 1 — the new state holds different objects.
+      expect(state.blocksById.get('D')).not.toBe(d)
+      expect(state.blocksById.get('E')).not.toBe(e)
+      // Arm 2 — and the references the caller (a rendered `blocks` array, the
+      // zoom rebase cache's `src`) still holds read their ORIGINAL values.
+      // This is the assertion `.not.toBe` cannot make on its own.
+      expect(d.depth).toBe(2)
+      expect(d.parent_id).toBe('M')
+      expect(e.depth).toBe(3)
+      expect(e.parent_id).toBe('D')
+    })
+
     it('canSplice guard: reparenting a block under its OWN DESCENDANT falls back to a full reload instead of corrupting the tree', async () => {
       // P has child C. Requesting moveToParent(P, C, ...) asks P to become a
       // child of its own child — a cycle a flat splice cannot represent. The
