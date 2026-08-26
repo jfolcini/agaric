@@ -773,7 +773,7 @@ pub async fn project_restore_block_to_sql(
 ///   invisible orphan either: the caller re-derives its tombstone from the new
 ///   position immediately afterwards.
 ///
-pub async fn clear_cohort_deleted_at_downward(
+pub(crate) async fn clear_cohort_deleted_at_downward(
     conn: &mut SqliteConnection,
     block_id: &str,
     deleted_at_ref: i64,

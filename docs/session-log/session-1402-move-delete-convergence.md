@@ -115,4 +115,47 @@ the next person: bare `cargo sqlx prepare --workspace` deletes 82 entries; use `
 ## Verification
 
 `cargo fmt`, `cargo check --all-targets`, `cargo clippy --all-targets --workspace` all clean.
-Requested filter 916/916. **Full workspace 6151/6151 passed, 0 failed.**
+Requested filter 897/897. **Full workspace 6153/6153 passed, 0 failed.**
+
+
+## Round two — the fix carried a data-loss regression, and review caught it
+
+The above is the round-one story. What happened next is the more instructive half, and it
+belongs in the durable record rather than only in a PR thread.
+
+**Widening the ancestor probe trashed a live block on boot repair.** The anchor became
+`WHERE id = ?1 AND (deleted_at IS NULL OR ?2)`, so the probe returned `Some(ancestor)` for a
+**tombstoned** subject. But the #4187 sweep is not gated on the un-sweep having fired — so in
+the short-circuit branch the un-sweep was skipped and the sweep still stamped the whole
+cohort, putting a pre-existing **live** orphan into the trash. Before this change the
+`deleted_at IS NULL` anchor returned `None` for a tombstoned subject, so no sweep ran and the
+two interpreters agreed.
+
+Proven RED before fixing — the orphan came back `Some(T0+4)`, P's cohort.
+
+**Why it slipped is the lesson.** The short-circuit-with-a-live-orphan shape *was* covered —
+on the materializer arm only. Recovery is the **third interpreter** of the same op (#2894),
+and its mirror was missing. That is the half-covered pair, in the very change whose argument
+is interpreter lockstep. The diagnostics bug travelled with it: the short-circuit case still
+pushed to `move_swept_under_tombstone`, reporting a sweep that changed nothing.
+
+**The fix took neither obvious direction.** Gating on "the un-sweep branch fired" would be a
+Rust-side belief about what an `UPDATE` did, and a second probe would cost the second
+recursive climb #4289 deliberately consolidated. Instead the subject's own row is re-read
+where the sweep **consumes** the answer — which is literally
+`sweep_move_under_tombstoned_ancestor`'s `matches!(own_deleted_at, Some(None))` early return,
+so the two interpreters cannot drift on the guard by construction. One PK lookup, only on a
+move that already found a tombstoned ancestor, era-agnostic.
+
+Review walked the full four-case matrix afterwards and confirmed the arms agree in every one:
+subject live, intrinsic tombstone, inherited-same-cohort, inherited-other-cohort.
+
+**Also corrected in round two:** the probe's docstring still asserted that the seed's
+`deleted_at IS NULL` *is* the live-subject guard — it no longer is, and saying so is how the
+gap hid. Four docstrings (not the two review first named) still said #4204 was "holding a
+maintainer ruling"; all four now cite the ruling. The engine-register gap became **#4390**,
+because "tracked in the PR" evaporates on merge.
+
+**Blast radius, established in review:** `validate_move_in_tx` requires `deleted_at IS NULL`
+on both subject and target, so no local command can reach the un-sweep at all — only a
+replayed remote op can. The resurrection is bounded to concurrent authoring.
