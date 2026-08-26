@@ -118,6 +118,97 @@ of that path. Those two are still worth care in a shared-`.git` worktree — the
 concurrent agent can move — but they fail in other ways, not this one. If a batch outlives a
 merge cycle, capture the base SHA at start and use the SHA thereafter.
 
+### A commit pushed onto a Dependabot branch survives only if you make it survive
+
+Fixing a red Dependabot PR sometimes needs a human commit — a test assertion updated for
+upstream behaviour, a lockfile relock, an `overrides` entry, a paired package bumped
+alongside it. Pushing that commit onto **Dependabot's own branch** (`dependabot/*`) is the
+easy move, but the branch is not yours: any `@dependabot rebase`, a `recreate`, or simply a
+newer upstream release superseding the group **force-pushes it**, and a commit that is not
+`dependabot[bot]`'s disappears with no trace. The PR goes red again for the *original*
+reason, and the next reader has no record the problem was ever diagnosed (#4360).
+
+It does not take a force-push to lose the commit's own record, either — **by default**.
+This repo squash-merges every Dependabot PR, and GitHub's squash box defaults to the *PR
+title*, which is Dependabot's own commit subject; if the merger accepts that default, the
+human commit's message never reaches `main`, only its diff. But this is a default, not a
+law: the merger can edit the squash-commit message box before confirming, and three of the
+eight instances below show someone doing exactly that: the merge commit for #3780 reads
+`fix(mcp): port adapter to rmcp 3.1`; for #3779, `fix(deps): harden fuzz dependency update`;
+and for #3771, `fix(tooling): apply OXC 0.62 migrations` — all three are the *human*
+commit's subject, not Dependabot's. **Edit the squash message to the human commit's subject
+line when merging** — it costs nothing and it is the one thing in this whole hazard that
+already has a track record of working.
+
+Real numbers (60 most-recently-merged Dependabot PRs, 2026-07-29 through 2026-08-26,
+independently re-derived — not just asserted): **8 (13%)** carried at least one
+non-Dependabot commit — a fuzz relock (#4326), a test-assertion fix (#4329), an `overrides`
+dedupe (#4331), a stryker-pair follow-up (#4333), an rmcp adapter port (#3780), a
+fuzz-dependency hardening (#3779), an OXC-migration fix (#3771), a bundle-budget rebaseline
+(#3237). Of those 8, the squash commit on `main` kept Dependabot's own message for 5
+(#4326, #4329, #4331, #4333, #3237) and the human commit's message for the other three
+(#3780, #3779, #3771) — checked by reading the actual merge commit, not inferred.
+
+**"None of the 8 lost the commit" is not a safe conclusion, and this method cannot support
+it.** A PR only enters this sample of 8 *because* its final, merged state still has a
+human commit in it — a commit that was force-pushed away and never restored would leave
+that PR looking exactly like an ordinary all-Dependabot PR that never needed help, with no
+way to tell the two apart after the fact. Worse, Dependabot sometimes doesn't rebase a
+branch in place — it closes the PR outright and opens a new one under a new number (this
+repo has a live example: PR #3451, `bump rmcp from 2.2.0 to 3.0.0`, was closed as
+superseded on 2026-08-05, and its replacement, `bump rmcp ... to 3.1.0`, reopened four days
+later as #3780). Anything commented on #3451 would have been stranded there, invisible from
+its replacement. So the count this section can actually stand behind is: **at least two recorded
+near-misses where a live force-push collided with an in-flight human push, both caught
+immediately, zero recorded *silent* losses** — not "zero losses", which nothing here
+measures. The near-misses: #4326 (a mid-session force-push turned an in-flight push into a
+non-fast-forward, caught because the push failed *loudly*) and #3237
+(`docs/session-log/session-1242-retiring-surface.md`: "Dependabot force-rebased over the
+fix commit while it was in flight. `git ls-remote` showed a SHA I had not pushed."
+recovered with `git rebase --onto FETCH_HEAD` + `--force-with-lease`). That session log's
+own lesson generalizes past this one incident: **"their rebase silently wins, so a push
+onto a Dependabot branch needs its SHA verified afterwards, not its exit code"** — after
+pushing, `git ls-remote origin <branch>` and confirm the SHA is the one you just pushed,
+don't trust a green `git push`.
+
+So: the hazard is real and not rare (roughly two PRs a week need this), it has caused two
+known near-misses (both recovered), and whether it has ever caused a *silent* loss is
+genuinely unknown — the method available cannot see one either way. Treat "no silent loss
+yet" as an absence of evidence, not evidence of absence.
+
+What to do:
+
+- **The fix can stand alone** (a test assertion, an `overrides` entry, most
+  application-code fixes) → put it on your **own branch off `main`**, open your **own PR**,
+  merge it independently. The Dependabot PR then rebases onto a `main` that already has the
+  fix and needs nothing further. This is the only option immune to the force-push, the
+  default squash-erasure, and the closed-and-superseded case above.
+- **The fix cannot stand alone** (a lockfile relock is meaningless without the bump it
+  accompanies — see [AGENTS.md § Coupled Dependency
+  Updates](../../../../AGENTS.md#coupled-dependency-updates), which documents exactly this
+  for `src-tauri/fuzz/Cargo.lock`) → leave it on Dependabot's branch (already the accepted
+  practice there), but **always `gh pr comment <n>` stating what broke and what you did**,
+  right after pushing, and **verify the push landed** with `git ls-remote origin <branch>`
+  before walking away (see the #3237 lesson above — a rejected push is loud, a silently
+  superseded one is not). A PR comment is not part of the branch's git history — it
+  survives a force-push and a squash-merge intact. It does **not** survive Dependabot
+  closing the PR outright and opening a fresh one (the #3451 → #3780 pattern) — if you
+  inherit a Dependabot PR that superseded another, check the closed one's comments before
+  assuming you are starting clean. And at merge time, edit the squash message to the human
+  commit's subject line so the diagnosis reaches `main` too, not just the diff.
+
+No *local* mechanical guard here: the destructive event is Dependabot's own server-side
+force-push, which can land hours or days later, in a different session — nothing that runs
+at commit/push time on your machine can observe or prevent it. A local warning could only
+nudge the choice above; it cannot catch or reverse the loss. A server-side option was not
+built or fully evaluated here and is left as an open question rather than a closed one: a
+scheduled workflow could snapshot which open Dependabot PRs carry non-Dependabot commits
+and diff against its previous run, catching a loss *after the fact* (not preventing it) and
+auto-posting the cached diagnosis back as a comment before it is gone from view. That is
+future work, not a dismissed option — it was not built because nothing here evaluated its
+cost against the (small, unmeasured-as-silent) rate of actual loss, not because it was
+found and rejected.
+
 ## Lint / format
 
 ### `oxfmt --write` detaches `oxlint-disable-next-line` comments — re-run oxlint AFTER formatting

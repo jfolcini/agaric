@@ -12,7 +12,8 @@ Detailed material lives in `references/` — load it only when the trigger fires
 
 - `references/pitfalls.md` — the war-story failure modes (git-stash scramble, oxfmt
   comment detach, role-swap test breaks, cargo-check-all-targets, dev.db schema drift,
-  timestamp-column coupling, chained-PR ordering).
+  timestamp-column coupling, chained-PR ordering, a human commit on a Dependabot branch
+  erased by force-push or squash).
 - `references/session-log.md` — session-log numbering, format, and plan-issue bookkeeping.
 - `references/codegen-and-sql.md` — `.sqlx` regen, specta bindings, SQL migration recipe,
   architectural invariants.
@@ -73,8 +74,9 @@ issues. Where the work lives:
 ## 1. PLAN
 
 **FIRST — at the start of a batch (and ONLY then), sweep the open-PR board once.**
-`gh pr list --author @me --state open`, then `gh pr checks <n>` for each: merge what's
-green, fix what's red. **Before merging a green PR, read its full `agaric-reviewer` review
+`gh pr list --state open` — **not** `--author @me`, which silently drops every Dependabot
+PR from the sweep on a board where they are usually the majority (session 1391) — then
+`gh pr checks <n>` for each: merge what's green, fix what's red. **Before merging a green PR, read its full `agaric-reviewer` review
 body + inline comments and address any findings (new commit if quick/in-scope, else a
 referenced GitHub issue) — an APPROVED verdict is not "nothing to address", and this holds
 for `--admin` merges too (§8 spells out the exact commands and the #2763/#2767 misses).**
@@ -83,7 +85,9 @@ wake-up, not after every subagent completion (maintainer feedback 2026-06-10: "r
 PRs all the time is not necessary"). Green PRs can sit until the next batch boundary or
 until the 10-PR cap needs a slot; nothing rots in an hour. **Any red is yours to fix** —
 even a failure *inherited from `main`* (a lint/zizmor finding that landed on `main` and
-now reds every PR). "Not from my diff" is NOT a reason to skip it: a red check blocks
+now reds every PR). If the red PR is Dependabot's own, a fix commit pushed onto its branch
+is exposed to a hazard the branch owner can trigger without warning — see pitfalls. "Not
+from my diff" is NOT a reason to skip it: a red check blocks
 otherwise-green merges and stalls the loop. Diagnose from
 `gh run view --job <id> --log-failed`, fix the **underlying cause** (prefer a real fix over
 a suppression; suppress only with a justifying comment). If the cause lives on `main`, fix
@@ -524,15 +528,17 @@ async over many minutes. Instead:
    `gh api repos/jfolcini/agaric/pulls/<n>/comments`. Note the reviewer routinely
    **APPROVES while still listing findings/caveats/out-of-scope bugs** in the body — an
    APPROVED verdict is NOT "nothing to address". For every actionable finding:
-   - quick + in-scope → fix it in a new commit on the branch, push, re-verify, THEN merge;
+   - quick + in-scope → fix it in a new commit on the branch, push, re-verify, THEN merge
+     (a Dependabot branch needs the push verified by SHA, not exit code — see pitfalls);
    - larger / out-of-scope / latent-elsewhere → `gh issue create` and reference it (a PR
      comment or the issue link), THEN merge — never merge and silently drop it.
    - `CHANGES_REQUESTED` blocks the merge outright until the request is resolved.
    This applies to **already-merged** PRs too: when sweeping recently-merged PRs, read
    their review bodies and open follow-up commits/issues for anything left unaddressed.
 4. **Keep the pending-PR list bounded** (up to **10** open PRs — maintainer preference,
-   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). `gh pr list --author @me --state open` shows what's outstanding if you lose
-   track. Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs;
+   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). `gh pr list --state open` shows what's outstanding if you
+   lose track — again NOT `--author @me`, which would hide the very Dependabot PRs the
+   next sentence authorises you to merge. Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs;
    for own green PRs blocked only by `REVIEW_REQUIRED`, `--admin` is sanctioned — but only
    when the required checks (`validate-all`, `dco`) are green. Those are the
    branch-protection CONTEXT names; `statusCheckRollup` reports the first as
