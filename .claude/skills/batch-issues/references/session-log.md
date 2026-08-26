@@ -46,10 +46,10 @@ what failed or required correction. There is no required metadata table or struc
 section format — the purpose of a session log is to preserve knowledge rather than to
 record metrics.
 
-The `# Session NNNN — <title>` heading is the first line of the file — a real H1, one `#`,
+The `# Session NNN — <title>` heading is the first line of the file — a real H1, one `#`,
 and nothing above it. This is enforced: the `session-log-numbering` pre-commit guard greps
 for `^#[[:space:]]+Session[[:space:]]+[0-9]+` in the staged file and rejects the commit
-with "no '# Session NNNN' heading found" if it is missing, so a `##` heading aborts the
+with "no '# Session NNN' heading found" if it is missing, so a `##` heading aborts the
 commit.
 
 ### Typical structure
@@ -98,9 +98,14 @@ created anywhere outside a picker's own hook was invisible to every warm cache.
 
 ## Verification
 
-Whole frontend suite: **783 files, 18065 passed**, 1 expected fail, 37 skipped. `tsc -b`
-clean; `oxlint` clean across all 22 changed files. 22 files, +1003/−18.
+[the suites actually run, with real counts — e.g. "Whole frontend suite: **NNN files,
+NNNNN passed**, 1 expected fail, 37 skipped. `tsc -b` clean; `oxlint` clean across all N
+changed files."]
 ```
+
+Every block above is a placeholder, including the counts under Verification. They are
+bracketed on purpose: an earlier draft of this file carried session 1401's real figures
+there, which an author filling in the obvious blanks would have published as their own.
 
 ## Plan-issue bookkeeping
 

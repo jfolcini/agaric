@@ -420,8 +420,9 @@ files between trees. Only the chained-PR case needs special ordering — see pit
 ## 6. LOG
 
 Create `docs/session-log/session-NNN-<slug>.md` (one file per session, never appended).
-Use the numbering rules, format, and plan-issue bookkeeping in **`references/session-log.md`**. Keep
-`docs/FEATURE-MAP.md` in sync when new commands/components/hooks/stores/tables ship.
+Use the numbering rules, format, and plan-issue bookkeeping in
+**`references/session-log.md`**. Keep `docs/FEATURE-MAP.md` in sync when new
+commands/components/hooks/stores/tables ship.
 
 ## 7. COMMIT AND PUSH
 
