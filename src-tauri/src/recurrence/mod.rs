@@ -5,9 +5,13 @@
 //! kept separate from the command dispatch plumbing.
 //!
 //! Public API consumed by the rest of the crate:
-//! - [`shift_date`] — compute the next occurrence date from a rule string
-//! - [`handle_recurrence`] — full recurrence flow (DB reads, end-condition
-//!   checks, sibling creation) called when a task transitions to DONE
+//! - `shift_date` — compute the next occurrence date from a rule string;
+//!   it moved down to [`agaric_engine::recurrence::parser::shift_date`] and is
+//!   re-exported crate-internally through `parser`
+//! - `handle_recurrence` / `handle_recurrence_in_tx` (`pub(crate)`, so not
+//!   linkable from public docs) — full recurrence flow (DB reads,
+//!   end-condition checks, sibling creation) run when a task transitions to
+//!   DONE
 //!
 //! The pure interval shift ([`agaric_store::recurrence_math::shift_date_once`]) and
 //! per-block projection ([`agaric_store::recurrence_math::project_block_dates`]) live

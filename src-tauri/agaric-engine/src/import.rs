@@ -60,7 +60,8 @@ pub struct ParsedBlock {
 
 /// Outcome of importing one markdown file: the created page plus aggregate
 /// counts and any non-fatal diagnostics, returned by
-/// [`import_markdown_with_progress`] and surfaced to the import UI.
+/// `agaric_lib::commands::pages::markdown::import_markdown_with_progress` and
+/// surfaced to the import UI.
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct ImportResult {
     /// Title of the page block the import created (derived from the filename

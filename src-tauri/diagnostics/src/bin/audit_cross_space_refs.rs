@@ -20,7 +20,9 @@
 //!   Phase-3 cross-space filter on the sync-ingress / bulk-import apply path,
 //!   so a synced cross-space ref property persists undetected. A5 surfaces
 //!   it. Uses the orphan-tolerant rule of
-//!   [`validate_ref_property_cross_space`](agaric_store::cross_space_validation)
+//!   `agaric_store::cross_space_validation::validate_ref_property_cross_space`
+//!   (not linkable from here: this crate depends on the app lib, not on
+//!   `agaric-store` directly)
 //!   — only a target in a DIFFERENT *assigned* space counts (an unassigned
 //!   orphan source/target is not "cross-space"), and the `space` key itself
 //!   is exempt (that is how pages move between spaces).

@@ -186,7 +186,7 @@ impl LoroEngine {
         }
         Ok(out)
     }
-    /// Test-only single-key companion to [`read_all_properties_typed`].
+    /// Test-only single-key companion to [`Self::read_all_properties_typed`].
     ///
     /// Returns `Ok(None)` for an unset key (no entry in the map),
     /// `Ok(Some(PropertyValue::Null))` for an explicit-null clear, and

@@ -194,7 +194,7 @@ impl PartialEq<SpaceId> for &str {
 /// # Deserialize validates the `Active` id shape (issue #1588)
 ///
 /// The wire/SQL layers treat the inner `SpaceId` as a trusted-shape string —
-/// [`SpaceId::Deserialize`] only uppercase-normalises (mirroring `BlockId`),
+/// [`SpaceId`]'s `Deserialize` impl only uppercase-normalises (mirroring `BlockId`),
 /// so without a guard a malformed `space_id` from the frontend / MCP / sync
 /// would bind a never-matching SQL filter param and silently return empty
 /// results. The hand-written `Deserialize` impl below deserialises through the

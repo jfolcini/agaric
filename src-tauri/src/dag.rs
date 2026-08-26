@@ -21,8 +21,9 @@
 //!   app-level module, so this thin adapter stays here while the verification
 //!   core descends.
 //! * The `#[cfg(test)]` CTE-oracle reference implementations
-//!   ([`extract_prev_edit`], [`fetch_prev_edit_oracle`],
-//!   [`walk_edit_chain_oracle`], [`find_lca_oracle`]) and the test modules
+//!   (`extract_prev_edit`, `fetch_prev_edit_oracle`,
+//!   `walk_edit_chain_oracle`, `find_lca_oracle` — `#[cfg(test)]`, so they
+//!   are absent from the doc graph and cannot be linked) and the test modules
 //!   (`dag/tests.rs`, `dag/proptest_b2.rs`). A `#[cfg(test)]` item in the
 //!   engine crate is not visible to this crate's test build, so the oracles
 //!   and the tests that pair them against the production CTE path live here,

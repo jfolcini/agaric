@@ -3,9 +3,9 @@
 //! ## Why this module exists
 //!
 //! Several things in the sync stack reach for the Android context through
-//! the [`ndk_context`] process-global:
+//! the `ndk_context` process-global:
 //!
-//! - [`crate::sync_daemon::android_multicast`] — `WifiManager.MulticastLock`,
+//! - `crate::sync_daemon::android_multicast` — `WifiManager.MulticastLock`,
 //!   without which `mdns-sd`'s UDP multicast sockets receive nothing.
 //! - `hickory-resolver`, via `iroh` → `iroh-dns` — reads the device's
 //!   configured nameservers through `LinkProperties.getDnsServers()`.
@@ -27,7 +27,7 @@
 //!
 //! ## How it is installed now
 //!
-//! [`jni_on_load`] does the install, driven by `JNI_OnLoad` — the JVM calls
+//! `jni_on_load` does the install, driven by `JNI_OnLoad` — the JVM calls
 //! that the instant `libagaric_lib.so` is loaded, long before any of our Rust
 //! code runs. The exported `JNI_OnLoad` symbol itself lives in the **app**
 //! crate (`src-tauri/src/android_jni.rs`), not here: only the crate that
@@ -40,9 +40,10 @@
 //!
 //! `ndk-context 0.1.1` exposes **no** non-panicking accessor, so callers
 //! cannot probe whether the global is set — the fallible-looking API is not
-//! fallible. [`require`] therefore reads the copy recorded here, which is
-//! empty until [`jni_on_load`] succeeds and is trivially empty on every
-//! non-Android target. Callers get an `Err` and degrade; nothing panics.
+//! fallible. [`require`](crate::android_context::require) therefore reads the
+//! copy recorded here, which is empty until `jni_on_load` succeeds and is
+//! trivially empty on every non-Android target. Callers get an `Err` and
+//! degrade; nothing panics.
 
 // Installing the JNI context is inherently `unsafe`: it hands raw JVM
 // pointers to `ndk_context`. Every `unsafe` block below is justified inline
@@ -76,10 +77,10 @@ impl AndroidContext {
     }
 }
 
-/// Set exactly once, by [`jni_on_load`], and never cleared.
+/// Set exactly once, by `jni_on_load`, and never cleared.
 static ANDROID_CONTEXT: OnceLock<AndroidContext> = OnceLock::new();
 
-/// Why [`jni_on_load`] declined to install the context, if it ran and failed.
+/// Why `jni_on_load` declined to install the context, if it ran and failed.
 ///
 /// `JNI_OnLoad` runs before the tracing subscriber exists, so a log line
 /// emitted there would be dropped. Recording the reason here lets the
@@ -89,7 +90,7 @@ static INSTALL_FAILURE: OnceLock<String> = OnceLock::new();
 
 /// Whether the Android `JavaVM` + Application `Context` are available.
 ///
-/// Always `false` off Android: [`jni_on_load`] is the only writer and it does
+/// Always `false` off Android: `jni_on_load` is the only writer and it does
 /// not exist on other targets.
 pub fn is_installed() -> bool {
     ANDROID_CONTEXT.get().is_some()

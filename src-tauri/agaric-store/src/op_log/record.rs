@@ -28,7 +28,7 @@ pub struct OpRecord {
     /// do not have to re-parse `payload` for the JSON `block_id` field.
     /// Populated at every construction site:
     ///   * `append_local_op_in_tx` / `append_merge_op` reads it from the
-    ///     typed [`OpPayload`] (no JSON parse).
+    ///     typed [`OpPayload`](crate::op::OpPayload) (no JSON parse).
     ///   * DB-read paths (`get_op_by_seq`, `get_ops_since`) populate it
     ///     from the indexed `op_log.block_id` column added in
     ///     migration 0030 (no JSON parse).

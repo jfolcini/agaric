@@ -30,12 +30,13 @@
 //! record costs a failed dial, not a session.
 //!
 //! This module therefore reports what was claimed and reconciles nothing:
-//! [`parse_service_event`] will happily return two peers claiming the same `device_id`
+//! [`parse_service_event`](crate::mdns::parse_service_event) will happily return two
+//! peers claiming the same `device_id`
 //! under different `endpoint_id`s. Deciding which (if either) may be synced with is the
 //! dial site's job, against the handshake-authenticated `EndpointId` — never against
 //! the claim in the record.
 //!
-//! # Changing [`MDNS_SERVICE_TYPE`] is a wire-visible break
+//! # Changing [`MDNS_SERVICE_TYPE`](crate::mdns::MDNS_SERVICE_TYPE) is a wire-visible break
 //!
 //! The service type is the browse key. `_agaric._tcp.local.` and `_agaric._udp.local.`
 //! are different keys, so a device running a release from either side of this change

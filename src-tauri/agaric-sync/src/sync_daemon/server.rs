@@ -9,7 +9,8 @@
 //! `verify_peer_cert`, `CertVerifyResult`, the B-33 hash pin, #800's missing-cert
 //! rejection, B-34's CN-vs-heads check — was app-layer compensation for that.
 //!
-//! [`EndpointId`] is not a claim. It is an ed25519 public key authenticated by the
+//! [`EndpointId`](iroh::EndpointId) is not a claim. It is an ed25519 public key
+//! authenticated by the
 //! TLS 1.3 handshake inside QUIC, before a single application byte moves, and
 //! [`InboundSession::remote`] is that key. So all of the above is gone, and the
 //! impersonation it defended against is now cryptographically impossible rather than

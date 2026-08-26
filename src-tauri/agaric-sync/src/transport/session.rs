@@ -1,4 +1,5 @@
-//! [`SyncMessage`] framing over an iroh QUIC bi-stream (#78, plan #3464 slice 1).
+//! [`SyncMessage`](crate::sync_protocol::SyncMessage) framing over an iroh QUIC
+//! bi-stream (#78, plan #3464 slice 1).
 //!
 //! # Why this is so much smaller than `sync_daemon::wire`
 //!

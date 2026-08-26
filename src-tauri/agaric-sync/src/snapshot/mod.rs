@@ -14,7 +14,8 @@
 //!
 //! # Compaction
 //!
-//! [`compact_op_log`] creates a snapshot and then purges `op_log` rows older
+//! [`compact_op_log`](crate::snapshot::compact_op_log) creates a snapshot and then
+//! purges `op_log` rows older
 //! than the configured retention window (default 90 days).
 
 pub mod codec;

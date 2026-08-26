@@ -30,8 +30,8 @@
 //! bind the socket to the source address that route selects. `getsockname()` then
 //! reads that selection back. Nothing is transmitted, nothing is observable from
 //! the network, and both calls are non-blocking — two syscalls, no I/O wait, which
-//! is why [`probe_peer_egress_with`] is a plain synchronous fn callable from an
-//! async context.
+//! is why `probe_peer_egress_with`
+//! is a plain synchronous fn callable from an async context.
 //!
 //! Comparing that selection against the *prefix* the sync endpoint actually bound
 //! answers a question no timeout can: *would our packets to this peer even leave
@@ -43,7 +43,7 @@
 //! `br0` bridge both on the LAN routinely selects the bridge's `prefsrc` for a peer
 //! our WiFi-bound socket reaches perfectly well; address equality called that a
 //! capture and told the user a VPN was eating their LAN when nothing was. See
-//! [`compare`].
+//! [`compare`](crate::transport::egress_probe::compare).
 //!
 //! # Why this and not a VPN interrogation
 //!
@@ -53,18 +53,21 @@
 //! it catches the whole class rather than one vendor: split-tunnel VPNs, corporate
 //! clients, a second link on a different subnet, a mis-scoped default route. (A
 //! second link on the *same* subnet is not in that class and is not reported — see
-//! [`compare`].) It also catches the case the original bug turned on, which a "is
+//! [`compare`](crate::transport::egress_probe::compare).) It also catches the case the
+//! original bug turned on, which a "is
 //! this RFC1918?" heuristic would have missed entirely — a route comparison does
 //! not care what the numbers look like.
 //!
 //! # What a verdict claims
 //!
-//! [`EgressVerdict::RoutedElsewhere`] claims exactly one thing: the system would
+//! [`EgressVerdict::RoutedElsewhere`](crate::transport::egress_probe::EgressVerdict::RoutedElsewhere)
+//! claims exactly one thing: the system would
 //! send traffic for this peer out of a source address that is not on the link this
 //! device bound. It does **not** claim a VPN — that is a hypothesis for the log
 //! line and a hedged "may" in the user-facing text, not a finding. Every failure,
 //! every ambiguity and every comparison between unlike things answers
-//! [`EgressVerdict::Inconclusive`], because the cost of a wrong "your network is
+//! [`EgressVerdict::Inconclusive`](crate::transport::egress_probe::EgressVerdict::Inconclusive),
+//! because the cost of a wrong "your network is
 //! broken" is a user chasing a network that is fine.
 //!
 //! # The probe must NOT inherit production's bind
@@ -91,7 +94,7 @@
 //! `src 100.64.0.1` under the app's uid — but `SameEgress` is "this module has
 //! nothing to add", never "the path is good".
 //!
-//! See [`system_source_address_for`].
+//! See `system_source_address_for`.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 

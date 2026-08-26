@@ -453,7 +453,7 @@ pub async fn move_block(
 ///   as one contiguous run, in selection order, among the target parent's
 ///   NON-selected children — a remove-then-splice outcome. Landing each member at
 ///   a naive `new_index + k` slot does NOT achieve this when the selection
-///   interleaves with non-moved siblings (the #2305 bug: [A,B,C,D] move [A,C] →
+///   interleaves with non-moved siblings (the #2305 bug: `[A,B,C,D]` move `[A,C]` →
 ///   B,A,D,C instead of the promised contiguous B,D,A,C). The loop below pins an
 ///   ANCHOR and derives each member's slot so the N sequential engine moves +
 ///   dense-rank reprojections settle into a contiguous run.

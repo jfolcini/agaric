@@ -448,7 +448,7 @@ impl ActiveBlockRow {
     ///
     /// For untrusted input (e.g., a `BlockRow` returned by a polymorphic
     /// dispatcher that may have routed through `list_trash`), call
-    /// [`agaric_core::ulid::verify_active`] on the id and reconstruct the row
+    /// `agaric_lib::ulid::verify_active` on the id and reconstruct the row
     /// instead.
     pub fn from_block_row_unchecked(row: BlockRow) -> Self {
         Self {
@@ -583,9 +583,9 @@ pub struct PageRequest {
 /// and surface "X of Y" progress to the user — `list_blocks_inner`
 /// (when filtering on `block_type`) is the first such site (PageBrowser
 /// pagination UX, 2026-05-14). Helpers that do not compute the count
-/// flow through [`build_page_response`] which initialises the field to
-/// `None`; sites that compute it use
-/// [`build_page_response_with_total`].
+/// flow through [`build_page_response`], which initialises the field to
+/// `None`; sites that compute a total overwrite `total_count` on the
+/// returned value.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PageResponse<T: specta::Type> {
     pub items: Vec<T>,

@@ -571,7 +571,8 @@ pub async fn read_attachment_inner(
 /// NOT touch the filesystem or the `attachment_blobs` table. With
 /// content-addressed dedup, many live rows may share one on-disk file, so the
 /// only race-free place to unlink bytes is the GC pass
-/// ([`cleanup_orphaned_attachments`](crate::materializer::handlers)) — it
+/// (`materializer::handlers::attachments::cleanup_orphaned_attachments`,
+/// a private module so it is not linkable from public docs) — it
 /// loads the full referenced-path set and unlinks a file only if no live row
 /// references it, with the check and the unlink colocated. An eager unlink
 /// here would race a concurrent same-bytes ingest (no global write mutex on a

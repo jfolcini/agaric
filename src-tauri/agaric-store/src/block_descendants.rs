@@ -9,11 +9,11 @@
 //!
 //! | Macro / constant              | Direction   | Extra recursive filter                       | When to use                                  |
 //! |-------------------------------|-------------|----------------------------------------------|----------------------------------------------|
-//! | [`descendants_cte_standard`]  | downward    | `d.depth < 100`                              | Generic descendant lookup / restore cascade. |
-//! | [`descendants_cte_active`]    | downward    | `b.deleted_at IS NULL AND d.depth < 100`     | Soft-delete cascade (skip already-deleted descendants). |
-//! | [`descendants_cte_purge`]     | downward    | `d.depth < 100` only                         | Physical purge. |
-//! | [`ancestors_cte_standard`]    | upward      | `a.depth < 100`                              | Cycle detection / depth-limit checks on parent chains. |
-//! | [`ancestors_cte_active`]      | upward      | `b.deleted_at IS NULL AND a.depth < 100`     | Reserved for future soft-delete-aware ancestor walks (no current caller). |
+//! | [`descendants_cte_standard`](crate::descendants_cte_standard)  | downward    | `d.depth < 100`                              | Generic descendant lookup / restore cascade. |
+//! | [`descendants_cte_active`](crate::descendants_cte_active)    | downward    | `b.deleted_at IS NULL AND d.depth < 100`     | Soft-delete cascade (skip already-deleted descendants). |
+//! | [`descendants_cte_purge`](crate::descendants_cte_purge)     | downward    | `d.depth < 100` only                         | Physical purge. |
+//! | [`ancestors_cte_standard`](crate::ancestors_cte_standard)    | upward      | `a.depth < 100`                              | Cycle detection / depth-limit checks on parent chains. |
+//! | [`ancestors_cte_active`](crate::ancestors_cte_active)      | upward      | `b.deleted_at IS NULL AND a.depth < 100`     | Reserved for future soft-delete-aware ancestor walks (no current caller). |
 //!
 //! The `depth < 100` bound is unconditional — it prevents runaway
 //! recursion on corrupted `parent_id` chains. The cap value is named
@@ -113,7 +113,7 @@ macro_rules! descendants_cte_standard {
 
 /// Recursive descendant CTE, active-only variant.
 ///
-/// Like [`descendants_cte_standard`] but additionally skips descendants that
+/// Like [`descendants_cte_standard`](crate::descendants_cte_standard) but additionally skips descendants that
 /// already have `deleted_at IS NOT NULL`. Used exclusively by the soft-delete
 /// cascade so that independently-trashed subtrees are not re-swept with a new
 /// `deleted_at` timestamp.
@@ -132,7 +132,7 @@ macro_rules! descendants_cte_active {
 
 /// Recursive descendant CTE, cohort variant.
 ///
-/// Like [`descendants_cte_standard`] but the recursive arm only descends
+/// Like [`descendants_cte_standard`](crate::descendants_cte_standard) but the recursive arm only descends
 /// into a child whose `deleted_at` equals a caller-bound timestamp. The
 /// walk therefore stays *contiguous* within a single soft-delete cohort:
 /// it stops at the first descendant that belongs to a different cohort
@@ -188,7 +188,7 @@ macro_rules! descendants_cte_purge {
 /// Recursive ancestor CTE, standard variant.
 ///
 /// Walks `blocks.parent_id` UPWARD from a seed id. Mirrors
-/// [`descendants_cte_standard`] with the recursion direction inverted:
+/// [`descendants_cte_standard`](crate::descendants_cte_standard) with the recursion direction inverted:
 /// each recursive step looks up the row whose `id` equals the previous
 /// step's id and emits that row's `parent_id`.
 ///
@@ -215,10 +215,10 @@ macro_rules! ancestors_cte_standard {
 
 /// Recursive ancestor CTE, active-only variant.
 ///
-/// Like [`ancestors_cte_standard`] but additionally skips ancestors that
+/// Like [`ancestors_cte_standard`](crate::ancestors_cte_standard) but additionally skips ancestors that
 /// have `deleted_at IS NOT NULL`. Reserved for future soft-delete-aware
 /// ancestor walks; no production caller uses it today, but it's exposed
-/// for symmetry with [`descendants_cte_active`] so a fifth migration is
+/// for symmetry with [`descendants_cte_active`](crate::descendants_cte_active) so a fifth migration is
 /// trivial.
 #[macro_export]
 macro_rules! ancestors_cte_active {
@@ -233,21 +233,21 @@ macro_rules! ancestors_cte_active {
     };
 }
 
-/// String form of [`descendants_cte_standard`] for the rare `format!()` call
+/// String form of [`descendants_cte_standard`](crate::descendants_cte_standard) for the rare `format!()` call
 /// site. Prefer `concat!(descendants_cte_standard!(), " …")` when the SQL
 /// prefix is static — it avoids the runtime format! allocation.
 pub const DESCENDANTS_CTE_STANDARD: &str = descendants_cte_standard!();
 
-/// String form of [`descendants_cte_active`]. See [`DESCENDANTS_CTE_STANDARD`].
+/// String form of [`descendants_cte_active`](crate::descendants_cte_active). See [`DESCENDANTS_CTE_STANDARD`].
 pub const DESCENDANTS_CTE_ACTIVE: &str = descendants_cte_active!();
 
-/// String form of [`descendants_cte_purge`]. See [`DESCENDANTS_CTE_STANDARD`].
+/// String form of [`descendants_cte_purge`](crate::descendants_cte_purge). See [`DESCENDANTS_CTE_STANDARD`].
 pub const DESCENDANTS_CTE_PURGE: &str = descendants_cte_purge!();
 
-/// String form of [`ancestors_cte_standard`]. See [`DESCENDANTS_CTE_STANDARD`].
+/// String form of [`ancestors_cte_standard`](crate::ancestors_cte_standard). See [`DESCENDANTS_CTE_STANDARD`].
 pub const ANCESTORS_CTE_STANDARD: &str = ancestors_cte_standard!();
 
-/// String form of [`ancestors_cte_active`]. See [`DESCENDANTS_CTE_STANDARD`].
+/// String form of [`ancestors_cte_active`](crate::ancestors_cte_active). See [`DESCENDANTS_CTE_STANDARD`].
 pub const ANCESTORS_CTE_ACTIVE: &str = ancestors_cte_active!();
 
 /// Minimum cascade affected-row count that can imply the depth-100 cap
@@ -336,13 +336,13 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DescendantWalkFilter {
     /// Descend only through still-active children (`deleted_at IS NULL`) —
-    /// the soft-delete cascade shape ([`descendants_cte_active`]).
+    /// the soft-delete cascade shape ([`descendants_cte_active`](crate::descendants_cte_active)).
     Active,
     /// Descend only through children soft-deleted at this cohort timestamp —
     /// the restore-cohort shape ([`descendants_cte_cohort`]).
     Cohort(i64),
     /// Descend through EVERY child regardless of `deleted_at` — the
-    /// standard shape ([`descendants_cte_standard`]). Used by the
+    /// standard shape ([`descendants_cte_standard`](crate::descendants_cte_standard)). Used by the
     /// point-in-time restore's page-subtree materialization (#2201), which
     /// must reach blocks deleted *after* the restore target so the ops that
     /// deleted them (and every op before that) are still swept.

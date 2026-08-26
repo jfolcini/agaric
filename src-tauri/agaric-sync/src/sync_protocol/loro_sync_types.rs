@@ -31,7 +31,7 @@ pub type LoroVersionVector = Vec<u8>;
 
 /// One sync message between peers, scoped to a single [`SpaceId`].
 ///
-/// Per-space partitioning matches the existing per-space [`LoroDoc`]
+/// Per-space partitioning matches the existing per-space [`LoroDoc`](loro::LoroDoc)
 /// model (see `docs/session-log/2026-sessions-401-800.md` Session 698 +
 /// `loro::registry::LoroEngineRegistry`); a sync session that
 /// covers N spaces sends N of these messages, one per space.

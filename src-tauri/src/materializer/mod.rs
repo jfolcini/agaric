@@ -196,7 +196,7 @@ pub enum MaterializeTask {
     /// (the page-level roll-up of `block_links`). Fires on delete /
     /// restore / purge and from `apply_snapshot` / boot-time "table
     /// is empty" fallback. Per-content-edit invalidation rolls up
-    /// inside the [`ReindexBlockLinks`] handler.
+    /// inside the [`MaterializeTask::ReindexBlockLinks`] handler.
     RebuildPageLinkCache,
     Barrier(Arc<tokio::sync::Notify>),
 }

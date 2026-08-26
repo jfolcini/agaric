@@ -226,7 +226,7 @@ pub fn encode_snapshot(data: &SnapshotData) -> Result<Vec<u8>, AppError> {
 /// The buffered `&[u8]` shape is still cheap because `&[u8]: Read`,
 /// so call sites pass `&compressed[..]` (or `compressed.as_slice()`)
 /// for a one-character migration. Production callers
-/// ([`sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`])
+/// ([`try_receive_snapshot_catchup`](crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup))
 /// pass a `std::fs::File` opened on the temp file the binary
 /// stream was written into — the only buffer in flight is the
 /// per-frame chunk inside `receive_binary_streaming`.

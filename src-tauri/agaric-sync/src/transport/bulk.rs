@@ -29,7 +29,8 @@
 //! attachment move without a multi-gigabyte `Vec<u8>`.
 //!
 //! And it sets the granularity of `on_progress`. Its value is
-//! [`BINARY_FRAME_CHUNK_SIZE`] deliberately: under the old transport the UI
+//! [`BINARY_FRAME_CHUNK_SIZE`](crate::sync_constants::BINARY_FRAME_CHUNK_SIZE)
+//! deliberately: under the old transport the UI
 //! ticked once per 5 MB frame, so reusing the constant keeps the shipped tick
 //! cadence rather than inventing a new one. Widening it later is a UI-smoothness
 //! decision that costs memory; it is not a protocol change and needs no
@@ -40,7 +41,8 @@
 //! `total_size` is a number the peer said. The threat model is the user's own
 //! paired devices, so "attacker" means "corruption or version skew" — but a
 //! wrong number must not become a resource commitment, which is the same
-//! discipline [`session`](super::session) applies to an oversized length prefix.
+//! discipline [`session`](crate::transport::session) applies to an oversized length
+//! prefix.
 //! [`recv_bulk`] therefore rejects `total_size > max_size` **before** it reads or
 //! allocates anything, and the cap is the caller's, because only the caller knows
 //! what a plausible payload is: `MAX_SNAPSHOT_SIZE` for a snapshot offer, and for

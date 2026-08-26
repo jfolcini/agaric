@@ -33,7 +33,7 @@ use n0_future::boxed::BoxFuture;
 /// This is test apparatus today, but it is deliberately **not** `#[cfg(test)]`: the
 /// same recorder wired into a production endpoint is a runtime tripwire, and a later
 /// slice may do exactly that once there is somewhere to report to. Compare
-/// [`permissive`], which is test-only precisely because shipping an internet-facing
+/// `permissive`, which is test-only precisely because shipping an internet-facing
 /// configuration would be a liability rather than an asset.
 ///
 /// # Bounded, because the production use is the point

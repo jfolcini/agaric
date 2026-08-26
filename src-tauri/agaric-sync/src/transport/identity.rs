@@ -2,7 +2,7 @@
 //!
 //! # Why this module has to exist at all
 //!
-//! [`lan_only`](super::endpoint::lan_only) does not set a secret key, so
+//! [`lan_only`](crate::transport::endpoint::lan_only) does not set a secret key, so
 //! `Endpoint::bind` mints a fresh one on every call. For the slices that built
 //! `transport` that was invisible and harmless — every test binds, dials itself and
 //! throws both endpoints away.

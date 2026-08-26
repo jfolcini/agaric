@@ -1,6 +1,7 @@
 //! Sync event types and emission infrastructure.
 //!
-//! The [`SyncEventSink`] trait decouples the [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator)
+//! The [`SyncEventSink`](crate::sync_events::SyncEventSink) trait decouples the
+//! [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator)
 //! from Tauri, allowing tests to capture events without an `AppHandle`.
 
 use serde::{Deserialize, Serialize};
@@ -404,7 +405,7 @@ pub struct BlocksChangedEvent {
 /// Abstraction for emitting sync events.
 ///
 /// Implemented by `TauriEventSink` for production use and by
-/// [`RecordingEventSink`] (test-only) for capturing events in tests.
+/// `RecordingEventSink` (test-only) for capturing events in tests.
 pub trait SyncEventSink: Send + Sync {
     fn on_sync_event(&self, event: SyncEvent);
 }

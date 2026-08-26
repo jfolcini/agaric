@@ -563,7 +563,7 @@ pub async fn query_by_tags_inner(
 ///
 /// `expr` is UNTRUSTED IPC input, so its nesting depth is validated against
 /// [`TagExpr::MAX_DEPTH`] BEFORE resolution — the same gate
-/// [`eval_tag_query`] applies to its own And/Or/Not arms, lifted here so a
+/// [`tag_query::eval_tag_query`] applies to its own And/Or/Not arms, lifted here so a
 /// pathologically deep leaf-only tree (which `eval_tag_query`'s leaf fast
 /// path would not depth-check) is also rejected up front, and so the
 /// rejection happens before any DB work. Resolution then drives the SAME

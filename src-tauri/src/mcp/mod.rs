@@ -60,7 +60,8 @@ use agaric_core::error::AppError;
 /// weight the `initialize` instructions heavily, and an RW socket that
 /// introduces itself as "read-only" can suppress legitimate write-tool
 /// use. The surface is threaded from the spawn helpers through the
-/// serve loop into [`rmcp_adapter::RmcpAdapter::get_info`], and also
+/// serve loop into [`RmcpAdapter`](rmcp_adapter::RmcpAdapter)'s
+/// `ServerHandler::get_info`, and also
 /// labels the accept-loop log lines (previously hardcoded "RO" on both
 /// paths).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +79,8 @@ impl McpSurface {
         }
     }
 
-    /// MCP `initialize` instructions advertised by [`rmcp_adapter::RmcpAdapter::get_info`].
+    /// MCP `initialize` instructions advertised by
+    /// [`RmcpAdapter`](rmcp_adapter::RmcpAdapter)'s `ServerHandler::get_info`.
     pub fn instructions(self) -> &'static str {
         match self {
             McpSurface::ReadOnly => {
@@ -331,7 +333,8 @@ pub const MCP_RO_PIPE_PATH: &str = r"\\.\pipe\agaric-mcp-ro";
 /// directory.
 ///
 /// - Linux / macOS: `<app_data_dir>/mcp-ro.sock`
-/// - Windows: the fixed named-pipe path [`MCP_RO_PIPE_PATH`] (the
+/// - Windows: the fixed named-pipe path `MCP_RO_PIPE_PATH` (`#[cfg(windows)]`,
+///   so it is absent from a non-Windows doc build; the
 ///   `app_data_dir` argument is unused there).
 pub fn default_mcp_ro_socket_path(
     #[cfg_attr(windows, allow(unused_variables))] app_data_dir: &Path,

@@ -3,7 +3,7 @@
 //! Implements the core sync logic: head exchange, Loro-CRDT engine
 //! sync, and peer-ref bookkeeping.  The transport layer (WebSocket,
 //! BLE, …) is handled elsewhere — this module operates purely on typed
-//! [`SyncMessage`] values.
+//! [`SyncMessage`](crate::sync_protocol::SyncMessage) values.
 
 // Sync wire types for Loro-based sync
 // (`LoroSyncMessage::{Snapshot, Update}`).

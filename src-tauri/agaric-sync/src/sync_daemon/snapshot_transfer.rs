@@ -103,7 +103,7 @@
 //! scheduled sync tick: the initiator's `op_log` is wiped by
 //! `apply_snapshot`, so its next [`SyncMessage::HeadExchange`] will
 //! advertise empty heads and the responder will stream every post-
-//! snapshot op via the normal [`SyncMessage::OpBatch`] path. This
+//! snapshot op via the normal [`SyncMessage::OpLogBatch`] path. This
 //! keeps the sub-protocol simple (no recursive session restart) and
 //! matches the way normal delta catch-up works when a peer reappears
 //! after a long offline period.
@@ -703,7 +703,8 @@ fn catchup_peer_identity<'a>(
 }
 
 /// Attempt to receive + apply a snapshot from the responder after the
-/// initiator's main loop reached [`SyncState::ResetRequired`].
+/// initiator's main loop reached
+/// [`SyncState::ResetRequired`](crate::sync_protocol::SyncState::ResetRequired).
 ///
 /// Called by [`run_sync_session`](super::session_supervisor::run_sync_session)
 /// once the main message loop exits with `state == ResetRequired`.

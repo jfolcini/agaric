@@ -126,7 +126,7 @@ pub struct SearchFilter {
     /// **bypassed entirely** (FTS5 cannot accept a regex) and the
     /// candidate set comes from a recency-ordered scan of
     /// structurally-filtered blocks. Compile failures surface as
-    /// [`AppError::Validation`] with the structured `InvalidRegex` code.
+    /// [`AppError::Validation`](agaric_core::error::AppError::Validation) with the structured `InvalidRegex` code.
     #[serde(default)]
     pub is_regex: bool,
     /// Restrict matches to a specific `blocks.block_type`
@@ -194,7 +194,7 @@ pub struct SearchFilter {
     /// `None` (the default) preserves the existing "no filter" behaviour.
     /// Compiled through [`crate::filters::primitive::SearchProjection`]
     /// (`compile_last_edited`) and spliced into the dynamic FTS WHERE via
-    /// the [`crate::fts::filter_builder`] projection routing — see the
+    /// the `crate::fts::filter_builder` projection routing — see the
     /// `add_last_edited_via_projection` splice. `#[serde(default)]` keeps
     /// the wire shape additive: pre-#1320-C frontends omit the field and
     /// observe today's behaviour unchanged.

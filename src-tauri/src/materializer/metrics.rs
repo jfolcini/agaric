@@ -474,8 +474,8 @@ pub struct StatusInfo {
     pub sql_only_fallback_count: u64,
     /// #2031: process-global count of post-commit descendant fan-out
     /// skips that left the Loro engine potentially divergent from SQL.
-    /// Bumped whenever [`super::handlers::apply::dispatch_restore_descendants`]
-    /// or [`super::handlers::apply::dispatch_delete_descendants`] aborts at a
+    /// Bumped whenever `super::handlers::apply::dispatch_restore_descendants`
+    /// or `super::handlers::apply::dispatch_delete_descendants` aborts at a
     /// divergence-leaving early-return: a malformed root payload, a
     /// `resolve_block_space` error, or a missing space. Monotonic, never
     /// reset. Mirrors `fg_apply_dropped`'s "silent divergence" signal for

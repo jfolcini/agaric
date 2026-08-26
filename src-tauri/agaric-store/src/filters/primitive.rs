@@ -110,14 +110,14 @@ pub enum FilterPrimitive {
     /// is a deliberate follow-up; this leaf takes a concrete id.
     LinksTo { target: String },
     /// #1455 — block has an INBOUND link FROM the concrete `source` block id
-    /// (inverse of [`LinksTo`]): `EXISTS (SELECT 1 FROM block_links l WHERE
+    /// (inverse of [`FilterPrimitive::LinksTo`]): `EXISTS (SELECT 1 FROM block_links l WHERE
     /// l.target_id = b.id AND l.source_id = ?)`. The richer FilterExpr-source
     /// form is a follow-up; this leaf takes a concrete id.
     LinkedFrom { source: String },
     /// #1455 — block's PARENT row satisfies the nested `matcher` expression:
     /// `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND
     /// (<matcher compiled against the parent row `p`>))`. The boxed
-    /// [`FilterExpr`] is compiled against the parent alias `p` rather than the
+    /// [`FilterExpr`](crate::filters::FilterExpr) is compiled against the parent alias `p` rather than the
     /// outer `b`. Recursion (a `HasParentMatching` whose matcher itself
     /// contains another `HasParentMatching`) is bounded by
     /// [`FilterExpr::MAX_DEPTH`](crate::filters::FilterExpr::MAX_DEPTH): the
@@ -241,7 +241,7 @@ pub enum PropertyValue {
 /// calendar day". The Pages/Backlink `due_date`/`scheduled_date` columns
 /// store *pure* `YYYY-MM-DD` (no time component), so a lexical `= ?` already
 /// matches the whole day — that is the form
-/// [`BacklinkProjection::compile_due_date`] /
+/// `BacklinkProjection`'s [`compile_due_date`](Projection::compile_due_date) /
 /// [`compile_scheduled`](Projection::compile_scheduled) emit, byte-identical
 /// to the legacy backlink `DueDate{Eq}` leaf (the resolver oracle treats the
 /// column as DATE-exact).
@@ -509,7 +509,7 @@ pub trait Projection {
     }
 
     /// Compile a single primitive so its column references are emitted against
-    /// `alias` (#2320). This is the alias-parameterised form of [`compile`];
+    /// `alias` (#2320). This is the alias-parameterised form of [`compile`](Projection::compile);
     /// the advanced-query `has-parent-matching` path calls it with a per-level
     /// parent alias (`p1`, `p2`, …) so a compiled sub-expression references the
     /// parent row directly, rather than post-hoc rewriting the emitted SQL.

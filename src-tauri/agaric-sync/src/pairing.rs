@@ -131,7 +131,7 @@ pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
 /// Lifetime of a pairing session / the pending-pairing activation marker.
 ///
 /// A pairing session is short-lived: the host shows a QR, the joiner scans
-/// The interactive pairing window used by [`PairingSession::is_expired`].
+/// The interactive pairing window used by `PairingSession::is_expired`.
 ///
 /// Moved down into the store layer ([`agaric_store::peer_refs`]) so the
 /// pending-pairing marker (see [`agaric_store::peer_refs::is_pending_pairing`])

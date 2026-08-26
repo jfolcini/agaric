@@ -207,7 +207,7 @@ pub async fn reproject_dense_positions(
 /// CRDT convergence win).
 ///
 /// #2909: the UPDATE intentionally does NOT filter `deleted_at IS NULL`.
-/// The engine ([`apply_edit_block_via_loro`]) applies the diff-splice
+/// The engine ([`apply_edit_block_via_loro`](crate::apply::loro_apply::apply_edit_block_via_loro)) applies the diff-splice
 /// whenever the block exists in its tree — deleted or not — so the
 /// engine's LoroText (the sync-exported source of truth) is authoritative
 /// for content. Filtering `deleted_at` here would silently no-op the
@@ -689,7 +689,7 @@ pub async fn project_move_block_to_sql(
 /// soft-deleted at the same `deleted_at_ref` timestamp.
 ///
 /// **Cohort identity is structural, not value-only (#1055).** The walk
-/// uses [`descendants_cte_cohort`], whose recursive arm only descends
+/// uses [`descendants_cte_cohort`](agaric_store::descendants_cte_cohort), whose recursive arm only descends
 /// into a child that shares the cohort timestamp. This keeps the restore
 /// set a *connected* chain of same-cohort blocks rooted at the seed, so a
 /// separately-deleted nested subtree sitting below a boundary block of a
@@ -1075,7 +1075,7 @@ pub async fn project_block_full_to_sql(
 ///
 /// ## Typed-column routing (Phase 4)
 ///
-/// The engine stores each value as a native [`PropertyValue`]
+/// The engine stores each value as a native [`PropertyValue`](crate::loro::engine::PropertyValue)
 /// (`Num`/`Bool`/`Str`/`Null`), so numbers and booleans route **directly**
 /// to `value_num` / `value_bool` with no string round-trip — the engine is
 /// type-lossless end-to-end. A `Str` covers text/date/ref/select (all

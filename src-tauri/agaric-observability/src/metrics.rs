@@ -107,7 +107,7 @@ pub fn build_meter_provider(
 /// callbacks fire on the `PeriodicReader`'s collection cycle (every
 /// [`EXPORT_INTERVAL`]); they are cheap relaxed atomic loads with no locking.
 ///
-/// The returned [`ObservableCounter`]s are *not* stored: registering the
+/// The returned [`ObservableCounter`](opentelemetry::metrics::ObservableCounter)s are *not* stored: registering the
 /// callback is the whole job, and the SDK keeps the instrument alive inside the
 /// provider for the provider's lifetime. The caller hands the provider to the
 /// shutdown guard, which is what keeps the callbacks running.

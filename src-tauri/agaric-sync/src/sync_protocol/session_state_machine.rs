@@ -98,7 +98,8 @@ use agaric_store::peer_refs;
 ///   `SyncComplete` fallback described above.
 ///
 /// * **`pending_loro_messages`** holds the
-///   [`LoroSyncMessage`]s we owe the remote.  Populated when entering
+///   [`LoroSyncMessage`](crate::sync_protocol::loro_sync_types::LoroSyncMessage)s
+///   we owe the remote.  Populated when entering
 ///   [`SyncState::StreamingOps`] (after processing the remote's
 ///   `HeadExchange`) and drained one-per-call via
 ///   [`SyncOrchestrator::next_message`].  The transport layer is

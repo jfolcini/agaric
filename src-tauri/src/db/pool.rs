@@ -26,8 +26,9 @@ use crate::db::{DbPools, base_connect_options};
 /// `#[allow(clippy::too_many_arguments)]` attributed to the base params be
 /// removed.
 ///
-/// Every field is cheaply cloneable (the pool and [`Materializer`] are
-/// `Arc`-backed; [`DeviceId`] wraps a small `String`), so `WriteCtx` is
+/// Every field is cheaply cloneable (the pool and
+/// [`Materializer`](crate::materializer::Materializer) are `Arc`-backed;
+/// [`DeviceId`](agaric_sync::device::DeviceId) wraps a small `String`), so `WriteCtx` is
 /// constructed once at boot from the same values that back the standalone
 /// `WritePool` / `DeviceId` / `Materializer` managed states (which are kept
 /// for the read-only / partial-triple consumers — e.g. `get_device_id`,

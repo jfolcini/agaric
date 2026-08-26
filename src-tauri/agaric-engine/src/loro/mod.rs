@@ -5,11 +5,11 @@
 //! The module exposes the surface the materializer + sync layers need
 //! to drive the per-space `LoroEngine`:
 //!
-//! * [`engine::LoroEngine`] — the CRDT engine, using
+//! * [`engine::LoroEngine`](crate::loro::engine::LoroEngine) — the CRDT engine, using
 //!   [`agaric_core::error::AppError`] for fallible operations.
-//! * [`engine::BlockSnapshot`] — the read-back projection of a block
+//! * [`engine::BlockSnapshot`](crate::loro::engine::BlockSnapshot) — the read-back projection of a block
 //!   from the Loro doc.
-//! * [`engine::peer_id_from_device_id`] — derives a stable Loro
+//! * [`engine::peer_id_from_device_id`](crate::loro::engine::peer_id_from_device_id) — derives a stable Loro
 //!   `PeerID` from the device's UUID-v4 `device_id` via `xxh3_64`.
 //!   The hash is deterministic across runs, devices, and Rust
 //!   toolchain versions; see the function's stability-contract

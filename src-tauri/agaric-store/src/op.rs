@@ -59,7 +59,7 @@ impl OpType {
     /// serialization and the `op_log.op_type` column value.
     ///
     /// This is the single source of truth for the string mapping. Both
-    /// [`Display`] and [`OpPayload::op_type_str`] delegate here.
+    /// [`Display`](std::fmt::Display) and [`OpPayload::op_type_str`] delegate here.
     ///
     /// # Examples
     ///
