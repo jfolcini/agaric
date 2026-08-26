@@ -7,7 +7,8 @@
 //! keeps the `CommandTx` / `Materializer` orchestration behind unchanged shims
 //! (`crate::recurrence::compute::handle_recurrence` /
 //! `handle_recurrence_in_tx`), which forward the open transaction to
-//! [`build_recurrence_sibling_in_tx`] and enqueue the returned op records.
+//! [`build_recurrence_sibling_in_tx`](crate::recurrence::compute::build_recurrence_sibling_in_tx)
+//! and enqueue the returned op records.
 //!
 //! Module layout:
 //! - `parser` — pure rule-string parsing and date math (RRULE-like)

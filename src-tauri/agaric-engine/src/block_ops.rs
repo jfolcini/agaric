@@ -16,10 +16,12 @@
 //!
 //! ## What lives here
 //!
-//! - [`validate_date_format`] and [`is_valid_iso_date`] (#642) — both pure
+//! - [`validate_date_format`](crate::block_ops::validate_date_format) and
+//!   [`is_valid_iso_date`](crate::block_ops::is_valid_iso_date) (#642) — both pure
 //!   (only `AppError` + `chrono`), no DB / op_log / payload coupling; moved
 //!   DOWN into `agaric_core::date_validation` (#2633) and re-exported here.
-//! - [`create_block_in_tx`] and [`set_property_in_tx`] (#882) — the
+//! - [`create_block_in_tx`](crate::block_ops::create_block_in_tx) and
+//!   [`set_property_in_tx`](crate::block_ops::set_property_in_tx) (#882) — the
 //!   tx-scoped create-block / set-property cores, moved verbatim from
 //!   `commands::blocks::crud`. Despite the `…_in_tx` names they are the
 //!   *command cores*: they build `OpPayload` / `CreateBlockPayload` /

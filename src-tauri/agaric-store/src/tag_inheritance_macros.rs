@@ -98,13 +98,13 @@ pub(crate) const MAX_TAG_INHERITANCE_DEPTH: i32 = 100;
 ///
 /// # #4121 — the seed also refuses to START at a soft-deleted `?1`
 ///
-/// This is the [`tag_inh_ancestors_walk`] #3944 filter on the AddTag side,
+/// This is the [`tag_inh_ancestors_walk`](crate::tag_inh_ancestors_walk) #3944 filter on the AddTag side,
 /// and the same soundness argument applies verbatim: this CTE feeds
 /// **INSERTs only** at both of its call-sites
 /// (`propagate_tag_to_descendants`'s single insert, and
 /// `remove_inherited_tag` step 3's), so an empty walk is exactly the
 /// arbiter's answer for a tombstoned subject rather than a suppressed
-/// repair pass. Contrast [`tag_inh_subtree_active`], whose seed must keep
+/// repair pass. Contrast [`tag_inh_subtree_active`](crate::tag_inh_subtree_active), whose seed must keep
 /// admitting a tombstoned `?1` because it ALSO scopes two `DELETE`s.
 ///
 /// Without it, `propagate_tag_to_descendants(R, T)` on a soft-deleted `R`
@@ -121,7 +121,7 @@ pub(crate) const MAX_TAG_INHERITANCE_DEPTH: i32 = 100;
 ///
 /// **Non-change, deliberately:** `remove_inherited_tag` step 3 is unaffected
 /// in behaviour. Its insert CROSS JOINs `descendants` with
-/// `nearest_ancestor`, which is derived from [`tag_inh_ancestors_walk`] —
+/// `nearest_ancestor`, which is derived from [`tag_inh_ancestors_walk`](crate::tag_inh_ancestors_walk) —
 /// already empty for a soft-deleted `?1` since #3944 — so the step-3 result
 /// for a tombstoned subject was already "insert nothing". Making the two
 /// root-seeded INSERT walks agree removes the second, redundant reason
@@ -164,7 +164,7 @@ macro_rules! tag_inh_descendants_active {
 /// out here rather than left to be rediscovered.
 ///
 /// The tempting change is to make this seed match
-/// [`tag_inh_ancestors_walk`]'s and require `?1` to be live, on the argument
+/// [`tag_inh_ancestors_walk`](crate::tag_inh_ancestors_walk)'s and require `?1` to be live, on the argument
 /// that a walk may no more START at a tombstone than pass THROUGH one. That
 /// argument does not transfer, because this CTE is not only an INSERT
 /// source: `recompute_subtree_inheritance` uses it for its two step-1
@@ -188,7 +188,7 @@ macro_rules! tag_inh_descendants_active {
 /// is covered by — and only by — a recompute rooted at its (possibly
 /// tombstoned) ancestor.
 ///
-/// #3944 is closed instead by [`tag_inh_ancestors_walk`]'s seed filter
+/// #3944 is closed instead by [`tag_inh_ancestors_walk`](crate::tag_inh_ancestors_walk)'s seed filter
 /// alone, which is sound precisely because that CTE feeds INSERTs only.
 /// With it in place a recompute rooted at a tombstone inserts nothing from
 /// above (step 3's `ancestor_tags` is empty) and nothing FOR the tombstone
@@ -252,7 +252,7 @@ macro_rules! tag_inh_subtree_unfiltered {
 /// parent is not) — consumers keep their own `JOIN blocks … WHERE
 /// deleted_at IS NULL` to reject a deleted ancestor as a tag source.
 ///
-/// This is the same rule [`tag_inh_descendant_tags_full`] applies walking
+/// This is the same rule [`tag_inh_descendant_tags_full`](crate::tag_inh_descendant_tags_full) applies walking
 /// the other way: `rebuild_all` propagates a tag only through a chain of
 /// live blocks, so for `A[#T] > X(deleted) > R` it attributes nothing to
 /// `R`. Without the filter here the ancestor walk reached `A` through the
@@ -318,12 +318,12 @@ macro_rules! tag_inh_ancestors_walk {
 /// CTE** declared earlier in the same `WITH RECURSIVE` block.
 ///
 /// Carries `(block_id, tag_id, inherited_from, depth)` like
-/// [`tag_inh_descendant_tags_full`], but the seed is filtered through
+/// [`tag_inh_descendant_tags_full`](crate::tag_inh_descendant_tags_full), but the seed is filtered through
 /// `JOIN subtree st ON bt.block_id = st.id` — so the walk only emits
 /// rows for blocks whose tag-bearing ancestor sits inside the recompute
 /// subtree. Used exclusively by `recompute_subtree_inheritance`.
 ///
-/// Caller responsibility: emit a [`tag_inh_subtree_active`] CTE earlier
+/// Caller responsibility: emit a [`tag_inh_subtree_active`](crate::tag_inh_subtree_active) CTE earlier
 /// in the same `WITH RECURSIVE` block. Bound is
 /// [`MAX_TAG_INHERITANCE_DEPTH`].
 ///
@@ -385,7 +385,7 @@ macro_rules! tag_inh_descendant_tags_full {
 /// Non-recursive CTE body: collapse the full descendant-tags walk to the
 /// **nearest-ancestor** attribution per `(block_id, tag_id)`.
 ///
-/// [`tag_inh_descendant_tags_full`] can emit several rows for the same
+/// [`tag_inh_descendant_tags_full`](crate::tag_inh_descendant_tags_full) can emit several rows for the same
 /// `(block_id, tag_id)` — one per tag-bearing ancestor along the chain —
 /// each carrying a different `inherited_from` and `depth`. Because
 /// `block_tag_inherited` has PK `(block_id, tag_id)`, only one survives.
@@ -399,7 +399,7 @@ macro_rules! tag_inh_descendant_tags_full {
 /// even in the (tree-impossible) case of two equal-depth ancestors, so
 /// the full rebuild and the incremental remove always agree.
 ///
-/// Caller responsibility: emit a [`tag_inh_descendant_tags_full`] CTE
+/// Caller responsibility: emit a [`tag_inh_descendant_tags_full`](crate::tag_inh_descendant_tags_full) CTE
 /// earlier in the same `WITH RECURSIVE` block.
 ///
 /// CTE name `descendant_tags_nearest(block_id, tag_id, inherited_from)`.
@@ -418,8 +418,8 @@ macro_rules! tag_inh_rebuild_nearest {
     };
 }
 
-/// Non-recursive CTE body: the [`tag_inh_rebuild_nearest`] collapse applied
-/// to the **subtree-scoped** walk [`tag_inh_tagged_descendants_in_subtree`].
+/// Non-recursive CTE body: the [`tag_inh_rebuild_nearest`](crate::tag_inh_rebuild_nearest) collapse applied
+/// to the **subtree-scoped** walk [`tag_inh_tagged_descendants_in_subtree`](crate::tag_inh_tagged_descendants_in_subtree).
 ///
 /// Same problem, same rule, different source CTE: `tagged_descendants` can
 /// emit several rows for one `(block_id, tag_id)` when two blocks inside the
@@ -437,7 +437,7 @@ macro_rules! tag_inh_rebuild_nearest {
 /// tiebreak exists to make the collapse total rather than to decide a case
 /// that occurs.
 ///
-/// Caller responsibility: emit a [`tag_inh_tagged_descendants_in_subtree`]
+/// Caller responsibility: emit a [`tag_inh_tagged_descendants_in_subtree`](crate::tag_inh_tagged_descendants_in_subtree)
 /// CTE earlier in the same `WITH RECURSIVE` block.
 ///
 /// CTE name `tagged_descendants_nearest(block_id, tag_id, inherited_from)`.

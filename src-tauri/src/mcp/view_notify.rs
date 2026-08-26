@@ -8,7 +8,7 @@
 //!
 //! - [`EVENT_BLOCKS_CHANGED`] (`blocks:changed`) — a page-keyed content-change
 //!   signal whose `changed_page_ids` payload is byte-identical to
-//!   [`SyncEvent::Complete`]'s #1071 field, so the frontend reuses the same
+//!   [`SyncEvent::Complete`](agaric_sync::sync_events::SyncEvent::Complete)'s #1071 field, so the frontend reuses the same
 //!   `forEachPageStore` targeted-reload path with no new vocabulary.
 //! - [`EVENT_PROPERTY_CHANGED`] (`block:properties-changed`) — the SAME event
 //!   local `set_property` already emits (`emit_property_changed_event`,
@@ -18,7 +18,7 @@
 //! The abstraction mirrors [`super::activity::ActivityEmitter`]: production
 //! wraps a [`tauri::AppHandle`] in [`TauriViewChangeEmitter`]; the headless /
 //! stub path uses [`NoopViewChangeEmitter`]; tests use
-//! [`RecordingViewChangeEmitter`]. Emission is infallible from the caller's
+//! `RecordingViewChangeEmitter` (`#[cfg(test)]`, so not linkable). Emission is infallible from the caller's
 //! perspective — a transient bus failure is logged via `tracing::warn!` but
 //! never propagated, so a missing frontend never blocks tool dispatch.
 

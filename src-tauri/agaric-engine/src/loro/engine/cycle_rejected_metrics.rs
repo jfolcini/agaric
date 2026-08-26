@@ -2,7 +2,7 @@
 //!
 //! When a `MoveBlock` op would make a node an ancestor of itself, Loro's
 //! tree CRDT rejects it with `CyclicMoveError` and
-//! [`super::apply`]'s `move_block_impl` keeps the node under its current
+//! `super::apply`'s `move_block_impl` keeps the node under its current
 //! parent. This is *correct* CRDT behaviour (deterministic convergence;
 //! SQL follows the engine snapshot) — locally-authored cycles are already
 //! blocked by the command-layer guard, so a rejection here almost always
@@ -13,8 +13,8 @@
 //! indistinguishable from log noise: an operator asking "are we silently
 //! dropping cross-peer reparents?" has nothing to correlate. This module
 //! adds a process-global aggregate, mirroring
-//! [`super::super::super::sync_protocol::snapshot_fallback_metrics`]: a
-//! monotonic count plus the latest occurrence's block id, so a *spike* in
+//! `sync_protocol::snapshot_fallback_metrics`: a monotonic count plus the
+//! latest occurrence's block id, so a *spike* in
 //! rejections (expected on the sync path, not on local edits) is observable
 //! rather than buried.
 //!

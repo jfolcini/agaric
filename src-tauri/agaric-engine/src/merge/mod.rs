@@ -37,7 +37,7 @@ pub(crate) mod divergence;
 /// and the registry holds one engine per space.
 ///
 /// `device_id` is the production UUID-v4 device id.  It's threaded
-/// through to [`LoroEngine::with_peer_id`] so the engine's Loro
+/// through to [`LoroEngine::with_peer_id`](crate::loro::engine::LoroEngine::with_peer_id) so the engine's Loro
 /// peer id is stable across the process lifetime.
 ///
 /// `op_created_at` is the originating op's `created_at` as an epoch-ms
@@ -45,7 +45,7 @@ pub(crate) mod divergence;
 /// #668 — NOT RFC-3339). It is the real `deleted_at` timestamp the
 /// `DeleteBlock` arm writes onto the engine seed (Phase 2) so
 /// the value is lossless across sync — see
-/// [`LoroEngine::apply_delete_block`]. All other arms ignore it (their
+/// [`LoroEngine::apply_delete_block`](crate::loro::engine::LoroEngine::apply_delete_block). All other arms ignore it (their
 /// ops carry no timestamp the engine stores).
 ///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —

@@ -1,5 +1,5 @@
-//! Driving a [`SyncOrchestrator`] to completion over a QUIC bi-stream (#78, plan
-//! #3464 slice 1).
+//! Driving a [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator) to
+//! completion over a QUIC bi-stream (#78, plan #3464 slice 1).
 //!
 //! # One loop, where there were two
 //!

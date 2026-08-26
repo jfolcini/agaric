@@ -707,7 +707,7 @@ pub async fn get_blocks(
 /// limit).
 ///
 /// The space-filter shape mirrors `pagination::list_trash` (and the
-/// canonical [`agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL`]
+/// canonical `agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL`
 /// fragment inlined across `pagination/{hierarchy,trash}.rs`):
 /// `b.space_id = ?1` (#533, migration 0086 — `space_id` is now a
 /// first-class column). A soft-deleted block retains its `space_id`

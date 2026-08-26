@@ -23,7 +23,7 @@
 //!
 //! 1. The tx owner ARMS the log right after `BEGIN IMMEDIATE` — the REMOTE
 //!    single-op path (`apply_op`) via a [`RevertScope`], the LOCAL command
-//!    path via [`CommandTx::arm_engine_rollback`](agaric_store::db::CommandTx::arm_engine_rollback),
+//!    path via the app-layer `CommandTx::arm_engine_rollback`,
 //!    which detaches inside its own commit/rollback/`Drop` rather than a scope.
 //! 2. Each mutation handler's
 //!    [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording)
@@ -45,7 +45,7 @@
 //! commit/rollback, no other writer can be in its engine-apply phase. Arming
 //! (step 1) to detaching (step 3) both happen inside that lock-held window, so a
 //! concurrent writer never observes an armed log that isn't its own. In
-//! production [`for_space`] is exclusively a MUTATION chokepoint (every non-test
+//! production [`for_space`](crate::loro::registry::LoroEngineRegistry::for_space) is exclusively a MUTATION chokepoint (every non-test
 //! caller is a write handler), so an armed log never records a concurrent
 //! reader either. Arming a log that is already armed is a bug (nested write tx)
 //! and trips a debug assert.
@@ -133,7 +133,7 @@ impl RevertLog {
     /// Lift the recorded checkpoints out of the log, disarming it, for an
     /// explicit commit/abort decision — the direct-`RevertLog` counterpart of
     /// [`RevertScope::detach`] used by the LOCAL command path
-    /// ([`CommandTx`](agaric_store::db::CommandTx)), which arms the log itself rather
+    /// (the app-layer `CommandTx`), which arms the log itself rather
     /// than through a `RevertScope`.
     ///
     /// Like [`RevertScope::detach`], MUST be called while the caller's

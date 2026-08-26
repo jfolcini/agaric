@@ -129,7 +129,7 @@ pub async fn update_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// `page_titles` once per batch and reuses them across every
 /// `UpdateFtsBlock` task in the batch, eliminating the two
 /// `SELECT id, content FROM blocks WHERE block_type = …` queries
-/// that the old async [`strip_for_fts`] path issued for every block.
+/// that the old async `strip_for_fts` path issued for every block.
 ///
 /// Reads the block, strips content via the sync
 /// [`strip_for_fts_with_maps`] (no DB round-trips), and upserts the

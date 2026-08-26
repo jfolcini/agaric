@@ -4,7 +4,7 @@
 //!
 //! Space membership is now a first-class `blocks.space_id` column
 //! (migration 0086), so the read filter is the trivial
-//! `(?N IS NULL OR b.space_id = ?N)` — see [`SPACE_FILTER_CANONICAL`].
+//! `(?N IS NULL OR b.space_id = ?N)` — see `SPACE_FILTER_CANONICAL`.
 //! The elaborate `block_properties` sub-select that the
 //! history below was written to police no longer exists, which also
 //! makes the sqlx-codegen rejection moot (there is nothing left to
@@ -34,14 +34,14 @@
 //! The canonical is `#[cfg(test)]` only — production code continues
 //! to inline the fragment at every call site. When the fragment
 //! changes (e.g., to add a `OR space_id IS NULL` clause for
-//! pre-spaces compat), update [`SPACE_FILTER_CANONICAL`] here, run
+//! pre-spaces compat), update `SPACE_FILTER_CANONICAL` here, run
 //! the parity test, and update each drifted site the test names.
 //!
 //! ## What's NOT in scope
 //!
 //! Some space-scoped queries in the source tree intentionally use
 //! a *different* SQL shape and therefore are NOT canonical-fragment
-//! sites. The parity test ([`tests::space_filter_production_sites_match_canonical`])
+//! sites. The parity test (`tests::space_filter_production_sites_match_canonical`)
 //! walks `src/**/*.rs` at test time and asserts the canonical shape
 //! on every regex match, so structurally-different sites are simply
 //! not matched by the canonical regex and need no allowlisting:
@@ -61,11 +61,11 @@
 /// Canonical inline form of the space-filter SQL fragment with `?N`
 /// standing in for the bind index (which varies from `?2` to `?8`
 /// across production sites). After whitespace + bind-index +
-/// `bp`-alias normalisation (see [`tests::normalize`]), every
+/// `bp`-alias normalisation (see `tests::normalize`), every
 /// production occurrence equals this string exactly.
 ///
 /// Keep in sync with the inlined copy at every call site flagged by
-/// [`tests::space_filter_production_sites_match_canonical`].
+/// `tests::space_filter_production_sites_match_canonical`.
 ///
 /// `#[cfg(test)]`-gated for the same reason as the precedent in
 /// `crate::pagination::block_row_columns::BLOCK_ROW_CANONICAL_SELECT`:
@@ -140,7 +140,7 @@ mod tests {
     /// normalises to a stable form. A hand-written single-line
     /// equivalent (with `?2` instead of `?N`, no line breaks) must
     /// produce the same normalised string. Catches typos / pasted
-    /// nbsp / smart-quote disasters in [`SPACE_FILTER_CANONICAL`].
+    /// nbsp / smart-quote disasters in `SPACE_FILTER_CANONICAL`.
     #[test]
     fn space_filter_canonical_normalises_to_self() {
         let canonical_norm = normalize(SPACE_FILTER_CANONICAL);
@@ -186,7 +186,7 @@ mod tests {
 
     /// Test B — every canonical-shape space-filter occurrence found by
     /// a recursive `src/**/*.rs` walk, after normalisation, equals
-    /// [`SPACE_FILTER_CANONICAL`]. The walk (rather than a hand-
+    /// `SPACE_FILTER_CANONICAL`. The walk (rather than a hand-
     /// maintained `include_str!` allowlist) means a new call site in
     /// *any* file is automatically asserted — there is no allowlist to
     /// fall out of sync with, and no magic expected-count to bump.

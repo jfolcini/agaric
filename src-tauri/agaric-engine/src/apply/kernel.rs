@@ -11,7 +11,7 @@
 use super::*;
 
 /// #2325/#2250 — the SINGLE collapsed apply-projection entry point shared by
-/// the single-op REMOTE path ([`apply_op`], `advance_cursor = true`) and the
+/// the single-op REMOTE path (`apply_op`, `advance_cursor = true`) and the
 /// LOCAL command sites (`advance_cursor = false`).
 ///
 /// Before this, the LOCAL command path (`apply_*_via_loro` in a `CommandTx`)
@@ -51,7 +51,7 @@ pub async fn apply_op_projected(
 }
 
 /// #2896 — mode-aware form of [`apply_op_projected`]. The single-op REMOTE /
-/// boot-replay path ([`apply_op`]) threads its [`ApplyMode`] through here so a
+/// boot-replay path (`apply_op`) threads its [`ApplyMode`] through here so a
 /// replayed op defers its inline reprojection into the replay-owned
 /// [`ReplayDirtyParents`] sink; every other caller uses the [`apply_op_projected`]
 /// wrapper, which passes [`ApplyMode::Normal`].
@@ -418,7 +418,7 @@ pub struct ApplyEffects {
     pub delete_space_id: Option<agaric_store::space::SpaceId>,
 }
 
-/// Core apply-op logic operating on a bare [`SqliteConnection`].
+/// Core apply-op logic operating on a bare [`sqlx::SqliteConnection`].
 ///
 /// Both the single-op path (`apply_op`) and the batched-transaction path
 /// (`BatchApplyOps`) delegate here so that a batch can be wrapped in a

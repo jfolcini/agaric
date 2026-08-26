@@ -124,7 +124,7 @@ pub enum AppError {
     /// Serializes as `kind: "not_found"`.  Carries a `String`
     /// payload to stay compatible with the pre-existing
     /// `NotFound(String)` call sites that synthesize a contextual
-    /// "block <id>" message; `From<sqlx::Error>` populates it with
+    /// "block `<id>`" message; `From<sqlx::Error>` populates it with
     /// a generic "row not found" since the driver has no row
     /// context at that layer.
     #[error("Not found: {0}")]

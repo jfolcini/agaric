@@ -296,7 +296,7 @@ fn truncate_row_content(rows: &mut [SearchBlockRow], snippet_len: Option<usize>)
 ///   Time because `apply_post_filter` clears them anyway.
 /// - All toggles off → straight FTS5 partitioned scan, snippets kept.
 ///
-/// Returns a [`FtsPartitionedScan`] with per-partition `has_more`.
+/// Returns a [`FtsPartitionedScan`](crate::fts::FtsPartitionedScan) with per-partition `has_more`.
 ///
 /// `cancel` is an optional cancellation token threaded into
 /// the FTS path. The regex-mode branch honours the same token:

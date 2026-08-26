@@ -8,8 +8,8 @@
 //! 2. **Allow-list gate** — every leaf key in the tree must be in
 //!    [`QUERY_ALLOWED_KEYS`]; an unsupported key (e.g. `orphan`) is rejected
 //!    with [`AppError::Validation`] before compilation.
-//! 3. **Compile** — [`QueryProjection::compile_expr`] folds the tree into one
-//!    [`WhereClause`]; an `unsupported()` result is rejected (defence in
+//! 3. **Compile** — [`QueryProjection::compile_expr`](crate::filters::CompileExpr::compile_expr) folds the tree into one
+//!    [`WhereClause`](crate::filters::WhereClause); an `unsupported()` result is rejected (defence in
 //!    depth — the gate already caught it).
 //! 4. **Assemble** — `FROM blocks b WHERE b.space_id = ? AND
 //!    b.deleted_at IS NULL AND (<compiled>)`, with the anonymous `?`

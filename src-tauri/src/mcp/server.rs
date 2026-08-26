@@ -5,7 +5,8 @@
 //! (the rmcp adapter). This module owns the bits that the rmcp adapter
 //! does not touch:
 //!
-//! - [`serve`] / [`serve_unix`] / [`serve_pipe`] — accept-loop with the
+//! - [`serve`] / [`serve_unix`] / `serve_pipe` (the latter is
+//!   `#[cfg(windows)]`, so it is absent from a non-Windows doc build) — accept-loop with the
 //!   H-2 enable/disable gate and the disconnect signal.
 //! - [`run_connection`] — per-connection lifecycle wrapper around the
 //!   rmcp adapter, threading [`super::McpLifecycle`]'s connection
@@ -31,7 +32,8 @@ pub use super::registry::{PlaceholderRegistry, ToolDescription, ToolRegistry};
 // Protocol constants
 // ---------------------------------------------------------------------------
 
-/// Application-level "not found" code, used by [`super::rmcp_adapter::app_error_to_rmcp`].
+/// Application-level "not found" code, used by the private
+/// `super::rmcp_adapter::app_error_to_rmcp` helper.
 /// Distinct from JSON-RPC's `-32601 Method not found` — this code signals
 /// "the *resource* named by the call arguments was not found" (unknown
 /// tool name under `tools/call`, unknown block id inside a tool handler,

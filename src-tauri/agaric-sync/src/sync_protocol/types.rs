@@ -355,7 +355,7 @@ impl From<OpTransfer> for OpRecord {
 ///    is closed and the daemon retries on the next scheduled tick.
 ///
 /// See [`crate::sync_protocol::session_state_machine`] (per-session ASCII
-/// diagram) and [`crate::sync_daemon::session_supervisor`] (daemon-level
+/// diagram) and `crate::sync_daemon::session_supervisor` (daemon-level
 /// orchestration) for the source-of-truth narrative.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -600,22 +600,26 @@ pub enum SyncMessage {
         records: Vec<OpTransfer>,
         is_last: bool,
     },
-    /// Transport-level escape hatch for an [`OpLogBatch`] whose serialised
+    /// Transport-level escape hatch for an [`OpLogBatch`](SyncMessage::OpLogBatch)
+    /// whose serialised
     /// `records` exceed [`crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES`]
     /// (#2593). Announces that the batch's `serde_json`-encoded records follow
     /// out-of-band as exactly `size_bytes` of chunked binary frames — the same
-    /// machinery [`LoroSyncChunked`] uses — so a lone oversized op record (a
+    /// machinery [`LoroSyncChunked`](SyncMessage::LoroSyncChunked) uses — so a lone
+    /// oversized op record (a
     /// sync-applied/imported op carrying a large block `content`) replicates its
     /// audit metadata instead of being dropped at the inline frame cap.
     ///
     /// **Nothing in this build produces it**, for the same reason as
-    /// [`LoroSyncChunked`]: the iroh port (#3464) removed the chunking layer,
+    /// [`LoroSyncChunked`](SyncMessage::LoroSyncChunked): the iroh port (#3464)
+    /// removed the chunking layer,
     /// and an oversized batch now ships inline under QUIC's 256 MB frame cap.
     /// The variant stays on the wire so a chunking-era peer is decoded and
     /// rejected explicitly; reaching `handle_message` fails the session loudly
     /// (same contract as `LoroSyncChunked`).
     ///
-    /// **Capability-gated identically to [`OpLogBatch`].** It is only produced
+    /// **Capability-gated identically to [`OpLogBatch`](SyncMessage::OpLogBatch).**
+    /// It is only produced
     /// when a batch that the peer already opted into (via
     /// `op_log_replication: true`) is too large to ship inline, so no peer that
     /// lacks the `OpLogBatch` capability is ever sent this variant.
@@ -646,7 +650,8 @@ pub enum SyncMessage {
     /// decides.
     ///
     /// `blob_blake3` (#706 item 2) is the hex blake3 of the *compressed*
-    /// snapshot blob, mirroring [`FileOffer::blake3_hash`]. The transfer
+    /// snapshot blob, mirroring [`FileOffer`](SyncMessage::FileOffer)'s
+    /// `blake3_hash`. The transfer
     /// already rides authenticated mTLS and an atomic decode-or-rollback
     /// apply, so this guards the one remaining gap: responder-side disk
     /// corruption of the blob between read and send. The initiator

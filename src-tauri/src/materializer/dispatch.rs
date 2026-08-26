@@ -535,7 +535,7 @@ impl Materializer {
     /// convention is deliberate: background task enqueue failures (queue
     /// closed, serialization failure) should not unwind the command handler
     /// because the op itself has already been durably written to the op log.
-    /// Callers that need propagation should use [`dispatch_background`]
+    /// Callers that need propagation should use [`Self::dispatch_background`]
     /// directly.
     pub fn dispatch_background_or_warn(&self, record: &OpRecord) {
         if let Err(e) = self.dispatch_background(record) {

@@ -120,7 +120,7 @@ pub async fn get_page_aliases_inner(
 ///
 /// `scope` — [`SpaceScope::Active`] restricts the
 /// match to aliases pointing at pages whose `b.space_id` equals the
-/// wrapped [`SpaceId`] (#533, migration 0086 — `space_id` is a first-class
+/// wrapped [`SpaceId`](agaric_store::space::SpaceId) (#533, migration 0086 — `space_id` is a first-class
 /// column). Mirrors the
 /// `(?N IS NULL OR b.space_id = ?N)` short-circuit
 /// already used by [`list_page_aliases_by_prefix_inner`] so the alias
@@ -184,7 +184,7 @@ struct PageAliasPrefixRow {
 ///
 /// `scope` — [`SpaceScope::Active`] restricts the
 /// result set to aliases pointing at pages whose `space` property
-/// equals the wrapped [`SpaceId`]. Mirrors the
+/// equals the wrapped [`SpaceId`](agaric_store::space::SpaceId). Mirrors the
 /// `(?N IS NULL OR ... IN (...))` short-circuit pattern used by
 /// `pagination::list_by_tag` and friends. [`SpaceScope::Global`] keeps
 /// the cross-space behaviour for callers that span every space.

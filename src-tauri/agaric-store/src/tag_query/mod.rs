@@ -60,7 +60,7 @@ impl TagExpr {
     pub const MAX_DEPTH: usize = 50;
 
     /// Reject a `TagExpr` whose nesting exceeds [`TagExpr::MAX_DEPTH`]
-    /// (#1597). Mirrors [`FilterExpr::validate_depth`]: the walk checks the
+    /// (#1597). Mirrors [`FilterExpr::validate_depth`](crate::filters::FilterExpr::validate_depth): the walk checks the
     /// bound at the TOP of each frame, BEFORE recursing into children, so it
     /// bounds its own recursion to `MAX_DEPTH + 1` frames and cannot itself
     /// overflow the stack on a pathologically deep tree.

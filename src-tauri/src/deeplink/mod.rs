@@ -1,7 +1,8 @@
 //! Deep-link router.
 //!
-//! Parses inbound URLs delivered by [`tauri-plugin-deep-link`] and emits
-//! typed Tauri events the frontend ([`useDeepLinkRouter`]) consumes:
+//! Parses inbound URLs delivered by the `tauri-plugin-deep-link` plugin and
+//! emits typed Tauri events the frontend (`useDeepLinkRouter`, in
+//! `src/hooks/useDeepLinkRouter.ts`) consumes:
 //!
 //! - `…block/<ULID>` → [`EVENT_NAVIGATE_TO_BLOCK`]
 //! - `…page/<ULID>` → [`EVENT_NAVIGATE_TO_PAGE`]
@@ -34,7 +35,7 @@ use agaric_core::ulid::BlockId;
 // Event name constants
 // ---------------------------------------------------------------------------
 
-/// Inbound event from [`tauri-plugin-deep-link`].  Payload is a JSON array
+/// Inbound event from the `tauri-plugin-deep-link` plugin.  Payload is a JSON array
 /// of URL strings (`Vec<String>`).  Defined in the plugin's `lib.rs`:
 /// `app.emit("deep-link://new-url", vec![url])`.
 pub const EVENT_DEEP_LINK_NEW_URL: &str = "deep-link://new-url";

@@ -227,7 +227,8 @@ pub fn classify_from_vv_reachability(
 /// ## Why per-block `deleted_at` reconciliation, not a vv freshness gate
 ///
 /// The engine tombstones rather than removes on delete
-/// ([`agaric_engine::loro::engine::apply::...apply_delete_block`] sets the
+/// ([`LoroEngine::apply_delete_block`](agaric_engine::loro::engine::LoroEngine::apply_delete_block)
+/// sets the
 /// `deleted_at` meta but the node survives in the `LoroDoc` and is still
 /// exported). The hazard a future eager-local-apply introduces is a
 /// *divergence* where SQL has soft-deleted a block but the engine still

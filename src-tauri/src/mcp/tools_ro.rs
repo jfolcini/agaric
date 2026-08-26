@@ -92,7 +92,7 @@ pub const SEARCH_RESULT_CAP: i64 = 50;
 /// Default for list-style tools (`list_pages`, `list_tags`,
 /// `list_backlinks`). Re-exported from
 /// [`crate::commands::MCP_PAGE_LIMIT_CAP`] so the tool boundary and the
-/// [`list_pages_inner`] / [`get_page_inner`] internal strict validation
+/// [`list_pages_inner`] / [`get_page_inner`](crate::commands::get_page_inner) internal strict validation
 /// share a single source of truth.
 pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 

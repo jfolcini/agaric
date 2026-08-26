@@ -524,7 +524,7 @@ impl LoroEngine {
     }
     /// String-valued `SetProperty` shim for legacy callers / parity paths.
     /// `value = None` writes an explicit Null (clear). Prefer
-    /// [`apply_set_property_typed`] on the write path so numbers and booleans
+    /// [`Self::apply_set_property_typed`] on the write path so numbers and booleans
     /// are stored natively rather than flattened to a string.
     pub fn apply_set_property(
         &mut self,

@@ -22,8 +22,8 @@
 //! - **Decoupled emitter.** `ActivityEmitter` is a trait object so the
 //!   server module stays free of any direct Tauri runtime generics.
 //!   Production wraps [`tauri::AppHandle`] in [`TauriRuntimeEmitter`]; tests
-//!   use [`RecordingEmitter`] (or [`NoopEmitter`] when they only care about
-//!   the ring).
+//!   use `RecordingEmitter` (`#[cfg(test)]`, so not linkable) or
+//!   [`NoopEmitter`] when they only care about the ring.
 //! - **Thread safety.** The ring is always accessed through
 //!   `Arc<Mutex<ActivityRing>>`. Lock poisoning is tolerated
 //!   (`unwrap_or_else(std::sync::PoisonError::into_inner)`) — a panic in
@@ -249,7 +249,7 @@ impl Default for ActivityRing {
 
 /// Trait-object seam between the MCP server module and the Tauri event bus.
 /// Production wiring uses [`TauriRuntimeEmitter`]; tests use
-/// [`RecordingEmitter`] or [`NoopEmitter`].
+/// `RecordingEmitter` (`#[cfg(test)]`, so not linkable) or [`NoopEmitter`].
 ///
 /// Implementations MUST be infallible from the caller's perspective —
 /// transient bus failures (no listener, shutting down, etc.) are logged via

@@ -4,7 +4,8 @@
 //! both peers may have `AddAttachment` ops pointing to `fs_path` values that
 //! don't exist locally.  This module provides the file transfer phase that
 //! sends the actual attachment bytes over the session's already-open iroh
-//! QUIC bi-stream (#3464): framed [`SyncMessage`]s via
+//! QUIC bi-stream (#3464): framed
+//! [`SyncMessage`](crate::sync_protocol::SyncMessage)s via
 //! [`crate::transport::session`], attachment payloads via
 //! [`crate::transport::bulk`].
 //!

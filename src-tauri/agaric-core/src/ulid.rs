@@ -252,15 +252,15 @@ impl From<BlockId> for String {
 /// A block ID that has been verified to refer to an active block.
 ///
 /// "Active" means the block exists in the materialised `blocks` table
-/// AND `deleted_at IS NULL`. Use [`verify_active`]
+/// AND `deleted_at IS NULL`. Use `agaric_lib::ulid::verify_active`
 /// to convert a raw [`BlockId`] into this type.
 ///
 /// **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
 /// `transparent`, and `sqlx::Type` is `transparent` over the inner
 /// `String` — the encoded representation is byte-identical to the
 /// underlying ULID. Round-tripping through JSON / SQLite preserves the
-/// active claim only because callers use [`verify_active`] at the
-/// boundary; deserialising raw user input never produces an
+/// active claim only because callers use `agaric_lib::ulid::verify_active`
+/// at the boundary; deserialising raw user input never produces an
 /// `ActiveBlockId` whose claim has been checked.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, sqlx::Type, specta::Type,
@@ -296,12 +296,12 @@ impl ActiveBlockId {
 
     /// Construct from a string already known to refer to an active block.
     ///
-    /// Skips the [`verify_active`] DB lookup. Use ONLY when the call site
-    /// has just produced the value from an active-filtering SQL query
-    /// (e.g., a `SELECT … WHERE deleted_at IS NULL`
-    /// helper) and the activeness claim is fresh. For untrusted input
+    /// Skips the `agaric_lib::ulid::verify_active` DB lookup. Use ONLY when
+    /// the call site has just produced the value from an active-filtering
+    /// SQL query (e.g., a `SELECT … WHERE deleted_at IS NULL` helper) and
+    /// the activeness claim is fresh. For untrusted input
     /// (command parameters, op log payloads, sync messages) call
-    /// [`verify_active`] instead.
+    /// `agaric_lib::ulid::verify_active` instead.
     ///
     /// Mirrors [`BlockId::from_trusted`] — `to_ascii_uppercase` keeps
     /// the byte-stable normalisation contract that blake3 hashing
@@ -323,8 +323,8 @@ impl ActiveBlockId {
 /// `ActiveBlockId.into_string()` round-trips, benches that seed known
 /// rows). Bypasses both ULID validation and the DB activeness check —
 /// production code reaching for a fresh `ActiveBlockId` should always
-/// route through [`verify_active`] so the activeness claim is verified
-/// at the call site. Mirror of [`BlockId`]'s implicit conversion.
+/// route through `agaric_lib::ulid::verify_active` so the activeness claim
+/// is verified at the call site. Mirror of [`BlockId`]'s implicit conversion.
 impl From<String> for ActiveBlockId {
     fn from(s: String) -> Self {
         Self(s.to_ascii_uppercase())

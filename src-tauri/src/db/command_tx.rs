@@ -231,7 +231,7 @@ impl CommandTx {
     /// Queue an `edit_block` op record with a `block_type` hint for
     /// post-commit dispatch.
     ///
-    /// Invokes [`Materializer::dispatch_edit_background`] during
+    /// Invokes [`Materializer::dispatch_edit_background`](crate::materializer::Materializer::dispatch_edit_background) during
     /// `commit_and_dispatch`. Dispatch failures are logged at warn level
     /// (matching the `_or_warn` convention used for the plain
     /// [`enqueue_background`](Self::enqueue_background) variant) rather
@@ -258,7 +258,7 @@ impl CommandTx {
     /// Queue a lifecycle op record (`delete_block` / `restore_block` /
     /// `purge_block`) with a `block_type` hint for post-commit dispatch.
     ///
-    /// Invokes [`Materializer::dispatch_lifecycle_background`] during
+    /// Invokes [`Materializer::dispatch_lifecycle_background`](crate::materializer::Materializer::dispatch_lifecycle_background) during
     /// `commit_and_dispatch`. Dispatch failures are logged at warn level
     /// (matching the `_or_warn` convention) rather than propagated — the op
     /// has already committed, so a missed cache rebuild is recoverable.
@@ -282,7 +282,7 @@ impl CommandTx {
     /// #2700: queue a LOCAL `move_block` op with a proven `same_page` hint for
     /// post-commit dispatch.
     ///
-    /// Invokes [`Materializer::dispatch_move_background`] during
+    /// Invokes [`Materializer::dispatch_move_background`](crate::materializer::Materializer::dispatch_move_background) during
     /// `commit_and_dispatch`. Dispatch failures are logged at warn level
     /// (matching the `_or_warn` convention) rather than propagated — the op has
     /// already committed, so a missed cache rebuild is recoverable.

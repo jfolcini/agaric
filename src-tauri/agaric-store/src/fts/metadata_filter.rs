@@ -5,7 +5,7 @@
 //! helper that turns the wire-side `SearchFilter` fields into a
 //! [`MetadataPredicates`] bundle ready to be appended to the dynamic
 //! SQL emitted by [`super::search::search_fts`] and
-//! [`super::toggle_filter::regex_mode_query`].
+//! `super::toggle_filter::regex_mode_query`.
 //!
 //! The work split:
 //!

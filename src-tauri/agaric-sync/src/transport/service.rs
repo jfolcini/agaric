@@ -18,7 +18,9 @@
 //!
 //! # Admission control is a refusal, not a queue
 //!
-//! The cap is [`MAX_CONCURRENT_RESPONDER_SESSIONS`] (16), carried unchanged from the
+//! The cap is
+//! [`MAX_CONCURRENT_RESPONDER_SESSIONS`](crate::sync_constants::MAX_CONCURRENT_RESPONDER_SESSIONS)
+//! (16), carried unchanged from the
 //! WebSocket accept loop this replaces (`sync_net::websocket`, #1581). Its sizing
 //! rationale is not about connections at all — it is about what those connections
 //! contend for: "16 leaves generous headroom over any realistic paired-device count
@@ -26,7 +28,8 @@
 //! ultimately draw on".
 //!
 //! That is why the over-capacity connection is **refused** rather than queued, and why
-//! [`Semaphore::try_acquire_owned`] rather than `acquire_owned().await` is the
+//! [`Semaphore::try_acquire_owned`](tokio::sync::Semaphore::try_acquire_owned) rather
+//! than `acquire_owned().await` is the
 //! load-bearing choice here. Queueing would look kinder and be worse: a cap sized
 //! against a downstream pool exists to keep contention bounded, and a waiter parked on
 //! that cap is a session that has already been admitted in every sense except the one
@@ -52,21 +55,27 @@
 //!
 //! # Identity comes from the handshake, never from the wire
 //!
-//! [`InboundSession::remote`] is [`Connection::remote_id`] — the [`EndpointId`] in the
+//! [`InboundSession::remote`] is
+//! [`Connection::remote_id`](iroh::endpoint::Connection::remote_id) — the
+//! [`EndpointId`](iroh::EndpointId) in the
 //! peer's TLS certificate, established by the QUIC handshake before a single
 //! application byte moves. This is plan #3464's D3, and it is the reason
 //! [`driver`](crate::transport::driver) needs only one session loop where the old stack
 //! needed two: the responder no longer has to read `HeadExchange` to find out who it is
 //! talking to.
 //!
-//! Mapping that [`EndpointId`] onto an Agaric `DeviceId` is a later slice and
+//! Mapping that [`EndpointId`](iroh::EndpointId) onto an Agaric `DeviceId` is a later
+//! slice and
 //! deliberately absent here. An identity this module invented would be an identity the
 //! transport did not authenticate.
 //!
 //! # Connection setup is bounded, and it is no longer serialized
 //!
-//! Setup is two waits with two legitimate durations: [`CONNECTION_SETUP_TIMEOUT`] for
-//! the handshake, and [`FIRST_FRAME_TIMEOUT`] for the peer's first frame, which it
+//! Setup is two waits with two legitimate durations:
+//! `CONNECTION_SETUP_TIMEOUT` for
+//! the handshake, and
+//! `FIRST_FRAME_TIMEOUT` for the
+//! peer's first frame, which it
 //! cannot send until it has read its own heads out of the database. See that second
 //! constant for why budgeting them together understated the first-message window by an
 //! order of magnitude.
@@ -415,7 +424,8 @@ impl AdmittedConnection {
 /// does not depend on `thiserror`.
 #[derive(Debug)]
 pub enum ServiceBindError {
-    /// [`lan_only`] rejected the bind address or prefix. No socket was opened.
+    /// [`lan_only`](crate::transport::endpoint::lan_only) rejected the bind address or
+    /// prefix. No socket was opened.
     Configuration(LanBindError),
     /// iroh could not bind the socket.
     Socket(BindError),
@@ -458,7 +468,8 @@ impl From<BindError> for ServiceBindError {
 impl SyncService {
     /// Bind a LAN-only sync endpoint on `bind`, confined to `prefix_len`.
     ///
-    /// The endpoint is built by [`lan_only`], not configured here — the posture that
+    /// The endpoint is built by [`lan_only`](crate::transport::endpoint::lan_only), not
+    /// configured here — the posture that
     /// module proves is the posture this service gets, and re-deriving any part of it
     /// would mean re-deriving the guard too.
     ///
@@ -466,7 +477,8 @@ impl SyncService {
     ///
     /// The addresses this host holds, as the caller enumerated them, for the locality gate
     /// that decides whether a publicly-routable `bind` may be claimed. It is a parameter
-    /// rather than a `getifaddrs(3)` call inside [`lan_only`] because the daemon's caller
+    /// rather than a `getifaddrs(3)` call inside
+    /// [`lan_only`](crate::transport::endpoint::lan_only) because the daemon's caller
     /// has **already** enumerated the host to pick `bind` in the first place: sweeping
     /// again here opens a window in which an address can disappear between the two reads,
     /// and the bind then fails as `BindAddressNotPrivate` rather than falling back to

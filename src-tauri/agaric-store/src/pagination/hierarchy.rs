@@ -29,7 +29,7 @@ use agaric_core::error::AppError;
 /// identical results. The filter uses bare `b.page_id` (migration 0066
 /// dropped the old `COALESCE(page_id, id)` form for sargability; 0073's
 /// `page_id_self_for_pages` CHECK makes the fallback unnecessary). See
-/// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
+/// [`crate::space_filter_canonical`]'s `SPACE_FILTER_CANONICAL` for the shared
 /// SQL fragment definition.
 ///
 /// Uses index `idx_blocks_parent_covering(parent_id, deleted_at, position, id)`.
@@ -51,7 +51,7 @@ pub async fn list_children(
     // NULL position sorts at the sentinel rather than mis-ordering or being
     // dropped across a pagination boundary — mirroring `get_page_inner`.
     // The literal is mirrored (modulo ?N) by
-    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] — kept
+    // `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept
     // inline here because `sqlx::query_as!` requires a string literal
     // directly and does not accept `concat!()`. Any change to the filter
     // SQL must touch every inlined copy (list_children, list_by_type,
@@ -98,7 +98,7 @@ pub async fn list_children(
 /// form for sargability, 0073's `page_id_self_for_pages` CHECK makes the
 /// fallback unnecessary) carries `space = ?space_id` are returned. `None`
 /// Keeps the pre-existing behaviour (no filter). See
-/// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
+/// [`crate::space_filter_canonical`]'s `SPACE_FILTER_CANONICAL` for the shared
 /// SQL fragment definition.
 ///
 /// Uses index `idx_blocks_type(block_type, deleted_at)`.
@@ -125,7 +125,7 @@ pub async fn list_by_type(
     // Phase 2 — ?5 (space_id) drives the space filter. See the
     // header note on `list_children` for why the clause is inlined
     // rather than composed via
-    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`].
+    // `crate::space_filter_canonical::SPACE_FILTER_CANONICAL`.
     let rows = sqlx::query_as!(
         ActiveBlockRow,
         r#"SELECT id as "id: agaric_core::ulid::ActiveBlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position,

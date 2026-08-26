@@ -9,7 +9,8 @@
 //!
 //! ## Production status (#2473 / #2481)
 //!
-//! [`insert_remote_op`] and [`append_merge_op`] have **no production
+//! [`insert_remote_op`](crate::dag::insert_remote_op) and
+//! [`append_merge_op`](crate::dag::append_merge_op) have **no production
 //! callers today**. Post-#490-M1 the local `op_log` is strictly
 //! device-local (see `sync_protocol::operations::check_reset_required`):
 //! inbound sync lands remote state via the Loro CRDT engine import + SQL
@@ -19,7 +20,7 @@
 //!
 //! This is retained deliberately, not dead code awaiting removal: #2481
 //! (DECIDED, option (a) — audit-only op-log replication) designates
-//! [`insert_remote_op`] as the phase-1 ingest point for replicated op
+//! [`insert_remote_op`](crate::dag::insert_remote_op) as the phase-1 ingest point for replicated op
 //! records. Under that design, records are hash-verified and stored for
 //! cross-device History/attribution but are **never applied to state**
 //! — state continues to flow exclusively through Loro CRDT sync. See

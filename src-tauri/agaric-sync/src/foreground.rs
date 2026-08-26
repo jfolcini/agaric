@@ -1,8 +1,10 @@
 //! Foreground/background gating primitive shared across layers.
 //!
 //! This is a **foundation-layer** module (no `crate::` or `tauri::`
-//! dependencies): the shared [`LifecycleHooks`] flag/wake pair and the
-//! pure [`derive_app_state`] discrimination logic are consumed by lower
+//! dependencies): the shared [`LifecycleHooks`](crate::foreground::LifecycleHooks)
+//! flag/wake pair and the pure
+//! [`derive_app_state`](crate::foreground::derive_app_state) discrimination
+//! logic are consumed by lower
 //! layers (the sync daemon, the materializer) as well as the app shell.
 //! The app-layer Tauri managed-state wrapper lives in the app crate's
 //! `lifecycle` module, which depends *down* on this module. Keeping the
@@ -16,7 +18,8 @@
 //! tick and the materializer's 5 min metrics log keep firing — harmless
 //! per-tick but preventing long idle-task-park windows.
 //!
-//! The [`LifecycleHooks`] value is shared between `lib.rs`'s window-event
+//! The [`LifecycleHooks`](crate::foreground::LifecycleHooks) value is shared
+//! between `lib.rs`'s window-event
 //! listener and the background tasks. When the app is focused, tasks
 //! behave normally; when unfocused (`is_foreground == false`) they skip
 //! their periodic work bodies. Foreground transitions wake waiters via

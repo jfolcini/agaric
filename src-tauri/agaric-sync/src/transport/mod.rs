@@ -18,8 +18,9 @@
 //! so an endpoint built from it still publishes this device's addresses to a third
 //! party on every start.
 //!
-//! [`endpoint::lan_only`] is the configuration that actually holds, and
-//! [`endpoint`]'s test module is the guard that proves it still holds after an iroh
+//! [`endpoint::lan_only`](crate::transport::endpoint::lan_only) is the configuration
+//! that actually holds, and [`endpoint`](crate::transport::endpoint)'s test module is
+//! the guard that proves it still holds after an iroh
 //! upgrade. That guard is the reason this module carries tests that look paranoid:
 //! the failure mode it defends against is silent, and it is one `cargo update` away.
 

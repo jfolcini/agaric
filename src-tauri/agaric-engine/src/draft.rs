@@ -1,8 +1,10 @@
 //! Block draft writer — autosave buffer for in-progress edits.
 //!
-//! Every ~2 seconds during active typing the frontend calls [`save_draft`] to
+//! Every ~2 seconds during active typing the frontend calls
+//! [`save_draft`](crate::draft::save_draft) to
 //! persist the current editor content into the `block_drafts` table. On
-//! blur / window-focus-loss the frontend calls [`flush_draft`] which writes a
+//! blur / window-focus-loss the frontend calls
+//! [`flush_draft`](crate::draft::flush_draft) which writes a
 //! proper `edit_block` op and removes the draft row.
 //!
 //! Drafts never participate in sync, undo, or compaction.

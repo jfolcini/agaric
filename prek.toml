@@ -2092,6 +2092,49 @@ pass_filenames = false
 types = ["rust"]
 stages = ["pre-push"]
 
+# Rust: rustdoc intra-doc link resolution. A `[`some_item`]` in a doc comment
+# that no longer resolves renders as literal text and silently stops being a
+# cross-reference — the doc-comment twin of the dead-citation class that
+# `scripts/check-dead-symbol-citations.mjs` pins by hand. That guard's own
+# header calls the general version ("any doc comment citing a symbol that
+# doesn't resolve") out of scope because it "needs real Rust name resolution";
+# rustdoc HAS that resolver, so this hook is the general version, for free.
+#
+# The sweep that introduced this hook fixed 177 already-broken links across all
+# six crates, so the tree starts clean and this is a ratchet, not a backlog.
+#
+# ONLY `broken_intra_doc_links` is denied — deliberately NOT `-D warnings`.
+# The same build also emits 211 `private_intra_doc_links`, 26
+# `redundant_explicit_link_target` and 3 `unclosed_html_tag` warnings, all
+# pre-existing. Those are separate judgment calls (widening visibility vs.
+# de-linking); denying them here would wire 240 unrelated failures into every
+# push. Add them as separate ratchets if/when each class is swept.
+#
+# `--workspace` for the same reason as cargo-clippy above: without it only the
+# root `agaric` package is documented. `--no-deps` keeps it to our six crates.
+#
+# Note this CANNOT be scoped to one crate with `-p`: a single-package doc build
+# drops the `tokio/macros` feature that workspace-wide feature unification
+# supplies, and dies with E0433 on `tokio::select!` / `tokio::try_join!` in
+# agaric-store. `--workspace` is the only build that reflects reality.
+#
+# COST (measured on this repo, warm cargo cache, CARGO_BUILD_JOBS=2):
+# ~50s for a full-workspace re-document, ~23s when only a leaf crate changed,
+# ~2min from a cold doc cache. rustdoc does NOT share artifacts with clippy's
+# check profile, so this is additive to the clippy hook rather than incremental
+# on it. Pre-push-staged (not pre-commit) for exactly the cargo-clippy reason:
+# it compiles the whole workspace and surfaces problems in untouched files.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "cargo-doc-links"
+name = "cargo doc (intra-doc links)"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && RUSTDOCFLAGS=\"-D rustdoc::broken_intra_doc_links\" cargo doc --workspace --no-deps'"
+language = "system"
+pass_filenames = false
+types = ["rust"]
+stages = ["pre-push"]
+
 # Rust: smart related-only tests. Pre-push only (#817): the related-test
 # selector falls back to the FULL nextest suite whenever a foundational
 # module is touched (the app lib/main entry points or any file below its
