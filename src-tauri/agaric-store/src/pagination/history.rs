@@ -136,12 +136,21 @@ pub async fn list_block_history(
 ///     reason and the same reasoning holds here: the rename's live-row
 ///     probe is correct whenever the row exists, and the orphan self-heals
 ///     the moment the delete is undone;
-///   * keeping the predicate byte-identical to the undo sites is what
-///     makes the two admitted sets agree. `undoDeleteOfImpl`
-///     (`src/stores/undo.ts`) feeds an index from THIS list straight into
-///     `undo_page_op`'s `undo_depth`, so any row one query admits and the
-///     other does not shifts that positional mapping by one. Divergence
-///     here is not cosmetic — it makes swipe-delete undo mis-target.
+///   * keeping the predicate byte-identical to the undo sites keeps the two
+///     admitted sets in step, which used to be load-bearing: before #4328,
+///     `undoDeleteOfImpl` (`src/stores/undo.ts`) fed an INDEX from THIS
+///     list straight into `undo_page_op`'s `undo_depth`, so any row one
+///     query admitted and the other did not shifted that positional
+///     mapping by one and made swipe-delete undo mis-target. That consumer
+///     is now ref-addressed — it reads `(device_id, seq)` off the
+///     `HistoryEntry` it picked and calls `undo_op` — so NO consumer maps
+///     a position in this list onto a position in an undo query today, and
+///     a divergence here is once again only about what the History view
+///     shows. Byte-identity is kept anyway: it is still the cheapest way
+///     to reason about these five predicates as one family, and nothing
+///     stops a future consumer from re-introducing a positional mapping
+///     (which is what #4247/#4277/#4328 each were). If you break it,
+///     break it deliberately and say so here.
 ///
 /// Known caveat, tracked as option 1 in #4247/#4278: if `compact_op_log`
 /// has reclaimed the paired `add_attachment`, the owning page is NOT
@@ -164,33 +173,35 @@ pub async fn list_block_history(
 /// (a maintenance operation, not a routine one) required first.
 ///
 /// This is deliberate, not a second gap to close: `src_add.is_replicated =
-/// 0` is the same filter the three undo queries carry (see above), and
-/// widening this probe by dropping it would break the byte-identity the
-/// `undoDeleteOfImpl` index mapping depends on — reintroducing the exact
-/// mis-targeted-undo bug this predicate exists to prevent. Omitting the row
-/// from history is the price paid to keep swipe-delete undo pointed at the
-/// right op; letting it through and mismatching the undo query would be
-/// worse than that trade.
+/// 0` is the same filter the three undo queries carry (see above), and the
+/// omitted row degrades to invisible rather than being attributed to an
+/// arbitrary page. Note that the ORIGINAL argument for this trade — that
+/// dropping the filter would break the byte-identity `undoDeleteOfImpl`'s
+/// index mapping depended on — no longer applies (see #4328 above); what
+/// remains is the weaker but still sufficient one, that this probe cannot
+/// prove ownership of a peer-added attachment without a local paired add.
 ///
-/// Residual divergence NOT closed here (out of scope, positional mapping
-/// unchanged): this query has no `is_undo = 0` / `is_replicated = 0`
-/// filter while the three undo queries do, so reverse ops and foreign
-/// audit rows (migration 0099) are listed but not undoable.
+/// Residual divergence NOT closed here, and no longer load-bearing
+/// (#4328): this query has no `is_undo = 0` / `is_replicated = 0` filter
+/// while the three undo queries do, so reverse ops and foreign audit rows
+/// (migration 0099) are listed here but are not implicit-undo targets.
+/// That is now a statement about two queries answering two different
+/// questions — "what happened to this page" vs "what may Ctrl+Z reverse" —
+/// rather than a bug, because nothing maps a position in one onto a
+/// position in the other any more.
 ///
-/// That skew predates #4277, but this PR GROWS its population (#4335
-/// review): reversing an `add_attachment` op appends an `is_undo = 1`
-/// `delete_attachment` row (`reverse_add_attachment`,
-/// `src/reverse/attachment_ops.rs`), and probe 2 above now admits that row
-/// into this list — via `src_add.block_id IN (...)`, which the reverse row
-/// itself satisfies once its `add_attachment` source is resolved — while
-/// `undo_page_op_inner` still excludes it via its own `AND ol.is_undo = 0`.
-/// So each such reversal adds +1 to this positional skew going forward,
-/// where before #4277 the row was invisible to both queries alike (no
-/// `block_id`, admitted by neither) and contributed no divergence at all.
-/// `undoDeleteOfImpl` (`src/stores/undo.ts`) tolerates only a skew of
-/// one — its retry window is `[index, index + 1]` — so this is not
-/// slack the growing population can safely eat. Strengthens the case for
-/// #4328.
+/// The population of that skew grew with #4277/#4335: reversing an
+/// `add_attachment` op appends an `is_undo = 1` `delete_attachment` row
+/// (`reverse_add_attachment`, `src/reverse/attachment_ops.rs`), and probe 2
+/// above admits that row into this list — via `src_add.block_id IN (...)`,
+/// which the reverse row itself satisfies once its `add_attachment` source
+/// is resolved — while `undo_page_op_inner` excludes it via its own `AND
+/// ol.is_undo = 0`. Before #4328 each such reversal added +1 to a skew
+/// `undoDeleteOfImpl` could only absorb ONE of (its retry window was
+/// `[index, index + 1]`); that is what made #4328 urgent. It is now
+/// unbounded and harmless. Keep it that way: a new consumer of this list
+/// must address ops by `(device_id, seq)` — both are on `HistoryEntry` —
+/// and never by position.
 pub async fn list_page_history(
     pool: &SqlitePool,
     page_id: &str,
