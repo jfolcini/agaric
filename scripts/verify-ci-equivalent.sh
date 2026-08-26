@@ -2401,7 +2401,7 @@ fi
 # "no staged files — skipping" — wasted noise since Phase C/D run them with
 # --range below) AND, category-aware, the hooks whose category did NOT change.
 #
-# This mirrors the CI `lint` job's per-category plan (an audit produced the
+# This mirrors the CI `lint` job's per-category plan (an audit produced the (with the documented `scripts/*.sh` divergence — see CI_PATH_RE)
 # exact lists): a hook is skipped only when the category it guards is absent
 # from this push. The nightly `full-suite` job in
 # .github/workflows/scheduled-deep-checks.yml runs the FULL unskipped prek

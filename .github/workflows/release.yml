@@ -490,6 +490,9 @@ jobs:
           # boot phases 2+ (`.setup()`, `init_persistence`, `recover_and_bootstrap`,
           # GTK/WebKit, window creation) — all of which run after `init_logging`.
           MIN_ALIVE_SECONDS: '20'
+          # Annotate (not fail) a boot slower than this. The ceiling bounds how
+          # long we WAIT; this bounds how long we stay QUIET about it.
+          SLOW_BOOT_WARN_SECONDS: '10'
           # Attempts before calling it a real failure. See the rationale on
           # the retry driver below: the underlying launch is flaky, and a
           # single attempt gates publication of the whole release on it.
@@ -555,7 +558,18 @@ jobs:
             # -> the app — lands in one process group. Killing `$!` alone would
             # only reap `xvfb-run`, two levels above the process that hung, and
             # a hung app would survive into the next attempt and outlive the step.
-            setsid xvfb-run -a "${launcher[@]}" "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1 &
+            # Echo the env from INSIDE the child before exec'ing the AppImage.
+            # `xvfb-run` and `dbus-run-session` set DISPLAY / DBUS_SESSION_BUS_ADDRESS
+            # only for their child, so printing them from the step shell reported
+            # `<unset>` on every failure — reading as "the dbus mitigation never
+            # applied" when it may have worked perfectly. A diagnostic that always
+            # says the same thing tells you nothing.
+            # shellcheck disable=SC2016  # single quotes are REQUIRED: these must
+            # expand inside the child, after xvfb-run/dbus-run-session have set
+            # them. Expanding here would print the step shell's values — the bug.
+            setsid xvfb-run -a "${launcher[@]}" \
+              bash -c 'echo "[child-env] DISPLAY=${DISPLAY:-<unset>} DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<unset>}"; exec "$0"' \
+              "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1 &
             app_pid=$!
             # `$!` is the pid bash FORKED; it only becomes a group leader once it
             # has execve'd setsid AND the setsid() syscall has returned. This `ps`
@@ -632,6 +646,13 @@ jobs:
             # `timeout 20s` + exit-124 contract without giving back the fast path.
             if [ "$booted" = "1" ]; then
               echo "boot artifact after ${waited}s; holding ${MIN_ALIVE_SECONDS}s to prove it stays up"
+              # A ceiling bounds failure, not latency. Measured boot-to-log is
+              # ~60ms locally, so anything past a few seconds is a regression the
+              # 90s ceiling would otherwise swallow silently. Same argument as the
+              # retry annotation: a slow pass is still a signal.
+              if [ "$waited" -ge "${SLOW_BOOT_WARN_SECONDS:-10}" ]; then
+                echo "::warning::AppImage boot took ${waited}s to reach init_logging (locally ~60ms). Passing, but this is a latency regression worth investigating — see #4418."
+              fi
               held=0
               while [ "$held" -lt "$MIN_ALIVE_SECONDS" ]; do
                 if ! kill -0 "$app_pid" 2>/dev/null; then
@@ -641,6 +662,13 @@ jobs:
                 sleep 1
                 held=$((held + 1))
               done
+              # One final probe AFTER the last sleep. Without it the dwell's last
+              # `kill -0` ran a second early and an exit inside that final second
+              # read as a pass — the comment above promises a re-assertion, so
+              # make it literally true.
+              if [ -z "$code" ] && ! kill -0 "$app_pid" 2>/dev/null; then
+                wait "$app_pid"; code="exited-after-boot:$?"
+              fi
               [ -z "$code" ] && code="alive" && \
                 echo "OK: still alive ${held}s after the boot artifact appeared"
             fi
@@ -674,7 +702,12 @@ jobs:
             # it. Killing `$app_pid` alone in that window would orphan
             # dbus-run-session -> AppRun -> app into the next attempt and past the
             # step — leaking the very tree the reap exists to collect.
-            if [ -z "$pgid" ]; then
+            # Only re-probe when we can still VERIFY the answer. If `own_pgid` is
+            # unreadable the comparison below can never fire, so re-probing would
+            # silently undo the refusal set above and let the group kill proceed
+            # unverified — these two guards, added in separate review rounds,
+            # were cancelling each other out.
+            if [ -z "$pgid" ] && [ -n "$own_pgid" ]; then
               pgid=$(ps -o pgid= -p "$app_pid" 2>/dev/null | tr -d ' ')
               [ "$pgid" = "$own_pgid" ] && pgid=""
             fi
@@ -751,8 +784,8 @@ jobs:
               echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
               cat "$SANDBOX/boot.log" >&2 || true
               echo "       --- environment ---" >&2
-              echo "       DISPLAY=${DISPLAY:-<unset>} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>}" >&2
-              echo "       DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<unset>}" >&2
+              echo "       (the app's own DISPLAY/DBUS are on the [child-env] line of" >&2
+              echo "        boot.log above — the step shell's values are NOT the app's)" >&2
               echo "       --- process state captured BEFORE the reap ---" >&2
               printf '%s\n' "$PROC_SNAPSHOT" | sed 's/^/       /' >&2
               return 1
