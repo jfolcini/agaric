@@ -1128,15 +1128,15 @@ export const commands = {
  *  A block ID that has been verified to refer to an active block.
  * 
  *  "Active" means the block exists in the materialised `blocks` table
- *  AND `deleted_at IS NULL`. Use [`verify_active`]
+ *  AND `deleted_at IS NULL`. Use `agaric_lib::ulid::verify_active`
  *  to convert a raw [`BlockId`] into this type.
  * 
  *  **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
  *  `transparent`, and `sqlx::Type` is `transparent` over the inner
  *  `String` — the encoded representation is byte-identical to the
  *  underlying ULID. Round-tripping through JSON / SQLite preserves the
- *  active claim only because callers use [`verify_active`] at the
- *  boundary; deserialising raw user input never produces an
+ *  active claim only because callers use `agaric_lib::ulid::verify_active`
+ *  at the boundary; deserialising raw user input never produces an
  *  `ActiveBlockId` whose claim has been checked.
  */
 export type ActiveBlockId = string;
@@ -1968,7 +1968,7 @@ export type DateOp = "lt" | "lte" | "eq" | "gte" | "gt";
  *  calendar day". The Pages/Backlink `due_date`/`scheduled_date` columns
  *  store *pure* `YYYY-MM-DD` (no time component), so a lexical `= ?` already
  *  matches the whole day — that is the form
- *  [`BacklinkProjection::compile_due_date`] /
+ *  `BacklinkProjection`'s [`compile_due_date`](Projection::compile_due_date) /
  *  [`compile_scheduled`](Projection::compile_scheduled) emit, byte-identical
  *  to the legacy backlink `DueDate{Eq}` leaf (the resolver oracle treats the
  *  column as DATE-exact).
@@ -2154,7 +2154,7 @@ export type FilterPrimitive =
 { type: "LinksTo"; target: string } | 
 /**
  *  #1455 — block has an INBOUND link FROM the concrete `source` block id
- *  (inverse of [`LinksTo`]): `EXISTS (SELECT 1 FROM block_links l WHERE
+ *  (inverse of [`FilterPrimitive::LinksTo`]): `EXISTS (SELECT 1 FROM block_links l WHERE
  *  l.target_id = b.id AND l.source_id = ?)`. The richer FilterExpr-source
  *  form is a follow-up; this leaf takes a concrete id.
  */
@@ -2163,7 +2163,7 @@ export type FilterPrimitive =
  *  #1455 — block's PARENT row satisfies the nested `matcher` expression:
  *  `EXISTS (SELECT 1 FROM blocks p WHERE p.id = b.parent_id AND
  *  (<matcher compiled against the parent row `p`>))`. The boxed
- *  [`FilterExpr`] is compiled against the parent alias `p` rather than the
+ *  [`FilterExpr`](crate::filters::FilterExpr) is compiled against the parent alias `p` rather than the
  *  outer `b`. Recursion (a `HasParentMatching` whose matcher itself
  *  contains another `HasParentMatching`) is bounded by
  *  [`FilterExpr::MAX_DEPTH`](crate::filters::FilterExpr::MAX_DEPTH): the
@@ -2425,7 +2425,8 @@ blocks_total: number } |
 /**
  *  Outcome of importing one markdown file: the created page plus aggregate
  *  counts and any non-fatal diagnostics, returned by
- *  [`import_markdown_with_progress`] and surfaced to the import UI.
+ *  `agaric_lib::commands::pages::markdown::import_markdown_with_progress` and
+ *  surfaced to the import UI.
  */
 export type ImportResult = {
 	/**
@@ -2840,9 +2841,9 @@ export type PagePropertyFlags = {
  *  and surface "X of Y" progress to the user — `list_blocks_inner`
  *  (when filtering on `block_type`) is the first such site (PageBrowser
  *  pagination UX, 2026-05-14). Helpers that do not compute the count
- *  flow through [`build_page_response`] which initialises the field to
- *  `None`; sites that compute it use
- *  [`build_page_response_with_total`].
+ *  flow through [`build_page_response`], which initialises the field to
+ *  `None`; sites that compute a total overwrite `total_count` on the
+ *  returned value.
  */
 export type PageResponse<T> = {
 	items: T[],
@@ -3606,7 +3607,7 @@ export type SearchFilter = {
 	 *  **bypassed entirely** (FTS5 cannot accept a regex) and the
 	 *  candidate set comes from a recency-ordered scan of
 	 *  structurally-filtered blocks. Compile failures surface as
-	 *  [`AppError::Validation`] with the structured `InvalidRegex` code.
+	 *  [`AppError::Validation`](agaric_core::error::AppError::Validation) with the structured `InvalidRegex` code.
 	 */
 	isRegex?: boolean,
 	/**
@@ -3682,7 +3683,7 @@ export type SearchFilter = {
 	 *  `None` (the default) preserves the existing "no filter" behaviour.
 	 *  Compiled through [`crate::filters::primitive::SearchProjection`]
 	 *  (`compile_last_edited`) and spliced into the dynamic FTS WHERE via
-	 *  the [`crate::fts::filter_builder`] projection routing — see the
+	 *  the `crate::fts::filter_builder` projection routing — see the
 	 *  `add_last_edited_via_projection` splice. `#[serde(default)]` keeps
 	 *  the wire shape additive: pre-#1320-C frontends omit the field and
 	 *  observe today's behaviour unchanged.
@@ -3894,7 +3895,7 @@ export type SpaceRow = {
  *  # Deserialize validates the `Active` id shape (issue #1588)
  * 
  *  The wire/SQL layers treat the inner `SpaceId` as a trusted-shape string —
- *  [`SpaceId::Deserialize`] only uppercase-normalises (mirroring `BlockId`),
+ *  [`SpaceId`]'s `Deserialize` impl only uppercase-normalises (mirroring `BlockId`),
  *  so without a guard a malformed `space_id` from the frontend / MCP / sync
  *  would bind a never-matching SQL filter param and silently return empty
  *  results. The hand-written `Deserialize` impl below deserialises through the
@@ -4089,8 +4090,8 @@ export type StatusInfo = {
 	/**
 	 *  #2031: process-global count of post-commit descendant fan-out
 	 *  skips that left the Loro engine potentially divergent from SQL.
-	 *  Bumped whenever [`super::handlers::apply::dispatch_restore_descendants`]
-	 *  or [`super::handlers::apply::dispatch_delete_descendants`] aborts at a
+	 *  Bumped whenever `super::handlers::apply::dispatch_restore_descendants`
+	 *  or `super::handlers::apply::dispatch_delete_descendants` aborts at a
 	 *  divergence-leaving early-return: a malformed root payload, a
 	 *  `resolve_block_space` error, or a missing space. Monotonic, never
 	 *  reset. Mirrors `fg_apply_dropped`'s "silent divergence" signal for
