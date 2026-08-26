@@ -1941,3 +1941,598 @@ async fn a_pre_delete_edge_survives_the_targets_delete_restore_untouched_4209() 
 
     mat.shutdown();
 }
+
+// ====================================================================
+// #4285 — a restore un-deletes a COHORT, not just the seed
+// ====================================================================
+
+/// The restored SEED of the cohort tests below — a content block that is
+/// itself a child of `RESTORE_PAGE_P`, so its descendant is a genuine
+/// grandchild of the page and the restore has something to fan out to.
+const COHORT_PARENT: &str = "01DP0000000000000000000000";
+/// The restored DESCENDANT — the block `invalidations_for_op` cannot see,
+/// because it is discovered by the cohort walk inside the apply transaction.
+const COHORT_CHILD: &str = "01DD0000000000000000000000";
+/// A live, unrelated page used as the descendant's own outbound target.
+const COHORT_TARGET_T1: &str = "01B10000000000000000000000";
+
+/// Seed the `P → parent → child` shape every #4285 test below starts from:
+/// a live page, a content block under it, and a content block under THAT
+/// carrying `child_content`.
+async fn seed_cohort_blocks(pool: &SqlitePool, child_content: &str) {
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'P', ?)")
+        .bind(RESTORE_PAGE_P)
+        .bind(RESTORE_PAGE_P)
+        .execute(pool)
+        .await
+        .unwrap();
+    for (id, parent, content) in [
+        (COHORT_PARENT, RESTORE_PAGE_P, "parent"),
+        (COHORT_CHILD, COHORT_PARENT, child_content),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+             VALUES (?, 'content', ?, ?, ?, 1)",
+        )
+        .bind(id)
+        .bind(content)
+        .bind(parent)
+        .bind(RESTORE_PAGE_P)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// #4285 — THE reported residual, INBOUND half. A `RestoreBlock` un-deletes a
+/// whole cohort, but only the SEED gets a `ReindexBlockLinks`, so a referrer
+/// waiting on a restored DESCENDANT stays stranded.
+///
+/// #4209 gave the `RestoreBlock` arm of `invalidations_for_op` a per-block
+/// `ReindexBlockLinks`, which discharges the `block_links_unresolved` debt of
+/// everyone waiting on the restored block (`resolve_referrers_of`). But that
+/// function is a pure function of an `OpRecord` — no pool, no `ApplyEffects` —
+/// so it sees only `record.block_id`, while the restore itself clears
+/// `deleted_at` across the descendant cohort (plus the #1884 ancestor chain).
+/// Every non-seed member became LINKABLE with nothing enqueued for it, and the
+/// unresolved row survived with nothing left to trigger it: #4118's permanent
+/// loss, one hop below the block the user actually restored.
+///
+/// The cohort IS available at every post-commit fan-out site, which is where
+/// the repair goes (`handlers::apply::reindex_restored_cohort_links`).
+///
+/// This test drives the REMOTE / replay shape (`dispatch_op` → `apply_op`);
+/// `the_local_restore_command_repairs_a_restored_descendants_links_4285`
+/// covers the LOCAL command path, which never routes through `apply_op` and is
+/// the path most users are on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cohort_restore_relinks_the_referrer_waiting_on_a_restored_descendant_4285() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_cohort_blocks(&pool, "a childless leaf").await;
+
+    // Parent and child are trashed as ONE cohort — the shared `deleted_at` is
+    // what `RestoreBlock` keys its cohort walk on.
+    for id in [COHORT_PARENT, COHORT_CHILD] {
+        soft_delete_block_direct(&pool, id).await;
+    }
+
+    // The referrer arrives during the deleted window naming the CHILD, and is
+    // indexed by the real production task so the declined token is recorded by
+    // production's own `sync_unresolved_links`.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 2)",
+    )
+    .bind(RESTORE_SOURCE_S)
+    .bind(format!("link [[{COHORT_CHILD}]]"))
+    .bind(RESTORE_PAGE_P)
+    .bind(RESTORE_PAGE_P)
+    .execute(&pool)
+    .await
+    .unwrap();
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(RESTORE_SOURCE_S),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: the tombstoned descendant must be DECLINED by the INSERT's \
+         `deleted_at IS NULL` guard"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, RESTORE_SOURCE_S).await,
+        vec![COHORT_CHILD.to_owned()],
+        "seed: and the debt must be recorded against the descendant that owes it"
+    );
+
+    // --- The PARENT is restored. The child comes back as part of its cohort. ---
+    let restore = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(COHORT_PARENT),
+            deleted_at_ref: FIXED_TS,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&restore).await.unwrap();
+    mat.flush().await.unwrap();
+
+    let child_live: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(COHORT_CHILD)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        child_live, None,
+        "seed: the cohort restore must actually have un-deleted the DESCENDANT — \
+         that is the premise the assertion below measures against"
+    );
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(RESTORE_SOURCE_S.to_owned(), COHORT_CHILD.to_owned())],
+        "#4285: the descendant became linkable, so the referrer that was declined \
+         for its tombstone must be re-linked. Only the SEED reached \
+         `invalidations_for_op`, so nothing but a cohort-wide repair at the \
+         post-commit fan-out can produce this row"
+    );
+    assert!(
+        unresolved_targets(&pool, RESTORE_SOURCE_S).await.is_empty(),
+        "and the recorded debt must be discharged"
+    );
+
+    mat.shutdown();
+}
+
+/// #4285 — the OUTBOUND mirror. A restored DESCENDANT's own edges are equally
+/// stranded, and for the reason #4209 established: a reindex that runs while
+/// the block is soft-deleted reads its content as
+/// `WHERE id = ? AND deleted_at IS NULL`, sees a content-less block, and diffs
+/// its WHOLE edge set away — while correctly leaving no `block_links_unresolved`
+/// row behind, because only a LIVE source owes a target (#4229). So nothing on
+/// the target side can ever repair it; only a reindex of that block itself, and
+/// the descendant never got one.
+///
+/// The deleted-window reindex is driven the way production reaches it: a
+/// `ReindexBlockLinks` for a block that is currently in the trash, which the
+/// retry-queue sweeper re-runs for an obligation shed at enqueue before the
+/// delete (#3843 measured 74–90% shedding on a large import).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cohort_restore_re_derives_a_restored_descendants_own_outbound_edges_4285() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'T', ?)")
+        .bind(COHORT_TARGET_T1)
+        .bind(COHORT_TARGET_T1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    seed_cohort_blocks(&pool, &format!("link [[{COHORT_TARGET_T1}]]")).await;
+
+    // The descendant's edge is established while everything is live.
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(COHORT_CHILD),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(COHORT_CHILD.to_owned(), COHORT_TARGET_T1.to_owned())],
+        "seed: the descendant's outbound edge exists before anything is deleted"
+    );
+
+    for id in [COHORT_PARENT, COHORT_CHILD] {
+        soft_delete_block_direct(&pool, id).await;
+    }
+
+    // The intervening deleted-window reindex — the event that loses the edge.
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(COHORT_CHILD),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: a reindex of a TOMBSTONED source reads it as content-less and drops \
+         its whole edge set — this is the loss the restore has to undo"
+    );
+    assert!(
+        unresolved_targets(&pool, COHORT_CHILD).await.is_empty(),
+        "seed: and it records NO debt (only a live source owes a target, #4229), \
+         which is why no target-side push can ever reach this half"
+    );
+
+    let restore = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(COHORT_PARENT),
+            deleted_at_ref: FIXED_TS,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&restore).await.unwrap();
+    mat.flush().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(COHORT_CHILD.to_owned(), COHORT_TARGET_T1.to_owned())],
+        "#4285: restoring the cohort must re-derive the DESCENDANT's own outbound \
+         edges too — `run_reindex_block_links` runs `reindex_one_block_links` for \
+         the block before `resolve_referrers_of`, so one repair per cohort member \
+         covers both directions"
+    );
+
+    mat.shutdown();
+}
+
+/// #4285 — the same residual on the LOCAL command path, which is the one most
+/// users are on and which the natural single-site fix does not reach.
+///
+/// `restore_block_inner` never routes through `apply_op`: it does its own SQL
+/// cohort walk and its own post-commit `dispatch_restore_descendants` (#3856),
+/// deliberately leaving the apply cursor put (#1257). So a fix that lives only
+/// in `handlers::apply` covers the remote / replay path and nothing the user
+/// does. Both cohort sets are in hand at this site, which is why the repair is
+/// called from here as well.
+///
+/// Both directions in one scenario, since one restore has to fix both: the
+/// descendant owes an outbound edge a deleted-window reindex dropped, AND a
+/// live referrer is waiting on it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_local_restore_command_repairs_a_restored_descendants_links_4285() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'T', ?)")
+        .bind(COHORT_TARGET_T1)
+        .bind(COHORT_TARGET_T1)
+        .execute(&pool)
+        .await
+        .unwrap();
+    seed_cohort_blocks(&pool, &format!("link [[{COHORT_TARGET_T1}]]")).await;
+
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(COHORT_CHILD),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    for id in [COHORT_PARENT, COHORT_CHILD] {
+        soft_delete_block_direct(&pool, id).await;
+    }
+
+    // A referrer written during the window (INBOUND half) …
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 2)",
+    )
+    .bind(RESTORE_SOURCE_S)
+    .bind(format!("link [[{COHORT_CHILD}]]"))
+    .bind(RESTORE_PAGE_P)
+    .bind(RESTORE_PAGE_P)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // … and a deleted-window reindex of the descendant (OUTBOUND half).
+    for id in [RESTORE_SOURCE_S, COHORT_CHILD] {
+        mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+            block_id: std::sync::Arc::from(id),
+        })
+        .await
+        .unwrap();
+    }
+    mat.flush_background().await.unwrap();
+
+    assert!(
+        all_edges(&pool).await.is_empty(),
+        "seed: both halves are lost — the referrer's token was declined, and the \
+         descendant's own edge was diffed away by the deleted-window reindex"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, RESTORE_SOURCE_S).await,
+        vec![COHORT_CHILD.to_owned()],
+        "seed: only the inbound half leaves a durable record"
+    );
+
+    // --- The real local command, exactly as the TrashView drives it. ---
+    crate::commands::blocks::crud::restore_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::test_id(COHORT_PARENT),
+        FIXED_TS,
+    )
+    .await
+    .expect("the local restore command must succeed");
+    mat.flush().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![
+            (COHORT_CHILD.to_owned(), COHORT_TARGET_T1.to_owned()),
+            (RESTORE_SOURCE_S.to_owned(), COHORT_CHILD.to_owned()),
+        ],
+        "#4285: the LOCAL restore must repair the restored descendant in BOTH \
+         directions. `commit_and_dispatch` enqueued a `ReindexBlockLinks` for the \
+         SEED only — `invalidations_for_op` never sees the cohort — so this can \
+         only come from the post-commit cohort repair at this call site"
+    );
+    assert!(
+        unresolved_targets(&pool, RESTORE_SOURCE_S).await.is_empty(),
+        "and the recorded debt must be discharged"
+    );
+
+    mat.shutdown();
+}
+
+/// Seed the #4285 "stranded descendant" scenario shared by the three
+/// batch restore tests below: `P → parent → child` with the parent and child
+/// tombstoned as one cohort, and a LIVE referrer written during the window
+/// naming the child, indexed by the real production task so its declined
+/// token is recorded in `block_links_unresolved`.
+async fn seed_stranded_descendant(pool: &SqlitePool, mat: &Materializer) {
+    seed_cohort_blocks(pool, "a childless leaf").await;
+    for id in [COHORT_PARENT, COHORT_CHILD] {
+        soft_delete_block_direct(pool, id).await;
+    }
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 2)",
+    )
+    .bind(RESTORE_SOURCE_S)
+    .bind(format!("link [[{COHORT_CHILD}]]"))
+    .bind(RESTORE_PAGE_P)
+    .bind(RESTORE_PAGE_P)
+    .execute(pool)
+    .await
+    .unwrap();
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(RESTORE_SOURCE_S),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        unresolved_targets(pool, RESTORE_SOURCE_S).await,
+        vec![COHORT_CHILD.to_owned()],
+        "seed: the debt is recorded against the tombstoned descendant"
+    );
+}
+
+/// Assert the stranded referrer was re-linked and its debt discharged.
+async fn assert_descendant_relinked(pool: &SqlitePool, site: &str) {
+    let child_live: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(COHORT_CHILD)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        child_live, None,
+        "seed ({site}): the restore must actually have un-deleted the DESCENDANT"
+    );
+    assert_eq!(
+        all_edges(pool).await,
+        vec![(RESTORE_SOURCE_S.to_owned(), COHORT_CHILD.to_owned())],
+        "#4285 ({site}): this restore path has its own post-commit fan-out and only \
+         the SEED reached `invalidations_for_op`, so the referrer waiting on the \
+         restored DESCENDANT can only be re-linked by this site's cohort repair"
+    );
+    assert!(
+        unresolved_targets(pool, RESTORE_SOURCE_S).await.is_empty(),
+        "and the recorded debt must be discharged"
+    );
+}
+
+/// #4285 — the THIRD production site the repair had to reach: a restore that
+/// arrives inside a `BatchApplyOps` chunk.
+///
+/// `handle_foreground_task`'s batch arm does NOT route through `apply_op`; it
+/// applies each record in one transaction and then runs its OWN post-commit
+/// cohort fan-out loop. That is the arm inbound sync and import replay deliver
+/// through, so it is where a peer's restore actually lands — and without its
+/// own call the cohort repair would be present on the single-op replay path
+/// and absent on the batched one, which is the more common remote shape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_batched_cohort_restore_relinks_the_referrer_waiting_on_a_descendant_4285() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_stranded_descendant(&pool, &mat).await;
+
+    // --- The restore arrives as a BATCH, the way a peer's ops do. ---
+    let restore = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(COHORT_PARENT),
+            deleted_at_ref: FIXED_TS,
+        }),
+    )
+    .await;
+    mat.enqueue_foreground(MaterializeTask::BatchApplyOps(StdArc::new(vec![restore])))
+        .await
+        .unwrap();
+    mat.flush().await.unwrap();
+
+    assert_descendant_relinked(&pool, "BatchApplyOps").await;
+    mat.shutdown();
+}
+
+/// #4285 — `restore_blocks_by_ids_inner`, the "restore the selected rows" form
+/// of the trash view. It is the batch counterpart of `restore_block_inner` and
+/// has its own post-commit fan-out loop, so it needs its own cohort repair.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_batch_restore_by_ids_command_relinks_a_restored_descendants_referrer_4285() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_stranded_descendant(&pool, &mat).await;
+
+    crate::commands::blocks::crud::restore_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![BlockId::test_id(COHORT_PARENT)],
+    )
+    .await
+    .expect("the batch restore command must succeed");
+    mat.flush().await.unwrap();
+
+    assert_descendant_relinked(&pool, "restore_blocks_by_ids_inner").await;
+    mat.shutdown();
+}
+
+/// #4285 — `restore_all_deleted_inner`, the "empty the trash back into the
+/// vault" form. It clears EVERY tombstone in one transaction and fans out per
+/// root; the same cohort-vs-seed gap applies to each root's cohort.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_restore_all_command_relinks_a_restored_descendants_referrer_4285() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_stranded_descendant(&pool, &mat).await;
+
+    crate::commands::blocks::crud::restore_all_deleted_inner(&pool, DEV, &mat)
+        .await
+        .expect("the restore-all command must succeed");
+    mat.flush().await.unwrap();
+
+    assert_descendant_relinked(&pool, "restore_all_deleted_inner").await;
+    mat.shutdown();
+}
+
+// ====================================================================
+// #4286 — a reindex must never be aimed at a TOMBSTONED referrer
+// ====================================================================
+
+/// The live target whose edge must survive.
+const COLLATERAL_LIVE_T1: &str = "01B10000000000000000000000";
+/// The unrelated target whose restore triggers the collateral damage.
+const COLLATERAL_RESTORED_T2: &str = "01B20000000000000000000000";
+
+/// #4286 — restoring one block must not destroy an UNRELATED tombstoned
+/// block's link edges.
+///
+/// `resolve_referrers_of` reindexes every source recorded as waiting on the
+/// target, and its source list came from `cache::unresolved_link_sources`:
+/// `SELECT source_id FROM block_links_unresolved WHERE target_id = ?`, with no
+/// liveness predicate and no join to `blocks`. Those rows SURVIVE a soft-delete
+/// — the FK cascade fires on a row `DELETE`, not on a `deleted_at` stamp — so a
+/// tombstoned referrer stayed in the list and got reindexed. And
+/// `reindex_block_links_conn` reads its content as
+/// `WHERE id = ? AND deleted_at IS NULL`, sees nothing, treats it as
+/// content-less, and `to_delete` becomes the block's ENTIRE edge set —
+/// including edges to live, unrelated targets that had nothing to do with the
+/// restore.
+///
+/// Bounded in damage (only currently-tombstoned blocks, and #4209 means it
+/// heals on their restore) but unbounded in FREQUENCY: every create, edit,
+/// space-stamp or restore of any target with a tombstoned referrer triggers
+/// it, and the work is pure waste even in the cases where nothing is lost.
+///
+/// The fix is a liveness filter on the referrer list. It does not delete the
+/// rows, only skip them — which is what keeps `reconciliation_oracle.rs`'s
+/// EXTRA arm green: that arm documents that it is deliberately NOT
+/// liveness-scoped "because no delete arm enqueues `ReindexBlockLinks`, so a
+/// tombstoned source's rows survive by design", so it expects exactly these
+/// rows to still be there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_tombstoned_referrers_edge_to_a_live_target_survives_an_unrelated_restore_4286() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    for (id, title) in [(RESTORE_PAGE_P, "P"), (COLLATERAL_LIVE_T1, "T1")] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'T2', ?)",
+    )
+    .bind(COLLATERAL_RESTORED_T2)
+    .bind(COLLATERAL_RESTORED_T2)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // T2 is trashed BEFORE the referrer is indexed, so the token naming it is
+    // declined and recorded — that record is what puts the referrer on T2's
+    // repair list in the first place.
+    soft_delete_block_direct(&pool, COLLATERAL_RESTORED_T2).await;
+
+    // The referrer names BOTH: a live target (the edge that must survive) and
+    // the tombstoned one (the debt that puts it on the list).
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, position) \
+         VALUES (?, 'content', ?, ?, ?, 1)",
+    )
+    .bind(RESTORE_SOURCE_S)
+    .bind(format!(
+        "link [[{COLLATERAL_LIVE_T1}]] and [[{COLLATERAL_RESTORED_T2}]]"
+    ))
+    .bind(RESTORE_PAGE_P)
+    .bind(RESTORE_PAGE_P)
+    .execute(&pool)
+    .await
+    .unwrap();
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: std::sync::Arc::from(RESTORE_SOURCE_S),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(RESTORE_SOURCE_S.to_owned(), COLLATERAL_LIVE_T1.to_owned())],
+        "seed: the live target is linked, the tombstoned one is declined"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, RESTORE_SOURCE_S).await,
+        vec![COLLATERAL_RESTORED_T2.to_owned()],
+        "seed: and the declined token is recorded against T2"
+    );
+
+    // The referrer itself is now trashed. Nothing else about it changes.
+    soft_delete_block_direct(&pool, RESTORE_SOURCE_S).await;
+
+    // --- An UNRELATED restore: T2 comes back. ---
+    let restore = make_op_record(
+        &pool,
+        OpPayload::RestoreBlock(RestoreBlockPayload {
+            block_id: BlockId::test_id(COLLATERAL_RESTORED_T2),
+            deleted_at_ref: FIXED_TS,
+        }),
+    )
+    .await;
+    mat.dispatch_op(&restore).await.unwrap();
+    mat.flush().await.unwrap();
+
+    assert_eq!(
+        all_edges(&pool).await,
+        vec![(RESTORE_SOURCE_S.to_owned(), COLLATERAL_LIVE_T1.to_owned())],
+        "#4286: restoring T2 must not reindex the TOMBSTONED referrer S — doing so \
+         reads S as content-less and diffs away its edge to the LIVE, unrelated T1, \
+         which no part of this restore had any business touching"
+    );
+    assert_eq!(
+        unresolved_targets(&pool, RESTORE_SOURCE_S).await,
+        vec![COLLATERAL_RESTORED_T2.to_owned()],
+        "and the referrer's recorded debt is SKIPPED, not discharged and not \
+         deleted — it is still owed (S is tombstoned, so it owes nothing yet), and \
+         `reconciliation_oracle.rs`'s EXTRA arm reasons about exactly these rows \
+         being present"
+    );
+
+    mat.shutdown();
+}

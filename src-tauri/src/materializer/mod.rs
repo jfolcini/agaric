@@ -62,9 +62,12 @@ pub(crate) use handlers::purge_block_sql_cascade;
 // now drive the restored ancestor chain onto the engine themselves post-commit
 // — the `apply_op` replay arm that used to be cited for it never runs for a
 // locally authored op (the local path leaves the apply cursor put).
+// #4285: `reindex_restored_cohort_links` joins it for the same reason — the
+// LOCAL restore paths repair the restored cohort's LINK edges themselves
+// post-commit, because `invalidations_for_op` sees only the seed's id.
 pub(crate) use handlers::{
     collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
-    dispatch_restore_ancestors, dispatch_restore_descendants,
+    dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_links,
 };
 // #2325/#2250: the single collapsed apply-projection entry point the LOCAL
 // command sites route through (`advance_cursor = false`).
