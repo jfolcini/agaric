@@ -21,7 +21,7 @@
 # parked live under a tombstoned ancestor and is era-agnostic by construction
 # (it copies the ancestor's stored `deleted_at` in SQL rather than binding an
 # i64 the way the engine's `sweep_move_under_tombstoned_ancestor` does). ---
-13 app blocks  # recovery carve-out: boot-time repair writes (pre-engine, corrupt-DB tolerant)
+14 app blocks  # recovery carve-out: boot-time repair writes (pre-engine, corrupt-DB tolerant)
 
 # --- engine crate: projection-time cache co-writers (legitimate carve-out,
 # two-arm lockstep / sql_only fallback, #891) + op_log ingest (migrating) ---

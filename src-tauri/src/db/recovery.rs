@@ -1154,6 +1154,18 @@ struct ReplayDiagnostics {
     /// carrying its cohort token), because the sweep's own live-subject
     /// guard suppresses it on a block a previous sweep already tombstoned.
     move_swept_under_tombstone: Vec<String>,
+    /// #4204/#4188: ids of blocks a replayed `move_block` carried out of a
+    /// deletion cohort they had only INHERITED, and whose inherited `deleted_at`
+    /// this pass therefore cleared so the sweep could re-derive it from the new
+    /// position. The recovery-side mirror of the materializer's
+    /// `unsweep_inherited_cohort_after_move`.
+    ///
+    /// An entry does NOT mean the block ended up live: when the new position
+    /// has a tombstoned ancestor of its own, the sweep re-stamps it at that
+    /// ancestor's cohort in the same op (#4188's shape) and the block appears
+    /// in `move_swept_under_tombstone` too. Only an entry here WITHOUT a
+    /// matching sweep is a block that came back (#4204's shape).
+    move_unswept_inherited_cohort: Vec<String>,
     /// #4232: recursive cascades that stopped at [`DESCENDANT_DEPTH_CAP`] with
     /// tree still beyond it. One entry per truncated walk, naming WHICH walk
     /// and at what depth.
@@ -1229,6 +1241,11 @@ const CASCADE_MOVE_SWEEP_ANCESTOR_PROBE: &str = "move_block ancestor probe";
 /// The `move_block` arm's downward sweep into the ancestor's deletion cohort
 /// (#4187). Truncation leaves the deep tail of the moved subtree live.
 const CASCADE_MOVE_SWEEP: &str = "move_block sweep cascade";
+/// The `move_block` arm's downward un-sweep, clearing an INHERITED cohort the
+/// reparent invalidated (#4204/#4188). Truncation leaves the deep tail of the
+/// moved subtree stamped at the OLD cohort — split from the head it moved with,
+/// and therefore unrestorable as one unit.
+const CASCADE_MOVE_UNSWEEP: &str = "move_block un-sweep cascade";
 /// The `delete_block` arm's soft-delete cascade (#429). Truncation leaves the
 /// deep tail live under a tombstoned ancestor.
 const CASCADE_DELETE: &str = "delete_block cascade";
@@ -1323,6 +1340,27 @@ impl ReplayDiagnostics {
                  Leaving them live would have rebuilt an invisible orphan: absent from the tree \
                  (its ancestor is trashed) and absent from the trash (it is not).",
                 self.move_swept_under_tombstone.len()
+            );
+        }
+
+        // #4204/#4188: the sweep's mirror image, and reported separately
+        // because it is the louder of the two — a block whose new position has
+        // no tombstoned ancestor comes BACK, visible again on a device where
+        // the user had watched it go into the trash with its old parent. Same
+        // twice-run-replay reason as every other entry: reported, not logged at
+        // the site.
+        if !self.move_unswept_inherited_cohort.is_empty() {
+            tracing::warn!(
+                unswept = self.move_unswept_inherited_cohort.len(),
+                block_ids = %self.move_unswept_inherited_cohort.join(","),
+                "{} replayed move_block op(s) carried a subtree OUT of a deletion cohort it had \
+                 only INHERITED, so the inherited `deleted_at` was cleared and re-derived from \
+                 the new position (#4204/#4188) — matching what the live materializer's \
+                 `unsweep_inherited_cohort_after_move` produces for the same op set. A block \
+                 also listed as swept was re-stamped into its new ancestor's cohort; one listed \
+                 ONLY here is live again, which is the converged answer for a delete of a \
+                 parent racing a move out onto a live one.",
+                self.move_unswept_inherited_cohort.len()
             );
         }
 
@@ -2109,6 +2147,37 @@ async fn recover_blocks_from_op_log(
                 // here (unlike the engine-less `apply_move_block_sql_only`
                 // fallback, which runs the shared `move_would_cycle` probe), so
                 // recovery's cycle-probe-free behaviour is likewise unchanged.
+                // #4204/#4188: classify the subject's tombstone BEFORE the
+                // reparent. An INHERITED tombstone (the subject is a cascade
+                // member of its parent's cohort, not a cohort ROOT) is a fact
+                // about the OLD parent, and one `SET parent_id` from now that
+                // parent is unrecoverable — `move_block`'s payload does not
+                // carry it. Returns the OLD PARENT's id, which the un-sweep
+                // below uses as the era-agnostic handle on the cohort's
+                // timestamp: the subject's own `deleted_at` is about to be
+                // cleared, but the old parent's copy of the same value stays
+                // put (it is an ancestor, never a member of the subject's
+                // descendant cohort).
+                //
+                // dynamic-sql: era-varying `blocks` at the pre-migration era
+                // (`query_scalar!` would check it against HEAD). The whole
+                // probe is an EQUALITY between two stored `deleted_at` values,
+                // so it never moves the column through Rust and holds in both
+                // the pre-0080 rfc3339-TEXT era and the at-head INTEGER one —
+                // the same era-agnostic-by-construction argument the sweep's
+                // statements below make.
+                let inherited_from_parent: Option<String> = sqlx::query_scalar::<_, String>(
+                    "SELECT b.parent_id FROM blocks b \
+                       JOIN blocks parent ON parent.id = b.parent_id \
+                      WHERE b.id = ?1 \
+                        AND b.deleted_at IS NOT NULL \
+                        AND parent.deleted_at IS NOT NULL \
+                        AND parent.deleted_at = b.deleted_at",
+                )
+                .bind(block_id)
+                .fetch_optional(&mut *executor)
+                .await?;
+
                 sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
                     .bind(new_parent_id)
                     .bind(new_position)
@@ -2181,7 +2250,14 @@ async fn recover_blocks_from_op_log(
                 // their TYPES do not, which is the whole point of reason 2.
                 // The seed's `deleted_at IS NULL` IS the live-subject guard: a
                 // move whose subject is already tombstoned yields no seed row,
-                // hence no sweep. depth<100: DESCENDANT_DEPTH_CAP, mirroring
+                // hence no sweep. #4204 widens it by exactly one case — the
+                // subject whose tombstone is INHERITED (`?2`), which the
+                // un-sweep below is about to clear, so it is a live subject one
+                // statement from now and the sweep must be able to re-derive
+                // its cohort from the new position. A tombstoned subject that
+                // is a cohort ROOT still yields no seed row and is still never
+                // swept (`recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort`).
+                // depth<100: DESCENDANT_DEPTH_CAP, mirroring
                 // the `delete_block` arm's bound (a corrupt `parent_id` cycle
                 // terminates at the cap rather than re-anchoring past it the
                 // way `nearest_tombstoned_ancestor` does).
@@ -2206,7 +2282,8 @@ async fn recover_blocks_from_op_log(
                     sqlx::query_as::<_, (Option<String>, bool)>(
                         "WITH RECURSIVE ancestors(id, depth) AS ( \
                              SELECT parent_id, 1 FROM blocks \
-                              WHERE id = ?1 AND deleted_at IS NULL AND parent_id IS NOT NULL \
+                              WHERE id = ?1 AND (deleted_at IS NULL OR ?2) \
+                                AND parent_id IS NOT NULL \
                              UNION ALL \
                              SELECT b.parent_id, a.depth + 1 FROM blocks b \
                                JOIN ancestors a ON b.id = a.id \
@@ -2222,6 +2299,7 @@ async fn recover_blocks_from_op_log(
                          )",
                     )
                     .bind(block_id)
+                    .bind(inherited_from_parent.is_some())
                     .fetch_one(&mut *executor)
                     .await?;
 
@@ -2239,6 +2317,86 @@ async fn recover_blocks_from_op_log(
                         cascade: CASCADE_MOVE_SWEEP_ANCESTOR_PROBE,
                         block_id: block_id.to_owned(),
                     });
+                }
+
+                // #4204/#4188: the un-sweep, the sweep's mirror image. An
+                // INHERITED tombstone is POSITIONAL — it says "my parent's
+                // cohort swallowed me" — so the reparent above invalidated it.
+                // Clear it and let the sweep below re-derive the cohort from
+                // the new position; see
+                // `agaric_engine::apply::sql_only::unsweep_inherited_cohort_after_move`
+                // for the rule and its order-independence argument, which this
+                // arm implements rather than restates. Recovery is the third
+                // interpreter of the same op (#2894), so leaving it out would
+                // let a boot rebuild reintroduce exactly the divergence the
+                // materializer just stopped producing.
+                //
+                // The short-circuit (the ancestor at the NEW position already
+                // carries the subject's own cohort ts) covers the same-parent
+                // reorder and the move within one cohort, and is expressed as
+                // an equality between two stored `deleted_at` values, so it is
+                // era-agnostic for the same reason the probe above is.
+                if let Some(old_parent_id) = inherited_from_parent {
+                    let same_cohort_at_new_position = match tombstoned_ancestor.as_deref() {
+                        None => false,
+                        Some(ancestor_id) => {
+                            // dynamic-sql: era-varying `blocks` at the
+                            // pre-migration era; a stored-value equality that
+                            // never decodes the column, so it holds in both the
+                            // pre-0080 rfc3339-TEXT era and the at-head INTEGER
+                            // one. `query_scalar!` would pin the statement to
+                            // the HEAD schema this replay is precisely NOT
+                            // running against.
+                            sqlx::query_scalar::<_, bool>(
+                                "SELECT EXISTS ( \
+                                 SELECT 1 FROM blocks subject, blocks ancestor \
+                                  WHERE subject.id = ?1 AND ancestor.id = ?2 \
+                                    AND subject.deleted_at = ancestor.deleted_at \
+                             )",
+                            )
+                            .bind(block_id)
+                            .bind(ancestor_id)
+                            .fetch_one(&mut *executor)
+                            .await?
+                        }
+                    };
+                    if !same_cohort_at_new_position {
+                        // The cohort to clear is recovery's own FLAT
+                        // `(subtree, deleted_at)` shape — the `restore_block`
+                        // arm's, not the projection's connected-cohort walk,
+                        // for the #2043 reason that arm states: recovery
+                        // deliberately keeps one cascade shape across its arms
+                        // rather than importing the head-shaped one.
+                        if materialize_cascade_cohort(&mut *executor, block_id).await? {
+                            diagnostics.cascade_truncations.push(CascadeTruncation {
+                                cascade: CASCADE_MOVE_UNSWEEP,
+                                block_id: block_id.to_owned(),
+                            });
+                        }
+                        // dynamic-sql: era-varying `blocks`, keyed on the TEMP
+                        // cohort materialised above and on the OLD PARENT's
+                        // stored `deleted_at` — the subject's own copy is one
+                        // of the values this statement NULLs, so keying on it
+                        // would be self-referential. `id <> ?1` keeps the
+                        // subquery's row out of the updated set even in the
+                        // corrupt case where a `parent_id` cycle put the old
+                        // parent inside the subject's own subtree (this arm
+                        // has no cycle probe, by design — see the UPDATE
+                        // above).
+                        sqlx::query(
+                            "UPDATE blocks SET deleted_at = NULL \
+                              WHERE id IN (SELECT id FROM recovery_cascade_cohort) \
+                                AND id <> ?1 \
+                                AND deleted_at IS NOT NULL \
+                                AND deleted_at = (SELECT deleted_at FROM blocks WHERE id = ?1)",
+                        )
+                        .bind(&old_parent_id)
+                        .execute(&mut *executor)
+                        .await?;
+                        diagnostics
+                            .move_unswept_inherited_cohort
+                            .push(block_id.to_owned());
+                    }
                 }
 
                 if let Some(ancestor_id) = tombstoned_ancestor {
@@ -3934,6 +4092,193 @@ mod tests {
             diagnostics.move_swept_under_tombstone.is_empty(),
             "nothing was swept: {:?}",
             diagnostics.move_swept_under_tombstone
+        );
+        assert!(
+            diagnostics.move_unswept_inherited_cohort.is_empty(),
+            "#4204: an INTRINSIC tombstone (B was deleted in its own right) is not \
+             inherited, so the un-sweep must not fire either: {:?}",
+            diagnostics.move_unswept_inherited_cohort
+        );
+    }
+
+    /// #4204 in the THIRD interpreter. Recovery replays the same op log as the
+    /// materializer (#2894), so an un-sweep that lives only in
+    /// `apply_move_block_via_loro` / `apply_move_block_sql_only` is undone by
+    /// the next boot rebuild — the divergence comes straight back.
+    ///
+    /// `{Delete(P1), Move(B: P1 → P2)}` with `P2` LIVE. `B`'s tombstone is
+    /// INHERITED (`P1`'s cascade stamped it), and the move takes it to a
+    /// position where nothing implies it, so the whole moved subtree is
+    /// re-derived as live — while the sibling the move left behind keeps `P1`'s
+    /// cohort, which is what distinguishes a re-derivation from undoing the
+    /// delete.
+    ///
+    /// Deleting the un-sweep block from the `move_block` arm reddens this on
+    /// `B` and `C` (both stay stamped at `P1`'s cohort).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_out_of_an_inherited_cohort_onto_a_live_parent_restores_it_4204() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "P1", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "P2", None, T0 + 2).await;
+        seed_create_op(&pool, 3, "B", Some("P1"), T0 + 3).await;
+        seed_create_op(&pool, 4, "C", Some("B"), T0 + 4).await;
+        seed_create_op(&pool, 5, "SIB", Some("P1"), T0 + 5).await;
+        seed_delete_op(&pool, 6, "P1", T0 + 6).await;
+        seed_move_op(&pool, 7, "B", "P2", T0 + 7).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            deleted_at_ms(&pool, "P1").await,
+            Some(T0 + 6),
+            "precondition: the delete arm stamped P1's own cohort"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "P2").await,
+            None,
+            "precondition: the target parent is LIVE throughout — the shape in which \
+             #4187's sweep has nothing to find"
+        );
+        assert_eq!(parent_of(&pool, "B").await.as_deref(), Some("P2"));
+        assert_eq!(
+            deleted_at_ms(&pool, "B").await,
+            None,
+            "#4204: an INHERITED tombstone is positional; the move invalidated it and \
+             the new chain is entirely live"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "C").await,
+            None,
+            "#4204: the re-derivation covers the moved COHORT — a live B over a \
+             trashed C would be a fresh invisible orphan"
+        );
+        assert_eq!(
+            deleted_at_ms(&pool, "SIB").await,
+            Some(T0 + 6),
+            "#4204: the sibling that did NOT move stays in P1's cohort — the un-sweep \
+             re-derives one subtree, it does not undo the delete"
+        );
+        assert_eq!(
+            diagnostics.move_unswept_inherited_cohort,
+            vec!["B".to_string()],
+            "the reconciliation is reported through ReplayDiagnostics (#3269 R5: the \
+             replay may run twice, so it reports rather than logs)"
+        );
+        assert!(
+            diagnostics.move_swept_under_tombstone.is_empty(),
+            "nothing to sweep INTO — the new ancestor chain is live: {:?}",
+            diagnostics.move_swept_under_tombstone
+        );
+    }
+
+    /// #4188 in the third interpreter, the neighbouring half: the target parent
+    /// is trashed too, in a DIFFERENT cohort.
+    ///
+    /// `{Delete(P1)@t1, Delete(P2)@t2, Move(B: P1 → P2)}`. The un-sweep clears
+    /// the inherited `t1` and the EXISTING #4187 sweep re-stamps `t2` in the
+    /// same op, so the block stays trashed and only its restore cohort moves —
+    /// to the one its final position implies. `B` is reported by BOTH
+    /// diagnostics, which is the observable difference between this shape and
+    /// the one above.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_between_two_deleted_parents_restamps_to_the_target_cohort_4188() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "P1", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "P2", None, T0 + 2).await;
+        seed_create_op(&pool, 3, "B", Some("P1"), T0 + 3).await;
+        seed_create_op(&pool, 4, "C", Some("B"), T0 + 4).await;
+        seed_create_op(&pool, 5, "SIB", Some("P1"), T0 + 5).await;
+        seed_delete_op(&pool, 6, "P1", T0 + 6).await;
+        seed_delete_op(&pool, 7, "P2", T0 + 7).await;
+        seed_move_op(&pool, 8, "B", "P2", T0 + 8).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(deleted_at_ms(&pool, "P1").await, Some(T0 + 6));
+        assert_eq!(
+            deleted_at_ms(&pool, "P2").await,
+            Some(T0 + 7),
+            "precondition: the two cohorts are DISTINGUISHABLE, or every assertion \
+             below is vacuous"
+        );
+        assert_eq!(parent_of(&pool, "B").await.as_deref(), Some("P2"));
+        for id in ["B", "C"] {
+            assert_eq!(
+                deleted_at_ms(&pool, id).await,
+                Some(T0 + 7),
+                "#4188: {id} must end in the TARGET's cohort (t2) — the cohort its \
+                 final position implies, not whichever cascade caught it first"
+            );
+        }
+        assert_eq!(
+            deleted_at_ms(&pool, "SIB").await,
+            Some(T0 + 6),
+            "#4188: the sibling that did not move keeps t1"
+        );
+        assert_eq!(
+            diagnostics.move_unswept_inherited_cohort,
+            vec!["B".to_string()],
+            "the inherited cohort was cleared"
+        );
+        assert_eq!(
+            diagnostics.move_swept_under_tombstone,
+            vec!["B".to_string()],
+            "#4188: and the EXISTING #4187 sweep re-stamped it — a block in both \
+             lists is a re-stamp, a block in the un-sweep list ALONE came back"
+        );
+    }
+
+    /// The negative half: a move that does NOT change which cohort the new
+    /// position implies must leave `deleted_at` alone.
+    ///
+    /// `{Delete(P), Move(B: P → SUB)}` where `SUB` is `P`'s other child, so
+    /// both endpoints are in ONE cohort. Clearing and re-stamping would land on
+    /// the same value, but it would churn the row (and, on the engine arm, the
+    /// CRDT register) for no state change — so the short-circuit is asserted
+    /// through the diagnostics, which are the only place the difference between
+    /// "did nothing" and "did and undid" is visible.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_within_one_cohort_does_not_unsweep_4188() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "P", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "B", Some("P"), T0 + 2).await;
+        seed_create_op(&pool, 3, "SUB", Some("P"), T0 + 3).await;
+        seed_delete_op(&pool, 4, "P", T0 + 4).await;
+        seed_move_op(&pool, 5, "B", "SUB", T0 + 5).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(parent_of(&pool, "B").await.as_deref(), Some("SUB"));
+        for id in ["P", "SUB", "B"] {
+            assert_eq!(
+                deleted_at_ms(&pool, id).await,
+                Some(T0 + 4),
+                "a move WITHIN one cohort keeps every row at that cohort's ts ({id})"
+            );
+        }
+        assert!(
+            diagnostics.move_unswept_inherited_cohort.is_empty(),
+            "#4188: the new position implies the SAME cohort, so the un-sweep must \
+             short-circuit rather than clear-and-re-stamp: {:?}",
+            diagnostics.move_unswept_inherited_cohort
         );
     }
 

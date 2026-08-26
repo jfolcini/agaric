@@ -723,30 +723,7 @@ pub async fn project_restore_block_to_sql(
     block_id: &str,
     deleted_at_ref: i64,
 ) -> Result<Vec<String>, AppError> {
-    // R27: the cohort walk is depth-UNBOUNDED (batched capped CTE,
-    // re-anchored at the depth-100 boundary) so a merged sync tree deeper
-    // than the cap restores its WHOLE contiguous cohort instead of leaving
-    // the sub-cap tail tombstoned. Cohort identity stays structural (#1055):
-    // each batch's recursive arm only descends through `deleted_at = ?`
-    // children, and continuation batches re-anchor only at rows that
-    // matched the cohort filter.
-    let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
-        &mut *conn,
-        block_id,
-        agaric_store::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
-    )
-    .await?;
-    let payload = serde_json::Value::from(cohort).to_string();
-    // dynamic-sql: json_each id-list UPDATE over the walked cohort; single
-    // bound JSON parameter, immune to the SQLite variable limit.
-    sqlx::query(
-        "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
-    )
-    .bind(&payload)
-    .bind(deleted_at_ref)
-    .execute(&mut *conn)
-    .await?;
+    clear_cohort_deleted_at_downward(&mut *conn, block_id, deleted_at_ref).await?;
 
     // #1884: also restore UPWARD, mirroring `restore_block_inner`. The cohort
     // CTE above only clears `deleted_at` downward, but the block's PARENT may
@@ -774,6 +751,58 @@ pub async fn project_restore_block_to_sql(
     // batched walk above no longer truncates at the depth-100 cap (crossing
     // it warns loudly inside `collect_subtree_ids_unbounded` instead).
     Ok(restored_ancestors)
+}
+
+/// Clear `deleted_at` over the cohort-contiguous subtree rooted at `block_id`
+/// — the DOWNWARD half of [`project_restore_block_to_sql`], with none of its
+/// upward `restore_deleted_ancestor_chain` half.
+///
+/// Extracted so the two callers cannot drift on the walk filter or the UPDATE
+/// shape:
+///
+/// * [`project_restore_block_to_sql`] — a genuine `RestoreBlock`, which wants
+///   BOTH halves (#1884: restoring a child out of a tombstoned parent must
+///   un-delete the parent chain too, or the child becomes a live invisible
+///   orphan).
+/// * #4204's un-sweep in the `MoveBlock` tail
+///   ([`crate::apply::sql_only::unsweep_inherited_cohort_after_move`]), which
+///   must NOT touch the ancestors. There the block has already been REPARENTED
+///   away from the tombstoned chain, so "up" now points at the block's NEW
+///   ancestors — restoring them would resurrect the *target* subtree, a
+///   different (and unrequested) cohort. The moved subtree does not become an
+///   invisible orphan either: the caller re-derives its tombstone from the new
+///   position immediately afterwards.
+///
+pub async fn clear_cohort_deleted_at_downward(
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    deleted_at_ref: i64,
+) -> Result<(), AppError> {
+    // R27: the cohort walk is depth-UNBOUNDED (batched capped CTE,
+    // re-anchored at the depth-100 boundary) so a merged sync tree deeper
+    // than the cap restores its WHOLE contiguous cohort instead of leaving
+    // the sub-cap tail tombstoned. Cohort identity stays structural (#1055):
+    // each batch's recursive arm only descends through `deleted_at = ?`
+    // children, and continuation batches re-anchor only at rows that
+    // matched the cohort filter.
+    let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
+        &mut *conn,
+        block_id,
+        agaric_store::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
+    )
+    .await?;
+    let payload = serde_json::Value::from(cohort).to_string();
+    // dynamic-sql: json_each id-list UPDATE over the walked cohort; single
+    // bound JSON parameter, immune to the SQLite variable limit.
+    sqlx::query(
+        "UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
+    )
+    .bind(&payload)
+    .bind(deleted_at_ref)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// Project a `DeleteProperty` engine state into SQL.  Mirrors the
@@ -1383,10 +1412,30 @@ pub async fn reproject_block_tags_from_engine(
 /// (`engine_deleted_at`, from
 /// [`crate::loro::engine::LoroEngine::read_deleted_at`]).
 ///
-/// The engine stores `deleted_at` on the **delete seed only** (the
-/// Descendant cascade is an SQL/app derivation per the
+/// The engine's `deleted_at` register is written on the **delete seed** by the
+/// engine apply itself (the descendant cascade is an SQL/app derivation per the
 /// boundary), so this helper re-derives the cascade in SQL rather than
 /// trusting per-block engine state:
+///
+/// **The register is NOT reliably seed-only, though** (#4204). The op path fans
+/// `ApplyEffects::deleted_cohort` — seed *plus* every cascaded descendant —
+/// onto the per-space engine post-commit
+/// (`materializer::handlers::apply::dispatch_delete_descendants`), and #4112's
+/// move sweep mirrors its own cohort inline. So a cascade member's register is
+/// routinely set on the op path and absent on the import path, and a device
+/// that reads `Some(ts)` here cannot conclude "this block is a delete seed".
+/// The consequence that matters: any arm that clears a cascade member's
+/// `deleted_at` in SQL must mirror the clear onto the register too, or the next
+/// import re-trashes the rows through the `Some(ts)` branch below. #4204's
+/// un-sweep ([`crate::apply::sql_only::unsweep_inherited_cohort_after_move`])
+/// does NOT yet do that, and cannot from where it sits: a move whose subject is
+/// tombstoned is routed to the engine-LESS `apply_move_block_sql_only` by
+/// `resolve_block_space`'s `deleted_at IS NULL` filter. Its SQL clear is
+/// therefore undone by the next import through this very branch — #4204's
+/// finding 3, pinned by
+/// `unsweep_does_not_yet_reach_the_engine_register_4204` and awaiting that
+/// issue's maintainer ruling, because the durable form is a CRDT-visible
+/// resurrection propagated to the deleting peer.
 ///
 /// * `Some(ts)` — the block is deleted on the remote. Cascade-soft-
 ///   delete the block + every still-active descendant at `ts` (via

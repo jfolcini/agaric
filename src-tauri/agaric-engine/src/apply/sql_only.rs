@@ -236,6 +236,11 @@ pub async fn apply_move_block_sql_only(
         return Ok(());
     }
 
+    // #4204: classify the subject's tombstone BEFORE the reparent — inheritance
+    // is a fact about the OLD parent, and one `UPDATE … SET parent_id` from now
+    // that parent is unrecoverable. See `inherited_cohort_before_move`.
+    let inherited = inherited_cohort_before_move(&mut *conn, block_id_str).await?;
+
     // #400: prefer the new-scheme 0-based `new_index` (as a 1-based position)
     // on this engine-less (test-only) path; else the legacy `new_position`.
     let position = p.new_index.map_or(
@@ -253,6 +258,14 @@ pub async fn apply_move_block_sql_only(
         position,
     };
     crate::loro::projection::project_move_block_to_sql(conn, &snapshot).await?;
+    // #4204: an INHERITED tombstone is positional, so the reparent above
+    // invalidated it. Clear it and let the sweep below re-derive the cohort
+    // from the new position. This arm has no engine to mirror the clear onto,
+    // and it is the arm that RUNS for a tombstoned subject — see
+    // `unsweep_inherited_cohort_after_move`'s "What this does NOT fix".
+    if let Some(inherited_ts) = inherited {
+        unsweep_inherited_cohort_after_move(&mut *conn, block_id_str, inherited_ts).await?;
+    }
     // #4112: the moved block may now sit LIVE under a tombstone. Sweep it into
     // the tombstone's cohort — the SAME R9 rule the sync-import path applies —
     // and let the sweep own the tag maintenance when it fires (a fully
@@ -277,6 +290,183 @@ pub async fn apply_move_block_sql_only(
         tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     }
     Ok(())
+}
+
+/// #4204/#4188 — the pre-`MoveBlock` half of the shared tail: is the subject's
+/// tombstone **INHERITED** (it is a cascade member of its parent's cohort) or
+/// **INTRINSIC** (it is a cohort ROOT — something deleted this block itself)?
+///
+/// ## The rule this classification serves
+///
+/// > `deleted_at` is a function of the CONVERGED TREE, not of replay order.
+/// > A cohort ROOT keeps its own stamp. Every other block's `deleted_at` is
+/// > the nearest tombstoned ancestor's `deleted_at` in the tree it is in NOW,
+/// > and NULL when that whole chain is live.
+///
+/// [`sweep_move_under_tombstoned_ancestor`] is the second clause read
+/// downwards (live block, tombstoned chain → inherit). This helper opens the
+/// same clause read upwards (inherited tombstone, chain that no longer implies
+/// it → re-derive). A `MoveBlock` is precisely the event that changes "the tree
+/// it is in NOW", so it is where the re-derivation belongs.
+///
+/// Order-independence: after every op has been applied, `parent_id` is
+/// converged (engine per-key LWW — both #4188 and #4204 measured it converging
+/// today) and the cohort roots with their stamps are converged (a root's stamp
+/// is its `DeleteBlock` record's `created_at`, an immutable op field). The rule
+/// makes every other `deleted_at` a pure function of those two converged
+/// inputs, so it cannot depend on the order the ops arrived in.
+///
+/// ## Why the test is structural
+///
+/// Cohort identity in this codebase is `(seed, deleted_at)`-STRUCTURAL, not an
+/// explicit stored cohort id (#1055 / #1549): a cohort is a *contiguous* chain
+/// of equal `deleted_at`, which is what
+/// [`agaric_store::block_descendants::DescendantWalkFilter::Cohort`] walks and
+/// what `restore_deleted_ancestor_chain` (#1884) climbs. So "my parent carries
+/// the same non-NULL `deleted_at`" IS this codebase's existing definition of
+/// "I am not the top of my own cohort", and reusing it keeps this arm from
+/// introducing a second, competing notion of cohort membership.
+///
+/// It is not free of the pre-existing limitation that comes with a structural
+/// cohort. `{Delete(P)@t1, Delete(B)@t3}` on a nested `P > B` already resolves
+/// order-dependently *today* (delete-P-first leaves `B` at `t1` because the
+/// second cascade's `deleted_at IS NULL` filter skips it; delete-B-first leaves
+/// it at `t3` because the outer cascade's active walk stops at it), so the ROOT
+/// SET itself is not converged for that shape — and any rule keyed on
+/// root-ness inherits that. It is out of scope here (neither #4188 nor #4204
+/// deletes the same block twice), it predates this change, and only an explicit
+/// cohort id — the #1055/#1549 schema change — dissolves it.
+///
+/// ## Why not the engine's `deleted_at` register instead
+///
+/// [`crate::loro::projection::reproject_block_deleted_at_from_engine`]'s docs
+/// say the engine holds `deleted_at` on the delete SEED only, which would make
+/// the register an authoritative root marker. That is true of the import path
+/// and FALSE of the op path: `apply_op_projected` fans
+/// `ApplyEffects::deleted_cohort` — seed *plus* descendants — onto the engine
+/// through `dispatch_delete_descendants`, so a cascade member's register is set
+/// too. The register therefore cannot distinguish root from member here, which
+/// is why the classification is structural.
+///
+/// It is also why the SQL clear this helper opens is NOT durable across a
+/// snapshot import, and that residue is the open half of #4204 — see
+/// [`unsweep_inherited_cohort_after_move`]'s "What this does NOT fix".
+///
+/// Returns `Some(ts)` when the subject is an inherited cascade member (its
+/// tombstone is positional), `None` when it is live, parentless, a cohort root,
+/// or has no row.
+pub(crate) async fn inherited_cohort_before_move(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Option<i64>, AppError> {
+    let inherited: Option<i64> = sqlx::query_scalar!(
+        "SELECT b.deleted_at FROM blocks b \
+           JOIN blocks parent ON parent.id = b.parent_id \
+          WHERE b.id = ? \
+            AND b.deleted_at IS NOT NULL \
+            AND parent.deleted_at IS NOT NULL \
+            AND parent.deleted_at = b.deleted_at",
+        block_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .flatten();
+    Ok(inherited)
+}
+
+/// #4204/#4188 — the post-`MoveBlock` half: re-derive an INHERITED tombstone
+/// from the subject's NEW position by clearing it, leaving
+/// [`sweep_move_under_tombstoned_ancestor`] (which the caller runs next) to
+/// stamp whatever the new ancestor chain implies.
+///
+/// `inherited_ts` is [`inherited_cohort_before_move`]'s answer, captured before
+/// the reparent.
+///
+/// ## The short-circuit is load-bearing, not an optimisation
+///
+/// When the new position's nearest tombstoned ancestor already carries
+/// `inherited_ts` the clear is skipped entirely. That covers the same-parent
+/// reorder, the move WITHIN one cohort, and — the case with teeth — the
+/// idempotent REPLAY of a move that this very tail swept on its first pass
+/// (`replayed_move_into_a_tombstone_is_idempotent_4112`): on the second pass
+/// the subject looks exactly like a cascade member of its new parent's cohort,
+/// because it now is one. Clearing and re-stamping would land on the same
+/// value, but it would churn the engine register through a restore/delete pair
+/// for no state change.
+///
+/// ## The two outcomes
+///
+/// * The new chain has a DIFFERENT tombstoned ancestor (#4188's shape, both
+///   endpoints deleted): cleared here, re-stamped at the new ancestor's cohort
+///   by the sweep. The block stays trashed; only its restore cohort moves —
+///   to the one its new position implies.
+/// * The new chain is entirely LIVE (#4204's shape, a move OUT of a deleted
+///   parent onto a live one): cleared here, and the sweep finds nothing, so the
+///   block stays live. This is a genuine resurrection on the device that
+///   replayed the delete first, and it is the only implementable convergent
+///   answer: `DeleteBlockPayload` carries only `block_id`, so a device that
+///   replayed the MOVE first has no record the subject was ever the deleted
+///   parent's child and no "delete wins" rule can recover one. It is also not a
+///   new semantic — the sweep's mirror image already ships it on the
+///   snapshot-import path, as
+///   `reproject_block_deleted_at_from_engine`'s `(Some(deleted_at_ref), None)`
+///   arm: SQL-tombstoned, engine-live, live ancestor chain → restore the
+///   cohort. What is new is the op path agreeing with it.
+///
+/// Only a CONCURRENT authoring can reach either outcome: `validate_move_in_tx`
+/// refuses to move a trashed block, so no device that had already seen the
+/// delete could have authored this move.
+///
+/// ## What this does NOT fix (#4204's open half)
+///
+/// The clear is SQL-only. On the device that replayed the delete first, the
+/// subject's per-space engine `deleted_at` register still holds the OLD
+/// cohort's timestamp, because `apply_op_projected` fans a delete's whole
+/// `deleted_cohort` — seed plus descendants — onto the engine
+/// (`dispatch_delete_descendants`). The next
+/// [`crate::loro::projection::reproject_block_deleted_at_from_engine`] takes
+/// its `Some(ts)` branch and re-trashes the subtree, so the convergence this
+/// helper produces survives op replay and boot recovery but NOT a snapshot
+/// import.
+///
+/// It cannot be mirrored from here, nor from `apply_move_block_via_loro`: a
+/// move whose subject is TOMBSTONED — the only kind this helper ever sees — is
+/// routed to `apply_move_block_sql_only` by `resolve_block_space`'s
+/// `deleted_at IS NULL` filter, and that arm has no engine by construction. The
+/// durable form is a post-commit fan-out in the shape of #2868's purge fix
+/// (`resolve_soft_deleted_block_space` + a mirror dispatch), which is a
+/// CRDT-visible resurrection propagated to the DELETING peer — the product call
+/// #4204 is holding a maintainer ruling for. Pinned, with the re-trash
+/// measured, by `unsweep_does_not_yet_reach_the_engine_register_4204`.
+pub(crate) async fn unsweep_inherited_cohort_after_move(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    inherited_ts: i64,
+) -> Result<(), AppError> {
+    let new_ancestor =
+        agaric_store::block_descendants::nearest_tombstoned_ancestor(&mut *conn, block_id).await?;
+    if let Some((_, ancestor_ts)) = new_ancestor
+        && ancestor_ts == inherited_ts
+    {
+        return Ok(());
+    }
+
+    // Loud for the same reason the sweep is: a cross-device reconciliation, not
+    // a user action.
+    tracing::warn!(
+        block_id = %block_id,
+        inherited_cohort_ts = inherited_ts,
+        new_ancestor_cohort_ts = new_ancestor.as_ref().map(|(_, ts)| *ts),
+        "MoveBlock carried an INHERITED tombstone to a position that no longer \
+         implies it (concurrent delete-vs-move-out merge, #4204/#4188); \
+         clearing the inherited cohort so the sweep can re-derive it",
+    );
+    // DOWNWARD only. The block has already been reparented, so
+    // `project_restore_block_to_sql`'s upward `restore_deleted_ancestor_chain`
+    // half would climb the block's NEW ancestors and resurrect the target
+    // subtree — a cohort nobody asked to restore.
+    crate::loro::projection::clear_cohort_deleted_at_downward(&mut *conn, block_id, inherited_ts)
+        .await
 }
 
 /// #4112 — the shared post-`MoveBlock` repair for the one tree shape a remote
@@ -324,9 +514,13 @@ pub async fn apply_move_block_sql_only(
 ///
 /// ## What it deliberately does NOT do
 ///
-/// A move whose SUBJECT is already tombstoned is applied unchanged. A
-/// tombstoned block under a live parent is the ordinary trash shape (that is
-/// exactly what `delete_block` produces), it is what R9's `(Some(_), Some(_))`
+/// A move whose SUBJECT is already tombstoned is applied unchanged — and, once
+/// #4204 landed the un-sweep above, its COHORT is kept unchanged too whenever
+/// that tombstone is INTRINSIC (the subject is a cohort root: `Delete` was
+/// aimed at the subject itself, so its parent is live or in a different
+/// cohort). A tombstoned block under a live parent is the ordinary trash shape
+/// (that is exactly what `delete_block` produces), it is what R9's
+/// `(Some(_), Some(_))`
 /// resurrection-guard arm preserves, and applying the move is what CONVERGES:
 /// `Delete(B)` then `Move(B → Q)` and `Move(B → Q)` then `Delete(B)` both end
 /// with `B` under `Q`, tombstoned. `validate_move_in_tx` rejects that case too,
@@ -336,27 +530,23 @@ pub async fn apply_move_block_sql_only(
 /// `move_of_a_tombstoned_block_is_applied_not_dropped_4112`, which reddens
 /// when the local path's subject probe IS mirrored onto this arm.
 ///
-/// The residue of that choice is #4188: when BOTH the source and the target
-/// parent are deleted concurrently, whichever cascade catches the block first
-/// owns its cohort, so `{Delete(P1), Delete(P2), Move(B: P1 → P2)}` still
-/// resolves `deleted_at` order-dependently. That divergence predates #4112 and
-/// lives in the `DeleteBlock` cascade's skip-an-already-stamped-row rule, not
-/// here — this sweep narrows it (it no longer leaves `B` live) rather than
-/// closing it.
+/// That choice left two residues, #4188 and #4204, both of them the case where
+/// the subject arrives at the move ALREADY tombstoned by a cascade rather than
+/// by a delete aimed at it. #4188: with BOTH endpoints deleted
+/// (`{Delete(P1)@t1, Delete(P2)@t2, Move(B: P1 → P2)}`) whichever cascade
+/// caught `B` first owned its cohort, so three of the six orders answered `t1`
+/// and three `t2`. #4204: with only the OLD parent deleted and the target LIVE
+/// (`{Delete(P1), Move(C1A: P1 → P2)}`) the delete-first order carried `C1A`
+/// under `P2` still TRASHED while the move-first order — where
+/// `collect_subtree_ids_unbounded(P1)` never reached it — left it LIVE, so the
+/// two devices disagreed about whether the subtree was in the tree at all.
 ///
-/// #4204 is the neighbouring residue, and it is NOT covered by #4188's
-/// "both endpoints deleted" scoping: a delete of the OLD parent racing a move
-/// OUT, with the target parent LIVE. For `{Delete(P1), Move(C1A: P1 → P2)}`
-/// with `P2` live, replayed delete-first, `P1`'s cascade stamps `C1A` and the
-/// move — which does not refuse a tombstoned subject, see above — carries it
-/// under `P2` still trashed; replayed move-first,
-/// `collect_subtree_ids_unbounded(P1)` no longer reaches `C1A` and it stays
-/// LIVE under `P2`. This sweep never fires in either order (after the move the
-/// whole ancestor chain is live, so `nearest_tombstoned_ancestor` returns
-/// `None`), so the divergence predates #4112 and is untouched by it — but it is
-/// strictly worse than #4188's, which diverges only on WHICH restore cohort a
-/// block that is trashed everywhere belongs to. Here the two devices disagree
-/// about whether the subtree is in the tree at all.
+/// Both are now closed by the pre-move half of this tail
+/// ([`inherited_cohort_before_move`] + [`unsweep_inherited_cohort_after_move`]),
+/// which re-derives an INHERITED tombstone from the subject's new position and
+/// leaves this sweep to supply the second clause. This sweep is unchanged: it
+/// still only ever fires on a subject whose own row is live — which after an
+/// un-sweep it is.
 ///
 /// This list is the set of shapes that have been WALKED, not a proof of
 /// exhaustiveness. It covers what the sweep's own choices imply; a new op
