@@ -275,6 +275,27 @@ the failure you expect to see**, and make the subagent produce it:
 > RED output, then restore. A test whose failure you cannot demonstrate has not been shown
 > to cover anything.
 
+**Falsify against a COPY, never in place.** Back the file up first (`cp <f> /tmp/<f>.bak`),
+mutate, run, capture, then restore from the backup and **prove the restore** with
+`cmp <f> /tmp/<f>.bak` or an md5 comparison. Say so in your report.
+
+This is not fussiness. Mutating in place opens a window in which the working tree contains a
+deliberately-disabled fix, and **a run that ends inside that window ships the stub**. Three
+have reached this repo that way — `if false && !purge_truncation_frontier.is_empty()` (#4287),
+`Err(e) if false && is_write_contention(&e)` (#4018), and
+`return Ok(None); // TEMPORARY #4204 REVERT` (#4204). Every one had a passing test suite
+around it, and two came from agents killed mid-falsification by a session restart rather than
+from carelessness. The window is the hazard; closing it is free.
+
+The backstop is `cargo clippy -- -D warnings`, which runs in both pre-push and CI: `if false &&`
+trips *"this boolean expression contains a logic bug"* and a `return` planted above live code
+trips *"unreachable statement"* (both verified against this repo, 2026-08-26). It is a backstop,
+not a net — a stub that leaves no unreachable code and no constant condition still compiles
+clean.
+
+**Before your final message, run `git diff` and confirm only your intended changes remain.**
+An inherited or interrupted diff is exactly where a stub hides, and the diff is where you see it.
+
 This is not ceremony — it is the only step that distinguishes "asserts the behaviour is
 correct" from "distinguishes correct from broken". Worked examples where the difference was
 real: #3452 (a suggested test passed against the stubbed-out function, because the fallback
@@ -297,7 +318,17 @@ These recur, are cheap to spot, and each has shipped at least once:
 3. **The half-covered pair.** One arm of a symmetric property pinned and the other left open —
    a snapshot column set checked while the restore projection is not (#3425), a guard body
    tested while its invocation is not (#3435). Ask of every guard: *is the call site covered
-   as well as the body?*
+   as well as the body?* When two interpreters must agree (materializer vs recovery vs import),
+   a test on one arm alone is this failure mode: #4389 shipped a live block into the trash
+   because the short-circuit shape was pinned on the materializer arm and the recovery mirror
+   was missing.
+
+4. **The assertion that is true for two reasons.** The sharpest form, and no grep finds it.
+   #4018's test asserted `!out.contains("root could not be purged")` — and with the fix
+   disabled, control fell into a *different* branch that returned before that log line ever
+   ran. The assertion passed either way, so a dead fix looked covered. Ask of every negative
+   assertion: *what else could make this true?* If the answer is "a path I did not intend",
+   assert on something only the intended path produces.
 
 ## 4. REVIEW (pipelined with BUILD)
 
