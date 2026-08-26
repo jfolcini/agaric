@@ -1065,15 +1065,16 @@ pub async fn get_property_inner(
     Ok(row)
 }
 
-/// Create a property definition. Uses INSERT OR IGNORE for idempotency —
-/// if the key already exists, this is a no-op.
-#[instrument(skip(pool, options), err)]
-pub async fn create_property_def_inner(
-    pool: &SqlitePool,
-    key: String,
-    value_type: String,
-    options: Option<String>,
-) -> Result<PropertyDefinition, AppError> {
+/// Shape validation shared by every `property_definitions` writer:
+/// [`create_property_def_inner`] (owns its pool round-trip) and
+/// [`create_property_def_in_tx`] (writes inside a caller's transaction).
+/// Extracted so the two cannot drift — a key/type/options payload either
+/// writer accepts must be one the other accepts too.
+fn validate_property_def_shape(
+    key: &str,
+    value_type: &str,
+    options: Option<&str>,
+) -> Result<(), AppError> {
     // Validate key: non-empty, max 64 chars, alphanumeric + underscore + hyphen
     if key.is_empty() || key.len() > 64 {
         return Err(AppError::validation(
@@ -1090,7 +1091,7 @@ pub async fn create_property_def_inner(
     }
     // Validate value_type
     if !matches!(
-        value_type.as_str(),
+        value_type,
         "text" | "number" | "date" | "select" | "ref" | "boolean"
     ) {
         return Err(AppError::validation(format!(
@@ -1099,7 +1100,7 @@ pub async fn create_property_def_inner(
     }
     // Validate options: required for select, forbidden for others
     if value_type == "select" {
-        match &options {
+        match options {
             None => {
                 return Err(AppError::validation(
                     "select-type definitions require an options array".into(),
@@ -1122,6 +1123,20 @@ pub async fn create_property_def_inner(
         )));
     }
 
+    Ok(())
+}
+
+/// Create a property definition. Uses INSERT OR IGNORE for idempotency —
+/// if the key already exists, this is a no-op.
+#[instrument(skip(pool, options), err)]
+pub async fn create_property_def_inner(
+    pool: &SqlitePool,
+    key: String,
+    value_type: String,
+    options: Option<String>,
+) -> Result<PropertyDefinition, AppError> {
+    validate_property_def_shape(&key, &value_type, options.as_deref())?;
+
     let now = agaric_core::time::now_rfc3339();
     sqlx::query(
         "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) VALUES (?, ?, ?, ?)",
@@ -1143,6 +1158,42 @@ pub async fn create_property_def_inner(
     .await?;
 
     Ok(row)
+}
+
+/// In-transaction twin of [`create_property_def_inner`] (#4382).
+///
+/// Same validation and the same idempotent `INSERT OR IGNORE`, but written
+/// through a caller-owned connection instead of the pool, and without the
+/// post-insert readback (callers that need the winning row already read
+/// `property_definitions` in the same transaction).
+///
+/// This exists so a caller can make "is this key safe to declare?" and the
+/// declaration itself **one atomic decision**. Declaring a key is globally
+/// visible — `property_definitions` is keyed by `key` alone — so a
+/// pre-flight run on a separate connection is a genuine TOCTOU: a
+/// concurrent write can create the very `block_properties` rows the
+/// pre-flight looked for and did not find. Inside one `BEGIN IMMEDIATE`
+/// there is no such window.
+pub async fn create_property_def_in_tx(
+    conn: &mut sqlx::SqliteConnection,
+    key: &str,
+    value_type: &str,
+    options: Option<&str>,
+) -> Result<(), AppError> {
+    validate_property_def_shape(key, value_type, options)?;
+
+    let now = agaric_core::time::now_rfc3339();
+    sqlx::query!(
+        "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) VALUES (?1, ?2, ?3, ?4)",
+        key,
+        value_type,
+        options,
+        now,
+    )
+    .execute(conn)
+    .await?;
+
+    Ok(())
 }
 
 /// List all property definitions, paginated and ordered by `key ASC`

@@ -149,8 +149,8 @@ pub use pages::{
     set_page_aliases, set_page_aliases_inner,
 };
 pub use properties::{
-    create_property_def, create_property_def_inner, delete_property, delete_property_def,
-    delete_property_def_inner, delete_property_inner, get_batch_properties,
+    create_property_def, create_property_def_in_tx, create_property_def_inner, delete_property,
+    delete_property_def, delete_property_def_inner, delete_property_inner, get_batch_properties,
     get_batch_properties_inner, get_properties, get_properties_inner, get_property,
     get_property_def, get_property_def_inner, get_property_inner, list_property_defs,
     list_property_defs_inner, list_property_keys, list_property_keys_inner, list_property_values,
