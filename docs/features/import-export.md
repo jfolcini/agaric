@@ -22,7 +22,11 @@ The Import button shows a per-block progress count while a file imports, then a 
 *Import Bibliography* in Settings → Data accepts `.bib` (BibTeX) and `.json` (CSL-JSON) files. Each entry becomes a **reference page** in the active space:
 
 - **Page title** is the citation display name — `{first-author family name} {year}` (e.g. "Smith 2024"), falling back to the citation key; title collisions get the citation key appended.
-- **Typed properties** per entry: `citation-key`, `authors` ("; "-joined), `year` (number), `doi`, `url`, `journal`, `abstract`, `reference-type`. Definitions are created idempotently; a pre-existing user declaration of the same key wins and values coerce to it.
+- **Typed properties** per entry: `citation-key`, `authors` ("; "-joined), `year` (number), `doi`, `url`, `journal`, `abstract`, `reference-type`. Those types are a *preference*, not a guarantee — **the vault's existing shape for a key always wins, declared or not**, and the import coerces its own values to that shape instead:
+  - A key you have already **declared** (Settings → Properties) keeps your declaration; the imported values coerce to it.
+  - A key you have **values under but never declared** stays undeclared — declaring it would constrain that key on every block in the vault, not just the imported pages, and there is no clean way back once values exist. The imported values are stored as text, like any undeclared key's.
+  - Only a key that is both undeclared and unused anywhere in the vault gets the type above.
+  - Every skipped declaration is reported in the import summary's `warnings` (counted as `N warning(s)`), naming the key and why.
 - **Re-import is idempotent:** entries whose `citation-key` (or, as a fallback, non-empty `doi`) already exists in the space are skipped and counted.
 - **BibTeX is a documented subset** (`src-tauri/agaric-engine/src/bibliography.rs`): brace-bodied entries with `{…}` / `"…"` / bare-integer values; `@comment` / `@preamble` / `@string` are skipped with a warning (no macro expansion, no `#` concatenation); LaTeX decoding covers only the common escapes, dashes, and pure-ASCII accent forms — anything else stays literal with a per-entry warning. Unbalanced braces or an unterminated quote fail the import with the entry's line number.
 - Authors and journals land as text, not linkable `ref` pages; a live citation picker is a possible follow-up.

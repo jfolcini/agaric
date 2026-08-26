@@ -43,10 +43,12 @@ use super::super::*;
 /// relative to the threshold instead of hardcoding the number.
 pub(crate) const IMPORT_BIB_CHUNK_ENTRIES: usize = 200;
 
-/// The typed property definitions every bibliography import declares
-/// upfront (idempotent — `create_property_def_inner` is `INSERT OR
-/// IGNORE`, so a user's pre-existing declaration for any of these keys
-/// wins and the import coerces values to THAT type instead).
+/// The typed property definitions a bibliography import *prefers* for its
+/// eight keys. A preference, not a guarantee: the vault's existing shape
+/// for a key always wins, and the import coerces its own values to that
+/// shape instead (see [`declare_bib_property_defs`] for the two ways a key
+/// can already have a shape, and why declaring over either would be
+/// destructive).
 const BIB_PROPERTY_DEFS: &[(&str, &str)] = &[
     ("citation-key", "text"),
     ("reference-type", "text"),
@@ -85,6 +87,140 @@ fn citation_display_name(entry: &BibEntry) -> String {
         (Some(family), Some(year)) => format!("{family} {year}"),
         _ => entry.citation_key.clone(),
     }
+}
+
+/// Declare the [`BIB_PROPERTY_DEFS`] the vault has no shape for yet, and
+/// fold what was declared into `decls` (#4382).
+///
+/// `decls` arrives holding the `property_definitions` rows that already
+/// exist for the import's eight keys, read from `tx`. A key already in
+/// `decls` is left alone — `INSERT OR IGNORE` would no-op anyway.
+///
+/// # Why an UNdeclared key can also be unsafe to declare
+///
+/// A `property_definitions` row is keyed by `key` alone, so declaring one
+/// constrains every block in the vault, not just the pages this import
+/// creates. The dangerous case is a key with existing **values** and no
+/// declaration — the ordinary state, since an undeclared key is fully
+/// permissive: `validate_property_value` skips its type check when
+/// `declaration` is `None`, so for a non-reserved key (none of the eight
+/// is reserved) *any* of the five typed slots is accepted. `set_property`
+/// and the MCP `set_property` tool both expose all five.
+///
+/// `year` is the severe example: a user keeping `"circa 1920"` has no
+/// `year` row for `INSERT OR IGNORE` to ignore, so an unguarded import
+/// would declare `year` as `number` for them, and:
+///
+///  1. every later text write to the key, on any block, is rejected;
+///  2. on inbound sync those rows are dropped row-absent — the Loro `Str`
+///     is routed by `value_type`, `parse::<f64>()` fails, and there is a
+///     deliberate no-fallback-to-`value_text` rule;
+///  3. the declaration cannot be removed while any `block_properties` row
+///     references the key (`delete_property_def_inner`'s `COUNT(*)`), and
+///     the remedy its error names — `set_property(value = None)` — is
+///     itself rejected for a non-reserved key. Only deleting the property
+///     from every affected block, discarding the values, exits.
+///
+/// The guard covers the seven `text` keys too, but for a *different*
+/// reason, and the warning must not claim this one for them (#4395 review
+/// note 2): declaring a key `text` does **not** reject later text edits —
+/// a `text` declaration with a `value_text` payload passes step 4 cleanly,
+/// and a Loro `Str` reprojects to `value_text` either way. What it does
+/// reject is every later `value_num` / `value_date` / `value_bool` write
+/// (step 4's `type_matches` for `"text"` admits only `value_text` and
+/// `value_ref`) — and those rows are reachable, precisely because an
+/// undeclared key accepts all five slots. Link 2 does not apply to them
+/// (`PropertyValue::Num` / `Bool` route straight to their column with no
+/// `property_definitions` lookup, so they survive sync), but link 3 does:
+/// the narrowing is one-way while any value under the key exists. Milder
+/// than `year`, still not this import's decision to make.
+///
+/// So: **the vault's existing shape for a key wins, declared or not.** An
+/// in-use-but-undeclared key stays undeclared and this import's values for
+/// it are coerced to that permissive shape, the same shape the user's
+/// existing values already have. Declaring is the branch that can leave
+/// the vault internally inconsistent; this one cannot.
+///
+/// Reported through [`ImportBibliographyResult::warnings`] rather than
+/// failing the import: a legitimate pre-existing use of `year` elsewhere
+/// is no reason to refuse to import a bibliography.
+async fn declare_bib_property_defs(
+    tx: &mut CommandTx,
+    decls: &mut HashMap<String, (String, Option<String>)>,
+    warnings: &mut Vec<String>,
+) -> Result<(), AppError> {
+    // Probe only the keys that are still undeclared — a declared key is
+    // decided already. The probe and the INSERT share the caller's BEGIN
+    // IMMEDIATE: a pre-flight on a separate connection would be a real
+    // TOCTOU, since a concurrent write could create the very rows the probe
+    // looked for and did not find.
+    let undeclared: Vec<&str> = BIB_PROPERTY_DEFS
+        .iter()
+        .map(|(key, _)| *key)
+        .filter(|key| !decls.contains_key(*key))
+        .collect();
+    if undeclared.is_empty() {
+        return Ok(());
+    }
+
+    // ONE batched `json_each` probe (the established import idiom): which
+    // of those keys any block already holds a value under. Deliberately
+    // does not filter `blocks.deleted_at`, because the blocking COUNT(*) in
+    // `delete_property_def_inner` does not either — narrowing the condition
+    // would let the trap back in through a soft-deleted block.
+    let keys_json = serde_json::to_string(&undeclared)?;
+    let in_use: HashSet<String> = sqlx::query_scalar!(
+        r#"SELECT DISTINCT key AS "key!: String"
+           FROM block_properties
+           WHERE key IN (SELECT value FROM json_each(?1))"#,
+        keys_json,
+    )
+    .fetch_all(&mut ***tx)
+    .await?
+    .into_iter()
+    .collect();
+
+    for (key, value_type) in BIB_PROPERTY_DEFS {
+        if decls.contains_key(*key) {
+            continue;
+        }
+        if in_use.contains(*key) {
+            tracing::info!(
+                key = %key,
+                preferred_type = %value_type,
+                "import: leaving property key undeclared; blocks already hold values under it"
+            );
+            // The consequence of declaring differs by preferred type, and
+            // the warning has to name the one the user would actually hit
+            // (#4395 review note 2). Seven of the eight keys are `text`,
+            // for which "would reject every later text edit" is simply
+            // false — see the type-specific paragraph in this function's
+            // docblock.
+            let consequence = if *value_type == "text" {
+                format!(
+                    "declaring it '{value_type}' would reject every later number, date or \
+                     boolean write to it — an undeclared key accepts all five value shapes — \
+                     and could not be removed again while any of those values exists"
+                )
+            } else {
+                format!(
+                    "declaring it '{value_type}' would reject every later text edit of those \
+                     values, and drop the ones that are not valid '{value_type}' on the next \
+                     inbound sync"
+                )
+            };
+            warnings.push(format!(
+                "property '{key}' left undeclared: blocks in this vault already hold values \
+                 under this key, and {consequence}; this import's '{key}' values are stored \
+                 as text"
+            ));
+            continue;
+        }
+        create_property_def_in_tx(tx, key, value_type, None).await?;
+        decls.insert((*key).to_string(), ((*value_type).to_string(), None));
+    }
+
+    Ok(())
 }
 
 /// Import a bibliography file as reference pages with typed properties.
@@ -163,13 +299,11 @@ pub async fn import_bibliography_inner(
         });
     }
 
-    // Idempotent pre-pass: declare the typed property definitions on the
-    // pool (INSERT OR IGNORE — an existing user declaration for a key wins,
-    // and the value coercion below follows the WINNING declaration).
-    for (key, value_type) in BIB_PROPERTY_DEFS {
-        create_property_def_inner(pool, (*key).to_string(), (*value_type).to_string(), None)
-            .await?;
-    }
+    // NOTE (#4382): the typed property definitions are NOT declared here.
+    // Declaring a key is globally visible (`property_definitions` is keyed
+    // by `key` alone), so the decision needs the same transaction as the
+    // check that guards it — see `declare_bib_property_defs`, called from
+    // inside the first chunk's `BEGIN IMMEDIATE` below.
 
     // --- Chunked IMMEDIATE transactions (#662 pattern) ---
     let mut tx = CommandTx::begin_immediate(pool, "import_bibliography").await?;
@@ -264,7 +398,11 @@ pub async fn import_bibliography_inner(
     // key's winning `(value_type, options)` once and drive the loop from the
     // map via `set_property_in_tx_with_declaration`, instead of a per-key
     // round-trip inside `set_property_in_tx` for every entry.
-    let decls: HashMap<String, (String, Option<String>)> = {
+    //
+    // #4382: this doubles as the pre-flight input for
+    // `declare_bib_property_defs`, which runs in this SAME transaction and
+    // adds the definitions it decides are safe to create back into the map.
+    let mut decls: HashMap<String, (String, Option<String>)> = {
         let keys: Vec<&str> = BIB_PROPERTY_DEFS.iter().map(|(k, _)| *k).collect();
         let keys_json = serde_json::to_string(&keys)?;
         let rows = sqlx::query!(
@@ -279,6 +417,31 @@ pub async fn import_bibliography_inner(
             .map(|r| (r.key, (r.value_type, r.options)))
             .collect()
     };
+
+    // #4382 — declare the import's typed property definitions, but only for
+    // keys the vault has no shape for yet. In the same transaction as the
+    // read above, so the check and the write cannot be split.
+    declare_bib_property_defs(&mut tx, &mut decls, &mut warnings).await?;
+
+    // KNOWN WINDOW (#4395 review note 5), recorded rather than fixed here.
+    // `decls` is read once, in this first chunk, and a SKIPPED key stays
+    // absent from it for the whole import. A `create_property_def` for that
+    // key landing between two chunk commits would therefore leave the later
+    // chunks passing `declaration: None` — skipping validation and writing
+    // `value_text` under, say, a fresh `number` declaration. Needs a
+    // >`IMPORT_BIB_CHUNK_ENTRIES` import racing an explicit declaration, so
+    // it is narrow; not re-reading `decls` per chunk is deliberate (#1921's
+    // one-lookup idiom).
+    //
+    // It is also not worth fixing independently, because its
+    // precondition IS the gap this PR does not close: a key is absent from
+    // `decls` only when it was skipped, and it is skipped only when it is
+    // already in use — so the racing `create_property_def` is itself
+    // declaring a type over in-use values, the very #4382 trap, on a path
+    // that still has no guard. Giving `create_property_def_inner` the same
+    // in-use probe closes this window as a side effect, since the racing
+    // declaration would then be refused for exactly the keys that can be
+    // missing from `decls`. Tracked in #4399, not separately.
 
     let mut pages_created: u64 = 0;
     let mut entries_skipped: u64 = 0;
@@ -400,9 +563,11 @@ pub async fn import_bibliography_inner(
 
         // Typed entry properties. Values are flat strings; the coercion into
         // the right `block_properties` column follows the WINNING declaration
-        // fetched above (`typed_property_args_for_registry_value`), so a
+        // in `decls` (`typed_property_args_for_registry_value`), so a
         // pre-existing user declaration (e.g. `year` as text) still imports
-        // cleanly instead of failing validation.
+        // cleanly instead of failing validation — and so does a key
+        // `declare_bib_property_defs` left deliberately undeclared (#4382),
+        // which has no entry in `decls` and routes to `value_text`.
         let mut props: Vec<(&str, String)> = vec![
             ("citation-key", entry.citation_key.clone()),
             ("reference-type", entry.entry_type.clone()),

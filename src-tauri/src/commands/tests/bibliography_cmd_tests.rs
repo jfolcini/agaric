@@ -716,3 +716,538 @@ async fn import_bibliography_rejects_invalid_space_1454() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// property-definition ownership (#4382)
+// ======================================================================
+
+/// The `property_definitions.value_type` for `key`, or `None` when the key
+/// is undeclared. `property_definitions` is keyed by `key` ALONE, so this
+/// is a vault-global fact, not a per-block one.
+async fn property_def_type(pool: &sqlx::SqlitePool, key: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT value_type FROM property_definitions WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+const ONE_ENTRY_BIBTEX_1920: &str = r"
+@book{old1920,
+  title  = {An Old Book},
+  author = {Doe, Jane},
+  year   = {1920},
+}
+";
+
+/// #4382 — an import must NOT declare a global type for a key whose values
+/// the user is already keeping in another shape.
+///
+/// The trap this pins: `year` is declared `number` vault-wide, so (1) every
+/// later text write to `year` on any block is rejected, (2) inbound sync
+/// drops those rows row-absent because `parse::<f64>()` fails, and (3) the
+/// declaration cannot be deleted while rows reference the key — and the
+/// remedy `delete_property_def_inner` names, `set_property(value = None)`,
+/// is itself rejected for a non-reserved key. Un-exitable short of deleting
+/// the property from every affected block.
+///
+/// Paired with `import_bibliography_declares_year_as_number_when_unused_4382`
+/// below: a fix that simply stopped declaring anything would pass this test
+/// and fail that one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_leaves_in_use_key_undeclared_4382() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // The user's pre-existing state: a block carrying `year` as free text,
+    // with NO `property_definitions` row. That is the ORDINARY state for a
+    // custom key — undeclared keys are fully permissive — which is exactly
+    // why `INSERT OR IGNORE` does not protect it: there is nothing to
+    // ignore.
+    const EXISTING: &str = "01AAAAYEAR0000000000000001";
+    insert_block(
+        &pool,
+        EXISTING,
+        "content",
+        "a note on an old book",
+        None,
+        None,
+    )
+    .await;
+    assign_to_test_space(&pool, EXISTING).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        EXISTING.into(),
+        "year".into(),
+        Some("circa 1920".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("an undeclared key must accept free text");
+    settle(&mat).await;
+    assert_eq!(
+        property_def_type(&pool, "year").await,
+        None,
+        "seed precondition: the trap needs `year` to be IN USE but UNDECLARED"
+    );
+
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        ONE_ENTRY_BIBTEX_1920.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
+    settle(&mat).await;
+
+    // 1. The import did not invent a global declaration for the in-use key.
+    assert_eq!(
+        property_def_type(&pool, "year").await,
+        None,
+        "import must not declare a global type for a key that already has values"
+    );
+
+    // 2. The user's existing value is untouched and still text.
+    let existing_props = props_of(&pool, EXISTING).await;
+    assert_eq!(
+        existing_props["year"].value_text.as_deref(),
+        Some("circa 1920"),
+        "pre-existing value must survive the import: {existing_props:?}"
+    );
+
+    // 3. The escape hatch stays open: a later TEXT write to `year`, on a
+    //    block that has nothing to do with the import, still succeeds. This
+    //    is the assertion that fails loudly under the bug, with
+    //    "Property 'year' expects type 'number', got 'text'."
+    const OTHER: &str = "01AAAAYEAR0000000000000002";
+    insert_block(&pool, OTHER, "content", "another note", None, None).await;
+    assign_to_test_space(&pool, OTHER).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        OTHER.into(),
+        "year".into(),
+        Some("n.d.".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("a text write to `year` must still be accepted after the import");
+    settle(&mat).await;
+
+    // 4. The import's OWN `year` value was coerced to the vault's existing
+    //    (undeclared, permissive) shape rather than dragging the vault to
+    //    the import's preferred one.
+    let page = page_id_by_title(&pool, "Doe 1920")
+        .await
+        .expect("Doe 1920 page");
+    let props = props_of(&pool, &page).await;
+    assert_eq!(
+        props["year"].value_text.as_deref(),
+        Some("1920"),
+        "an undeclared key routes to value_text: {props:?}"
+    );
+    assert_eq!(
+        props["year"].value_num, None,
+        "value_num is for a `number` declaration, which was deliberately not made: {props:?}"
+    );
+
+    // 5. The skip is REPORTED, not silent — the decision is visible to the
+    //    caller through the existing warnings channel.
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("'year'") && w.contains("undeclared")),
+        "the skipped declaration must be surfaced: {:?}",
+        result.warnings
+    );
+
+    // 6. Only the in-use key is skipped. The other seven, unused, are
+    //    declared exactly as before — a fix that skipped everything would
+    //    otherwise pass this test.
+    assert_eq!(
+        property_def_type(&pool, "citation-key").await.as_deref(),
+        Some("text"),
+        "an UNUSED key must still be declared"
+    );
+    assert_eq!(
+        property_def_type(&pool, "authors").await.as_deref(),
+        Some("text"),
+        "an UNUSED key must still be declared"
+    );
+    assert_eq!(
+        props["citation-key"].value_text.as_deref(),
+        Some("old1920"),
+        "{props:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #4382 (the other half of the pair) — when `year` is NOT already in use,
+/// the import declares it `number` exactly as it always did, and the value
+/// lands in `value_num`. Guards against "fix" the guard by never declaring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_declares_year_as_number_when_unused_4382() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    assert_eq!(
+        property_def_type(&pool, "year").await,
+        None,
+        "seed precondition: `year` starts undeclared and unused"
+    );
+
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        ONE_ENTRY_BIBTEX_1920.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "an unused key is declared silently: {:?}",
+        result.warnings
+    );
+    settle(&mat).await;
+
+    assert_eq!(
+        property_def_type(&pool, "year").await.as_deref(),
+        Some("number"),
+        "an unused `year` must still be declared `number`"
+    );
+    let page = page_id_by_title(&pool, "Doe 1920")
+        .await
+        .expect("Doe 1920 page");
+    let props = props_of(&pool, &page).await;
+    assert_eq!(
+        props["year"].value_num,
+        Some(1920.0),
+        "the declaration must route the value to value_num: {props:?}"
+    );
+    assert_eq!(props["year"].value_text, None, "{props:?}");
+
+    mat.shutdown();
+}
+
+/// #4382 — a user's pre-existing DECLARATION still wins, unchanged. The
+/// guard must not regress the behaviour the old comment described.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_keeps_existing_year_declaration_4382() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    create_property_def_inner(&pool, "year".into(), "text".into(), None)
+        .await
+        .unwrap();
+
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        ONE_ENTRY_BIBTEX_1920.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "a declared key is not a skip — nothing to report: {:?}",
+        result.warnings
+    );
+    settle(&mat).await;
+
+    assert_eq!(
+        property_def_type(&pool, "year").await.as_deref(),
+        Some("text"),
+        "the user's declaration must not be overwritten"
+    );
+    let page = page_id_by_title(&pool, "Doe 1920")
+        .await
+        .expect("Doe 1920 page");
+    let props = props_of(&pool, &page).await;
+    assert_eq!(
+        props["year"].value_text.as_deref(),
+        Some("1920"),
+        "{props:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #4382 / #4395 review note 2 — an in-use **text** key is skipped too, and
+/// the warning tells the truth about what declaring it would have cost.
+///
+/// Seven of the eight [`BIB_PROPERTY_DEFS`] keys prefer `text`, and for
+/// those the `year` wording ("would reject every later text edit") is
+/// false: a `text` declaration accepts `value_text` happily. What a `text`
+/// declaration *does* reject is a `value_num` / `value_date` / `value_bool`
+/// write — and those rows are reachable under an undeclared key, because
+/// `validate_property_value` skips its type check when `declaration` is
+/// `None` and both `set_property` and the MCP `set_property` tool expose
+/// all five typed slots. That is the reachability this test pins: the seed
+/// writes `authors` as a NUMBER through the ordinary command path, and the
+/// post-import escape hatch writes another one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_leaves_in_use_text_key_undeclared_4382() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // The user's pre-existing state: `authors` in use, undeclared, and
+    // holding a value the import's preferred `text` type would forbid.
+    const EXISTING: &str = "01AAAAAUTH0000000000000001";
+    insert_block(&pool, EXISTING, "content", "a headcount note", None, None).await;
+    assign_to_test_space(&pool, EXISTING).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        EXISTING.into(),
+        "authors".into(),
+        None,
+        Some(3.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("an undeclared key must accept a number — this is the reachability the guard needs");
+    settle(&mat).await;
+    assert_eq!(
+        property_def_type(&pool, "authors").await,
+        None,
+        "seed precondition: `authors` must be IN USE but UNDECLARED"
+    );
+
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        ONE_ENTRY_BIBTEX_1920.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
+    settle(&mat).await;
+
+    // 1. The in-use text key is skipped, exactly like the number key.
+    assert_eq!(
+        property_def_type(&pool, "authors").await,
+        None,
+        "an in-use TEXT key must be skipped too, not just the `number` one"
+    );
+
+    // 2. The user's existing non-text value survives untouched.
+    let existing_props = props_of(&pool, EXISTING).await;
+    assert_eq!(
+        existing_props["authors"].value_num,
+        Some(3.0),
+        "pre-existing value must survive the import: {existing_props:?}"
+    );
+
+    // 3. The escape hatch stays open: a later NUMBER write to `authors`
+    //    still succeeds. This is the assertion that fails loudly if the
+    //    guard is narrowed to non-text preferred types, with
+    //    "Property 'authors' expects type 'text', got 'number'."
+    const OTHER: &str = "01AAAAAUTH0000000000000002";
+    insert_block(&pool, OTHER, "content", "another headcount", None, None).await;
+    assign_to_test_space(&pool, OTHER).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        OTHER.into(),
+        "authors".into(),
+        None,
+        Some(7.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("a number write to `authors` must still be accepted after the import");
+    settle(&mat).await;
+
+    // 4. The warning states the consequence that is TRUE for a text key,
+    //    and not the `year` one, which is false for it.
+    let warning = result
+        .warnings
+        .iter()
+        .find(|w| w.contains("'authors'"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the skipped declaration must be surfaced: {:?}",
+                result.warnings
+            )
+        });
+    assert!(
+        warning.contains("undeclared") && warning.contains("number, date or boolean"),
+        "a text key's warning must name the writes a 'text' declaration would actually \
+         reject: {warning}"
+    );
+    assert!(
+        !warning.contains("text edit"),
+        "declaring `authors` 'text' would NOT reject a later text edit — the `year` wording \
+         must not be reused for a text key: {warning}"
+    );
+
+    // 5. The import's own `authors` value still lands, as text.
+    let page = page_id_by_title(&pool, "Doe 1920")
+        .await
+        .expect("Doe 1920 page");
+    let props = props_of(&pool, &page).await;
+    assert_eq!(
+        props["authors"].value_text.as_deref(),
+        Some("Doe, Jane"),
+        "{props:?}"
+    );
+
+    // 6. Only the in-use key is skipped — `year`, unused here, is still
+    //    declared `number`, so this is not a "skip everything" pass.
+    assert_eq!(
+        property_def_type(&pool, "year").await.as_deref(),
+        Some("number"),
+        "an UNUSED key must still be declared"
+    );
+
+    mat.shutdown();
+}
+
+/// #4382 / #4395 review note 3 — a key whose only values live on a
+/// SOFT-DELETED block is still in use, and still skipped.
+///
+/// The probe in `declare_bib_property_defs` deliberately does not filter
+/// `blocks.deleted_at`, because the blocking `COUNT(*)` in
+/// `delete_property_def_inner` does not either: a declaration created over
+/// a soft-deleted block's values is just as un-removable as one created
+/// over a live block's, and the values come back if the block is restored.
+/// Until now that omission was asserted only in a comment. Adding
+/// `JOIN blocks … WHERE deleted_at IS NULL` to the probe — the obvious
+/// "tidy-up" — reopens #4382 through this door, and reddens here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_treats_soft_deleted_values_as_in_use_4382() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const TRASHED: &str = "01AAAATRSH0000000000000001";
+    insert_block(
+        &pool,
+        TRASHED,
+        "content",
+        "a note on an old book",
+        None,
+        None,
+    )
+    .await;
+    assign_to_test_space(&pool, TRASHED).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        TRASHED.into(),
+        "year".into(),
+        Some("circa 1920".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    delete_block_inner(&pool, DEV, &mat, TRASHED.into())
+        .await
+        .expect("soft-delete the only block holding a `year` value");
+    settle(&mat).await;
+
+    // The premise the probe rests on: a soft delete leaves the
+    // `block_properties` row in place, which is why
+    // `delete_property_def_inner`'s unfiltered COUNT(*) would still block a
+    // later attempt to remove the declaration.
+    let surviving: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = 'year'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        surviving, 1,
+        "seed precondition: the soft-deleted block's `year` row must survive the delete"
+    );
+    let deleted_at: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(TRASHED)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        deleted_at.is_some(),
+        "seed precondition: the block must actually be soft-deleted"
+    );
+
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        ONE_ENTRY_BIBTEX_1920.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
+    settle(&mat).await;
+
+    assert_eq!(
+        property_def_type(&pool, "year").await,
+        None,
+        "a `year` value on a soft-deleted block still makes the key in-use: declaring it \
+         would be just as un-removable, since `delete_property_def_inner` counts that row too"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("'year'") && w.contains("undeclared")),
+        "the skip must be reported here too: {:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
