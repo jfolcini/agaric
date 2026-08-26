@@ -22,10 +22,22 @@ import { axe } from 'vitest-axe'
 
 // ── Mocks ──────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/tauri', () => ({
-  setDueDate: vi.fn().mockResolvedValue({}),
-  setScheduledDate: vi.fn().mockResolvedValue({}),
-}))
+// #2927 — `useBlockReschedule` calls the generated bindings directly, so the
+// seam this suite stubs is `commands.*`, not the retired `@/lib/tauri`
+// wrapper. Spreading `actual.commands` keeps every other command real, and
+// the resolved `{ status: 'ok' }` envelope means the production `unwrap`
+// runs for real instead of being bypassed by a wrapper-level mock.
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setDueDate: vi.fn(),
+      setScheduledDate: vi.fn(),
+    },
+  }
+})
 
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
@@ -45,11 +57,11 @@ vi.mock('@/components/ui/button', () => ({
 import { DateChipEditor } from '@/components/properties/DateChipEditor'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { announce } from '@/lib/announcer'
+import { commands } from '@/lib/bindings'
 import { formatDate } from '@/lib/date-utils'
-import { setDueDate, setScheduledDate } from '@/lib/tauri'
 
-const mockedSetDueDate = vi.mocked(setDueDate)
-const mockedSetScheduledDate = vi.mocked(setScheduledDate)
+const mockedSetDueDate = vi.mocked(commands.setDueDate)
+const mockedSetScheduledDate = vi.mocked(commands.setScheduledDate)
 const mockedToast = vi.mocked(toast)
 const mockedAnnounce = vi.mocked(announce)
 
@@ -76,8 +88,8 @@ function nextWeekStr(): string {
 describe('DateChipEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockedSetDueDate.mockResolvedValue({} as never)
-    mockedSetScheduledDate.mockResolvedValue({} as never)
+    mockedSetDueDate.mockResolvedValue({ status: 'ok', data: {} as never })
+    mockedSetScheduledDate.mockResolvedValue({ status: 'ok', data: {} as never })
   })
 
   // 1. Renders quick date options

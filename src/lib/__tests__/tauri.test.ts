@@ -97,15 +97,10 @@ import {
   revertOps,
   saveDraft,
   searchBlocks,
-  setDueDate,
   setPageAliases,
   setPeerAddress,
-  setPriority,
   setProperty,
   setPropertyBatch,
-  setScheduledDate,
-  setTodoState,
-  setTodoStateBatch,
   readAttachment,
   startPairing,
   startSync,
@@ -1990,61 +1985,15 @@ describe('listPropertyValues', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Thin fixed-field commands (setTodoState, setPriority, setDueDate)
+// Thin fixed-field commands (setPropertyBatch)
+//
+// #2927 — the setTodoState / setTodoStateBatch / setPriority / setDueDate /
+// setScheduledDate wrappers were deleted along with the whole tasks domain
+// module; their call sites now invoke `commands.*` directly and are covered by
+// their own suites (useBlockReschedule, useCheckboxSyntax, DateChipEditor).
 // ---------------------------------------------------------------------------
 
 describe('thin fixed-field commands', () => {
-  it('setTodoState calls invoke with set_todo_state command', async () => {
-    const expected = { id: 'BLOCK1', todo_state: 'TODO' }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await setTodoState('BLOCK1', 'TODO')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
-      blockId: 'BLOCK1',
-      state: 'TODO',
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('setTodoState with null sends null state', async () => {
-    const expected = { id: 'BLOCK1', todo_state: null }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    await setTodoState('BLOCK1', null)
-
-    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
-      blockId: 'BLOCK1',
-      state: null,
-    })
-  })
-
-  // Single-IPC batch wrapper.
-  it('setTodoStateBatch passes the id list + state through to set_todo_state_batch', async () => {
-    mockedInvoke.mockResolvedValueOnce(3)
-
-    const result = await setTodoStateBatch(['B1', 'B2', 'B3'], 'DONE')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
-      blockIds: ['B1', 'B2', 'B3'],
-      state: 'DONE',
-    })
-    expect(result).toBe(3)
-  })
-
-  it('setTodoStateBatch sends null state to clear', async () => {
-    mockedInvoke.mockResolvedValueOnce(2)
-
-    await setTodoStateBatch(['B1', 'B2'], null)
-
-    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
-      blockIds: ['B1', 'B2'],
-      state: null,
-    })
-  })
-
   it('setPropertyBatch passes the id list + key + value through to set_property_batch', async () => {
     mockedInvoke.mockResolvedValueOnce(3)
 
@@ -2068,58 +2017,6 @@ describe('thin fixed-field commands', () => {
       blockIds: ['B1', 'B2'],
       key: 'due_date',
       value: null,
-    })
-  })
-
-  it('setPriority calls invoke with set_priority command', async () => {
-    const expected = { id: 'BLOCK1', priority: '1' }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await setPriority('BLOCK1', '1')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
-      blockId: 'BLOCK1',
-      level: '1',
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('setPriority with null sends null level', async () => {
-    const expected = { id: 'BLOCK1', priority: null }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    await setPriority('BLOCK1', null)
-
-    expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
-      blockId: 'BLOCK1',
-      level: null,
-    })
-  })
-
-  it('setDueDate calls invoke with set_due_date command', async () => {
-    const expected = { id: 'BLOCK1', due_date: '2026-06-15' }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await setDueDate('BLOCK1', '2026-06-15')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('set_due_date', {
-      blockId: 'BLOCK1',
-      date: '2026-06-15',
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('setDueDate with null sends null date', async () => {
-    const expected = { id: 'BLOCK1', due_date: null }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    await setDueDate('BLOCK1', null)
-
-    expect(mockedInvoke).toHaveBeenCalledWith('set_due_date', {
-      blockId: 'BLOCK1',
-      date: null,
     })
   })
 })
@@ -2207,38 +2104,6 @@ describe('countBacklinksBatch', () => {
     await countBacklinksBatch({ pageIds: ['PAGE1'], spaceId: 'SPACE_42' })
     const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
     expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// setScheduledDate
-// ---------------------------------------------------------------------------
-
-describe('setScheduledDate', () => {
-  it('invokes set_scheduled_date with blockId and date', async () => {
-    const expected = { id: 'BLOCK1', scheduled_date: '2026-06-15' }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await setScheduledDate('BLOCK1', '2026-06-15')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('set_scheduled_date', {
-      blockId: 'BLOCK1',
-      date: '2026-06-15',
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('passes null to clear the scheduled date', async () => {
-    const expected = { id: 'BLOCK1', scheduled_date: null }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    await setScheduledDate('BLOCK1', null)
-
-    expect(mockedInvoke).toHaveBeenCalledWith('set_scheduled_date', {
-      blockId: 'BLOCK1',
-      date: null,
-    })
   })
 })
 
@@ -3773,10 +3638,6 @@ describe('cross-cutting', () => {
     await getBatchProperties(['id'])
     await countAgendaBatch({ dates: ['2025-01-15'] })
     await countBacklinksBatch({ pageIds: ['id'] })
-    await setTodoState('id', 'TODO')
-    await setPriority('id', '1')
-    await setDueDate('id', '2026-06-15')
-    await setScheduledDate('id', '2026-07-01')
     await listPageHistory({ pageId: 'id' })
     await revertOps({ ops: [{ device_id: 'd', seq: 1 }] })
     await queryByProperty({ key: 'k' })
@@ -3835,10 +3696,6 @@ describe('cross-cutting', () => {
       'get_batch_properties',
       'count_agenda_batch',
       'count_backlinks_batch',
-      'set_todo_state',
-      'set_priority',
-      'set_due_date',
-      'set_scheduled_date',
       'list_page_history',
       'revert_ops',
       'query_by_property',

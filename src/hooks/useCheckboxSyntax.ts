@@ -12,9 +12,10 @@ import type { TFunction } from 'i18next'
 import { useCallback, useRef } from 'react'
 import type { StoreApi } from 'zustand'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { getProperty, setTodoState as setTodoStateCmd } from '@/lib/tauri'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -34,7 +35,7 @@ export function useCheckboxSyntax({
   t,
 }: UseCheckboxSyntaxParams): CheckboxSyntaxHandler {
   // Re-entrancy guard: prevents a rapid double-invocation on the same block
-  // from queueing two in-flight `setTodoStateCmd` calls, whose error-path
+  // from queueing two in-flight `set_todo_state` calls, whose error-path
   // rollbacks would both restore the (now stale) `priorTodoState` snapshot.
   const inProgress = useRef(false)
 
@@ -44,16 +45,20 @@ export function useCheckboxSyntax({
       if (inProgress.current) return
       inProgress.current = true
       // FE-H-7: snapshot prior todo_state so the optimistic mutation can be
-      // reverted if `setTodoStateCmd` rejects.
+      // reverted if `set_todo_state` rejects.
       const priorTodoState = pageStore.getState().blocksById.get(focusedBlockId)?.todo_state ?? null
-      setTodoStateCmd(focusedBlockId, state)
+      commands
+        .setTodoState(focusedBlockId, state)
+        .then(unwrap)
         .then(() => {
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
           // F-37: warn when completing a task that has unresolved dependencies.
           // Single-key PK lookup; the check only
           // needs the `blocked_by` row, not the full vocabulary.
           if (state === 'DONE') {
-            getProperty(focusedBlockId, 'blocked_by')
+            commands
+              .getProperty(focusedBlockId, 'blocked_by')
+              .then(unwrap)
               .then((row) => {
                 const hasBlockedBy = row != null && row.value_ref != null
                 if (hasBlockedBy) {
@@ -69,7 +74,7 @@ export function useCheckboxSyntax({
           logger.error('useCheckboxSyntax', 'setTodoState failed', { focusedBlockId, state }, err)
           notify.error(t('blockTree.setTaskStateFailed'))
           // FE-H-7: revert the optimistic mutation so UI state stays in sync
-          // with the backend after a rejected `setTodoStateCmd`.
+          // with the backend after a rejected `set_todo_state`.
           pageStore.setState((s) => ({
             blocks: s.blocks.map((b) =>
               b.id === focusedBlockId ? { ...b, todo_state: priorTodoState } : b,

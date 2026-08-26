@@ -30,11 +30,23 @@ vi.mock('@/lib/logger', () => ({
 const mockSetDueDate = vi.hoisted(() => vi.fn())
 const mockGetBlock = vi.hoisted(() => vi.fn())
 const mockSetScheduledDate = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/tauri', () => ({
-  setDueDate: (...args: unknown[]) => mockSetDueDate(...args),
-  getBlock: (...args: unknown[]) => mockGetBlock(...args),
-  setScheduledDate: (...args: unknown[]) => mockSetScheduledDate(...args),
-}))
+// #2927 — `useBlockReschedule` calls the generated bindings directly, so the
+// seam this suite stubs is `commands.*`, not the retired `@/lib/tauri`
+// wrapper. Spreading `actual.commands` keeps every other command real, and
+// the stubs resolve the `{ status, data }` envelope so the production
+// `unwrap` runs for real instead of being bypassed by a wrapper-level mock.
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setDueDate: (...args: unknown[]) => mockSetDueDate(...args),
+      getBlock: (...args: unknown[]) => mockGetBlock(...args),
+      setScheduledDate: (...args: unknown[]) => mockSetScheduledDate(...args),
+    },
+  }
+})
 
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
@@ -47,9 +59,12 @@ const mockedAnnounce = vi.mocked(announce)
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockSetDueDate.mockResolvedValue({})
-  mockSetScheduledDate.mockResolvedValue({})
-  mockGetBlock.mockResolvedValue({ due_date: '2025-01-10', scheduled_date: null })
+  mockSetDueDate.mockResolvedValue({ status: 'ok', data: {} })
+  mockSetScheduledDate.mockResolvedValue({ status: 'ok', data: {} })
+  mockGetBlock.mockResolvedValue({
+    status: 'ok',
+    data: { due_date: '2025-01-10', scheduled_date: null },
+  })
 })
 
 /** Helper to create a mock DataTransfer with the reschedule MIME type. */
@@ -248,7 +263,10 @@ describe('RescheduleDropZone', () => {
 
   // 8. Calls setScheduledDate when block has only scheduled_date
   it('calls setScheduledDate when block has only scheduled_date', async () => {
-    mockGetBlock.mockResolvedValueOnce({ scheduled_date: '2025-01-10', due_date: null })
+    mockGetBlock.mockResolvedValueOnce({
+      status: 'ok',
+      data: { scheduled_date: '2025-01-10', due_date: null },
+    })
 
     render(
       <RescheduleDropZone dateStr="2025-01-15">
@@ -267,7 +285,10 @@ describe('RescheduleDropZone', () => {
 
   // 9. Calls setDueDate when block has only due_date
   it('calls setDueDate when block has only due_date', async () => {
-    mockGetBlock.mockResolvedValueOnce({ due_date: '2025-01-10', scheduled_date: null })
+    mockGetBlock.mockResolvedValueOnce({
+      status: 'ok',
+      data: { due_date: '2025-01-10', scheduled_date: null },
+    })
 
     render(
       <RescheduleDropZone dateStr="2025-01-15">
@@ -286,7 +307,10 @@ describe('RescheduleDropZone', () => {
 
   // 10. Calls setDueDate when block has both dates
   it('calls setDueDate when block has both dates', async () => {
-    mockGetBlock.mockResolvedValueOnce({ due_date: '2025-01-10', scheduled_date: '2025-01-08' })
+    mockGetBlock.mockResolvedValueOnce({
+      status: 'ok',
+      data: { due_date: '2025-01-10', scheduled_date: '2025-01-08' },
+    })
 
     render(
       <RescheduleDropZone dateStr="2025-01-15">

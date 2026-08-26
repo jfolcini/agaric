@@ -32,8 +32,6 @@ vi.mock('@/lib/tauri', () => ({
   listProjectedAgenda: vi.fn(),
   queryByProperty: vi.fn(),
   getBlock: vi.fn(),
-  setDueDate: vi.fn(),
-  setScheduledDate: vi.fn(),
   paginationLimit: (n: number) => n,
   listProjectedAgendaLimit: (n: number) => n,
   listBlocksLimit: (n: number) => n,

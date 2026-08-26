@@ -66,8 +66,6 @@ vi.mock('@/lib/tauri', () => ({
   getBatchProperties: (...args: unknown[]) => mockGetBatchProperties(...args),
   batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
   getBlock: vi.fn(),
-  setDueDate: vi.fn(),
-  setScheduledDate: vi.fn(),
 }))
 
 // #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`)
