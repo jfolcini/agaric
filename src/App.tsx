@@ -462,28 +462,33 @@ function App() {
   useScrollRestore(mainContentEl, viewKey)
 
   // ── View transition fade ─────────────────────────────────────────
-  // Uses the "set state during render" pattern to synchronously hide
-  // content when the view key changes, then fades in via CSS transition.
-  const [prevViewKey, setPrevViewKey] = useState(viewKey)
-  const [fadeVisible, setFadeVisible] = useState(true)
-
-  if (prevViewKey !== viewKey) {
-    setPrevViewKey(viewKey)
-    setFadeVisible(false)
-  }
+  // The pane hides synchronously when the view key changes and fades back in
+  // via CSS once the new view has had a beat to load.
+  //
+  // `fadeVisible` is DERIVED from which view key has been faded in, never held
+  // as its own boolean (#3388). The boolean version re-armed the fade-in from
+  // `useEffect(…, [fadeVisible])`, and an effect only sees values React
+  // COMMITS: when a second view change coalesced with the pending
+  // `setFadeVisible(true)`, the committed value went `false → false`, the
+  // effect was skipped, no timer was re-armed, and the pane stayed `opacity-0`
+  // until the next navigation — a blank app under a correct header and
+  // sidebar. Keying on `viewKey` removes the class rather than narrowing the
+  // window, since the deps provably change on every switch however React
+  // batches. Computing it during render keeps the hide in the same commit as
+  // the view change.
+  const [visibleKey, setVisibleKey] = useState(viewKey)
+  const fadeVisible = visibleKey === viewKey
 
   useEffect(() => {
-    if (!fadeVisible) {
-      // Delay fade-in by 150ms to allow page content to load from SQLite
-      // before the opacity transition begins, preventing CLS from skeleton
-      // placeholders being replaced by actual content mid-fade (B-76).
-      const id = setTimeout(() => {
-        setFadeVisible(true)
-      }, 150)
-      return () => clearTimeout(id)
-    }
-    return undefined
-  }, [fadeVisible])
+    if (visibleKey === viewKey) return undefined
+    // Delay fade-in by 150ms to allow page content to load from SQLite
+    // before the opacity transition begins, preventing CLS from skeleton
+    // placeholders being replaced by actual content mid-fade (B-76).
+    const id = setTimeout(() => {
+      setVisibleKey(viewKey)
+    }, 150)
+    return () => clearTimeout(id)
+  }, [viewKey, visibleKey])
 
   return (
     <BootGate>
