@@ -42,14 +42,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { paginationLimit } from '@/lib/safe-limit'
 import type { OpRef, UndoResult } from '@/lib/tauri'
-import {
-  listPageHistory,
-  redoPageOp,
-  undoOp,
-  undoOps,
-  undoPageGroup,
-  undoPageOp,
-} from '@/lib/tauri'
+import { listPageHistory, redoPageOp, undoOp, undoOps, undoPageGroup } from '@/lib/tauri'
 
 export type { OpRef, UndoResult }
 
@@ -267,11 +260,41 @@ interface UndoStore {
    * depth-0 group undo (`performActivePageUndo`) would then reverse the
    * user's typed edit (or group the flush-edit with the delete and revert
    * BOTH). Instead: locate the block's newest `delete_block` op in the page
-   * history, undo at ITS depth, and verify the reversed ref. When the undo
-   * reverses something else (the history read raced the tap's in-flight
-   * flush), roll the mis-undo back via `redoPageOp` and probe one deeper —
-   * the race can only shift the delete by the single op the same tap
-   * appended. Anything else fails loudly.
+   * history and undo THAT EXACT OP by its `(device_id, seq)` ref.
+   *
+   * #4328 — the ref is the whole point. This used to feed the entry's
+   * INDEX in the `listPageHistory` result straight into `undoPageOp`'s
+   * `undo_depth`, which only works while both queries admit the same
+   * op-log rows — and they never did: `list_page_history` carries neither
+   * `is_undo = 0` nor `is_replicated = 0`, while all three positional-undo
+   * queries carry both. So every reverse op already in the page's log (one
+   * prior Ctrl+Z is enough) and every foreign audit row (`is_replicated =
+   * 1`, migration 0099) shifted the mapping by one, and `HistoryEntry` does
+   * not expose `is_undo`, so no client-side correction was even
+   * expressible. The old `[index, index + 1]` probe window absorbed a skew
+   * of exactly one and rolled a mis-undo back via `redoPageOp`; past that
+   * the toast just reported failure. `undoOp` (#2468) addresses the op by
+   * the identity the op-log is actually keyed on — `(device_id, seq)`,
+   * already present on every `HistoryEntry` — so no window, no rollback
+   * probe, and no future filter divergence between the two queries can
+   * make this mis-target again. It also means the backend's own reject
+   * rules (replicated / already-reversed / is-an-undo-op) apply to the
+   * exact row the toast promised, instead of to whatever row the count
+   * happened to land on.
+   *
+   * Residual, deliberately NOT closed here: the SELECTION scan can still
+   * only filter on what `HistoryEntry` carries, which is `is_replicated`
+   * but not `is_undo`. So if a page ever held an `is_undo = 1`
+   * `delete_block` for THIS block NEWER than the swipe's own row, the scan
+   * would pick it and `undo_op` would refuse it (`reversing an undo op is
+   * redo's job`, #659) — a visible failure, not a wrong undo. That ordering
+   * is not constructible from the swipe path itself: the block must be
+   * ALIVE to be swiped, so the swipe's `delete_block` is by construction
+   * the newest delete on it, and the toast lives 5 s. Closing it for real
+   * means adding `is_undo` to `HistoryEntry` (op-log column exists; it
+   * would touch the two `agaric-store` history queries, the generated
+   * bindings and the tauri-mock), which buys nothing for TARGETING now
+   * that targeting is by ref.
    *
    * `reloadPage` refreshes the page's block subtree after a successful
    * targeted undo. This store deliberately does NOT import `getPageStore`
@@ -421,8 +444,15 @@ function isPermanentRevertFailure(err: unknown): boolean {
 /**
  * #2901 — how far back `undoDeleteOf`'s toast-Undo scans page history for its
  * delete op. The delete is the newest op at swipe time; only ops landing in
- * the toast's 5s window (typically the tap's own blur-flush edit) can sit
- * above it, so a small window is plenty.
+ * the toast's 5s window (typically the tap's own blur-flush edit, a Ctrl+Z's
+ * reverse row, or a sync burst's audit rows) can sit above it, so a small
+ * window is plenty.
+ *
+ * #4328 — this bounds the SEARCH only. It used to also bound the accuracy of
+ * the result, because the entry's index in this page doubled as the
+ * `undo_page_op` depth; the scan now yields the entry's `(device_id, seq)`
+ * and `undoOp` takes it from there, so a row admitted here that the undo
+ * queries would skip costs a wasted comparison, not a wrong target.
  */
 const SWIPE_UNDO_HISTORY_SCAN = 50
 
@@ -701,11 +731,21 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         pageId,
         limit: paginationLimit(SWIPE_UNDO_HISTORY_SCAN),
       })
-      const index = history.items.findIndex(
+      // #4328 — newest-first scan for the block's own `delete_block` row,
+      // skipping REPLICATED rows. A peer's delete of the same block is
+      // ingested as an append-only audit row (`is_replicated = 1`, migration
+      // 0099) that was never applied locally; `undo_op` rejects it outright
+      // (`verify_undo_targets_in_tx`, #2481), so selecting it would turn the
+      // toast into a guaranteed error. The local row underneath it is the one
+      // the swipe actually appended. `is_replicated` is the only one of
+      // `undo_op`'s three reject rules `HistoryEntry` exposes — see the
+      // residual note on `undoDeleteOf`'s doc block.
+      const target = history.items.find(
         (entry) =>
-          entry.op_type === 'delete_block' && historyEntryBlockId(entry.payload) === blockId,
+          entry.op_type === 'delete_block' &&
+          !entry.is_replicated &&
+          historyEntryBlockId(entry.payload) === blockId,
       )
-      const target = index >= 0 ? history.items[index] : undefined
       if (!target) {
         logger.warn('UndoStore', 'swipe-delete undo: delete op not found in page history', {
           pageId,
@@ -715,38 +755,23 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         return
       }
 
-      for (const depth of [index, index + 1]) {
-        const result = await undoPageOp({ pageId, undoDepth: depth })
-        if (
-          result.reversed_op.device_id === target.device_id &&
-          result.reversed_op.seq === target.seq
-        ) {
-          // #2901 — this targeted positional undo bypasses the undo store's
-          // normal ref-addressed/positional bookkeeping (it reverts a specific
-          // historical depth, not the top-of-stack entry), so treat it as a
-          // new action: stale depth/redo anchors can no longer target ops the
-          // targeted undo just shifted. Formerly a cross-module call from
-          // `SortableBlock`; now internal to the store that owns it.
-          get().onNewAction(pageId)
-          notify(t('undo.op.deleteBlock', { defaultValue: t('undo.undoneMessage') }), {
-            duration: 1500,
-          })
-          announce(t('announce.undone'))
-          await reloadPage()
-          return
-        }
-        // Wrong op reversed — roll the mis-undo back (reverse ITS reverse op)
-        // before probing one deeper.
-        await redoPageOp({
-          undoDeviceId: result.new_op_ref.device_id,
-          undoSeq: result.new_op_ref.seq,
-        })
-      }
-      logger.warn('UndoStore', 'swipe-delete undo: could not pin the delete op', {
-        pageId,
-        blockId,
+      // Ref-addressed: the op-log is keyed on `(device_id, seq)` and
+      // `HistoryEntry` already carries both, so the toast reverses the exact
+      // row it found rather than the Nth row of a differently-filtered walk.
+      await undoOp({ opRef: { device_id: target.device_id, seq: target.seq } })
+
+      // #2901 — this targeted undo bypasses the undo store's normal
+      // ref-addressed/positional bookkeeping (it reverts a specific historical
+      // op, not the top-of-stack entry), so treat it as a new action: stale
+      // depth/redo anchors can no longer target ops the targeted undo just
+      // shifted. Formerly a cross-module call from `SortableBlock`; now
+      // internal to the store that owns it.
+      get().onNewAction(pageId)
+      notify(t('undo.op.deleteBlock', { defaultValue: t('undo.undoneMessage') }), {
+        duration: 1500,
       })
-      notifySwipeUndoFailed()
+      announce(t('announce.undone'))
+      await reloadPage()
     } catch (err) {
       logger.error('UndoStore', 'swipe-delete undo failed', { pageId, blockId }, err)
       notifySwipeUndoFailed()

@@ -8293,3 +8293,293 @@ async fn undo_page_op_restores_peer_content_for_synced_block_3644() {
          apply to this device"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #4328 — a `list_page_history` position is NOT an `undo_page_op` `undo_depth`
+//
+// `list_page_history` carries no `is_undo = 0` and no `is_replicated = 0`
+// filter; all three positional-undo queries carry both. The two walks
+// therefore number the same op-log differently, and anything mapping a
+// position in one onto a position in the other is wrong by however many
+// reverse ops and foreign audit rows sit ABOVE the target row.
+//
+// The consumer that did exactly that was `undoDeleteOfImpl`
+// (`src/stores/undo.ts`), the swipe-delete toast's Undo: it took the delete's
+// INDEX in the history list and passed it as `undo_depth`. It is now
+// ref-addressed — it reads `(device_id, seq)` off the `HistoryEntry` it
+// selected and calls `undo_op`.
+//
+// The rows that shift the mapping have to land above the delete, and two
+// ordinary things put them there inside the toast's 5 s life:
+//   * a Ctrl+Z (the fixture below) — its reverse op is `is_undo = 1`, listed
+//     by history and skipped by the undo walk;
+//   * a sync burst — a peer op whose `created_at` is ahead of this device's
+//     clock sorts above the delete and is `is_replicated = 1`, skipped by the
+//     undo walk for a different reason (#2481). No user action needed at all;
+//     pinned separately by
+//     `undo_op_refuses_a_replicated_foreign_delete_listed_by_history_4328`.
+//
+// The two tests below are a pair. The first PINS the divergence — it is a
+// property of the two queries and nothing here changes it (option 1 in the
+// issue, adding the filters to `list_page_history`, was rejected: those rows
+// genuinely happened and the History view exists to show what happened). The
+// second shows the divergence no longer decides anything, because
+// `(device_id, seq)` — already on every `HistoryEntry` — addresses the op
+// regardless of how either query numbers its rows.
+// ---------------------------------------------------------------------------
+
+/// Fixture for the pair below. A page with two children and an edit; then the
+/// swipe's `delete_block`; then ONE undo of the earlier edit, whose `is_undo =
+/// 1` reverse row lands ABOVE the delete. That single row is the whole skew:
+/// the delete is at history index 1 and at `undo_depth` 0.
+///
+/// Returns `(page_id, child2_id, delete_ref, delete_index)`, where
+/// `delete_index` is exactly the number the frontend used to hand to
+/// `undo_page_op` as `undo_depth`.
+async fn seed_history_index_vs_undo_depth_4328(
+    pool: &SqlitePool,
+    mat: &Materializer,
+) -> (String, String, OpRef, usize) {
+    let (page_id, child_ids) = create_page_with_children(pool, mat).await;
+    let child1 = child_ids[0].clone();
+    let child2 = child_ids[1].clone();
+
+    edit_block_inner(pool, DEV, mat, child1.clone().into(), "edited".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // The swipe.
+    delete_block_inner(pool, DEV, mat, child2.clone().into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // The prior undo, by ref so it targets the EDIT and not the delete that is
+    // now the newest undoable op. Its reverse op is stamped `now_ms()`
+    // (`reverse_op_timestamp`), so it sorts above the delete.
+    let edit_ref = find_op_ref(pool, &page_id, "edit_block").await;
+    undo_op_inner(pool, DEV, mat, edit_ref)
+        .await
+        .expect("the prior undo must succeed");
+    mat.flush_background().await.unwrap();
+
+    let history =
+        list_page_history_inner(pool, page_id.clone(), None, &SpaceScope::Global, None, None)
+            .await
+            .unwrap();
+
+    let (idx, entry) = history
+        .items
+        .iter()
+        .enumerate()
+        .find(|(_, e)| e.op_type == "delete_block" && history_entry_block_id(e) == child2)
+        .expect("the delete of child2 must appear in the page history");
+
+    let delete_ref = OpRef {
+        device_id: entry.device_id.clone(),
+        seq: entry.seq,
+    };
+    (page_id, child2, delete_ref, idx)
+}
+
+/// `payload.block_id` of a history entry — the same field
+/// `undoDeleteOfImpl`'s scan reads.
+fn history_entry_block_id(entry: &HistoryEntry) -> String {
+    serde_json::from_str::<serde_json::Value>(&entry.payload)
+        .ok()
+        .and_then(|v| v["block_id"].as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// Newest `(device_id, seq)` of the given op type on a page, via the history
+/// list (so the test addresses ops the way the frontend does).
+async fn find_op_ref(pool: &SqlitePool, page_id: &str, op_type: &str) -> OpRef {
+    let history = list_page_history_inner(
+        pool,
+        page_id.to_owned(),
+        Some(op_type.to_owned()),
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let entry = history
+        .items
+        .first()
+        .unwrap_or_else(|| panic!("no {op_type} op on page {page_id}"));
+    OpRef {
+        device_id: entry.device_id.clone(),
+        seq: entry.seq,
+    }
+}
+
+/// PIN: with one prior undo on the page, the delete's `list_page_history`
+/// INDEX addresses a DIFFERENT op in `undo_page_op`'s walk. This is #4328
+/// reproduced at the layer it lives in. It is deliberately left in place; what
+/// changed is that no frontend consumer depends on the two numbers agreeing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_history_index_is_not_undo_depth_after_one_undo_4328() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, child2, delete_ref, delete_index) =
+        seed_history_index_vs_undo_depth_4328(&pool, &mat).await;
+
+    assert_eq!(
+        delete_index, 1,
+        "#4328 fixture: the prior undo's `is_undo = 1` reverse row sits above \
+         the delete, so the delete is at history index 1"
+    );
+
+    // Feed that index straight in as `undo_depth`, exactly as the frontend
+    // used to. `undo_page_op` skips the reverse row, so depth 1 is the op
+    // BELOW the delete.
+    let depth = i64::try_from(delete_index).expect("history index fits in i64");
+    let mis = undo_page_op_inner(&pool, DEV, &mat, page_id.clone(), depth)
+        .await
+        .expect("undo_depth 1 is in range — it just points at the wrong op");
+    mat.flush_background().await.unwrap();
+
+    assert_ne!(
+        (mis.reversed_op.device_id.as_str(), mis.reversed_op.seq),
+        (delete_ref.device_id.as_str(), delete_ref.seq),
+        "#4328: positional undo at the delete's HISTORY index must NOT land on \
+         the delete — if it does, the two queries have been brought into \
+         agreement and this pin (plus `list_page_history`'s doc block) needs \
+         rewriting"
+    );
+    assert_eq!(
+        mis.reversed_op_type, "edit_block",
+        "#4328: it lands one op too deep, on the edit under the delete"
+    );
+
+    // …and the block the user asked to get back is still deleted.
+    let still_gone = get_block_inner(&pool, child2.clone().into()).await.unwrap();
+    assert!(
+        still_gone.deleted_at.is_some(),
+        "#4328: the positional undo reversed an unrelated op, so child2 is \
+         still deleted"
+    );
+}
+
+/// The fix: address the op by `(device_id, seq)` read straight off the
+/// `HistoryEntry` the scan selected, and the SAME fixture undoes the right op.
+/// Non-tautology: this is the identical fixture the test above proves the
+/// positional path gets wrong.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn swipe_delete_undo_targets_the_delete_by_ref_after_one_undo_4328() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (_page_id, child2, delete_ref, delete_index) =
+        seed_history_index_vs_undo_depth_4328(&pool, &mat).await;
+    assert_eq!(delete_index, 1, "#4328 fixture must be skewed by one");
+
+    let result = undo_op_inner(&pool, DEV, &mat, delete_ref.clone())
+        .await
+        .expect("ref-addressed undo of the delete must succeed");
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        (
+            result.reversed_op.device_id.as_str(),
+            result.reversed_op.seq
+        ),
+        (delete_ref.device_id.as_str(), delete_ref.seq),
+        "#4328: the ref-addressed undo must reverse exactly the op the history \
+         scan selected"
+    );
+    assert_eq!(
+        result.reversed_op_type, "delete_block",
+        "#4328: and that op must be the delete, not a neighbour"
+    );
+
+    let restored = get_block_inner(&pool, child2.clone().into()).await.unwrap();
+    assert!(
+        restored.deleted_at.is_none(),
+        "#4328: undoing the delete by ref must bring child2 back"
+    );
+}
+
+/// The `is_replicated = 1` half of the same divergence, isolated. A foreign
+/// audit `delete_block` for a block on this page IS listed by
+/// `list_page_history` (correct — it happened on a peer) and IS refused by
+/// `undo_op` (#2481). That refusal is why `undoDeleteOfImpl`'s scan skips
+/// replicated entries rather than merely tolerating them: picking one would
+/// make the toast a guaranteed error.
+///
+/// This pins the BEHAVIOUR, not one implementation of it, and that is
+/// deliberate — falsification found TWO independent guards on this path and
+/// disabling either alone leaves the test green:
+///
+///   1. `verify_undo_targets_in_tx`'s `row.is_replicated != 0` arm, which
+///      `undo_ops_inner` runs inside the IMMEDIATE transaction;
+///   2. `reverse::reject_replicated_targets`, which `revert_ops_in_tx` runs
+///      before computing any reverse.
+///
+/// Both return `AppError::Validation`, so the assertion below cannot tell
+/// them apart, and it is not trying to: what the frontend depends on is that
+/// `undo_op` refuses, not which layer refuses. Verified by disabling BOTH —
+/// only then does this test fail. If you remove one, this stays green on
+/// purpose; if you remove both, it reddens.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_op_refuses_a_replicated_foreign_delete_listed_by_history_4328() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+    let child1 = child_ids[0].clone();
+
+    // A peer clock ahead of this device's: the audit row sorts ABOVE every
+    // local op, which is also how a sync burst shifts a positional mapping
+    // with no user action at all.
+    append_replicated_op(
+        &pool,
+        "peer-device",
+        7,
+        OpPayload::DeleteBlock(agaric_store::op::DeleteBlockPayload {
+            block_id: child1.clone().into(),
+        }),
+        crate::db::now_ms() + 60_000,
+    )
+    .await;
+
+    let history = list_page_history_inner(&pool, page_id, None, &SpaceScope::Global, None, None)
+        .await
+        .unwrap();
+    let foreign = history
+        .items
+        .first()
+        .expect("#4328: history must be non-empty");
+    assert!(
+        foreign.op_type == "delete_block" && foreign.is_replicated,
+        "#4328: the foreign delete must be LISTED, and newest — history shows \
+         what happened, on every device. Got {:?}",
+        (&foreign.op_type, foreign.is_replicated)
+    );
+
+    let err = undo_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        OpRef {
+            device_id: foreign.device_id.clone(),
+            seq: foreign.seq,
+        },
+    )
+    .await
+    .expect_err("#4328: undo_op must refuse a replicated foreign op");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "#4328: the refusal is a Validation error (#2481), got {err:?}"
+    );
+
+    // The local block is untouched: an audit row is never applied here.
+    let child = get_block_inner(&pool, child1.clone().into()).await.unwrap();
+    assert!(
+        child.deleted_at.is_none(),
+        "#4328: an audit-only delete must not have deleted the local block"
+    );
+}
