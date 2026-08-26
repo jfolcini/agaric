@@ -88,6 +88,26 @@ sqlx_probe_dir_cleanup() {
     return 0
 }
 
+# ── MCP change classifier (#4419) ──────────────────────────────────
+# Which changed paths force Phase F (the `agaric-mcp` RELEASE build, the
+# UDS smoke and the externalBin pin verification). Only things that end
+# up IN that binary belong here.
+#
+# The directory arm is anchored to `.rs` on purpose. It used to be a bare
+# `^src-tauri/src/mcp/`, which also matched `src-tauri/src/mcp/AGENTS.md`
+# and the `tools_*/snapshots/*.snap` fixtures — neither of which is
+# compiled into anything. Editing one sentence of that AGENTS.md made
+# push.sh spend ~12 minutes on a release build of `agaric_lib`, observed
+# 2026-08-26. Snapshots are test fixtures; a `.snap`-only change cannot
+# alter the binary, and any `.rs` edit that DID alter it matches the arm
+# below anyway.
+#
+# `^src-tauri/binaries/` stays a bare prefix: it holds the prebuilt
+# artifacts themselves, which are not `.rs` and must still trigger.
+#
+# Defined up here so `--self-test` below can drive it directly.
+MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-tauri/src/bin/agaric-mcp\.rs$|^src-tauri/binaries/'
+
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
 # tracked path, and the convention here is to symlink it from the main
@@ -867,6 +887,33 @@ if [ "${1:-}" = "--self-test" ]; then
         st_bad "cleanup removes the probe dir including -wal/-shm siblings" \
             "$(ls -A "$d1" 2>/dev/null | tr '\n' ' ')"
     fi
+
+    # 4b. MCP classifier (#4419): the gate decides whether a push pays for
+    #     a full `agaric-mcp` RELEASE build. Drive the real pattern against
+    #     sample paths — a string ratchet would pass against a dead
+    #     constant, so this applies MCP_PATH_RE the way the classifier does.
+    st_mcp() {  # <path> <expected: yes|no> <label>
+        local got=no
+        printf '%s\n' "$1" | grep -qE "$MCP_PATH_RE" && got=yes
+        if [ "$got" = "$2" ]; then
+            st_ok "MCP gate: $3"
+        else
+            st_bad "MCP gate: $3" "path '$1' matched=$got, expected $2"
+        fi
+    }
+    # MUST trigger — these end up in the binary.
+    st_mcp 'src-tauri/src/mcp/server.rs'            yes 'a .rs file in the mcp module triggers'
+    st_mcp 'src-tauri/src/mcp/server/tests.rs'      yes 'a nested .rs file triggers'
+    st_mcp 'src-tauri/src/commands/mcp.rs'          yes 'the Tauri command wrapper triggers'
+    st_mcp 'src-tauri/src/bin/agaric-mcp.rs'        yes 'the binary entry point triggers'
+    st_mcp 'src-tauri/binaries/agaric-mcp-x86_64'   yes 'a prebuilt artifact triggers (not .rs)'
+    # MUST NOT trigger — nothing here is compiled into anything. Each of
+    # these matched the old bare `^src-tauri/src/mcp/` prefix, so they are
+    # the cases that fail if it is ever restored.
+    st_mcp 'src-tauri/src/mcp/AGENTS.md'            no  'docs in the mcp module do NOT trigger'
+    st_mcp 'src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_descriptions.snap' \
+                                                    no  'a .snap fixture does NOT trigger'
+    st_mcp 'docs/mcp.md'                            no  'an unrelated doc does NOT trigger'
 
     # 5. Ratchet: the fixed machine-global path must not come back. Guards
     #    against a future edit quietly reintroducing the collision while
@@ -2169,7 +2216,7 @@ else
     # MCP gate: only the binary, its module, the Tauri command wrapper, and
     # the prebuilt-binary directory. Catches the surface that affects the
     # agaric-mcp release build + UDS smoke + externalBin pin verification.
-    has_match '^src-tauri/src/mcp/|^src-tauri/src/commands/mcp\.rs$|^src-tauri/src/bin/agaric-mcp\.rs$|^src-tauri/binaries/' && HAS_MCP=1
+    has_match "$MCP_PATH_RE" && HAS_MCP=1
 
     # Fail-closed for UNRECOGNIZED non-docs paths (mirrors _validate.yml's
     # classifier): a changed file matching neither docs nor any known category
