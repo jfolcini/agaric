@@ -132,13 +132,17 @@ It does not take a force-push to lose the commit's own record, either — **by d
 This repo squash-merges every Dependabot PR, and GitHub's squash box defaults to the *PR
 title*, which is Dependabot's own commit subject; if the merger accepts that default, the
 human commit's message never reaches `main`, only its diff. But this is a default, not a
-law: the merger can edit the squash-commit message box before confirming, and three of the
-eight instances below show someone doing exactly that: the merge commit for #3780 reads
+law: the merger can override it — the GitHub **web UI** does this by editing the
+squash-commit message box before confirming, but the CLI path this skill actually
+prescribes (§8.3, `gh pr merge <n> --squash --delete-branch`) never shows that box; it
+takes the repo default silently. From the CLI, override it with `-t`/`--subject` (and
+`-b`/`--body` if needed) instead. Three of the eight instances below show someone
+overriding the default one way or the other: the merge commit for #3780 reads
 `fix(mcp): port adapter to rmcp 3.1`; for #3779, `fix(deps): harden fuzz dependency update`;
 and for #3771, `fix(tooling): apply OXC 0.62 migrations` — all three are the *human*
-commit's subject, not Dependabot's. **Edit the squash message to the human commit's subject
-line when merging** — it costs nothing and it is the one thing in this whole hazard that
-already has a track record of working.
+commit's subject, not Dependabot's. **Pass `gh pr merge <n> --squash --subject "<human
+commit subject>"` (add `--body` too if useful) when merging** — it costs nothing and it is
+the one thing in this whole hazard that already has a track record of working.
 
 Real numbers (60 most-recently-merged Dependabot PRs, 2026-07-29 through 2026-08-26,
 independently re-derived — not just asserted): **8 (13%)** carried at least one
@@ -156,7 +160,7 @@ that PR looking exactly like an ordinary all-Dependabot PR that never needed hel
 way to tell the two apart after the fact. Worse, Dependabot sometimes doesn't rebase a
 branch in place — it closes the PR outright and opens a new one under a new number (this
 repo has a live example: PR #3451, `bump rmcp from 2.2.0 to 3.0.0`, was closed as
-superseded on 2026-08-05, and its replacement, `bump rmcp ... to 3.1.0`, reopened four days
+superseded on 2026-08-05, and its replacement, `bump rmcp ... to 3.1.0`, reopened five days
 later as #3780). Anything commented on #3451 would have been stranded there, invisible from
 its replacement. So the count this section can actually stand behind is: **at least two recorded
 near-misses where a live force-push collided with an in-flight human push, both caught
@@ -194,8 +198,9 @@ What to do:
   survives a force-push and a squash-merge intact. It does **not** survive Dependabot
   closing the PR outright and opening a fresh one (the #3451 → #3780 pattern) — if you
   inherit a Dependabot PR that superseded another, check the closed one's comments before
-  assuming you are starting clean. And at merge time, edit the squash message to the human
-  commit's subject line so the diagnosis reaches `main` too, not just the diff.
+  assuming you are starting clean. And at merge time, `gh pr merge <n> --squash --subject
+  "<human commit subject>"` (add `--body` too if useful) so the diagnosis reaches `main`
+  too, not just the diff.
 
 No *local* mechanical guard here: the destructive event is Dependabot's own server-side
 force-push, which can land hours or days later, in a different session — nothing that runs
