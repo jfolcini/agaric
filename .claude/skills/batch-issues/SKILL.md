@@ -322,6 +322,7 @@ These recur, are cheap to spot, and each has shipped at least once:
    a test on one arm alone is this failure mode: #4389 shipped a live block into the trash
    because the short-circuit shape was pinned on the materializer arm and the recovery mirror
    was missing.
+
 4. **The assertion that is true for two reasons.** The sharpest form, and no grep finds it.
    #4018's test asserted `!out.contains("root could not be purged")` — and with the fix
    disabled, control fell into a *different* branch that returned before that log line ever
@@ -462,7 +463,7 @@ specta bindings) and verify with `cargo check --all-targets` (benches aren't cov
 **"Docs only" does not mean "no generated output".** tauri-specta copies Rust doc comments
 into `src/lib/bindings.ts` as JSDoc, so a commit that edits nothing but `///` docs on a
 command (or a type reachable from one) still makes the checked-in bindings stale, and
-`specta_tests::ts_bindings_up_to_date` (`src-tauri/src/lib.rs:2800`) reds in CI. This landed
+`specta_tests::ts_bindings_up_to_date` reds in CI. This landed
 a red `validate-all` on #4404 — a 177-link rustdoc sweep pushed as "inert". Regenerate with
 `just gen-bindings`, and run it **in the background**: in the foreground it routinely blows
 the 10-minute Bash timeout and exits 143, which looks like a failure and is not. Before
@@ -545,41 +546,74 @@ as success. A watcher built this way reported `ALL_SETTLED` while four PRs still
 queued (2026-08-26). Distinguish three states, and require a second independent condition:
 
 ```bash
-# `gh pr view --json statusCheckRollup` — NOT `gh pr checks`, which has no
-# --json flag at all in gh 2.45 ("unknown flag: --json").
-raw=$(gh pr view "$pr" --json statusCheckRollup \
-        --jq '[.statusCheckRollup[] | {n: (.name // .context), s: (.conclusion // .state)}]')
-[ -z "$raw" ] || [ "$raw" = "[]" ] && { echo "$pr: NO CHECKS YET — not a pass"; return; }
-# Match the SUFFIX: the check is reported as `validate / validate-all`
-# (job name + `/`), never bare `validate-all`.
-va=$(jq -r '[.[] | select(.n | test("validate-all$"))]
-            | if length == 0 then "ABSENT" else .[0].s end' <<<"$raw")
-pend=$(jq -r '[.[] | select(.s | IN("PENDING","IN_PROGRESS","QUEUED","EXPECTED",""))] | length' <<<"$raw")
-bad=$(jq -r '[.[] | select(.s | IN("FAILURE","TIMED_OUT","ERROR","CANCELLED")) | .n] | unique | join(",")' <<<"$raw")
-echo "$pr: validate-all=$va pending=$pend failing=${bad:-none}"
-# green ONLY when: va == SUCCESS AND pend == 0 AND bad is empty
+# Use `gh pr view --json statusCheckRollup`. It is the portable choice:
+# `gh pr checks --json` does not exist in every gh (absent in 2.45.0, present
+# in newer builds), whereas statusCheckRollup works across versions.
+check_pr () {
+  local pr="$1" raw va unclassified pend bad
+  raw=$(gh pr view "$pr" --json statusCheckRollup \
+          --jq '[.statusCheckRollup[] | {n: (.name // .context), s: (.conclusion // .state // .status)}]')
+  if [ -z "$raw" ] || [ "$raw" = "[]" ]; then
+    echo "$pr: NO CHECKS YET — not a pass"; return 1
+  fi
+  # Match the SUFFIX: the required CONTEXT is `validate-all`, but the rollup
+  # reports it as `validate / validate-all` (job name + `/`).
+  va=$(jq -r '[.[] | select(.n | test("validate-all$"))]
+              | if length == 0 then "ABSENT" else .[0].s end' <<<"$raw")
+  # Classify POSITIVELY. An allow-list of "this is fine" states is the only
+  # form that fails safe: a state nobody anticipated (STARTUP_FAILURE,
+  # ACTION_REQUIRED, STALE) then shows up as unclassified and blocks, instead
+  # of silently counting as neither pending nor failing — which is this very
+  # section's thesis applied to the recipe itself.
+  pend=$(jq -r '[.[] | select(.s | IN("PENDING","IN_PROGRESS","QUEUED","EXPECTED","WAITING",""))] | length' <<<"$raw")
+  bad=$(jq -r  '[.[] | select(.s | IN("SUCCESS","SKIPPED","NEUTRAL",
+                                      "PENDING","IN_PROGRESS","QUEUED","EXPECTED","WAITING","") | not)
+                | "\(.n)=\(.s)"] | unique | join(",")' <<<"$raw")
+  echo "$pr: validate-all=$va pending=$pend not-green=${bad:-none}"
+  [ "$va" = "SUCCESS" ] && [ "$pend" = "0" ] && [ -z "$bad" ]
+}
+check_pr 4420
 ```
 
 Real output, run against this PR and its sibling while the sibling's CI had not yet
 dispatched — the second line is the failure mode this whole section is about:
 
 ```text
-4420: validate-all=SUCCESS pending=0 failing=none
+# sibling PR whose CI had not yet dispatched — the case this section exists for
 4421: NO CHECKS YET — not a pass
+
+# this PR, mid-run: the required gate is green but work is outstanding, so NOT green
+4420: validate-all=SUCCESS pending=1 not-green=none
+
+# the same PR's sibling after a close/reopen spawned a second run and
+# `cancel-in-progress` killed the first — the allow-list surfaces every
+# cancelled check, where a FAILURE-only deny-list reported just one
+4421: validate-all=FAILURE pending=1 not-green=android-build=CANCELLED,build=CANCELLED,
+      validate / cargo-tests (1)=CANCELLED,validate / lint=CANCELLED,…,validate / validate-all=FAILURE
 ```
 
-Three traps, every one of which an earlier draft of this very recipe fell into:
+`check_pr` returns non-zero unless **all three** hold: `validate-all` is `SUCCESS`, nothing
+is pending, and nothing is unclassified. Note the middle line — a green required gate with
+work still outstanding is *not* a green PR.
 
-1. **`gh pr checks` has no `--json`** in gh 2.45 — it exits `unknown flag: --json`, `raw`
-   comes back empty, and every downstream `jq` yields the empty string, so the guard reads
-   as "nothing failing". `.conclusion` and a `COMPLETED` status belong to
-   `gh pr view --json statusCheckRollup`; do not mix fields between the two commands.
-2. **The check is named `validate / validate-all`.** `ci.yml` calls `_validate.yml` from a
-   job named `validate`, so the reported name carries that prefix. An `== "validate-all"`
-   match is permanently `ABSENT`.
-3. **`state` is never `COMPLETED`** — it is `SUCCESS`/`FAILURE`/`IN_PROGRESS`/`SKIPPED`/
-   `NEUTRAL`. A `!= "COMPLETED"` filter counts every check, so a "nothing outstanding"
-   condition written that way can never become true.
+Traps this recipe exists to avoid, each hit for real:
+
+1. **The check is named `validate / validate-all`.** `ci.yml` calls `_validate.yml` from a
+   job named `validate`, so the rollup name carries that prefix, while the *required
+   branch-protection context* is the bare `validate-all`. An `== "validate-all"` match is
+   therefore permanently `ABSENT` — this cost two wrong "no checks yet" readings on a PR
+   whose CI had already gone green.
+2. **`ABSENT` is a real, expected state, not an error.** `validate-all` is an aggregate job
+   gated on `needs:`, so it genuinely does not exist while `cargo-tests` is still running.
+   Treat it as *keep waiting*; never as *nothing is failing*.
+3. **Know which field you are reading.** In `statusCheckRollup`, `CheckRun` objects carry
+   `status` (`QUEUED`/`IN_PROGRESS`/`COMPLETED`) and `conclusion`; only `StatusContext`
+   objects carry `state`. The `.s` above is a derived union of all three, which is why it
+   must be classified by an explicit allow-list rather than compared against any one field's
+   vocabulary.
+4. **Never classify by deny-list.** `FAILURE|TIMED_OUT|ERROR|CANCELLED` misses
+   `STARTUP_FAILURE`, `ACTION_REQUIRED` and `STALE`, each of which would then count as
+   neither pending nor failing and read as green.
 
 Treat `ABSENT` as *not started* — a reason to keep waiting. More generally: an empty result
 set is absence of evidence, never evidence of success. Before merging on a scripted green,
