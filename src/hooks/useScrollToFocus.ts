@@ -25,7 +25,7 @@
  * caller doesn't need to memoise.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 
 export interface UseScrollToFocusOptions {
   /**
@@ -58,7 +58,9 @@ export function useScrollToFocus(
   // narrow (`[targetId]`). Without this, an inline `{ behavior: 'smooth' }`
   // object literal would re-fire the effect on every render.
   const optionsRef = useRef<UseScrollToFocusOptions | undefined>(options)
-  optionsRef.current = options
+  useLayoutEffect(() => {
+    optionsRef.current = options
+  })
 
   useEffect(() => {
     if (targetId == null) return

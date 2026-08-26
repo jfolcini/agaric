@@ -12,7 +12,14 @@
  * helper, which makes the rules testable in isolation.
  */
 
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
+import {
+  type Dispatch,
+  type SetStateAction,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 
 export interface UseListKeyboardNavigationOptions {
   /** Number of items in the list */
@@ -219,7 +226,9 @@ export function useListKeyboardNavigation(
   // already handles query changes. We read the current value through a ref so
   // the effect stays keyed to `itemCount` alone while always seeing fresh props.
   const hasResetKeyRef = useRef(hasResetKey)
-  hasResetKeyRef.current = hasResetKey
+  useLayoutEffect(() => {
+    hasResetKeyRef.current = hasResetKey
+  })
   useEffect(() => {
     if (hasResetKeyRef.current) {
       // Clamp into [0, itemCount - 1]; an empty list parks focus at 0.

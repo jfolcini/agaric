@@ -28,7 +28,7 @@
  * request-id stale-guard (#1531). Left as-is by design.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
@@ -222,10 +222,13 @@ export function useDuePanelData({
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   // Mirror `blocks` into a ref so `fetchBlocks` can compute
   // the merged paginated list (`prev + new items`) without keeping
-  // `blocks` in its deps array. Updated on every render to stay in sync
+  // `blocks` in its deps array. Updated on every commit — by a
+  // dependency-array-less layout effect, not during render — to stay in sync
   // with the latest committed state.
   const blocksRef = useRef<BlockRow[]>(blocks)
-  blocksRef.current = blocks
+  useLayoutEffect(() => {
+    blocksRef.current = blocks
+  })
   // #1531 — request token guarding `fetchBlocks` (loadMore) against a
   // date/source/space/invalidation change that lands mid-pagination. The main
   // fetch effect bumps it; `fetchBlocks` captures it at call time and discards

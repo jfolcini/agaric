@@ -8,7 +8,7 @@
  * rather than the full picker/search/create API from useBlockResolve.
  */
 
-import { useCallback, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -33,7 +33,9 @@ export function useRichContentCallbacks(): RichContentCallbacks {
   const cache = useResolveStore((s) => s.cache)
 
   const cacheRef = useRef(cache)
-  cacheRef.current = cache
+  useLayoutEffect(() => {
+    cacheRef.current = cache
+  })
 
   // Cache is keyed by composite `${spaceId}::${ulid}`. Read
   // the active space at lookup time so a switch immediately routes
@@ -95,7 +97,9 @@ export function useTagClickHandler(): (tagId: string) => void {
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
 
   const cacheRef = useRef(cache)
-  cacheRef.current = cache
+  useLayoutEffect(() => {
+    cacheRef.current = cache
+  })
 
   return useCallback(
     (tagId: string) => {

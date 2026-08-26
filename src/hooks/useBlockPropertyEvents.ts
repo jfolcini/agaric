@@ -19,7 +19,7 @@
  * the next mount reads a higher key and refetches.
  */
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react'
 
 import {
   DEBOUNCE_MS,
@@ -106,8 +106,12 @@ export interface UseScopedBlockPropertyEventsOptions {
 export function useScopedBlockPropertyEvents(
   options: UseScopedBlockPropertyEventsOptions,
 ): UseBlockPropertyEventsReturn {
-  const ownsBlockRef = useRef(options.ownsBlock)
-  ownsBlockRef.current = options.ownsBlock
+  // Non-reactive view of `ownsBlock` so the registration effect keeps its
+  // empty dep array while `target` still consults the latest predicate.
+  // `useEffectEvent` replaces the latest-value ref mirror this used to carry
+  // (#4377) — `target` only ever runs while the registration below is live,
+  // so the effect-event call rule holds.
+  const ownsBlock = useEffectEvent((blockId: string) => options.ownsBlock(blockId))
 
   const [invalidationKey, setInvalidationKey] = useState(0)
 
@@ -118,7 +122,7 @@ export function useScopedBlockPropertyEvents(
       // No block_id to attribute the change to (malformed event, or a future
       // bulk-change signal) — never drop it, always invalidate (fallback).
       // Otherwise only bump when THIS consumer owns the changed block.
-      const relevant = payload === undefined || ownsBlockRef.current(payload.block_id)
+      const relevant = payload === undefined || ownsBlock(payload.block_id)
       if (!relevant) return
 
       if (debounceTimer) clearTimeout(debounceTimer)

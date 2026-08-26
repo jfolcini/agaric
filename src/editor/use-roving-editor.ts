@@ -33,7 +33,7 @@ import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import { DOMSerializer, type Node as PMNode } from '@tiptap/pm/model'
 import { type Editor, Extension, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { computeContentDelta, shouldSplitOnBlur } from '@/editor/content-delta'
 import type { ContentDelta } from '@/editor/content-delta'
@@ -705,39 +705,44 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // time but the refs always point to the current versions, preventing
   // stale closures inside NodeViews.
   const resolveTagNameRef = useRef(resolveTagName)
-  resolveTagNameRef.current = resolveTagName
   // #921 — the placeholder is computed live per focused block (template hint vs
   // slash-command hint) but the editor is created once, so a captured string
   // froze at creation. Keep it in a ref and read it via Placeholder's function
-  // form so the decoration reflects the CURRENT placeholder on every render.
+  // form so the decoration reflects the CURRENT placeholder on every commit.
   const placeholderRef = useRef(placeholder)
-  placeholderRef.current = placeholder
   const resolveBlockTitleRef = useRef(resolveBlockTitle)
-  resolveBlockTitleRef.current = resolveBlockTitle
   const onNavigateRef = useRef(onNavigate)
-  onNavigateRef.current = onNavigate
   const onTagClickRef = useRef(onTagClick)
-  onTagClickRef.current = onTagClick
   const onCreatePageRef = useRef(onCreatePage)
-  onCreatePageRef.current = onCreatePage
   const onCreateTagRef = useRef(onCreateTag)
-  onCreateTagRef.current = onCreateTag
   const onSlashCommandRef = useRef(onSlashCommand)
-  onSlashCommandRef.current = onSlashCommand
   const onPropertySelectRef = useRef(onPropertySelect)
-  onPropertySelectRef.current = onPropertySelect
   const onCheckboxRef = useRef(onCheckbox)
-  onCheckboxRef.current = onCheckbox
   const searchBlockRefsRef = useRef(options.searchBlockRefs ?? (async () => [] as PickerItem[]))
-  searchBlockRefsRef.current = options.searchBlockRefs ?? (async () => [] as PickerItem[])
   const searchTagsRef = useRef(searchTags)
-  searchTagsRef.current = searchTags
   const searchPagesRef = useRef(searchPages)
-  searchPagesRef.current = searchPages
   const searchSlashCommandsRef = useRef(searchSlashCommands)
-  searchSlashCommandsRef.current = searchSlashCommands
   const searchPropertyKeysRef = useRef(searchPropertyKeys)
-  searchPropertyKeysRef.current = searchPropertyKeys
+  // Written in a dependency-array-less layout effect (not during render): the
+  // mirrors refresh on EVERY commit, before paint and before any passive effect
+  // or user event, so the extension closures below always read current values.
+  useLayoutEffect(() => {
+    resolveTagNameRef.current = resolveTagName
+    placeholderRef.current = placeholder
+    resolveBlockTitleRef.current = resolveBlockTitle
+    onNavigateRef.current = onNavigate
+    onTagClickRef.current = onTagClick
+    onCreatePageRef.current = onCreatePage
+    onCreateTagRef.current = onCreateTag
+    onSlashCommandRef.current = onSlashCommand
+    onPropertySelectRef.current = onPropertySelect
+    onCheckboxRef.current = onCheckbox
+    searchBlockRefsRef.current = options.searchBlockRefs ?? (async () => [] as PickerItem[])
+    searchTagsRef.current = searchTags
+    searchPagesRef.current = searchPages
+    searchSlashCommandsRef.current = searchSlashCommands
+    searchPropertyKeysRef.current = searchPropertyKeys
+  })
 
   // #726 — build the extensions array EXACTLY ONCE and keep its identity stable
   // across renders. `@tiptap/react`'s `useEditor` (called below with the default
@@ -1164,7 +1169,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // The two `activeBlockId` / `originalMarkdown` getters read from refs, so
   // they remain live regardless of memo freshness — consumers that need
   // up-to-date values either read them via the getters or capture the
-  // handle in a ref (e.g. `src/components/editor/EditableBlock.tsx:273`, `src/components/editor/BlockTree.tsx:504`).
+  // handle in a ref (e.g. `src/components/editor/EditableBlock.tsx:273`, `src/components/editor/BlockTree.tsx:508`).
   //
   // Without this, every parent re-render produced a fresh handle object
   // that propagated to `SortableBlockWrapper` and defeated its `React.memo`

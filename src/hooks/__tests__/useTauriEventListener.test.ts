@@ -247,4 +247,71 @@ describe('useTauriEventListener', () => {
 
     unmount()
   })
+
+  /**
+   * #4377 — `onError` and `onSubscribed` are read from the `listen()` promise's
+   * continuations, which settle arbitrarily late. The effect deliberately does
+   * NOT re-run when they change identity, so both must dispatch to the newest
+   * committed closure; a mount-frozen one would report a failure (or a live
+   * subscription) to a callback whose captured state is already gone.
+   */
+  it('routes a late listen() rejection to the LATEST onError', async () => {
+    let rejectListen: (err: unknown) => void = () => {}
+    mockListen.mockReturnValue(
+      new Promise<() => void>((_resolve, reject) => {
+        rejectListen = reject
+      }),
+    )
+    const onErrorAtMount = vi.fn()
+    const onErrorAfterRerender = vi.fn()
+
+    const { rerender, unmount } = renderHook(
+      ({ onError }: { onError: (err: unknown) => void }) =>
+        useTauriEventListener('test:event', vi.fn(), { onError }),
+      { initialProps: { onError: onErrorAtMount } },
+    )
+    await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(1))
+
+    // New `onError` identity — must not re-register the listener.
+    rerender({ onError: onErrorAfterRerender })
+    expect(mockListen).toHaveBeenCalledTimes(1)
+
+    rejectListen(new Error('boom'))
+
+    await vi.waitFor(() => expect(onErrorAfterRerender).toHaveBeenCalledTimes(1))
+    expect(onErrorAfterRerender).toHaveBeenCalledWith(expect.any(Error))
+    expect(onErrorAtMount).not.toHaveBeenCalled()
+    // A custom handler still suppresses the default warn path.
+    expect(mockLoggerWarn).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('notifies the LATEST onSubscribed when listen() resolves', async () => {
+    let resolveListen: (fn: () => void) => void = () => {}
+    mockListen.mockReturnValue(
+      new Promise<() => void>((resolve) => {
+        resolveListen = resolve
+      }),
+    )
+    const onSubscribedAtMount = vi.fn()
+    const onSubscribedAfterRerender = vi.fn()
+
+    const { rerender, unmount } = renderHook(
+      ({ onSubscribed }: { onSubscribed: () => void }) =>
+        useTauriEventListener('test:event', vi.fn(), { onSubscribed }),
+      { initialProps: { onSubscribed: onSubscribedAtMount } },
+    )
+    await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(1))
+
+    rerender({ onSubscribed: onSubscribedAfterRerender })
+    expect(mockListen).toHaveBeenCalledTimes(1)
+
+    resolveListen(mockUnlisten)
+
+    await vi.waitFor(() => expect(onSubscribedAfterRerender).toHaveBeenCalledTimes(1))
+    expect(onSubscribedAtMount).not.toHaveBeenCalled()
+
+    unmount()
+  })
 })

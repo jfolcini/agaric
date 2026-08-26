@@ -11,7 +11,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useFailedOnce } from '@/hooks/useFailedOnce'
@@ -154,7 +154,11 @@ export function useAutocompleteSources(
   // object identity and needlessly re-runs the effect for the active key,
   // re-firing the idempotent value-fetch each time.
   const selectOptionsRef = useRef(selectOptions)
-  selectOptionsRef.current = selectOptions
+  // Mirrored in a dependency-array-less layout effect (not during render) so the
+  // ref refreshes on every commit, before paint and before any passive effect.
+  useLayoutEffect(() => {
+    selectOptionsRef.current = selectOptions
+  })
 
   // Phase 4.M3 — shared race-discard hook. The guard bumps on
   // every tag-anchor activation AND on every keystroke while active;

@@ -19,7 +19,7 @@ import {
   useSensors,
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
-import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
+import { type RefObject, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
 import { useAutoScrollOnDrag } from '@/hooks/useAutoScrollOnDrag'
@@ -172,7 +172,9 @@ export function useBlockDnD({
   useAutoScrollOnDrag(scrollContainerRef ?? fallbackRef, !!activeId)
 
   const rovingEditorRef = useRef(rovingEditor)
-  rovingEditorRef.current = rovingEditor
+  useLayoutEffect(() => {
+    rovingEditorRef.current = rovingEditor
+  })
 
   // #923 — the block that was being edited when the drag began. `handleDragStart`
   // clears focus (flush + setFocused(null)); if the drag is then CANCELLED (Esc)

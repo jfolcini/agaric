@@ -93,6 +93,16 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
   // Buffers for interactions that happen before the live editor is ready.
   const pendingMountRef = useRef<PendingMount | null>(null)
   const pendingOnUpdateRef = useRef<(() => void) | null>(null)
+  // #4377 — deliberately still a render-phase write, and the `react/refs`
+  // finding on it is deliberately still open. `liveHandleRef` is read by
+  // `handleReady` below, which `RovingEditorHost` (a DESCENDANT) calls from its
+  // own `useLayoutEffect`. React runs descendants' layout effects before their
+  // ancestors', so mirroring this from a layout effect here would still be one
+  // commit late — the "already adopted this instance" guard would compare
+  // against the PREVIOUS commit's handle and re-run the adopt path. Unlike the
+  // ~34 sites converted with #4377, no effect in this component runs early
+  // enough; fixing this one means restructuring the adopt handshake, not moving
+  // the write.
   const liveHandleRef = useRef<RovingEditorHandle | null>(null)
   liveHandleRef.current = liveHandle
 

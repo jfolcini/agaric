@@ -328,8 +328,13 @@ stages = ["pre-commit", "pre-push"]
 repo = "local"
 [[repos.hooks]]
 id = "no-legacy-react-apis"
+# Two #4377 tests are excluded from the forwardRef grep: their SUBJECT is which
+# React fiber tag owns a `useEffectEvent`, and `forwardRef(Fn)` is one of the
+# four tags they have to construct to pin it (see #4397). They are the only
+# legitimate reason to name the API, and the exclusion is per-file rather than
+# a directory so nothing else inherits it.
 name = "no legacy react apis"
-entry = "bash -c 'set -e; if grep -rnE \"\\bforwardRef\\b|\\bReact\\.forwardRef\\b|\\bMutableRefObject\\b|\\bReact\\.ComponentRef\\b\" src/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=mocks --exclude=bindings.ts; then echo \"ERROR: legacy React API detected — forwardRef / MutableRefObject / React.ComponentRef were removed during the React 19 / TS 6 migration\"; exit 1; fi; if grep -rnE \"(^|[^.])JSX\\.(IntrinsicElements|Element)\" src/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=mocks --exclude=bindings.ts; then echo \"ERROR: ambient JSX.* namespace detected — use React.JSX.IntrinsicElements / React.ReactElement instead (React 19 dropped the global JSX namespace)\"; exit 1; fi'"
+entry = "bash -c 'set -e; if grep -rnE \"\\bforwardRef\\b|\\bReact\\.forwardRef\\b|\\bMutableRefObject\\b|\\bReact\\.ComponentRef\\b\" src/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=mocks --exclude=bindings.ts --exclude=effect-event-fiber-tags.test.tsx --exclude=effect-event-fiber-owner.test.ts; then echo \"ERROR: legacy React API detected — forwardRef / MutableRefObject / React.ComponentRef were removed during the React 19 / TS 6 migration\"; exit 1; fi; if grep -rnE \"(^|[^.])JSX\\.(IntrinsicElements|Element)\" src/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=mocks --exclude=bindings.ts; then echo \"ERROR: ambient JSX.* namespace detected — use React.JSX.IntrinsicElements / React.ReactElement instead (React 19 dropped the global JSX namespace)\"; exit 1; fi'"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]

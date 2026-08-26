@@ -1128,6 +1128,58 @@ describe('DaySection', () => {
         expect(mw.markVisible).not.toHaveBeenCalled()
       })
 
+      // #4377 — the observer is registered once per `hasEntered` phase, so the
+      // callback it closes over must dispatch to the LATEST committed
+      // `onVisible`, not the one that happened to be current at mount. A
+      // mount-frozen callback would report entry to the caller's previous
+      // `markVisible` (in production: a stale `useDayMountWindow` closure),
+      // marking recency on a dead LRU and never mounting the day.
+      it('reports intersection to the LATEST onVisible after a re-render, without re-observing', () => {
+        const entry = makeDayEntry({
+          pageId: 'PAGE_1',
+          dateStr: '2025-06-15',
+          displayDate: 'Sun, Jun 15, 2025',
+        })
+        const markVisibleAtMount = vi.fn()
+        const markVisibleAfterRerender = vi.fn()
+
+        const { rerender } = render(
+          <DaySection
+            entry={entry}
+            mode="stream"
+            lazyMount
+            mounted={false}
+            onVisible={markVisibleAtMount}
+            onAddBlock={noop}
+          />,
+        )
+        expect(MockIntersectionObserver.instances).toHaveLength(1)
+
+        // Same day, same (unmounted) window state — only the callback identity
+        // changes, exactly as it does when the caller re-mints its closure.
+        rerender(
+          <DaySection
+            entry={entry}
+            mode="stream"
+            lazyMount
+            mounted={false}
+            onVisible={markVisibleAfterRerender}
+            onAddBlock={noop}
+          />,
+        )
+        // The whole point of the non-reactive view: no teardown/re-subscribe.
+        expect(MockIntersectionObserver.instances).toHaveLength(1)
+
+        const obs = MockIntersectionObserver.instances[0]
+        expect(obs).toBeDefined()
+        act(() => {
+          obs?.enterAll()
+        })
+
+        expect(markVisibleAtMount).not.toHaveBeenCalled()
+        expect(markVisibleAfterRerender).toHaveBeenCalledWith('2025-06-15')
+      })
+
       it('eagerly mounts under prefers-reduced-motion even with a mount window set', () => {
         const originalMatchMedia = window.matchMedia
         try {

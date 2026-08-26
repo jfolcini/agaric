@@ -20,7 +20,7 @@
  */
 
 import { type NodeViewProps, NodeViewWrapper } from '@tiptap/react'
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 // Lazy-load KatexMath so KaTeX (+ its CSS) loads only when a math node renders.
@@ -40,12 +40,6 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
   const [showSource, setShowSource] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  // #2453 — mirror the latest LaTeX into a ref so the close handler (invoked
-  // from the document-level capture listener and from onBlur, both of which
-  // close over a render that may predate the user's edits) always reads the
-  // current value.
-  const latexRef = useRef(latex)
-  latexRef.current = latex
   const deletedRef = useRef(false)
 
   // Close the source editor. #2453 — a whitespace-only atom has no canonical
@@ -56,7 +50,7 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
   // CLOSE (blur / Enter / Escape), NOT on every `updateAttributes` keystroke,
   // so clearing the field to retype does not delete the node mid-edit.
   const closeSource = () => {
-    if (latexRef.current.trim() === '') {
+    if (latex.trim() === '') {
       // Guard the once-only delete against a concurrent block save/unmount
       // (the blur that triggers this can also tear the editor down); acting on
       // a destroyed editor throws (cf. the #1064 destroyed-editor guards).
@@ -68,8 +62,17 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
     }
     setShowSource(false)
   }
-  const closeSourceRef = useRef(closeSource)
-  closeSourceRef.current = closeSource
+  // #2453 — the document-level capture listener below is registered once per
+  // `showSource` toggle, so a plain closure would trap a render that predates
+  // the user's edits (and `closeSource` reads `latex`). `useEffectEvent`
+  // always dispatches to the newest committed `closeSource`, which is what
+  // the latest-value ref mirror here used to buy (#4377). The JSX `onBlur`
+  // calls `closeSource` directly — an effect event must not be called from a
+  // React event handler, and it does not need to be: that closure is already
+  // this render's.
+  const closeSourceFromKeydown = useEffectEvent(() => {
+    closeSource()
+  })
 
   // Finding 44 — while the LaTeX source field is shown:
   //  - focus it (revealing it via the rendered-math button preventDefaults the
@@ -91,7 +94,7 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
         e.preventDefault()
         // #2453 — closing may drop an empty atom instead of just hiding the
         // source field; either way return focus to the contenteditable.
-        closeSourceRef.current()
+        closeSourceFromKeydown()
         editor.commands.focus()
       }
       e.stopPropagation()
@@ -134,7 +137,7 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
             // (the data-editor-portal tag above keeps the editor mounted).
             onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) => updateAttributes({ latex: e.target.value })}
-            onBlur={() => closeSourceRef.current()}
+            onBlur={() => closeSource()}
             // Enter/Escape live in the document-level capture listener above —
             // a React onKeyDown here would never fire (propagation is stopped
             // before React's root listener sees the event).

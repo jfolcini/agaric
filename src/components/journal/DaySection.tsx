@@ -7,7 +7,7 @@
 
 import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DonePanel } from '@/components/agenda/DonePanel'
@@ -145,8 +145,28 @@ function useControlledViewportEntry(
   rootMargin = '200px 0px',
 ): React.RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement | null>(null)
+  // Non-reactive view of `onEnter`, so the observer is not torn down and
+  // rebuilt whenever the caller passes a fresh closure. It is only ever read
+  // from the effect body or from the observer callback the effect owns and
+  // disconnects.
+  //
+  // This is the #4377 mirror written from a dep-less `useLayoutEffect` (see
+  // `src/__tests__/latest-value-mirror-ordering.test.tsx`) and NOT
+  // `useEffectEvent`. React 19.2 only publishes effect-event implementations
+  // for fibers tagged `FunctionComponent`: `commitBeforeMutationEffectsOnFiber`
+  // drains `updateQueue.events` in the `FunctionComponent` case and falls
+  // straight through `case ForwardRef: case SimpleMemoComponent: break`. The
+  // exported `DaySection` is `memo(DaySectionInner)` with no compare function,
+  // which React downgrades to a `SimpleMemoComponent` fiber — so an effect
+  // event here would keep dispatching to the closure captured at MOUNT
+  // forever, reporting viewport entry into a dead `useDayMountWindow` closure.
   const onEnterRef = useRef(onEnter)
-  onEnterRef.current = onEnter
+  useLayoutEffect(() => {
+    onEnterRef.current = onEnter
+  })
+  const reportEntered = () => {
+    onEnterRef.current()
+  }
 
   useEffect(() => {
     if (!enabled || hasEntered) return
@@ -154,14 +174,14 @@ function useControlledViewportEntry(
     if (!el) return
     if (typeof IntersectionObserver === 'undefined') {
       // Defensive: jsdom/older runtimes — report entered immediately.
-      onEnterRef.current()
+      reportEntered()
       return
     }
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            onEnterRef.current()
+            reportEntered()
             return
           }
         }

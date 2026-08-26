@@ -12,7 +12,7 @@
 
 import { FileText, Hash, Tag } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 import type { PickerItem } from '@/editor/SuggestionList'
 import { unwrap } from '@/lib/app-error'
@@ -90,7 +90,7 @@ export interface UseBlockResolveReturn {
    *     (`src/components/block-tree/use-block-date-picker.ts:180`, the #4319 site above).
    *  2. THE EIGHT CANNOT REGISTER — they did not forget to.
    *     `useBlockResolve()` has exactly one caller
-   *     (`src/components/editor/BlockTree.tsx:494`), and every one of the eight sits above or
+   *     (`src/components/editor/BlockTree.tsx:498`), and every one of the eight sits above or
    *     beside `BlockTree`: ancestors (`useJournalBlockCreation` via
    *     `JournalPage`/`StreamView`, `App.tsx`, `useAppKeyboardShortcuts`),
    *     sibling subtrees with no BlockTree at all (`usePageCreation` in
@@ -1080,7 +1080,9 @@ export function useBlockResolve(): UseBlockResolveReturn {
   const cache = useResolveStore((s) => s.cache)
 
   const cacheRef = useRef(cache)
-  cacheRef.current = cache
+  useLayoutEffect(() => {
+    cacheRef.current = cache
+  })
 
   // Local ref for pagesListRef used in searchPages caching. Lazily
   // filled by `searchPagesViaCache` (scoped to the space active at

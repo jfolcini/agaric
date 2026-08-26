@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -22,15 +22,20 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
   // every toggle). Functional setState forms below remain the source of truth
   // for writes.
   const expandedKeysRef = useRef(expandedKeys)
-  expandedKeysRef.current = expandedKeys
   const diffCacheRef = useRef(diffCache)
-  diffCacheRef.current = diffCache
   // Mirror keyFn into a ref too: callers pass a freshly-allocated inline arrow
   // every render, so depending on keyFn identity would churn handleToggleDiff
   // each render and defeat downstream memoization. The ref always holds the
   // latest keyFn while keeping the callback identity stable.
   const keyFnRef = useRef(keyFn)
-  keyFnRef.current = keyFn
+  // All three mirrors are written in a dependency-array-less layout effect (not
+  // during render), so they refresh on every commit, before paint and before any
+  // toggle event reads them.
+  useLayoutEffect(() => {
+    expandedKeysRef.current = expandedKeys
+    diffCacheRef.current = diffCache
+    keyFnRef.current = keyFn
+  })
 
   const handleToggleDiff = useCallback(async (entry: HistoryEntry) => {
     const key = keyFnRef.current(entry)

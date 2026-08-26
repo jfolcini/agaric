@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -236,10 +236,13 @@ export function useBlockDatePicker({
   // future caller mounts this hook outside BlockTree (or recreates
   // the editor mid-mount), this assumption breaks.
   const rovingEditorRef = useRef(rovingEditor)
-  rovingEditorRef.current = rovingEditor
 
   const tRef = useRef(t)
-  tRef.current = t
+
+  useLayoutEffect(() => {
+    rovingEditorRef.current = rovingEditor
+    tRef.current = t
+  })
 
   // `t` is read via `tRef` (invariant above) so it is intentionally not listed. `pageStore` (a Zustand StoreApi) and `registerCreatedPage` (a `useCallback` with an empty dep list, #4319) are stable across renders, so listing them is safe and adds no extra runs — `handleDatePick` is only consumed as an event handler (BlockTree onSelect), never as another hook's dependency.
   const handleDatePick = useCallback(

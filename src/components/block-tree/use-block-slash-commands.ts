@@ -27,7 +27,7 @@
  * import them from there directly rather than through this module.
  */
 
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 
 import type {
   SlashCommandContext,
@@ -149,20 +149,22 @@ export function useBlockSlashCommands({
     openPropertyDrawer,
     tables,
   })
-  inputsRef.current = {
-    rootParentId,
-    rovingEditor,
-    pageStore,
-    datePickerCursorPos,
-    setDatePickerMode,
-    setDatePickerOpen,
-    t,
-    openTemplatePicker: template.openTemplatePicker,
-    openQueryBuilder,
-    openEmojiPicker,
-    openPropertyDrawer,
-    tables,
-  }
+  useLayoutEffect(() => {
+    inputsRef.current = {
+      rootParentId,
+      rovingEditor,
+      pageStore,
+      datePickerCursorPos,
+      setDatePickerMode,
+      setDatePickerOpen,
+      t,
+      openTemplatePicker: template.openTemplatePicker,
+      openQueryBuilder,
+      openEmojiPicker,
+      openPropertyDrawer,
+      tables,
+    }
+  })
 
   const handleSlashCommand = useCallback(
     async (item: PickerItem) => {

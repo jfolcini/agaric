@@ -13,7 +13,7 @@
 
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
-import { useCallback, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { unwrap } from '@/lib/app-error'
@@ -187,7 +187,9 @@ export function useBlockNavigateToLink({
 
   // Keep ref in sync with the latest handleNavigate so consumers
   // captured at first render still call into the up-to-date callback.
-  handleNavigateRef.current = handleNavigate
+  useLayoutEffect(() => {
+    handleNavigateRef.current = handleNavigate
+  })
 
   return { handleNavigate, handleNavigateRef }
 }

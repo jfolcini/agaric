@@ -220,6 +220,48 @@ describe('StreamView', () => {
     expect(mockStream.loadOlder).not.toHaveBeenCalled()
   })
 
+  // #4377 — the sentinel observer is registered on `[loading, reachedEnd]`, so
+  // it outlives every page-map/in-flight change. Its callback must therefore
+  // read the LATEST committed `loadOlder` AND the LATEST `loadingOlder`; a
+  // callback frozen at mount would call a dead loader and would keep firing
+  // duplicate loads while one is already in flight.
+  it('dispatches to the latest loadOlder and honours a later loadingOlder flip', () => {
+    const originalLoadOlder = mockStream.loadOlder
+    const loadOlderAtMount = vi.fn()
+    const loadOlderAfterRerender = vi.fn()
+    try {
+      mockStream.loadOlder = loadOlderAtMount
+      const { rerender } = render(<StreamView />)
+      const observerAtMount = lastObserverCallback
+      expect(observerAtMount).not.toBeNull()
+
+      // (a) `useStreamDates` hands StreamView a fresh `loadOlder` (it re-mints
+      // on every window/page-map change). The already-registered observer must
+      // call the NEW one.
+      mockStream.loadOlder = loadOlderAfterRerender
+      rerender(<StreamView />)
+      // No re-subscribe: same observer instance is still the live one.
+      expect(lastObserverCallback).toBe(observerAtMount)
+
+      fireIntersection(true)
+      expect(loadOlderAtMount).not.toHaveBeenCalled()
+      expect(loadOlderAfterRerender).toHaveBeenCalledTimes(1)
+
+      // (b) that load is now in flight — `loadingOlder` flips false → true.
+      // The same observer must see the new value and skip, or a scroll that
+      // keeps the sentinel in view stacks duplicate batch loads.
+      mockStream.loadingOlder = true
+      rerender(<StreamView />)
+      expect(lastObserverCallback).toBe(observerAtMount)
+
+      fireIntersection(true)
+      expect(loadOlderAfterRerender).toHaveBeenCalledTimes(1)
+      expect(loadOlderAtMount).not.toHaveBeenCalled()
+    } finally {
+      mockStream.loadOlder = originalLoadOlder
+    }
+  })
+
   it('shows a loading skeleton (no day sections) on first load', () => {
     mockStream.loading = true
     mockStream.dates = []

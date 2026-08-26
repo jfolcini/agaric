@@ -133,14 +133,15 @@ export function useEditorEventDispatch(): EditorEventDispatch {
   // It points at the stable `flush` thunk, so the ref identity AND its current
   // value are both stable across renders.
   const flushRef = useRef<EditorEventHandlers['flush']>(thunks.flush)
-  flushRef.current = thunks.flush
 
   // Single post-commit sync. Reads the handlers staged this render and
-  // publishes them (or their defaults) to the backing refs. No dependency
-  // array on purpose — `.on()` writes into a fresh `staged.current` every
-  // render, so the sync must track every commit. See the file doc comment for
-  // why this must run post-commit (concurrent renders can be abandoned).
+  // publishes them (or their defaults) to the backing refs, and refreshes the
+  // exposed `flushRef` mirror. No dependency array on purpose — `.on()` writes
+  // into a fresh `staged.current` every render, so the sync must track every
+  // commit. See the file doc comment for why this must run post-commit
+  // (concurrent renders can be abandoned).
   useLayoutEffect(() => {
+    flushRef.current = thunks.flush
     const next = staged.current
     refs.current.slashCommand = next.slashCommand ?? DEFAULT_HANDLERS.slashCommand
     refs.current.checkbox = next.checkbox ?? DEFAULT_HANDLERS.checkbox

@@ -23,7 +23,7 @@ import { fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
 //      success effect can never see it as new and the wait DEADLOCKS
 //      until the 5-minute TTL.
 //   2. the immediate fetch `usePollingQuery` fires the instant `enabled`
-//      flips true (usePollingQuery.ts:106 — the effect calls `load()`
+//      flips true (usePollingQuery.ts:108 — the effect calls `load()`
 //      before arming its interval). A peer present here resolves the wait
 //      in the same frame it opened, which is the pre-#3469 "claim success
 //      the moment `pair()` returned" lie wearing a poll's clothes.

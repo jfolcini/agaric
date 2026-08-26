@@ -7,7 +7,7 @@
  */
 
 import type { TFunction } from 'i18next'
-import React, { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
@@ -271,18 +271,25 @@ function EditableBlockInner({
   // initial value passed to `mount()` — a content change while the editor is
   // already mounted should not trigger a re-mount.
   const rovingEditorRef = useRef(rovingEditor)
-  rovingEditorRef.current = rovingEditor
   const contentRef = useRef(content)
-  contentRef.current = content
   const editRef = useRef(edit)
-  editRef.current = edit
   const splitBlockRef = useRef(splitBlock)
-  splitBlockRef.current = splitBlock
   // Same "read but don't re-run" reasoning as above — a mocked/wrapped
   // `usePageBlockStoreApi` may not be referentially stable across renders
   // (e.g. in tests), so its identity must not gate the auto-mount effect.
   const pageStoreApiRef = useRef(pageStoreApi)
-  pageStoreApiRef.current = pageStoreApi
+  // All five mirrors are refreshed on every commit (no dep array). A LAYOUT
+  // effect, not a passive one: `rovingEditorRef.current` is read from a passive
+  // effect CLEANUP below (`setOnUpdate(null)`), and passive cleanups run after
+  // this commit's layout effects — a passive write would change what that
+  // cleanup sees.
+  useLayoutEffect(() => {
+    rovingEditorRef.current = rovingEditor
+    contentRef.current = content
+    editRef.current = edit
+    splitBlockRef.current = splitBlock
+    pageStoreApiRef.current = pageStoreApi
+  })
 
   // ── Draft autosave + content commit: driven by the editor update signal ──
   // #2938 — both are armed by a change SIGNAL from the editor's `update` event

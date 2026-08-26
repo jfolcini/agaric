@@ -9,7 +9,7 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
-import { useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2927 phase 5 — the hook now calls the generated `commands.getBlock`, so
@@ -77,9 +77,11 @@ interface HarnessParams {
 
 function useHarness(params: HarnessParams) {
   const rovingEditorRef = useRef<RovingEditorHandle | null>(params.rovingEditor)
-  rovingEditorRef.current = params.rovingEditor
   const handleFlushRef = useRef<() => string | null>(params.handleFlush)
-  handleFlushRef.current = params.handleFlush
+  useLayoutEffect(() => {
+    rovingEditorRef.current = params.rovingEditor
+    handleFlushRef.current = params.handleFlush
+  })
 
   return useBlockNavigateToLink({
     rovingEditorRef,

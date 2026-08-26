@@ -27,7 +27,7 @@
 
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { StoreApi } from 'zustand'
 
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
@@ -93,7 +93,9 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   // Internal ref to access the latest rovingEditor without adding it to
   // every dependency array (matches original BlockTree behaviour).
   const rovingEditorRef = useRef(rovingEditor)
-  rovingEditorRef.current = rovingEditor
+  useLayoutEffect(() => {
+    rovingEditorRef.current = rovingEditor
+  })
 
   // #713 / #1250 — every handler below acts on the block the bus resolved as
   // owned by THIS tree's page store: the focus-keyed `dispatchBlockCommand`
