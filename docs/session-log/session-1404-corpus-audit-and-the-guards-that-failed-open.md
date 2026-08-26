@@ -9,8 +9,11 @@ drifted from the repo too.
 ## What shipped
 
 - **#4420** (merged) — corpus corrections across root `AGENTS.md`, `batch-issues/SKILL.md`,
-  `references/pitfalls.md`, `CONTRIBUTING.md`, `docs/BUILD.md`, four dependent skills and
-  `src-tauri/src/mcp/AGENTS.md`.
+  `references/pitfalls.md`, `CONTRIBUTING.md`, four dependent skills,
+  `src-tauri/src/mcp/AGENTS.md` and `src-tauri/benches/AGENTS.md`.
+  (`docs/BUILD.md` was NOT changed and did not need to be: its wording was already
+  conditional — "optional", "when available", "not a build or test prerequisite". An
+  earlier draft of this log claimed otherwise.)
 - **#4421** (open) — the release boot-smoke rewrite plus the MCP path-gate narrowing
   (#4419), and a CI-classifier fix so shell-only changes stop pinning the Rust suites.
 - **#4418** — filed, then publicly corrected twice as measurement killed my hypotheses.
@@ -61,7 +64,9 @@ What measurement then revealed, cheaply: `init_logging` is called *inside* Tauri
 hook, so "no log file" means GUI init never completed — the guard was reporting a real
 failure, and the investigation had been aimed at the wrong layer entirely.
 
-The corrected note is in `feedback_measure_not_imagine.md`: when a hypothesis rests on a
+The corrected note is in the agent-memory file `feedback_measure_not_imagine.md` (which
+lives in `~/.claude/projects/.../memory/`, outside this repo — so it is not a path a reader
+can open from a checkout): when a hypothesis rests on a
 magnitude ("that's slow", "that's big"), the check costs seconds — spend them *before* filing
 it, because a filed issue is a claim other people act on.
 
@@ -92,4 +97,19 @@ the key's UID.
   `validate / validate-all`, not `validate-all`. Both cost real time; both are now written
   down with a pasted run rather than a description.
 - A `.md` edit under `src-tauri/src/mcp/` forced a ~12-minute `agaric-mcp` release build, and
-  a shell-only diff pinned the full Rust suite. Both fixed, both falsified.
+  a shell-only diff pinned the full Rust suite. Both fixed and falsified **in #4421, which is
+  still open** — neither is on `main` yet, and the `unrec_ci` duplication is still present on
+  the merge base.
+
+## A note on this file's own format
+
+`.claude/skills/batch-issues/references/session-log.md` prescribes a metadata table,
+"Files touched", "Verification" and "Commit plan" sections and a `(YYYY-MM-DD)` heading
+suffix. This log has none of them — and neither do 1401, 1402 or 1403, which deviate
+identically. Practice moved to prose and the template did not follow.
+
+That is the same drift class this session spent its day auditing, in a file the audit read,
+and nothing enforces it: the numbering guard only greps for the `# Session NNNN` heading.
+Recording it deliberately rather than leaving a fourth session to deviate silently. Filed
+separately rather than fixed here, because deciding whether the template or the practice is
+authoritative is a maintainer call, not a cleanup.
