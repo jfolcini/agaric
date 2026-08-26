@@ -570,7 +570,12 @@ jobs:
             # to hide it — so no local verification can cover it.
             own_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
             pgid=$(ps -o pgid= -p "$app_pid" 2>/dev/null | tr -d ' ')
-            if [ -z "$pgid" ] || [ "$pgid" = "$own_pgid" ]; then
+            if [ -z "$own_pgid" ]; then
+              # We could not read our OWN group, so the comparison below can never
+              # fire and the guard would be inert precisely when it cannot verify
+              # safety. Refuse the group kill outright rather than trust it.
+              pgid=""
+            elif [ -z "$pgid" ] || [ "$pgid" = "$own_pgid" ]; then
               pgid=""   # setsid had not taken effect yet — never kill our own group
             fi
 
@@ -612,6 +617,15 @@ jobs:
             # this step exists to catch also lives after init_logging, so the short
             # window would have called that green too.
             #
+            # WHAT THE DWELL DOES NOT DO: catch a hang. It detects an EXIT. A
+            # process that wedges after init_logging but stays alive ends the
+            # dwell with code=alive and passes both checks — the same blind spot
+            # the old exit-124 contract had, and the one CHECK 1's retained
+            # "Scope limit" note describes. The 0.9.9 hang is caught because it
+            # wedges BEFORE init_logging, so no artifact appears at all. Saying
+            # otherwise would put a false claim in the file this PR's sibling
+            # (#4420) exists to de-drift.
+            #
             # So: keep the poll (it is what makes a NEVER-boots case fail fast and
             # lets BOOT_SECONDS be generous), then hold for MIN_ALIVE_SECONDS and
             # re-assert liveness. That restores the survival half of the old
@@ -641,12 +655,17 @@ jobs:
             #
             # `wchan` is the payload: for a process blocked rather than crashed,
             # the kernel function it is waiting in names the cause.
-            snap_pids="$(pgrep -f 'agaric|[Xx]vfb|dbus-run-session' | tr '\n' ' ' || true)"
+            # ONE comma-separated argument, not word-split bare pids: procps may
+            # reject the split form, and because the call is guarded by `|| true`
+            # a rejection would leave PROC_SNAPSHOT empty — silently dropping the
+            # `wchan` capture that is this whole change's payload. A diagnostic
+            # that can fail quietly is the failure it was added to prevent.
+            snap_pids="$(pgrep -f 'agaric|[Xx]vfb|dbus-run-session' | paste -sd, - || true)"
             if [ -n "$snap_pids" ]; then
-              # shellcheck disable=SC2086  # deliberate split into -p arguments
-              PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p $snap_pids 2>/dev/null || true)"
+              PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p "$snap_pids" 2>&1)" \
+                || PROC_SNAPSHOT="(ps failed for pids '$snap_pids': $PROC_SNAPSHOT)"
             else
-              PROC_SNAPSHOT="(no agaric/Xvfb/dbus processes)"
+              PROC_SNAPSHOT="(no agaric/Xvfb/dbus processes matched at snapshot time)"
             fi
 
             # #4418 note 5 — re-probe the group before giving up on it. The guard
@@ -872,6 +891,14 @@ jobs:
             echo "--- attempt $attempt failed; retrying ($((attempt + 1))/$MAX_BOOT_ATTEMPTS) ---" >&2
             attempt=$((attempt + 1))
           done
+          if [ "$attempt" -gt 1 ]; then
+            # #4418 note 5 — a retry that succeeds is still a signal. Without an
+            # annotation, a launch failing one attempt in two reports green ~87%
+            # of the time and the only trace is buried in the raw step log. The
+            # flake this step exists to survive would then be invisible, which is
+            # how e2e-tauri-weekly's 3-in-5 failure rate went unnoticed.
+            echo "::warning::AppImage boot smoke needed $attempt attempts (of $MAX_BOOT_ATTEMPTS). The launch is flaky on this runner even though the step passed — see #4418."
+          fi
           echo "OK: boot smoke passed on attempt $attempt of $MAX_BOOT_ATTEMPTS"
 
 
