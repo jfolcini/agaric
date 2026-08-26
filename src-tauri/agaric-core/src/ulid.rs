@@ -2,6 +2,86 @@ use serde::Serialize;
 use std::fmt;
 use std::str::FromStr;
 
+/// Why a candidate string is not a usable ULID — the two outcomes
+/// [`canonical_ulid`] distinguishes.
+///
+/// The split matters because the two are treated differently at the boundary:
+/// a [`UlidRejection::Malformed`] input is simply not a ULID (test fixtures
+/// like `"BLOCK_A"` are in this class and the lenient `Deserialize` fallback
+/// keeps accepting them), while a [`UlidRejection::Aliased`] input LOOKS like
+/// a ULID to the decoder and is the #4284 hazard — it must never be normalised
+/// into something else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UlidRejection {
+    /// Not a 26-character Crockford base32 string at all (the `ulid`
+    /// decoder's own complaint, rendered).
+    Malformed(String),
+    /// #4284: it decodes, but to a DIFFERENT id than it spells. The
+    /// `canonical` field is the id it WOULD have silently become.
+    Aliased {
+        /// The id the decoder hands back for this input.
+        canonical: String,
+    },
+}
+
+impl fmt::Display for UlidRejection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UlidRejection::Malformed(e) => write!(f, "{e}"),
+            UlidRejection::Aliased { canonical } => write!(
+                f,
+                "overflows the 128-bit ULID range and decodes to a DIFFERENT id \
+                 ('{canonical}') — a 26-character base32 ULID's leading character \
+                 encodes at most 2 bits, so it must be '0'..='7' (#4284)"
+            ),
+        }
+    }
+}
+
+/// Decode `s` as a ULID and return its CANONICAL uppercase Crockford base32
+/// form, rejecting any input the decoder would silently rewrite (#4284).
+///
+/// # The defect this closes
+///
+/// `ulid` 3.0's `base32::decode` has no overflow check: it shifts 26 base-32
+/// characters — 130 bits — into a `u128`, discarding the top 2, and its
+/// `DecodeError` has only `InvalidLength` and `InvalidChar` variants, nothing
+/// for "this does not fit". So every id whose LEADING character encodes more
+/// than 2 bits (any value above `7`) decodes to a different id than it spells:
+/// `"TT00…"` comes back as `"2T00…"`, and two distinct 26-character strings
+/// collapse onto one `BlockId`. The *validating* constructor returned `Ok`
+/// while handing back an id it was never given, so a write op addressed to a
+/// crafted, non-existent id could silently retarget a REAL block.
+///
+/// # Why re-encode-and-compare rather than a leading-character range check
+///
+/// The two are equivalent for `ulid` 3.0 — its lookup table has no alternate
+/// encodings (`I`/`L`/`O`/`U` are rejected outright), so case is the only
+/// other axis and `to_ascii_uppercase` covers it. Comparing against the
+/// re-encoded form states the invariant the callers actually need — *the id
+/// you validated is the id you get back* — without depending on that table
+/// staying as it is. A future decoder that starts accepting `O` as `0` would
+/// be rejected here rather than silently canonicalised, which is the safe
+/// direction for the #1558 hash-preimage argument (untrusted input can never
+/// pick which of several spellings feeds the blake3 preimage).
+///
+/// Lowercase and mixed-case ULIDs are still ACCEPTED and normalised — that is
+/// a pure case fold, not a change of value.
+///
+/// # Errors
+/// [`UlidRejection::Malformed`] when `s` is not 26 Crockford base32
+/// characters, [`UlidRejection::Aliased`] when it is but decodes to another
+/// id.
+pub fn canonical_ulid(s: &str) -> Result<String, UlidRejection> {
+    let parsed = ulid::Ulid::from_str(s).map_err(|e| UlidRejection::Malformed(e.to_string()))?;
+    let canonical = parsed.to_string();
+    if canonical == s.to_ascii_uppercase() {
+        Ok(canonical)
+    } else {
+        Err(UlidRejection::Aliased { canonical })
+    }
+}
+
 /// Newtype wrapper around ULID for type safety and consistent serialisation.
 /// Stores the canonical uppercase Crockford base32 representation.
 ///
@@ -42,9 +122,26 @@ impl<'de> serde::Deserialize<'de> for BlockId {
         // ergonomics intact while hardening the real-ULID path. ASCII-only
         // uppercase matches `from_trusted` byte-for-byte for those non-ULID
         // inputs (AGENTS.md invariant #8).
-        match ulid::Ulid::from_str(&s) {
-            Ok(parsed) => Ok(Self(parsed.to_string())),
-            Err(_) => Ok(Self(s.to_ascii_uppercase())),
+        //
+        // #4284 — the THIRD class, which used to be folded into the first and
+        // is the reason this is no longer a two-arm match: a 26-character
+        // Crockford string whose leading character encodes more than 2 bits
+        // DECODES (so it took the `Ok` arm) but decodes to a different id than
+        // it spells, because `ulid`'s base32 decoder shifts 130 bits into a
+        // `u128` without an overflow check. Canonicalising it was therefore
+        // not canonicalisation at all — it silently RETARGETED the op at
+        // another block, and this is the entry point the doc above names as
+        // genuinely untrusted. It is refused rather than passed through
+        // unchanged: the lenient fallback exists to keep synthetic fixtures
+        // working, and a string that reads as a well-formed ULID to every
+        // decoder in the system is not one of those.
+        match canonical_ulid(&s) {
+            Ok(canonical) => Ok(Self(canonical)),
+            Err(UlidRejection::Aliased { canonical }) => Err(serde::de::Error::custom(format!(
+                "invalid block id '{s}': it {}",
+                UlidRejection::Aliased { canonical }
+            ))),
+            Err(UlidRejection::Malformed(_)) => Ok(Self(s.to_ascii_uppercase())),
         }
     }
 }
@@ -85,12 +182,26 @@ impl BlockId {
     ///
     /// assert!(BlockId::from_string("not-a-ulid").is_err());
     /// ```
+    ///
+    /// #4284 — so is a 26-character base32 string that OVERFLOWS the 128-bit
+    /// ULID range. It decodes (the `ulid` crate does not range-check), but to
+    /// a different id than it spells, so accepting it would mean returning an
+    /// id the caller never supplied:
+    ///
+    /// ```
+    /// use agaric_core::ulid::BlockId;
+    ///
+    /// assert!(BlockId::from_string("TT000000000000000000000000").is_err());
+    /// ```
     pub fn from_string(s: impl Into<String>) -> Result<Self, crate::error::AppError> {
         let s = s.into();
-        let parsed = ulid::Ulid::from_str(&s)
-            .map_err(|e| crate::error::AppError::Ulid(format!("Invalid ULID '{s}': {e}")))?;
-        // Store the canonical uppercase form, not the original input
-        Ok(Self(parsed.to_string()))
+        // #4284: `canonical_ulid` rejects BOTH the malformed input the `ulid`
+        // decoder complains about and the overflowing one it silently
+        // rewrites, so this constructor's contract is now what its name always
+        // implied — the id it returns is the id it was given.
+        canonical_ulid(&s)
+            .map(Self)
+            .map_err(|e| crate::error::AppError::Ulid(format!("Invalid ULID '{s}': {e}")))
     }
 
     /// Get the inner string reference.
