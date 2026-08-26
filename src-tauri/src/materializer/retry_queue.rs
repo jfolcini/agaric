@@ -1116,6 +1116,30 @@ pub async fn sweep_once(
                     )
                     .await?;
                 }
+                Ok(ApplyOpSweepDisposition::SupersededByNewerOp { slot }) => {
+                    // #3294: a later op on the same block already wrote the
+                    // same logical slot (property key / tag membership / tree
+                    // position) under strict LWW. The projections for those op
+                    // types are unguarded writes with no `created_at`
+                    // comparison, so re-applying this stale op hours later
+                    // would flip the user's value back in BOTH the engine and
+                    // SQL and export the regression over sync. The newer op
+                    // makes this op's effect moot — retire the row.
+                    tracing::info!(
+                        block_id = %row.block_id,
+                        task_kind = %row.task_kind,
+                        slot,
+                        "retiring persisted ApplyOp row: a later op wrote the same \
+                         logical slot — re-applying would regress a newer value (#3294)"
+                    );
+                    clear_entry(
+                        write_pool,
+                        &row.block_id,
+                        &row.task_kind,
+                        materializer.metrics(),
+                    )
+                    .await?;
+                }
                 Err(e) => {
                     tracing::warn!(
                         block_id = %row.block_id,
@@ -1228,6 +1252,146 @@ enum ApplyOpSweepDisposition {
     /// `apply_edit_block_via_loro` splices `to_text` and projects the
     /// snapshot, overwriting the newer content in both engine and SQL.
     SupersededByEdit,
+    /// #3294: a later op on the same block already wrote the SAME logical
+    /// WRITE SLOT this op writes (see [`WriteSlot`]). Re-applying this stale
+    /// op would regress the value the user observed — the property/tag/move
+    /// analogue of [`Self::SupersededByEdit`]. `slot` names the slot family
+    /// for the retirement log line.
+    SupersededByNewerOp { slot: &'static str },
+}
+
+/// #3294: the logical WRITE SLOT a swept op targets — the unit of state that
+/// re-applying the op would overwrite WHOLESALE.
+///
+/// This is the generalisation of the #850 `edit_block` gate. #850's scoping
+/// comment ("only a newer edit — not e.g. a delete/restore …") is often read
+/// as "cross-op-type supersession is unsafe"; it is not. What makes a later
+/// `delete_block` a non-superseder of a stale `edit_block` is that the two
+/// write DIFFERENT slots (`deleted_at` vs content), so the stale edit's
+/// content should still land. Supersession is a statement about the SLOT, not
+/// about the op type or the value written into it — two `edit_block`s write
+/// opposite CONTENT into one slot and either supersedes the other, and the
+/// same is true of `set_property`/`delete_property` and `add_tag`/`remove_tag`.
+///
+/// The gate fires only when the later op writes the WHOLE of what the stale op
+/// writes. That is why `create_block` is deliberately absent even though it
+/// also establishes a tree position: its write set is
+/// `{existence, type, content, position}`, a strict SUPERSET of a
+/// `move_block`'s `{position}`, so a later move must NOT retire a stale create
+/// (the block would then never exist at all).
+#[derive(Debug, PartialEq, Eq)]
+enum WriteSlot {
+    /// `(block_id, key)` — one property's value. Written by BOTH
+    /// `set_property` (to a value) and `delete_property` (to absent). The two
+    /// are opposite VALUES into one slot, so a later op of EITHER type
+    /// supersedes an earlier op of either type. The projection is an
+    /// unguarded `UPDATE blocks SET {col} = ?` (reserved keys), a
+    /// `blocks.space_id` page-group fan-out (`space`), or a
+    /// `block_properties` UPSERT/DELETE — none of which compare `created_at`.
+    Property { key: String },
+    /// `(block_id, tag_id)` — one tag-membership bit. `block_tags` is a bare
+    /// `(block_id, tag_id)` PRIMARY KEY with no `inherited` discriminator
+    /// (migration 0061), so membership IS a single boolean and `add_tag` /
+    /// `remove_tag` write `true` / `false` into it. The descendant fan-out
+    /// (`propagate_tag_to_descendants` / `remove_inherited_tag`) is a pure
+    /// function of that bit plus the descendant set at apply time, so the
+    /// later op's own fan-out already established the observed state.
+    TagMembership { tag_id: String },
+    /// `(block_id)` — the block's tree position (effective parent + sibling
+    /// slot). Written ONLY by `move_block` here. `apply_move_block_via_loro`
+    /// writes `parent_id` + `position` into the engine by per-key register
+    /// LWW (i.e. LAST-APPLIED wins, NOT `created_at` LWW) and then reprojects
+    /// the OLD and NEW sibling groups densely, so a stale re-apply regresses
+    /// not just this block but the ordering of both sibling groups. Everything
+    /// in the move tail — the #4112 tombstoned-ancestor sweep and
+    /// `recompute_subtree_inheritance` — is a function of the resulting
+    /// position, so a later move fully determines all of it.
+    TreePosition,
+}
+
+impl WriteSlot {
+    /// Short slot-family name for the retirement log line.
+    fn name(&self) -> &'static str {
+        match self {
+            WriteSlot::Property { .. } => "property",
+            WriteSlot::TagMembership { .. } => "tag_membership",
+            WriteSlot::TreePosition => "tree_position",
+        }
+    }
+
+    /// Classify a swept record's write slot, or `None` when this op type has
+    /// no slot the #3294 gate can decide.
+    ///
+    /// The match over [`OpType`] is EXHAUSTIVE with no catch-all arm, per the
+    /// in-crate invariant on that enum (`agaric_store::op::OpType`): adding a
+    /// new op type must force an explicit decision here rather than silently
+    /// inheriting "no gate". An `op_type` string that does not parse (a
+    /// forward-migrated log) is treated as ungated — conservative, the op
+    /// still re-applies.
+    ///
+    /// The slot KEY is parsed out of the record's own payload in Rust rather
+    /// than in SQL so that a malformed/absent key degrades to `None`
+    /// (no gate, op re-applies) instead of matching a SQL `NULL` against other
+    /// rows' NULL keys.
+    fn of(record: &agaric_store::op_log::OpRecord) -> Option<Self> {
+        use agaric_store::op::OpType;
+        use std::str::FromStr;
+
+        let op_type = OpType::from_str(&record.op_type).ok()?;
+        match op_type {
+            OpType::SetProperty | OpType::DeleteProperty => Some(WriteSlot::Property {
+                key: payload_string_field(&record.payload, "key")?,
+            }),
+            OpType::AddTag | OpType::RemoveTag => Some(WriteSlot::TagMembership {
+                tag_id: payload_string_field(&record.payload, "tag_id")?,
+            }),
+            OpType::MoveBlock => Some(WriteSlot::TreePosition),
+            // Deliberately NOT gated by #3294 — each for a stated reason:
+            //
+            // * `CreateBlock`: its write set strictly CONTAINS a
+            //   `move_block`'s (see the type docstring). Retiring a create
+            //   because the block was later moved would mean the block never
+            //   exists.
+            // * `EditBlock`: already gated by the #850 twin above.
+            // * `PurgeBlock`: terminal, and it is the SUPERSEDER in the #621 /
+            //   #2212 gates — nothing supersedes it.
+            // * `DeleteBlock` / `RestoreBlock`: the `deleted_at` slot is NOT a
+            //   per-block slot. Both cascade over a descendant cohort with NO
+            //   per-descendant op_log rows (the same shape #2212 needed a
+            //   whole ancestry CTE for), and `deleted_at` is a function of the
+            //   converged tree rather than of any single op, so a same-block
+            //   `created_at` comparison is not the right decision procedure.
+            //   #621 deferred this interplay on purpose; #3294 keeps it
+            //   deferred rather than widening on a guess.
+            // * `AddAttachment` / `DeleteAttachment` / `RenameAttachment`:
+            //   keyed by `attachment_id`, not `block_id` — `DeleteAttachment`
+            //   carries no `block_id` at all — so they are outside this gate's
+            //   `block_id`-scoped predicate entirely.
+            OpType::CreateBlock
+            | OpType::EditBlock
+            | OpType::DeleteBlock
+            | OpType::RestoreBlock
+            | OpType::PurgeBlock
+            | OpType::AddAttachment
+            | OpType::DeleteAttachment
+            | OpType::RenameAttachment => None,
+        }
+    }
+}
+
+/// #3294: pull a top-level string field out of a serialized op payload.
+///
+/// `op_log.payload` stores the INNER payload struct only (the `op_type` serde
+/// tag lives in its own column — see
+/// `agaric_store::op_log::payload::serialize_inner_payload`), so the fields are
+/// at the JSON root: `$.key`, `$.tag_id`. Returns `None` on a parse failure or
+/// a missing/non-string field, which the caller treats as "no gate".
+fn payload_string_field(payload: &str, field: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()?
+        .get(field)?
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// Re-enqueue a previously-persisted [`MaterializeTask::ApplyOp`]
@@ -1241,7 +1405,10 @@ enum ApplyOpSweepDisposition {
 ///      resurrection); and if the swept op is an `edit_block` with a later
 ///      `edit_block` on the same block, do NOT re-apply (out-of-order content
 ///      regression).
-///   3. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`].
+///   3. #3294: gate on WRITE-SLOT supersession — if a later op wrote the same
+///      logical slot ([`WriteSlot`]: property key, tag membership, tree
+///      position), do NOT re-apply (out-of-order value regression).
+///   4. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`].
 ///
 /// A missing op_log row and a purge-/edit-superseded op are reported as
 /// [`ApplyOpSweepDisposition`] values (permanent — the caller retires the
@@ -1430,6 +1597,123 @@ async fn try_reenqueue_apply_op(
             .await?;
             if superseded_by_edit != 0 {
                 return Ok(ApplyOpSweepDisposition::SupersededByEdit);
+            }
+        }
+
+        // #3294: the SLOT gate — the generalisation of the #850 twin above to
+        // every op type whose re-apply is an unguarded overwrite of a value a
+        // later op already wrote. `set_property`, `delete_property`,
+        // `add_tag`, `remove_tag` and `move_block` previously fell straight
+        // through to `enqueue_foreground` with NO LWW check, and none of their
+        // projections compares `created_at`, so an op that failed twice under
+        // WAL contention and was persisted here would — up to an hour later —
+        // silently flip `todo_state` back to its old value, jump a block to
+        // its old parent, or resurrect a removed tag, in BOTH the Loro doc and
+        // SQL, and export the regression over sync (ApplyOp rows are exempt
+        // from give-up retirement, so it retries until it lands).
+        //
+        // The predicate is the SAME strict total order as the purge/edit gates
+        // (`created_at, device_id, seq`). It IS total: `(device_id, seq)` is
+        // the `op_log` PRIMARY KEY and `device_id` is a plain TEXT column
+        // (BINARY collation, migration 0079), so two distinct rows can never
+        // tie on all three and the strict `>` excludes the op from superseding
+        // itself.
+        //
+        // Retiring — rather than applying-then-losing — is what keeps the two
+        // projections in lockstep: the op is never applied at all, so the
+        // engine and SQL both simply do not see it. This gate can therefore
+        // not introduce engine/SQL divergence, only prevent it.
+        if let Some(slot) = WriteSlot::of(&record) {
+            // One compile-checked `query_scalar!` per slot family rather than a
+            // runtime `query()` over a match-selected string. The three sibling
+            // gates above are runtime queries because their predicates reuse
+            // NUMBERED parameters (`?1`…`?4`, and `?1` six times in the #2212
+            // ancestry CTE), which the macro form cannot express; this gate has
+            // no such need — repeating the bind for each reuse of `created_at`
+            // and `device_id` keeps it inside the macro, so the SQL is verified
+            // against the schema at compile time and needs no
+            // `dynamic-sql-baseline` slack.
+            let created_at = record.created_at;
+            let dev = record.device_id.as_str();
+            let seq = record.seq;
+            let superseded_by_slot_write: i64 = match &slot {
+                // The `json_extract(payload, '$.key')` expression and the
+                // `op_type IN ('set_property','delete_property')` filter are
+                // byte-identical to the partial expression index
+                // `idx_op_log_block_key_created` (migration 0098), so this is an
+                // equality seek on (block_id, key), not a scan.
+                WriteSlot::Property { key } => {
+                    let key = key.as_str();
+                    sqlx::query_scalar!(
+                        r#"SELECT EXISTS(
+                             SELECT 1 FROM op_log
+                             WHERE op_type IN ('set_property', 'delete_property')
+                               AND block_id = ?
+                               AND json_extract(payload, '$.key') = ?
+                               AND (created_at > ?
+                                    OR (created_at = ?
+                                        AND (device_id > ?
+                                             OR (device_id = ? AND seq > ?))))
+                           ) AS "e!: i64""#,
+                        block_id,
+                        key,
+                        created_at,
+                        created_at,
+                        dev,
+                        dev,
+                        seq,
+                    )
+                    .fetch_one(read_pool)
+                    .await?
+                }
+                WriteSlot::TagMembership { tag_id } => {
+                    let tag_id = tag_id.as_str();
+                    sqlx::query_scalar!(
+                        r#"SELECT EXISTS(
+                             SELECT 1 FROM op_log
+                             WHERE op_type IN ('add_tag', 'remove_tag')
+                               AND block_id = ?
+                               AND json_extract(payload, '$.tag_id') = ?
+                               AND (created_at > ?
+                                    OR (created_at = ?
+                                        AND (device_id > ?
+                                             OR (device_id = ? AND seq > ?))))
+                           ) AS "e!: i64""#,
+                        block_id,
+                        tag_id,
+                        created_at,
+                        created_at,
+                        dev,
+                        dev,
+                        seq,
+                    )
+                    .fetch_one(read_pool)
+                    .await?
+                }
+                WriteSlot::TreePosition => {
+                    sqlx::query_scalar!(
+                        r#"SELECT EXISTS(
+                         SELECT 1 FROM op_log
+                         WHERE op_type = 'move_block'
+                           AND block_id = ?
+                           AND (created_at > ?
+                                OR (created_at = ?
+                                    AND (device_id > ?
+                                         OR (device_id = ? AND seq > ?))))
+                       ) AS "e!: i64""#,
+                        block_id,
+                        created_at,
+                        created_at,
+                        dev,
+                        dev,
+                        seq,
+                    )
+                    .fetch_one(read_pool)
+                    .await?
+                }
+            };
+            if superseded_by_slot_write != 0 {
+                return Ok(ApplyOpSweepDisposition::SupersededByNewerOp { slot: slot.name() });
             }
         }
     }
@@ -3321,6 +3605,460 @@ mod tests {
         assert_eq!(
             n, 1,
             "a lone edit (no later edit) must be re-enqueued — the gate is strict (#850)"
+        );
+        mat.shutdown();
+    }
+
+    // ---------------------------------------------------------------
+    // #3294 — the WRITE-SLOT gate (`ApplyOpSweepDisposition::
+    // SupersededByNewerOp`). Each test names the ONE gate arm it pins;
+    // the deterministic discriminators are the pair
+    // (sweep return count, remaining retry rows): a RETIRED row is
+    // (0, 0), a RE-ENQUEUED row is (1, 1 — leased, not cleared), and a
+    // transient error would be (0, 1). Post-state assertions on `blocks`
+    // are corroborating only.
+    // ---------------------------------------------------------------
+
+    /// Seed one persisted ApplyOp retry row for `(device_id, seq)`, due now.
+    async fn seed_apply_op_retry_row(pool: &SqlitePool, device_id: &str, seq: i64) {
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent = crate::db::now_ms();
+        let task_kind = format!("ApplyOp:{seq}:{device_id}");
+        sqlx::query(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("__APPLY_OP__")
+        .bind(&task_kind)
+        .bind(1_i64)
+        .bind(recent)
+        .bind(past)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #3294 (the headline scenario, verbatim from the issue): a
+    /// `set_property(todo_state = DONE)` fails twice under WAL contention and
+    /// is persisted as an ApplyOp row. The user then sets `todo_state = TODO`,
+    /// which applies normally. Up to an hour later the sweeper must NOT
+    /// re-apply `DONE` — the projection is an unguarded
+    /// `UPDATE blocks SET todo_state = ?` with no `created_at` comparison, so
+    /// re-applying would silently flip the user's completed state back in both
+    /// the engine and SQL and export the regression over sync.
+    ///
+    /// Pins the `WriteSlot::Property` arm.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_stale_set_property_superseded_by_later_set_property_3294() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // The block carries the value the user observed (the LATER op's).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, todo_state) \
+             VALUES ('BLK3294PROP', 'content', 'task', 'TODO')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let t0 = crate::db::now_ms() - 60_000;
+        // seq 1: the failed-then-persisted STALE set_property(todo_state=DONE).
+        insert_sweep_op(
+            &pool,
+            "dev-3294p",
+            1,
+            "set_property",
+            r#"{"block_id":"BLK3294PROP","key":"todo_state","value_text":"DONE","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK3294PROP",
+            t0,
+        )
+        .await;
+        // seq 2: the LATER set_property(todo_state=TODO) that already won.
+        insert_sweep_op(
+            &pool,
+            "dev-3294p",
+            2,
+            "set_property",
+            r#"{"block_id":"BLK3294PROP","key":"todo_state","value_text":"TODO","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK3294PROP",
+            t0 + 1000,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "dev-3294p", 1).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "a slot-superseded set_property must NOT be re-enqueued (#3294)"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "the slot-superseded set_property row must be RETIRED, not left pending (#3294)"
+        );
+        let todo_state: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = 'BLK3294PROP'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            todo_state.as_deref(),
+            Some("TODO"),
+            "sweeping a stale set_property must not flip the user's newer todo_state back (#3294)"
+        );
+        mat.shutdown();
+    }
+
+    /// #3294 (cross-type, both directions): `set_property` and
+    /// `delete_property` write OPPOSITE VALUES into the SAME `(block_id, key)`
+    /// slot — a value, and absence — exactly as two `edit_block`s write
+    /// opposite content into the content slot. So each must supersede the
+    /// other. Gating only same-op-type would leave both of these regressions
+    /// live.
+    ///
+    /// Pins the cross-type `op_type IN ('set_property','delete_property')`
+    /// half of the `WriteSlot::Property` arm.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_property_ops_superseded_across_op_types_3294() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        // (a) stale set_property superseded by a later delete_property.
+        insert_sweep_op(
+            &pool,
+            "dev-3294x",
+            1,
+            "set_property",
+            r#"{"block_id":"BLK3294XA","key":"priority","value_text":"A","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK3294XA",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-3294x",
+            2,
+            "delete_property",
+            r#"{"block_id":"BLK3294XA","key":"priority"}"#,
+            "BLK3294XA",
+            t0 + 1000,
+        )
+        .await;
+        // (b) stale delete_property superseded by a later set_property.
+        insert_sweep_op(
+            &pool,
+            "dev-3294x",
+            3,
+            "delete_property",
+            r#"{"block_id":"BLK3294XB","key":"due_date"}"#,
+            "BLK3294XB",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-3294x",
+            4,
+            "set_property",
+            r#"{"block_id":"BLK3294XB","key":"due_date","value_text":null,"value_num":null,"value_date":"2026-01-01","value_ref":null,"value_bool":null}"#,
+            "BLK3294XB",
+            t0 + 1000,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "dev-3294x", 1).await;
+        seed_apply_op_retry_row(&pool, "dev-3294x", 3).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "neither cross-type property op may be re-enqueued: set_property and \
+             delete_property write the same (block_id, key) slot (#3294)"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "both cross-type-superseded property rows must be RETIRED (#3294)"
+        );
+        mat.shutdown();
+    }
+
+    /// #3294 (slot key, not op type): a later `set_property` on a DIFFERENT
+    /// key does NOT write this op's slot, so the stale op must still
+    /// re-apply. This is the assertion that distinguishes the implemented
+    /// `(block_id, key)` gate from a coarser "any later property op on this
+    /// block" gate, which would silently DROP the user's other property.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_set_property_when_later_op_writes_another_key_3294() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-3294k",
+            1,
+            "set_property",
+            r#"{"block_id":"BLK3294KEY","key":"todo_state","value_text":"DONE","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK3294KEY",
+            t0,
+        )
+        .await;
+        // Later, but a DIFFERENT key — a different slot.
+        insert_sweep_op(
+            &pool,
+            "dev-3294k",
+            2,
+            "set_property",
+            r#"{"block_id":"BLK3294KEY","key":"priority","value_text":"A","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK3294KEY",
+            t0 + 1000,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "dev-3294k", 1).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "a later property op on a DIFFERENT key must not retire this op — the \
+             gate is keyed on (block_id, key), not on op type (#3294)"
+        );
+        mat.shutdown();
+    }
+
+    /// #3294 (strictness boundary, mirroring the #850 twin): the LWW
+    /// comparison is STRICT, so a lone `set_property` is never superseded by
+    /// ITSELF and must be re-enqueued normally.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_lone_set_property_not_self_superseded_3294() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-3294s",
+            1,
+            "set_property",
+            r#"{"block_id":"BLK3294SOLO","key":"todo_state","value_text":"DONE","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK3294SOLO",
+            t0,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "dev-3294s", 1).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "a lone set_property (no later op on the slot) must be re-enqueued — \
+             the gate is strict (#3294)"
+        );
+        mat.shutdown();
+    }
+
+    /// #3294 (the "a removed tag reappears" scenario): a stale `add_tag`
+    /// superseded by a LATER `remove_tag` on the same `(block_id, tag_id)`.
+    /// `block_tags` is a bare `(block_id, tag_id)` PRIMARY KEY with no
+    /// `inherited` discriminator (migration 0061), so membership is a single
+    /// boolean slot and the two ops write `true` / `false` into it. This is
+    /// the case a same-op-type-only gate could never catch.
+    ///
+    /// Pins the `WriteSlot::TagMembership` arm.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_stale_add_tag_superseded_by_later_remove_tag_3294() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-3294t",
+            1,
+            "add_tag",
+            r#"{"block_id":"BLK3294TAG","tag_id":"TAG3294A"}"#,
+            "BLK3294TAG",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-3294t",
+            2,
+            "remove_tag",
+            r#"{"block_id":"BLK3294TAG","tag_id":"TAG3294A"}"#,
+            "BLK3294TAG",
+            t0 + 1000,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "dev-3294t", 1).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "a stale add_tag superseded by a later remove_tag on the same tag must \
+             NOT be re-enqueued — the removed tag would reappear (#3294)"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "the tag-superseded row must be RETIRED (#3294)"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM block_tags WHERE block_id = 'BLK3294TAG'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            0,
+            "the tag the user removed must stay removed (#3294)"
+        );
+        mat.shutdown();
+    }
+
+    /// #3294 (slot key, tag half): a later tag op on a DIFFERENT `tag_id`
+    /// writes a different membership slot and must NOT retire this op —
+    /// otherwise removing tag B would silently drop a pending add of tag A.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_add_tag_when_later_op_targets_another_tag_3294() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-3294u",
+            1,
+            "add_tag",
+            r#"{"block_id":"BLK3294TAG2","tag_id":"TAG3294A"}"#,
+            "BLK3294TAG2",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-3294u",
+            2,
+            "remove_tag",
+            r#"{"block_id":"BLK3294TAG2","tag_id":"TAG3294B"}"#,
+            "BLK3294TAG2",
+            t0 + 1000,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "dev-3294u", 1).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "a later tag op on a DIFFERENT tag_id must not retire this op — the gate \
+             is keyed on (block_id, tag_id) (#3294)"
+        );
+        mat.shutdown();
+    }
+
+    /// #3294 (`move_block`): a stale move superseded by a LATER move on the
+    /// same block. A move's write set is exactly the block's tree position
+    /// (effective parent + sibling slot), and `apply_move_block_via_loro`
+    /// writes it into the engine by per-key REGISTER LWW — last-APPLIED wins,
+    /// not `created_at` LWW — then densely reprojects BOTH the old and new
+    /// sibling groups. So a stale re-apply regresses this block's parent and
+    /// the ordering of two whole sibling groups. A later move rewrites all of
+    /// it, so it fully supersedes.
+    ///
+    /// Pins the `WriteSlot::TreePosition` arm.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_stale_move_block_superseded_by_later_move_3294() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-3294m",
+            1,
+            "move_block",
+            r#"{"block_id":"BLK3294MOVE","new_parent_id":"PARENTOLD","new_position":1,"new_index":0}"#,
+            "BLK3294MOVE",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-3294m",
+            2,
+            "move_block",
+            r#"{"block_id":"BLK3294MOVE","new_parent_id":"PARENTNEW","new_position":1,"new_index":0}"#,
+            "BLK3294MOVE",
+            t0 + 1000,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "dev-3294m", 1).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "a stale move superseded by a later move on the same block must NOT be \
+             re-enqueued — the block would jump back to its old parent (#3294)"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "the move-superseded row must be RETIRED (#3294)"
+        );
+        mat.shutdown();
+    }
+
+    /// #3294 (the excluded-op-type boundary that keeps the gate honest): a
+    /// `create_block` is NOT retired by a later `move_block` on the same
+    /// block. A move writes only the position slot; a create writes
+    /// `{existence, type, content, position}` — a strict SUPERSET. Retiring
+    /// the create because the block was later moved would mean the block never
+    /// exists at all. This pins the deliberate `OpType::CreateBlock => None`
+    /// arm of `WriteSlot::of`, i.e. that the gate is "the later op writes the
+    /// WHOLE of what this op writes", not merely "some overlap".
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_create_block_despite_later_move_3294() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-3294c",
+            1,
+            "create_block",
+            r#"{"block_id":"BLK3294CREATE","block_type":"content","content":"x","parent_id":null,"position":1}"#,
+            "BLK3294CREATE",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-3294c",
+            2,
+            "move_block",
+            r#"{"block_id":"BLK3294CREATE","new_parent_id":null,"new_position":1,"new_index":0}"#,
+            "BLK3294CREATE",
+            t0 + 1000,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "dev-3294c", 1).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "a create_block must NOT be retired by a later move — a move supersedes \
+             only the position slot, and the create also creates the block (#3294)"
         );
         mat.shutdown();
     }
