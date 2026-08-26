@@ -370,6 +370,15 @@ function isLocalPathCandidate(raw) {
 //     later citation in the file rather than every later citation in the
 //     paragraph. `extractCommentText` inserts a blank line between two
 //     comments with code between them for exactly this reason.
+//   - #4291 review — a line that is blank APART FROM the `*` GUTTER of a
+//     `/** … */` block resets it identically, because that is the only
+//     shape a paragraph break HAS inside a block comment: the blank line
+//     between two JSDoc paragraphs is written ` *`, never empty. Matching
+//     only the empty form meant the bound above simply did not exist within
+//     one comment — a single unbalanced backtick in a long doc comment
+//     flipped the pairing for the whole REST of that comment, which in this
+//     tree is routinely a hundred lines of prose citing a dozen paths. The
+//     `*` is optional in the pattern, so both spellings reset.
 //
 // The 2..200 length window is a FILTER on what is yielded, never on what is
 // consumed: a span outside it is still paired and skipped, so an over-long
@@ -377,9 +386,60 @@ function isLocalPathCandidate(raw) {
 // failure the old regex had, where a non-matching span left its delimiters
 // free to mispair with the next one).
 //
+// #4291 review, THE FAIL-CLOSED BACKSTOP. Pairing across newlines fixed a
+// hole in one direction and opened a smaller one in the other: cross-line
+// pairing can also HIDE a citation the old line-scoped regex found. An
+// unbalanced backtick on one line, a citation on the NEXT line and no
+// paragraph break between them pairs the stray opener with the citation's
+// OPENING backtick — the citation is then "inside a code span" and skipped
+// entirely, invisible to the guard and to its reporting, which is the
+// failure mode #4220 exists to eliminate.
+//
+// The reset above cannot reach that shape (there is no paragraph break to
+// reset AT), so the segment gets a second, LINE-SCOPED pass — the exact
+// pre-#4220 regex, applied per line — whenever pass 1 ends the segment with
+// an UNRESOLVED opener (`openAt !== -1`). Every yield of both passes is
+// unioned; each caller already dedupes into a Set/Map, so a span both passes
+// see costs nothing.
+//
+// The trigger is the stray backtick, NOT "some span crossed a newline". The
+// wider trigger was tried and rejected: a segment that crosses newlines while
+// staying perfectly balanced is pass 1 pairing correctly, exactly as a
+// CommonMark parser would, and re-scanning it line by line invents citations
+// out of the plain prose sitting between two legitimately-closed spans. That
+// is a guard reddening a VALID doc, which gets the guard suppressed — the one
+// outcome worse than a miss. The long comment inside the loop works the
+// example through. An unresolved `openAt` is the only signal that actually
+// means "a stray backtick is here", which is the only condition under which
+// the line-scoped regex can find something the global pairing did not.
+//
+// What the backstop does and does not buy:
+//   - It can only ADD candidates, never remove one, so it is fail-CLOSED by
+//     construction: the worst case is judging a citation the cross-line
+//     pass would have skipped, and "judged" is the direction a drift guard
+//     must err in. Widening what is SKIPPED would have been the opposite.
+//   - It does NOT catch every divergence, and claiming otherwise here was a
+//     defect of its own. STRAY BACKTICKS THAT COME IN PAIRS leave the
+//     segment balanced and the backstop unarmed: a stray opener, a citation,
+//     then a second stray opener is four backticks, pass 1 pairs 1-2 and
+//     3-4, the citation is consumed as DELIMITERS rather than yielded as
+//     content, `openAt` ends at -1, and that citation is never judged —
+//     exit 0 where the wider "a span crossed a newline" trigger this one
+//     replaced exited 1 (measured on the fixture, both ways). This is a
+//     KNOWN LIMITATION, kept on purpose because the alternative reds valid
+//     docs, and it is fixture'd (`spanPairingScenarios`, the paired-stray
+//     shape) so it is demonstrated rather than taken on trust.
+//   - The gap is bounded to ONE PARAGRAPH: the ` *`/blank-line reset is
+//     independent of all of this, so an unlucky paragraph hides its own
+//     citations and nothing after it. That bound is what the fixture
+//     asserts; the gap itself is deliberately not pinned green, so closing
+//     it later does not red the suite.
+//
 // @param {string} text
 function* inlineCodeSpans(text) {
-  for (const segment of text.split(/\n[ \t\r]*\n/)) {
+  // A paragraph break: an empty line, or a line holding nothing but a block
+  // comment's ` *` gutter.
+  for (const segment of text.split(/\n[ \t\r]*\*?[ \t\r]*\n/)) {
     let openAt = -1
     for (const run of segment.matchAll(/`+/g)) {
       if (run[0].length > 1) {
@@ -394,6 +454,28 @@ function* inlineCodeSpans(text) {
       openAt = -1
       if (content.length < 2 || content.length > 200) continue
       yield content
+    }
+    // The backstop below is triggered by a genuinely UNBALANCED backtick —
+    // `openAt` still open when the segment runs out — not merely by "some
+    // span crossed a newline". A span crossing a newline with the segment
+    // otherwise fully balanced (`openAt` closed) is pass1's own pairing
+    // working exactly as intended: every backtick in the segment paired off
+    // cleanly, left to right, the same way a real Markdown/CommonMark
+    // parser would read it, so there is nothing for a second pass to
+    // recover. Triggering on "crossed a newline" alone re-scans that
+    // already-correct segment anyway and can turn a stretch of PLAIN PROSE
+    // sitting between two legitimately-closed spans (e.g. a doc comment
+    // quoting a multi-line example that itself contains a properly nested
+    // `` `x` `` — two more single backticks, still perfectly balanced) into
+    // a phantom citation the backstop invents from a coincidental pair of
+    // backtick characters — a false positive this diff's own #4291 fix
+    // must not introduce while closing the fail-open hole. An unresolved
+    // `openAt` is the one signal that actually means "a stray backtick is
+    // here", which is the only condition under which the old line-scoped
+    // regex can find something pass1's global pairing did not.
+    if (openAt === -1) continue
+    for (const line of segment.split('\n')) {
+      for (const span of line.matchAll(/`([^`\n]{2,200})`/g)) yield span[1]
     }
   }
 }
@@ -1848,6 +1930,164 @@ function spanPairingScenarios(root) {
       contiguous.status === 1 && /contiguous-miss\.ts/.test(contiguous.stderr),
       `expected 1 naming contiguous-miss.ts, got ${contiguous.status}: ${contiguous.stderr}`,
     )
+
+    // #4291 review, SHAPE 3: the blast-radius bound WITHIN one block
+    // comment. A paragraph break inside `/** … */` is a ` *` line, never an
+    // EMPTY one, so a reset keyed on `\n\s*\n` alone never fired here at
+    // all — one unbalanced backtick flipped the pairing for the whole rest
+    // of the comment, which in this tree is routinely a hundred lines of
+    // prose citing a dozen paths.
+    //
+    // The second paragraph carries a MULTI-LINE span of its own on purpose:
+    // that is what makes this fixture isolate the ` *` reset. Without it,
+    // the line-scoped backstop below (shape 4) would find the citation
+    // anyway and the fixture would pass against an unreset scan, proving
+    // nothing about this bullet.
+    writeFileSync(join(dir, 'src', 'contiguous.ts'), 'export const C = 3\n')
+    const docBreak = (cited) =>
+      [
+        '/**',
+        ' * A stray closer: resolver filters deleted_at IS NULL` on every row.',
+        ' *',
+        ' * The filter is `sanitize_fts_query` + `WHERE',
+        ` * fts_blocks MATCH ?1\` (\`${cited}\`, SQL at the top).`,
+        ' */',
+        'export const D = 4',
+        '',
+      ].join('\n')
+    writeFileSync(join(dir, 'src', 'doc-break.ts'), docBreak('src/nowhere/after-doc-break.ts'))
+    git('add', '-A')
+    const afterDocBreak = run(['--worktree'])
+    record(
+      'a ` *` line is a paragraph break, so a stray backtick cannot hide a citation later in the SAME doc comment',
+      afterDocBreak.status === 1 && /after-doc-break\.ts/.test(afterDocBreak.stderr),
+      `expected 1 naming after-doc-break.ts, got ${afterDocBreak.status}: ${afterDocBreak.stderr}`,
+    )
+
+    // The same shape citing a REAL path is green — the reset changed which
+    // citations are SEEN, not how they are judged.
+    writeFileSync(join(dir, 'src', 'doc-break.ts'), docBreak('src/real.ts'))
+    git('add', '-A')
+    const docBreakFixed = run(['--worktree'])
+    record(
+      'the SAME ` *`-paragraph-break shape citing a REAL path is green',
+      docBreakFixed.status === 0,
+      `expected 0, got ${docBreakFixed.status}: ${docBreakFixed.stderr}`,
+    )
+
+    // #4291 review, SHAPE 4: the direction cross-line pairing made WORSE,
+    // and the reason the backstop is line-scoped rather than a wider skip.
+    // An unbalanced OPENER on one line and a citation on the NEXT, with no
+    // paragraph break between them, pairs the stray opener with the
+    // citation's OPENING backtick — so the citation reads as span CONTENT
+    // and is skipped. The pre-#4220 line-scoped regex found this one; only
+    // the cross-line scan loses it, which is a fail-OPEN regression in a
+    // guard. Red proves the union of both passes still judges it.
+    const hidden = (cited) =>
+      [
+        '/**',
+        ' * A stray opener: the resolver filters `deleted_at',
+        ` * \`${cited}\` names the site.`,
+        ' */',
+        'export const E = 5',
+        '',
+      ].join('\n')
+    writeFileSync(join(dir, 'src', 'hidden.ts'), hidden('src/nowhere/hidden-by-pairing.ts'))
+    git('add', '-A')
+    const hiddenByPairing = run(['--worktree'])
+    record(
+      'a stray OPENER on the previous line does not hide the next line’s citation (fail-closed backstop)',
+      hiddenByPairing.status === 1 && /hidden-by-pairing\.ts/.test(hiddenByPairing.stderr),
+      `expected 1 naming hidden-by-pairing.ts, got ${hiddenByPairing.status}: ${hiddenByPairing.stderr}`,
+    )
+
+    // …and the backstop only ADDS candidates: the same shape citing a real
+    // path stays green, so the second pass cannot manufacture a miss.
+    writeFileSync(join(dir, 'src', 'hidden.ts'), hidden('src/real.ts'))
+    git('add', '-A')
+    const hiddenFixed = run(['--worktree'])
+    record(
+      'the SAME stray-opener shape citing a REAL path is green',
+      hiddenFixed.status === 0,
+      `expected 0, got ${hiddenFixed.status}: ${hiddenFixed.stderr}`,
+    )
+
+    // Adversarial review finding — the backstop's own false-positive edge:
+    // a segment that is FULLY BALANCED (no stray backtick anywhere — pass1
+    // ends the scan with `openAt` closed) but still crosses a newline,
+    // because it legitimately quotes a multi-line example. Two clean,
+    // independent, correctly-closed spans (`` `error: cannot stat…` `` and
+    // `` `: No such file` ``, four backticks, none of them stray) bracket
+    // ordinary prose that happens to be path-shaped. Gating the backstop on
+    // "some span crossed a newline" alone re-scans this already-correct
+    // segment and turns that prose into a phantom citation; gating it on an
+    // actually-unresolved `openAt` does not, because there is nothing
+    // unresolved here for a second pass to rescue.
+    const balanced = (cited) =>
+      [
+        '/**',
+        ' * Sample output: `error: cannot stat',
+        ` * \`${cited}\`: No such file\` was the original bug report.`,
+        ' */',
+        'export const F = 6',
+        '',
+      ].join('\n')
+    writeFileSync(join(dir, 'src', 'balanced.ts'), balanced('src/nowhere/phantom-citation.ts'))
+    git('add', '-A')
+    const balancedNoStray = run(['--worktree'])
+    record(
+      'a fully-balanced multi-line-crossing segment (no stray backtick) does not let the backstop invent a citation from plain prose',
+      balancedNoStray.status === 0,
+      `expected 0, got ${balancedNoStray.status}: ${balancedNoStray.stderr}`,
+    )
+
+    // #4291 review, THE RESIDUAL the `openAt !== -1` narrowing leaves open —
+    // fixture'd so it is DEMONSTRATED rather than merely described, because
+    // the header above used to claim "no divergence escapes it" and that was
+    // not true.
+    //
+    // Stray backticks that come in PAIRS leave the segment balanced. A stray
+    // opener, then a citation, then a SECOND stray opener is four backticks:
+    // pass1 pairs 1-2 and 3-4, the citation is consumed as DELIMITERS rather
+    // than yielded as content, `openAt` ends at -1, the backstop never runs,
+    // and the stale path is never judged. The wider "a span crossed a
+    // newline" trigger caught exactly this shape; narrowing it to an
+    // unresolved opener gave that up in exchange for the assertion directly
+    // above (measured on this fixture both ways), and the trade is the right
+    // one — a guard that reds a VALID doc gets suppressed, and a suppressed
+    // guard misses everything, not one paragraph.
+    //
+    // What is ASSERTED here is the part that is not a gap and stays true
+    // however the residual is later resolved: the blast radius. The hole is
+    // one PARAGRAPH wide, because the ` *` reset still fires, so the stale
+    // citation in the NEXT paragraph of the SAME comment is caught normally.
+    // The failure mode is a missed citation, never a wrong verdict on one
+    // that was read.
+    //
+    // Deliberately NOT asserted: that `paired-stray.ts` is absent from the
+    // output. Pinning the gap green would make the defect load-bearing and
+    // turn its eventual fix into a red suite. It is a known limitation, not
+    // a guarantee — the fixture demonstrates it, the comment names it, and
+    // the assertion covers only the bound around it.
+    const pairedStrayFixture = [
+      '/**',
+      ' * A stray opener: the resolver filters `deleted_at',
+      ' * `src/nowhere/paired-stray.ts` names the site, and `WHERE clause',
+      ' *',
+      ' * After the reset: `src/nowhere/after-paired-stray.ts` names it too.',
+      ' */',
+      'export const G = 7',
+      '',
+    ].join('\n')
+    writeFileSync(join(dir, 'src', 'paired-stray.ts'), pairedStrayFixture)
+    git('add', '-A')
+    const pairedStray = run(['--worktree'])
+    record(
+      'the paired-stray-backtick gap is bounded to its own paragraph: the citation after the ` *` reset is still judged (known limitation, documented above — no tracking issue by design)',
+      pairedStray.status === 1 && /after-paired-stray\.ts/.test(pairedStray.stderr),
+      `expected 1 naming after-paired-stray.ts, got ${pairedStray.status}: ${pairedStray.stderr}`,
+    )
+
     return results
   })
 }

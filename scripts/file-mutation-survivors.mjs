@@ -533,13 +533,26 @@ const FIRST_SEEN_PREFIX = /^(\d{4}-\d{2}-\d{2})\t/
  * copy-pasted slicer is how the two would eventually disagree about what
  * counts as a line. `parseChildLinks` keeps its own reader: its lines are
  * `#<number><TAB><area>`, not mutant ids.
+ *
+ * The boundary rule itself is split out into `markerBlockRange` for the same
+ * reason: `parseReanchorNotes` has to ask "is this line INSIDE a block?" and a
+ * second copy of the `indexOf` arithmetic is how that reader and this one would
+ * eventually disagree about where a block ends. One rule, two callers — and in
+ * particular both share the `end < start` case that returns nothing at all,
+ * which is the case a poisoned marker creates.
  */
-function markerBlockLines(body, startMarker, endMarker) {
-  if (!body) return []
+function markerBlockRange(body, startMarker, endMarker) {
+  if (!body) return null
   const start = body.indexOf(startMarker)
   const end = body.indexOf(endMarker)
-  if (start === -1 || end === -1 || end < start) return []
-  const block = body.slice(start + startMarker.length, end)
+  if (start === -1 || end === -1 || end < start) return null
+  return [start + startMarker.length, end]
+}
+
+function markerBlockLines(body, startMarker, endMarker) {
+  const range = markerBlockRange(body, startMarker, endMarker)
+  if (range === null) return []
+  const block = body.slice(range[0], range[1])
   // The block is a fenced code block; strip the ``` fences and blank lines.
   // Only the trailing whitespace is trimmed — a leading trim would eat the
   // first-seen prefix's own separator on a malformed line and silently mint a
@@ -772,26 +785,186 @@ function renderChildBlock(childLinks) {
  *     difference from the `// Stryker disable` directives #3593 rejected, and
  *     it is what makes the block safe to hand a triager at all.
  *
- * Rendered only when non-empty, like the child block: an empty pair of markers
- * is not state, and a body that never had a triage verdict recorded in it
- * should not carry the furniture for one. Re-seeding is a paste (the whole
- * block, markers included), which is also what a maintainer does the first
- * time.
+ * Rendered ALWAYS, empty included — unlike the child block, and deliberately
+ * so. The head above tells a triager to "copy the id into the
+ * accepted-equivalent block at the bottom of this body", and the how-to
+ * preamble that tells them the line shape lives inside this block: on an issue
+ * with nothing accepted yet, rendering only when non-empty meant the
+ * instructions pointed at a block that was not on the page, and the FIRST
+ * triager — the only one who has never seen the mechanism work — had to invent
+ * the marker syntax from the script source. So the empty block IS the template:
+ * markers, fence, and a line saying what goes between them. Measured, not
+ * estimated: 1085 characters of the body budget on every body that renders,
+ * which moves the #3257 clamp ceiling from 597 rust-shaped findings to 586. The
+ * ladder's rungs are unchanged — the block is STATE and was never a rung — and
+ * eleven findings of headroom is what the instruction being true costs.
+ *
+ * `reanchored` is the re-anchoring history (see `appendReanchorNote`): the
+ * filer's own note of the entries it dropped. It renders here, ABOVE the
+ * markers and therefore outside everything `parseAcceptedSurvivors` reads —
+ * which holds only because `noteSafeId` has broken the marker delimiters in
+ * every line spliced in here, whether this run wrote it (`appendReanchorNote`)
+ * or read it out of the previous body (`parseReanchorNotes`). Position alone
+ * does not buy it: the markers are found by `indexOf` over the whole body, so
+ * an unsanitised note ABOVE them can move the boundary and put itself INSIDE
+ * the block it was meant to sit outside. `reanchored` is therefore only ever
+ * the output of those two functions — hand this a raw body line and the
+ * guarantee is gone.
  */
-function renderAcceptedBlock(accepted, acceptedOn) {
-  if (accepted.length === 0) return []
+function renderAcceptedBlock(accepted, acceptedOn, reanchored = []) {
   const lines = [
     `### Accepted-equivalent mutants (${accepted.length})`,
     "_Hand-edited — **this block is yours, not the filer's**. Record a mutant here once triage has PROVEN it equivalent (unkillable), and the weekly run stops re-filing it: copy its id verbatim from the block above, in the same `<accepted-on date><TAB><mutant>` shape (the date is bookkeeping and is ignored). The filer never adds a line here. It only re-renders what it read, and DROPS any entry whose id matches no observed mutant — so an entry whose line has moved stops suppressing anything and that mutant re-reports normally, rather than staying silently hidden (#4173). An entry suppresses **only the one mutant it names**: a different mutant on the same line, same mutator or not, still reports._",
-    ACCEPTED_MARKER_START,
-    '```',
   ]
+  if (accepted.length === 0) {
+    lines.push(
+      '_Nothing accepted yet — **the empty block below is the template**. Paste one line per proven-unkillable mutant between the two marker comments, inside the fence, and the next run stops reporting it. Keep the marker comments exactly as they are: they are what the filer reads._',
+    )
+  }
+  if (reanchored.length > 0) {
+    lines.push(
+      `_Re-anchoring history — entries the filer DROPPED because they matched no observed mutant (their mutants report normally again until re-accepted). Kept in the body because a dropped entry is a triage verdict quietly expiring, and the run log that recorded the drop expires with the run; the ${MAX_REANCHOR_NOTES} most recent are kept. These are history, not state: the ids below are not suppressing anything._`,
+      ...reanchored,
+    )
+  }
+  lines.push(ACCEPTED_MARKER_START, '```')
   for (const id of accepted) {
     const on = acceptedOn.get(id)
     lines.push(on ? `${on}\t${id}` : id)
   }
   lines.push('```', ACCEPTED_MARKER_END)
   return lines
+}
+
+/**
+ * #4173 residual — the durable half of re-anchoring.
+ *
+ * Dropping a stale accepted entry is the SAFE direction (the mutant re-reports
+ * rather than staying hidden), but it also silently retires a triage verdict a
+ * human spent a session reaching, and until now the only record that it had
+ * happened was a line in a CI log that GitHub deletes with the run. If every
+ * recorded entry went stale in one run — a file rename does exactly that — the
+ * whole block vanished from the issue and nothing on the page said why.
+ *
+ * So the drop is written into the body itself, as prose OUTSIDE the markers,
+ * newest last and capped: bounded growth, and a triager who wonders why a
+ * mutant they accepted in March is back has the answer on the page they are
+ * already looking at.
+ *
+ * The ids in a note are deliberately NOT part of any findings list — #3245's
+ * "no finding appears twice" rule is about the lists a triager counts, and a
+ * history bullet is not one. A dropped id that later comes back as a live
+ * survivor is therefore in the state block AND named in the history, which is
+ * the honest rendering of "this came back after we retired it".
+ */
+const REANCHOR_NOTE_PREFIX = '- **Re-anchored '
+const MAX_REANCHOR_NOTES = 5
+
+/**
+ * A note is the ONE place this filer echoes HAND-EDITED body text back into the
+ * body, un-fenced and — because the note renders above the markers — EARLIER in
+ * it than `ACCEPTED_MARKER_START`. Every marker here is an HTML comment and
+ * `markerBlockLines` locates them with a bare `indexOf`, so an id carrying a
+ * marker delimiter does not merely look odd in the history: it MOVES the block
+ * boundary the next run reads.
+ *
+ * Both directions were reproducible, and the accepted block is hand-edited free
+ * text, so an id shaped like a marker only takes a bad paste (re-seeding "the
+ * whole block, markers included" INTO the fence is the obvious one) — or a
+ * maintainer annotating the history by hand, which is the other way a note gets
+ * written and the one this function never sees:
+ *
+ *   - a note containing `…accepted:begin -->` puts the FIRST start marker
+ *     inside the note, so the block read next run starts mid-prose: the note's
+ *     own tail and the real marker line parse as live accepted entries — the
+ *     history parsing back as state, which is precisely what the note's
+ *     position outside the markers was supposed to make impossible;
+ *   - a note containing `…accepted:end -->` puts the FIRST end marker BEFORE
+ *     the start marker, so `markerBlockLines` returns nothing, the block reads
+ *     as empty FOREVER (the poisoned note is carried forward with no expiry),
+ *     every accepted mutant re-reports as new, and the next rewrite renders an
+ *     empty block — silently erasing every triage verdict on the page.
+ *
+ * So the delimiters are broken on BOTH paths a note reaches the body by, and
+ * naming only one of them is how this invariant was wrong the first time. This
+ * function is applied when a note is WRITTEN (below) and again when one is READ
+ * back (`parseReanchorNotes`), because a note is carried forward verbatim from
+ * the previous body and only the write path was ever the filer's. The read path
+ * is the reachable one: a maintainer hand-annotating the re-anchoring history —
+ * it renders as ordinary prose in a shape that invites it — quotes a raw end
+ * marker, and from the next run on the accepted block reads EMPTY, the rewrite
+ * renders it empty, and the note is picked back up and re-rendered unchanged, so
+ * it never expires. Guarding the write path alone leaves that entirely open:
+ * position outside the markers was never a proof of safety for text this filer
+ * did not author, which is the whole point of the two cases above.
+ *
+ * Sanitising on read is idempotent — neither `<! --` nor `-- >` contains the
+ * delimiter it came from — so a body that has been through one run is stable,
+ * and a poisoned one converges in exactly one rewrite instead of never.
+ *
+ * A stale id is by definition one that matches no observed mutant, so nothing
+ * downstream reads these back as state; the mangling is visible, which is the
+ * right signal for a "mutant id" that contains an HTML comment in the first
+ * place.
+ */
+function noteSafeId(id) {
+  return id.replaceAll('<!--', '<! --').replaceAll('-->', '-- >')
+}
+
+/**
+ * The re-anchoring notes already in a body, oldest first — SCOPED, SANITISED
+ * and CAPPED on read, because everything this returns is spliced straight back
+ * into the next body by `renderAcceptedBlock`, and none of it was written by
+ * this script. A note survives by being copied forward, so "the filer only
+ * writes safe notes" says nothing about what the filer READS.
+ *
+ * Scoped: only lines that BEGIN outside every marker block count. A note is
+ * prose above the markers; a line in the note shape that begins inside a fence
+ * is hand-edited block content that happens to start with the prefix, and
+ * reading it as a note both duplicated it into the history and left it in the
+ * block, where it is also read as an id. The test is where the line STARTS, not
+ * whether it overlaps: a note whose own tail has been swallowed by a poisoned
+ * marker still starts outside, and dropping it there would lose the record this
+ * whole mechanism exists to keep.
+ *
+ * Sanitised: `noteSafeId` on read as well as on write. `markerBlockRange` finds
+ * both delimiters with a bare `indexOf` over the whole body, so a carried-
+ * forward note quoting a raw marker MOVES the accepted block — see `noteSafeId`
+ * for the two directions. Applied here the poison is defused on the first run
+ * that reads it, which is also what makes recovery converge.
+ *
+ * Capped: `appendReanchorNote` slices only when it appends, so a body that
+ * somehow holds more than the cap — a paste, a hand-edit, an older revision of
+ * this script — would otherwise carry them all forward for ever, and "bounded
+ * growth" would hold only for bodies this script had never had to recover.
+ */
+export function parseReanchorNotes(body) {
+  if (!body) return []
+  const blocks = [
+    markerBlockRange(body, MARKER_START, MARKER_END),
+    markerBlockRange(body, ACCEPTED_MARKER_START, ACCEPTED_MARKER_END),
+    markerBlockRange(body, CHILD_MARKER_START, CHILD_MARKER_END),
+  ].filter((r) => r !== null)
+  const notes = []
+  let at = 0
+  for (const line of body.split('\n')) {
+    const startsAt = at
+    at += line.length + 1
+    if (!line.startsWith(REANCHOR_NOTE_PREFIX)) continue
+    if (blocks.some(([from, to]) => startsAt >= from && startsAt < to)) continue
+    notes.push(noteSafeId(line))
+  }
+  return notes.slice(-MAX_REANCHOR_NOTES)
+}
+
+/** Carried-forward notes plus this run's, if this run dropped anything. */
+export function appendReanchorNote(notes, stale, today) {
+  if (stale.length === 0) return notes.slice(-MAX_REANCHOR_NOTES)
+  const what = `${stale.length} accepted entr${stale.length === 1 ? 'y' : 'ies'}`
+  return [
+    ...notes,
+    `${REANCHOR_NOTE_PREFIX}${today ?? 'undated'}** — ${what} dropped, matching no observed mutant: ${stale.map((id) => `\`${noteSafeId(id)}\``).join(', ')}`,
+  ].slice(-MAX_REANCHOR_NOTES)
 }
 
 /**
@@ -805,20 +978,28 @@ function renderAcceptedBlock(accepted, acceptedOn) {
  *   'sync'   — the area is unchanged or only shrank: re-render the body, do not
  *              comment, do not reopen. A partial recovery is not news, exactly
  *              as in the sibling reporter.
- *   'close'  — the area's last survivor is gone: comment and close.
+ *   'close'  — the area has no REPORTABLE finding left: comment and close.
  *
  * `maxChildren` caps CREATES only. An update or a close cannot run away — they
  * are bounded by what is already recorded — so capping the total would just
  * wedge the job on a backlog it did not create.
+ *
+ * #4173 residual — `accepted` (this run's live accepted-equivalent ids) is
+ * carried through to the close action for exactly one reason: an area whose
+ * remaining findings are ALL accepted is absent from `groups`, so it closes on
+ * the same branch as an area that was genuinely cleaned up, and the two must
+ * not be told to the reader the same way. See `buildChildCloseComment`.
  */
 export function decideChildActions({
   groups,
   newOnes = [],
   knownChildren = new Map(),
   maxChildren = DEFAULT_MAX_CHILDREN,
+  accepted = [],
 }) {
   const newSet = new Set(newOnes)
   const live = new Set(groups.map((g) => g.area))
+  const acceptedByArea = new Map(groupByArea(accepted).map((g) => [g.area, g.members]))
   const actions = []
   for (const g of groups) {
     const number = knownChildren.get(g.area)
@@ -832,7 +1013,15 @@ export function decideChildActions({
     })
   }
   for (const [area, number] of knownChildren) {
-    if (!live.has(area)) actions.push({ area, members: [], hasNew: false, number, action: 'close' })
+    if (!live.has(area))
+      actions.push({
+        area,
+        members: [],
+        hasNew: false,
+        number,
+        action: 'close',
+        accepted: acceptedByArea.get(area) ?? [],
+      })
   }
   const creates = actions.filter((a) => a.action === 'create').length
   if (creates > maxChildren) {
@@ -1015,12 +1204,40 @@ export function buildChildComment({ area, newMembers, runUrl }) {
   ])
 }
 
-export function buildChildCloseComment({ area, runUrl }) {
-  const lines = [
-    `No mutants survive or go uncovered in **${area}** any more — closing. If a finding reappears there, the next run reopens this issue rather than filing a new one.`,
-  ]
+/**
+ * #4173 residual — a child closes for TWO different reasons and they are not
+ * interchangeable.
+ *
+ * The area drops out of `groupByArea(all)` both when its last mutant was
+ * actually killed AND when every finding left in it was accepted as
+ * equivalent, because accepted ids are subtracted from the observed set before
+ * the grouping (see `applyAcceptedGaps`). The single unqualified "no mutants
+ * survive or go uncovered in X any more" was therefore a FALSE ALL-CLEAR on
+ * the second path: those mutants do survive, every one of them, and the only
+ * thing that changed is that triage ruled them unkillable and the filer stopped
+ * saying so. A closing comment claiming the tests now kill them is a lie of the
+ * #3245 family — the report telling a reader the opposite of the truth — and it
+ * is worse than the noise it replaced, because a closed issue is not re-read.
+ */
+export function buildChildCloseComment({ area, runUrl, accepted = [] }) {
+  const lines =
+    accepted.length > 0
+      ? [
+          `Nothing left to triage in **${area}** — closing. **This is not an all-clear**: the ${accepted.length} finding(s) still there are recorded in the parent as **accepted as equivalent** (triage proved them unkillable, #4173), so they survive every run and the filer has stopped reporting them. If any OTHER mutant appears in ${area}, the next run reopens this issue rather than filing a new one.`,
+          '',
+          `**Accepted as equivalent (${accepted.length})** — still surviving, deliberately not reported:`,
+          '```',
+          ...accepted,
+          '```',
+        ]
+      : [
+          `No mutants survive or go uncovered in **${area}** any more — closing. If a finding reappears there, the next run reopens this issue rather than filing a new one.`,
+        ]
   if (runUrl) lines.push('', `Run: ${runUrl}`)
-  return lines.join('\n')
+  return clampCommentLines(lines, (omitted, total) => [
+    '',
+    `_**Truncated** — ${omitted} of these ${total} accepted entries are not shown above, to keep this comment under GitHub's ${MAX_BODY_CHARS}-character working limit. The full list is in the parent's accepted-equivalent block._`,
+  ])
 }
 
 // ---------------------------------------------------------------------------
@@ -1060,6 +1277,7 @@ export function buildIssueBody({
   childLinks = new Map(),
   accepted = [],
   acceptedOn = new Map(),
+  reanchored = [],
 }) {
   const newSet = new Set(newOnes)
   const { survived, noCoverage } = partitionByOutcome(all)
@@ -1080,7 +1298,7 @@ export function buildIssueBody({
   )
   head.push('')
   head.push(
-    'Triage each line below: either (a) add (no coverage) or strengthen (survivor) a test that kills it and remove its line here, or (b) leave a comment explaining why it is an accepted gap and remove its line here anyway. Removing a line is not durable on its own — once it is gone, the next run that sees that mutant again re-adds it as "new" — so for (b), also copy the id into the **accepted-equivalent** block at the bottom of this body, which is where a proven-unkillable mutant is recorded permanently (#4173).',
+    'Triage each line below: either (a) add (no coverage) or strengthen (survivor) a test that kills it and remove its line here, or (b) leave a comment explaining why it is an accepted gap and remove its line here anyway. Removing a line is not durable on its own — once it is gone, the next run that sees that mutant again re-adds it as "new" — so for (b), also copy the id into the **accepted-equivalent** block at the bottom of this body, which is where a proven-unkillable mutant is recorded permanently (#4173). That block is always there, empty or not, and it carries the line shape and the marker comments you need — so there is nothing to invent even if you are the first to record one.',
   )
   head.push('')
   head.push(
@@ -1184,7 +1402,7 @@ export function buildIssueBody({
   // accepted mutant as "new" the following week — the precise loop the block
   // exists to end — and would do it silently, since the run that dropped it
   // looks exactly like a run that never had one.
-  state.push(...renderAcceptedBlock(accepted, acceptedOn))
+  state.push(...renderAcceptedBlock(accepted, acceptedOn, reanchored))
 
   const tail = []
   if (runUrl) {
@@ -1450,11 +1668,16 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, new
       continue
     }
     if (action === 'close') {
-      withTempFile(buildChildCloseComment({ area: a.area, runUrl }), (f) =>
+      const acceptedHere = a.accepted ?? []
+      withTempFile(buildChildCloseComment({ area: a.area, runUrl, accepted: acceptedHere }), (f) =>
         gh(['issue', 'comment', String(number), '--repo', repo, '--body-file', f]),
       )
       if (state !== 'CLOSED') gh(['issue', 'close', String(number), '--repo', repo])
-      console.log(`  child #${number} closed (${a.area} has no findings left)`)
+      console.log(
+        acceptedHere.length > 0
+          ? `  child #${number} closed (${a.area} has nothing left to triage — ${acceptedHere.length} finding(s) accepted as equivalent, still surviving)`
+          : `  child #${number} closed (${a.area} has no findings left)`,
+      )
       continue
     }
 
@@ -1621,17 +1844,48 @@ function applyAcceptedGaps({ body, current }) {
       `accepted-equivalent (#4173): ${accepted.length} suppressed of ${recorded.length} recorded`,
     )
   }
-  if (stale.length > 0) {
-    console.log(
-      `re-anchoring (#4173): dropped ${stale.length} accepted entr${stale.length === 1 ? 'y' : 'ies'} matching no observed mutant, so an entry whose line has moved cannot go on suppressing whatever mutant now sits at that id: ${stale.join(', ')}`,
-    )
-  }
+  // The DROP is not announced here. Nothing has been dropped yet: an entry
+  // leaves the block only when the body is rewritten, and this run may not
+  // rewrite it at all (the no-op arm in `main` is the common case on a quiet
+  // week). The old log said "dropped N accepted entries" from here, before that
+  // was decided, so on every quiet week it claimed a removal that had not
+  // happened and would not happen — the entries stayed in the body and were
+  // re-evaluated the following Monday. `main` owns the announcement now,
+  // because `main` is where it becomes true or false.
   return {
     accepted,
+    stale,
     acceptedOn: parseAcceptedOn(body),
     reported: current.filter((id) => !acceptedSet.has(id)),
     known: new Set([...parseKnownSurvivors(body)].filter((id) => !acceptedSet.has(id))),
   }
+}
+
+/**
+ * #4173 residual — the re-anchoring announcement, made from `main` and not from
+ * `applyAcceptedGaps`, because only `main` knows whether the body is going to
+ * be rewritten at all.
+ *
+ * A stale entry is dropped by being LEFT OUT of a rewrite. On a run that writes
+ * nothing — the quiet week, which is the common case — it is therefore not
+ * dropped: it is still in the issue on Tuesday and is re-evaluated next Monday.
+ * The old log said "dropped N accepted entries" from before the no-op check,
+ * i.e. every quiet week it announced a removal that had not happened and was
+ * not going to, about the filer's own state, in the one report whose entire job
+ * is not to say things that are not so.
+ */
+function announceReanchoring({ stale, willWrite, dryRun }) {
+  if (stale.length === 0) return
+  const what = `${stale.length} accepted entr${stale.length === 1 ? 'y' : 'ies'} matching no observed mutant: ${stale.join(', ')}`
+  if (!willWrite) {
+    console.log(
+      `re-anchoring (#4173): LEFT IN PLACE — this run rewrites nothing, so the entries stay in the body and are re-evaluated next run — ${what}`,
+    )
+    return
+  }
+  console.log(
+    `re-anchoring (#4173): ${dryRun ? 'would drop' : 'dropping'} ${what} — so an entry whose line has moved cannot go on suppressing whatever mutant now sits at that id. The drop is recorded in the body's re-anchoring history, not only here.`,
+  )
 }
 
 export function main(argv = process.argv.slice(2)) {
@@ -1672,7 +1926,7 @@ export function main(argv = process.argv.slice(2)) {
   // #4173 — see `applyAcceptedGaps`: the proven-equivalent mutants come out of
   // the observed set (and out of the tracked set) before anything else looks
   // at either.
-  const { accepted, acceptedOn, reported, known } = applyAcceptedGaps({
+  const { accepted, stale, acceptedOn, reported, known } = applyAcceptedGaps({
     body: existingIssue?.body,
     current,
   })
@@ -1702,13 +1956,20 @@ export function main(argv = process.argv.slice(2)) {
         newOnes,
         knownChildren,
         maxChildren: args.maxChildren,
+        // #4173 residual — an area whose every remaining finding is accepted is
+        // absent from `groupByArea(all)` and closes like a clean one. The plan
+        // carries the accepted ids so the close can say which of the two it is.
+        accepted,
       })
     : []
   // A 'sync' re-renders a child body that is identical to what is already
   // there, so an unchanged week still writes nothing and never spams.
   const childWork = childActions.filter((a) => a.action !== 'sync')
 
-  if (newOnes.length === 0 && childWork.length === 0) {
+  const willWrite = newOnes.length > 0 || childWork.length > 0
+  announceReanchoring({ stale, willWrite, dryRun: args.dryRun })
+
+  if (!willWrite) {
     console.log('no new mutation findings — no-op (tracking issue left untouched)')
     if (resolvedOnes.length > 0) {
       console.log(
@@ -1717,6 +1978,11 @@ export function main(argv = process.argv.slice(2)) {
     }
     return
   }
+
+  // #4173 residual — the durable half: the run log that recorded a drop dies
+  // with the run, so the drop is written into the body too, carried forward
+  // from the body that is being replaced.
+  const reanchored = appendReanchorNote(parseReanchorNotes(existingIssue?.body), stale, today)
 
   const comment = buildNewSurvivorComment({ newOnes, runUrl })
 
@@ -1734,6 +2000,7 @@ export function main(argv = process.argv.slice(2)) {
       childLinks: knownChildren,
       accepted,
       acceptedOn,
+      reanchored,
     })
     printDryRun({ args, existingIssue, newOnes, resolvedOnes, all, body, comment, childActions })
     return
@@ -1763,6 +2030,7 @@ export function main(argv = process.argv.slice(2)) {
     childLinks,
     accepted,
     acceptedOn,
+    reanchored,
   })
   writeParent({ existingIssue, repo, body, comment, newOnes, childWork })
 }
@@ -1840,8 +2108,15 @@ function printDryRun({
   if (args.children) {
     console.log(`[dry-run] child issues (cap ${args.maxChildren}):`)
     for (const a of childActions) {
+      // A close whose area still holds accepted-equivalent mutants reads as
+      // "0 finding(s)" like any other close, which is the same false all-clear
+      // the close COMMENT used to carry. Say which kind of close it is here too.
+      const acceptedNote =
+        (a.accepted?.length ?? 0) > 0
+          ? ` (${a.accepted.length} accepted as equivalent, still surviving)`
+          : ''
       console.log(
-        `[dry-run]   ${a.action.padEnd(6)} ${a.number ? `#${a.number}` : '(new)'} ${a.area} — ${a.members.length} finding(s)`,
+        `[dry-run]   ${a.action.padEnd(6)} ${a.number ? `#${a.number}` : '(new)'} ${a.area} — ${a.members.length} finding(s)${acceptedNote}`,
       )
       if (a.action === 'create') {
         console.log(`[dry-run]     title: ${childIssueTitle(a.area)}`)
@@ -2480,6 +2755,70 @@ function selfTestChildPlanning({ check, survivor }) {
       small,
     )
   }
+
+  selfTestChildCloseWording({ check, FE, RS, survivor })
+}
+
+/**
+ * #4173 residual — the wording of a CLOSE, split out of `selfTestChildPlanning`
+ * only to keep that function under the repo's cyclomatic-complexity budget.
+ */
+function selfTestChildCloseWording({ check, FE, RS, survivor }) {
+  // 10h. #4173 residual — THE TWO KINDS OF CLOSE, and the whole point is that a
+  //      test which passes on both is worthless here. An area leaves
+  //      `groupByArea(all)` for two unrelated reasons: its mutants were killed,
+  //      or every one of them was accepted as equivalent and subtracted from
+  //      the observed set. Both reach the SAME close branch, so before this
+  //      both closed with "No mutants survive or go uncovered in X any more" —
+  //      a flat falsehood in the second case, on an issue nobody reopens to
+  //      re-read. #3751/#3760/#3763/#3764 were the four standing instances.
+  //
+  //      Pinned as a pair: the clean close must keep the all-clear AND not
+  //      mention acceptance, the accepted close must say the count AND NOT
+  //      claim the all-clear. Assert only one arm and the "fix" of always
+  //      qualifying the wording passes while lying the other way round.
+  {
+    const acceptedHere = [survivor(1), survivor(2)]
+    const plan = decideChildActions({
+      groups: [],
+      newOnes: [],
+      knownChildren: new Map([
+        [FE, 41],
+        [RS, 42],
+      ]),
+      accepted: acceptedHere,
+    })
+    const byArea = new Map(plan.map((a) => [a.area, a]))
+    check(
+      byArea.get(FE).accepted.length === 2 &&
+        byArea.get(RS).accepted.length === 0 &&
+        acceptedHere.every((id) => byArea.get(FE).accepted.includes(id)),
+      'a close carries the accepted-equivalent ids of ITS area, and only those',
+      plan.map((a) => `${a.area}=[${(a.accepted ?? []).length}]`).join(' '),
+    )
+
+    const acceptedClose = buildChildCloseComment({
+      area: FE,
+      accepted: byArea.get(FE).accepted,
+      runUrl: 'https://example/run',
+    })
+    const cleanClose = buildChildCloseComment({ area: RS, runUrl: 'https://example/run' })
+    check(
+      !acceptedClose.includes('No mutants survive or go uncovered') &&
+        acceptedClose.includes('not an all-clear') &&
+        acceptedClose.includes('Accepted as equivalent (2)') &&
+        acceptedHere.every((id) => acceptedClose.includes(id)),
+      'an all-accepted area closes WITHOUT claiming an all-clear, and names the survivors (#4173)',
+      acceptedClose,
+    )
+    check(
+      cleanClose.includes('No mutants survive or go uncovered') &&
+        !/accepted as equivalent/i.test(cleanClose) &&
+        !cleanClose.includes('not an all-clear'),
+      'a genuinely cleaned-up area still closes with the plain all-clear (#4173)',
+      cleanClose,
+    )
+  }
 }
 
 /**
@@ -2584,8 +2923,16 @@ function selfTestChildGh({ check }) {
     return calls
   }
 
-  const parentWith = (all, childLinks) =>
-    buildIssueBody({ all, resolvedOnes: [], today: '2026-08-09', newOnes: [], childLinks })
+  const parentWith = (all, childLinks, accepted = []) =>
+    buildIssueBody({
+      all,
+      resolvedOnes: [],
+      today: '2026-08-09',
+      newOnes: [],
+      childLinks,
+      accepted,
+      acceptedOn: new Map(accepted.map((id) => [id, '2026-08-09'])),
+    })
 
   // 11a. BOOTSTRAP. A parent that already tracks both survivors but has no
   //      children yet: nothing is NEW, yet the children must still be filed —
@@ -2657,9 +3004,16 @@ function selfTestChildGh({ check }) {
     const seq = calls.map((c) => c.sub).join(',')
     const closeComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
     check(
-      seq === 'view,comment,close,edit' && closeComment.includes(OP),
+      seq === 'view,comment,close,edit' &&
+        closeComment.includes(OP) &&
+        // This area really was cleaned up — the missed.txt is empty and nothing
+        // is accepted — so the unqualified all-clear is the TRUE thing to say,
+        // and 11i is the same sequence where it would be false. The pair is
+        // what makes either assertion mean anything.
+        closeComment.includes('No mutants survive or go uncovered') &&
+        !/accepted as equivalent/i.test(closeComment),
       'a resolved area comments on and closes its child, then syncs the parent',
-      `gh sequence was: ${seq || '(no gh calls at all)'}`,
+      `gh sequence was: ${seq || '(no gh calls at all)'} — comment: ${closeComment}`,
     )
     check(
       parseChildLinks(calls.findLast((c) => c.sub === 'edit')?.body ?? '').size === 0,
@@ -2733,6 +3087,8 @@ function selfTestChildGh({ check }) {
     )
   }
 
+  selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP })
+
   // 11g. A recorded child that no longer exists (deleted, or transferred) must
   //      not take the whole run down with it — the parent update, and every
   //      other area, would be lost over one dead issue. The record is dropped
@@ -2781,6 +3137,48 @@ function selfTestChildGh({ check }) {
       !calls.some((c) => c.sub === 'create' || c.sub === 'view') && written.get(OP) === 101,
       'a run without --children preserves the child block instead of deleting it',
       `${calls.map((c) => c.sub).join(',')} recorded=${JSON.stringify([...written])}`,
+    )
+  }
+}
+
+/**
+ * #4173 residual — the false all-clear, driven through the real close path.
+ * Split out of `selfTestChildGh` to keep that function's complexity from
+ * growing further; it runs inside it, against the same `gh` stub.
+ */
+function selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP }) {
+  // 11i. #4173 residual — THE FALSE ALL-CLEAR, end to end and through the real
+  //      close path. Same shape as 11c (the area leaves the grouping, the child
+  //      is commented on and closed) with ONE difference: the mutant is still
+  //      in `missed.txt`. It survives. It is simply accepted as equivalent, so
+  //      it is subtracted from the observed set and its area vanishes from
+  //      `groupByArea(all)` exactly as a cleaned-up area does. 11c pins the
+  //      wording for the clean case; this pins that the same wording is NOT
+  //      reused here, that the surviving id is named, and that the mutant did
+  //      not sneak back into the tracked set on the way past.
+  {
+    const calls = drive({
+      missedLines: [opId.replace('[rust] ', '')],
+      body: parentWith([opId], new Map([[OP, 101]]), [opId]),
+      state: 'OPEN',
+    })
+    const seq = calls.map((c) => c.sub).join(',')
+    const closeComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
+    const parentEdit = calls.findLast((c) => c.sub === 'edit')
+    check(
+      seq === 'view,comment,close,edit' &&
+        !closeComment.includes('No mutants survive or go uncovered') &&
+        closeComment.includes('not an all-clear') &&
+        closeComment.includes('Accepted as equivalent (1)') &&
+        closeComment.includes(opId),
+      'an area that is clean ONLY because everything in it was accepted does not close with an all-clear (#4173)',
+      `gh sequence was: ${seq || '(no gh calls at all)'} — comment: ${closeComment}`,
+    )
+    check(
+      parseAcceptedSurvivors(parentEdit?.body ?? '').has(opId) &&
+        !parseKnownSurvivors(parentEdit?.body ?? '').has(opId),
+      'the accepted mutant stays accepted and out of the tracked set across the close (#4173)',
+      parentEdit?.body ?? '(no parent edit)',
     )
   }
 }
@@ -3274,12 +3672,18 @@ function selfTestAcceptedGaps({ ok, fail, survivor }) {
       '--require-frontend',
     ])
 
-  // 14a. SUPPRESSED. The accepted mutant is observed by the lane this run and
-  //      is already tracked; with the other two findings unchanged the run has
-  //      nothing to say. Not new, not re-tracked, no child touched (so nothing
-  //      re-opened), and — the half that needs the `known` side of the
-  //      subtraction — not announced as RESOLVED either, which would claim a
-  //      test now kills a mutant that cannot be killed.
+  // 14a. SUPPRESSED. The accepted mutant is observed by the lane this run;
+  //      with the other two findings unchanged the run has nothing to say. Not
+  //      new, not re-tracked, no child touched (so nothing re-opened), and the
+  //      suppression is reported for what it is.
+  //
+  //      NOT the `known`-side subtraction, despite what this comment used to
+  //      claim: SV_COL7 is accepted here but is NOT in this fixture's tracked
+  //      block (`all` is NC_ID + SV_COL24), so the `known` filter has nothing
+  //      to remove and `resolvedOnes` is 0 with or without it. The
+  //      "not announced as RESOLVED" check below is a genuine no-op in this
+  //      fixture. 14b is the one that earns that credit — see the
+  //      new/resolved-count assertion there.
   {
     const path = bodyFile(
       'accepted-suppressed.md',
@@ -3358,6 +3762,13 @@ function selfTestAcceptedGaps({ ok, fail, survivor }) {
     if (!announced(SV_COL24)) problems.push('the sibling was not announced as new')
     if (tracked.has(SV_COL7)) problems.push('the accepted mutant entered the tracked set')
     if (announced(SV_COL7)) problems.push('the accepted mutant was announced as new')
+    // THE `known` SIDE OF THE SUBTRACTION, and this is the fixture that
+    // exercises it (14a cannot: its accepted id is not in its tracked block, so
+    // the filter there is a no-op). Here SV_COL7 IS tracked and IS accepted, so
+    // dropping `.filter(id => !acceptedSet.has(id))` from `known` leaves it in
+    // the tracked set while it is absent from `reported` — and `diffSurvivors`
+    // announces it as RESOLVED, i.e. claims a test now kills a mutant triage
+    // has just certified as unkillable. `resolved: 0` is that claim's tripwire.
     if (!out.includes('new findings: 2, resolved: 0'))
       problems.push('wrong new/resolved counts (an accepted id must be neither)')
     if (problems.length === 0)
@@ -3376,7 +3787,11 @@ function selfTestAcceptedGaps({ ok, fail, survivor }) {
     if (!acceptedBack.has(SV_COL7)) staleProblems.push('the live entry was dropped')
     if (parseAcceptedOn(body).get(SV_COL7) !== '2026-08-19')
       staleProblems.push(`lost its accepted-on date (${parseAcceptedOn(body).get(SV_COL7)})`)
-    if (!out.includes('re-anchoring')) staleProblems.push('the drop was not reported')
+    // The wording matters, not just the word: this run DOES rewrite the body,
+    // so a drop is what happens. `selfTestAcceptedReanchorTrace` pins the other
+    // arm, where the same stale entry is not dropped at all.
+    if (!out.includes('re-anchoring (#4173): would drop 1 accepted entry'))
+      staleProblems.push('the drop was not reported as a drop')
     if (staleProblems.length === 0)
       ok('a stale accepted entry is dropped on rewrite and the live one is kept, dated (#4173)')
     else
@@ -3463,6 +3878,420 @@ function selfTestAcceptedBlockShape({ ok, fail }) {
       fail(
         'the accepted block does not leak into the tracked survivor set (#4173)',
         [...parseKnownSurvivors(mixed)].join(' | '),
+      )
+  }
+
+  // 14e. #4173 residual — THE INSTRUCTIONS EXIST ON THE PAGE THEY POINT AT.
+  //      The head tells a triager to copy the id into "the accepted-equivalent
+  //      block at the bottom of this body", and the how-to (the line shape, the
+  //      marker comments, the one-id-per-entry rule) lives inside that block.
+  //      Rendered only when non-empty, NEITHER existed on a tracking issue with
+  //      nothing accepted yet — which is every issue until the first triager
+  //      records one, i.e. exactly the reader with no way to know the syntax.
+  //      An empty block is furniture; furniture that makes the instruction true
+  //      is worth its 1085 characters (measured against the same builder, not
+  //      estimated — it moves the #3257 ceiling from 597 findings to 586).
+  {
+    const empty = buildIssueBody({ all: [SV_COL24], resolvedOnes: [], accepted: [] })
+    const problems = []
+    if (!empty.includes(ACCEPTED_MARKER_START) || !empty.includes(ACCEPTED_MARKER_END))
+      problems.push('no marker pair to paste into')
+    if (!empty.includes('accepted-equivalent** block at the bottom of this body'))
+      problems.push('the head stopped pointing at the block')
+    if (!empty.includes('the empty block below is the template'))
+      problems.push('no "this is the template" line')
+    if (!empty.includes('`<accepted-on date><TAB><mutant>` shape'))
+      problems.push('the how-to preamble (the line shape) is missing')
+    // …and the furniture is furniture: an empty block must parse to an empty
+    // set, or every issue would boot with a phantom accepted entry.
+    if (parseAcceptedSurvivors(empty).size > 0) problems.push('the empty block minted an entry')
+    if (parseKnownSurvivors(empty).size !== 1) problems.push('it disturbed the tracked set')
+    if (problems.length === 0)
+      ok('a body with nothing accepted still carries the block a triager is told to use (#4173)')
+    else
+      fail(
+        'a body with nothing accepted still carries the block a triager is told to use (#4173)',
+        problems.join('; '),
+      )
+  }
+}
+
+/**
+ * #4173 residual — re-anchoring, which is a CLAIM the filer makes about its own
+ * state, and both halves of the claim were wrong.
+ *
+ *   1. It was announced from `applyAcceptedGaps`, which runs BEFORE the no-op
+ *      check. A stale entry is dropped by being left out of a body rewrite, so
+ *      on a quiet week — the common case — nothing was written, the entry
+ *      stayed in the issue, and the log said it had been dropped anyway. The
+ *      next run re-evaluated the same entry and said it again.
+ *   2. When it did happen, the only record was that log line, and a workflow
+ *      log expires. A drop retires a triage verdict a human spent a session
+ *      reaching; if every entry went stale at once (a file rename does that),
+ *      the whole block left the issue with nothing on the page saying why.
+ *
+ * Driven through `main()` because both halves are decisions `main` makes:
+ * whether the body is rewritten at all, and what goes into it when it is.
+ */
+function selfTestAcceptedReanchorTrace({ ok, fail }) {
+  const AREA = 'frontend: date-utils'
+  const STALE = '[frontend] date-utils: src/lib/date-utils.ts:12:1 [BooleanLiteral]'
+  const root = writeStrykerFixture('date-utils', STRYKER_FIXTURE)
+  const HEAD = '[dry-run] --- issue body ---\n'
+  const TAIL = '[dry-run] --- new-survivor comment ---'
+  const bodyOf = (out) => out.slice(out.indexOf(HEAD) + HEAD.length, out.indexOf(TAIL))
+  const bodyFile = (name, body) => {
+    const path = join(root, name)
+    writeFileSync(path, body)
+    return path
+  }
+  const runDry = (dir, path) =>
+    captureMain([
+      '--dry-run',
+      '--children',
+      '--known-body-file',
+      path,
+      '--frontend-dir',
+      dir,
+      '--require-frontend',
+    ])
+
+  // 14f. THE QUIET WEEK. Everything observed is already tracked and nothing is
+  //      accepted-and-live, so the run writes nothing — and therefore drops
+  //      nothing. The entry is still in the issue on Tuesday. Saying "dropped"
+  //      here is the filer misreporting its own state, which is the one thing
+  //      this script exists to stop other reports doing.
+  {
+    const path = bodyFile(
+      'quiet-with-stale.md',
+      buildIssueBody({
+        all: [NC_ID, SV_COL7, SV_COL24].toSorted(),
+        resolvedOnes: [],
+        today: '2026-08-01',
+        firstSeen: new Map([
+          [NC_ID, '2026-08-01'],
+          [SV_COL7, '2026-08-01'],
+          [SV_COL24, '2026-08-01'],
+        ]),
+        childLinks: new Map([[AREA, 4242]]),
+        accepted: [STALE],
+        acceptedOn: new Map([[STALE, '2026-08-19']]),
+      }),
+    )
+    const { out, err } = runDry(root, path)
+    const problems = []
+    if (err) problems.push(`threw: ${err.message}`)
+    if (!out.includes('no new mutation findings — no-op')) problems.push('not a no-op')
+    if (!out.includes('re-anchoring (#4173): LEFT IN PLACE'))
+      problems.push('the stale entry was not reported as left in place')
+    if (/re-anchoring \(#4173\): (would drop|dropping|dropped)/.test(out))
+      problems.push('a run that wrote nothing claimed it dropped an entry')
+    if (problems.length === 0)
+      ok('a run that rewrites nothing does not claim it dropped a stale entry (#4173)')
+    else
+      fail(
+        'a run that rewrites nothing does not claim it dropped a stale entry (#4173)',
+        `${problems.join('; ')} — out=${out.slice(0, 900)}`,
+      )
+  }
+
+  // 14g. THE DURABLE TRACE, and that it survives the NEXT rewrite. A run that
+  //      does drop an entry records it in the body — outside the markers, so a
+  //      historical id can never come back as a live entry — and the run after
+  //      it carries the note forward instead of quietly losing it with the
+  //      workflow log.
+  {
+    const path = bodyFile(
+      'drops-one.md',
+      buildIssueBody({
+        all: [NC_ID, SV_COL7].toSorted(),
+        resolvedOnes: [],
+        today: '2026-08-01',
+        firstSeen: new Map([
+          [NC_ID, '2026-08-01'],
+          [SV_COL7, '2026-08-01'],
+        ]),
+        childLinks: new Map([[AREA, 4242]]),
+        accepted: [STALE],
+        acceptedOn: new Map([[STALE, '2026-08-19']]),
+      }),
+    )
+    const first = runDry(root, path)
+    const written = bodyOf(first.out)
+    const notes = parseReanchorNotes(written)
+    const problems = []
+    if (first.err) problems.push(`threw: ${first.err.message}`)
+    if (notes.length !== 1) problems.push(`${notes.length} note(s) in the body, expected 1`)
+    else if (!notes[0].includes(STALE)) problems.push('the note does not name the dropped entry')
+    // Not just "the id string is absent": ANY live accepted entry that the
+    // note text contains is the history parsing back as state. Checking only
+    // `has(STALE)` passed even with the note rendered INSIDE the markers, where
+    // the whole note line became a live entry.
+    const leaked = [...parseAcceptedSurvivors(written)].filter((id) =>
+      notes.some((n) => n.includes(id)),
+    )
+    if (leaked.length > 0)
+      problems.push(`the note leaked back as live entries: ${leaked.join(' | ')}`)
+
+    // The run after it: a genuinely new mutant, so the body IS rewritten, and
+    // nothing is stale this time. The note must still be there — a trace that
+    // only survives until the next Monday is the expiring log again.
+    const grown = structuredClone(STRYKER_FIXTURE)
+    grown.files['src/lib/date-utils.ts'].mutants.push({
+      id: '6',
+      mutatorName: 'ArithmeticOperator',
+      status: 'Survived',
+      location: { start: { line: 200, column: 5 }, end: { line: 200, column: 9 } },
+    })
+    const second = runDry(
+      writeStrykerFixture('date-utils', grown),
+      bodyFile('carried-forward.md', written),
+    )
+    const carried = parseReanchorNotes(bodyOf(second.out))
+    if (second.err) problems.push(`second run threw: ${second.err.message}`)
+    if (!second.out.includes('new findings: 1')) problems.push('the second run did not rewrite')
+    if (carried.length !== 1 || !carried[0].includes(STALE))
+      problems.push(`the note did not survive the next rewrite (${carried.length} note(s))`)
+    if (problems.length === 0)
+      ok('a dropped accepted entry leaves a note in the body that outlives the run log (#4173)')
+    else
+      fail(
+        'a dropped accepted entry leaves a note in the body that outlives the run log (#4173)',
+        problems.join('; '),
+      )
+  }
+
+  selfTestReanchorNoteCannotParseBack({ ok, fail })
+}
+
+/**
+ * #4173 residual — THE LOAD-BEARING CLAIM of the durable note, pinned on its
+ * own because the note is the one place this filer writes hand-edited body text
+ * back into the body, un-fenced, ABOVE the markers.
+ *
+ * "Above the markers, therefore outside the block" is not a proof. Both markers
+ * are HTML comments located by a bare `indexOf` over the WHOLE body, so an id
+ * carrying a marker delimiter does not sit outside the block — it MOVES it. The
+ * accepted fence is hand-edited free text, so a marker-shaped entry is one bad
+ * paste away (re-seeding "the whole block, markers included" INTO the fence).
+ *
+ * Both directions, both reproducible before `noteSafeId`, and the second is the
+ * worse one — it is not a wrong line in a report, it is the silent destruction
+ * of every recorded triage verdict on an issue nobody re-reads:
+ *
+ *   begin -> the FIRST start marker lands inside the note, so the block read
+ *            next run starts mid-prose: the note's own tail and the real marker
+ *            line come back as LIVE accepted entries.
+ *   end   -> the FIRST end marker precedes the start marker, `markerBlockLines`
+ *            returns nothing, the block reads EMPTY for ever (the poisoned note
+ *            is carried forward with no expiry), every accepted mutant
+ *            re-reports as new, and the next rewrite renders an empty block.
+ *
+ * One assertion covers both, and it needs both halves: the real verdict must
+ * still be readable (the `end` failure zeroes it) AND nothing else may appear
+ * (the `begin` failure mints entries). Assert only "no bogus entry" and the
+ * erasure passes; assert only "the verdict survives" and the injection does.
+ *
+ * And it needs both PATHS. A note reaches a body two ways — this run wrote it
+ * (`appendReanchorNote`) or this run read it out of the last body
+ * (`parseReanchorNotes`) — and only the first is the filer's own text. Driving
+ * the poison through `appendReanchorNote` alone proves the claim exactly where
+ * it was never in doubt, so the arms below plant it in the INPUT BODY as well,
+ * in the shape a maintainer annotating the history by hand would leave. That
+ * one is the reachable failure and the non-convergent one: the note is copied
+ * forward unchanged every week, so `end` erases the accepted block for ever
+ * rather than for a run.
+ */
+function selfTestReanchorNoteCannotParseBack({ ok, fail }) {
+  // 14h. A NOTE CAN NEVER PARSE BACK AS A LIVE ACCEPTED ENTRY.
+  const LIVE = SV_COL7
+  const problems = []
+  for (const [dir, poison] of [
+    ['begin', `${ACCEPTED_MARKER_START} smuggled`],
+    ['end', `smuggled ${ACCEPTED_MARKER_END}`],
+  ]) {
+    const notes = appendReanchorNote([], [poison], '2026-08-08')
+    const body = buildIssueBody({
+      all: [LIVE],
+      resolvedOnes: [],
+      today: '2026-08-08',
+      accepted: [LIVE],
+      acceptedOn: new Map([[LIVE, '2026-07-01']]),
+      reanchored: notes,
+    })
+    const back = parseAcceptedSurvivors(body)
+    if (!back.has(LIVE)) problems.push(`${dir}: the recorded verdict became unreadable`)
+    if (back.size !== 1)
+      problems.push(`${dir}: minted ${back.size - 1} phantom entr(y|ies): ${[...back].join(' | ')}`)
+    // And the note is still THERE — "fixing" it by dropping the history would
+    // pass the two checks above while losing the record they exist to protect.
+    if (parseReanchorNotes(body).length !== 1) problems.push(`${dir}: the note itself was lost`)
+  }
+  if (problems.length === 0)
+    ok('a re-anchoring note cannot move the accepted markers or parse back as an entry (#4173)')
+  else
+    fail(
+      'a re-anchoring note cannot move the accepted markers or parse back as an entry (#4173)',
+      problems.join('; '),
+    )
+
+  // 14h (read path). THE SAME CLAIM, ON THE PATH THAT WAS ACTUALLY UNGUARDED.
+  //      The two arms above hand the poison to `appendReanchorNote`, so they
+  //      only ever exercise ids THIS run dropped — text the filer authored,
+  //      which is the half `noteSafeId` already covered. A note reaches the
+  //      next body the other way too: it is READ out of the previous body and
+  //      spliced back in. That path needs no stale mutant at all — the history
+  //      renders as ordinary prose in an inviting `- **Re-anchored …** — …`
+  //      shape, so a maintainer annotating it, or a paste, is enough to put a
+  //      raw marker into a line the next run copies forward verbatim.
+  //
+  //      The composition is production's, from the one place notes are carried:
+  //      `appendReanchorNote(parseReanchorNotes(existingIssue.body), stale,
+  //      today)`. `stale` is EMPTY on purpose — the quiet path, where the write
+  //      path contributes nothing and everything rendered is what was read.
+  //
+  //      The third check is convergence, and it is the one that separates this
+  //      from a run-of-the-mill wrong line: unsanitised, the poisoned note is
+  //      re-rendered unchanged every week, so `end` does not erase the block for
+  //      a run, it erases it for ever. A second round-trip must therefore leave
+  //      the body no worse than the first, and must leave the note itself still
+  //      on the page — deleting the history would satisfy the other checks
+  //      while losing exactly what the mechanism exists to keep.
+  {
+    const readProblems = []
+    for (const [dir, poison] of [
+      ['begin', `${ACCEPTED_MARKER_START} smuggled`],
+      ['end', `smuggled ${ACCEPTED_MARKER_END}`],
+    ]) {
+      const render = (reanchored) =>
+        buildIssueBody({
+          all: [LIVE],
+          resolvedOnes: [],
+          today: '2026-08-15',
+          accepted: [LIVE],
+          acceptedOn: new Map([[LIVE, '2026-07-01']]),
+          reanchored,
+        })
+      // Not `appendReanchorNote`'s output: a hand-written annotation, raw, in
+      // the body the next run will read. This is the input the filer does not
+      // control and never sanitised.
+      const handAnnotated = render([
+        `${REANCHOR_NOTE_PREFIX}2026-08-08** — 1 accepted entry dropped, matching no observed mutant: \`${poison}\``,
+      ])
+      let body = handAnnotated
+      for (const round of ['first', 'second']) {
+        body = render(appendReanchorNote(parseReanchorNotes(body), [], '2026-08-15'))
+        const back = parseAcceptedSurvivors(body)
+        if (!back.has(LIVE))
+          readProblems.push(`${dir}/${round}: the recorded verdict became unreadable`)
+        // `> 1`, not `!== 1`: the empty case is already reported above by the
+        // verdict check, and subtracting from a zero-size set printed
+        // "minted -1 phantom entries" next to it.
+        if (back.size > 1)
+          readProblems.push(
+            `${dir}/${round}: minted ${back.size - 1} phantom entr(y|ies): ${[...back].join(' | ')}`,
+          )
+        if (parseReanchorNotes(body).length !== 1)
+          readProblems.push(`${dir}/${round}: the note itself was lost`)
+      }
+    }
+    if (readProblems.length === 0)
+      ok('a note READ BACK from a hand-edited body cannot move the accepted markers either (#4173)')
+    else
+      fail(
+        'a note READ BACK from a hand-edited body cannot move the accepted markers either (#4173)',
+        readProblems.join('; '),
+      )
+  }
+
+  // 14h (scoping). A NOTE IS PROSE ABOVE THE MARKERS, NOT ANY LINE THAT LOOKS
+  //      LIKE ONE. `parseReanchorNotes` used to scan the whole body, fences
+  //      included, so a line pasted INTO the accepted fence in the note shape —
+  //      the same bad paste that motivates the arms above, re-seeding a whole
+  //      rendered section into the block — was read twice: once as an accepted
+  //      id, which is what it now is, and once as a note, which duplicated it
+  //      into the history above the markers where it then never expired.
+  //
+  //      Pinned on the rendered body rather than on the parser alone, because
+  //      the duplication is the thing that matters: the line must appear
+  //      EXACTLY once in the body the next run would write.
+  {
+    const scopeProblems = []
+    const pasted = `${REANCHOR_NOTE_PREFIX}2026-05-01** — 1 accepted entry dropped: \`m9\``
+    const seeded = buildIssueBody({
+      all: [LIVE],
+      resolvedOnes: [],
+      today: '2026-08-15',
+      accepted: [LIVE, pasted],
+      acceptedOn: new Map([[LIVE, '2026-07-01']]),
+    })
+    const notes = parseReanchorNotes(seeded)
+    if (notes.length > 0)
+      scopeProblems.push(`a line inside the fence was read as ${notes.length} note(s)`)
+    const rewritten = buildIssueBody({
+      all: [LIVE],
+      resolvedOnes: [],
+      today: '2026-08-15',
+      accepted: [LIVE, pasted],
+      acceptedOn: new Map([[LIVE, '2026-07-01']]),
+      reanchored: appendReanchorNote(notes, [], '2026-08-15'),
+    })
+    const copies = rewritten.split(pasted).length - 1
+    if (copies !== 1) scopeProblems.push(`the pasted line appears ${copies} time(s), expected 1`)
+    // The other direction of the same rule, so the scoping cannot be "read
+    // nothing": a genuine note, above the markers, is still read.
+    const genuine = buildIssueBody({
+      all: [LIVE],
+      resolvedOnes: [],
+      today: '2026-08-15',
+      accepted: [LIVE],
+      acceptedOn: new Map([[LIVE, '2026-07-01']]),
+      reanchored: appendReanchorNote([], ['m9'], '2026-05-01'),
+    })
+    if (parseReanchorNotes(genuine).length !== 1)
+      scopeProblems.push('a genuine note above the markers stopped being read')
+    if (scopeProblems.length === 0)
+      ok('only prose outside the marker blocks counts as a re-anchoring note (#4173)')
+    else
+      fail(
+        'only prose outside the marker blocks counts as a re-anchoring note (#4173)',
+        scopeProblems.join('; '),
+      )
+  }
+
+  // 14i. BOUNDED GROWTH, on BOTH paths. The history is capped so it cannot eat
+  //      the body budget the state block needs, and the cap has to hold on READ
+  //      as well as on append: capping only where a note is added leaves a body
+  //      that already carries more — a paste, a hand-edit, an older revision of
+  //      this script — carrying them forward for ever, which is the unbounded
+  //      growth the cap exists to prevent, just entered by a different door.
+  //
+  //      And it must keep the NEWEST. A cap that keeps the oldest five is the
+  //      same size and answers the opposite question: the reader asking why a
+  //      mutant is back needs the recent drops, not the first five ever made.
+  {
+    const many = Array.from(
+      { length: MAX_REANCHOR_NOTES + 2 },
+      (_, i) => `${REANCHOR_NOTE_PREFIX}2026-0${i + 1}-01** — 1 accepted entry dropped: \`m${i}\``,
+    )
+    const capProblems = []
+    const newest = (notes) => notes.at(-1)?.includes(`\`m${many.length - 1}\``)
+    const onRead = parseReanchorNotes(many.join('\n'))
+    if (onRead.length !== MAX_REANCHOR_NOTES)
+      capProblems.push(`read kept ${onRead.length}, expected ${MAX_REANCHOR_NOTES}`)
+    if (!newest(onRead)) capProblems.push('read kept the oldest notes, not the newest')
+    // The quiet path: nothing dropped this run, so nothing is appended — and
+    // that is exactly the path where an over-full history used to sail through.
+    const carried = appendReanchorNote(many, [], '2026-09-01')
+    if (carried.length !== MAX_REANCHOR_NOTES)
+      capProblems.push(`carry-forward kept ${carried.length}, expected ${MAX_REANCHOR_NOTES}`)
+    if (!newest(carried)) capProblems.push('carry-forward kept the oldest notes, not the newest')
+    if (capProblems.length === 0)
+      ok(`the re-anchoring history is capped at ${MAX_REANCHOR_NOTES}, newest kept (#4173)`)
+    else
+      fail(
+        `the re-anchoring history is capped at ${MAX_REANCHOR_NOTES}, newest kept (#4173)`,
+        capProblems.join('; '),
       )
   }
 }
@@ -3633,6 +4462,7 @@ function runSelfTest() {
   //     entry re-anchors rather than suppressing forever.
   selfTestAcceptedGaps({ ok, fail, survivor })
   selfTestAcceptedBlockShape({ ok, fail })
+  selfTestAcceptedReanchorTrace({ ok, fail })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
