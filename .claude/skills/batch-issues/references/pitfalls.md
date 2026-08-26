@@ -86,6 +86,33 @@ aborted the commit. Always confirm `git rev-parse HEAD` moved (or `git log --one
 shows your new commit) BEFORE pushing or opening a PR. A masked abort means you push the
 prior commit and the PR is missing your work.
 
+### `git reset --soft <moving ref>` in a worktree silently writes a REVERT
+
+Worktrees **share one `.git`**. While a batch runs, you (or a concurrent agent) fetch and
+merge, so `origin/main` advances *underneath* the worktree. `git reset --soft origin/main`
+then moves HEAD **forward** to that newer commit while keeping the old index and working
+tree. Committing records "the tree as it was before those merges" as a change *against* the
+newer main — which is precisely a revert of everything that landed in between.
+
+Nothing errors. `git commit` reports a plausible file count.
+
+Live case (2026-08-26): a subagent splitting its work into a clean commit produced a
+**25-file, 1422-deletion revert of #4401, #4403 and #4405**, including an unrelated
+`src/stores/undo.ts` it had never touched. It caught this itself in a post-commit `--stat`
+review and redid the split against a pinned SHA; the final branch was 16 files, +1135/-57,
+zero deletions. The review is what saved it — no hook would have.
+
+```bash
+base=$(git rev-parse HEAD)     # pin it; never reset onto a ref others can move
+git reset --soft "$base"
+git show --stat HEAD                    # after ANY reset-and-recommit
+git diff --stat origin/main...HEAD      # deletions you can't explain == a revert
+```
+
+Same exposure applies to `git rebase origin/main`, `git merge origin/main` and
+`git checkout origin/main -- <path>` in a shared-`.git` worktree. If a batch outlives a
+merge cycle, capture the base SHA at start and use the SHA thereafter.
+
 ## Lint / format
 
 ### `oxfmt --write` detaches `oxlint-disable-next-line` comments — re-run oxlint AFTER formatting
@@ -184,6 +211,30 @@ predicates against *other* tables and for values flowing from one timestamp into
 migrate any coupled set in a single PR. Backfill recipe preserving ms precision:
 `CAST(ROUND((julianday(col) - 2440587.5) * 86400000.0) AS INTEGER)`, NULL-guarded for
 nullable columns.
+
+### A ratchet-baseline bump is a last resort, not a cost of doing business
+
+`dynamic-sql-baseline.txt`, `table-ownership-baseline.txt` and `tauri-import-baseline.json`
+are count-keyed ratchets. Raising one is always *available*, which is exactly why it needs a
+bar: a bump is **permanent debt with no owner** — it lifts the ceiling for everyone, forever,
+and the next reader sees only a number.
+
+On #3294 (2026-08-26) three write-slot predicates seemed to need a runtime
+`sqlx::query_scalar(` call, because the compile-checked `query_scalar!` macro needs a fixed
+parameter count. A bump was accepted. The implementing agent then **triplicated the SQL into
+three fixed-arity `query_scalar!` calls**: the bump disappeared, the baseline came out
+byte-identical to main, and the SQL became compile-checked. The duplication avoided was
+three short adjacent literals.
+
+- **Arity is the usual culprit.** The fix is N fixed-arity call sites selected by a `match`.
+- **Duplicating a short literal beats losing a compile-time check.**
+- If you do bump, say in the PR body **what you tried**. A bump with no rationale is
+  indistinguishable from not having tried.
+
+Verify the bump is what you think: the baseline is count-keyed **per file**, so diff it
+(`git diff --stat -- <baseline>`) and be able to point at the exact new call site. A count of
+"new production sites" taken by cutting the file at `src.find("\n#[cfg(test)]")` was wrong —
+it matched the wrong occurrence; scan for a line that *starts with* `#[cfg(test)]`.
 
 ## Delegation
 

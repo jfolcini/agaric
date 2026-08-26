@@ -214,7 +214,7 @@ sequential work, single-file edits, or review-only subagents.
 work (a nextest/vitest filter over the touched modules) — the orchestrator (or the
 reviewer, who re-runs anyway) owns exactly ONE full-suite run per item before commit.
 Builders running the full suite triples the wall-clock for zero signal (2026-06-10: the
-full Rust suite ran ~3× per backend item). Do NOT run clippy/fmt/biome/prek inside
+full Rust suite ran ~3× per backend item). Do NOT run clippy/fmt/oxlint/oxfmt/prek inside
 subagents — prek runs via the pre-commit/pre-push hooks at commit and push time.
 
 **Background-execution ban (the #1 wall-clock killer, 2026-06-10 — 4 builder deaths):**
@@ -305,7 +305,7 @@ path produced an identical result); #3455 (four mutants, killed and proven kille
 Where mutation testing is available, "the mutant dies" is the strongest available form of
 this and cannot be satisfied vacuously.
 
-### Three failure modes to reject in review
+### Four failure modes to reject in review
 
 These recur, are cheap to spot, and each has shipped at least once:
 
@@ -322,13 +322,22 @@ These recur, are cheap to spot, and each has shipped at least once:
    a test on one arm alone is this failure mode: #4389 shipped a live block into the trash
    because the short-circuit shape was pinned on the materializer arm and the recovery mirror
    was missing.
-
 4. **The assertion that is true for two reasons.** The sharpest form, and no grep finds it.
    #4018's test asserted `!out.contains("root could not be purged")` — and with the fix
    disabled, control fell into a *different* branch that returned before that log line ever
    ran. The assertion passed either way, so a dead fix looked covered. Ask of every negative
    assertion: *what else could make this true?* If the answer is "a path I did not intend",
    assert on something only the intended path produces.
+
+   It recurs. #4328 showed the *two independent guards* form — undo of a replicated target
+   was rejected by both `verify_undo_targets_in_tx`'s `is_replicated` arm and
+   `reverse::reject_replicated_targets`, so disabling either alone still went green. The
+   consequence is sharp: **"I broke the fix and the test went red" is necessary, not
+   sufficient.** It proves *something* covers the behaviour, not that *this* code does.
+   Where guards may overlap, disable them one at a time *and together*; and prefer a
+   discriminator only the intended path can produce — #3294 asserted the **pair**
+   (sweep count, remaining rows), which a second guard can satisfy by accident in one
+   component but not both.
 
 ## 4. REVIEW (pipelined with BUILD)
 
@@ -423,7 +432,7 @@ formatting (`cargo fmt`, `oxfmt`, trim-trailing-whitespace, fix-end-of-files) an
 changed files — Rust `cargo fmt`; frontend `npx oxfmt --write <changed files>` (NEVER
 `oxfmt --write .` — it reformats all TOML and aborts, see pitfalls). Then commit once.
 
-If a hook still modifies files (e.g. biome auto-fix you didn't anticipate), re-stage and
+If a hook still modifies files (e.g. an oxfmt auto-fix you didn't anticipate), re-stage and
 retry.
 
 **Stage by path, not `git add -A` bare.** `git add -A -- <paths>` (the files you actually
@@ -436,9 +445,10 @@ halves of the same incident; both are required, neither substitutes for the othe
 pre-commit abort. Confirm `git log --oneline -1` shows your commit (HEAD advanced) before
 pushing. When a commit aborts, read the hook output for the **named failing hook** —
 `cargo fmt`/`fix end of files` (auto-fix → re-stage), `cargo clippy … no such column`
-(stale worktree dev.db → `sqlx migrate run`, see §2), `clippy too many arguments` (a param
-push crossed 7 → `#[allow(clippy::too_many_arguments)]` per the file's own convention) —
-each has a distinct fix; don't blind-retry.
+(stale worktree dev.db → `sqlx migrate run`, see §2), `check-command-arity` (a command
+crossed the **10-arg** specta ceiling → collapse params into `ctx: State<'_, WriteCtx>` or a
+request struct, per `src-tauri/src/commands/AGENTS.md`; **not** an
+`#[allow(clippy::too_many_arguments)]`) — each has a distinct fix; don't blind-retry.
 
 Push when ready — the **pre-push hook** runs prek's heavier checks (full clippy,
 `no-commit-to-branch=main` guard, `pre-push` stages). Do NOT run `prek run --all-files`
@@ -448,6 +458,21 @@ fix the underlying issue and let the hook re-run.
 After a Rust change, regenerate codegen per **`references/codegen-and-sql.md`** (`.sqlx`,
 specta bindings) and verify with `cargo check --all-targets` (benches aren't covered by
 `--tests`).
+
+**"Docs only" does not mean "no generated output".** tauri-specta copies Rust doc comments
+into `src/lib/bindings.ts` as JSDoc, so a commit that edits nothing but `///` docs on a
+command (or a type reachable from one) still makes the checked-in bindings stale, and
+`specta_tests::ts_bindings_up_to_date` (`src-tauri/src/lib.rs:2800`) reds in CI. This landed
+a red `validate-all` on #4404 — a 177-link rustdoc sweep pushed as "inert". Regenerate with
+`just gen-bindings`, and run it **in the background**: in the foreground it routinely blows
+the 10-minute Bash timeout and exits 143, which looks like a failure and is not. Before
+calling any diff inert, ask *which generated artifacts derive from what I touched*.
+
+**Check sqlx the way CI does.** A plain `cargo check` compiles `query!` macros against the
+live `DATABASE_URL`, so it passes with a stale or incomplete `src-tauri/.sqlx`. Only
+`SQLX_OFFLINE=true cargo check --workspace` reproduces CI. The inverse also holds: a sqlx
+error naming a column your migrations *do* create usually means **your local dev DB is
+stale**, not that the branch is broken — re-check offline before believing it.
 
 ## 8. OPEN PR — THEN PIPELINE, NEVER WAIT FOR CI
 
@@ -509,12 +534,31 @@ async over many minutes. Instead:
    for own green PRs blocked only by `REVIEW_REQUIRED`, `--admin` is sanctioned — but only
    when the required checks (`validate-all`, `dco`) are green.
 
+**An ABSENT check is not a passing check.** On a freshly-pushed PR the required checks do
+not exist yet, and that is exactly when you poll. A filter like
+`.[] | select(.name=="validate-all") | .conclusion // "PENDING"` yields `"PENDING"` only for
+a check that *exists* with a null conclusion; a check GitHub has not created yet is absent
+from the array, `select` matches nothing, and the empty result reads as "not failing" — i.e.
+as success. A watcher built this way reported `ALL_SETTLED` while four PRs still had jobs
+queued (2026-08-26). Distinguish three states, and require a second independent condition:
+
+```bash
+raw=$(gh pr checks "$pr" --json name,state,conclusion)
+va=$(jq -r '[.[]|select(.name=="validate-all")] | if length==0 then "ABSENT"
+            else (.[0].conclusion // "RUNNING") end' <<<"$raw")
+still=$(jq -r '[.[]|select(.state!="COMPLETED")]|length' <<<"$raw")
+# settled ONLY when va is terminal AND still == 0
+```
+
+Treat `ABSENT` as *not started* — a reason to keep waiting. More generally: an empty result
+set is absence of evidence, never evidence of success. Before merging on a scripted green,
+assert the checks you require were actually **found**, by name and by count.
+
 This pipelines batches against CI wall-clock: while batch N's CI runs, you build N+1; by
 the time N+1 is pushed, N's CI has finished and you merge it.
 
 **When all planned items are PR'd and only CI-pending PRs remain, do NOT idle — pull the
-next backlog issue** (`gh issue list`, honoring the refactor-focus priorities in memory)
-and start a fresh batch in a disjoint domain. An empty planned-list is a cue to refill from
+next backlog issue** (`gh issue list`) and start a fresh batch in a disjoint domain. An empty planned-list is a cue to refill from
 the backlog, not to stop. Pending PRs get merged at the next batch-boundary sweep.
 
 ## Principles
@@ -575,8 +619,23 @@ This applies with most force to claims that *support the conclusion you already 
   nothing lands). Serialize commit/push in the FOREGROUND; after each, verify HEAD moved
   (`git log -1`) and the remote SHA changed (`git ls-remote`). Building in parallel
   worktrees is fine — only the hook step must serialize.
-- **`cargo fmt` prek hook is `--check`, not auto-fix** — a long line a subagent/reviewer
-  left unformatted aborts the commit; run `cargo fmt` yourself in `<wt>/src-tauri`, re-stage.
+- **The `cargo fmt` pre-commit hook AUTO-FIXES (#817)** — it rewrites the file and aborts
+  the commit once so you re-stage; don't run `cargo fmt` by hand first. A `--check`
+  companion runs at pre-push. Confirm HEAD advanced before pushing.
+- **Broken Rust intra-doc links block the push** — the `cargo-doc-links` pre-push hook
+  (#4404) runs `cargo doc` with `-D rustdoc::broken_intra_doc_links`. A `/// [SomeType]`
+  naming a moved, private or `#[cfg(test)]` item reds the push; fix the link, don't suppress.
+  Links in a `mod x;` declaration's `///` resolve in the PARENT's scope, not the module's.
+- **A rules-config change and its linter version bump must land in ONE commit** — oxlint
+  rejects a config naming rules it doesn't know, so "config first, bump after" reds main in
+  between (session 1397).
+- **`git reset --soft origin/main` in a worktree writes a REVERT** — the shared `.git` moves
+  `origin/main` under you; unexplained deletions in `git diff --stat origin/main...HEAD` are
+  the signature. Pin the base SHA.
+- **Bumping a ratchet baseline** — "the safe construct can't express this" is usually an
+  arity problem; N fixed-arity call sites beat one dynamic one, and keep the compile check.
+- **Release commit identity decides signature verification** — committer email must be a UID
+  on the signing key, or the branch rule is bypassed rather than satisfied, silently.
 - **Splitting a god-file breaks path-keyed guards** — a verbatim MOVE still reds CI:
   re-anchor `dynamic-sql-baseline.txt` (`--update-baseline`, verify count-preserving),
   swap `check-raw-tx.py` allowlist globs to the new dir, repoint AGENTS.md +
