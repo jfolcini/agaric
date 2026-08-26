@@ -1026,6 +1026,44 @@ if [ "${1:-}" = "--self-test" ]; then
     st_hook 'scripts/check-test-file-naming.sh'  "$HOOK_OWNER_TS_RE" yes 'test-file-naming re-enables HAS_TS'
     st_hook 'scripts/push.sh'                    "$HOOK_OWNER_RS_RE" no  'a self-tested script does not'
     st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor one with its own self-test hook'
+
+    # RATCHET the documented divergence from `_validate.yml`'s `ci_re`. The
+    # comment this replaces ("mirrors _validate.yml's classifier") went stale
+    # precisely because nothing checked it. Assert the difference is EXACTLY
+    # the `scripts/*.sh` arm: shell scripts are CI here and not there, while
+    # every other CI path agrees. If someone widens `_validate.yml` to match,
+    # this fails and the stale note gets updated with it.
+    _vy=".github/workflows/_validate.yml"
+    if [ -f "$_vy" ]; then
+        _vci=$(sed -n "s/^[[:space:]]*ci_re='\(.*\)'[[:space:]]*$/\1/p" "$_vy" | head -1)
+        if [ -z "$_vci" ]; then
+            st_bad "divergence ratchet: found _validate.yml's ci_re" "no ci_re= line matched"
+        else
+            _ours=no; _theirs=no
+            printf 'scripts/push.sh\n' | grep -qE "$CI_PATH_RE" && _ours=yes
+            printf 'scripts/push.sh\n' | grep -qE "$_vci" && _theirs=yes
+            if [ "$_ours" = yes ] && [ "$_theirs" = no ]; then
+                st_ok "divergence ratchet: scripts/*.sh is CI here and NOT in _validate.yml (documented, safe direction)"
+            else
+                st_bad "divergence ratchet: scripts/*.sh is CI here and NOT in _validate.yml" \
+                    "ours=$_ours theirs=$_theirs — if _validate.yml gained a scripts/ arm, update the divergence note"
+            fi
+            # ...and every OTHER CI path must still agree, or the divergence is
+            # wider than documented.
+            _mismatch=""
+            for _p in .github/workflows/ci.yml prek.toml .taplo.toml lychee.toml .gitleaks.toml; do
+                _a=no; _b=no
+                printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _a=yes
+                printf '%s\n' "$_p" | grep -qE "$_vci" && _b=yes
+                [ "$_a" = "$_b" ] || _mismatch="$_mismatch $_p(ours=$_a,theirs=$_b)"
+            done
+            if [ -z "$_mismatch" ]; then
+                st_ok "divergence ratchet: every non-scripts CI path agrees with _validate.yml"
+            else
+                st_bad "divergence ratchet: every non-scripts CI path agrees with _validate.yml" "$_mismatch"
+            fi
+        fi
+    fi
     for _v in HOOK_OWNER_RS_RE:HAS_RS HOOK_OWNER_TS_RE:HAS_TS; do
         _re="${_v%%:*}"; _flag="${_v##*:}"
         if grep -qE "^[[:space:]]*has_match \"\\\$$_re\" && $_flag=1\$" "${BASH_SOURCE[0]}"; then

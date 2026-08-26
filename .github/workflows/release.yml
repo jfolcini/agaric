@@ -183,6 +183,11 @@ jobs:
             patchelf
             pkg-config
             xvfb
+            # `dbus-run-session` lives here. Without it the smoke step's dbus
+            # mitigation silently degrades on every run (it warns and boots
+            # without a session bus), making the mitigation depend on whatever
+            # the runner image happens to ship.
+            dbus-x11
 
       - name: Setup Node.js
         # No package-manager cache on a publishing lane (#3573). The
@@ -546,7 +551,16 @@ jobs:
             # anomaly CI shows, so it is worth providing rather than guessing
             # at graphics flags; if the runner image ever drops it we fall back
             # rather than fail, since it is a mitigation and not a requirement.
-            if command -v dbus-run-session >/dev/null 2>&1; then
+            # LAST attempt drops the launcher. `command -v` proves the binary
+            # exists, not that it can start a bus — and a present-but-broken
+            # dbus-daemon would fail all three attempts identically and block
+            # publication, which is precisely the outcome this step exists to
+            # prevent. Degrading to the pre-#4418 invocation on the final try
+            # means a broken bus costs a warning, not a release.
+            if [ "${attempt:-1}" -ge "$MAX_BOOT_ATTEMPTS" ] && [ "$MAX_BOOT_ATTEMPTS" -gt 1 ]; then
+              echo "::warning::Final attempt: booting WITHOUT dbus-run-session, so a broken session bus degrades to the previous behaviour instead of gating the release."
+              launcher=()
+            elif command -v dbus-run-session >/dev/null 2>&1; then
               launcher=(dbus-run-session --)
             else
               echo "::warning::dbus-run-session unavailable on this runner; booting without a session bus. The a11y/dbus stall this mitigates is unguarded for this run." >&2
@@ -688,7 +702,11 @@ jobs:
             # a rejection would leave PROC_SNAPSHOT empty — silently dropping the
             # `wchan` capture that is this whole change's payload. A diagnostic
             # that can fail quietly is the failure it was added to prevent.
-            snap_pids="$(pgrep -f 'agaric|[Xx]vfb|dbus-run-session' | paste -sd, - || true)"
+            # Match the AppImage BASENAME, not a bare 'agaric': the runner's
+            # workspace is /home/runner/work/agaric/agaric, so an unanchored
+            # match sweeps in every process whose cmdline embeds the repo path
+            # and buries the wchan rows that are the point of this capture.
+            snap_pids="$(pgrep -f "$(basename "$APPIMAGE_BIN")|[Xx]vfb|dbus-run-session" | paste -sd, - || true)"
             if [ -n "$snap_pids" ]; then
               PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p "$snap_pids" 2>&1)" \
                 || PROC_SNAPSHOT="(ps failed for pids '$snap_pids': $PROC_SNAPSHOT)"
@@ -770,11 +788,13 @@ jobs:
               echo "       Read the boot output dumped above FIRST: if it shows xvfb-run or" >&2
               echo "       the AppImage failing to start, the process never reached Rust at" >&2
               echo "       all and none of the boot-phase readings below apply." >&2
-              echo "       Otherwise the code is the tell: 134 (or 101 on an unwinding" >&2
-              echo "       build) means it panicked before" >&2
-              echo "       init_logging, 124 means it was alive but never got there, anything" >&2
-              echo "       else means it exited early. Or the sandbox override was not" >&2
-              echo "       honoured. Sandbox tree:" >&2
+              echo "       Otherwise '\$code' is the tell — it is a STRING now, not an" >&2
+              echo "       exit status: 'timeout' = alive at the deadline but never produced" >&2
+              echo "       the artifact; 'exited:N' = ended on its own before booting" >&2
+              echo "       (134 = SIGABRT under panic=abort, 0 = a quiet false start);" >&2
+              echo "       'exited-after-boot:N' = a later boot phase failed. There is no" >&2
+              echo "       124 any more — the step no longer uses timeout(1). Or the sandbox" >&2
+              echo "       override was not honoured. Sandbox tree:" >&2
               find "$SANDBOX" -maxdepth 3 >&2 || true
               # #4418 — the 0.9.9 failure left nothing to diagnose with: the
               # captured boot.log held one dbus warning and the step stopped.
@@ -806,8 +826,8 @@ jobs:
                 echo "       and flushing init_logging. Full diagnostics:" >&2
                 echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
                 cat "$SANDBOX/boot.log" >&2 || true
-                echo "       DISPLAY=${DISPLAY:-<unset>} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>}" >&2
-                echo "       DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<unset>}" >&2
+                echo "       (the app's own DISPLAY/DBUS are on the [child-env] line of" >&2
+                echo "        boot.log above — the step shell's values are NOT the app's)" >&2
                 echo "       --- process state captured BEFORE the reap ---" >&2
                 printf '%s\n' "$PROC_SNAPSHOT" | sed 's/^/       /' >&2
               fi
