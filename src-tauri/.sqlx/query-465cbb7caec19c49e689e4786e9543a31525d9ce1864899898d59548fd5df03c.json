@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.deleted_at FROM blocks b JOIN blocks parent ON parent.id = b.parent_id WHERE b.id = ? AND b.deleted_at IS NOT NULL AND parent.deleted_at IS NOT NULL AND parent.deleted_at = b.deleted_at",
+  "describe": {
+    "columns": [
+      {
+        "name": "deleted_at",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "deleted_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "465cbb7caec19c49e689e4786e9543a31525d9ce1864899898d59548fd5df03c"
+}

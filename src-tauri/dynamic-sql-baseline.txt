@@ -58,7 +58,7 @@
 2 src-tauri/src/commands/queries.rs
 1 src-tauri/src/dag.rs
 4 src-tauri/src/db/pool.rs
-50 src-tauri/src/db/recovery.rs
+54 src-tauri/src/db/recovery.rs
 4 src-tauri/src/lib.rs
 3 src-tauri/src/link_metadata/mod.rs
 2 src-tauri/src/maintenance.rs

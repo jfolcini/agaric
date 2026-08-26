@@ -682,6 +682,40 @@ pub async fn apply_delete_block_via_loro(
 /// locally. See that helper for why the answer is a sweep into the ancestor's
 /// cohort rather than the local path's rejection — refusing a peer's op is the
 /// divergence, not the cure.
+///
+/// #4204/#4188 — the tail's OTHER half, the un-sweep
+/// ([`super::sql_only::unsweep_inherited_cohort_after_move`]), is deliberately
+/// NOT called here, and that is a statement about this function rather than a
+/// gap. The un-sweep only ever fires on a subject whose own row is TOMBSTONED
+/// (its tombstone was inherited from a concurrent cascade on its old parent).
+/// The first statement of this function resolves the space with
+/// [`agaric_store::space::resolve_block_space`], which filters
+/// `deleted_at IS NULL` (AGENTS.md invariant #9), so a tombstoned subject never
+/// reaches this arm at all — it is routed to
+/// [`super::sql_only::apply_move_block_sql_only`], where the un-sweep lives.
+/// Calling it here too would be unreachable code, and the `#891` fallback-count
+/// assertions in `move_convergence_tests` pin that routing.
+///
+/// The consequence is the open half of #4204 (its "finding 3"): because the
+/// tombstoned-subject move runs on the engine-LESS arm, nothing clears the
+/// subject's per-space engine `deleted_at` register, which the delete's
+/// post-commit `dispatch_delete_descendants` fan-out set for the whole cohort.
+/// The SQL re-derivation therefore does not survive the next snapshot import
+/// (`reproject_block_deleted_at_from_engine` takes its `Some(ts)` branch). The
+/// durable fix is a post-commit fan-out in the shape of #2868's purge fix —
+/// resolve the space with
+/// [`agaric_store::space::resolve_soft_deleted_block_space`] and mirror the
+/// clear.
+///
+/// That it is a CRDT-visible resurrection propagated to the DELETING peer is
+/// no longer a reason to hold: the maintainer ruling of 2026-08-26 adopts
+/// exactly that semantics
+/// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>).
+/// It is not bolted on here for the structural reason above — this arm never
+/// sees a tombstoned subject, so the mirror has no call site here to live at —
+/// and the fan-out is a post-commit concern outside this function either way.
+/// The canonical statement of the gap is on
+/// [`super::sql_only::unsweep_inherited_cohort_after_move`].
 pub async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,

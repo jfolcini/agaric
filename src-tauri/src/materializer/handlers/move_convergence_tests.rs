@@ -1845,3 +1845,631 @@ async fn sweep_does_not_leave_the_tags_cache_over_counting_4200() {
          RebuildTagsCache"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #4204 / #4188 — the un-sweep: the SUBJECT arrives at the move already
+// tombstoned by a CASCADE on its old parent, and the move takes it somewhere
+// that cohort no longer describes.
+//
+// One rule serves both: `deleted_at` is a function of the CONVERGED TREE, not
+// of replay order. A cohort ROOT keeps its own stamp; every other block's
+// `deleted_at` is the nearest tombstoned ancestor's in the tree it is in NOW,
+// and NULL when that chain is entirely live. #4112's sweep is that rule read
+// downwards; `unsweep_inherited_cohort_after_move` opens it upwards.
+//
+// Both tests replay the SAME `OpRecord` values on every device — one op SET
+// seen in different orders, which is the only thing a convergence claim can be
+// made about.
+// ---------------------------------------------------------------------------
+
+/// Append a `DeleteBlock` op and FORCE its `created_at`, hence its cohort
+/// timestamp.
+///
+/// `append_local_op` stamps wall-clock ms, so two deletes appended back to back
+/// routinely land in the SAME millisecond. In the #4188 fixture below that
+/// would make `t1 == t2` and every cohort assertion VACUOUS — the two answers
+/// the issue reports would be indistinguishable and the test would pass on
+/// today's divergent code. The op path takes the cohort ts from
+/// `record.created_at` (`apply_op_tx`'s `DeleteBlock` arm), not from #1549's
+/// monotonic `next_delete_ms`, so overriding the field is exactly what the
+/// production cascade will read.
+///
+/// The override is IN MEMORY ONLY. `append_local_op` has already written the
+/// `op_log` row with its wall-clock `created_at`, and this does not go back and
+/// rewrite it — so the forced-distinct `t1`/`t2` exist on the `OpRecord`
+/// values these tests hand to `replay`, and nowhere in the database. That is
+/// sound for what these tests assert (they are about the op path, which reads
+/// the cohort ts off the record it is given), but it means the fixture is NOT
+/// reproducible by any DB-driven replay: a boot recovery over the same
+/// `op_log` would read the two wall-clock stamps and could see `t1 == t2`. The
+/// recovery-arm mirrors of these shapes therefore build their own op rows with
+/// explicit `created_at` values rather than reusing this helper — see the
+/// `seed_delete_op` / `seed_move_op` fixtures in `crate::db::recovery`'s tests.
+async fn append_delete_at(
+    pool: &SqlitePool,
+    block_id: &str,
+    created_at: i64,
+) -> agaric_store::op_log::OpRecord {
+    let mut record = append_delete(pool, block_id).await;
+    record.created_at = created_at;
+    record
+}
+
+/// The two forced-distinct delete cohort timestamps for the #4188 fixture.
+const TS_DELETE_P1: i64 = 1_700_000_000_001;
+/// The second, strictly later cohort — see [`TS_DELETE_P1`].
+const TS_DELETE_P2: i64 = 1_700_000_000_002;
+
+/// #4204, THE convergence test: a delete of a block's OLD parent racing a move
+/// OUT of it, with the target parent LIVE throughout, must not resolve
+/// live-vs-trashed by replay order.
+///
+/// `{Delete(P1), Move(C1A: P1 → P2)}` over `PAGE > {P1 > (C1A > G1A), P2}`.
+/// Before the un-sweep:
+///
+/// * delete-first — `D(P1)`'s cascade stamps `C1A`/`G1A`, and the move (which
+///   deliberately does not refuse a tombstoned subject) carries them under `P2`
+///   still TRASHED;
+/// * move-first — `collect_subtree_ids_unbounded(P1)` never reaches `C1A`, so
+///   it ends under `P2` LIVE.
+///
+/// #4112's sweep fires in NEITHER order (after the move the whole ancestor
+/// chain `P2 > PAGE` is live), which is why this shape survived it. The two
+/// devices disagreed about whether the subtree is in the tree at all — the
+/// worse half of the #4188/#4204 pair.
+///
+/// The converged answer is LIVE, and it is the only implementable one:
+/// `DeleteBlockPayload` carries `block_id` alone, so the move-first device
+/// holds no record that `C1A` was ever `P1`'s child and no "delete wins" rule
+/// could recover one. It is also the answer the snapshot-import path already
+/// gives — `reproject_block_deleted_at_from_engine`'s
+/// `(Some(deleted_at_ref), None)` arm restores exactly this shape.
+///
+/// Reddens on today's code in the `C1A`/`G1A` rows of the cross-device
+/// comparison (trashed on A, live on B).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_out_of_a_deleted_parent_converges_across_replay_orders_4204() {
+    let (_dir_a, pool_a, state_a) = seed_engine_world("unsweep_delete_first.db").await;
+    let (_dir_b, pool_b, state_b) = seed_engine_world("unsweep_move_first.db").await;
+
+    // Device A owns the op log; both devices replay ITS records.
+    let del = append_delete(&pool_a, P1_ID).await;
+    let mv = append_move(&pool_a, C1A_ID, P2_ID, MOVE_INDEX).await;
+
+    let fallback_before = super::sql_only_fallback::count();
+
+    // Device A: the delete's cascade stamps C1A before the move takes it out.
+    replay(&pool_a, &state_a, &del).await;
+    replay(&pool_a, &state_a, &mv).await;
+
+    // Device B: the move takes C1A out first, so the cascade never reaches it.
+    replay(&pool_b, &state_b, &mv).await;
+    replay(&pool_b, &state_b, &del).await;
+
+    // #891, and the routing fact that decides where the un-sweep must LIVE.
+    // `apply_move_block_via_loro` resolves the space with `resolve_block_space`,
+    // which filters `deleted_at IS NULL` (AGENTS.md invariant #9) — so the
+    // delete-first device's move, whose SUBJECT is tombstoned, is routed to
+    // `apply_move_block_sql_only`, while the move-first device's (live subject)
+    // stays on the engine arm. Exactly ONE of the four replays here falls back.
+    //
+    // Pinned rather than merely tolerated, for two reasons: it proves the
+    // move-first order really did exercise production's engine arm (#891), and
+    // it is the reason #4204's engine-register half is still open — see
+    // `unsweep_does_not_yet_reach_the_engine_register_4204`. Changing the move
+    // routing reddens this and forces that question to be re-answered.
+    assert_eq!(
+        super::sql_only_fallback::count() - fallback_before,
+        1,
+        "#891: exactly one replay (the delete-first device's tombstoned-subject \
+         move) may take the sql_only fallback; the move-first device must stay on \
+         the ENGINE arm"
+    );
+
+    let a = world_shape(&pool_a).await;
+    let b = world_shape(&pool_b).await;
+    assert_eq!(
+        a, b,
+        "#4204: the two replay orders of {{Delete(P1), Move(C1A -> P2)}} diverge — \
+         delete-first={a:?} move-first={b:?}"
+    );
+
+    // Non-vacuity: pin the converged VALUES, so the equality above cannot pass
+    // by both devices doing nothing.
+    assert_eq!(
+        shape_of(&pool_a, P2_ID).await,
+        (Some(PAGE_ID.to_string()), None),
+        "precondition: the target parent P2 is LIVE throughout — the whole point \
+         of this shape is that #4112's sweep has nothing to find"
+    );
+    assert_eq!(
+        shape_of(&pool_a, P1_ID).await,
+        (Some(PAGE_ID.to_string()), Some(del.created_at)),
+        "the delete itself still lands: P1 is trashed at its own cohort ts"
+    );
+    assert_eq!(
+        shape_of(&pool_a, C1B_ID).await,
+        (Some(P1_ID.to_string()), Some(del.created_at)),
+        "the sibling that did NOT move stays in P1's cohort — the un-sweep must \
+         re-derive only the MOVED subtree, not undo the delete"
+    );
+    assert_eq!(
+        shape_of(&pool_a, C1A_ID).await,
+        (Some(P2_ID.to_string()), None),
+        "#4204: the converged answer is `moved AND live under the live P2` — the \
+         inherited tombstone was a fact about C1A's position in P1, and the move \
+         changed that position"
+    );
+    assert_eq!(
+        shape_of(&pool_a, G1A_ID).await,
+        (Some(C1A_ID.to_string()), None),
+        "#4204: the un-sweep re-derives the whole moved COHORT, not just its head \
+         — a live C1A over a trashed G1A would be a new invisible orphan"
+    );
+}
+
+/// #4188, THE convergence test: a `MoveBlock` racing deletes of BOTH its source
+/// and its target parent, replayed in all six orders.
+///
+/// `{Delete(P1)@t1, Delete(P2)@t2, Move(C1A: P1 → P2)}`. Before the un-sweep,
+/// three orders answered `t1` and three `t2` — the block is trashed on every
+/// device either way, but the two answers put it in DIFFERENT restore cohorts,
+/// so restoring `P1` resurrected it on one device and not the other.
+///
+/// The converged answer is `t2`, the cohort of the nearest tombstoned ancestor
+/// in the final tree — the same answer #4112's sweep already gave in the one
+/// order (`D(P2), M, D(P1)`) where it fired, now given in all six. `t1` is not
+/// available to a rule that has to work on every device: in the `M, D(P1),
+/// D(P2)` order `D(P1)`'s cascade never reaches `C1A` at all, so there is
+/// nothing for an "earliest stamp wins" tiebreak to win against — the
+/// divergence is in the cascade's REACH, not in its skip-an-already-stamped-row
+/// filter.
+///
+/// The two delete timestamps are FORCED distinct (see [`append_delete_at`]);
+/// with the wall-clock stamps `append_local_op` assigns they routinely collide
+/// in one millisecond and every assertion below goes vacuous.
+///
+/// Reddens on today's code: orders `[0,1,2]`, `[0,2,1]` and `[1,0,2]` answer
+/// `t1` where the other three answer `t2`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_of_both_endpoints_and_move_converge_across_all_six_orders_4188() {
+    let mut worlds = Vec::new();
+    for n in 0..6u8 {
+        worlds.push(seed_engine_world(&format!("both_endpoints_{n}.db")).await);
+    }
+    // World 0 doubles as the op-log owner; every world replays ITS records, so
+    // all six see ONE op set rather than six similar ones.
+    let records = [
+        append_delete_at(&worlds[0].1, P1_ID, TS_DELETE_P1).await,
+        append_delete_at(&worlds[0].1, P2_ID, TS_DELETE_P2).await,
+        append_move(&worlds[0].1, C1A_ID, P2_ID, MOVE_INDEX).await,
+    ];
+    assert_ne!(
+        records[0].created_at, records[1].created_at,
+        "fixture precondition: the two delete cohorts must be DISTINGUISHABLE, \
+         or every cohort assertion below is vacuous"
+    );
+
+    const ORDERS: [[usize; 3]; 6] = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let fallback_before = super::sql_only_fallback::count();
+    let mut shapes = Vec::new();
+    for (order, (_dir, pool, state)) in ORDERS.iter().zip(worlds.iter()) {
+        for &i in order {
+            replay(pool, state, &records[i]).await;
+        }
+        shapes.push(world_shape(pool).await);
+    }
+    // #891 + routing, as in the #4204 test above: the three orders that put both
+    // deletes before the move hand `apply_move_block_via_loro` a TOMBSTONED
+    // subject, for which `resolve_block_space`'s `deleted_at IS NULL` filter
+    // returns `None`, so they run `apply_move_block_sql_only`. The other three
+    // move a live block and stay on the engine arm. The convergence asserted
+    // below is therefore across BOTH materializer arms, which is the stronger
+    // claim — and the count pins that neither arm was silently skipped.
+    assert_eq!(
+        super::sql_only_fallback::count() - fallback_before,
+        3,
+        "#891: exactly the three delete-before-move orders may take the sql_only \
+         fallback; the other three must exercise the ENGINE arm"
+    );
+
+    for (order, shape) in ORDERS.iter().zip(shapes.iter()).skip(1) {
+        assert_eq!(
+            &shapes[0], shape,
+            "#4188: replay order {order:?} diverges from {:?}",
+            ORDERS[0]
+        );
+    }
+
+    // Non-vacuity: pin the converged answer rather than letting six identical
+    // no-ops satisfy the equality above.
+    let (_dir, pool, _state) = &worlds[0];
+    assert_eq!(
+        shape_of(pool, P1_ID).await,
+        (Some(PAGE_ID.to_string()), Some(TS_DELETE_P1)),
+        "precondition: P1 is trashed at t1"
+    );
+    assert_eq!(
+        shape_of(pool, P2_ID).await,
+        (Some(PAGE_ID.to_string()), Some(TS_DELETE_P2)),
+        "precondition: P2 is trashed at t2, a DIFFERENT cohort"
+    );
+    assert_eq!(
+        shape_of(pool, C1B_ID).await,
+        (Some(P1_ID.to_string()), Some(TS_DELETE_P1)),
+        "the sibling that did not move keeps P1's cohort — the re-derivation is \
+         about POSITION, and C1B's did not change"
+    );
+    for (id, parent) in [(C1A_ID, P2_ID), (G1A_ID, C1A_ID)] {
+        assert_eq!(
+            shape_of(pool, id).await,
+            (Some(parent.to_string()), Some(TS_DELETE_P2)),
+            "#4188: {id} must end under {parent} in P2's cohort (t2) — the cohort \
+             its FINAL position implies, on every one of the six orders"
+        );
+    }
+}
+
+/// Drive one already-appended record through `apply_op_tx` AND the post-commit
+/// engine fan-out that `apply_op_projected` runs in production.
+///
+/// [`replay`] deliberately omits the fan-out (the #4112 harness pins SQL only,
+/// and says so). The un-sweep's DURABILITY, though, is a claim about the engine
+/// register, and the register is only reachable through
+/// `dispatch_delete_descendants` — the very call that puts a cascade member's
+/// `deleted_at` into the CRDT in the first place. So the register tests use
+/// this fuller replay and nothing else does.
+async fn replay_with_fanout(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    record: &agaric_store::op_log::OpRecord,
+) {
+    let mut tx = pool.begin().await.expect("begin replay");
+    let effects = super::apply_op_tx(&mut tx, record, None, state)
+        .await
+        .expect("apply record");
+    tx.commit().await.expect("commit replay");
+    super::dispatch_delete_descendants(
+        record,
+        &effects.deleted_cohort,
+        effects.delete_space_id.as_ref(),
+        state,
+    )
+    .await;
+}
+
+/// The per-space engine's `deleted_at` register for one block — the value
+/// `reproject_block_deleted_at_from_engine` reads on the snapshot-import path.
+fn engine_deleted_at(
+    state: &agaric_engine::loro::shared::LoroState,
+    block_id: &str,
+) -> Option<String> {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEVICE_ID)
+        .expect("for_space (read register)");
+    let out = guard
+        .engine_mut()
+        .read_deleted_at(block_id)
+        .expect("read_deleted_at");
+    drop(guard);
+    out
+}
+
+/// #4204's OPEN half, measured rather than argued: the SQL re-derivation does
+/// NOT reach the per-space engine register, so a snapshot import undoes it.
+///
+/// This is a CHARACTERISATION test. It asserts today's behaviour, including the
+/// part that is wrong, because that part is the reason #4204 cannot be called
+/// closed and the issue's own "finding 3" asserts it without a runnable
+/// witness. It reddens the moment someone makes the clear durable — which is
+/// the point: the fix has to come back here and flip these assertions.
+///
+/// The mechanism, end to end:
+///
+/// 1. The op path fans a delete's whole `deleted_cohort` — seed *plus* every
+///    cascaded descendant — onto the engine (`dispatch_delete_descendants`), so
+///    on the delete-first device `C1A`'s register holds `P1`'s cohort ts even
+///    though `C1A` is not a delete seed.
+/// 2. The move that follows has a TOMBSTONED subject, so
+///    `resolve_block_space`'s `deleted_at IS NULL` filter routes it to
+///    `apply_move_block_sql_only` — the arm with no engine to mirror onto.
+/// 3. SQL is re-derived (live), the register is not, and the next
+///    `reproject_block_deleted_at_from_engine` takes its `Some(ts)` branch and
+///    re-trashes the subtree.
+///
+/// The durable answer is a post-commit fan-out in the shape of #2868's purge
+/// fix (`resolve_soft_deleted_block_space` + a mirror dispatch). The semantics
+/// it would propagate — a CRDT-visible resurrection reaching the DELETING peer
+/// — are ruled ON, not pending: see the maintainer ruling of 2026-08-26
+/// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>)
+/// and the canonical statement of the gap on
+/// `agaric_engine::apply::sql_only::unsweep_inherited_cohort_after_move`. So
+/// what this test measures is an unwritten fan-out, not an undecided question.
+///
+/// This is the one test in the file that runs the post-commit fan-out (see
+/// [`replay_with_fanout`]), because the register is what it is about.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unsweep_does_not_yet_reach_the_engine_register_4204() {
+    let (_dir, pool, state) = seed_engine_world("unsweep_engine_register.db").await;
+
+    let del = append_delete(&pool, P1_ID).await;
+    let mv = append_move(&pool, C1A_ID, P2_ID, MOVE_INDEX).await;
+
+    replay_with_fanout(&pool, &state, &del).await;
+    // Step 1: the fan-out stamps a CASCADE MEMBER's register, not just the
+    // delete seed's — which is what `reproject_block_deleted_at_from_engine`'s
+    // "the engine stores deleted_at on the delete seed only" docstring gets
+    // wrong about the op path.
+    assert_eq!(
+        engine_deleted_at(&state, C1A_ID),
+        Some(del.created_at.to_string()),
+        "precondition: `dispatch_delete_descendants` put P1's cohort ts on C1A's \
+         engine register even though C1A is not the delete seed"
+    );
+
+    replay_with_fanout(&pool, &state, &mv).await;
+
+    // Step 2: SQL was re-derived...
+    assert_eq!(
+        shape_of(&pool, C1A_ID).await,
+        (Some(P2_ID.to_string()), None),
+        "the SQL half of the fix DID run (on the sql_only arm)"
+    );
+    // ...and the register was not.
+    assert_eq!(
+        engine_deleted_at(&state, C1A_ID),
+        Some(del.created_at.to_string()),
+        "#4204 OPEN: the tombstoned-subject move ran on the engine-LESS arm, so \
+         nothing cleared C1A's register. Flip this assertion to `None` when the \
+         durable fan-out lands."
+    );
+
+    // Step 3: therefore the next snapshot import undoes the fix.
+    let mut conn = pool.acquire().await.expect("acquire");
+    for id in [C1A_ID, G1A_ID] {
+        let register = engine_deleted_at(&state, id);
+        agaric_engine::loro::projection::reproject_block_deleted_at_from_engine(
+            &mut conn,
+            &BlockId::from_trusted(id),
+            register.as_deref(),
+        )
+        .await
+        .expect("reproject_block_deleted_at_from_engine");
+    }
+    drop(conn);
+    assert_eq!(
+        shape_of(&pool, C1A_ID).await,
+        (Some(P2_ID.to_string()), Some(del.created_at)),
+        "#4204 OPEN: an import-path reproject re-trashes the subtree from the \
+         stale register, so the op-path convergence is not durable. This is the \
+         issue's finding 3, and the reason the ruling it asks for is still needed."
+    );
+}
+
+/// Fallback arm: NO engine. Seed the identical hierarchy in SQL, stamp `P1`'s
+/// delete cascade at `source_ts` (so `C1A`'s tombstone is INHERITED, exactly
+/// what the delete-first replay order hands the move), optionally stamp `P2`'s
+/// subtree at `target_ts`, then call `apply_move_block_sql_only` — the exact fn
+/// the engine arm's routing degrades to.
+async fn run_fallback_unsweep_arm(
+    db_name: &str,
+    source_ts: i64,
+    target_ts: Option<i64>,
+) -> (
+    (Option<String>, Option<i64>),
+    (Option<String>, Option<i64>),
+    (Option<String>, Option<i64>),
+    (Option<String>, Option<i64>),
+) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join(db_name))
+        .await
+        .expect("init_pool");
+    seed_space(&pool).await;
+    seed_hierarchy_sql(&pool).await;
+    insert_block_row(
+        &pool,
+        G1A_ID,
+        "content",
+        Some(C1A_ID),
+        0,
+        Some(PAGE_ID),
+        Some(SPACE_ID),
+    )
+    .await;
+    // The delete cascade the mover peer never saw: P1 and its whole subtree.
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id IN (?, ?, ?, ?)")
+        .bind(source_ts)
+        .bind(P1_ID)
+        .bind(C1A_ID)
+        .bind(C1B_ID)
+        .bind(G1A_ID)
+        .execute(&pool)
+        .await
+        .expect("tombstone P1 subtree");
+    if let Some(ts) = target_ts {
+        sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id IN (?, ?, ?)")
+            .bind(ts)
+            .bind(P2_ID)
+            .bind(C2A_ID)
+            .bind(C2B_ID)
+            .execute(&pool)
+            .await
+            .expect("tombstone P2 subtree");
+    }
+
+    let mut conn = pool.acquire().await.expect("acquire");
+    apply_move_block_sql_only(
+        &mut conn,
+        MoveBlockPayload {
+            block_id: BlockId::from_trusted(C1A_ID),
+            new_parent_id: Some(BlockId::from_trusted(P2_ID)),
+            new_position: agaric_store::pagination::index_to_provisional_position(MOVE_INDEX),
+            new_index: Some(MOVE_INDEX),
+        },
+    )
+    .await
+    .expect("apply_move_block_sql_only");
+    drop(conn);
+
+    (
+        shape_of(&pool, C1A_ID).await,
+        shape_of(&pool, G1A_ID).await,
+        shape_of(&pool, C1B_ID).await,
+        shape_of(&pool, P1_ID).await,
+    )
+}
+
+/// The `sql_only` fallback arm runs the SAME un-sweep tail as the engine arm.
+///
+/// #1323's rule for this file: a repair that lands on one materializer arm only
+/// is worse than the bug, because the two arms then disagree about the same op.
+/// The engine tests above drive `apply_move_block_via_loro`; this one drives
+/// `apply_move_block_sql_only` directly (the fn that arm's own routing degrades
+/// to when space resolution fails or the engine tree is missing the block) and
+/// demands both #4204's and #4188's answers from it.
+///
+/// The two arms' absolute cohort timestamps differ by construction — the engine
+/// arm takes them from the op records, this arm from fixture constants — so
+/// what is asserted is the same RELATION: an inherited tombstone is re-derived
+/// from the new position, and the siblings left behind keep the old cohort.
+///
+/// Removing the `unsweep_inherited_cohort_after_move` call from
+/// `apply_move_block_sql_only` reddens both halves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unsweep_runs_on_the_sql_only_arm_too_4204_4188() {
+    // #4204: the target parent is LIVE, so the re-derivation finds no cohort
+    // and the moved subtree comes back.
+    let (c1a, g1a, c1b, p1) =
+        run_fallback_unsweep_arm("fallback_unsweep_live_target.db", TS_DELETE_P1, None).await;
+    assert_eq!(
+        c1a,
+        (Some(P2_ID.to_string()), None),
+        "#4204 (sql_only arm): C1A moved onto a LIVE P2 must end live, as it does \
+         on the engine arm"
+    );
+    assert_eq!(
+        g1a,
+        (Some(C1A_ID.to_string()), None),
+        "#4204 (sql_only arm): the re-derivation covers the moved COHORT, not just \
+         its head"
+    );
+    assert_eq!(
+        c1b,
+        (Some(P1_ID.to_string()), Some(TS_DELETE_P1)),
+        "#4204 (sql_only arm): the sibling that did not move keeps P1's cohort — \
+         the un-sweep must not undo the delete"
+    );
+    assert_eq!(
+        p1,
+        (Some(PAGE_ID.to_string()), Some(TS_DELETE_P1)),
+        "#4204 (sql_only arm): P1 itself stays trashed"
+    );
+
+    // #4188: the target parent is trashed in a DIFFERENT cohort, so the
+    // re-derivation re-stamps rather than resurrects.
+    let (c1a, g1a, c1b, _p1) = run_fallback_unsweep_arm(
+        "fallback_unsweep_trashed_target.db",
+        TS_DELETE_P1,
+        Some(TS_DELETE_P2),
+    )
+    .await;
+    assert_eq!(
+        c1a,
+        (Some(P2_ID.to_string()), Some(TS_DELETE_P2)),
+        "#4188 (sql_only arm): C1A must land in the TARGET's cohort (t2), the one \
+         its final position implies"
+    );
+    assert_eq!(
+        g1a,
+        (Some(C1A_ID.to_string()), Some(TS_DELETE_P2)),
+        "#4188 (sql_only arm): the whole moved subtree is re-stamped, not just C1A"
+    );
+    assert_eq!(
+        c1b,
+        (Some(P1_ID.to_string()), Some(TS_DELETE_P1)),
+        "#4188 (sql_only arm): the sibling that did not move keeps t1"
+    );
+}
+
+/// The short-circuit is LOAD-BEARING on this arm, not an optimisation: a move
+/// WITHIN one cohort must leave `deleted_at` alone, including on rows the
+/// re-derivation would otherwise pull in.
+///
+/// Fixture: `P1`'s cascade tombstoned `P1`, `C1A` and `C1B` at `t1`, but `G1A`
+/// was created under `C1A` AFTER that cascade (a peer adding a child to a block
+/// another device concurrently deleted), so it is LIVE under a tombstone — the
+/// pre-existing orphan shape `recover_move_of_an_already_tombstoned_block_…`
+/// also fixes. Then `Move(C1A → C1B)`, both endpoints in the SAME cohort.
+///
+/// Without the short-circuit the un-sweep would clear `C1A`'s `t1` and hand a
+/// LIVE subject to `sweep_move_under_tombstoned_ancestor`, whose cascade walks
+/// ACTIVE descendants — so it would stamp `G1A` at `t1` too, silently adopting
+/// an orphan the move never touched. `deleted_at` on `C1A` would land back on
+/// the same value, which is why only `G1A` can witness this.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unsweep_short_circuits_a_move_within_one_cohort_4188() {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = init_pool(&dir.path().join("fallback_unsweep_same_cohort.db"))
+        .await
+        .expect("init_pool");
+    seed_space(&pool).await;
+    seed_hierarchy_sql(&pool).await;
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id IN (?, ?, ?)")
+        .bind(TS_DELETE_P1)
+        .bind(P1_ID)
+        .bind(C1A_ID)
+        .bind(C1B_ID)
+        .execute(&pool)
+        .await
+        .expect("tombstone P1 subtree");
+    // Created after the cascade: live under a tombstone.
+    insert_block_row(
+        &pool,
+        G1A_ID,
+        "content",
+        Some(C1A_ID),
+        0,
+        Some(PAGE_ID),
+        Some(SPACE_ID),
+    )
+    .await;
+
+    let mut conn = pool.acquire().await.expect("acquire");
+    apply_move_block_sql_only(
+        &mut conn,
+        MoveBlockPayload {
+            block_id: BlockId::from_trusted(C1A_ID),
+            new_parent_id: Some(BlockId::from_trusted(C1B_ID)),
+            new_position: agaric_store::pagination::index_to_provisional_position(0),
+            new_index: Some(0),
+        },
+    )
+    .await
+    .expect("apply_move_block_sql_only");
+    drop(conn);
+
+    assert_eq!(
+        shape_of(&pool, C1A_ID).await,
+        (Some(C1B_ID.to_string()), Some(TS_DELETE_P1)),
+        "the move applies and the subject keeps the cohort its new position still \
+         implies"
+    );
+    assert_eq!(
+        shape_of(&pool, G1A_ID).await,
+        (Some(C1A_ID.to_string()), None),
+        "#4188: the short-circuit must skip the clear-and-re-stamp entirely — \
+         re-deriving here would sweep this PRE-EXISTING live orphan into P1's \
+         cohort, which is neither what the move asked for nor what the delete's \
+         own cascade produced"
+    );
+}
