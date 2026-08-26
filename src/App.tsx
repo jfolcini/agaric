@@ -476,6 +476,28 @@ function App() {
   // window, since the deps provably change on every switch however React
   // batches. Computing it during render keeps the hide in the same commit as
   // the view change.
+  //
+  // Keying on the view has two consequences that the boolean did not have.
+  // Both are deliberate and both are pinned in `viewTransition.test.tsx`:
+  //
+  //  1. The beat is measured from the LAST switch, not the first. The effect
+  //     clears and re-arms whenever `viewKey` changes, so clicking through
+  //     views faster than 150ms keeps the pane blank until the user pauses.
+  //     That is what B-76 asks for — the view that ends up on screen is the
+  //     one that gets its load beat. The boolean armed a single timer on the
+  //     first switch and then revealed whichever view happened to be current
+  //     when it fired, typically one that had had far less than 150ms.
+  //  2. Re-entering a view inside its own fade window (A → B → A) skips the
+  //     hide: B's timer never fired, so `visibleKey` is still A and
+  //     `fadeVisible` is true on the return render. Note this is NOT
+  //     "the DOM still holds A" — `ViewDispatcher` switches on `currentView`,
+  //     so A is genuinely unmounted and remounted, and views that load into
+  //     local state (TagList, PageBrowser, TrashView) re-fetch and can show a
+  //     skeleton frame. We take that over 150ms more blankness: the pane is
+  //     already `opacity-0` at that instant so nothing is flashed away, A has
+  //     already earned one beat, and this is what BOUNDS (1) — an oscillating
+  //     user always has a view that comes back at once instead of a pane that
+  //     stays blank for as long as they keep clicking.
   const [visibleKey, setVisibleKey] = useState(viewKey)
   const fadeVisible = visibleKey === viewKey
 

@@ -1049,7 +1049,10 @@ describe('App', () => {
         render(<App />)
         const dot = await screen.findByTestId('sync-button-status-dot')
         expect(dot).toBeInTheDocument()
-        expect(dot.className).toContain('bg-status-pending')
+        // Whole-token match: a `className` substring check would also pass on
+        // `bg-status-pending-foo`, and `bg-destructive` below is a prefix of
+        // every `bg-destructive/NN` opacity variant.
+        expect(dot).toHaveClass('bg-status-pending')
         // Decorative — text label carries semantics.
         expect(dot).toHaveAttribute('aria-hidden', 'true')
       })
@@ -1061,7 +1064,7 @@ describe('App', () => {
         })
         render(<App />)
         const dot = await screen.findByTestId('sync-button-status-dot')
-        expect(dot.className).toContain('bg-sync-active')
+        expect(dot).toHaveClass('bg-sync-active')
         expect(dot).toHaveAttribute('data-sync-state', 'syncing')
       })
 
@@ -1073,7 +1076,7 @@ describe('App', () => {
         })
         render(<App />)
         const dot = await screen.findByTestId('sync-button-status-dot')
-        expect(dot.className).toContain('bg-destructive')
+        expect(dot).toHaveClass('bg-destructive')
       })
     })
 
