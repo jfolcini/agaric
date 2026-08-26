@@ -35,18 +35,17 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 import { t } from '@/lib/i18n'
 
 // `usePropertyKeysCache` resolves through `propertyKeysQueryFn`
-// (`@/lib/property-keys-cache`), which now calls `commands.listPropertyKeys`
-// from `@/lib/bindings` and unwraps the `Result` envelope. The same spy backs
-// both the (still-wrapped) `@/lib/tauri` surface and the `commands.*` surface
-// so the `vi.mocked(...)` assertions keep working; it resolves the
-// `{ status: 'ok', data }` shape.
+// (`@/lib/property-keys-cache`), which calls `commands.listPropertyKeys` from
+// `@/lib/bindings` and unwraps the `Result` envelope. `listPropertyKeys` no
+// longer exists on `@/lib/tauri` (dead wrapper, #4410) — the hoisted mock
+// below backs the `commands.*` surface only, and is used directly (not via
+// `vi.mocked(...)` on a `@/lib/tauri` import) for the assertion further down.
 const { mockListPropertyKeys } = vi.hoisted(() => ({ mockListPropertyKeys: vi.fn() }))
 
 vi.mock('@/lib/tauri', () => ({
   listUnlinkedReferences: vi.fn(),
   editBlock: vi.fn(),
   listTagsByPrefix: vi.fn(),
-  listPropertyKeys: mockListPropertyKeys,
   // `handleLinkIt` now reads aliases via `getPageAliases` so
   // alias-only mentions can be rewritten. Default mock returns no
   // aliases so the legacy title-only test paths stay unaffected;
@@ -141,18 +140,12 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import {
-  editBlock,
-  getPageAliases,
-  listPropertyKeys,
-  listTagsByPrefix,
-  listUnlinkedReferences,
-} from '@/lib/tauri'
+import { editBlock, getPageAliases, listTagsByPrefix, listUnlinkedReferences } from '@/lib/tauri'
 
 const mockedListUnlinked = vi.mocked(listUnlinkedReferences)
 const mockedEditBlock = vi.mocked(editBlock)
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
-const mockedListPropertyKeys = vi.mocked(listPropertyKeys)
+const mockedListPropertyKeys = mockListPropertyKeys
 const mockedGetPageAliases = vi.mocked(getPageAliases)
 
 function makeGroup(

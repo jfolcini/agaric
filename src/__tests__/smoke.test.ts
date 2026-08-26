@@ -45,7 +45,6 @@ describe('module smoke tests', () => {
     expect(typeof mod.createBlock).toBe('function')
     expect(typeof mod.editBlock).toBe('function')
     expect(typeof mod.deleteBlock).toBe('function')
-    expect(typeof mod.moveBlock).toBe('function')
     expect(typeof mod.getBlock).toBe('function')
     expect(typeof mod.searchBlocks).toBe('function')
   })

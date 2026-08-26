@@ -14,100 +14,63 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   addAttachmentWithBytes,
-  addTag,
   batchResolve,
-  cancelPairing,
-  cancelSync,
-  computeEditDiff,
-  confirmPairing,
-  countAgendaBatch,
-  countAgendaBatchBySource,
-  countBacklinksBatch,
   createBlock,
   createBlocksBatch,
   createPageInSpace,
-  createPropertyDef,
-  deleteAttachment,
   deleteBlock,
   deleteBlocksByIds,
   deleteDraft,
-  deletePeerRef,
   deleteProperty,
-  deletePropertyDef,
   editBlock,
   exportPageMarkdown,
   fetchLinkMetadata,
   filteredBlocksQuery,
-  findUndoGroup,
   firstChildForBlocks,
   flushAllDrafts,
-  flushDraft,
-  getBacklinks,
-  getBatchAttachments,
   getBatchProperties,
   getBlock,
   getBlockHistory,
-  getBlocks,
-  getDeviceId,
   getLinkMetadata,
   getPageAliases,
-  getPeerRef,
   getProperties,
   getProperty,
   getPropertyDef,
   getStatus,
   importMarkdown,
-  listAttachments,
   listBacklinksGrouped,
   listBlocks,
   listBlocksLimit,
-  listDrafts,
   listPageHistory,
   listPageLinks,
   listPeerRefs,
   listProjectedAgenda,
   listProjectedAgendaLimit,
   listPropertyDefs,
-  listPropertyKeys,
-  listPropertyValues,
   listSpaces,
   listTagsByPrefix,
-  listTagsForBlock,
   listUndatedTasks,
   listUnlinkedReferences,
   logFrontend,
-  moveBlock,
   paginationLimit,
   PartialPurgeError,
   purgeAllDeletedInSpace,
   purgeBlock,
   purgeBlocksByIds,
-  queryBacklinksFiltered,
   queryByProperty,
   queryByTags,
-  notifyTask,
-  quickCaptureBlock,
   redoPageOp,
-  removeTag,
   resolvePageByAlias,
   restoreAllDeletedInSpace,
   restoreBlock,
   restoreBlocksByIds,
-  restorePageToOp,
-  revertOps,
   saveDraft,
   searchBlocks,
-  setPageAliases,
-  setPeerAddress,
   setProperty,
   setPropertyBatch,
   readAttachment,
-  startPairing,
   startSync,
-  trashDescendantCounts,
   undoPageOp,
-  updatePeerName,
-  updatePropertyDefOptions,
 } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -515,84 +478,6 @@ describe('getBlock', () => {
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('get_block', { blockId: 'BLK001' })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// moveBlock
-// ---------------------------------------------------------------------------
-
-describe('moveBlock', () => {
-  it('invokes move_block with all args', async () => {
-    const expected = {
-      block_id: 'BLK001',
-      new_parent_id: 'PARENT02',
-      new_position: 5,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await moveBlock('BLK001', 'PARENT02', 5)
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
-      blockId: 'BLK001',
-      newParentId: 'PARENT02',
-      newIndex: 5,
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('passes null newParentId for top-level move', async () => {
-    const expected = { block_id: 'BLK001', new_parent_id: null, new_position: 0 }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    await moveBlock('BLK001', null, 0)
-
-    expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
-      blockId: 'BLK001',
-      newParentId: null,
-      newIndex: 0,
-    })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// addTag
-// ---------------------------------------------------------------------------
-
-describe('addTag', () => {
-  it('invokes add_tag with blockId and tagId', async () => {
-    const expected = { block_id: 'BLK001', tag_id: 'TAG01' }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await addTag('BLK001', 'TAG01')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('add_tag', {
-      blockId: 'BLK001',
-      tagId: 'TAG01',
-    })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// removeTag
-// ---------------------------------------------------------------------------
-
-describe('removeTag', () => {
-  it('invokes remove_tag with blockId and tagId', async () => {
-    const expected = { block_id: 'BLK001', tag_id: 'TAG01' }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await removeTag('BLK001', 'TAG01')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('remove_tag', {
-      blockId: 'BLK001',
-      tagId: 'TAG01',
-    })
     expect(result).toEqual(expected)
   })
 })
@@ -1030,68 +915,6 @@ describe('batchResolve', () => {
 })
 
 // ---------------------------------------------------------------------------
-// getBacklinks
-// ---------------------------------------------------------------------------
-
-describe('getBacklinks', () => {
-  const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
-
-  it('invokes get_backlinks with all parameters', async () => {
-    const pageResp = {
-      items: [
-        {
-          id: 'B1',
-          block_type: 'content',
-          content: 'ref',
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-        },
-      ],
-      next_cursor: 'next1',
-      has_more: true,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(pageResp)
-
-    const result = await getBacklinks({
-      blockId: 'TARGET',
-      cursor: 'cur1',
-      limit: paginationLimit(10),
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_backlinks', {
-      blockId: 'TARGET',
-      cursor: 'cur1',
-      limit: 10,
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(pageResp)
-  })
-
-  it('defaults optional cursor, limit to null and scope to global', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-
-    await getBacklinks({ blockId: 'TARGET' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('get_backlinks', {
-      blockId: 'TARGET',
-      cursor: null,
-      limit: null,
-      scope: { kind: 'global' },
-    })
-  })
-
-  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyPage)
-    await getBacklinks({ blockId: 'TARGET', spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-})
-
-// ---------------------------------------------------------------------------
 // getBlockHistory
 // ---------------------------------------------------------------------------
 
@@ -1150,23 +973,6 @@ describe('getStatus', () => {
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('get_status')
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// listTagsForBlock
-// ---------------------------------------------------------------------------
-
-describe('listTagsForBlock', () => {
-  it('invokes list_tags_for_block with blockId', async () => {
-    const expected = ['tag1', 'tag2', 'tag3']
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await listTagsForBlock('BLK001')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_tags_for_block', { blockId: 'BLK001' })
     expect(result).toEqual(expected)
   })
 })
@@ -1396,27 +1202,6 @@ describe('listPageHistory', () => {
 })
 
 // ---------------------------------------------------------------------------
-// revertOps
-// ---------------------------------------------------------------------------
-
-describe('revertOps', () => {
-  it('invokes revert_ops with ops array', async () => {
-    const ops = [
-      { device_id: 'dev1', seq: 10 },
-      { device_id: 'dev2', seq: 20 },
-    ]
-    const expected = { reverted: 2 }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await revertOps({ ops })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('revert_ops', { ops })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
 // queryByProperty
 // ---------------------------------------------------------------------------
 
@@ -1569,46 +1354,6 @@ describe('undoPageOp', () => {
 })
 
 // ---------------------------------------------------------------------------
-// FindUndoGroup
-// ---------------------------------------------------------------------------
-
-describe('findUndoGroup', () => {
-  it('invokes find_undo_group with pageId, depth and windowMs', async () => {
-    mockedInvoke.mockResolvedValueOnce(3)
-
-    const result = await findUndoGroup({
-      pageId: 'PAGE1',
-      depth: 0,
-      windowMs: 500,
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('find_undo_group', {
-      pageId: 'PAGE1',
-      depth: 0,
-      windowMs: 500,
-    })
-    expect(result).toBe(3)
-  })
-
-  it('returns 1 when backend reports no batch (single op)', async () => {
-    mockedInvoke.mockResolvedValueOnce(1)
-
-    const result = await findUndoGroup({ pageId: 'PAGE1', depth: 5, windowMs: 500 })
-
-    expect(result).toBe(1)
-  })
-
-  it('returns 0 when seed op does not exist (depth out of range)', async () => {
-    mockedInvoke.mockResolvedValueOnce(0)
-
-    const result = await findUndoGroup({ pageId: 'PAGE1', depth: 999, windowMs: 500 })
-
-    expect(result).toBe(0)
-  })
-})
-
-// ---------------------------------------------------------------------------
 // redoPageOp
 // ---------------------------------------------------------------------------
 
@@ -1676,148 +1421,6 @@ describe('listPeerRefs', () => {
 })
 
 // ---------------------------------------------------------------------------
-// getPeerRef
-// ---------------------------------------------------------------------------
-
-describe('getPeerRef', () => {
-  it('invokes get_peer_ref with peerId', async () => {
-    const expected = {
-      peer_id: 'peer-1',
-      last_hash: null,
-      last_sent_hash: null,
-      streamed_at: null,
-      synced_at: 1736899200000, // 2025-01-15T00:00:00Z
-      reset_count: 0,
-      last_reset_at: null,
-      cert_hash: null,
-      device_name: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await getPeerRef('peer-1')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_peer_ref', { peerId: 'peer-1' })
-    expect(result).toEqual(expected)
-  })
-
-  it('returns null when peer not found', async () => {
-    mockedInvoke.mockResolvedValueOnce(null)
-
-    const result = await getPeerRef('nonexistent')
-
-    expect(mockedInvoke).toHaveBeenCalledWith('get_peer_ref', { peerId: 'nonexistent' })
-    expect(result).toBeNull()
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
-    await expect(getPeerRef('peer-1')).rejects.toThrow('db error')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// deletePeerRef
-// ---------------------------------------------------------------------------
-
-describe('deletePeerRef', () => {
-  it('invokes delete_peer_ref with peerId', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-    await deletePeerRef('peer-to-delete')
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_peer_ref', { peerId: 'peer-to-delete' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// updatePeerName
-// ---------------------------------------------------------------------------
-
-describe('updatePeerName', () => {
-  it('invokes update_peer_name with peerId and deviceName', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-    await updatePeerName('peer-1', "Javier's Phone")
-    expect(mockedInvoke).toHaveBeenCalledWith('update_peer_name', {
-      peerId: 'peer-1',
-      deviceName: "Javier's Phone",
-    })
-  })
-
-  it('passes null to clear the name', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-    await updatePeerName('peer-1', null)
-    expect(mockedInvoke).toHaveBeenCalledWith('update_peer_name', {
-      peerId: 'peer-1',
-      deviceName: null,
-    })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// getDeviceId
-// ---------------------------------------------------------------------------
-
-describe('getDeviceId', () => {
-  it('invokes get_device_id with no arguments', async () => {
-    mockedInvoke.mockResolvedValueOnce('my-device-uuid')
-    const result = await getDeviceId()
-    expect(result).toBe('my-device-uuid')
-    expect(mockedInvoke).toHaveBeenCalledWith('get_device_id')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// startPairing
-// ---------------------------------------------------------------------------
-
-describe('startPairing', () => {
-  it('invokes start_pairing and returns pairing info', async () => {
-    // PairingInfo carries only passphrase + qr_svg. mDNS owns
-    // discovery + address resolution end-to-end, so the response has no
-    // host/port fields.
-    const expected = {
-      passphrase: 'alpha bravo charlie delta',
-      qr_svg: '<svg>...</svg>',
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-    const result = await startPairing()
-    expect(result).toEqual(expected)
-    expect(mockedInvoke).toHaveBeenCalledWith('start_pairing')
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('pairing unavailable'))
-    await expect(startPairing()).rejects.toThrow('pairing unavailable')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// confirmPairing
-// ---------------------------------------------------------------------------
-
-describe('confirmPairing', () => {
-  it('invokes confirm_pairing with passphrase and remoteDeviceId', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-    await confirmPairing('alpha bravo charlie delta', 'remote-device-id')
-    expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
-      passphrase: 'alpha bravo charlie delta',
-      remoteDeviceId: 'remote-device-id',
-    })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// cancelPairing
-// ---------------------------------------------------------------------------
-
-describe('cancelPairing', () => {
-  it('invokes cancel_pairing with no arguments', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-    await cancelPairing()
-    expect(mockedInvoke).toHaveBeenCalledWith('cancel_pairing')
-  })
-})
-
-// ---------------------------------------------------------------------------
 // startSync
 // ---------------------------------------------------------------------------
 
@@ -1848,139 +1451,6 @@ describe('startSync', () => {
   it('propagates errors from invoke', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('peer unreachable'))
     await expect(startSync('peer-1')).rejects.toThrow('peer unreachable')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// cancelSync
-// ---------------------------------------------------------------------------
-
-describe('cancelSync', () => {
-  it('invokes cancel_sync with no arguments', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-    await cancelSync()
-    expect(mockedInvoke).toHaveBeenCalledWith('cancel_sync')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// queryBacklinksFiltered
-// ---------------------------------------------------------------------------
-
-describe('queryBacklinksFiltered', () => {
-  const emptyResponse = { items: [], next_cursor: null, has_more: false, total_count: 0 }
-
-  it('calls invoke with correct command name', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-
-    await queryBacklinksFiltered({ blockId: 'TARGET' })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect((mockedInvoke.mock.calls[0] as unknown[])[0]).toBe('query_backlinks_filtered')
-  })
-
-  it('passes blockId parameter', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-
-    await queryBacklinksFiltered({ blockId: 'TARGET_BLOCK' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'query_backlinks_filtered',
-      expect.objectContaining({
-        blockId: 'TARGET_BLOCK',
-      }),
-    )
-  })
-
-  it('defaults optional params to null', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-
-    await queryBacklinksFiltered({ blockId: 'TARGET' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('query_backlinks_filtered', {
-      blockId: 'TARGET',
-      filters: null,
-      sort: null,
-      cursor: null,
-      limit: null,
-      scope: { kind: 'global' },
-    })
-  })
-
-  it('passes filters when provided', async () => {
-    const filters = [
-      { type: 'BlockType' as const, block_type: 'content' },
-      { type: 'Contains' as const, query: 'hello' },
-    ]
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-
-    await queryBacklinksFiltered({ blockId: 'TARGET', filters })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('query_backlinks_filtered', {
-      blockId: 'TARGET',
-      filters,
-      sort: null,
-      cursor: null,
-      limit: null,
-      scope: { kind: 'global' },
-    })
-  })
-
-  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-    await queryBacklinksFiltered({ blockId: 'TARGET', spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// listPropertyKeys
-// ---------------------------------------------------------------------------
-
-describe('listPropertyKeys', () => {
-  it('calls invoke with correct command name', async () => {
-    mockedInvoke.mockResolvedValueOnce(['todo', 'priority'])
-
-    await listPropertyKeys()
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_property_keys')
-  })
-
-  it('returns string array', async () => {
-    const expected = ['priority', 'status', 'todo']
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await listPropertyKeys()
-
-    expect(result).toEqual(expected)
-    expect(Array.isArray(result)).toBe(true)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// listPropertyValues (#1425)
-// ---------------------------------------------------------------------------
-
-describe('listPropertyValues', () => {
-  it('calls invoke with the command name and key argument', async () => {
-    mockedInvoke.mockResolvedValueOnce(['done', 'todo'])
-
-    await listPropertyValues('status')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_property_values', { key: 'status' })
-  })
-
-  it('returns the usage-ranked string array', async () => {
-    const expected = ['done', 'todo', 'blocked']
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await listPropertyValues('status')
-
-    expect(result).toEqual(expected)
-    expect(Array.isArray(result)).toBe(true)
   })
 })
 
@@ -2018,124 +1488,6 @@ describe('thin fixed-field commands', () => {
       key: 'due_date',
       value: null,
     })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// countAgendaBatch
-// ---------------------------------------------------------------------------
-
-describe('countAgendaBatch', () => {
-  it('invokes count_agenda_batch with dates', async () => {
-    const expected = { '2025-01-15': 3, '2025-01-16': 1 }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await countAgendaBatch({ dates: ['2025-01-15', '2025-01-16'] })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch', {
-      dates: ['2025-01-15', '2025-01-16'],
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce({})
-    await countAgendaBatch({ dates: ['2025-01-15'], spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// countAgendaBatchBySource
-// ---------------------------------------------------------------------------
-
-describe('countAgendaBatchBySource', () => {
-  it('invokes count_agenda_batch_by_source with dates', async () => {
-    const expected = {
-      '2025-01-15': { 'column:due_date': 2, 'column:scheduled_date': 1 },
-      '2025-01-16': { 'property:deadline': 1 },
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await countAgendaBatchBySource({ dates: ['2025-01-15', '2025-01-16'] })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('count_agenda_batch_by_source', {
-      dates: ['2025-01-15', '2025-01-16'],
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce({})
-    await countAgendaBatchBySource({ dates: ['2025-01-15'], spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// countBacklinksBatch
-// ---------------------------------------------------------------------------
-
-describe('countBacklinksBatch', () => {
-  it('invokes count_backlinks_batch with pageIds and a global scope by default', async () => {
-    const expected = { PAGE1: 5, PAGE2: 0 }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await countBacklinksBatch({ pageIds: ['PAGE1', 'PAGE2'] })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('count_backlinks_batch', {
-      pageIds: ['PAGE1', 'PAGE2'],
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(expected)
-  })
-
-  // SpaceId is forwarded as an active scope so the
-  // backend can filter source blocks by owning page's space.
-  it('forwards spaceId as an active scope to the binding', async () => {
-    mockedInvoke.mockResolvedValueOnce({})
-    await countBacklinksBatch({ pageIds: ['PAGE1'], spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// computeEditDiff
-// ---------------------------------------------------------------------------
-
-describe('computeEditDiff', () => {
-  it('invokes compute_edit_diff with deviceId and seq', async () => {
-    const expected = [
-      { tag: 'Equal', value: 'hello ' },
-      { tag: 'Delete', value: 'world' },
-      { tag: 'Insert', value: 'there' },
-    ]
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await computeEditDiff({ deviceId: 'dev1', seq: 42 })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('compute_edit_diff', {
-      deviceId: 'dev1',
-      seq: 42,
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('returns null for non-edit ops', async () => {
-    mockedInvoke.mockResolvedValueOnce(null)
-
-    const result = await computeEditDiff({ deviceId: 'dev1', seq: 1 })
-
-    expect(result).toBeNull()
   })
 })
 
@@ -2256,54 +1608,6 @@ describe('listUnlinkedReferences', () => {
 })
 
 // ---------------------------------------------------------------------------
-// createPropertyDef
-// ---------------------------------------------------------------------------
-
-describe('createPropertyDef', () => {
-  it('invokes create_property_def with all params', async () => {
-    const expected = {
-      key: 'status',
-      value_type: 'select',
-      options: '["todo","done"]',
-      created_at: '2025-01-15T00:00:00Z',
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await createPropertyDef({
-      key: 'status',
-      valueType: 'select',
-      options: '["todo","done"]',
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
-      key: 'status',
-      valueType: 'select',
-      options: '["todo","done"]',
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('defaults optional options to null', async () => {
-    const expected = {
-      key: 'priority',
-      value_type: 'text',
-      options: null,
-      created_at: '2025-01-15T00:00:00Z',
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    await createPropertyDef({ key: 'priority', valueType: 'text' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
-      key: 'priority',
-      valueType: 'text',
-      options: null,
-    })
-  })
-})
-
-// ---------------------------------------------------------------------------
 // listPropertyDefs
 // ---------------------------------------------------------------------------
 
@@ -2373,66 +1677,6 @@ describe('getPropertyDef', () => {
 
     expect(result).toBeNull()
     expect(mockedInvoke).toHaveBeenCalledWith('get_property_def', { key: 'nope' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// updatePropertyDefOptions
-// ---------------------------------------------------------------------------
-
-describe('updatePropertyDefOptions', () => {
-  it('invokes update_property_def_options with key and options', async () => {
-    const expected = {
-      key: 'status',
-      value_type: 'select',
-      options: '["todo","done","cancelled"]',
-      created_at: '2025-01-15T00:00:00Z',
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await updatePropertyDefOptions('status', '["todo","done","cancelled"]')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
-      key: 'status',
-      options: '["todo","done","cancelled"]',
-    })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// deletePropertyDef
-// ---------------------------------------------------------------------------
-
-describe('deletePropertyDef', () => {
-  it('invokes delete_property_def with key', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-
-    await deletePropertyDef('status')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_property_def', { key: 'status' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// setPageAliases
-// ---------------------------------------------------------------------------
-
-describe('setPageAliases', () => {
-  it('invokes set_page_aliases with pageId and aliases', async () => {
-    const expected = ['alias1', 'alias2']
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await setPageAliases('PAGE1', ['alias1', 'alias2'])
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('set_page_aliases', {
-      pageId: 'PAGE1',
-      aliases: ['alias1', 'alias2'],
-    })
-    expect(result).toEqual(expected)
   })
 })
 
@@ -2760,33 +2004,6 @@ describe('purgeBlocksByIds', () => {
 })
 
 // ---------------------------------------------------------------------------
-// trashDescendantCounts
-// ---------------------------------------------------------------------------
-
-describe('trashDescendantCounts', () => {
-  it('invokes trash_descendant_counts with rootIds array', async () => {
-    const expected = { ROOT1: 3, ROOT2: 1 }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await trashDescendantCounts(['ROOT1', 'ROOT2'])
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('trash_descendant_counts', {
-      rootIds: ['ROOT1', 'ROOT2'],
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('passes empty array unchanged', async () => {
-    mockedInvoke.mockResolvedValueOnce({})
-
-    await trashDescendantCounts([])
-
-    expect(mockedInvoke).toHaveBeenCalledWith('trash_descendant_counts', { rootIds: [] })
-  })
-})
-
-// ---------------------------------------------------------------------------
 // FirstChildForBlocks
 // ---------------------------------------------------------------------------
 
@@ -2825,44 +2042,6 @@ describe('firstChildForBlocks', () => {
 
     expect(mockedInvoke).toHaveBeenCalledWith('first_child_for_blocks', { blockIds: [] })
     expect(result).toEqual({})
-  })
-})
-
-// ---------------------------------------------------------------------------
-// GetBlocks
-// ---------------------------------------------------------------------------
-
-describe('getBlocks', () => {
-  it('invokes get_blocks with the ids array', async () => {
-    const expected = [
-      {
-        id: 'B1',
-        block_type: 'content',
-        content: 'one',
-        parent_id: null,
-        position: null,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        page_id: null,
-      },
-    ]
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await getBlocks(['B1', 'B2', 'B3'])
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_blocks', {
-      ids: ['B1', 'B2', 'B3'],
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('returns the array unchanged from the IPC', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
-    expect(await getBlocks(['MISSING'])).toEqual([])
   })
 })
 
@@ -3048,117 +2227,6 @@ describe('listPageLinks', () => {
 })
 
 // ---------------------------------------------------------------------------
-// restorePageToOp
-// ---------------------------------------------------------------------------
-
-describe('restorePageToOp', () => {
-  it('invokes restore_page_to_op with all parameters', async () => {
-    const expected = { ops_reverted: 3, non_reversible_skipped: 1, results: [] }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await restorePageToOp({
-      pageId: 'PAGE1',
-      targetDeviceId: 'dev1',
-      targetSeq: 42,
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('restore_page_to_op', {
-      pageId: 'PAGE1',
-      targetDeviceId: 'dev1',
-      targetSeq: 42,
-    })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// setPeerAddress
-// ---------------------------------------------------------------------------
-
-describe('setPeerAddress', () => {
-  it('invokes set_peer_address with peerId and address', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-
-    await setPeerAddress('peer-1', '192.168.1.10:8765')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('set_peer_address', {
-      peerId: 'peer-1',
-      address: '192.168.1.10:8765',
-    })
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('invalid address'))
-    await expect(setPeerAddress('peer-1', 'bogus')).rejects.toThrow('invalid address')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// listAttachments
-// ---------------------------------------------------------------------------
-
-describe('listAttachments', () => {
-  it('invokes list_attachments with blockId', async () => {
-    const expected = [
-      {
-        id: 'ATT1',
-        block_id: 'BLK001',
-        filename: 'photo.png',
-        mime_type: 'image/png',
-        size_bytes: 1024,
-        fs_path: '/tmp/photo.png',
-        created_at: '2025-01-15T00:00:00Z',
-      },
-    ]
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await listAttachments('BLK001')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_attachments', { blockId: 'BLK001' })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// getBatchAttachments
-// ---------------------------------------------------------------------------
-
-describe('getBatchAttachments', () => {
-  it('invokes list_attachments_batch with blockIds', async () => {
-    const expected = {
-      BLK001: [
-        {
-          id: 'ATT1',
-          block_id: 'BLK001',
-          filename: 'photo.png',
-          mime_type: 'image/png',
-          size_bytes: 1024,
-          fs_path: '/tmp/photo.png',
-          created_at: '2025-01-15T00:00:00Z',
-        },
-      ],
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await getBatchAttachments(['BLK001'])
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_attachments_batch', {
-      blockIds: ['BLK001'],
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('db error'))
-    await expect(getBatchAttachments(['BLK001'])).rejects.toThrow('db error')
-  })
-})
-
-// ---------------------------------------------------------------------------
 // addAttachmentWithBytes
 // ---------------------------------------------------------------------------
 
@@ -3220,21 +2288,6 @@ describe('readAttachment', () => {
 
     await expect(readAttachment('ATT404')).rejects.toEqual(appError)
     expect(mockedInvoke).toHaveBeenCalledWith('read_attachment', { attachmentId: 'ATT404' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// deleteAttachment
-// ---------------------------------------------------------------------------
-
-describe('deleteAttachment', () => {
-  it('invokes delete_attachment with attachmentId', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-
-    await deleteAttachment('ATT1')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_attachment', { attachmentId: 'ATT1' })
   })
 })
 
@@ -3363,21 +2416,6 @@ describe('saveDraft', () => {
 })
 
 // ---------------------------------------------------------------------------
-// flushDraft
-// ---------------------------------------------------------------------------
-
-describe('flushDraft', () => {
-  it('invokes flush_draft with blockId', async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined)
-
-    await flushDraft('BLK001')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('flush_draft', { blockId: 'BLK001' })
-  })
-})
-
-// ---------------------------------------------------------------------------
 // FlushAllDrafts
 // ---------------------------------------------------------------------------
 
@@ -3414,31 +2452,6 @@ describe('deleteDraft', () => {
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('delete_draft', { blockId: 'BLK001' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// listDrafts
-// ---------------------------------------------------------------------------
-
-describe('listDrafts', () => {
-  it('invokes list_drafts with no arguments', async () => {
-    const expected = [{ block_id: 'BLK001', content: 'draft', updated_at: '2025-01-15T00:00:00Z' }]
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await listDrafts()
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_drafts')
-    expect(result).toEqual(expected)
-  })
-
-  it('returns empty array when no drafts', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
-
-    const result = await listDrafts()
-
-    expect(result).toEqual([])
   })
 })
 
@@ -3621,50 +2634,26 @@ describe('cross-cutting', () => {
     await listBlocks({ spaceId: 'TEST_SPACE_01' })
     await getBlock('id')
     await batchResolve(['id'], 'global')
-    await moveBlock('id', null, 0)
-    await addTag('id', 'tag')
-    await removeTag('id', 'tag')
-    await getBacklinks({ blockId: 'id' })
     await getBlockHistory({ blockId: 'id' })
     await searchBlocks({ query: 'test', spaceId: 'TEST_SPACE_01' })
     await getStatus()
     await queryByTags({ tagIds: ['t'], prefixes: [], mode: 'and' })
     await listTagsByPrefix({ prefix: 'w' })
-    await listTagsForBlock('id')
     await setProperty({ blockId: 'id', key: 'k' })
     await deleteProperty('id', 'k')
     await getProperties('id')
     await getProperty('id', 'k')
     await getBatchProperties(['id'])
-    await countAgendaBatch({ dates: ['2025-01-15'] })
-    await countBacklinksBatch({ pageIds: ['id'] })
     await listPageHistory({ pageId: 'id' })
-    await revertOps({ ops: [{ device_id: 'd', seq: 1 }] })
     await queryByProperty({ key: 'k' })
     await undoPageOp({ pageId: 'id', undoDepth: 1 })
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
-    await findUndoGroup({ pageId: 'id', depth: 0, windowMs: 500 })
-    await computeEditDiff({ deviceId: 'd', seq: 1 })
-    await queryBacklinksFiltered({ blockId: 'id' })
     await listBacklinksGrouped({ blockId: 'id' })
     await listUnlinkedReferences({ pageId: 'id' })
-    await listPropertyKeys()
-    await createPropertyDef({ key: 'k', valueType: 'text' })
     await getPropertyDef('k')
     await listPropertyDefs()
-    await updatePropertyDefOptions('k', '[]')
-    await deletePropertyDef('k')
     await listPeerRefs()
-    await getPeerRef('peer-1')
-    await deletePeerRef('peer-1')
-    await updatePeerName('peer-1', 'My Phone')
-    await getDeviceId()
-    await startPairing()
-    await confirmPairing('passphrase', 'remote-id')
-    await cancelPairing()
     await startSync('peer-1')
-    await cancelSync()
-    await setPageAliases('id', ['alias'])
     await getPageAliases('id')
     await resolvePageByAlias({ alias: 'alias' })
     await exportPageMarkdown('id')
@@ -3679,123 +2668,29 @@ describe('cross-cutting', () => {
       'list_blocks',
       'get_block',
       'batch_resolve',
-      'move_block',
-      'add_tag',
-      'remove_tag',
-      'get_backlinks',
       'get_block_history',
       'search_blocks',
       'get_status',
       'query_by_tags',
       'list_tags_by_prefix',
-      'list_tags_for_block',
       'set_property',
       'delete_property',
       'get_properties',
       'get_property',
       'get_batch_properties',
-      'count_agenda_batch',
-      'count_backlinks_batch',
       'list_page_history',
-      'revert_ops',
       'query_by_property',
       'undo_page_op',
       'redo_page_op',
-      'find_undo_group',
-      'compute_edit_diff',
-      'query_backlinks_filtered',
       'list_backlinks_grouped',
       'list_unlinked_references',
-      'list_property_keys',
-      'create_property_def',
       'get_property_def',
       'list_property_defs',
-      'update_property_def_options',
-      'delete_property_def',
       'list_peer_refs',
-      'get_peer_ref',
-      'delete_peer_ref',
-      'update_peer_name',
-      'get_device_id',
-      'start_pairing',
-      'confirm_pairing',
-      'cancel_pairing',
       'start_sync',
-      'cancel_sync',
-      'set_page_aliases',
       'get_page_aliases',
       'resolve_page_by_alias',
       'export_page_markdown',
     ])
-  })
-})
-
-// ---------------------------------------------------------------------------
-// QuickCaptureBlock
-// ---------------------------------------------------------------------------
-
-describe('quickCaptureBlock', () => {
-  it('invokes quick_capture_block with the captured content and active space', async () => {
-    const expected = {
-      id: 'BLK_QC1',
-      block_type: 'content',
-      content: 'captured note',
-      parent_id: 'PARENT_PAGE',
-      position: 1,
-      deleted_at: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await quickCaptureBlock('captured note', 'SPACE_PERSONAL')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    // SpaceId is required so quick-capture lands on the
-    // active-space's daily journal page.
-    expect(mockedInvoke).toHaveBeenCalledWith('quick_capture_block', {
-      content: 'captured note',
-      spaceId: 'SPACE_PERSONAL',
-    })
-    expect(result).toEqual(expected)
-  })
-
-  // Every IPC wrapper must have at least one mockRejectedValue
-  // test so the failure path is covered.
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('quick_capture_block failed'))
-    await expect(quickCaptureBlock('foo', 'SPACE_PERSONAL')).rejects.toThrow(
-      'quick_capture_block failed',
-    )
-  })
-})
-
-// ---------------------------------------------------------------------------
-// NotifyTask
-// ---------------------------------------------------------------------------
-
-describe('notifyTask', () => {
-  it('invokes notify_task with the full notification payload', async () => {
-    mockedInvoke.mockResolvedValueOnce(null)
-
-    await notifyTask({ title: 'Buy groceries', body: 'Due 09:00', blockId: '01ABC' })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('notify_task', {
-      notification: { title: 'Buy groceries', body: 'Due 09:00', blockId: '01ABC' },
-    })
-  })
-
-  it('passes a title-only notification through unchanged', async () => {
-    mockedInvoke.mockResolvedValueOnce(null)
-
-    await notifyTask({ title: 'Standup' })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('notify_task', {
-      notification: { title: 'Standup' },
-    })
-  })
-
-  it('propagates errors from invoke', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('notify_task failed'))
-    await expect(notifyTask({ title: 'x' })).rejects.toThrow('notify_task failed')
   })
 })

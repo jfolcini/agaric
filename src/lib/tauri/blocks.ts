@@ -5,7 +5,6 @@ import type {
   CreateBlockSpec,
   DateRange,
   DeleteResponse,
-  MoveResponse,
   PageResponse,
   PurgeResponse,
   RestoreResponse,
@@ -334,18 +333,6 @@ export async function purgeAllDeletedInSpace(spaceId: string): Promise<BulkTrash
 }
 
 /**
- * Batch-count cascade-deleted descendants per trash root.
- *
- * Given a list of trash-root IDs (as returned by `listTrash`),
- * returns a map of `root_id -> descendant_count`. Descendants are blocks sharing
- * the root's `deleted_at` timestamp, excluding the root itself and conflict copies.
- * Roots with zero descendants are omitted — treat missing keys as `0`.
- */
-export async function trashDescendantCounts(rootIds: string[]): Promise<Record<string, number>> {
-  return unwrap(await commands.trashDescendantCounts(rootIds))
-}
-
-/**
  * Batch-fetch the first child of each parent block in a single IPC call.
  *
  * Collapses the TemplatesView preview-fetch N+1
@@ -360,30 +347,6 @@ export async function trashDescendantCounts(rootIds: string[]): Promise<Record<s
  */
 export async function firstChildForBlocks(blockIds: string[]): Promise<Record<string, BlockRow>> {
   return unwrap(await commands.firstChildForBlocks(blockIds))
-}
-
-/**
- * Batch-fetch full BlockRows by id.
- *
- * Sibling of `batchResolve` returning the full 12-column `BlockRow`
- * (not just the lightweight `id / title / block_type / deleted`
- * projection). Consumers that need `todo_state`, `priority`, `due_date`,
- * `scheduled_date`, `content`, `parent_id`, `position`, etc. collapse a
- * per-row `getBlock` IPC fan-out into a single query.
- *
- * Soft-deleted rows are INCLUDED — as they are in `batchResolve`, which
- * surfaces them with `deleted: true` (`batch_resolve_inner` in
- * `src-tauri/src/commands/blocks/queries.rs` applies no `deleted_at` filter).
- * The difference from `batchResolve` is the projection width and the scoping,
- * not the tombstone handling: this command is NOT space-scoped.
- *
- * IDs that don't exist are silently omitted from the response — callers
- * must map by `id` and treat missing keys as "unknown / lost". Returned
- * rows are NOT guaranteed to be in input order. Empty input rejects with
- * `AppError::Validation` (mirrors `batchResolve`).
- */
-export async function getBlocks(ids: string[]): Promise<BlockRow[]> {
-  return unwrap(await commands.getBlocks(ids))
 }
 
 /** List blocks with optional filters and cursor-based pagination.
@@ -496,17 +459,4 @@ export async function batchResolve(ids: string[], scope: ResolveScope): Promise<
   const spaceScope: SpaceScope =
     scope === 'global' ? { kind: 'global' } : { kind: 'active', space_id: scope }
   return unwrap(await commands.batchResolve(ids, spaceScope))
-}
-
-/**
- * Move a block under a new parent at a 0-based sibling slot (#400). `newIndex`
- * is an insertion slot among the target parent's other children (0 = first /
- * top); the backend derives the convergent fractional key from it.
- */
-export async function moveBlock(
-  blockId: string,
-  newParentId: string | null,
-  newIndex: number,
-): Promise<WithOps<MoveResponse>> {
-  return unwrap(await commands.moveBlock(blockId, newParentId, newIndex))
 }

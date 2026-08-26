@@ -9,31 +9,6 @@ export async function listPeerRefs(): Promise<PeerRef[]> {
   return unwrap(await commands.listPeerRefs())
 }
 
-/** Fetch a single peer reference by ID, or null if not found. */
-export async function getPeerRef(peerId: string): Promise<PeerRef | null> {
-  return unwrap(await commands.getPeerRef(peerId))
-}
-
-/** Delete a peer reference by ID. */
-export async function deletePeerRef(peerId: string): Promise<void> {
-  unwrap(await commands.deletePeerRef(peerId))
-}
-
-/** Update the display name for a paired peer. Pass null to clear. */
-export async function updatePeerName(peerId: string, deviceName: string | null): Promise<void> {
-  unwrap(await commands.updatePeerName(peerId, deviceName))
-}
-
-/** Manually set a peer's network address (host:port) for direct connection. */
-export async function setPeerAddress(peerId: string, address: string): Promise<void> {
-  unwrap(await commands.setPeerAddress(peerId, address))
-}
-
-/** Get the local device ID. */
-export async function getDeviceId(): Promise<string> {
-  return unwrap(await commands.getDeviceId())
-}
-
 // ---------------------------------------------------------------------------
 // Sync protocol commands
 // ---------------------------------------------------------------------------
@@ -54,47 +29,6 @@ export interface SyncSessionInfo {
   ops_sent: number
 }
 
-// #3715 — the three pairing wrappers below are UNQUEUED, and nothing in the
-// app calls them: every pairing-state mutation goes through
-// `pairingMutations` (`src/lib/pairing-mutations.ts`), which serialises them
-// against each other because they all write the same device-global
-// pending-pairing row. Calling one of these from app code instead re-opens
-// #3620/#3628 — an arm and a clear landing in the wrong order — for every
-// other caller too, not just for itself. They are kept only as thin
-// command-shape wrappers alongside the rest of this façade; add nothing to
-// this list, and reach for `pairingMutations` from the UI.
-
-/** Start the pairing flow — returns a passphrase and QR SVG.
- *
- * The QR carries only the passphrase. mDNS owns discovery and
- * address resolution end-to-end, so there is no `host`/`port` field on
- * the returned payload.
- *
- * Unqueued — see the note above; the UI uses `pairingMutations.start()`.
- */
-export async function startPairing(): Promise<{
-  passphrase: string
-  qr_svg: string
-}> {
-  return unwrap(await commands.startPairing())
-}
-
-/** Confirm a pairing with the given passphrase and remote device ID.
- *
- * Unqueued — see the note above; the UI uses `pairingMutations.confirm()`.
- */
-export async function confirmPairing(passphrase: string, remoteDeviceId: string): Promise<void> {
-  unwrap(await commands.confirmPairing(passphrase, remoteDeviceId))
-}
-
-/** Cancel an in-progress pairing.
- *
- * Unqueued — see the note above; the UI uses `pairingMutations.cancel()`.
- */
-export async function cancelPairing(): Promise<void> {
-  unwrap(await commands.cancelPairing())
-}
-
 /** Start a sync session with a known peer. */
 export async function startSync(
   peerId: string,
@@ -105,12 +39,3 @@ export async function startSync(
   if (onProgress) channel.onmessage = onProgress
   return unwrap(await commands.startSync(peerId, channel))
 }
-
-/** Cancel an in-progress sync session. */
-export async function cancelSync(): Promise<void> {
-  unwrap(await commands.cancelSync())
-}
-
-// ---------------------------------------------------------------------------
-// Page alias commands (#598)
-// ---------------------------------------------------------------------------

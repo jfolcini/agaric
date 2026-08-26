@@ -1,6 +1,6 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import type { BlockRow, SpaceRow, StatusInfo } from '@/lib/bindings'
+import type { SpaceRow, StatusInfo } from '@/lib/bindings'
 
 /** Get materializer queue status and metrics. */
 export async function getStatus(): Promise<StatusInfo> {
@@ -60,23 +60,4 @@ export async function createSpace(params: {
   accentColor?: string | null | undefined
 }): Promise<string> {
   return unwrap(await commands.createSpace(params.name, params.accentColor ?? null))
-}
-
-// ---------------------------------------------------------------------------
-// Quick capture
-// ---------------------------------------------------------------------------
-
-/**
- * + drop a single content block onto today's journal
- * page in the active space.
- *
- * Resolves today's journal page in `spaceId` on the backend (creating it
- * if missing) and appends a content block as a child. Used by the
- * global-shortcut quick-capture flow (`QuickCaptureDialog` →
- * `quickCaptureBlock`). The space scoping is required: every journal
- * page belongs to a space, so two devices in different spaces capture
- * into their own daily notes without colliding.
- */
-export async function quickCaptureBlock(content: string, spaceId: string): Promise<BlockRow> {
-  return unwrap(await commands.quickCaptureBlock(content, spaceId))
 }

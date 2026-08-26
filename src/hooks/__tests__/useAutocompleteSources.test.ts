@@ -18,17 +18,18 @@ import type { PropertyDefinition, TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { getPathHistory } from '@/lib/path-history'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
-import { getPropertyDef, listPropertyKeys, listPropertyValues, listTagsByPrefix } from '@/lib/tauri'
+import { getPropertyDef, listTagsByPrefix } from '@/lib/tauri'
 
 // The propKey source resolves through `propertyKeysQueryFn`
-// (`@/lib/property-keys-cache`), which now calls `commands.listPropertyKeys`
-// from `@/lib/bindings` and unwraps the `Result` envelope. Likewise the
-// propValue source resolves through `propertyValuesQueryFn`
-// (`@/lib/property-values-cache`, #2927 phase 4), which now calls
-// `commands.listPropertyValues` directly. The same spies back both the
-// (still-wrapped) `@/lib/tauri` surface and the `commands.*` surface so the
-// `vi.mocked(...)` assertions keep working; they resolve the
-// `{ status: 'ok', data }` shape.
+// (`@/lib/property-keys-cache`), which calls `commands.listPropertyKeys` from
+// `@/lib/bindings` and unwraps the `Result` envelope. Likewise the propValue
+// source resolves through `propertyValuesQueryFn`
+// (`@/lib/property-values-cache`, #2927 phase 4), which calls
+// `commands.listPropertyValues` directly. `listPropertyKeys` /
+// `listPropertyValues` no longer exist on `@/lib/tauri` (dead wrappers,
+// #4410) — the hoisted mocks below back the `commands.*` surface only, and
+// are used directly (not via `vi.mocked(...)` on a `@/lib/tauri` import) for
+// the assertions further down.
 const { mockListPropertyKeys, mockListPropertyValues } = vi.hoisted(() => ({
   mockListPropertyKeys: vi.fn(),
   mockListPropertyValues: vi.fn(),
@@ -36,8 +37,6 @@ const { mockListPropertyKeys, mockListPropertyValues } = vi.hoisted(() => ({
 
 vi.mock('@/lib/tauri', () => ({
   listTagsByPrefix: vi.fn(),
-  listPropertyKeys: mockListPropertyKeys,
-  listPropertyValues: mockListPropertyValues,
   getPropertyDef: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
@@ -74,8 +73,8 @@ import { _resetPropertyValuesCacheForTest } from '@/lib/property-values-cache'
 import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
 
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
-const mockedListPropertyKeys = vi.mocked(listPropertyKeys)
-const mockedListPropertyValues = vi.mocked(listPropertyValues)
+const mockedListPropertyKeys = mockListPropertyKeys
+const mockedListPropertyValues = mockListPropertyValues
 const mockedGetPropertyDef = vi.mocked(getPropertyDef)
 const mockedGetPathHistory = vi.mocked(getPathHistory)
 

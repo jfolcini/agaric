@@ -1,6 +1,6 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import type { DiffSpan, HistoryEntry, PageResponse, RestoreToOpResult } from '@/lib/bindings'
+import type { HistoryEntry, PageResponse } from '@/lib/bindings'
 import type { SafeLimit } from '@/lib/safe-limit'
 import { toSpaceScope } from '@/lib/tauri/_shared'
 
@@ -50,24 +50,6 @@ export async function listPageHistory(params: {
   )
 }
 
-/** Revert a batch of operations (by device_id + seq pairs). */
-export async function revertOps(params: {
-  ops: Array<{ device_id: string; seq: number }>
-}): Promise<UndoResult[]> {
-  return unwrap(await commands.revertOps(params.ops))
-}
-
-/** Restore a page to its state at a specific operation (point-in-time restore). */
-export async function restorePageToOp(params: {
-  pageId: string
-  targetDeviceId: string
-  targetSeq: number
-}): Promise<RestoreToOpResult> {
-  return unwrap(
-    await commands.restorePageToOp(params.pageId, params.targetDeviceId, params.targetSeq),
-  )
-}
-
 export interface OpRef {
   device_id: string
   seq: number
@@ -81,7 +63,18 @@ export interface UndoResult {
   is_redo: boolean
 }
 
-/** Undo the Nth most-recent undoable op on a page. */
+/**
+ * Undo the Nth most-recent undoable op on a page.
+ *
+ * #4410 — no production call site: `undoDeleteOf` (`@/stores/undo`) now goes
+ * through the ref-addressed `undoOp` exclusively. This wrapper is kept only
+ * because `src/stores/__tests__/undo.test.ts`'s #4328 positional-undo
+ * regression tests assert `mockedUndoPageOp` is `.not.toHaveBeenCalled()` —
+ * a real, importable/mockable symbol here is load-bearing for proving the
+ * new ref-addressed path never falls back to the old positional one.
+ * Deleting it would require rewriting those regression assertions away, not
+ * just deleting dead code. Re-evaluate if that test file changes.
+ */
 export async function undoPageOp(params: {
   pageId: string
   undoDepth: number
@@ -136,35 +129,6 @@ export async function undoOps(params: { ops: OpRef[] }): Promise<UndoResult[]> {
   return unwrap(await commands.undoOps(params.ops))
 }
 
-/**
- * Compute the size of the consecutive same-device,
- * within-window undo group starting at the Nth-most-recent undoable op
- * of a page.
- *
- * Replaces the FE's pre-existing growing-window `listPageHistory`
- * re-fetch (executed after every Ctrl+Z) with a single backend query.
- * The undo store calls this once per Ctrl+Z to know how many ops to
- * revert as a group; it then issues `undoPageOp` `groupSize` times.
- *
- * Semantics mirrored from the prior FE-side filter:
- *   - "Undoable" excludes ops whose `op_type` starts with `undo_` /
- *     `redo_` (those are reverse ops, never user-undoable).
- *   - `depth = 0` seeds at the most-recent undoable op for the page.
- *   - The group extends backward (older direction) one op at a time
- *     until either `device_id` differs or the gap exceeds `windowMs`.
- *
- * Returns >= 1 normally; returns 0 when the seed op doesn't exist
- * (depth exceeds the page's undoable-op count) — callers should
- * fall back to a single undo (groupSize = 1) in that case.
- */
-export async function findUndoGroup(params: {
-  pageId: string
-  depth: number
-  windowMs: number
-}): Promise<number> {
-  return unwrap(await commands.findUndoGroup(params.pageId, params.depth, params.windowMs))
-}
-
 /** Redo a previously undone op by reversing it again. */
 export async function redoPageOp(params: {
   undoDeviceId: string
@@ -172,19 +136,3 @@ export async function redoPageOp(params: {
 }): Promise<UndoResult> {
   return unwrap(await commands.redoPageOp(params.undoDeviceId, params.undoSeq))
 }
-
-// ---------------------------------------------------------------------------
-// Word-level diff for history display
-// ---------------------------------------------------------------------------
-
-/** Compute a word-level diff for an edit_block history entry. Returns null for non-edit ops. */
-export async function computeEditDiff(params: {
-  deviceId: string
-  seq: number
-}): Promise<DiffSpan[] | null> {
-  return unwrap(await commands.computeEditDiff(params.deviceId, params.seq))
-}
-
-// ---------------------------------------------------------------------------
-// Filtered backlink query commands
-// ---------------------------------------------------------------------------

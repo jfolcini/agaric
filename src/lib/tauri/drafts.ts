@@ -1,15 +1,10 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import type { Draft, FlushAllDraftsResult } from '@/lib/bindings'
+import type { FlushAllDraftsResult } from '@/lib/bindings'
 
 /** Save (upsert) a draft for a block. Called every ~2s during active typing. */
 export async function saveDraft(blockId: string, content: string): Promise<void> {
   unwrap(await commands.saveDraft(blockId, content))
-}
-
-/** Flush a draft: write an edit_block op and delete the draft row. Called on blur/unmount. */
-export async function flushDraft(blockId: string): Promise<void> {
-  unwrap(await commands.flushDraft(blockId))
 }
 
 /**
@@ -26,11 +21,6 @@ export async function flushAllDrafts(): Promise<FlushAllDraftsResult> {
 /** Delete a draft for a block (e.g. after a successful normal save). */
 export async function deleteDraft(blockId: string): Promise<void> {
   unwrap(await commands.deleteDraft(blockId))
-}
-
-/** List all drafts, ordered by updated_at ascending. */
-export async function listDrafts(): Promise<Draft[]> {
-  return unwrap(await commands.listDrafts())
 }
 
 // ---------------------------------------------------------------------------
