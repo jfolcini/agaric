@@ -112,6 +112,29 @@ sqlx_probe_dir_cleanup() {
 # Defined up here so `--self-test` below can drive it directly.
 MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-tauri/src/bin/agaric-mcp\.rs$|^src-tauri/binaries/'
 
+# ── CI/tooling change classifier ────────────────────────────────────
+# Workflows, the lint-tool configs the CI `lint` job keys on, and the
+# repo's own shell tooling under `scripts/`.
+#
+# `^scripts/.*\.sh$` is deliberate. Without it a shell-only change fell
+# through to the fail-closed arm below — "a build/toolchain change we
+# cannot attribute to a suite" — which pins frontend+backend+ci and makes
+# a two-file YAML+shell diff pay the FULL Rust suite. That is not merely
+# slow: it made four consecutive pushes of exactly such a diff unusable
+# (2026-08-26).
+#
+# It IS attributable. `scripts/*.sh` is covered by Phase A: shellcheck
+# plus the per-script self-test hooks (`push.sh self-test`,
+# `verify-ci-equivalent-selftest`, `SKIP_CI_VERIFY bypass guard test`,
+# and the rest), which are precisely the suite for this category.
+#
+# Deliberately NOT widened: a ROOT-level `*.sh`, `rust-toolchain.toml`,
+# `.cargo/config.toml` and friends still hit fail-closed. Those change how
+# everything is built, and no per-category suite covers them.
+#
+# Defined up here so `--self-test` below can drive it directly.
+CI_PATH_RE='^\.github/|^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
+
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
 # tracked path, and the convention here is to symlink it from the main
@@ -918,6 +941,38 @@ if [ "${1:-}" = "--self-test" ]; then
     st_mcp 'src-tauri/src/mcp/tools_ro/snapshots/agaric_lib__mcp__tools_ro__tests__tool_descriptions.snap' \
                                                     no  'a .snap fixture does NOT trigger'
     st_mcp 'docs/mcp.md'                            no  'an unrelated doc does NOT trigger'
+
+    # 4c. CI classifier: decides whether a path is attributable to the CI
+    #     category or falls through to the fail-closed arm that pins EVERY
+    #     suite. Drives the real constant, and asserts the fail-closed arm
+    #     reuses it — those two were verbatim copies, so a change to one
+    #     silently left the other behind.
+    st_ci() {  # <path> <expected: yes|no> <label>
+        local got=no
+        printf '%s\n' "$1" | grep -qE "$CI_PATH_RE" && got=yes
+        if [ "$got" = "$2" ]; then
+            st_ok "CI gate: $3"
+        else
+            st_bad "CI gate: $3" "path '$1' matched=$got, expected $2"
+        fi
+    }
+    st_ci 'scripts/verify-ci-equivalent.sh' yes 'a scripts/*.sh change is CI (covered by shellcheck + its self-tests)'
+    st_ci 'scripts/push.sh'                 yes 'ditto for push.sh'
+    st_ci '.github/workflows/release.yml'   yes 'a workflow is CI'
+    st_ci 'prek.toml'                       yes 'the hook config is CI'
+    # MUST NOT be CI — these change how everything is built, no per-category
+    # suite covers them, and they must keep hitting the fail-closed arm.
+    st_ci 'rust-toolchain.toml'             no  'the toolchain pin is NOT CI (must fail closed)'
+    st_ci '.cargo/config.toml'              no  'cargo config is NOT CI (must fail closed)'
+    st_ci 'bootstrap.sh'                    no  'a ROOT-level *.sh is NOT CI (must fail closed)'
+    st_ci 'src-tauri/src/lib.rs'            no  'Rust is not CI'
+    # The fail-closed arm must not carry its own copy of the pattern.
+    if grep -qE '^[[:space:]]*unrec_ci="\$CI_PATH_RE"$' "${BASH_SOURCE[0]}"; then
+        st_ok "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it"
+    else
+        st_bad "CI gate: the fail-closed arm reuses CI_PATH_RE rather than copying it" \
+            "$(grep -nE '^[[:space:]]*unrec_ci=' "${BASH_SOURCE[0]}" | tr '\n' ' ')"
+    fi
 
     # 5. Ratchet: the fixed machine-global path must not come back. Guards
     #    against a future edit quietly reintroducing the collision while
@@ -2214,7 +2269,7 @@ else
     # Frontend: TS/JS/CSS sources, e2e specs, and the FE build/config surface.
     has_match '^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$' && HAS_TS=1
     # CI/tooling: workflows plus the lint-tool configs the CI lint job keys on.
-    has_match '^\.github/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$' && HAS_CI=1
+    has_match "$CI_PATH_RE" && HAS_CI=1
     # Docs: any Markdown file plus the docs/ tree.
     has_match '\.md$|^docs/' && HAS_DOCS=1
     # MCP gate: only the binary, its module, the Tauri command wrapper, and
@@ -2237,7 +2292,12 @@ else
     unrec_docs='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
     unrec_fe='^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$'
     unrec_be='\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$'
-    unrec_ci='^\.github/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
+    # Reuse the SAME constant the classifier uses. This was a verbatim copy,
+    # so narrowing or widening one arm silently left the other behind — and
+    # the fail-closed check is the one that decides whether a category-less
+    # path pins every suite. A shell-only change would have kept paying the
+    # full Rust suite here even after the classifier learned to attribute it.
+    unrec_ci="$CI_PATH_RE"
     while IFS= read -r f; do
         [ -z "$f" ] && continue
         if [[ "$f" =~ $unrec_docs || "$f" =~ $unrec_fe || "$f" =~ $unrec_be || "$f" =~ $unrec_ci ]]; then
