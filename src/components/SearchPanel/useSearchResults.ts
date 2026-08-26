@@ -16,6 +16,7 @@ import {
   type SetStateAction,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -178,8 +179,12 @@ export function useSearchResults({
   )
   // Held in a ref too so the stable `setItems` setter can target this exact cache
   // entry without re-deriving the key (mirrors usePageBrowserData / TrashView).
+  // Mirrored from a layout effect with no dep array — refreshed on every
+  // commit, before any passive effect or user event can read it.
   const queryKeyRef = useRef(queryKey)
-  queryKeyRef.current = queryKey
+  useLayoutEffect(() => {
+    queryKeyRef.current = queryKey
+  })
 
   // NEW-3 — fire when there is a free-text pattern OR at least one structural
   // filter (filter-only search). #717 — HOLD while tag name→id resolution is in

@@ -209,3 +209,71 @@ Read the arrow as "is depended on by": `src/lib/` may depend only on itself and 
 Step 2 of #3121 — splitting `src/lib/` by concern to burn the baseline down and carving out a `lib/ipc` leaf — is deliberately not part of this guard; it moves no files.
 
 The decomposition pattern (a "god component" with an `oxlint-disable-next-line eslint/complexity` suppression → orchestrator + per-concern children + a containing hook) is documented in `docs/UX.md § UI primitives`.
+
+## Latest-value mirrors: `useEffectEvent`, else a layout effect (#4377)
+
+Dozens of hooks need a long-lived closure — an effect-registered listener, a
+timer, a TipTap plugin config — to reach the *latest* props or state without
+re-registering. The historical idiom wrote a mirror during render:
+
+```ts
+const fooRef = useRef(foo)
+fooRef.current = foo          // render-phase write
+```
+
+That is what oxlint's React Compiler rule `react/refs` reports as "Cannot update
+ref value during render", and the codebase carried 81 of them. Two replacements
+are in use; both keep the site visible to the linter rather than moving it
+across a boundary the analysis stops at.
+
+**Prefer `useEffectEvent`** when the mirrored value is a *callback* and every
+call happens inside an effect, or inside a closure that effect owns and tears
+down. It deletes the ref and the mirror outright. `react-hooks/rules-of-hooks`
+enforces the boundary at error level: calling an effect event from a
+`useCallback`, from a JSX event handler, or from a closure captured in a
+`useMemo` (a TipTap `.configure({…})` config, say) is a lint error, not a
+judgement call. A value read during render is out of scope too — an effect
+event throws if called while rendering.
+
+**One trap the linter does not catch: which fiber owns the effect event.**
+React 19.2 republishes an effect event's implementation in
+`commitBeforeMutationEffectsOnFiber`, which drains `updateQueue.events` for
+`FunctionComponent` and then falls through `case ForwardRef: case
+SimpleMemoComponent: break` — draining nothing. So an effect event owned by a
+`memo(Fn)` component (React downgrades a compare-less `memo` to a single
+`SimpleMemoComponent` fiber) or by `forwardRef(Fn)` is **frozen at mount
+forever**, silently. `memo(Fn, compare)` is fine — it renders a separate inner
+function fiber. This is not theoretical: `DaySection` is `memo(DaySectionInner)`
+and an effect event there reported viewport entry into the mount-time
+`useDayMountWindow` closure, so an evicted day would never have remounted. It
+uses the layout-effect mirror below instead. Two tests hold the line —
+`src/__tests__/effect-event-fiber-tags.test.tsx` pins React's actual behaviour
+per fiber tag (and fails if a React upgrade fixes it), and
+`src/__tests__/effect-event-fiber-owner.test.ts` fails if any component that
+owns an effect event — directly or through a chain of hooks — becomes
+`memo()`/`forwardRef()` wrapped.
+
+**Otherwise write the mirror from a `useLayoutEffect` with no dependency array.**
+Not `useEffect`, and the difference is load-bearing rather than stylistic:
+
+- A layout effect runs during the commit phase, before paint, and therefore
+  ahead of *every* passive effect in the tree — including passive effects of
+  descendants, which React flushes child-first. Radix's `PopperAnchor` reads
+  `virtualRef.current` from a bare `useEffect`, so a passive write in the
+  component that owns the mirror would park the popover on a one-commit-stale
+  anchor rect.
+- React runs all passive *destroy* functions before any passive *create*, so a
+  ref read from an effect cleanup would also see the previous commit's value
+  under a passive write. A layout write has already landed by then.
+
+No dependency array: the mirror must refresh on every commit, and a dep array
+would additionally drag `react-hooks/exhaustive-deps` (error-level here) into a
+site that exists precisely to keep values out of dep arrays.
+
+`src/__tests__/latest-value-mirror-ordering.test.tsx` asserts both orderings
+executably, including the stale-by-one behaviour of the passive variant, so the
+premise fails loudly if React ever changes it.
+
+Sites where neither fits — a ref written *and read* during the same render, e.g.
+a `useMemo` cache — keep their inline write and their finding. They are a
+different hazard and need restructuring, not a mirror change.

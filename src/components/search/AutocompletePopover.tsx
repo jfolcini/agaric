@@ -13,7 +13,7 @@
 
 import { useCommandState } from 'cmdk'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -120,12 +120,19 @@ export function AutocompletePopover({
   const virtualRef = useRef<Measurable>({
     getBoundingClientRect: () => anchorRect ?? new DOMRect(),
   })
-  virtualRef.current = useMemo<Measurable>(
+  const measurable = useMemo<Measurable>(
     () => ({
       getBoundingClientRect: () => anchorRect ?? new DOMRect(),
     }),
     [anchorRect],
   )
+  // Mirrored on every commit (no dep array). A LAYOUT effect, not a passive
+  // one: Radix's `PopperAnchor` reads `virtualRef.current` from a passive
+  // effect in a DESCENDANT, and descendant passive effects run before this
+  // component's would, which would leave the anchor one commit stale.
+  useLayoutEffect(() => {
+    virtualRef.current = measurable
+  })
 
   // Track the popover content node so we can read cmdk's generated ids
   // post-render (cmdk owns its listbox / option ids via `useId()` and

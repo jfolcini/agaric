@@ -12,7 +12,7 @@
  * up to a full interval to see fresh data on return.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface UsePollingQueryOptions {
   /** Polling interval in milliseconds. */
@@ -51,7 +51,9 @@ export function usePollingQuery<T>(
   const [error, setError] = useState<string | null>(null)
 
   const optionsRef = useRef(options)
-  optionsRef.current = options
+  useLayoutEffect(() => {
+    optionsRef.current = options
+  })
 
   // #755 — stale-response guard (same pattern as usePaginatedQuery's
   // requestIdRef). For fixed-params polling a stale write self-corrects

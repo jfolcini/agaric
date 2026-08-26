@@ -39,7 +39,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DaySection } from '@/components/journal/DaySection'
@@ -108,12 +108,17 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
   // observer is re-created when the load callback or terminal state flips;
   // it self-disables once we reach MIN_JOURNAL_DATE.
   const sentinelRef = useRef<HTMLDivElement | null>(null)
-  // Latest loadOlder in a ref so the observer callback never goes stale
-  // without forcing the observer to tear down on every page-map change.
-  const loadOlderRef = useRef(loadOlder)
-  loadOlderRef.current = loadOlder
-  const loadingOlderRef = useRef(loadingOlder)
-  loadingOlderRef.current = loadingOlder
+  // Non-reactive view of `loadOlder` + the in-flight flag, so the observer
+  // callback never goes stale without forcing the observer to tear down on
+  // every page-map change. `useEffectEvent` replaces the two latest-value ref
+  // mirrors this used to carry (#4377); it is only called from the observer
+  // callback the effect below owns and disconnects. Returns whether it
+  // actually started a load, so the caller's early-return stays exact.
+  const loadOlderIfIdle = useEffectEvent((): boolean => {
+    if (loadingOlder) return false
+    loadOlder()
+    return true
+  })
 
   useEffect(() => {
     if (loading || reachedEnd) return
@@ -123,8 +128,7 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
     const observer = new IntersectionObserver(
       (obsEntries) => {
         for (const e of obsEntries) {
-          if (e.isIntersecting && !loadingOlderRef.current) {
-            loadOlderRef.current()
+          if (e.isIntersecting && loadOlderIfIdle()) {
             return
           }
         }

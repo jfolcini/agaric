@@ -30,7 +30,7 @@
  *   views, and has no single localized name to announce).
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useEffectEvent, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { announce } from '@/lib/announcer'
@@ -43,9 +43,13 @@ export function useViewChangeAnnouncer(): void {
   const isFirstRender = useRef(true)
   // Read `t` fresh inside the effect without making language changes
   // re-trigger an announcement (the effect's only real dependency is the
-  // view itself).
-  const tRef = useRef(t)
-  tRef.current = t
+  // view itself). `useEffectEvent` is the platform mechanism for exactly
+  // that: non-reactive, always the latest committed `t`, and — unlike the
+  // latest-value ref mirror it replaced — not a ref write during render
+  // (#4377).
+  const announceView = useEffectEvent((labelKey: string) => {
+    announce(t('announce.navigatedTo', { view: t(labelKey) }))
+  })
 
   useEffect(() => {
     if (isFirstRender.current) {
@@ -54,6 +58,6 @@ export function useViewChangeAnnouncer(): void {
     }
     const navItem = NAV_ITEMS.find((item) => item.id === currentView)
     if (!navItem) return
-    announce(tRef.current('announce.navigatedTo', { view: tRef.current(navItem.labelKey) }))
+    announceView(navItem.labelKey)
   }, [currentView])
 }

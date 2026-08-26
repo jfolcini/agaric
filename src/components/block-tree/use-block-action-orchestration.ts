@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 import { consumePendingSplit } from '@/components/block-tree/use-block-flush'
 import { parse } from '@/editor/markdown-serializer'
@@ -245,7 +245,9 @@ export function useBlockActionOrchestration({
   t,
 }: UseBlockActionOrchestrationParams): UseBlockActionOrchestrationReturn {
   const rovingEditorRef = useRef(rovingEditor)
-  rovingEditorRef.current = rovingEditor
+  useLayoutEffect(() => {
+    rovingEditorRef.current = rovingEditor
+  })
 
   // Tracks the post-merge setTextSelection setTimeout so we can cancel it on
   // unmount. Without this, a late-firing callback could call

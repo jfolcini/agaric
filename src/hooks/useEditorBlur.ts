@@ -17,7 +17,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import type { StoreApi } from 'zustand'
 
@@ -87,7 +87,11 @@ export function useEditorBlur(params: {
   // Store rovingEditor in a ref to avoid stale closures — the handle's
   // object identity changes on every render.
   const rovingEditorRef = useRef(params.rovingEditor)
-  rovingEditorRef.current = params.rovingEditor
+  // Mirrored in a dependency-array-less layout effect (not during render) so the
+  // ref refreshes on every commit, before paint and before any blur event.
+  useLayoutEffect(() => {
+    rovingEditorRef.current = params.rovingEditor
+  })
 
   const handleBlur = useCallback(
     (e: React.FocusEvent) => {

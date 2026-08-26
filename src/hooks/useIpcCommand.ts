@@ -31,7 +31,7 @@
  * options held in a ref so the returned `execute` stays stable).
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import { logger } from '@/lib/logger'
 
@@ -83,7 +83,9 @@ export function useIpcCommand<TArgs = void, TResult = void>(
   // Hold the latest options in a ref so `execute` can stay stable across
   // renders — matches usePaginatedQuery's optionsRef pattern.
   const optionsRef = useRef(options)
-  optionsRef.current = options
+  useLayoutEffect(() => {
+    optionsRef.current = options
+  })
   // Per-call id so concurrent executes only clear `loading` on the most
   // recent one (avoids a stale early-resolver flipping loading off while a
   // later execute is still pending).

@@ -33,7 +33,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 // the lazy-init path hits the mocked `listen()` above.
 ;(window as unknown as { __TAURI_INTERNALS__: object }).__TAURI_INTERNALS__ = {}
 
-import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import {
+  useBlockPropertyEvents,
+  useScopedBlockPropertyEvents,
+} from '@/hooks/useBlockPropertyEvents'
 import {
   _resetBlockPropertyEventsForTest,
   EVENT_PROPERTY_CHANGED,
@@ -151,5 +154,55 @@ describe('useBlockPropertyEvents', () => {
       await vi.advanceTimersByTimeAsync(0)
     })
     expect(second.result.current.invalidationKey).toBe(1)
+  })
+})
+
+describe('useScopedBlockPropertyEvents', () => {
+  // #2905 registers the fan-out target ONCE (empty dep array) so an `ownsBlock`
+  // that changes identity on every render does not re-register the listener.
+  // #4377 — that indirection used to be a latest-value ref mirror written
+  // during render and is now a `useEffectEvent`. Either way the contract is the
+  // same and is what this test pins: the registered target must consult the
+  // ownership predicate from the LATEST commit, not the one captured when the
+  // effect registered. Freeze the predicate at mount and this fails.
+  it('consults the ownsBlock predicate from the latest render, not the one it registered with', async () => {
+    const { result, rerender } = renderHook(
+      ({ owned }: { owned: string }) =>
+        useScopedBlockPropertyEvents({ ownsBlock: (blockId) => blockId === owned }),
+      { initialProps: { owned: 'BLK01' } },
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(result.current.invalidationKey).toBe(0)
+
+    // An event for a block this instance does NOT own is ignored.
+    act(() => {
+      firePropertyEvent('BLK02', ['todo_state'])
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150)
+    })
+    expect(result.current.invalidationKey).toBe(0)
+
+    // Hand the hook a brand-new predicate that owns BLK02 instead.
+    rerender({ owned: 'BLK02' })
+
+    act(() => {
+      firePropertyEvent('BLK02', ['todo_state'])
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150)
+    })
+    expect(result.current.invalidationKey).toBe(1)
+
+    // ...and the block it used to own is now ignored.
+    act(() => {
+      firePropertyEvent('BLK01', ['todo_state'])
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150)
+    })
+    expect(result.current.invalidationKey).toBe(1)
   })
 })

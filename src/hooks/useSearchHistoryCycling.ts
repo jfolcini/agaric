@@ -23,7 +23,7 @@
  * normally.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface SearchHistoryCycling {
   /** Bind to the input's `onKeyDown`. Returns true when consumed. */
@@ -61,8 +61,10 @@ export function useSearchHistoryCycling(
   // effect can ignore self-driven changes (otherwise every cycle
   // snaps us back to typing mode).
   const lastSelfWriteRef = useRef<string | null>(null)
-  historyRef.current = history
-  queryRef.current = query
+  useLayoutEffect(() => {
+    historyRef.current = history
+    queryRef.current = query
+  })
 
   // When the user edits the input outside the hook's own writes,
   // snap back to typing mode so the next `↑` reseeds from the

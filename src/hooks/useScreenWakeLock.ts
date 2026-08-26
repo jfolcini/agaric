@@ -52,7 +52,7 @@
  * fixes.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { logger } from '@/lib/logger'
 
@@ -119,7 +119,9 @@ export function useScreenWakeLock(active: boolean): ScreenWakeLockState {
   // Guards against a request that resolves after the flag already went false:
   // without it, a fast open/close leaves a lock held with nothing to release it.
   const activeRef = useRef(active)
-  activeRef.current = active
+  useLayoutEffect(() => {
+    activeRef.current = active
+  })
 
   const release = useCallback(() => {
     const sentinel = sentinelRef.current

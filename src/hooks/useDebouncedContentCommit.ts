@@ -60,7 +60,7 @@
  * checkbox/split/property — those stay blur-only).
  */
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -90,7 +90,11 @@ export function useDebouncedContentCommit(params: {
   // Read the latest `isFocused` inside the identity-stable `schedule` without
   // rebuilding it every render (which would churn EditableBlock's registration).
   const isFocusedRef = useRef(isFocused)
-  isFocusedRef.current = isFocused
+  // Mirrored in a dependency-array-less layout effect (not during render) so the
+  // ref refreshes on every commit, before paint and before any passive effect.
+  useLayoutEffect(() => {
+    isFocusedRef.current = isFocused
+  })
 
   // Extracted so both the debounce timer AND the export "flush now" bridge
   // (#2969) share exactly one commit implementation.

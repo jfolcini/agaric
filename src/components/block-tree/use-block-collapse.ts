@@ -25,7 +25,7 @@
  * layout, with no undo and across reloads.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { hasPreference, PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -145,12 +145,15 @@ export function useBlockCollapse(
   // Effective, not persisted: a transiently revealed ancestor RENDERS as
   // expanded, so the user's next chevron click on it must mean "collapse".
   const collapsedIdsRef = useRef(collapsedIds)
-  collapsedIdsRef.current = collapsedIds
 
   // Persisted set for event-time reads (`expandAncestors` decides what to
   // reveal against the SAVED layout, not against its own previous overlay).
   const persistedCollapsedIdsRef = useRef(persistedCollapsedIds)
-  persistedCollapsedIdsRef.current = persistedCollapsedIds
+
+  useLayoutEffect(() => {
+    collapsedIdsRef.current = collapsedIds
+    persistedCollapsedIdsRef.current = persistedCollapsedIds
+  })
 
   // BlockTree is NOT remounted on page switch (`rootParentId` just changes),
   // so reload the persisted state whenever the storage scope changes. A

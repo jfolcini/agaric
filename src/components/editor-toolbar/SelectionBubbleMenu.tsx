@@ -21,7 +21,7 @@ import { useEditorState } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Link2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { LinkEditPopover } from '@/components/editor-toolbar/LinkEditPopover'
@@ -129,24 +129,30 @@ export function SelectionBubbleMenu({
   const virtualAnchorRef = useRef<{ getBoundingClientRect: () => DOMRect }>({
     getBoundingClientRect: () => new DOMRect(),
   })
-  virtualAnchorRef.current = {
-    getBoundingClientRect: () => {
-      // #3061 — Radix calls this closure repeatedly (layout/scroll/resize)
-      // for as long as the link popover stays open, not just once at click
-      // time, so it can run after `editor` has gone null mid mount/teardown
-      // race. Guard `editor?.view` before touching `.state`/`.view` below.
-      if (!editor?.view) return new DOMRect()
-      const range = savedSelection ?? {
-        from: editor.state.selection.from,
-        to: editor.state.selection.to,
-      }
-      if (range.from !== range.to) {
-        return posToDOMRect(editor.view, range.from, range.to)
-      }
-      const coords = editor.view.coordsAtPos(range.from)
-      return new DOMRect(coords.left, coords.top, 0, coords.bottom - coords.top)
-    },
-  }
+  // Refreshed on every commit (no dep array). A LAYOUT effect, not a passive
+  // one: Radix's `PopperAnchor` reads `virtualRef.current` from a passive
+  // effect in a DESCENDANT, and descendant passive effects run before this
+  // component's would, which would leave the anchor rect one commit stale.
+  useLayoutEffect(() => {
+    virtualAnchorRef.current = {
+      getBoundingClientRect: () => {
+        // #3061 — Radix calls this closure repeatedly (layout/scroll/resize)
+        // for as long as the link popover stays open, not just once at click
+        // time, so it can run after `editor` has gone null mid mount/teardown
+        // race. Guard `editor?.view` before touching `.state`/`.view` below.
+        if (!editor?.view) return new DOMRect()
+        const range = savedSelection ?? {
+          from: editor.state.selection.from,
+          to: editor.state.selection.to,
+        }
+        if (range.from !== range.to) {
+          return posToDOMRect(editor.view, range.from, range.to)
+        }
+        const coords = editor.view.coordsAtPos(range.from)
+        return new DOMRect(coords.left, coords.top, 0, coords.bottom - coords.top)
+      },
+    }
+  })
 
   const state = useEditorState({
     editor,

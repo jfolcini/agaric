@@ -30,7 +30,7 @@
 
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import type { Dispatch, SetStateAction } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { pageSortWireFor, type SortOption } from '@/hooks/usePageBrowserSort'
@@ -154,7 +154,9 @@ export function usePageBrowserData({
     [currentSpaceId, sortOption, wireFilters],
   )
   const queryKeyRef = useRef(queryKey)
-  queryKeyRef.current = queryKey
+  useLayoutEffect(() => {
+    queryKeyRef.current = queryKey
+  })
 
   const {
     data,
@@ -440,13 +442,15 @@ export function usePageBrowserData({
   // means a failed delete, which leaves `pages` unchanged, also leaves
   // the count unchanged.
   //
-  // E15 — a render-synced snapshot of `pages` so `setPagesForDelete` can
+  // E15 — a commit-synced snapshot of `pages` so `setPagesForDelete` can
   // compute the array delta WITHOUT reading `prev` from inside a
   // `setPages` updater. Keeping the delta math (and the dependent
   // `setDisplayTotalCount`) outside the updater makes the path idempotent
   // under React StrictMode's double-invoke.
   const setPagesSnapshotRef = useRef(pages)
-  setPagesSnapshotRef.current = pages
+  useLayoutEffect(() => {
+    setPagesSnapshotRef.current = pages
+  })
   const setPagesForDelete = useCallback(
     (updater: (prev: BlockRow[]) => BlockRow[]) => {
       // E15 — the count decrement must NOT live inside the `setPages`

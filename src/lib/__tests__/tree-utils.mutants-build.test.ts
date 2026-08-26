@@ -170,7 +170,7 @@ describe('computeSelectionRoots', () => {
  * is given — that guarantee then comes from ITS three current callers:
  * `src/components/block-tree/use-block-slash-commands/useSlashCommandStructural.ts:76`,
  * `src/components/block-tree/use-block-tree-keyboard-shortcuts.ts:314`, and
- * `src/components/editor/BlockTree.tsx:790`, all of which pass `state.blocks`. So every current call path — direct or via
+ * `src/components/editor/BlockTree.tsx:794`, all of which pass `state.blocks`. So every current call path — direct or via
  * `serializeBlockSubtree` — feeds `computeSelectionRoots` the FULL-PAGE flat
  * array straight out of `buildFlatTree`, never a hand-built or sliced subset.
  * But `serializeBlockSubtree` is an exported boundary, not a guarantee of its

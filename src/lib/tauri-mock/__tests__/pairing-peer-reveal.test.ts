@@ -72,7 +72,7 @@ describe('tauri-mock pairing peer reveal (#3469)', () => {
     // here poisons the baseline and the wait can never resolve.
     expect(listPeerRefs()).toEqual([])
     // 2 — usePollingQuery's immediate fetch when `enabled` flips true
-    // (usePollingQuery.ts:106). A peer here closes the dialog in the same
+    // (usePollingQuery.ts:108). A peer here closes the dialog in the same
     // frame the waiting state opened.
     expect(listPeerRefs()).toEqual([])
     // 3 — the first 2s interval tick: the peer legitimately appears.

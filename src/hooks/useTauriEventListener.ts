@@ -19,7 +19,7 @@
 
 import type { Event } from '@tauri-apps/api/event'
 import { listen } from '@tauri-apps/api/event'
-import { useEffect, useRef } from 'react'
+import { useEffect, useEffectEvent } from 'react'
 
 import { logger } from '@/lib/logger'
 
@@ -64,9 +64,9 @@ export interface UseTauriEventListenerOptions {
  *     the only safe point at which a caller can reconcile against the
  *     unbuffered gap before it.
  *
- * `handler` and `onError` are read through refs so the listener is
- * never re-registered on each render even when callers pass inline
- * closures. Re-registration only happens when `eventName` or
+ * `handler`, `onError` and `onSubscribed` are wrapped in `useEffectEvent`
+ * so the listener is never re-registered on each render even when callers
+ * pass inline closures. Re-registration only happens when `eventName` or
  * `enabled` change.
  */
 export function useTauriEventListener<T = unknown>(
@@ -75,15 +75,30 @@ export function useTauriEventListener<T = unknown>(
   options: UseTauriEventListenerOptions = {},
 ): void {
   const { enabled = true, onError, onSubscribed } = options
-  const handlerRef = useRef(handler)
-  const onErrorRef = useRef(onError)
-  const onSubscribedRef = useRef(onSubscribed)
 
-  // Keep the refs current on every render so the registered listener
-  // always calls the latest handler / onError without re-subscribing.
-  handlerRef.current = handler
-  onErrorRef.current = onError
-  onSubscribedRef.current = onSubscribed
+  // Non-reactive views of the three callbacks, so the registered listener
+  // always invokes the latest one without re-subscribing. `useEffectEvent`
+  // replaces the latest-value ref mirror this used to carry (#4377): same
+  // "read the newest committed closure" semantics, but published during the
+  // commit phase instead of written during render, so `react/refs` has
+  // nothing to flag. Every call site below is inside the effect or inside a
+  // closure the effect owns.
+  const emit = useEffectEvent((event: Event<T>) => {
+    handler(event)
+  })
+  const notifySubscribed = useEffectEvent(() => {
+    onSubscribed?.()
+  })
+  // `name` is passed in rather than read off the enclosing scope so a
+  // rejection that lands after `eventName` changed still names the event it
+  // actually failed on, exactly as the closed-over `eventName` used to.
+  const reportListenFailure = useEffectEvent((name: string, err: unknown) => {
+    if (onError) {
+      onError(err)
+    } else {
+      logger.warn('useTauriEventListener', `Failed to listen to ${name}`, undefined, err)
+    }
+  })
 
   useEffect(() => {
     if (!enabled) return
@@ -92,7 +107,7 @@ export function useTauriEventListener<T = unknown>(
     let cancelled = false
 
     listen<T>(eventName, (event) => {
-      handlerRef.current(event)
+      emit(event)
     })
       .then((fn) => {
         if (cancelled) {
@@ -101,16 +116,11 @@ export function useTauriEventListener<T = unknown>(
           unlisten = fn
           // Only now is the subscription live. Deliberately after `unlisten`
           // is stored, so a callback that throws cannot strand the listener.
-          onSubscribedRef.current?.()
+          notifySubscribed()
         }
       })
       .catch((err: unknown) => {
-        const errorHandler = onErrorRef.current
-        if (errorHandler) {
-          errorHandler(err)
-        } else {
-          logger.warn('useTauriEventListener', `Failed to listen to ${eventName}`, undefined, err)
-        }
+        reportListenFailure(eventName, err)
       })
 
     return () => {

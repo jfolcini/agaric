@@ -63,7 +63,7 @@
 
 import { ChevronRight, Home, MoreHorizontal } from 'lucide-react'
 import type * as React from 'react'
-import { Fragment, useCallback, useRef, useState } from 'react'
+import { Fragment, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -253,8 +253,12 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
   // a single stable `onClick` lives on the list container, reads the
   // `data-breadcrumb-overflow-item` attribute already on each button, looks
   // up the matching item, and dispatches its `onSelect`.
+  // Mirrored from a layout effect with no dep array — refreshed on every
+  // commit, before any passive effect or user event can read it.
   const itemsRef = useRef(items)
-  itemsRef.current = items
+  useLayoutEffect(() => {
+    itemsRef.current = items
+  })
   const listRef = useRef<HTMLDivElement | null>(null)
   const handleListClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null

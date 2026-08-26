@@ -235,6 +235,76 @@ describe('MathNodeView drops whitespace-only atoms on close (#2453)', () => {
   })
 })
 
+/**
+ * #2453 / #4377 — the Enter/Escape close path lives in a document-level CAPTURE
+ * keydown listener registered once, when the source field is revealed. Typing
+ * into the field fires `updateAttributes({ latex })`, which re-renders the node
+ * view with a NEW `latex` under that already-registered listener. The listener
+ * must act on the latex the user actually left, not the one current when it was
+ * registered — otherwise Enter drops an atom the user just filled in, or keeps
+ * an atom the user just emptied.
+ */
+describe('MathNodeView keydown close acts on the latest LaTeX (#2453)', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  /**
+   * Fidelity harness: an identity-STABLE `editor` (so the keydown listener is
+   * registered exactly once, on the `showSource` toggle — a fresh `editor` each
+   * render would re-run the effect and mask a stale closure) plus a real
+   * `updateAttributes` that commits a new `latex` and re-renders, mirroring
+   * TipTap's `setNodeMarkup`.
+   */
+  function KeydownHarness({
+    initialLatex,
+    deleteNode,
+  }: {
+    initialLatex: string
+    deleteNode: () => void
+  }): React.ReactElement {
+    const [latex, setLatex] = useState(initialLatex)
+    const [editor] = useState(() => ({ commands: { focus: vi.fn() }, isDestroyed: false }))
+    const props = {
+      node: { attrs: { latex } },
+      updateAttributes: ({ latex: next }: { latex: string }) => setLatex(next),
+      deleteNode,
+      editor,
+    } as unknown as React.ComponentProps<typeof MathInlineNodeView>
+    return <MathInlineNodeView {...props} />
+  }
+
+  it('drops the atom on Enter after the field was cleared under the registered listener', async () => {
+    const deleteNode = vi.fn()
+    render(<KeydownHarness initialLatex="a" deleteNode={deleteNode} />)
+    // Revealing the field registers the capture listener while latex === 'a'.
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+
+    // The user wipes the source — a committed re-render with whitespace-only latex.
+    fireEvent.change(input, { target: { value: '   ' } })
+    await waitFor(() => expect(input).toHaveValue('   '))
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(deleteNode).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the atom on Enter after an empty field was typed into under the registered listener', async () => {
+    const deleteNode = vi.fn()
+    render(<KeydownHarness initialLatex="" deleteNode={deleteNode} />)
+    // Registered while latex === '' — the state that WOULD delete the node.
+    fireEvent.click(await screen.findByTestId('math-rendered'))
+    const input = await screen.findByTestId('math-source-input')
+
+    fireEvent.change(input, { target: { value: 'x^2' } })
+    await waitFor(() => expect(input).toHaveValue('x^2'))
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(deleteNode).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByTestId('math-source-input')).not.toBeInTheDocument())
+  })
+})
+
 describe('MathBlockNodeView (#1437)', () => {
   afterEach(() => vi.clearAllMocks())
 

@@ -34,7 +34,7 @@
 
 import { SlidersHorizontal, Star, StarOff, Tag, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
@@ -144,7 +144,11 @@ export function PageBrowserBatchToolbar({
   // merely emptied, `mountedRef` because the last render before an unmount
   // still carried the old (non-zero) count.
   const selectedCountRef = useRef(selectedIds.length)
-  selectedCountRef.current = selectedIds.length
+  // Mirrored from a layout effect with no dep array — refreshed on every
+  // commit, before any passive effect or user event can read it.
+  useLayoutEffect(() => {
+    selectedCountRef.current = selectedIds.length
+  })
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true

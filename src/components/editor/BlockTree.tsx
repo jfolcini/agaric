@@ -458,12 +458,16 @@ export function BlockTree({
   // #1066 — `visibleIds` is re-derived from `blocks` on every edit, so a
   // `handleSelect` that closed over it would get a new identity per edit and
   // bust the `blockActions` context bag (re-rendering every memoized row).
-  // Keep a render-synced ref so `handleSelect` can read the CURRENT visible
+  // Keep a commit-synced ref so `handleSelect` can read the CURRENT visible
   // ids at call time while staying referentially stable across edits. This
   // preserves #1063's visible-only range-select semantics without the closure
-  // dependency.
+  // dependency. The mirror is written from a layout effect with no dep array,
+  // so it refreshes on every commit and lands before any passive effect or
+  // user event can read it.
   const visibleIdsRef = useRef(visibleIds)
-  visibleIdsRef.current = visibleIds
+  useLayoutEffect(() => {
+    visibleIdsRef.current = visibleIds
+  })
 
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())
