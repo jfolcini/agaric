@@ -1002,3 +1002,252 @@ async fn import_bibliography_keeps_existing_year_declaration_4382() {
 
     mat.shutdown();
 }
+
+/// #4382 / #4395 review note 2 — an in-use **text** key is skipped too, and
+/// the warning tells the truth about what declaring it would have cost.
+///
+/// Seven of the eight [`BIB_PROPERTY_DEFS`] keys prefer `text`, and for
+/// those the `year` wording ("would reject every later text edit") is
+/// false: a `text` declaration accepts `value_text` happily. What a `text`
+/// declaration *does* reject is a `value_num` / `value_date` / `value_bool`
+/// write — and those rows are reachable under an undeclared key, because
+/// `validate_property_value` skips its type check when `declaration` is
+/// `None` and both `set_property` and the MCP `set_property` tool expose
+/// all five typed slots. That is the reachability this test pins: the seed
+/// writes `authors` as a NUMBER through the ordinary command path, and the
+/// post-import escape hatch writes another one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_leaves_in_use_text_key_undeclared_4382() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // The user's pre-existing state: `authors` in use, undeclared, and
+    // holding a value the import's preferred `text` type would forbid.
+    const EXISTING: &str = "01AAAAAUTH0000000000000001";
+    insert_block(&pool, EXISTING, "content", "a headcount note", None, None).await;
+    assign_to_test_space(&pool, EXISTING).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        EXISTING.into(),
+        "authors".into(),
+        None,
+        Some(3.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("an undeclared key must accept a number — this is the reachability the guard needs");
+    settle(&mat).await;
+    assert_eq!(
+        property_def_type(&pool, "authors").await,
+        None,
+        "seed precondition: `authors` must be IN USE but UNDECLARED"
+    );
+
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        ONE_ENTRY_BIBTEX_1920.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
+    settle(&mat).await;
+
+    // 1. The in-use text key is skipped, exactly like the number key.
+    assert_eq!(
+        property_def_type(&pool, "authors").await,
+        None,
+        "an in-use TEXT key must be skipped too, not just the `number` one"
+    );
+
+    // 2. The user's existing non-text value survives untouched.
+    let existing_props = props_of(&pool, EXISTING).await;
+    assert_eq!(
+        existing_props["authors"].value_num,
+        Some(3.0),
+        "pre-existing value must survive the import: {existing_props:?}"
+    );
+
+    // 3. The escape hatch stays open: a later NUMBER write to `authors`
+    //    still succeeds. This is the assertion that fails loudly if the
+    //    guard is narrowed to non-text preferred types, with
+    //    "Property 'authors' expects type 'text', got 'number'."
+    const OTHER: &str = "01AAAAAUTH0000000000000002";
+    insert_block(&pool, OTHER, "content", "another headcount", None, None).await;
+    assign_to_test_space(&pool, OTHER).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        OTHER.into(),
+        "authors".into(),
+        None,
+        Some(7.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("a number write to `authors` must still be accepted after the import");
+    settle(&mat).await;
+
+    // 4. The warning states the consequence that is TRUE for a text key,
+    //    and not the `year` one, which is false for it.
+    let warning = result
+        .warnings
+        .iter()
+        .find(|w| w.contains("'authors'"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the skipped declaration must be surfaced: {:?}",
+                result.warnings
+            )
+        });
+    assert!(
+        warning.contains("undeclared") && warning.contains("number, date or boolean"),
+        "a text key's warning must name the writes a 'text' declaration would actually \
+         reject: {warning}"
+    );
+    assert!(
+        !warning.contains("text edit"),
+        "declaring `authors` 'text' would NOT reject a later text edit — the `year` wording \
+         must not be reused for a text key: {warning}"
+    );
+
+    // 5. The import's own `authors` value still lands, as text.
+    let page = page_id_by_title(&pool, "Doe 1920")
+        .await
+        .expect("Doe 1920 page");
+    let props = props_of(&pool, &page).await;
+    assert_eq!(
+        props["authors"].value_text.as_deref(),
+        Some("Doe, Jane"),
+        "{props:?}"
+    );
+
+    // 6. Only the in-use key is skipped — `year`, unused here, is still
+    //    declared `number`, so this is not a "skip everything" pass.
+    assert_eq!(
+        property_def_type(&pool, "year").await.as_deref(),
+        Some("number"),
+        "an UNUSED key must still be declared"
+    );
+
+    mat.shutdown();
+}
+
+/// #4382 / #4395 review note 3 — a key whose only values live on a
+/// SOFT-DELETED block is still in use, and still skipped.
+///
+/// The probe in `declare_bib_property_defs` deliberately does not filter
+/// `blocks.deleted_at`, because the blocking `COUNT(*)` in
+/// `delete_property_def_inner` does not either: a declaration created over
+/// a soft-deleted block's values is just as un-removable as one created
+/// over a live block's, and the values come back if the block is restored.
+/// Until now that omission was asserted only in a comment. Adding
+/// `JOIN blocks … WHERE deleted_at IS NULL` to the probe — the obvious
+/// "tidy-up" — reopens #4382 through this door, and reddens here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_bibliography_treats_soft_deleted_values_as_in_use_4382() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const TRASHED: &str = "01AAAATRSH0000000000000001";
+    insert_block(
+        &pool,
+        TRASHED,
+        "content",
+        "a note on an old book",
+        None,
+        None,
+    )
+    .await;
+    assign_to_test_space(&pool, TRASHED).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        TRASHED.into(),
+        "year".into(),
+        Some("circa 1920".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    delete_block_inner(&pool, DEV, &mat, TRASHED.into())
+        .await
+        .expect("soft-delete the only block holding a `year` value");
+    settle(&mat).await;
+
+    // The premise the probe rests on: a soft delete leaves the
+    // `block_properties` row in place, which is why
+    // `delete_property_def_inner`'s unfiltered COUNT(*) would still block a
+    // later attempt to remove the declaration.
+    let surviving: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = 'year'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        surviving, 1,
+        "seed precondition: the soft-deleted block's `year` row must survive the delete"
+    );
+    let deleted_at: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(TRASHED)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        deleted_at.is_some(),
+        "seed precondition: the block must actually be soft-deleted"
+    );
+
+    let result = import_bibliography_inner(
+        &pool,
+        DEV,
+        &mat,
+        ONE_ENTRY_BIBTEX_1920.into(),
+        Some("bibtex".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
+    settle(&mat).await;
+
+    assert_eq!(
+        property_def_type(&pool, "year").await,
+        None,
+        "a `year` value on a soft-deleted block still makes the key in-use: declaring it \
+         would be just as un-removable, since `delete_property_def_inner` counts that row too"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("'year'") && w.contains("undeclared")),
+        "the skip must be reported here too: {:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}

@@ -102,26 +102,44 @@ fn citation_display_name(entry: &BibEntry) -> String {
 /// constrains every block in the vault, not just the pages this import
 /// creates. The dangerous case is a key with existing **values** and no
 /// declaration — the ordinary state, since an undeclared key is fully
-/// permissive (`validate_property_value` skips its type check when
-/// `declaration` is `None`). `year` is the live example: a user keeping
-/// `"circa 1920"` has no `year` row for `INSERT OR IGNORE` to ignore, so
-/// an unguarded import would declare `year` as `number` for them, and:
+/// permissive: `validate_property_value` skips its type check when
+/// `declaration` is `None`, so for a non-reserved key (none of the eight
+/// is reserved) *any* of the five typed slots is accepted. `set_property`
+/// and the MCP `set_property` tool both expose all five.
+///
+/// `year` is the severe example: a user keeping `"circa 1920"` has no
+/// `year` row for `INSERT OR IGNORE` to ignore, so an unguarded import
+/// would declare `year` as `number` for them, and:
 ///
 ///  1. every later text write to the key, on any block, is rejected;
 ///  2. on inbound sync those rows are dropped row-absent — the Loro `Str`
 ///     is routed by `value_type`, `parse::<f64>()` fails, and there is a
 ///     deliberate no-fallback-to-`value_text` rule;
 ///  3. the declaration cannot be removed while any `block_properties` row
-///     references the key, and the remedy its error names —
-///     `set_property(value = None)` — is itself rejected for a
-///     non-reserved key. Only deleting the property from every affected
-///     block, discarding the values, exits.
+///     references the key (`delete_property_def_inner`'s `COUNT(*)`), and
+///     the remedy its error names — `set_property(value = None)` — is
+///     itself rejected for a non-reserved key. Only deleting the property
+///     from every affected block, discarding the values, exits.
+///
+/// The guard covers the seven `text` keys too, but for a *different*
+/// reason, and the warning must not claim this one for them (#4395 review
+/// note 2): declaring a key `text` does **not** reject later text edits —
+/// a `text` declaration with a `value_text` payload passes step 4 cleanly,
+/// and a Loro `Str` reprojects to `value_text` either way. What it does
+/// reject is every later `value_num` / `value_date` / `value_bool` write
+/// (step 4's `type_matches` for `"text"` admits only `value_text` and
+/// `value_ref`) — and those rows are reachable, precisely because an
+/// undeclared key accepts all five slots. Link 2 does not apply to them
+/// (`PropertyValue::Num` / `Bool` route straight to their column with no
+/// `property_definitions` lookup, so they survive sync), but link 3 does:
+/// the narrowing is one-way while any value under the key exists. Milder
+/// than `year`, still not this import's decision to make.
 ///
 /// So: **the vault's existing shape for a key wins, declared or not.** An
 /// in-use-but-undeclared key stays undeclared and this import's values for
 /// it are coerced to that permissive shape, the same shape the user's
-/// existing values already have. Declaring `number` is the branch that
-/// leaves the vault internally inconsistent; this one does not.
+/// existing values already have. Declaring is the branch that can leave
+/// the vault internally inconsistent; this one cannot.
 ///
 /// Reported through [`ImportBibliographyResult::warnings`] rather than
 /// failing the import: a legitimate pre-existing use of `year` elsewhere
@@ -172,10 +190,29 @@ async fn declare_bib_property_defs(
                 preferred_type = %value_type,
                 "import: leaving property key undeclared; blocks already hold values under it"
             );
+            // The consequence of declaring differs by preferred type, and
+            // the warning has to name the one the user would actually hit
+            // (#4395 review note 2). Seven of the eight keys are `text`,
+            // for which "would reject every later text edit" is simply
+            // false — see the type-specific paragraph in this function's
+            // docblock.
+            let consequence = if *value_type == "text" {
+                format!(
+                    "declaring it '{value_type}' would reject every later number, date or \
+                     boolean write to it — an undeclared key accepts all five value shapes — \
+                     and could not be removed again while any of those values exists"
+                )
+            } else {
+                format!(
+                    "declaring it '{value_type}' would reject every later text edit of those \
+                     values, and drop the ones that are not valid '{value_type}' on the next \
+                     inbound sync"
+                )
+            };
             warnings.push(format!(
                 "property '{key}' left undeclared: blocks in this vault already hold values \
-                 under this key, and declaring it '{value_type}' would reject every later \
-                 text edit of those values; this import's '{key}' values are stored as text"
+                 under this key, and {consequence}; this import's '{key}' values are stored \
+                 as text"
             ));
             continue;
         }
@@ -385,6 +422,26 @@ pub async fn import_bibliography_inner(
     // keys the vault has no shape for yet. In the same transaction as the
     // read above, so the check and the write cannot be split.
     declare_bib_property_defs(&mut tx, &mut decls, &mut warnings).await?;
+
+    // KNOWN WINDOW (#4395 review note 5), recorded rather than fixed here.
+    // `decls` is read once, in this first chunk, and a SKIPPED key stays
+    // absent from it for the whole import. A `create_property_def` for that
+    // key landing between two chunk commits would therefore leave the later
+    // chunks passing `declaration: None` — skipping validation and writing
+    // `value_text` under, say, a fresh `number` declaration. Needs a
+    // >`IMPORT_BIB_CHUNK_ENTRIES` import racing an explicit declaration, so
+    // it is narrow; not re-reading `decls` per chunk is deliberate (#1921's
+    // one-lookup idiom).
+    //
+    // It is also not worth fixing independently, because its
+    // precondition IS the gap this PR does not close: a key is absent from
+    // `decls` only when it was skipped, and it is skipped only when it is
+    // already in use — so the racing `create_property_def` is itself
+    // declaring a type over in-use values, the very #4382 trap, on a path
+    // that still has no guard. Giving `create_property_def_inner` the same
+    // in-use probe closes this window as a side effect, since the racing
+    // declaration would then be refused for exactly the keys that can be
+    // missing from `decls`. Tracked in #4399, not separately.
 
     let mut pages_created: u64 = 0;
     let mut entries_skipped: u64 = 0;
