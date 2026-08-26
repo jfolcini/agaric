@@ -462,28 +462,55 @@ function App() {
   useScrollRestore(mainContentEl, viewKey)
 
   // ── View transition fade ─────────────────────────────────────────
-  // Uses the "set state during render" pattern to synchronously hide
-  // content when the view key changes, then fades in via CSS transition.
-  const [prevViewKey, setPrevViewKey] = useState(viewKey)
-  const [fadeVisible, setFadeVisible] = useState(true)
-
-  if (prevViewKey !== viewKey) {
-    setPrevViewKey(viewKey)
-    setFadeVisible(false)
-  }
+  // The pane hides synchronously when the view key changes and fades back in
+  // via CSS once the new view has had a beat to load.
+  //
+  // `fadeVisible` is DERIVED from which view key has been faded in, never held
+  // as its own boolean (#3388). The boolean version re-armed the fade-in from
+  // `useEffect(…, [fadeVisible])`, and an effect only sees values React
+  // COMMITS: when a second view change coalesced with the pending
+  // `setFadeVisible(true)`, the committed value went `false → false`, the
+  // effect was skipped, no timer was re-armed, and the pane stayed `opacity-0`
+  // until the next navigation — a blank app under a correct header and
+  // sidebar. Keying on `viewKey` removes the class rather than narrowing the
+  // window, since the deps provably change on every switch however React
+  // batches. Computing it during render keeps the hide in the same commit as
+  // the view change.
+  //
+  // Keying on the view has two consequences that the boolean did not have.
+  // Both are deliberate and both are pinned in `viewTransition.test.tsx`:
+  //
+  //  1. The beat is measured from the LAST switch, not the first. The effect
+  //     clears and re-arms whenever `viewKey` changes, so clicking through
+  //     views faster than 150ms keeps the pane blank until the user pauses.
+  //     That is what B-76 asks for — the view that ends up on screen is the
+  //     one that gets its load beat. The boolean armed a single timer on the
+  //     first switch and then revealed whichever view happened to be current
+  //     when it fired, typically one that had had far less than 150ms.
+  //  2. Re-entering a view inside its own fade window (A → B → A) skips the
+  //     hide: B's timer never fired, so `visibleKey` is still A and
+  //     `fadeVisible` is true on the return render. Note this is NOT
+  //     "the DOM still holds A" — `ViewDispatcher` switches on `currentView`,
+  //     so A is genuinely unmounted and remounted, and views that load into
+  //     local state (TagList, PageBrowser, TrashView) re-fetch and can show a
+  //     skeleton frame. We take that over 150ms more blankness: the pane is
+  //     already `opacity-0` at that instant so nothing is flashed away, A has
+  //     already earned one beat, and this is what BOUNDS (1) — an oscillating
+  //     user always has a view that comes back at once instead of a pane that
+  //     stays blank for as long as they keep clicking.
+  const [visibleKey, setVisibleKey] = useState(viewKey)
+  const fadeVisible = visibleKey === viewKey
 
   useEffect(() => {
-    if (!fadeVisible) {
-      // Delay fade-in by 150ms to allow page content to load from SQLite
-      // before the opacity transition begins, preventing CLS from skeleton
-      // placeholders being replaced by actual content mid-fade (B-76).
-      const id = setTimeout(() => {
-        setFadeVisible(true)
-      }, 150)
-      return () => clearTimeout(id)
-    }
-    return undefined
-  }, [fadeVisible])
+    if (visibleKey === viewKey) return undefined
+    // Delay fade-in by 150ms to allow page content to load from SQLite
+    // before the opacity transition begins, preventing CLS from skeleton
+    // placeholders being replaced by actual content mid-fade (B-76).
+    const id = setTimeout(() => {
+      setVisibleKey(viewKey)
+    }, 150)
+    return () => clearTimeout(id)
+  }, [viewKey, visibleKey])
 
   return (
     <BootGate>
