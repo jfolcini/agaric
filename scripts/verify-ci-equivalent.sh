@@ -150,6 +150,24 @@ CI_PATH_RE='^\.github/|^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$
 # that provisions dev.db.
 RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.sh$'
 
+# Scripts whose ONLY prek hook lives in a category the SKIP list can drop, and
+# which have no `--self-test` hook of their own. `CI_PATH_RE`'s rationale is
+# "covered by Phase A: shellcheck plus the per-script self-tests" — true for
+# most of `scripts/`, but NOT for these three: editing one would otherwise
+# run shellcheck alone, where the old fail-closed arm ran its hook.
+# (Careful reflowing this: a comment line STARTING with the word after `# `
+#  being "shellcheck" is parsed as a shellcheck DIRECTIVE, and prose then
+#  fails SC1072/SC1073. That is how this very comment broke a commit.)
+#
+#   check-unsafe-allowlist.sh   -> hook `unsafe-allowlist`  (dropped when HAS_RS=0)
+#   check-axe-presence.sh       -> hook `axe-presence`      (dropped when HAS_TS=0)
+#   check-test-file-naming.sh   -> hook `test-file-naming`  (dropped when HAS_TS=0)
+#
+# Others are fine: check-migrations-immutable.sh, check-session-log-numbering.sh
+# and cargo-audit-guard.sh each have a self-test hook outside every skip list.
+HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$'
+
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
 # tracked path, and the convention here is to symlink it from the main
@@ -995,6 +1013,27 @@ if [ "${1:-}" = "--self-test" ]; then
     st_rs 'scripts/test-related-rust.sh'     yes 'selects which Rust tests Phase D runs'
     st_rs 'scripts/push.sh'                  no  'a plain shell script does NOT force the Rust phases'
     st_rs 'scripts/verify-ci-equivalent.sh'  no  'nor does this verifier itself'
+    # A script whose ONLY hook lives in a skippable category must re-enable that
+    # category, or attributing it to CI leaves it covered by shellcheck alone.
+    st_hook() {  # <path> <re-var> <expected> <label>
+        local got=no
+        printf '%s\n' "$1" | grep -qE "$2" && got=yes
+        if [ "$got" = "$3" ]; then st_ok "hook-owner gate: $4"
+        else st_bad "hook-owner gate: $4" "path '$1' matched=$got, expected $3"; fi
+    }
+    st_hook 'scripts/check-unsafe-allowlist.sh'  "$HOOK_OWNER_RS_RE" yes 'unsafe-allowlist re-enables HAS_RS'
+    st_hook 'scripts/check-axe-presence.sh'      "$HOOK_OWNER_TS_RE" yes 'axe-presence re-enables HAS_TS'
+    st_hook 'scripts/check-test-file-naming.sh'  "$HOOK_OWNER_TS_RE" yes 'test-file-naming re-enables HAS_TS'
+    st_hook 'scripts/push.sh'                    "$HOOK_OWNER_RS_RE" no  'a self-tested script does not'
+    st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor one with its own self-test hook'
+    for _v in HOOK_OWNER_RS_RE:HAS_RS HOOK_OWNER_TS_RE:HAS_TS; do
+        _re="${_v%%:*}"; _flag="${_v##*:}"
+        if grep -qE "^[[:space:]]*has_match \"\\\$$_re\" && $_flag=1\$" "${BASH_SOURCE[0]}"; then
+            st_ok "hook-owner gate: the classifier consults $_re"
+        else
+            st_bad "hook-owner gate: the classifier consults $_re" "no has_match call found"
+        fi
+    done
     # ...and the classifier must actually CONSULT it. Driving the constant
     # alone would pass against a constant nothing reads — the exact shape of
     # the `unrec_ci` copy this file already got wrong once.
@@ -2306,8 +2345,11 @@ else
     has_match '\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$' && HAS_RS=1
     # ...and the shell scripts the Rust phases depend on (see RS_SCRIPT_RE).
     has_match "$RS_SCRIPT_RE" && HAS_RS=1
+    # ...and scripts whose only hook would otherwise be skipped (HOOK_OWNER_*).
+    has_match "$HOOK_OWNER_RS_RE" && HAS_RS=1
     # Frontend: TS/JS/CSS sources, e2e specs, and the FE build/config surface.
     has_match '^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$' && HAS_TS=1
+    has_match "$HOOK_OWNER_TS_RE" && HAS_TS=1
     # CI/tooling: workflows plus the lint-tool configs the CI lint job keys on.
     has_match "$CI_PATH_RE" && HAS_CI=1
     # Docs: any Markdown file plus the docs/ tree.
@@ -2401,8 +2443,9 @@ fi
 # "no staged files — skipping" — wasted noise since Phase C/D run them with
 # --range below) AND, category-aware, the hooks whose category did NOT change.
 #
-# This mirrors the CI `lint` job's per-category plan (an audit produced the (with the documented `scripts/*.sh` divergence — see CI_PATH_RE)
-# exact lists): a hook is skipped only when the category it guards is absent
+# This mirrors the CI `lint` job's per-category plan (an audit produced the
+# exact lists), with the documented `scripts/*.sh` divergence — see the note
+# on CI_PATH_RE: a hook is skipped only when the category it guards is absent
 # from this push. The nightly `full-suite` job in
 # .github/workflows/scheduled-deep-checks.yml runs the FULL unskipped prek
 # suite over the whole tree as the backstop, so this trades per-push
