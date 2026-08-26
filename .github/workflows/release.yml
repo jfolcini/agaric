@@ -557,7 +557,22 @@ jobs:
             # a hung app would survive into the next attempt and outlive the step.
             setsid xvfb-run -a "${launcher[@]}" "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1 &
             app_pid=$!
+            # `$!` is the pid bash FORKED; it only becomes a group leader once it
+            # has execve'd setsid AND the setsid() syscall has returned. This `ps`
+            # races that. If it wins, `pgid` is OUR OWN group — and the reap below
+            # would then SIGKILL the step's shell and everything sharing its group
+            # (the runner does not setsid the step shell, so that reaches upward).
+            # It runs on EVERY attempt, including a fully successful boot, and the
+            # retry loop cannot recover because the shell running it is what died.
+            # The child normally wins this race; the guard is here because the
+            # consequence is severe, it reads as unexplained infra failure rather
+            # than a test failure, and a stubbed xvfb-run always execs fast enough
+            # to hide it — so no local verification can cover it.
+            own_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
             pgid=$(ps -o pgid= -p "$app_pid" 2>/dev/null | tr -d ' ')
+            if [ -z "$pgid" ] || [ "$pgid" = "$own_pgid" ]; then
+              pgid=""   # setsid had not taken effect yet — never kill our own group
+            fi
 
             code=""
             booted=0
@@ -570,7 +585,13 @@ jobs:
               # that write, and CHECK 1 (which greps for the line) would then report
               # "exists but carries no boot line" on every attempt: a false RED.
               # Polling the same predicate CHECK 1 asserts removes the mismatch.
-              if grep -qs "log directory initialized" "$AGARIC_DATA_DIR"/logs/agaric.log* 2>/dev/null; then
+              # `/dev/null` as a second operand is load-bearing: `nullglob` is on,
+              # so before the log exists the glob expands to ZERO words and a bare
+              # `grep -qs PATTERN` would read the step's STDIN. That is benign only
+              # because hosted runners close it; given an open stdin the first poll
+              # blocks forever and the job burns its timeout — the exact outcome
+              # this step exists to prevent.
+              if grep -qs "log directory initialized" "$AGARIC_DATA_DIR"/logs/agaric.log* /dev/null 2>/dev/null; then
                 booted=1
                 break
               fi
@@ -616,6 +637,12 @@ jobs:
               kill -TERM "-$pgid" 2>/dev/null
               sleep 1
               kill -KILL "-$pgid" 2>/dev/null
+            else
+              # No usable group: still reap the leader so a hung app cannot leak
+              # into the next attempt or outlive the step.
+              kill -TERM "$app_pid" 2>/dev/null
+              sleep 1
+              kill -KILL "$app_pid" 2>/dev/null
             fi
             wait "$app_pid" 2>/dev/null
             set -e
@@ -683,7 +710,10 @@ jobs:
               # `wchan` is the point of this: for a process that hung rather
               # than crashed, the kernel function it is blocked in is the
               # single most useful datum, and 0.9.9 gave us none of it.
-              boot_pids="$(pgrep -f 'agaric|[Xx]vfb' | tr '\n' ' ')"
+              # `|| true`: pgrep exits 1 when nothing matches and `pipefail` is on.
+              # Harmless at the current call site (errexit is suppressed inside an
+              # `until` condition) but not if this function is ever called directly.
+              boot_pids="$(pgrep -f 'agaric|[Xx]vfb' | tr '\n' ' ' || true)"
               if [ -n "$boot_pids" ]; then
                 # shellcheck disable=SC2086  # deliberate split into -p args
                 ps -o pid,stat,etimes,wchan:24,comm -p $boot_pids >&2 || true
@@ -698,9 +728,6 @@ jobs:
               return 1
             fi
             echo "OK: init_logging completed and wrote ${app_logs[*]}"
-            # Cleaned only on the success path; a failed attempt keeps its tree
-            # so the diagnostics above stay inspectable.
-            trap 'rm -rf "$SANDBOX"' RETURN
 
             # CHECK 2 — and it did not exit on its own.
             #
@@ -728,7 +755,12 @@ jobs:
                 # catch; without it the run would have been reported green.
                 echo "ERROR: booted past init_logging, then exited (${code#exited-after-boot:})" >&2
                 echo "       within ${MIN_ALIVE_SECONDS}s. A later boot phase failed —" >&2
-                echo "       134 = SIGABRT under panic=abort. See boot.log above." >&2
+                echo "       134 = SIGABRT under panic=abort." >&2
+                # The dump above is capped at 200 lines, and the interesting output
+                # of a late-phase failure is at the END. This is the case the dwell
+                # was added to catch, so give it the whole log.
+                echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
+                cat "$SANDBOX/boot.log" >&2 || true
                 return 1
                 ;;
               timeout)
@@ -761,6 +793,10 @@ jobs:
                 return 1
                 ;;
             esac
+
+            # Success only: a failed attempt already returned above and keeps its
+            # tree so the diagnostics stay inspectable.
+            rm -rf "$SANDBOX"
             return 0
           }
 

@@ -30,8 +30,12 @@
 #
 #   Phase F — `agaric-mcp` release build + MCP UDS smoke + externalBin
 #             host-triple verify. **Only when MCP paths change**
-#             (`src-tauri/src/mcp/`, `src-tauri/src/commands/mcp.rs`,
+#             (`src-tauri/src/mcp/**/*.rs`, `src-tauri/src/commands/mcp.rs`,
 #             `src-tauri/src/bin/agaric-mcp.rs`, `src-tauri/binaries/`).
+#             The directory arm is anchored to `.rs` (#4419): the bare
+#             prefix also matched `mcp/AGENTS.md` and the `.snap`
+#             fixtures, so a docs-only edit paid a full release build.
+#             See MCP_PATH_RE for the authoritative pattern.
 #             Skipped for unrelated pushes — the release build is the
 #             slowest non-test step and most pushes don't touch MCP.
 #
