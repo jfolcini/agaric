@@ -81,7 +81,7 @@ for `--admin` merges too (§8 spells out the exact commands and the #2763/#2767 
 Do NOT re-poll PR CI between these checkpoints — not on every
 wake-up, not after every subagent completion (maintainer feedback 2026-06-10: "reconciling
 PRs all the time is not necessary"). Green PRs can sit until the next batch boundary or
-until the 5-PR cap needs a slot; nothing rots in an hour. **Any red is yours to fix** —
+until the 10-PR cap needs a slot; nothing rots in an hour. **Any red is yours to fix** —
 even a failure *inherited from `main`* (a lint/zizmor finding that landed on `main` and
 now reds every PR). "Not from my diff" is NOT a reason to skip it: a red check blocks
 otherwise-green merges and stalls the loop. Diagnose from
@@ -178,9 +178,9 @@ directly, update docs, or pre-read sources for the next batch.
 
 **Never idle-wait on a slow subagent — run another issue concurrently.** When the active
 issue's subagents are busy (a Tauri/Rust compile runs minutes), start another independent
-issue rather than scheduling a long wakeup. **Up to 5 PRs may be open at once** (maintainer
-preference, 2026-06-06) — keep enough in flight to fill idle windows while keeping real
-oversight; don't exceed 5.
+issue rather than scheduling a long wakeup. **Up to 10 PRs may be open at once** (maintainer
+preference, raised from 5 on 2026-06-19; reconfirmed 2026-08-26) — keep enough in flight to
+fill idle windows while keeping real oversight; don't exceed 10.
 
 - Choose a second issue whose files don't overlap, ideally a different toolchain (frontend
   while Rust compiles) so builds don't contend on the cargo target lock.
@@ -214,7 +214,7 @@ sequential work, single-file edits, or review-only subagents.
 work (a nextest/vitest filter over the touched modules) — the orchestrator (or the
 reviewer, who re-runs anyway) owns exactly ONE full-suite run per item before commit.
 Builders running the full suite triples the wall-clock for zero signal (2026-06-10: the
-full Rust suite ran ~3× per backend item). Do NOT run clippy/fmt/biome/prek inside
+full Rust suite ran ~3× per backend item). Do NOT run clippy/fmt/oxlint/oxfmt/prek inside
 subagents — prek runs via the pre-commit/pre-push hooks at commit and push time.
 
 **Background-execution ban (the #1 wall-clock killer, 2026-06-10 — 4 builder deaths):**
@@ -305,7 +305,7 @@ path produced an identical result); #3455 (four mutants, killed and proven kille
 Where mutation testing is available, "the mutant dies" is the strongest available form of
 this and cannot be satisfied vacuously.
 
-### Three failure modes to reject in review
+### Four failure modes to reject in review
 
 These recur, are cheap to spot, and each has shipped at least once:
 
@@ -329,6 +329,16 @@ These recur, are cheap to spot, and each has shipped at least once:
    ran. The assertion passed either way, so a dead fix looked covered. Ask of every negative
    assertion: *what else could make this true?* If the answer is "a path I did not intend",
    assert on something only the intended path produces.
+
+   It recurs. #4328 showed the *two independent guards* form — undo of a replicated target
+   was rejected by both `verify_undo_targets_in_tx`'s `is_replicated` arm and
+   `reverse::reject_replicated_targets`, so disabling either alone still went green. The
+   consequence is sharp: **"I broke the fix and the test went red" is necessary, not
+   sufficient.** It proves *something* covers the behaviour, not that *this* code does.
+   Where guards may overlap, disable them one at a time *and together*; and prefer a
+   discriminator only the intended path can produce — #3294 asserted the **pair**
+   (sweep count, remaining rows), which a second guard can satisfy by accident in one
+   component but not both.
 
 ## 4. REVIEW (pipelined with BUILD)
 
@@ -423,7 +433,7 @@ formatting (`cargo fmt`, `oxfmt`, trim-trailing-whitespace, fix-end-of-files) an
 changed files — Rust `cargo fmt`; frontend `npx oxfmt --write <changed files>` (NEVER
 `oxfmt --write .` — it reformats all TOML and aborts, see pitfalls). Then commit once.
 
-If a hook still modifies files (e.g. biome auto-fix you didn't anticipate), re-stage and
+If a hook still modifies files (e.g. an oxfmt auto-fix you didn't anticipate), re-stage and
 retry.
 
 **Stage by path, not `git add -A` bare.** `git add -A -- <paths>` (the files you actually
@@ -436,9 +446,10 @@ halves of the same incident; both are required, neither substitutes for the othe
 pre-commit abort. Confirm `git log --oneline -1` shows your commit (HEAD advanced) before
 pushing. When a commit aborts, read the hook output for the **named failing hook** —
 `cargo fmt`/`fix end of files` (auto-fix → re-stage), `cargo clippy … no such column`
-(stale worktree dev.db → `sqlx migrate run`, see §2), `clippy too many arguments` (a param
-push crossed 7 → `#[allow(clippy::too_many_arguments)]` per the file's own convention) —
-each has a distinct fix; don't blind-retry.
+(stale worktree dev.db → `sqlx migrate run`, see §2), `check-command-arity` (a command
+crossed the **10-arg** specta ceiling → collapse params into `ctx: State<'_, WriteCtx>` or a
+request struct, per `src-tauri/src/commands/AGENTS.md`; **not** an
+`#[allow(clippy::too_many_arguments)]`) — each has a distinct fix; don't blind-retry.
 
 Push when ready — the **pre-push hook** runs prek's heavier checks (full clippy,
 `no-commit-to-branch=main` guard, `pre-push` stages). Do NOT run `prek run --all-files`
@@ -448,6 +459,21 @@ fix the underlying issue and let the hook re-run.
 After a Rust change, regenerate codegen per **`references/codegen-and-sql.md`** (`.sqlx`,
 specta bindings) and verify with `cargo check --all-targets` (benches aren't covered by
 `--tests`).
+
+**"Docs only" does not mean "no generated output".** tauri-specta copies Rust doc comments
+into `src/lib/bindings.ts` as JSDoc, so a commit that edits nothing but `///` docs on a
+command (or a type reachable from one) still makes the checked-in bindings stale, and
+`specta_tests::ts_bindings_up_to_date` reds in CI. This landed
+a red `validate-all` on #4404 — a 177-link rustdoc sweep pushed as "inert". Regenerate with
+`just gen-bindings`, and run it **in the background**: in the foreground it routinely blows
+the 10-minute Bash timeout and exits 143, which looks like a failure and is not. Before
+calling any diff inert, ask *which generated artifacts derive from what I touched*.
+
+**Check sqlx the way CI does.** A plain `cargo check` compiles `query!` macros against the
+live `DATABASE_URL`, so it passes with a stale or incomplete `src-tauri/.sqlx`. Only
+`SQLX_OFFLINE=true cargo check --workspace` reproduces CI. The inverse also holds: a sqlx
+error naming a column your migrations *do* create usually means **your local dev DB is
+stale**, not that the branch is broken — re-check offline before believing it.
 
 ## 8. OPEN PR — THEN PIPELINE, NEVER WAIT FOR CI
 
@@ -478,7 +504,7 @@ async over many minutes. Instead:
    `origin/main` (prior commits may not have landed — fine; if the new batch genuinely
    depends on them, branch from the prior batch's branch and merge the chain bottom-up).
 3. **Reconcile open PRs ONLY at batch boundaries** — the §1 sweep at the start of the
-   next batch (same checkpoint as "END of the current batch"), or early only if the 5-PR
+   next batch (same checkpoint as "END of the current batch"), or early only if the 10-PR
    cap blocks a new PR. One sweep, all PRs at once; never poll CI per-wake-up or
    per-subagent-completion (maintainer feedback 2026-06-10):
    - `gh pr checks <prevPR>`. All green + mergeable → **read the full review before
@@ -503,18 +529,101 @@ async over many minutes. Instead:
    - `CHANGES_REQUESTED` blocks the merge outright until the request is resolved.
    This applies to **already-merged** PRs too: when sweeping recently-merged PRs, read
    their review bodies and open follow-up commits/issues for anything left unaddressed.
-4. **Keep the pending-PR list bounded** (up to **5** open PRs — maintainer preference,
-   2026-06-06). `gh pr list --author @me --state open` shows what's outstanding if you lose
+4. **Keep the pending-PR list bounded** (up to **10** open PRs — maintainer preference,
+   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). `gh pr list --author @me --state open` shows what's outstanding if you lose
    track. Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs;
    for own green PRs blocked only by `REVIEW_REQUIRED`, `--admin` is sanctioned — but only
-   when the required checks (`validate-all`, `dco`) are green.
+   when the required checks (`validate-all`, `dco`) are green. Those are the
+   branch-protection CONTEXT names; `statusCheckRollup` reports the first as
+   `validate / validate-all`, so match on the suffix — see the recipe above.
+
+**An ABSENT check is not a passing check.** On a freshly-pushed PR the required checks do
+not exist yet, and that is exactly when you poll. A filter like
+`.[] | select(.name=="validate-all") | .conclusion // "PENDING"` yields `"PENDING"` only for
+a check that *exists* with a null conclusion; a check GitHub has not created yet is absent
+from the array, `select` matches nothing, and the empty result reads as "not failing" — i.e.
+as success. A watcher built this way reported `ALL_SETTLED` while four PRs still had jobs
+queued (2026-08-26). Distinguish three states, and require a second independent condition:
+
+```bash
+# Use `gh pr view --json statusCheckRollup`. It is the portable choice:
+# `gh pr checks --json` does not exist in every gh (absent in 2.45.0, present
+# in newer builds), whereas statusCheckRollup works across versions.
+check_pr () {
+  local pr="$1" raw va unclassified pend bad
+  raw=$(gh pr view "$pr" --json statusCheckRollup \
+          --jq '[.statusCheckRollup[] | {n: (.name // .context), s: (.conclusion // .state // .status)}]')
+  if [ -z "$raw" ] || [ "$raw" = "[]" ]; then
+    echo "$pr: NO CHECKS YET — not a pass"; return 1
+  fi
+  # Match the SUFFIX: the required CONTEXT is `validate-all`, but the rollup
+  # reports it as `validate / validate-all` (job name + `/`).
+  va=$(jq -r '[.[] | select(.n | test("validate-all$"))]
+              | if length == 0 then "ABSENT" else .[0].s end' <<<"$raw")
+  # Classify POSITIVELY. An allow-list of "this is fine" states is the only
+  # form that fails safe: a state nobody anticipated (STARTUP_FAILURE,
+  # ACTION_REQUIRED, STALE) then shows up as unclassified and blocks, instead
+  # of silently counting as neither pending nor failing — which is this very
+  # section's thesis applied to the recipe itself.
+  pend=$(jq -r '[.[] | select(.s | IN("PENDING","IN_PROGRESS","QUEUED","EXPECTED","WAITING",""))] | length' <<<"$raw")
+  bad=$(jq -r  '[.[] | select(.s | IN("SUCCESS","SKIPPED","NEUTRAL",
+                                      "PENDING","IN_PROGRESS","QUEUED","EXPECTED","WAITING","") | not)
+                | "\(.n)=\(.s)"] | unique | join(",")' <<<"$raw")
+  echo "$pr: validate-all=$va pending=$pend not-green=${bad:-none}"
+  [ "$va" = "SUCCESS" ] && [ "$pend" = "0" ] && [ -z "$bad" ]
+}
+check_pr 4420
+```
+
+Real output, run against this PR and its sibling while the sibling's CI had not yet
+dispatched — the second line is the failure mode this whole section is about:
+
+```text
+# sibling PR whose CI had not yet dispatched — the case this section exists for
+4421: NO CHECKS YET — not a pass
+
+# this PR, mid-run: the required gate is green but work is outstanding, so NOT green
+4420: validate-all=SUCCESS pending=1 not-green=none
+
+# the same PR's sibling after a close/reopen spawned a second run and
+# `cancel-in-progress` killed the first — the allow-list surfaces every
+# cancelled check, where a FAILURE-only deny-list reported just one
+4421: validate-all=FAILURE pending=1 not-green=android-build=CANCELLED,build=CANCELLED,
+      validate / cargo-tests (1)=CANCELLED,validate / lint=CANCELLED,…,validate / validate-all=FAILURE
+```
+
+`check_pr` returns non-zero unless **all three** hold: `validate-all` is `SUCCESS`, nothing
+is pending, and nothing is unclassified. Note the middle line — a green required gate with
+work still outstanding is *not* a green PR.
+
+Traps this recipe exists to avoid, each hit for real:
+
+1. **The check is named `validate / validate-all`.** `ci.yml` calls `_validate.yml` from a
+   job named `validate`, so the rollup name carries that prefix, while the *required
+   branch-protection context* is the bare `validate-all`. An `== "validate-all"` match is
+   therefore permanently `ABSENT` — this cost two wrong "no checks yet" readings on a PR
+   whose CI had already gone green.
+2. **`ABSENT` is a real, expected state, not an error.** `validate-all` is an aggregate job
+   gated on `needs:`, so it genuinely does not exist while `cargo-tests` is still running.
+   Treat it as *keep waiting*; never as *nothing is failing*.
+3. **Know which field you are reading.** In `statusCheckRollup`, `CheckRun` objects carry
+   `status` (`QUEUED`/`IN_PROGRESS`/`COMPLETED`) and `conclusion`; only `StatusContext`
+   objects carry `state`. The `.s` above is a derived union of all three, which is why it
+   must be classified by an explicit allow-list rather than compared against any one field's
+   vocabulary.
+4. **Never classify by deny-list.** `FAILURE|TIMED_OUT|ERROR|CANCELLED` misses
+   `STARTUP_FAILURE`, `ACTION_REQUIRED` and `STALE`, each of which would then count as
+   neither pending nor failing and read as green.
+
+Treat `ABSENT` as *not started* — a reason to keep waiting. More generally: an empty result
+set is absence of evidence, never evidence of success. Before merging on a scripted green,
+assert the checks you require were actually **found**, by name and by count.
 
 This pipelines batches against CI wall-clock: while batch N's CI runs, you build N+1; by
 the time N+1 is pushed, N's CI has finished and you merge it.
 
 **When all planned items are PR'd and only CI-pending PRs remain, do NOT idle — pull the
-next backlog issue** (`gh issue list`, honoring the refactor-focus priorities in memory)
-and start a fresh batch in a disjoint domain. An empty planned-list is a cue to refill from
+next backlog issue** (`gh issue list`) and start a fresh batch in a disjoint domain. An empty planned-list is a cue to refill from
 the backlog, not to stop. Pending PRs get merged at the next batch-boundary sweep.
 
 ## Principles
@@ -575,8 +684,23 @@ This applies with most force to claims that *support the conclusion you already 
   nothing lands). Serialize commit/push in the FOREGROUND; after each, verify HEAD moved
   (`git log -1`) and the remote SHA changed (`git ls-remote`). Building in parallel
   worktrees is fine — only the hook step must serialize.
-- **`cargo fmt` prek hook is `--check`, not auto-fix** — a long line a subagent/reviewer
-  left unformatted aborts the commit; run `cargo fmt` yourself in `<wt>/src-tauri`, re-stage.
+- **The `cargo fmt` pre-commit hook AUTO-FIXES (#817)** — it rewrites the file and aborts
+  the commit once so you re-stage; don't run `cargo fmt` by hand first. A `--check`
+  companion runs at pre-push. Confirm HEAD advanced before pushing.
+- **Broken Rust intra-doc links block the push** — the `cargo-doc-links` pre-push hook
+  (#4404) runs `cargo doc` with `-D rustdoc::broken_intra_doc_links`. A `/// [SomeType]`
+  naming a moved, private or `#[cfg(test)]` item reds the push; fix the link, don't suppress.
+  Links in a `mod x;` declaration's `///` resolve in the PARENT's scope, not the module's.
+- **A rules-config change and its linter version bump must land in ONE commit** — oxlint
+  rejects a config naming rules it doesn't know, so "config first, bump after" reds main in
+  between (session 1397).
+- **`git reset --soft origin/main` in a worktree writes a REVERT** — the shared `.git` moves
+  `origin/main` under you; unexplained deletions in `git diff --stat origin/main...HEAD` are
+  the signature. Pin the base SHA.
+- **Bumping a ratchet baseline** — "the safe construct can't express this" is usually an
+  arity problem; N fixed-arity call sites beat one dynamic one, and keep the compile check.
+- **Release commit identity decides signature verification** — committer email must be a UID
+  on the signing key, or the branch rule is bypassed rather than satisfied, silently.
 - **Splitting a god-file breaks path-keyed guards** — a verbatim MOVE still reds CI:
   re-anchor `dynamic-sql-baseline.txt` (`--update-baseline`, verify count-preserving),
   swap `check-raw-tx.py` allowlist globs to the new dir, repoint AGENTS.md +

@@ -187,10 +187,12 @@ reserved keys → page_id → spaces FK → ULID → block_id). Re-run until cle
 
 ## Pre-commit
 
-`cargo fmt --check` runs in pre-commit and will **abort the commit** (HEAD does
-not move) if bench code isn't formatted. Run `cargo fmt` first. Verify HEAD
-actually advanced after committing — a masked hook abort looks like success
-under `rtk`.
+The `cargo fmt` pre-commit hook **auto-formats** (`cargo fmt --all`, #817) rather
+than checking: it rewrites unformatted bench code in place and then **aborts the
+commit** (HEAD does not move) so you re-stage. Re-stage and commit again — you do
+not need to run `cargo fmt` by hand. A `--check` companion runs at pre-push.
+Verify HEAD actually advanced after committing — a masked hook abort looks like
+success under `rtk`.
 
 ## Layout: themed binaries + `groups/` mods (#2879)
 
