@@ -41,6 +41,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
+import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { getPaletteCommand } from '@/lib/palette-commands'
@@ -322,6 +323,9 @@ function tryCreateNewPage(e: KeyboardEvent, t: (key: string) => string): boolean
     .then(unwrap)
     .then((newId) => {
       useResolveStore.getState().set(newId, 'Untitled', false)
+      // #4338 — publish the create so warm picker caches stay right. Same
+      // rationale as `App.tsx`'s `handleNewPage`, which this mirrors.
+      notifyPageAdded(newId, 'Untitled')
       useTabsStore.getState().navigateToPage(newId, 'Untitled')
       announce(t('announce.newPageCreated'))
     })

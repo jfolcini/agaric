@@ -41,6 +41,8 @@ vi.mock('lucide-react', () => ({
 
 import { WelcomeModal } from '@/components/pages/WelcomeModal'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { useBootStore } from '@/stores/boot'
 import { useSpaceStore } from '@/stores/space'
@@ -442,6 +444,51 @@ describe('WelcomeModal', () => {
       expect(
         pages.filter((page) => page.content === i18n.t('welcome.sampleGettingStartedTitle')),
       ).toHaveLength(1)
+    })
+
+    // #4338 — `ensureSamplePage` is a module-level function with no hook
+    // context, so the bus is its only route to a picker cache. Usually there
+    // is none to update (first boot), but Settings → "Show the welcome tour
+    // again" re-runs this flow mid-session with `BlockTree`s mounted.
+    //
+    // The pair that matters is CREATE vs REUSE: only a page that actually
+    // came into existence may be announced. Announcing the reused page would
+    // be a second 'added' for an id a warm cache already holds, and would
+    // bump every picker's generation for a write that never happened.
+    it("publishes an 'added' event per page CREATED, and none for a page reused", async () => {
+      const user = userEvent.setup()
+      installSampleIpcMock({ failCreateBlockCall: 2 })
+
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+      try {
+        render(<WelcomeModal />)
+        await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+        // First attempt: Getting Started is created, then a body block
+        // rejects before Quick Tips is reached.
+        await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalled())
+        expect(changes.map((c) => 'name' in c && c.name)).toEqual([
+          i18n.t('welcome.sampleGettingStartedTitle'),
+        ])
+
+        // Retry: Getting Started is found by title and REUSED; only Quick
+        // Tips is created.
+        await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+        await waitFor(() =>
+          expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+            i18n.t('welcome.samplePagesCreated'),
+          ),
+        )
+
+        expect(changes.map((c) => 'name' in c && c.name)).toEqual([
+          i18n.t('welcome.sampleGettingStartedTitle'),
+          i18n.t('welcome.sampleQuickTipsTitle'),
+        ])
+        expect(changes.every((c) => c.kind === 'added' && c.entity === 'page')).toBe(true)
+      } finally {
+        unsubscribe()
+      }
     })
 
     it('back-fills only the missing body blocks when reusing a half-built Getting Started page', async () => {

@@ -20,6 +20,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { TemplatesView } from '@/components/templates/TemplatesView'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -861,6 +863,79 @@ describe('TemplatesView', () => {
           cmd === 'create_block' && (args as { blockType?: string }).blockType === 'page',
       )
       expect(legacyCreateBlockPageCalls).toHaveLength(0)
+    })
+
+    // #4338 — a template IS a page: `list_all_pages_in_space`, the query that
+    // fills the `[[` picker's cache, has no template filter, so a warm cache
+    // that lacks this row is simply wrong about the space.
+    it("publishes an 'added' event before the template property is set", async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'create_page_in_space') return 'T_NEW'
+        if (cmd === 'set_property') {
+          return {
+            id: 'T_NEW',
+            block_type: 'page',
+            content: 'My Template',
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+          }
+        }
+        return emptyPage
+      })
+
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+      try {
+        render(<TemplatesView />)
+
+        const input = await screen.findByPlaceholderText('New template name...')
+        await user.type(input, 'My Template')
+        await user.click(screen.getByRole('button', { name: /create template/i }))
+
+        await waitFor(() =>
+          expect(changes).toEqual([
+            { kind: 'added', entity: 'page', id: 'T_NEW', name: 'My Template' },
+          ]),
+        )
+      } finally {
+        unsubscribe()
+      }
+    })
+
+    // The page exists the moment `create_page_in_space` commits; the
+    // `template` property is a second, separate write. If it fails the row is
+    // still an ordinary page in the space, so the cache must still know.
+    it("publishes the 'added' event even when the template property write fails", async () => {
+      const user = userEvent.setup()
+      const mockedToastError = vi.mocked(toast.error)
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'query_by_property') return emptyPage
+        if (cmd === 'list_blocks') return emptyPage
+        if (cmd === 'create_page_in_space') return 'T_NEW'
+        if (cmd === 'set_property') throw new Error('property fail')
+        return emptyPage
+      })
+
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+      try {
+        render(<TemplatesView />)
+
+        const input = await screen.findByPlaceholderText('New template name...')
+        await user.type(input, 'My Template')
+        await user.click(screen.getByRole('button', { name: /create template/i }))
+
+        await waitFor(() => {
+          expect(mockedToastError).toHaveBeenCalledWith('Failed to create template')
+        })
+        expect(changes).toEqual([
+          { kind: 'added', entity: 'page', id: 'T_NEW', name: 'My Template' },
+        ])
+      } finally {
+        unsubscribe()
+      }
     })
 
     it('resets input after successful creation', async () => {

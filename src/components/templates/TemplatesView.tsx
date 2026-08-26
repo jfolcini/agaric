@@ -24,6 +24,7 @@ import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import {
@@ -135,6 +136,12 @@ export function TemplatesView(): React.ReactElement {
         return
       }
       const newId = await createPageInSpace({ content: name, spaceId: activeSpaceId })
+      // #4338 — published BEFORE the `template` property is set, because
+      // that is when the row starts being returned by
+      // `list_all_pages_in_space` (which has no template filter): if the
+      // `setProperty` below fails, the page still exists as an ordinary page
+      // and a warm picker cache should still know about it.
+      notifyPageAdded(newId, name)
       await setProperty({ blockId: newId, key: 'template', valueText: 'true' })
       setTemplates((prev) => [
         { id: newId, content: name, preview: null, isJournalTemplate: false },

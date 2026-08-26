@@ -22,6 +22,8 @@ import { announce } from '@/lib/announcer'
 import { markGestureCoachMarkSeen } from '@/lib/gesture-coachmark'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { setWindowTitle } from '@/lib/platform/window'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
@@ -519,6 +521,43 @@ describe('App', () => {
         expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled' }),
       )
     })
+  })
+
+  // #4338 — `handleNewPage` is App-level: no `useBlockResolve()` in reach, so
+  // the bus is its only route to a warm `pagesListRef`. Driven through the
+  // real sidebar button rather than the hook so the wiring is pinned at the
+  // surface a user actually clicks.
+  it("the sidebar New Page button publishes an 'added' event to the name-change bus", async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_spaces')
+        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+      if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
+      return emptyPage
+    })
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    try {
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      await user.click(getSidebar().getByText(t('sidebar.newPage')))
+
+      await waitFor(() =>
+        expect(changes).toContainEqual({
+          kind: 'added',
+          entity: 'page',
+          id: 'NEW_PAGE_ID_00000000000000',
+          name: 'Untitled',
+        }),
+      )
+    } finally {
+      unsubscribe()
+    }
   })
 
   it('Ctrl+Shift+F announces the destination view via the central view-change announcer (#2944)', async () => {

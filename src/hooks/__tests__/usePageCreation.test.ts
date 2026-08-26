@@ -38,6 +38,8 @@ vi.mock('@/hooks/usePrimaryFocus', () => ({
 }))
 
 import { isConflict } from '@/lib/app-error'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 
 const mockedToastError = vi.mocked(toast.error)
 
@@ -112,6 +114,57 @@ describe('usePageCreation', () => {
     expect(countUpdater(5)).toBe(6)
     expect(countUpdater(undefined)).toBeUndefined()
     expect(h.onPageSelect).toHaveBeenCalledWith('NEW_ID_0000000000000000000', 'My Page')
+  })
+
+  // #4338 — the Pages view has no `useBlockResolve()` to register with, so
+  // the bus is its only route to the `[[` picker's cache. A page the user has
+  // just NAMED here is the page they are most likely to link to next.
+  it("publishes an 'added' event so the picker cache learns the new page", async () => {
+    mockedCreate.mockResolvedValue('NEW_ID_0000000000000000009')
+    const h = makeHarness([])
+    const { result } = h.render()
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      act(() => {
+        result.current.setNewPageName('Quarterly Review')
+      })
+      await act(async () => {
+        await result.current.handleCreatePage()
+      })
+    } finally {
+      unsubscribe()
+    }
+
+    expect(changes).toEqual([
+      {
+        kind: 'added',
+        entity: 'page',
+        id: 'NEW_ID_0000000000000000009',
+        name: 'Quarterly Review',
+      },
+    ])
+  })
+
+  it('publishes nothing when the create IPC rejects', async () => {
+    mockedCreate.mockRejectedValue(new Error('Disk full'))
+    const h = makeHarness([])
+    const { result } = h.render()
+
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      await act(async () => {
+        await result.current.handleCreatePage()
+      })
+    } finally {
+      unsubscribe()
+    }
+
+    // A cache told about a page that does not exist would offer a `[[` link
+    // resolving to nothing.
+    expect(changes).toEqual([])
   })
 
   it('reloads (no optimistic prepend) when chips are active', async () => {

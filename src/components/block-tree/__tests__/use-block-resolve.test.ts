@@ -52,7 +52,9 @@ import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { i18n, t } from '@/lib/i18n'
 import {
   invalidateNameCaches,
+  notifyPageAdded,
   notifyPageRemoved,
+  notifyTagAdded,
   notifyTagRemoved,
   notifyTagRenamed,
 } from '@/lib/name-change-bus'
@@ -5686,5 +5688,317 @@ describe("registerCreatedPage — the date picker's route into the page cache (#
 
     expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
     expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('P_DATE')
+  })
+})
+
+// ── the bus 'added' event (#4338) ────────────────────────────────────────
+//
+// `registerCreatedPage` (the block above) is only reachable by a site that
+// holds a `useBlockResolve()` return value — which, in this app, means a
+// site inside `BlockTree`. Nine of the ten page-creation sites are not: the
+// sidebar, the palette, the `createNewPage` chord, the Pages view form,
+// Templates, the journal, paste-internalize and the welcome modal all create
+// pages from module scope or from a component with no `BlockTree` under it.
+// #4338 gives them the bus instead.
+//
+// The two halves that make an 'added' event safe are the same two
+// `recordCreatedRow` carries, and both are pinned below because either one
+// alone is a bug: append into a WARM cache (or the event is pointless), and
+// do NOT append into an EMPTY one (or the #4008 latch is back — an empty
+// cache means "not fetched for this space yet", and one row would stand in
+// for the whole space for the rest of the session).
+
+describe("the name-change bus 'added' event (#4338)", () => {
+  function pageRow(id: string, content: string) {
+    return {
+      id,
+      content,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+  }
+
+  function tagRow(id: string, name: string) {
+    return { tag_id: id, name, usage_count: 1, updated_at: '2024-01-01' }
+  }
+
+  afterEach(() => {
+    mockedListAllPagesInSpace.mockReset()
+    mockedListAllTagsInSpace.mockReset()
+  })
+
+  it('appends a page created elsewhere into a WARM cache, without a re-fetch', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_EXISTING', 'Existing Page')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // The picker has been used once, so `pagesListRef` is filled.
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+
+    // A page is created somewhere with no access to this hook — the command
+    // palette, say — and publishes on the bus.
+    act(() => {
+      notifyPageAdded('P_PALETTE', 'Untitled')
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([
+      { id: 'P_EXISTING', title: 'Existing Page' },
+      { id: 'P_PALETTE', title: 'Untitled' },
+    ])
+
+    // …and the picker offers it straight from that cache. No second IPC:
+    // before #4338 the only way to see this page was to wait for an
+    // invalidation and pay a full re-fetch.
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('P_PALETTE')
+  })
+
+  it('does NOT latch an EMPTY cache: the next short query still re-fetches the whole space', async () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Nothing has filled the cache yet — the state that makes the lazy fill
+    // re-fetch. This is the case the bus docblock used to cite as the reason
+    // an 'added' event could not exist at all.
+    expect(result.current.pagesListRef.current).toEqual([])
+
+    act(() => {
+      notifyPageAdded('P_PALETTE', 'Untitled')
+    })
+
+    // Still empty — the row is skipped, not inserted.
+    expect(result.current.pagesListRef.current).toEqual([])
+
+    // …so the next read re-fetches, and picks up BOTH the added page and
+    // everything else in the space. Without the guard this assertion sees
+    // one IPC call and a one-row space.
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_OTHER', 'Another Page'),
+      pageRow('P_PALETTE', 'Untitled'),
+    ])
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_OTHER', 'P_PALETTE'])
+  })
+
+  it('does not duplicate a row a racing fill already delivered', async () => {
+    // The interleaving: a fill is dispatched, the create commits in the
+    // backend, the fill resolves with the new row ALREADY in it, and only
+    // THEN does the creating site's `await` return and emit. Nothing orders
+    // the fill's resolution against the backend write, so this is ordinary.
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    await act(async () => {
+      resolveFetch([pageRow('P_OTHER', 'Another Page'), pageRow('P_PASTED', 'Pasted Page')])
+      await inFlight
+    })
+    expect(result.current.pagesListRef.current.map((p) => p.id)).toEqual(['P_OTHER', 'P_PASTED'])
+
+    // The emit lands after the fill already cached the row.
+    act(() => {
+      notifyPageAdded('P_PASTED', 'Pasted Page')
+    })
+
+    // One entry, not two. A duplicate id would be offered twice by the `[[`
+    // picker and counted twice by the FTS supplement's `>= 5` cutoff.
+    expect(result.current.pagesListRef.current.map((p) => p.id)).toEqual(['P_OTHER', 'P_PASTED'])
+  })
+
+  it('bumps the generation, so a fill issued before the create cannot win with its pre-create snapshot', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // A short-query fill is in flight against an empty cache.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    // The create lands mid-flight. The cache is empty, so the guard above
+    // skips the append — the generation bump the subscriber performs before
+    // applying is the ONLY thing that can stop the racing fill from
+    // persisting a snapshot that predates the page.
+    act(() => {
+      notifyPageAdded('P_PASTED', 'Pasted Page')
+    })
+
+    let staleItems: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      resolveFetch([pageRow('P_PRE_EXISTING', 'Pre-existing Page')])
+      staleItems = (await inFlight) as typeof staleItems
+    })
+
+    // Without the bump `pagesListRef.current` would now be the pre-create
+    // snapshot, and `P_PASTED` would be missing from the picker until
+    // something else invalidated.
+    expect(result.current.pagesListRef.current).toEqual([])
+    expect(staleItems.filter((i) => !i.isCreate).map((i) => i.id)).toEqual([])
+
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_PRE_EXISTING', 'Pre-existing Page'),
+      pageRow('P_PASTED', 'Pasted Page'),
+    ])
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('P_PASTED')
+  })
+
+  it('reaches EVERY mounted instance, which is what `registerCreatedPage` cannot do', async () => {
+    // The journal mounts one `BlockTree` — and so one `useBlockResolve` —
+    // per day panel, so several `pagesListRef`s coexist. A hook return value
+    // reaches exactly one of them; the bus reaches all of them.
+    mockedListAllPagesInSpace
+      .mockResolvedValueOnce([pageRow('P_EXISTING', 'Existing Page')])
+      .mockResolvedValueOnce([pageRow('P_EXISTING', 'Existing Page')])
+
+    const monday = renderHook(() => useBlockResolve())
+    const tuesday = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await monday.result.current.searchPages('')
+      await tuesday.result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+
+    act(() => {
+      notifyPageAdded('P_JOURNAL', '2025-06-01')
+    })
+
+    expect(monday.result.current.pagesListRef.current.map((p) => p.id)).toContain('P_JOURNAL')
+    expect(tuesday.result.current.pagesListRef.current.map((p) => p.id)).toContain('P_JOURNAL')
+
+    monday.unmount()
+    tuesday.unmount()
+  })
+
+  it('appends a tag created elsewhere into a WARM tagsListRef, without a re-fetch', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([tagRow('T_EXISTING', 'existing')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchTags('exist')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+
+    // A `#tag` internalized from a paste, say.
+    act(() => {
+      notifyTagAdded('T_PASTED', 'pastedtag')
+    })
+
+    // `usage_count: 0` — the tag is not applied to any block yet, exactly
+    // like the row `onCreateTag` appends for its own create.
+    expect(result.current.tagsListRef.current.map((row) => [row.tag_id, row.usage_count])).toEqual([
+      ['T_EXISTING', 1],
+      ['T_PASTED', 0],
+    ])
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('pasted')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('T_PASTED')
+  })
+
+  it('does NOT latch an EMPTY tagsListRef: the next searchTags still re-fetches', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // An empty first fill leaves the cache in the "not fetched yet" state
+    // on purpose (the sibling test in the #3277 block pins that).
+    await act(async () => {
+      await result.current.searchTags('any')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(1)
+    expect(result.current.tagsListRef.current).toEqual([])
+
+    act(() => {
+      notifyTagAdded('T_FIRST', 'first')
+    })
+    expect(result.current.tagsListRef.current).toEqual([])
+
+    // A tag created in another window (or by the sync) must still be
+    // reachable — which it is only because the cache was never latched.
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      tagRow('T_FIRST', 'first'),
+      tagRow('T_ELSEWHERE', 'elsewhere'),
+    ])
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      items = await result.current.searchTags('elsewhere')
+    })
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toContain('T_ELSEWHERE')
+  })
+
+  it("makes a young page's later RENAME land: 'renamed' alone bails on an id the cache never saw", async () => {
+    // The compounding failure #4338 is really about. `applyPageNameChange`'s
+    // 'renamed' arm returns the list untouched when the id is absent, so
+    // before #4338 the ordinary "New Page → type a heading" flow was dropped
+    // TWICE: once as an unpublished create, then again as a rename of an
+    // unknown id. The page never entered a warm cache at all.
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_EXISTING', 'Existing Page')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    act(() => {
+      notifyPageAdded('P_NEW', 'Untitled')
+    })
+    act(() => {
+      renamePage('P_NEW', 'Quarterly Review')
+    })
+
+    expect(result.current.pagesListRef.current).toContainEqual({
+      id: 'P_NEW',
+      title: 'Quarterly Review',
+    })
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('Qu')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_NEW'])
   })
 })

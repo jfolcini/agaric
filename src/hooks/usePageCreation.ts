@@ -32,6 +32,7 @@ import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { isConflict, unwrap } from '@/lib/app-error'
 import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
 
@@ -100,6 +101,10 @@ export function usePageCreation({
     setIsCreating(true)
     try {
       const newId = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
+      // #4338 — a page the user has just NAMED is the strongest picker
+      // candidate there is; publish it so a warm `pagesListRef` can offer it
+      // to `[[` without waiting for a space switch to clear the cache.
+      notifyPageAdded(newId, name)
       setNewPageName('')
       // The optimistic prepend assumes the new page belongs
       // at the top of the *current* result set. That only holds when no

@@ -1023,6 +1023,43 @@ describe('TagList', () => {
       }
     })
 
+    // #4338 — the create was the one mutation this view made silently. A
+    // tag created here stayed missing from a warm `#`-picker cache for the
+    // rest of the session, because `searchTags` only re-fetches while its
+    // cache is empty.
+    it('broadcasts a create to the picker name caches', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      const changes: NameChange[] = []
+      const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+      try {
+        render(<TagList />)
+
+        expect(
+          await screen.findByPlaceholderText(t('tagList.newTagPlaceholder')),
+        ).toBeInTheDocument()
+
+        mockedInvoke.mockResolvedValueOnce({
+          id: 'T_NEW',
+          block_type: 'tag',
+          content: 'brandnew',
+          parent_id: null,
+          position: null,
+        })
+
+        await user.type(screen.getByPlaceholderText(t('tagList.newTagPlaceholder')), 'brandnew')
+        await user.click(screen.getByRole('button', { name: /Add Tag/i }))
+
+        await waitFor(() =>
+          expect(changes).toEqual([
+            { kind: 'added', entity: 'tag', id: 'T_NEW', name: 'brandnew' },
+          ]),
+        )
+      } finally {
+        unsubscribe()
+      }
+    })
+
     it('broadcasts a delete to the picker name caches', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'to-purge')])

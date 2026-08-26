@@ -11,6 +11,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { buildImportRefInternalizers } from '@/lib/paste-internalize'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -66,6 +68,60 @@ describe('buildImportRefInternalizers — success paths (behavior pin)', () => {
 
     await expect(page('Fresh Page')).resolves.toBe('01HZ0CREATEDPAGE0000000000')
     expect(mockCreatePageInSpace).toHaveBeenCalledWith({ content: 'Fresh Page', spaceId: SPACE })
+  })
+
+  // #4338 — the picker's `pagesListRef` / `tagsListRef` live in React refs
+  // inside `useBlockResolve`, which this module has no way to reach. Without
+  // the bus emissions below, a `[[Name]]` internalized on paste created a
+  // page that a warm `[[` picker could not offer — so the very next `[[Name]]`
+  // showed "Create new page" for a page that already existed.
+  it("publishes an 'added' event for a page created from a pasted [[link]]", async () => {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      const { page } = buildOrThrow()
+      await page('Fresh Page')
+    } finally {
+      unsubscribe()
+    }
+
+    expect(changes).toEqual([
+      {
+        kind: 'added',
+        entity: 'page',
+        id: '01HZ0CREATEDPAGE0000000000',
+        name: 'Fresh Page',
+      },
+    ])
+  })
+
+  it("publishes an 'added' event for a tag created from a pasted #tag", async () => {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      const { tag } = buildOrThrow()
+      await tag('freshtag')
+    } finally {
+      unsubscribe()
+    }
+
+    expect(changes).toEqual([
+      { kind: 'added', entity: 'tag', id: '01HZ0CREATEDTAG00000000000', name: 'freshtag' },
+    ])
+  })
+
+  it('publishes nothing when the name already resolves — no create, no event', async () => {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      const { page, tag } = buildOrThrow()
+      await page('Project Alpha')
+      await tag('work')
+    } finally {
+      unsubscribe()
+    }
+
+    expect(changes).toEqual([])
   })
 
   it('resolves an existing tag without creating', async () => {

@@ -10,6 +10,7 @@
 
 import type { RefInternalizers } from '@/lib/block-clipboard'
 import { logger } from '@/lib/logger'
+import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
 import {
   createBlock,
   createPageInSpace,
@@ -111,6 +112,11 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
         map.set(name, [newId])
         // Seed the resolve cache so the new link chip renders its title at once.
         useResolveStore.getState().set(newId, name, false)
+        // #4338 — and tell the picker caches. This is the create with the
+        // clearest picker relevance in the app: the name is already in use as
+        // a `[[link]]`, so the very next `[[` on it must offer the page
+        // rather than a second "Create new page".
+        notifyPageAdded(newId, name)
         return newId
       } catch (err) {
         logger.warn('page-blocks', 'import: page create failed', { name }, err)
@@ -131,6 +137,9 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
         const block = await createBlock({ blockType: 'tag', content: name, spaceId })
         map.set(name, block.id)
         useResolveStore.getState().set(block.id, name, false)
+        // #4338 — the `#` picker's `tagsListRef` needs the same signal the
+        // page branch above gets, for the same reason.
+        notifyTagAdded(block.id, name)
         return block.id
       } catch (err) {
         logger.warn('page-blocks', 'import: tag create failed', { name }, err)

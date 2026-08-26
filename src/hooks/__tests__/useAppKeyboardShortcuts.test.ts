@@ -11,10 +11,12 @@
  * already exercises.
  */
 
-import { fireEvent, renderHook } from '@testing-library/react'
+import { fireEvent, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
+import type { NameChange } from '@/lib/name-change-bus'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
@@ -165,6 +167,37 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     await Promise.resolve()
 
     expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled', 'SPACE_PERSONAL')
+  })
+
+  // #4338 — the chord creates a page from module scope, with no
+  // `useBlockResolve()` anywhere in reach. It publishes on the bus instead.
+  // "Untitled" looks picker-irrelevant, but it is the flow that mattered
+  // most: `applyPageNameChange`'s 'renamed' arm bails on an id the cache has
+  // never seen, so without the create event the title the user types next
+  // was dropped too, and the page never entered a warm cache at all.
+  it("Ctrl+N publishes an 'added' event to the name-change bus", async () => {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    try {
+      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+      fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+
+      // The handler is a `.then` chain off the create IPC, so the emission
+      // lands several microtasks after the keydown returns.
+      await waitFor(() =>
+        expect(changes).toEqual([
+          {
+            kind: 'added',
+            entity: 'page',
+            id: 'NEW_PAGE_ID_00000000000000',
+            name: 'Untitled',
+          },
+        ]),
+      )
+    } finally {
+      unsubscribe()
+    }
   })
 })
 
