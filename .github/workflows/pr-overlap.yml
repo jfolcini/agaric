@@ -739,3 +739,192 @@ jobs:
             echo "::error::pr-merge-result-check: a ratchet guard fails on the merge result — see #3672"
             exit 1
           fi
+
+  # ---------------------------------------------------------------------------
+  # session-log-pr-collision (#3933) — two open, unmerged PRs can each add a
+  # DIFFERENT `docs/session-log/session-NNNN-*.md` filename claiming the SAME
+  # embedded number. `check-session-log-numbering.sh`'s check 1 cannot see
+  # this: it tests uniqueness against `HEAD ∪ origin/main ∪ same-commit
+  # siblings`, and a sibling's open PR branch is in none of those sets while
+  # both are open — origin/main has neither number yet, so both branches
+  # honestly compute the same "free" number and both pass, every time,
+  # locally and in their own CI. This is the mechanism behind the two real
+  # duplicate `session-1281` files that guard's own header describes, and it
+  # happened again live while preparing #3932 (session-1319, caught by hand,
+  # nothing in the toolchain would have caught it).
+  #
+  # It is also NOT the `compute`/`post` overlap above: that lane intersects
+  # CHANGED FILE PATHS, and two PRs colliding on session-1319 add two
+  # DIFFERENT filenames (`session-1319-foo.md`, `session-1319-bar.md`) — no
+  # path is shared, so a path intersection reports them as disjoint,
+  # correctly and uselessly. The identity that collides is the NUMBER
+  # embedded in the filename, which is why this is a dedicated job with its
+  # own script (`scripts/check-session-log-pr-collision.mjs`) rather than an
+  # extra field bolted onto `pr-file-overlap.mjs`'s path-based comparison.
+  #
+  # ─── Why CI, and not a prek / pre-commit hook ──────────────────────────────
+  #
+  # The only place that can see every open PR at once is the GitHub API's own
+  # view of the open-PR board — no single branch's git checkout ever contains
+  # a sibling PR's commits, open or merged. A pre-commit hook that must reach
+  # the network to do its job is a bad hook: it would break an offline
+  # commit, and turn one flaky API call into a block on EVERY commit rather
+  # than one CI run. So the actual check runs here, once per push to a PR;
+  # `scripts/check-session-log-pr-collision.mjs`'s own `--self-test` (a prek
+  # hook keyed on that script and this file) stays pure-function and
+  # network-free, exercising `analyze()` directly.
+  #
+  # ─── Why this job needs no fork-content checkout at all ───────────────────
+  #
+  # Unlike `compute` above, this job never needs to look at THIS PR's own
+  # commits — the collision it is checking for lives entirely in GitHub's own
+  # record of what OTHER open PRs changed (`gh pr list --json number,files`,
+  # read-only, no code from any PR is ever executed) plus the merge target's
+  # own tree (checked out below at `base.sha`, never at a PR head). So this
+  # job's checkout is pinned to `base.sha` from the start — the same pattern
+  # `post`'s trusted checkout uses, and for the same reason: the script and
+  # the merged-numbers computation both come from a commit already in this
+  # repo's own history, never from a fork. `permissions:` asks for
+  # `pull-requests: read` (to list open PRs) and `contents: read` (the
+  # checkout) — no write scope of any kind, so `check-pr-overlap-trust-
+  # boundary.mjs`'s "any write-scoped job needs a base-pinned checkout" rule
+  # does not even apply to it, and its checkout is base-pinned anyway.
+  #
+  # ─── Fail-closed (the whole point of #3933) — what happens when the API or
+  # the token is unavailable ──────────────────────────────────────────────────
+  #
+  # `gh pr list`'s own exit code is checked explicitly and treated as a HARD
+  # job failure, not as "no open PRs" — unlike `post`'s informational overlap
+  # step above, which deliberately falls back to `echo '[]'` on the same
+  # failure because that lane is allowed to under-report (it never gates).
+  # This job is not: an API failure here must read as "could not verify",
+  # never as "verified clean". `scripts/check-session-log-pr-collision.mjs`
+  # itself adds a second, independent layer on top of that: it verifies its
+  # OWN input positively (an array of `{number, files}` objects — not merely
+  # "parses as JSON", which `[]`/`{}`/`null` all satisfy) and checks that
+  # THIS PR is actually present in the fetched list before trusting the list
+  # at all — the cheapest self-consistency check available, and one that
+  # catches an empty/truncated/stale API response even when `gh pr list`
+  # itself reported success. See that script's own header for the full
+  # fail-open enumeration and its `--self-test` for each case asserted
+  # separately (a missing self-PR, a malformed entry, a PR that added no
+  # session-log file at all — each is a DISTINCT tested outcome, not a shared
+  # "green").
+  #
+  # A fork PR's `GITHUB_TOKEN` under `pull_request` is read-only regardless
+  # of the `permissions:` block (GitHub's own default, documented in this
+  # file's own header above) — which is exactly the `pull-requests: read`
+  # this job asks for, so the check runs identically for a fork PR and a
+  # same-repo one. It needs no PAT and no elevated scope.
+  #
+  # ─── What this job does NOT do ─────────────────────────────────────────────
+  #
+  # It is not wired into branch protection and cannot be: `gh api
+  # repos/<owner>/<repo>/branches/main/protection` 404s (the legacy endpoint;
+  # `main` is actually protected by a ruleset, see `merge-result`'s own
+  # comment above) and configuring rulesets needs repo-admin rights this PR's
+  # author does not have. So a genuine collision shows as a red check on both
+  # PRs but, same as `merge-result`, can still be bypassed by `gh pr merge
+  # --admin` — the residual gap #3672 already names for that job applies
+  # here identically. Branch protection requiring branches to be up to date
+  # before merging (#3933's own option 1) would close this at the merge
+  # click itself, for every path-keyed guard, not just this one; it is the
+  # cheaper structural fix and is left to whoever holds that access.
+  session-log-pr-collision:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      # `gh pr list --limit N` truncates SILENTLY at N with no error and no
+      # flag distinguishing "that's every open PR" from "that's the first N
+      # of more" — the same fail-open shape as the 100-files-per-PR cap
+      # below, just at the list level instead of a single entry. The
+      # project's own open-PR pipeline cap is 10 (see the batch-issues
+      # workflow), so 100 is 10x headroom while staying a single cheap `gh`
+      # call; shared between the two steps below so the fetch limit and the
+      # truncation check the script runs against it can never drift apart.
+      # `check-session-log-pr-collision.mjs`'s `--pr-limit` flag is what
+      # makes hitting this number itself a FAILURE (see its own header) —
+      # a page exactly this long fails closed instead of being trusted as
+      # "that's just how many PRs are open".
+      PR_LIST_LIMIT: "100"
+    steps:
+      - name: Checkout the merge target (trusted; never this PR's own commits)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Pinned to the BASE branch commit GitHub recorded for this PR — a
+          # commit in THIS repo's own history, never the fork's. Both the
+          # script this job runs and the merged-numbers listing below come
+          # from this checkout, so a fork PR can influence neither.
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Session numbers already merged into the target branch
+        run: |
+          set -euo pipefail
+          git ls-tree -r --name-only HEAD -- docs/session-log \
+            | grep -oE 'session-[0-9]+' | grep -oE '[0-9]+' | sort -n -u > merged-nums.txt || true
+          echo "merged session numbers on $(git rev-parse HEAD): $(wc -l < merged-nums.txt)"
+
+      - name: List every open PR's changed files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          # Explicit failure, NOT a `[]` fallback: unlike `post`'s
+          # informational overlap step above, this job gates a merge, so an
+          # API failure must read as "could not verify" and fail the job —
+          # never as "no open PRs", which `[]` would silently claim instead.
+          #
+          # `changedFiles` alongside `files`: `gh`'s `files` field is a
+          # GitHub API connection hard-capped at 100 entries per PR,
+          # SILENTLY — a PR with more than 100 changed files (a large
+          # batch-issue PR that also adds a session-log entry, say) has any
+          # file past the 100th invisible to `files`, with nothing in that
+          # field's shape to say so. `changedFiles` is the PR's true total
+          # count, requested for exactly this cross-check;
+          # `check-session-log-pr-collision.mjs` fails closed whenever
+          # `changedFiles > files.length` for any entry — see its own
+          # header.
+          if ! gh pr list --repo "$REPO" --state open --limit "$PR_LIST_LIMIT" \
+              --json number,files,changedFiles > prs.json; then
+            echo "::error::session-log-pr-collision: gh pr list failed — cannot verify session-log collisions (fail-closed, see #3933)"
+            exit 1
+          fi
+
+      - name: Check for a session-log number claimed by more than one open PR
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          # `-e` (the default GitHub Actions shell) aborts the step the
+          # instant a pipeline with `pipefail` returns non-zero — capturing
+          # `${PIPESTATUS[0]}` AFTER a trailing `|| true` does not work,
+          # because `true` running as its own command overwrites
+          # PIPESTATUS with ITS OWN status before the next line ever reads
+          # it (measured while writing this: every branch below read
+          # rc=0, including the collision fixture). Wrapping the pipeline
+          # as an `if` CONDITION is what actually suppresses `-e` for it
+          # while leaving `${PIPESTATUS[0]}` holding the real exit code in
+          # the `else` branch.
+          if node scripts/check-session-log-pr-collision.mjs \
+              --prs prs.json --self-pr "$PR_NUMBER" --merged-nums merged-nums.txt \
+              --pr-limit "$PR_LIST_LIMIT" \
+              2>&1 | tee collision.log; then
+            rc=0
+          else
+            rc="${PIPESTATUS[0]}"
+          fi
+          cat collision.log >> "$GITHUB_STEP_SUMMARY" || true
+          if [ "$rc" -eq 0 ]; then
+            echo "session-log-pr-collision: verified — no open PR shares a session-log number with another."
+          elif [ "$rc" -eq 1 ]; then
+            echo "::error::session-log-pr-collision: a session-log number is claimed by more than one open PR — see the log above"
+            exit 1
+          else
+            echo "::error::session-log-pr-collision: could not verify (rc=$rc) — treated as a failure, never a pass (#3933)"
+            exit 1
+          fi
