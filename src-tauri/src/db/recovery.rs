@@ -2632,6 +2632,24 @@ pub(crate) async fn recover_derived_state_from_op_log(
     // `prop_count > 0 || tag_count > 0` branch below already retires it in the
     // same "there is nothing left for a retry to do" situation; these two must
     // agree.
+    //
+    // #4020: why this retire needs NO `ENGINE_REPROJECT_PENDING_KEY` check,
+    // unlike the one at the end of [`recover_attachments_from_op_log`]. That
+    // one is conditional because an incomplete engine reprojection means the
+    // attachment arms' `EXISTS` guard DROPPED rows a later boot could still
+    // restore — there is replayable work outstanding, so the marker must stay
+    // armed. Here `op_count == 0` says the replayable set is empty for BOTH
+    // passes (the count is the union of `STATE_REPLAYABLE` and
+    // `ATTACHMENT_REPLAYABLE`), so no boot can ever restore anything through
+    // this marker, whatever the engine reprojection does or does not finish.
+    // Nor does retiring it strand that reprojection: `init_pools` gates the
+    // engine pass on `engine_reproject_pending(..)` independently of this
+    // marker, so the engine retry survives on its own signal.
+    //
+    // Outside a transaction on purpose: it is one idempotent DELETE with
+    // nothing to be atomic WITH — this branch performs no replay — and the
+    // replay tx below has not been opened yet. Losing it to a crash costs one
+    // re-probe on the next boot, the same cost the marker already trades for.
     if op_count == 0 {
         if marker_pending > 0 {
             clear_derived_recovery_marker(pool).await?;
@@ -2867,6 +2885,27 @@ pub(crate) async fn recover_derived_state_from_op_log(
                         continue;
                     }
 
+                    // #4020: this `EXISTS` skip now also fires on a
+                    // LOCALLY-authored op whose target block is PEER-authored.
+                    // `recover_blocks_from_op_log` filters `is_replicated = 0`,
+                    // so peer-authored blocks are still absent from `blocks`
+                    // while this pass runs — the identical drop that forced the
+                    // attachment arms into their own post-reprojection pass
+                    // (#3268). It is safe HERE, and only here, because
+                    // `reproject_blocks_from_engine` runs next and
+                    // DELETE-then-reinserts `block_properties` (and
+                    // `block_tags`) per block straight from the engine, which
+                    // holds local and peer state alike — so anything this guard
+                    // skipped is rewritten from the authoritative source
+                    // moments later. `attachments` has no such downstream
+                    // repair (it is not Loro-modelled — `pool.rs` states this
+                    // for attachments and nothing stated it here), and THAT
+                    // asymmetry, not a difference in the guards, is the whole
+                    // reason only the attachment arms moved. Do not "fix" this
+                    // by moving the property/tag arms after the reprojection
+                    // too: they would then be overwritten by it and the local
+                    // op-log pass would stop contributing anything.
+                    //
                     // Guard the two FK columns (block_id, value_ref → blocks(id)).
                     // An op may reference a block that was purged or created on
                     // another device and is absent from the local op_log, so
@@ -2925,6 +2964,16 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     // Both columns are FKs to blocks(id): skip the tag if either
                     // the tagged block or the tag block is absent (purged, or
                     // never created in the local op_log) to avoid FK 787 panic.
+                    // #4020: as on the `set_property` arm above, that "absent"
+                    // set now includes PEER-authored blocks, which
+                    // `recover_blocks_from_op_log`'s `is_replicated = 0` filter
+                    // leaves out of `blocks` until the engine reprojection runs.
+                    // Safe for the same reason and only that reason:
+                    // `reproject_blocks_from_engine` DELETE-then-reinserts
+                    // `block_tags` per block from the engine right after this
+                    // pass. `attachments` is the exception with no downstream
+                    // repair — see the `set_property` arm for the full argument
+                    // and for why the fix must not be applied in reverse here.
                     sqlx::query(
                         "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
                      SELECT ?, ? \
