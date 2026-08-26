@@ -156,6 +156,12 @@ pub(super) async fn apply_op_with_mode(
         state,
     )
     .await;
+    // #4285: the two fan-outs above mirror the SQL cohort onto the ENGINE.
+    // This one repairs the SQL-side LINK edges of the same cohort — the half
+    // #4209 reached for the seed and only the seed. Runs after them so the
+    // reindex sees a cohort that is alive in both projections.
+    reindex_restored_cohort_links(pool, &effects.restored_cohort, &effects.restored_ancestors)
+        .await;
 
     Ok(())
 }
@@ -235,6 +241,104 @@ pub(crate) async fn dispatch_restore_ancestors(
     // [`dispatch_restore_descendants`]); only the op-id infix (`#ancestor/`)
     // and log wording differ, both carried by `FanoutKind::Ancestors`.
     fan_out_restore(pool, root_record, ancestors, FanoutKind::Ancestors, state).await;
+}
+
+/// #4285 — re-derive the LINK edges of every block a restore un-deleted, not
+/// just the seed.
+///
+/// # What #4209 fixed, and where it stopped
+///
+/// #4209 gave `RestoreBlock`'s `invalidations_for_op` arm a per-block
+/// `ReindexBlockLinks`, because a restore is the third way a block becomes
+/// LINKABLE and the one #4118 did not observe. But that function is a pure
+/// function of an `OpRecord` — no pool, no [`ApplyEffects`] — so it sees only
+/// `record.block_id`, while a `RestoreBlock` un-deletes a whole COHORT: the
+/// descendant subtree plus the #1884 contiguous ancestor chain. Every non-seed
+/// member became linkable with nothing enqueued for it.
+///
+/// # Both directions, for the reason #4209 established
+///
+/// * INBOUND — a referrer that named the descendant while it was tombstoned
+///   was declined by `reindex_block_links_conn`'s `deleted_at IS NULL` guard
+///   and its debt recorded in `block_links_unresolved`. The debt is discharged
+///   from the TARGET's reindex (`resolve_referrers_of`), which the descendant
+///   never got, so the row survived with nothing left to trigger it.
+/// * OUTBOUND — a reindex that ran while the block was soft-deleted read its
+///   content as `WHERE … deleted_at IS NULL`, saw a content-less block, and
+///   diffed its whole edge set away while correctly recording NO unresolved
+///   row (only a live source owes a target, #4229). Nothing on the target side
+///   can ever repair that; only a reindex of the block itself.
+///
+/// `run_reindex_block_links` runs `reindex_one_block_links` before
+/// `resolve_referrers_of`, so one call per member covers both.
+///
+/// # Why this runs INLINE rather than enqueueing a task
+///
+/// The seed's repair is a background `ReindexBlockLinks`, but that queue is
+/// reachable only from `CommandTx::commit_and_dispatch`. This helper has to
+/// serve the REMOTE / replay path too ([`apply_op`], the `BatchApplyOps` arm),
+/// which holds a pool and a cohort and no queue handle — and on that path the
+/// seed does not reach `invalidations_for_op` either, so an inline call is
+/// what makes the remote restore work at all. Running the same code the task
+/// would have run keeps one definition of the repair.
+///
+/// Cost is O(cohort), the same order as the engine fan-out beside it, and each
+/// call is cheap for the overwhelmingly common member: a block with no link
+/// tokens and no waiting referrers costs two source-keyed index seeks and an
+/// empty diff. The seed is included and therefore repeated on the local path —
+/// idempotent, and the alternative (special-casing which path enqueued what)
+/// is worth less than the uniformity.
+///
+/// # Scope this does NOT extend to
+///
+/// A target made linkable by a PEER's non-restore op still does not reach the
+/// push half. Inbound sync fans out through `enqueue_inbound_sync_rebuilds`,
+/// which enqueues per-changed-block `UpdateFtsBlock` + `ReindexBlockTagRefs`
+/// and a debounced global set, but no per-block link reindex — so a remotely
+/// delivered `CreateBlock`/`EditBlock` that resolves a waiting referrer is
+/// repaired only when something local touches one of the two blocks. That is
+/// the pre-existing #4118 path bound (tracked in #4293), not something this
+/// helper introduces; restores specifically ARE covered on the remote path,
+/// because `apply_op` calls this.
+///
+/// Infallible / log-only, mirroring the engine fan-outs' call shape: the SQL
+/// restore has already committed and a failed repair must not fail the op. A
+/// member whose repair errors keeps its `block_links_unresolved` row, so the
+/// retry-queue sweeper remains the recovery path.
+///
+/// No `QueueMetrics` handle is threaded in: two of the four call sites
+/// (`apply_op`, the `BatchApplyOps` arm) do not hold one, and the only thing
+/// it feeds is the `pending_retry_rows` GAUGE. Passing `None` keeps the seed
+/// and the clear symmetric — both are skipped — so the gauge can only run
+/// stale-LOW, which `note_retry_rows_deleted` already saturates at 0 by
+/// design. It is never made inconsistent with the table.
+///
+/// Takes the two id sets as separate plain slices rather than a slice OF
+/// slices: a `&[&[String]]` parameter makes the returned future's auto-trait
+/// leakage higher-ranked over the inner lifetime, and every caller up the
+/// `handle_foreground_task` chain then fails to prove `Send`.
+pub(crate) async fn reindex_restored_cohort_links(
+    pool: &SqlitePool,
+    cohort: &[String],
+    ancestors: &[String],
+) {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for id in cohort.iter().chain(ancestors.iter()) {
+        // The seed sits in the descendant cohort AND (for a
+        // `restore_all_deleted` style call) can repeat across groups; the
+        // reindex is idempotent but not free, so dedupe rather than repeat.
+        if !seen.insert(id.as_str()) {
+            continue;
+        }
+        if let Err(e) = super::task_handlers::run_reindex_block_links(pool, None, id, None).await {
+            tracing::warn!(
+                block_id = %id,
+                error = %e,
+                "#4285: link reindex for a restored cohort member failed; its \
+                 unresolved rows stay for the retry sweeper"
+            );
+        }
+    }
 }
 
 /// Which restore fan-out is being driven onto the per-space engine.

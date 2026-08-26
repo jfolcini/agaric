@@ -67,8 +67,11 @@ pub async fn truncate_block_links(conn: &mut sqlx::SqliteConnection) -> Result<(
 // block_links_unresolved (#4118)
 // ---------------------------------------------------------------------------
 
-/// The sources that name `target_id` in their content but have NO
+/// The LIVE sources that name `target_id` in their content but have NO
 /// `block_links` edge to it — the reverse lookup #4118 exists to provide.
+///
+/// Soft-deleted sources are excluded (#4286 — see below); the rows they own in
+/// `block_links_unresolved` are left in place, only skipped.
 ///
 /// Answered by an index seek on `idx_block_links_unresolved_target`, so it is
 /// affordable on the per-block reindex path where every created / edited /
@@ -78,6 +81,32 @@ pub async fn truncate_block_links(conn: &mut sqlx::SqliteConnection) -> Result<(
 /// Ordered by `source_id` purely so the repair fan-out is deterministic
 /// (test-diffable, and log lines from two runs of the same repair line up).
 ///
+/// # Why LIVE sources only (#4286)
+///
+/// The rows themselves survive a soft-delete — the FK cascade fires on a row
+/// `DELETE`, not on a `deleted_at` stamp — and they are MEANT to (see below).
+/// But this function's answer drives a reindex, and reindexing a tombstoned
+/// source is actively destructive: `reindex_block_links_conn` reads content as
+/// `WHERE id = ? AND deleted_at IS NULL`, sees nothing, treats the block as
+/// content-less, and diffs its ENTIRE edge set away — including edges to LIVE,
+/// unrelated targets. So restoring or creating ANY block could wipe the link
+/// edges of an unrelated block that merely happened to be in the trash while
+/// naming it. Nothing about the caller made that reachable; the missing
+/// predicate did.
+///
+/// Filtering here rather than at the call site is deliberate: this is the
+/// "who should be re-linked now that `target_id` is linkable?" question, and a
+/// tombstoned source is not a candidate for re-linking under the very rule
+/// that decides the edge — only a LIVE source owes a target (#4229). A
+/// referrer that is later restored gets its own `ReindexBlockLinks` from the
+/// restore arm (#4209/#4285), which is where its debt is discharged.
+///
+/// The rows are NOT deleted, only skipped. `reconciliation_oracle.rs`'s EXTRA
+/// arm documents that it is deliberately not liveness-scoped "because no
+/// delete arm enqueues `ReindexBlockLinks`, so a tombstoned source's rows
+/// survive by design" — it expects exactly these rows to be present, and
+/// filtering the *reindex* does not change what it folds.
+///
 /// # Errors
 /// Returns [`AppError`] if the query fails.
 pub async fn unresolved_link_sources(
@@ -85,8 +114,10 @@ pub async fn unresolved_link_sources(
     target_id: &str,
 ) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query!(
-        "SELECT source_id FROM block_links_unresolved \
-         WHERE target_id = ? ORDER BY source_id",
+        "SELECT u.source_id AS \"source_id!\" FROM block_links_unresolved u \
+         JOIN blocks b ON b.id = u.source_id \
+         WHERE u.target_id = ? AND b.deleted_at IS NULL \
+         ORDER BY u.source_id",
         target_id,
     )
     .fetch_all(pool)

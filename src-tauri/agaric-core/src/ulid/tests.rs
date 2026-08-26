@@ -854,3 +854,142 @@ fn ulid_inline_rejects_over_capacity_without_panic() {
         "try_from_str must return Err (not panic/truncate) on > 26 bytes",
     );
 }
+
+// --- #4284: a ULID that overflows 128 bits must never be silently rewritten ---
+
+/// The reported input: 26 valid Crockford characters whose LEADING character
+/// (`T` = 26) encodes more than the 2 bits the top of a 128-bit ULID has room
+/// for. `ulid` 3.0's `base32::decode` shifts all 130 bits into a `u128` with
+/// no overflow check, so this used to decode — to `2T00…`, a DIFFERENT id.
+const OVERFLOWING_ULID: &str = "TT000000000000000000000000";
+
+/// #4284 — the acceptance. The VALIDATING constructor must refuse an id it
+/// cannot return unchanged.
+///
+/// Before the fix it returned `Ok` holding `2T000000000000000000000000`: a
+/// caller that validated an untrusted id got back a different one, so a write
+/// op addressed to a crafted, non-existent id could silently retarget a REAL
+/// block. `from_string` is reached with input that is not ours — deeplinks
+/// (`src/deeplink/mod.rs`), page-id command arguments
+/// (`commands/pages/listing.rs`, `commands/pages/markdown.rs`) — which is what
+/// makes this a boundary bug rather than a test-fixture footgun.
+#[test]
+fn from_string_rejects_a_ulid_that_overflows_128_bits_4284() {
+    assert_eq!(OVERFLOWING_ULID.len(), 26, "the input IS ULID-shaped");
+    let got = BlockId::from_string(OVERFLOWING_ULID);
+    assert!(
+        got.is_err(),
+        "#4284: a 26-char base32 string whose leading character encodes more than \
+         2 bits does not fit a 128-bit ULID, so the validating constructor must \
+         REJECT it rather than hand back the different id it decodes to — got {got:?}"
+    );
+}
+
+/// #4284 — the same string through the `Deserialize` impl, whose own doc
+/// comment names it "the genuinely-UNTRUSTED entry point: remote op-log
+/// payloads, sync messages and IPC parameters".
+///
+/// This one is refused rather than passed through unchanged. The lenient
+/// fallback beside it exists so synthetic non-ULID fixtures (`"BLOCK_A"`)
+/// keep deserialising; a string every decoder in the system reads as a
+/// well-formed ULID is not one of those, and accepting it verbatim would put
+/// a non-canonical spelling into the blake3 hash preimage #1558 exists to
+/// make unique.
+#[test]
+fn deserialize_rejects_a_ulid_that_overflows_128_bits_4284() {
+    let json = format!("\"{OVERFLOWING_ULID}\"");
+    let got: Result<BlockId, _> = serde_json::from_str(&json);
+    assert!(
+        got.is_err(),
+        "#4284: the untrusted entry point must reject the overflowing id, not \
+         normalise it into another block's id — got {got:?}"
+    );
+}
+
+/// #4284 — the property behind both assertions above, stated once over a
+/// mixed corpus: `from_string` either FAILS or returns EXACTLY what it was
+/// given (modulo the pure case fold). It must never return a different id.
+///
+/// This is the assertion that would have caught the defect without knowing
+/// its mechanism, and it is the one that stays meaningful if the `ulid`
+/// crate's decoder ever changes: a silent rewrite is a round-trip failure
+/// whatever produced it.
+#[test]
+fn from_string_round_trip_is_an_error_or_an_exact_identity_4284() {
+    let corpus = [
+        FIXTURE_ULID,
+        FIXTURE_ULID_LOWER,
+        FIXTURE_ULID_OTHER,
+        OVERFLOWING_ULID,
+        // Every leading character above '7' aliases; a couple of extra shapes
+        // so this is not a single-fixture assertion.
+        "ZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        "8000000000000000000000000A",
+        // …and the boundary itself: '7' is the largest leading character that
+        // fits, so it must still be ACCEPTED (an over-strict fix that rejected
+        // it would pass every assertion above and fail here).
+        "7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        "not-a-ulid",
+        "",
+    ];
+    for input in corpus {
+        if let Ok(id) = BlockId::from_string(input) {
+            assert_eq!(
+                id.as_str(),
+                input.to_ascii_uppercase(),
+                "#4284: from_string({input:?}) returned Ok with a DIFFERENT id — the \
+                 validating constructor must return the id it was given or none at all"
+            );
+        }
+    }
+
+    // The boundary case is genuinely accepted, so the loop above is not
+    // vacuously satisfied by rejecting everything.
+    assert_eq!(
+        BlockId::from_string("7ZZZZZZZZZZZZZZZZZZZZZZZZZ")
+            .expect("'7' is the largest leading character that fits 128 bits")
+            .as_str(),
+        "7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    );
+}
+
+/// #4284 — the aliasing is what made the defect dangerous rather than merely
+/// wrong: two DISTINCT 26-character strings collapsed onto one `BlockId`.
+/// Whatever the boundary does with them now, it must not be that.
+#[test]
+fn two_distinct_ulid_shaped_strings_never_collapse_to_one_block_id_4284() {
+    let aliased = BlockId::from_string(OVERFLOWING_ULID);
+    let real = BlockId::from_string("2T000000000000000000000000")
+        .expect("the id the overflowing one used to decode to is itself valid");
+    if let Ok(aliased) = aliased {
+        assert_ne!(
+            aliased, real,
+            "#4284: '{OVERFLOWING_ULID}' and '2T00…' are different strings and must \
+             never yield the same BlockId"
+        );
+    }
+}
+
+/// #4284 — the shared validator, exercised directly so the two boundary types
+/// (`BlockId` here, `agaric_store::space::SpaceId` in its own module) are
+/// pinned to one definition of "canonical".
+#[test]
+fn canonical_ulid_distinguishes_malformed_from_aliased_4284() {
+    assert_eq!(
+        canonical_ulid(FIXTURE_ULID_LOWER).as_deref(),
+        Ok(FIXTURE_ULID),
+        "a pure case fold is still accepted and canonicalised"
+    );
+    assert!(
+        matches!(
+            canonical_ulid(OVERFLOWING_ULID),
+            Err(UlidRejection::Aliased { .. })
+        ),
+        "an overflowing id is ALIASED — it decodes, but to something else"
+    );
+    assert!(
+        matches!(canonical_ulid("BLOCK_A"), Err(UlidRejection::Malformed(_))),
+        "a synthetic fixture is MALFORMED — the class the lenient Deserialize \
+         fallback keeps accepting"
+    );
+}

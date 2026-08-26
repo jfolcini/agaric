@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT source_id FROM block_links_unresolved WHERE target_id = ? ORDER BY source_id",
+  "query": "SELECT u.source_id AS \"source_id!\" FROM block_links_unresolved u JOIN blocks b ON b.id = u.source_id WHERE u.target_id = ? AND b.deleted_at IS NULL ORDER BY u.source_id",
   "describe": {
     "columns": [
       {
-        "name": "source_id",
+        "name": "source_id!",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "89fb2c548b028ffae790be2c58a4aec195210bb72af8253b14d23d7261eb7ba9"
+  "hash": "804dc51365b22aaaa7e47c102f13f31ee5a5e537d059cef7128c6d05c7fd56c0"
 }

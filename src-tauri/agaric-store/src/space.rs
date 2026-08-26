@@ -15,7 +15,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::str::FromStr;
 
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
@@ -30,8 +29,9 @@ use agaric_core::ulid::BlockId;
 ///
 /// Stored value is the canonical uppercase Crockford base32 representation —
 /// AGENTS.md invariant #8. The normaliser differs by path: `from_string`
-/// parses the input through `ulid::Ulid::from_str` and stores the crate's
-/// canonical re-encoding (`parsed.to_string()`), while `from_trusted` and the
+/// parses the input through [`agaric_core::ulid::canonical_ulid`] and stores
+/// the crate's canonical re-encoding — which, since #4284, it must EQUAL
+/// rather than merely decode to — while `from_trusted` and the
 /// `Deserialize` impl skip the parse and uppercase via `to_ascii_uppercase`.
 /// For a well-formed ASCII Crockford-base32 ULID the two forms coincide, so
 /// every path yields byte-identical output and blake3 hash determinism holds.
@@ -72,16 +72,20 @@ impl SpaceId {
     /// that are already known to be valid ULIDs (e.g. produced by a
     /// previous `from_string` call and round-tripped through the DB),
     /// prefer [`SpaceId::from_trusted`] which skips the parse.
+    ///
+    /// #4284: rejects a 26-character base32 string that OVERFLOWS the
+    /// 128-bit range as well as a malformed one. This constructor is reached
+    /// with AGENT-supplied arguments (`mcp/tools_ro.rs`, `mcp/tools_rw.rs`),
+    /// so "returns `Ok` with a different id than it was handed" was a live
+    /// retargeting hazard here, not only on `BlockId`.
     pub fn from_string(s: impl Into<String>) -> Result<Self, AppError> {
         let s = s.into();
-        let parsed = ulid::Ulid::from_str(&s)
-            .map_err(|e| AppError::Ulid(format!("Invalid space ULID '{s}': {e}")))?;
         // Store the canonical uppercase form, not the original input —
-        // mirrors `BlockId::from_string`. For ASCII Crockford base32 the
-        // two forms coincide, but going through `parsed.to_string()`
-        // tracks the `ulid` crate's canonical encoding rather than
-        // trusting the caller's casing.
-        Ok(Self(parsed.to_string()))
+        // mirrors `BlockId::from_string`, and shares its validator so the
+        // two boundaries cannot drift on what they accept.
+        agaric_core::ulid::canonical_ulid(&s)
+            .map(Self)
+            .map_err(|e| AppError::Ulid(format!("Invalid space ULID '{s}': {e}")))
     }
 
     /// Construct from a string already known to be a valid ULID. Skips
@@ -95,7 +99,8 @@ impl SpaceId {
     /// Lightweight ULID-shape check for an already-constructed `SpaceId`.
     ///
     /// Reuses the same validator as [`SpaceId::from_string`]
-    /// (`ulid::Ulid::from_str`) — a 26-char Crockford base32 string — but
+    /// ([`agaric_core::ulid::canonical_ulid`]) — a 26-char Crockford base32
+    /// string that decodes to itself (#4284) — but
     /// operates on the stored value rather than constructing a new id, so
     /// it can gate values that arrived through the lenient `Deserialize`
     /// path (which only uppercase-normalises, mirroring `BlockId`).
@@ -104,7 +109,12 @@ impl SpaceId {
     /// boundary surfaces a clear error instead of binding a never-matching
     /// SQL param and silently returning empty results (issue #1588).
     pub fn validate_shape(&self) -> Result<(), AppError> {
-        ulid::Ulid::from_str(&self.0)
+        // #4284: the same validator as `from_string`, so a value that arrived
+        // through the lenient `Deserialize` path cannot pass a shape check
+        // that a constructor would have refused. An overflowing id is the
+        // case that matters here: it is precisely the one `ulid::from_str`
+        // alone calls well-formed.
+        agaric_core::ulid::canonical_ulid(&self.0)
             .map(|_| ())
             .map_err(|e| AppError::validation(format!("malformed space id '{}': {}", self.0, e)))
     }
@@ -466,6 +476,41 @@ mod tests {
     fn from_string_rejects_empty() {
         let err = SpaceId::from_string("").expect_err("empty must reject");
         assert!(matches!(err, AppError::Ulid(_)));
+    }
+
+    /// #4284 — `SpaceId::from_string` is reached with AGENT-supplied arguments
+    /// (`mcp/tools_ro.rs`, `mcp/tools_rw.rs`), so it shares `BlockId`'s
+    /// exposure: `ulid` 3.0's decoder shifts 130 base-32 bits into a `u128`
+    /// without an overflow check, and a leading character above `7` therefore
+    /// decoded to a DIFFERENT space than it spelled while the constructor
+    /// returned `Ok`. It must refuse instead.
+    #[test]
+    fn from_string_rejects_a_ulid_that_overflows_128_bits_4284() {
+        let overflowing = "TT000000000000000000000000";
+        assert_eq!(overflowing.len(), 26, "the input IS ULID-shaped");
+        let got = SpaceId::from_string(overflowing);
+        assert!(
+            got.is_err(),
+            "#4284: a space id that does not fit 128 bits must be rejected, not \
+             silently normalised into another space's id — got {got:?}"
+        );
+    }
+
+    /// #4284 — and `validate_shape`, which exists precisely to gate values that
+    /// arrived through the LENIENT `Deserialize` path, must apply the same rule:
+    /// otherwise the one id class that `ulid::from_str` alone calls well-formed
+    /// walks straight past the check that was added to catch malformed ids.
+    #[test]
+    fn validate_shape_rejects_a_ulid_that_overflows_128_bits_4284() {
+        let smuggled = SpaceId::from_trusted("TT000000000000000000000000");
+        assert!(
+            smuggled.validate_shape().is_err(),
+            "#4284: the shape check must not accept an id its own constructor refuses"
+        );
+        assert!(
+            SpaceId::from_trusted(FIXTURE_ULID).validate_shape().is_ok(),
+            "a real space id still passes — the check is not simply always failing"
+        );
     }
 
     // --- SpaceId::from_trusted ---

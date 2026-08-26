@@ -1484,6 +1484,24 @@ pub async fn restore_block_inner(
     )
     .await;
 
+    // #4285 POST-COMMIT LINK repair for the same two sets. `commit_and_dispatch`
+    // above enqueued a `ReindexBlockLinks` for the SEED (#4209's fix, via
+    // `invalidations_for_op`) and could not enqueue one for anything else:
+    // that function is a pure function of the `OpRecord` and never sees the
+    // cohort, which is walked inside the transaction. So a referrer waiting on
+    // a restored DESCENDANT — and that descendant's own outbound edges, which
+    // a deleted-window reindex diffed away — stayed stranded on the path most
+    // users are actually on. The cohort and the ancestor chain are both in
+    // hand here, which is why the repair belongs at this site and not only in
+    // `handlers::apply` (the remote/replay counterpart). The seed is repeated
+    // (idempotent) rather than filtered out.
+    crate::materializer::reindex_restored_cohort_links(
+        pool,
+        &restore_cohort,
+        &restored_chain.chain,
+    )
+    .await;
+
     Ok(RestoreResponse {
         block_id,
         restored_count: restored_rows,
@@ -1922,6 +1940,13 @@ pub async fn restore_all_deleted_inner(
             materializer.loro_state(),
         )
         .await;
+        // #4285: and repair each cohort's LINK edges — only the seed of each
+        // root reached `invalidations_for_op`. No ancestor group here for the
+        // same reason the upward engine fan-out is absent: this variant clears
+        // EVERY tombstone, so an ancestor chain is either inside a root's
+        // cohort or is a root of its own. Overlapping cohorts are deduped
+        // per call, and repeats across roots are idempotent.
+        crate::materializer::reindex_restored_cohort_links(pool, cohort, &[]).await;
     }
 
     Ok(BulkTrashResponse {
@@ -2375,6 +2400,9 @@ pub async fn restore_blocks_by_ids_inner(
             materializer.loro_state(),
         )
         .await;
+        // #4285: LINK repair for the same pair — see `restore_block_inner`,
+        // whose single-root fan-out this loop is the batch form of.
+        crate::materializer::reindex_restored_cohort_links(pool, cohort, ancestors).await;
     }
 
     Ok(BulkTrashResponse {

@@ -211,6 +211,17 @@ pub(crate) async fn handle_foreground_task(
                     state,
                 )
                 .await;
+                // #4285: repair the LINK edges of everything this record's
+                // restore un-deleted — the whole cohort, not just the seed.
+                // Mirrors `apply_op`'s single-op call; a batch of remote ops
+                // is exactly where a restore arrives without ever passing
+                // through `invalidations_for_op`.
+                super::apply::reindex_restored_cohort_links(
+                    pool,
+                    &effects.restored_cohort,
+                    &effects.restored_ancestors,
+                )
+                .await;
             }
 
             Ok(())
@@ -280,7 +291,11 @@ where
 /// refresh is stale for exactly the same reason the roll-up is. The
 /// `block_links` diff it repeats is idempotent and, for a block whose content
 /// did not change, empty.
-async fn run_reindex_block_links(
+/// #4285 raised this to `pub(super)` so the restore fan-out
+/// ([`super::apply::reindex_restored_cohort_links`]) repairs a restored cohort
+/// member by running the SAME body the `ReindexBlockLinks` task runs, rather
+/// than open-coding a second version of the repair.
+pub(super) async fn run_reindex_block_links(
     pool: &SqlitePool,
     read_pool: Option<&SqlitePool>,
     block_id: &str,

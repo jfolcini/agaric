@@ -1644,30 +1644,36 @@ pub(crate) fn invalidations_for_op(
                 // above names two things that do. Hence the outbound half —
                 // and hence the reindex, not just a target-side push.
                 //
-                // KNOWN RESIDUAL: the task is seeded for the SEED block only.
-                // A restore un-deletes a whole cohort (descendants + the #1884
-                // contiguous ancestor chain), but `invalidations_for_op` sees
-                // just `record.block_id` — the cohort is computed inside the
-                // apply tx (`ApplyEffects::restored_cohort`) and is not
-                // available here. Both directions are affected for a
-                // non-seed member: a referrer waiting on a restored
-                // DESCENDANT stays stranded, and so do that descendant's own
-                // outbound edges if a deleted-window reindex dropped them.
-                // Either still needs one of the two blocks to be touched. The
-                // cohort is in hand at BOTH post-commit fan-out sites — the
-                // remote/replay `handlers::apply` one and the LOCAL
-                // `commands::blocks::crud::restore_block_inner` one (plus the
-                // two batch-trash paths), which does its own fan-out and never
-                // routes through `apply_op` — so a fix has to cover both.
+                // SCOPE (cohort): the task seeded HERE is for the SEED block
+                // only, and that is structural rather than a residual — a
+                // restore un-deletes a whole cohort (descendants + the #1884
+                // contiguous ancestor chain), but `invalidations_for_op` is a
+                // pure function of the `OpRecord`: the cohort is computed
+                // inside the apply tx (`ApplyEffects::restored_cohort`) and
+                // cannot be reached from here. #4285 closed the resulting gap
+                // where the cohort IS in hand — post-commit, at every restore
+                // fan-out site — via
+                // `handlers::apply::reindex_restored_cohort_links`, called
+                // from the remote/replay `apply_op` + `BatchApplyOps` arms AND
+                // from the LOCAL `commands::blocks::crud` sites
+                // (`restore_block_inner` plus the two batch-trash paths),
+                // which do their own fan-out and never route through
+                // `apply_op`. Both directions were affected for a non-seed
+                // member: a referrer waiting on a restored DESCENDANT, and
+                // that descendant's own outbound edges if a deleted-window
+                // reindex dropped them.
                 //
                 // SCOPE (path): this arm is the LOCAL command fan-out.
                 // `enqueue_background_tasks` is reached only from
                 // `CommandTx::commit_and_dispatch`; an inbound-sync import
                 // fans out through `enqueue_inbound_sync_rebuilds`, which
                 // carries per-changed-block FTS and `block_tag_refs` tasks but
-                // no per-block link reindex. A restore that arrives from a
-                // PEER therefore still does not reach this pass — the same
-                // path bound #4118's push half already has.
+                // no per-block link reindex. A RESTORE arriving from a peer is
+                // nonetheless covered since #4285, because the apply handlers
+                // repair the cohort directly; what still does not reach any
+                // push half is a target made linkable by a peer's
+                // create/edit/space-stamp — the pre-existing #4118 path bound,
+                // tracked in #4293.
                 tasks.push(MaterializeTask::ReindexBlockLinks {
                     block_id: Arc::from(block_id),
                 });
