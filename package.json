@@ -150,7 +150,7 @@
     "knip": "^6.32.2",
     "license-checker": "^25.0.1",
     "markdownlint-cli2": "^0.23.2",
-    "oxfmt": "^0.63.0",
+    "oxfmt": "^0.64.0",
     "oxlint": "^1.79.0",
     "rollup-plugin-visualizer": "^7.1.1",
     "tsx": "^4.23.12",
