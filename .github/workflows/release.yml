@@ -470,14 +470,21 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04'
         env:
           BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
-          # Long enough to get well past window creation and the setup hook
-          # (init_logging, deep-link router, DB open), short enough not to
-          # matter on a job that already spent minutes compiling. Measured
-          # 2026-08-26 against the real 0.9.9 AppImage in an ubuntu-24.04
-          # container: extraction 0.73s, and `log directory initialized` at
-          # ~60ms after launch. 20s is ~250x that headroom, so a failure here
-          # is a hang, not a slow boot — do not "fix" this by raising it.
-          BOOT_SECONDS: '20'
+          # CEILING, not a sleep: the step polls and exits as soon as the
+          # boot artifact appears, so a healthy boot pays ~1s regardless of
+          # this number and only a genuinely stuck boot pays the full budget.
+          #
+          # Raised 20 -> 90 (#4418). An earlier revision of this comment
+          # argued the opposite — that 20s was ~250x the ~60ms boot measured
+          # locally, so a failure "is a hang, not a slow boot". That
+          # measurement was taken in a container where the boot IS fast, and
+          # generalising it to the runner was wrong: 0.9.9 failed twice
+          # identically with exit 124 (ALIVE at the deadline) and nothing in
+          # boot.log but an AT-SPI dbus failure. A dbus call's default timeout
+          # is 25s — longer than the old budget — so a boot stalled on one was
+          # being killed seconds before it would have finished. 90s covers
+          # that and several retries of it.
+          BOOT_SECONDS: '90'
           # Attempts before calling it a real failure. See the rationale on
           # the retry driver below: the underlying launch is flaky, and a
           # single attempt gates publication of the whole release on it.
@@ -512,10 +519,63 @@ jobs:
             # cannot see.
             export APPIMAGE_EXTRACT_AND_RUN=1
 
+            # #4418 — POLL for the boot artifact instead of sleeping the whole
+            # budget, and give the boot room to be slow rather than assuming
+            # it is fast.
+            #
+            # The 0.9.9 failure was exit 124 (ALIVE at the deadline) with only
+            # an AT-SPI dbus failure in boot.log — which is equally consistent
+            # with a boot BLOCKED on a dbus call as with one hung forever. A
+            # dbus method call's default timeout is 25s, i.e. LONGER than the
+            # old 20s budget, so a boot stalled on one was being killed a few
+            # seconds before it would have completed. Polling costs nothing
+            # when the boot is fast (it exits within ~1s of the log appearing,
+            # measured at ~60ms locally) and costs only wall-clock when it is
+            # slow, so the budget can be generous without slowing the job down.
+            #
+            # `dbus-run-session` gives the app a real session bus so the a11y
+            # lookup resolves instead of stalling. It is the one concrete
+            # anomaly CI shows, so it is worth providing rather than guessing
+            # at graphics flags; if the runner image ever drops it we fall back
+            # rather than fail, since it is a mitigation and not a requirement.
+            if command -v dbus-run-session >/dev/null 2>&1; then
+              launcher=(dbus-run-session --)
+            else
+              echo "NOTE: dbus-run-session unavailable; booting without a session bus" >&2
+              launcher=()
+            fi
+
             set +e
-            timeout --signal=TERM --kill-after=10s "${BOOT_SECONDS}s" \
-              xvfb-run -a "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1
-            code=$?
+            xvfb-run -a "${launcher[@]}" "$APPIMAGE_BIN" > "$SANDBOX/boot.log" 2>&1 &
+            app_pid=$!
+            code=""
+            waited=0
+            while [ "$waited" -lt "$BOOT_SECONDS" ]; do
+              if compgen -G "$AGARIC_DATA_DIR/logs/agaric.log*" > /dev/null; then
+                # Artifact present. Assert the process is STILL ALIVE — the
+                # old CHECK 2 intent: a desktop app that booted stays up, and
+                # a quiet immediate exit (a single-instance handoff, exit 0
+                # included) is exactly the shape a false green takes here.
+                if kill -0 "$app_pid" 2>/dev/null; then
+                  echo "OK: boot artifact appeared after ${waited}s and the process is alive"
+                  code="alive"
+                else
+                  wait "$app_pid"; code="exited:$?"
+                fi
+                break
+              fi
+              if ! kill -0 "$app_pid" 2>/dev/null; then
+                wait "$app_pid"; code="exited:$?"
+                break
+              fi
+              sleep 1
+              waited=$((waited + 1))
+            done
+            [ -z "$code" ] && code="timeout"
+            kill -TERM "$app_pid" 2>/dev/null
+            sleep 1
+            kill -KILL "$app_pid" 2>/dev/null
+            wait "$app_pid" 2>/dev/null
             set -e
 
             echo "----- first 200 lines of boot output -----"
@@ -553,8 +613,11 @@ jobs:
             # release with a message blaming boot for a naming mistake.
             app_logs=("$AGARIC_DATA_DIR"/logs/agaric.log*)
             if [ ${#app_logs[@]} -eq 0 ]; then
-              echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${BOOT_SECONDS}s." >&2
-              echo "       Process exit code was $code (124 = still running at the deadline)." >&2
+              echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${waited}s" >&2
+              echo "       (budget ${BOOT_SECONDS}s; a shorter time means the process ended" >&2
+              echo "       early rather than the budget expiring)." >&2
+              echo "       Outcome was '$code' (alive = still running, timeout = never" >&2
+              echo "       produced the artifact, exited:N = ended on its own with code N)." >&2
               echo "       Read the boot output dumped above FIRST: if it shows xvfb-run or" >&2
               echo "       the AppImage failing to start, the process never reached Rust at" >&2
               echo "       all and none of the boot-phase readings below apply." >&2
@@ -594,58 +657,52 @@ jobs:
             fi
             echo "OK: init_logging completed and wrote ${app_logs[*]}"
 
-            # CHECK 2 — and it was still running when the deadline fired.
+            # CHECK 2 — and it did not exit on its own.
             #
-            # 124 is the only pass. Every other code means it exited on its own,
-            # which for a desktop app that just booted is a failure however tidy
-            # the code — exit 0 included. A silent, instant, successful-looking
-            # exit is precisely the shape a false green takes here: a
-            # single-instance handoff produces exactly that, and did, when this
-            # check was first tried by hand against 0.9.8.
+            # A desktop app that really booted stays up. Every "exited"
+            # outcome is a failure however tidy the code, **exit 0 included**:
+            # a silent, instant, successful-looking exit is precisely the shape
+            # a false green takes here — a single-instance handoff produces
+            # exactly that, and did, when this check was first tried by hand
+            # against 0.9.8.
+            #
+            # The old form asserted this by requiring `timeout` to report 124.
+            # Polling asserts the same property directly (`kill -0` at the
+            # moment the artifact appears), which is strictly sharper: 124 only
+            # said "alive at 20s", whereas this says "alive at the moment it
+            # finished booting", and it no longer conflates "still healthy"
+            # with "we waited the full budget".
             case "$code" in
-              124)
-                # 124 is "timeout fired", which covers both a clean SIGTERM exit
-                # and the --kill-after escalation to SIGKILL (timeout reports its
-                # own status, not the child's, whenever it timed out). Either way
-                # the app was still alive at the deadline, which is what we assert.
-                echo "OK: still running at ${BOOT_SECONDS}s; reaped by timeout"
+              alive)
+                : # CHECK 1 + the liveness assertion above both passed
                 ;;
-              137)
-                # NOT "ignored SIGTERM": GNU timeout reports EXIT_TIMEDOUT (124)
-                # whenever it timed out, including when --kill-after had to
-                # escalate to SIGKILL. So a 137 arriving here came from an
-                # EXTERNAL SIGKILL — an OOM kill on the runner being the likely
-                # one — not from the app outlasting our own TERM.
-                echo "ERROR: killed by an external SIGKILL (return 137); OOM on the runner is" >&2
-                echo "       the usual cause. Not a SIGTERM-ignored timeout — that reports 124." >&2
+              timeout)
+                echo "ERROR: no boot artifact after ${BOOT_SECONDS}s and the process was" >&2
+                echo "       still alive — a hang, not a crash and not a slow boot." >&2
+                echo "       Diagnostics were dumped by CHECK 1 above." >&2
                 return 1
                 ;;
-              101 | 134)
+              exited:0)
+                echo "ERROR: exited 0 before producing a boot artifact. A booted app stays" >&2
+                echo "       up; a quiet immediate success here means it never really started." >&2
+                return 1
+                ;;
+              exited:134 | exited:101)
                 # 134 is the one that actually fires for a RELEASE AppImage:
-                # `[profile.release]` sets `panic = "abort"` (Cargo.toml), so a
-                # panic raises SIGABRT and the shell reports 128+6 = 134, never
-                # 101. 101 is kept for a debug/unwinding build run through this
-                # same step by hand.
-                #
-                # Either code is reachable only when a panic still let
-                # init_logging write its line first; a panic BEFORE that (the
-                # literal 0.9.7 shape) trips CHECK 1 above and never reaches this
-                # case. Note WHICH branch of CHECK 1 it trips:
-                # `RollingFileAppender::builder().build()` opens the file eagerly,
-                # before the `.init()` that panicked in 0.9.7, so the file EXISTS
-                # and it is the grep that fails — the operator sees "exists but
-                # carries no boot line", not "no log file".
-                echo "ERROR: Rust panic during boot (exit $code — 134 = SIGABRT under" >&2
-                echo "       panic=abort, 101 = an unwinding build), after init_logging ran" >&2
+                # `[profile.release]` sets `panic = "abort"`, so a panic raises
+                # SIGABRT and the shell reports 128+6 = 134, never 101. 101 is
+                # kept for a debug/unwinding build run through this by hand.
+                echo "ERROR: Rust panic during boot (${code#exited:} — 134 = SIGABRT under" >&2
+                echo "       panic=abort, 101 = an unwinding build)." >&2
                 return 1
                 ;;
-              0)
-                echo "ERROR: exited 0 before ${BOOT_SECONDS}s. A booted app stays up; a quiet" >&2
-                echo "       immediate success here means it never really started." >&2
+              exited:137)
+                echo "ERROR: killed by SIGKILL (137); an OOM kill on the runner is the usual" >&2
+                echo "       cause." >&2
                 return 1
                 ;;
               *)
-                echo "ERROR: exited with code $code before ${BOOT_SECONDS}s" >&2
+                echo "ERROR: process ended unexpectedly (${code})" >&2
                 return 1
                 ;;
             esac
