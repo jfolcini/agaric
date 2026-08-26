@@ -386,9 +386,22 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 ///
 /// Since the key set comes from mDNS announcements, *anyone on the LAN* can
 /// keep the map at the cap by announcing more than 64 device ids. Every new
-/// announcer then evicts an entry, and a legitimate peer's retry hint can be
-/// evicted again as fast as it is re-created — indefinitely, for as long as
-/// the flood lasts. That peer is then retried on the pre-backoff cadence
+/// announcer then evicts an entry.
+///
+/// The treadmill is real but it does not start immediately, and
+/// [`evict_for_new_peer`]'s "# What the `next_retry_at` order does and does not
+/// say" is why: the victim is `min(next_retry_at)`, so a legitimate peer
+/// sitting on an accumulated `now + 60s` sorts *behind* the flooders' own fresh
+/// `now + 2s` entries, which are evicted first. (`next_retry_at` is an absolute
+/// `Instant`, so that ordering is against freshly-stamped entries: a saturated
+/// peer within ~2s of its due time does sort earliest and is evicted first —
+/// which costs nothing, since it was about to fire anyway.) Once that peer has
+/// lost its hint once, though, its re-created stamp is a bottom-rung
+/// `now + 2s`, so from then on it can be evicted about as fast as it is
+/// re-created — though the re-created entry climbs the ladder again
+/// (2s -> 4s -> 8s ...), so the treadmill only persists while new announcers
+/// arrive faster than the victim can climb. That peer is then retried on the
+/// pre-backoff cadence
 /// rather than on its accumulated wait: the "noisier, never quieter"
 /// direction [`evict_for_new_peer`] documents, and exactly what this code did
 /// before #4231, so it is not a regression this cap introduced. It is stated
