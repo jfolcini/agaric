@@ -25,14 +25,16 @@ Four separate times, a guard I wrote and tested would have waved something throu
 caught by testing that the guard *worked* — each was caught by asking what would make it
 *not fire*.
 
-1. **A CI-check recipe classified failures by deny-list.** `FAILURE|TIMED_OUT|ERROR|
-   CANCELLED` — so `STARTUP_FAILURE`, `ACTION_REQUIRED` and `STALE` counted as neither
-   pending nor failing and read as **green**. `dco` is a required context the recipe never
-   extracted by name, so it rested entirely on that list.
+1. **A CI-check recipe classified failures by deny-list.** It matched only
+   `FAILURE|TIMED_OUT|ERROR|CANCELLED`, so `STARTUP_FAILURE`, `ACTION_REQUIRED` and
+   `STALE` counted as neither pending nor failing and read as **green**. `dco` is a
+   required context the recipe never extracted by name, so it rested entirely on that list.
 2. **The boot smoke's liveness window collapsed from 20s to ~1s.** I replaced `timeout 20s`
-   + exit-124 with "poll until the log line appears, then assert alive". Reaching
-   `init_logging` is phase 1; `.setup()`, `init_persistence`, `recover_and_bootstrap` and
-   window creation all follow. A panic at t≈2-4s used to exit 134 and go red — and would
+   + exit-124 with "poll until the log line appears, then assert alive". `init_logging` is
+   called *inside* Tauri's `.setup()` closure (`src-tauri/src/lib.rs:2475`) and is the
+   first thing it does; `init_persistence` (`:2492`), `recover_and_bootstrap` (`:2505`),
+   window creation and the whole `.run()` loop (`:2747`) all come after the log line
+   appears. A panic at t≈2-4s used to exit 134 and go red — and under the new scheme would
    have reported a pass. **The AT-SPI/WebKit hang the PR exists to fix also lives after
    `init_logging`, so the fix would have called its own target failure green.**
 3. **The process-group reap could SIGKILL the step's own group.** `$!` is the pid bash
@@ -110,6 +112,6 @@ identically. Practice moved to prose and the template did not follow.
 
 That is the same drift class this session spent its day auditing, in a file the audit read,
 and nothing enforces it: the numbering guard only greps for the `# Session NNNN` heading.
-Recording it deliberately rather than leaving a fourth session to deviate silently. Filed
-separately rather than fixed here, because deciding whether the template or the practice is
+Recording it deliberately rather than leaving a fourth session to deviate silently. Filed as
+**#4423** rather than fixed here, because deciding whether the template or the practice is
 authoritative is a maintainer call, not a cleanup.
