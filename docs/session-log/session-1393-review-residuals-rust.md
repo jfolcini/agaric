@@ -25,11 +25,11 @@ Counted, not estimated: `git grep -c` for the two stale symbols at the base comm
 (`27fd4e5`) returns **5**, all in `src-tauri/src/db/recovery.rs` — lines 1186, 2171,
 4762, 4877 and 4964. At HEAD it returns **1**.
 
-So it is **five sites, four rewritten, the fifth kept** — not five plus a sixth. One
+So it is **five sites, four rewritten, one kept** — not five plus a sixth. One
 of the four was inside an assertion *message string*, so a failing test would have
 pointed the reader at a symbol they could not grep for.
 
-The fifth (line 2171, a `//` comment in the `move_block` arm) was deliberately KEPT —
+The one kept (line 2171, a `//` comment in the `move_block` arm) was deliberate —
 it refers to the mechanism #4289 replaced, which is legitimate history — but
 disambiguated with "(deleted by #4289; named here only as the shape this replaced)"
 so nobody greps for a live symbol.
@@ -82,7 +82,13 @@ The `tracing::debug!` at the eviction site repeated the same overstatement and n
 
 A second paragraph records that the cap's cost is **attacker-influenceable**: anyone on
 the LAN can hold the map at the cap by announcing more than 64 device ids, keeping a
-legitimate peer's retry hint evicted for as long as the flood lasts. That is the
+legitimate peer's retry hint evicted for as long as the flood lasts. *(Erratum: the
+doc comment no longer says this in that strong a form. A saturated peer sorts behind
+the flooders' fresh entries until it has lost its hint once, and a re-created entry
+climbs the backoff ladder again — so the treadmill needs announcers arriving faster
+than the victim can climb. The direction is right; the "for as long as the flood
+lasts" was the overstatement, and it is the same class of defect this pass exists to
+correct.)* That is the
 documented "noisier, never quieter" direction and is what the code did before #4231, so
 it is not a regression — but the previous text let a reader infer that only incidental
 churn could reach the cap.
