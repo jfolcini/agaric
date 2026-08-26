@@ -937,9 +937,17 @@ function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
 }
 
 /**
- * The 'added' arm shared by both apply functions below (#4338) — the exact
- * decision `recordCreatedRow` makes for an in-hook create, restated for a
- * create announced on the bus so the two can never drift:
+ * The 'added' arm shared by both apply functions below (#4338) — the decision
+ * `recordCreatedRow` makes for an in-hook create, restated for a create
+ * announced on the bus.
+ *
+ * NOT identical, and the difference is deliberate: `recordCreatedRow` has no
+ * `alreadyPresent` check, because an in-hook create knows the row is new. A bus
+ * event can race a fill that already delivered the same row, so this arm dedupes
+ * and is therefore a strict SUPERSET of the in-hook decision. That is the safe
+ * direction. Do NOT "restore parity" by deleting the dedupe — the two are not
+ * meant to be the same function, and the extra check is the whole reason a
+ * duplicated row cannot reach the picker.
  *
  *  - `'skip'` when the list is EMPTY. An empty cache is not "a space with no
  *    rows", it is "not fetched for this space yet", and appending the one row
@@ -994,6 +1002,12 @@ function applyTagNameChange(list: TagCacheRow[], change: NameChange): TagCacheRo
     if (addedRowDisposition(list.length === 0, present) === 'skip') return list
     // `usage_count: 0` is correct — a just-created tag is not yet applied to
     // any block. Mirrors the row `onCreateTag` appends for its own create.
+    // `updated_at` reads the clock inside what is otherwise a pure reducer.
+    // Inert today: `compareTagRows` sorts on name then `tag_id`, and nothing in
+    // the picker reads `updated_at` — but it does make this function
+    // non-deterministic under fake timers or a future snapshot test. If one is
+    // ever added, hoist the clock read to the subscriber and pass it in rather
+    // than dropping the field.
     return [...list, { tag_id: id, name, usage_count: 0, updated_at: new Date().toISOString() }]
   }
   if (!present) return list
