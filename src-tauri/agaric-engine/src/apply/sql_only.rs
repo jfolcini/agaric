@@ -435,9 +435,33 @@ pub(crate) async fn inherited_cohort_before_move(
 /// `deleted_at IS NULL` filter, and that arm has no engine by construction. The
 /// durable form is a post-commit fan-out in the shape of #2868's purge fix
 /// (`resolve_soft_deleted_block_space` + a mirror dispatch), which is a
-/// CRDT-visible resurrection propagated to the DELETING peer — the product call
-/// #4204 is holding a maintainer ruling for. Pinned, with the re-trash
-/// measured, by `unsweep_does_not_yet_reach_the_engine_register_4204`.
+/// CRDT-visible resurrection propagated to the DELETING peer. Pinned, with the
+/// re-trash measured, by `unsweep_does_not_yet_reach_the_engine_register_4204`.
+///
+/// The resurrection itself is SETTLED, and this docstring is the canonical
+/// record of that. The maintainer ruling of 2026-08-26 adopts the
+/// converged-tree rule —
+/// <https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056> —
+/// "a block moved out of a deleted parent onto a live one stays live — a real
+/// resurrection, accepted deliberately", on three grounds: it is the only rule
+/// that converges BOTH #4188 (measured inseparable: "re-stamp, never
+/// resurrect" still diverges on the order `D(P1), M, D(P2)`) and #4204; it
+/// makes the op path AGREE with the import path, which already ships that
+/// answer as R9's `(Some(sql), None)` cell, so it removes a disagreement
+/// rather than adding a second rule; and cohort membership is positional, so
+/// an explicit move out of a trashed subtree wins over an inherited stamp the
+/// block never carried intrinsically.
+///
+/// What is open is therefore the PLUMBING, not the decision: the fan-out above
+/// is unwritten, so the ruled-on semantics hold on the op-replay and
+/// boot-recovery paths but not across a snapshot import.
+///
+/// Three other sites bear on that gap and CROSS-REFERENCE here rather than
+/// restating it — keep the argument in one place:
+/// [`crate::loro::projection::reproject_block_deleted_at_from_engine`] (the
+/// branch that undoes the clear), `apply_move_block_via_loro` (why the mirror
+/// cannot be bolted on there), and
+/// `unsweep_does_not_yet_reach_the_engine_register_4204` (the measurement).
 pub(crate) async fn unsweep_inherited_cohort_after_move(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,

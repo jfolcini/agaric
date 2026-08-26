@@ -2248,15 +2248,23 @@ async fn recover_blocks_from_op_log(
                 // `pragma_table_info` probe above); the columns it reads
                 // (`id` / `parent_id` / `deleted_at`) exist in every era, but
                 // their TYPES do not, which is the whole point of reason 2.
-                // The seed's `deleted_at IS NULL` IS the live-subject guard: a
-                // move whose subject is already tombstoned yields no seed row,
+                // The seed's `deleted_at IS NULL` WAS the live-subject guard: a
+                // move whose subject is already tombstoned yielded no seed row,
                 // hence no sweep. #4204 widens it by exactly one case — the
                 // subject whose tombstone is INHERITED (`?2`), which the
-                // un-sweep below is about to clear, so it is a live subject one
-                // statement from now and the sweep must be able to re-derive
-                // its cohort from the new position. A tombstoned subject that
-                // is a cohort ROOT still yields no seed row and is still never
-                // swept (`recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort`).
+                // un-sweep below MAY clear, in which case it is a live subject
+                // one statement from now and the sweep must be able to
+                // re-derive its cohort from the new position. A tombstoned
+                // subject that is a cohort ROOT still yields no seed row and is
+                // still never swept
+                // (`recover_move_of_an_already_tombstoned_block_keeps_its_original_cohort`).
+                //
+                // MAY, not WILL: the un-sweep short-circuits when the new
+                // position already implies the same cohort, and then the
+                // subject is STILL tombstoned when the sweep runs. So this
+                // probe answering `Some` no longer means "safe to sweep", and
+                // the live-subject guard moved to where the answer is CONSUMED
+                // — see the re-read below the un-sweep.
                 // depth<100: DESCENDANT_DEPTH_CAP, mirroring
                 // the `delete_block` arm's bound (a corrupt `parent_id` cycle
                 // terminates at the cap rather than re-anchoring past it the
@@ -2367,6 +2375,31 @@ async fn recover_blocks_from_op_log(
                         // for the #2043 reason that arm states: recovery
                         // deliberately keeps one cascade shape across its arms
                         // rather than importing the head-shaped one.
+                        //
+                        // #4204 — the residual third-interpreter disagreement,
+                        // stated rather than left to be rediscovered. The
+                        // materializer's `unsweep_inherited_cohort_after_move`
+                        // routes through `clear_cohort_deleted_at_downward`,
+                        // whose walk is `DescendantWalkFilter::Cohort(ts)` —
+                        // CONTIGUOUS, so it stops descending at a child whose
+                        // `deleted_at` is not `ts`. This walk is the standard
+                        // flat subtree, filtered afterwards. They part on one
+                        // shape: `B(t1) > X(live) > Y(t1)`, where `Y` carries
+                        // the cohort ts but is not connected to `B` through it.
+                        // Recovery clears `Y`; the materializer leaves it
+                        // trashed.
+                        //
+                        // Left as-is deliberately, for the same reason the
+                        // sweep's reach gap below is: recovery's `restore_block`
+                        // and `delete_block` arms both use this flat shape, so
+                        // importing the contiguous one HERE would make recovery
+                        // disagree with ITSELF (a `RestoreBlock` on the cleared
+                        // cohort would cover rows this un-sweep would not),
+                        // which is the self-consistency #4187 traded the
+                        // engine-parity for. Closing it means changing all three
+                        // arms together, not this one. Reaching it also needs a
+                        // pre-existing `deleted_at`-equal-but-disconnected row,
+                        // which only a #4188/#4204-shaped history produces.
                         if materialize_cascade_cohort(&mut *executor, block_id).await? {
                             diagnostics.cascade_truncations.push(CascadeTruncation {
                                 cascade: CASCADE_MOVE_UNSWEEP,
@@ -2399,7 +2432,70 @@ async fn recover_blocks_from_op_log(
                     }
                 }
 
-                if let Some(ancestor_id) = tombstoned_ancestor {
+                // #4204: the sweep's OWN live-subject guard, re-read AFTER the
+                // un-sweep has had its chance to run. It is the exact mirror of
+                // `sweep_move_under_tombstoned_ancestor`'s
+                // `matches!(own_deleted_at, Some(None))` early return, and it
+                // exists because the probe above no longer carries that
+                // guarantee: `?2` widened the seed's `deleted_at IS NULL` so an
+                // INHERITED-tombstone subject would still get an ancestor
+                // answer to re-derive its cohort FROM. That widening is only
+                // sound when the un-sweep then CLEARS — and it does not clear
+                // in the short-circuit case (the new position implies the same
+                // cohort), which leaves a `Some(ancestor)` in hand for a
+                // subject that is still tombstoned. Consuming it there ran the
+                // cascade below over the moved subtree and stamped every LIVE
+                // descendant into the ancestor's cohort — a pre-existing live
+                // orphan (a peer's child of a concurrently deleted block)
+                // silently moved into the trash by a boot repair, in exactly
+                // the materializer-vs-recovery lockstep the un-sweep exists to
+                // preserve.
+                //
+                // Phrased as a re-read of the subject's own row rather than as
+                // "did the un-sweep branch fire", for two reasons: it is
+                // literally the materializer's condition, so the two cannot
+                // drift; and it answers from the state the cascade is about to
+                // read rather than from a Rust-side belief about what the
+                // UPDATE did. The three cases it separates:
+                //
+                //  * subject live all along (`?2` false) — unchanged, sweeps;
+                //  * subject inherited-tombstoned and UN-SWEPT — now live,
+                //    sweeps, which is #4188's re-stamp to the target cohort;
+                //  * subject inherited-tombstoned and SHORT-CIRCUITED — still
+                //    tombstoned, declines. (A cohort-ROOT tombstone never got
+                //    an ancestor out of the probe in the first place, so it
+                //    declines one step earlier, as before.)
+                //
+                // Costs one PK lookup, and only on a move that actually found a
+                // tombstoned ancestor — the same price the materializer pays.
+                // Pinned by `recover_move_within_one_cohort_leaves_a_live_orphan_alone_4188`
+                // (the recovery mirror of the materializer's
+                // `unsweep_short_circuits_a_move_within_one_cohort_4188`), and
+                // by the `move_swept_under_tombstone` half of
+                // `recover_move_within_one_cohort_does_not_unsweep_4188`.
+                let sweep_ancestor = match tombstoned_ancestor {
+                    None => None,
+                    Some(ancestor_id) => {
+                        // dynamic-sql: era-varying `blocks` at the
+                        // pre-migration era; an `IS NULL` test that never
+                        // decodes the column, so it holds in both the pre-0080
+                        // rfc3339-TEXT era and the at-head INTEGER one, for the
+                        // same reason the probe above does. `query_scalar!`
+                        // would pin the statement to the HEAD schema this
+                        // replay is precisely NOT running against.
+                        let subject_is_live = sqlx::query_scalar::<_, bool>(
+                            "SELECT EXISTS ( \
+                                 SELECT 1 FROM blocks WHERE id = ?1 AND deleted_at IS NULL \
+                             )",
+                        )
+                        .bind(block_id)
+                        .fetch_one(&mut *executor)
+                        .await?;
+                        subject_is_live.then_some(ancestor_id)
+                    }
+                };
+
+                if let Some(ancestor_id) = sweep_ancestor {
                     // The `delete_block` arm's cascade shape, keyed on the
                     // ancestor's own stored `deleted_at` (era-agnostic, and
                     // byte-identical to the cohort a delete-last replay would
@@ -4279,6 +4375,85 @@ mod tests {
             "#4188: the new position implies the SAME cohort, so the un-sweep must \
              short-circuit rather than clear-and-re-stamp: {:?}",
             diagnostics.move_unswept_inherited_cohort
+        );
+        assert!(
+            diagnostics.move_swept_under_tombstone.is_empty(),
+            "#4204: and the sweep must not fire either. The subject is still \
+             tombstoned (the un-sweep short-circuited, so nothing cleared it), which \
+             is exactly the case `sweep_move_under_tombstoned_ancestor`'s \
+             live-subject guard declines — a sweep reported here is a cascade that \
+             stamped rows the materializer left alone: {:?}",
+            diagnostics.move_swept_under_tombstone
+        );
+    }
+
+    /// The recovery MIRROR of `unsweep_short_circuits_a_move_within_one_cohort_4188`
+    /// (`crate::materializer::handlers::move_convergence_tests`) — the half of
+    /// that pair this arm was missing, and the absence that let #4204's widened
+    /// ancestor probe trash a live block on boot repair.
+    ///
+    /// Same fixture as the test above plus ONE row: `G`, created under `B`
+    /// AFTER `P`'s delete, so it is LIVE under a tombstone before the move ever
+    /// runs (a peer adding a child to a block another device concurrently
+    /// deleted). Then `Move(B → SUB)`, both endpoints in `P`'s ONE cohort.
+    ///
+    /// The materializer answers "`G` stays live" twice over: the un-sweep
+    /// short-circuits (`SUB` already carries `t`, so `B`'s tombstone is never
+    /// cleared), and `sweep_move_under_tombstoned_ancestor`'s live-subject
+    /// guard then declines a subject whose own row is still tombstoned. Both
+    /// guards must hold HERE too, and they are independent: the probe's `?2`
+    /// widening makes `tombstoned_ancestor` `Some` for a subject the sweep must
+    /// not touch, so the sweep needs its own reason to stay quiet — the
+    /// un-sweep having actually CLEARED. Without that gate this cascade stamps
+    /// `G` at `t` and a boot rebuild silently moves a live block into the
+    /// trash, in exactly the lockstep the un-sweep exists to preserve.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recover_move_within_one_cohort_leaves_a_live_orphan_alone_4188() {
+        let (pool, _dir) = test_pool().await;
+        const T0: i64 = 1_767_225_600_000;
+
+        seed_create_op(&pool, 1, "P", None, T0 + 1).await;
+        seed_create_op(&pool, 2, "B", Some("P"), T0 + 2).await;
+        seed_create_op(&pool, 3, "SUB", Some("P"), T0 + 3).await;
+        seed_delete_op(&pool, 4, "P", T0 + 4).await;
+        // Created AFTER the cascade, so it never saw it: live under a tombstone.
+        seed_create_op(&pool, 5, "G", Some("B"), T0 + 5).await;
+        seed_move_op(&pool, 6, "B", "SUB", T0 + 6).await;
+
+        let mut conn = pool.acquire().await.unwrap();
+        let diagnostics = recover_blocks_from_op_log(&mut conn, /* deleted_at_is_ms */ true)
+            .await
+            .unwrap();
+        drop(conn);
+
+        assert_eq!(parent_of(&pool, "B").await.as_deref(), Some("SUB"));
+        for id in ["P", "SUB", "B"] {
+            assert_eq!(
+                deleted_at_ms(&pool, id).await,
+                Some(T0 + 4),
+                "precondition: the move stays WITHIN one cohort, so every row the \
+                 delete caught keeps that cohort's ts ({id})"
+            );
+        }
+        assert_eq!(
+            deleted_at_ms(&pool, "G").await,
+            None,
+            "#4204: the PRE-EXISTING live orphan is none of this move's business. \
+             The materializer leaves it live (short-circuit, then the sweep's \
+             live-subject guard); recovery is the third interpreter of the same op \
+             (#2894) and must agree, or a boot rebuild puts a live block in the trash"
+        );
+        assert!(
+            diagnostics.move_unswept_inherited_cohort.is_empty(),
+            "#4188: the new position implies the SAME cohort, so the un-sweep \
+             short-circuits: {:?}",
+            diagnostics.move_unswept_inherited_cohort
+        );
+        assert!(
+            diagnostics.move_swept_under_tombstone.is_empty(),
+            "#4204: and with nothing cleared, the subject is still tombstoned — the \
+             case the materializer's sweep declines outright: {:?}",
+            diagnostics.move_swept_under_tombstone
         );
     }
 

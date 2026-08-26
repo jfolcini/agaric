@@ -1432,10 +1432,15 @@ pub async fn reproject_block_tags_from_engine(
 /// tombstoned is routed to the engine-LESS `apply_move_block_sql_only` by
 /// `resolve_block_space`'s `deleted_at IS NULL` filter. Its SQL clear is
 /// therefore undone by the next import through this very branch — #4204's
-/// finding 3, pinned by
-/// `unsweep_does_not_yet_reach_the_engine_register_4204` and awaiting that
-/// issue's maintainer ruling, because the durable form is a CRDT-visible
-/// resurrection propagated to the deleting peer.
+/// finding 3, pinned by `unsweep_does_not_yet_reach_the_engine_register_4204`.
+/// The SEMANTICS are settled (the maintainer ruling of 2026-08-26 adopts the
+/// resurrection —
+/// <https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>);
+/// what is missing is the durable plumbing, a #2868-shaped post-commit fan-out
+/// via `resolve_soft_deleted_block_space`. The canonical statement of that gap
+/// — why it cannot be closed from either move arm, and what closing it takes —
+/// lives on [`crate::apply::sql_only::unsweep_inherited_cohort_after_move`];
+/// this comment names only the branch that undoes the clear.
 ///
 /// * `Some(ts)` — the block is deleted on the remote. Cascade-soft-
 ///   delete the block + every still-active descendant at `ts` (via

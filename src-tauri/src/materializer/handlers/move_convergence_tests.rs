@@ -1873,6 +1873,18 @@ async fn sweep_does_not_leave_the_tags_cache_over_counting_4200() {
 /// `record.created_at` (`apply_op_tx`'s `DeleteBlock` arm), not from #1549's
 /// monotonic `next_delete_ms`, so overriding the field is exactly what the
 /// production cascade will read.
+///
+/// The override is IN MEMORY ONLY. `append_local_op` has already written the
+/// `op_log` row with its wall-clock `created_at`, and this does not go back and
+/// rewrite it — so the forced-distinct `t1`/`t2` exist on the `OpRecord`
+/// values these tests hand to `replay`, and nowhere in the database. That is
+/// sound for what these tests assert (they are about the op path, which reads
+/// the cohort ts off the record it is given), but it means the fixture is NOT
+/// reproducible by any DB-driven replay: a boot recovery over the same
+/// `op_log` would read the two wall-clock stamps and could see `t1 == t2`. The
+/// recovery-arm mirrors of these shapes therefore build their own op rows with
+/// explicit `created_at` values rather than reusing this helper — see the
+/// `seed_delete_op` / `seed_move_op` fixtures in `crate::db::recovery`'s tests.
 async fn append_delete_at(
     pool: &SqlitePool,
     block_id: &str,
@@ -2175,9 +2187,13 @@ fn engine_deleted_at(
 ///    re-trashes the subtree.
 ///
 /// The durable answer is a post-commit fan-out in the shape of #2868's purge
-/// fix (`resolve_soft_deleted_block_space` + a mirror dispatch), and it is a
-/// CRDT-visible resurrection propagated to the deleting peer — exactly the
-/// product call #4204 is holding a maintainer ruling for.
+/// fix (`resolve_soft_deleted_block_space` + a mirror dispatch). The semantics
+/// it would propagate — a CRDT-visible resurrection reaching the DELETING peer
+/// — are ruled ON, not pending: see the maintainer ruling of 2026-08-26
+/// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>)
+/// and the canonical statement of the gap on
+/// `agaric_engine::apply::sql_only::unsweep_inherited_cohort_after_move`. So
+/// what this test measures is an unwritten fan-out, not an undecided question.
 ///
 /// This is the one test in the file that runs the post-commit fan-out (see
 /// [`replay_with_fanout`]), because the register is what it is about.

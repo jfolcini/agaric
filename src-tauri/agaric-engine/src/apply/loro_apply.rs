@@ -705,8 +705,17 @@ pub async fn apply_delete_block_via_loro(
 /// durable fix is a post-commit fan-out in the shape of #2868's purge fix —
 /// resolve the space with
 /// [`agaric_store::space::resolve_soft_deleted_block_space`] and mirror the
-/// clear — and it is exactly the CRDT-visible resurrection #4204 is holding a
-/// maintainer ruling for, so it is not bolted on here.
+/// clear.
+///
+/// That it is a CRDT-visible resurrection propagated to the DELETING peer is
+/// no longer a reason to hold: the maintainer ruling of 2026-08-26 adopts
+/// exactly that semantics
+/// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>).
+/// It is not bolted on here for the structural reason above — this arm never
+/// sees a tombstoned subject, so the mirror has no call site here to live at —
+/// and the fan-out is a post-commit concern outside this function either way.
+/// The canonical statement of the gap is on
+/// [`super::sql_only::unsweep_inherited_cohort_after_move`].
 pub async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
