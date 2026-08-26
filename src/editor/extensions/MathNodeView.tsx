@@ -23,6 +23,8 @@ import { type NodeViewProps, NodeViewWrapper } from '@tiptap/react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
+
 // Lazy-load KatexMath so KaTeX (+ its CSS) loads only when a math node renders.
 const KatexMath = lazy(() =>
   import('@/components/rendering/KatexMath').then((m) => ({ default: m.KatexMath })),
@@ -45,7 +47,7 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
   // close over a render that may predate the user's edits) always reads the
   // current value.
   const latexRef = useRef(latex)
-  latexRef.current = latex
+  useSyncLatestRef(latexRef, latex)
   const deletedRef = useRef(false)
 
   // Close the source editor. #2453 — a whitespace-only atom has no canonical
@@ -69,7 +71,7 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
     setShowSource(false)
   }
   const closeSourceRef = useRef(closeSource)
-  closeSourceRef.current = closeSource
+  useSyncLatestRef(closeSourceRef, closeSource)
 
   // Finding 44 — while the LaTeX source field is shown:
   //  - focus it (revealing it via the rendered-math button preventDefaults the

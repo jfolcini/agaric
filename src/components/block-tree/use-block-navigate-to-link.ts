@@ -16,6 +16,7 @@ import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
@@ -187,7 +188,7 @@ export function useBlockNavigateToLink({
 
   // Keep ref in sync with the latest handleNavigate so consumers
   // captured at first render still call into the up-to-date callback.
-  handleNavigateRef.current = handleNavigate
+  useSyncLatestRef(handleNavigateRef, handleNavigate)
 
   return { handleNavigate, handleNavigateRef }
 }

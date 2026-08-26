@@ -69,6 +69,7 @@ import { cleanupOrphanedPopups } from '@/editor/suggestion-renderer'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import type { DocNode } from '@/editor/types'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
@@ -705,39 +706,39 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // time but the refs always point to the current versions, preventing
   // stale closures inside NodeViews.
   const resolveTagNameRef = useRef(resolveTagName)
-  resolveTagNameRef.current = resolveTagName
+  useSyncLatestRef(resolveTagNameRef, resolveTagName)
   // #921 — the placeholder is computed live per focused block (template hint vs
   // slash-command hint) but the editor is created once, so a captured string
   // froze at creation. Keep it in a ref and read it via Placeholder's function
   // form so the decoration reflects the CURRENT placeholder on every render.
   const placeholderRef = useRef(placeholder)
-  placeholderRef.current = placeholder
+  useSyncLatestRef(placeholderRef, placeholder)
   const resolveBlockTitleRef = useRef(resolveBlockTitle)
-  resolveBlockTitleRef.current = resolveBlockTitle
+  useSyncLatestRef(resolveBlockTitleRef, resolveBlockTitle)
   const onNavigateRef = useRef(onNavigate)
-  onNavigateRef.current = onNavigate
+  useSyncLatestRef(onNavigateRef, onNavigate)
   const onTagClickRef = useRef(onTagClick)
-  onTagClickRef.current = onTagClick
+  useSyncLatestRef(onTagClickRef, onTagClick)
   const onCreatePageRef = useRef(onCreatePage)
-  onCreatePageRef.current = onCreatePage
+  useSyncLatestRef(onCreatePageRef, onCreatePage)
   const onCreateTagRef = useRef(onCreateTag)
-  onCreateTagRef.current = onCreateTag
+  useSyncLatestRef(onCreateTagRef, onCreateTag)
   const onSlashCommandRef = useRef(onSlashCommand)
-  onSlashCommandRef.current = onSlashCommand
+  useSyncLatestRef(onSlashCommandRef, onSlashCommand)
   const onPropertySelectRef = useRef(onPropertySelect)
-  onPropertySelectRef.current = onPropertySelect
+  useSyncLatestRef(onPropertySelectRef, onPropertySelect)
   const onCheckboxRef = useRef(onCheckbox)
-  onCheckboxRef.current = onCheckbox
+  useSyncLatestRef(onCheckboxRef, onCheckbox)
   const searchBlockRefsRef = useRef(options.searchBlockRefs ?? (async () => [] as PickerItem[]))
-  searchBlockRefsRef.current = options.searchBlockRefs ?? (async () => [] as PickerItem[])
+  useSyncLatestRef(searchBlockRefsRef, options.searchBlockRefs ?? (async () => [] as PickerItem[]))
   const searchTagsRef = useRef(searchTags)
-  searchTagsRef.current = searchTags
+  useSyncLatestRef(searchTagsRef, searchTags)
   const searchPagesRef = useRef(searchPages)
-  searchPagesRef.current = searchPages
+  useSyncLatestRef(searchPagesRef, searchPages)
   const searchSlashCommandsRef = useRef(searchSlashCommands)
-  searchSlashCommandsRef.current = searchSlashCommands
+  useSyncLatestRef(searchSlashCommandsRef, searchSlashCommands)
   const searchPropertyKeysRef = useRef(searchPropertyKeys)
-  searchPropertyKeysRef.current = searchPropertyKeys
+  useSyncLatestRef(searchPropertyKeysRef, searchPropertyKeys)
 
   // #726 — build the extensions array EXACTLY ONCE and keep its identity stable
   // across renders. `@tiptap/react`'s `useEditor` (called below with the default
@@ -1164,7 +1165,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // The two `activeBlockId` / `originalMarkdown` getters read from refs, so
   // they remain live regardless of memo freshness — consumers that need
   // up-to-date values either read them via the getters or capture the
-  // handle in a ref (e.g. `src/components/editor/EditableBlock.tsx:273`, `src/components/editor/BlockTree.tsx:504`).
+  // handle in a ref (e.g. `src/components/editor/EditableBlock.tsx:286`, `src/components/editor/BlockTree.tsx:505`).
   //
   // Without this, every parent re-render produced a fresh handle object
   // that propagated to `SortableBlockWrapper` and defeated its `React.memo`

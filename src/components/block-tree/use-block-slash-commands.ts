@@ -44,6 +44,7 @@ import { useSlashCommandStructural } from '@/components/block-tree/use-block-sla
 import { useSlashCommandTemplate } from '@/components/block-tree/use-block-slash-commands/useSlashCommandTemplate'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { addRecentCommand, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
 
 export type {
@@ -149,7 +150,7 @@ export function useBlockSlashCommands({
     openPropertyDrawer,
     tables,
   })
-  inputsRef.current = {
+  useSyncLatestRef(inputsRef, {
     rootParentId,
     rovingEditor,
     pageStore,
@@ -162,7 +163,7 @@ export function useBlockSlashCommands({
     openEmojiPicker,
     openPropertyDrawer,
     tables,
-  }
+  })
 
   const handleSlashCommand = useCallback(
     async (item: PickerItem) => {

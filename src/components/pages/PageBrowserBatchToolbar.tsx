@@ -48,6 +48,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useStarredPages } from '@/hooks/useStarredPages'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
@@ -144,7 +145,7 @@ export function PageBrowserBatchToolbar({
   // merely emptied, `mountedRef` because the last render before an unmount
   // still carried the old (non-zero) count.
   const selectedCountRef = useRef(selectedIds.length)
-  selectedCountRef.current = selectedIds.length
+  useSyncLatestRef(selectedCountRef, selectedIds.length)
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true

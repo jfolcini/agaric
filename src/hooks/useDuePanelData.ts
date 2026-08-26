@@ -32,6 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { useToday } from '@/hooks/useToday'
 import { formatDate } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
@@ -225,7 +226,7 @@ export function useDuePanelData({
   // `blocks` in its deps array. Updated on every render to stay in sync
   // with the latest committed state.
   const blocksRef = useRef<BlockRow[]>(blocks)
-  blocksRef.current = blocks
+  useSyncLatestRef(blocksRef, blocks)
   // #1531 — request token guarding `fetchBlocks` (loadMore) against a
   // date/source/space/invalidation change that lands mid-pagination. The main
   // fetch effect bumps it; `fetchBlocks` captures it at call time and discards

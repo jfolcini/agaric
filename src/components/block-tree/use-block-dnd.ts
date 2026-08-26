@@ -24,6 +24,7 @@ import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
 import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
 import { useAutoScrollOnDrag } from '@/hooks/useAutoScrollOnDrag'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { logger } from '@/lib/logger'
 import { consumePreDragFocus } from '@/lib/pre-drag-focus'
 import {
@@ -172,7 +173,7 @@ export function useBlockDnD({
   useAutoScrollOnDrag(scrollContainerRef ?? fallbackRef, !!activeId)
 
   const rovingEditorRef = useRef(rovingEditor)
-  rovingEditorRef.current = rovingEditor
+  useSyncLatestRef(rovingEditorRef, rovingEditor)
 
   // #923 — the block that was being edited when the drag began. `handleDragStart`
   // clears focus (flush + setFocused(null)); if the drag is then CANCELLED (Esc)

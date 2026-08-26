@@ -11,6 +11,8 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
+
 export interface UseListMultiSelectOptions<T> {
   items: T[]
   getItemId: (item: T) => string
@@ -49,13 +51,13 @@ export function useListMultiSelect<T>({
   // Keep a ref to `selected` so handleRowClick can read current state without
   // adding `selected` to its dependency array (avoids re-creating on every change).
   const selectedRef = useRef(selected)
-  selectedRef.current = selected
+  useSyncLatestRef(selectedRef, selected)
 
   // Read `items` via a ref inside toggleSelection so its identity stays
   // stable across paginated loads — memoized children (rows) won't re-render
   // just because the items array reference changed.
   const itemsRef = useRef(items)
-  itemsRef.current = items
+  useSyncLatestRef(itemsRef, items)
 
   const isSelectable = useCallback(
     (item: T): boolean => (filterPredicate ? filterPredicate(item) : true),

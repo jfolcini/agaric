@@ -67,6 +67,7 @@ import { Fragment, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { cn } from '@/lib/utils'
 
 /** Items above this count collapse middle crumbs into the overflow popover. */
@@ -254,7 +255,7 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
   // `data-breadcrumb-overflow-item` attribute already on each button, looks
   // up the matching item, and dispatches its `onSelect`.
   const itemsRef = useRef(items)
-  itemsRef.current = items
+  useSyncLatestRef(itemsRef, items)
   const listRef = useRef<HTMLDivElement | null>(null)
   const handleListClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null

@@ -21,6 +21,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import {
   DEBOUNCE_MS,
   ensureBlockPropertyEventsListener,
@@ -107,7 +108,7 @@ export function useScopedBlockPropertyEvents(
   options: UseScopedBlockPropertyEventsOptions,
 ): UseBlockPropertyEventsReturn {
   const ownsBlockRef = useRef(options.ownsBlock)
-  ownsBlockRef.current = options.ownsBlock
+  useSyncLatestRef(ownsBlockRef, options.ownsBlock)
 
   const [invalidationKey, setInvalidationKey] = useState(0)
 

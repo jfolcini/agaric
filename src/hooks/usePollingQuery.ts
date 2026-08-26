@@ -14,6 +14,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
+
 export interface UsePollingQueryOptions {
   /** Polling interval in milliseconds. */
   intervalMs: number
@@ -51,7 +53,7 @@ export function usePollingQuery<T>(
   const [error, setError] = useState<string | null>(null)
 
   const optionsRef = useRef(options)
-  optionsRef.current = options
+  useSyncLatestRef(optionsRef, options)
 
   // #755 — stale-response guard (same pattern as usePaginatedQuery's
   // requestIdRef). For fixed-params polling a stale write self-corrects

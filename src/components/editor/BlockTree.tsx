@@ -70,6 +70,7 @@ import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useScopedBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useLazyRovingEditor } from '@/hooks/useLazyRovingEditor'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportWindow } from '@/hooks/useViewportWindow'
 import { unwrap } from '@/lib/app-error'
@@ -463,7 +464,7 @@ export function BlockTree({
   // preserves #1063's visible-only range-select semantics without the closure
   // dependency.
   const visibleIdsRef = useRef(visibleIds)
-  visibleIdsRef.current = visibleIds
+  useSyncLatestRef(visibleIdsRef, visibleIds)
 
   // ── Enter-creates-block refs ───────────────────────────────────────
   const justCreatedBlockIds = useRef(new Set<string>())

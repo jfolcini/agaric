@@ -21,6 +21,7 @@ import type { Event } from '@tauri-apps/api/event'
 import { listen } from '@tauri-apps/api/event'
 import { useEffect, useRef } from 'react'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { logger } from '@/lib/logger'
 
 export interface UseTauriEventListenerOptions {
@@ -81,9 +82,9 @@ export function useTauriEventListener<T = unknown>(
 
   // Keep the refs current on every render so the registered listener
   // always calls the latest handler / onError without re-subscribing.
-  handlerRef.current = handler
-  onErrorRef.current = onError
-  onSubscribedRef.current = onSubscribed
+  useSyncLatestRef(handlerRef, handler)
+  useSyncLatestRef(onErrorRef, onError)
+  useSyncLatestRef(onSubscribedRef, onSubscribed)
 
   useEffect(() => {
     if (!enabled) return

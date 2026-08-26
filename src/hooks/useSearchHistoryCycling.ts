@@ -25,6 +25,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
+
 export interface SearchHistoryCycling {
   /** Bind to the input's `onKeyDown`. Returns true when consumed. */
   handleKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => boolean
@@ -61,8 +63,8 @@ export function useSearchHistoryCycling(
   // effect can ignore self-driven changes (otherwise every cycle
   // snaps us back to typing mode).
   const lastSelfWriteRef = useRef<string | null>(null)
-  historyRef.current = history
-  queryRef.current = query
+  useSyncLatestRef(historyRef, history)
+  useSyncLatestRef(queryRef, query)
 
   // When the user edits the input outside the hook's own writes,
   // snap back to typing mode so the next `↑` reseeds from the

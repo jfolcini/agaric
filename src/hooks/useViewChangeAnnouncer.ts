@@ -33,6 +33,7 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { announce } from '@/lib/announcer'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { useNavigationStore } from '@/stores/navigation'
@@ -45,7 +46,7 @@ export function useViewChangeAnnouncer(): void {
   // re-trigger an announcement (the effect's only real dependency is the
   // view itself).
   const tRef = useRef(t)
-  tRef.current = t
+  useSyncLatestRef(tRef, t)
 
   useEffect(() => {
     if (isFirstRender.current) {

@@ -1,14 +1,3 @@
-/**
- * useSearchResults — the SearchPanel results pipeline.
- *
- * FE-A18 (continues) — extracted from the SearchPanel
- * god-component. Owns the AST→IPC projection, the paginated `searchBlocks`
- * query, the inline regex-error derive, breadcrumb (page-title)
- * resolution, page grouping + collapse state, the roving keyboard-nav
- * model, and result/recent-page navigation. Behaviour-preserving lift:
- * every memo/effect dependency array and the comments that justify them
- * are unchanged from the inline version.
- */
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import type React from 'react'
 import {
@@ -28,6 +17,18 @@ import { astFilterParams } from '@/components/SearchPanel/searchFilterParams'
 import { useTagResolution } from '@/components/SearchPanel/useTagResolution'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+/**
+ * useSearchResults — the SearchPanel results pipeline.
+ *
+ * FE-A18 (continues) — extracted from the SearchPanel
+ * god-component. Owns the AST→IPC projection, the paginated `searchBlocks`
+ * query, the inline regex-error derive, breadcrumb (page-title)
+ * resolution, page grouping + collapse state, the roving keyboard-nav
+ * model, and result/recent-page navigation. Behaviour-preserving lift:
+ * every memo/effect dependency array and the comments that justify them
+ * are unchanged from the inline version.
+ */
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { isAppError, isCancellation, type TypedAppError, validationCode } from '@/lib/app-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
@@ -179,7 +180,7 @@ export function useSearchResults({
   // Held in a ref too so the stable `setItems` setter can target this exact cache
   // entry without re-deriving the key (mirrors usePageBrowserData / TrashView).
   const queryKeyRef = useRef(queryKey)
-  queryKeyRef.current = queryKey
+  useSyncLatestRef(queryKeyRef, queryKey)
 
   // NEW-3 — fire when there is a free-text pattern OR at least one structural
   // filter (filter-only search). #717 — HOLD while tag name→id resolution is in

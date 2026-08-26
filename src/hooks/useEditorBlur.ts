@@ -23,6 +23,7 @@ import type { StoreApi } from 'zustand'
 
 import { shouldSplitOnBlur } from '@/editor/content-delta'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { logger } from '@/lib/logger'
 import { runUnmountFlush } from '@/lib/unmount-flush'
 import type { PageBlockState } from '@/stores/page-blocks'
@@ -87,7 +88,7 @@ export function useEditorBlur(params: {
   // Store rovingEditor in a ref to avoid stale closures — the handle's
   // object identity changes on every render.
   const rovingEditorRef = useRef(params.rovingEditor)
-  rovingEditorRef.current = params.rovingEditor
+  useSyncLatestRef(rovingEditorRef, params.rovingEditor)
 
   const handleBlur = useCallback(
     (e: React.FocusEvent) => {

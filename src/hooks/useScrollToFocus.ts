@@ -27,6 +27,8 @@
 
 import { useEffect, useRef } from 'react'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
+
 export interface UseScrollToFocusOptions {
   /**
    * Forwarded to `scrollIntoView`. Omit to inherit the browser default
@@ -58,7 +60,7 @@ export function useScrollToFocus(
   // narrow (`[targetId]`). Without this, an inline `{ behavior: 'smooth' }`
   // object literal would re-fire the effect on every render.
   const optionsRef = useRef<UseScrollToFocusOptions | undefined>(options)
-  optionsRef.current = options
+  useSyncLatestRef(optionsRef, options)
 
   useEffect(() => {
     if (targetId == null) return

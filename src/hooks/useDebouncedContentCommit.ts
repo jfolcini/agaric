@@ -65,6 +65,7 @@ import type { RefObject } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
@@ -90,7 +91,7 @@ export function useDebouncedContentCommit(params: {
   // Read the latest `isFocused` inside the identity-stable `schedule` without
   // rebuilding it every render (which would churn EditableBlock's registration).
   const isFocusedRef = useRef(isFocused)
-  isFocusedRef.current = isFocused
+  useSyncLatestRef(isFocusedRef, isFocused)
 
   // Extracted so both the debounce timer AND the export "flush now" bridge
   // (#2969) share exactly one commit implementation.

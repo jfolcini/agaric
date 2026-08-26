@@ -35,6 +35,7 @@ import { useTranslation } from 'react-i18next'
 
 import { pageSortWireFor, type SortOption } from '@/hooks/usePageBrowserSort'
 import { usePageDelete } from '@/hooks/usePageDelete'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import {
   isAppError,
   isCancellation,
@@ -154,7 +155,7 @@ export function usePageBrowserData({
     [currentSpaceId, sortOption, wireFilters],
   )
   const queryKeyRef = useRef(queryKey)
-  queryKeyRef.current = queryKey
+  useSyncLatestRef(queryKeyRef, queryKey)
 
   const {
     data,
@@ -446,7 +447,7 @@ export function usePageBrowserData({
   // `setDisplayTotalCount`) outside the updater makes the path idempotent
   // under React StrictMode's double-invoke.
   const setPagesSnapshotRef = useRef(pages)
-  setPagesSnapshotRef.current = pages
+  useSyncLatestRef(setPagesSnapshotRef, pages)
   const setPagesForDelete = useCallback(
     (updater: (prev: BlockRow[]) => BlockRow[]) => {
       // E15 — the count decrement must NOT live inside the `setPages`

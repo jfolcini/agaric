@@ -37,6 +37,7 @@ import {
 } from '@/components/block-tree/use-block-slash-commands/helpers'
 import type { SlashCommandContext } from '@/components/block-tree/use-block-slash-commands/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { type BlockCommandHandler, registerBlockCommandTarget } from '@/lib/block-command-bus'
@@ -93,7 +94,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   // Internal ref to access the latest rovingEditor without adding it to
   // every dependency array (matches original BlockTree behaviour).
   const rovingEditorRef = useRef(rovingEditor)
-  rovingEditorRef.current = rovingEditor
+  useSyncLatestRef(rovingEditorRef, rovingEditor)
 
   // #713 / #1250 — every handler below acts on the block the bus resolved as
   // owned by THIS tree's page store: the focus-keyed `dispatchBlockCommand`

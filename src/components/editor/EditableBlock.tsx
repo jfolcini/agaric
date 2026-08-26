@@ -18,6 +18,7 @@ import { useDebouncedContentCommit } from '@/hooks/useDebouncedContentCommit'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { retryOnPoolBusy } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
@@ -270,19 +271,31 @@ function EditableBlockInner({
   // object identity changes on every render; `content` is only needed as the
   // initial value passed to `mount()` — a content change while the editor is
   // already mounted should not trigger a re-mount.
+  // NOT routed through `useSyncLatestRef` — deliberately, and this is the one
+  // site in #4377 phase 2 that is held back. Converting it clears this
+  // `react/refs` warning but UNMASKS an error-level
+  // `react-hooks/exhaustive-deps` finding on the cleanup at the `setOnUpdate`
+  // effect below ("the ref's value `.current` is accessed directly in the
+  // effect cleanup function"): the inline write suppresses that rule's
+  // cleanup check for this ref, the hook call does not. The finding is latent
+  // today, not introduced by the conversion — proven by converting this line
+  // alone against an otherwise-unmodified file. Resolving it means capturing
+  // the handle in a local at effect time, which is a behaviour change on the
+  // editor update subscription and belongs in its own change, not in a
+  // refactor.
   const rovingEditorRef = useRef(rovingEditor)
   rovingEditorRef.current = rovingEditor
   const contentRef = useRef(content)
-  contentRef.current = content
+  useSyncLatestRef(contentRef, content)
   const editRef = useRef(edit)
-  editRef.current = edit
+  useSyncLatestRef(editRef, edit)
   const splitBlockRef = useRef(splitBlock)
-  splitBlockRef.current = splitBlock
+  useSyncLatestRef(splitBlockRef, splitBlock)
   // Same "read but don't re-run" reasoning as above — a mocked/wrapped
   // `usePageBlockStoreApi` may not be referentially stable across renders
   // (e.g. in tests), so its identity must not gate the auto-mount effect.
   const pageStoreApiRef = useRef(pageStoreApi)
-  pageStoreApiRef.current = pageStoreApi
+  useSyncLatestRef(pageStoreApiRef, pageStoreApi)
 
   // ── Draft autosave + content commit: driven by the editor update signal ──
   // #2938 — both are armed by a change SIGNAL from the editor's `update` event

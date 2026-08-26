@@ -31,6 +31,7 @@ import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import {
   createMarkToggles,
@@ -129,7 +130,7 @@ export function SelectionBubbleMenu({
   const virtualAnchorRef = useRef<{ getBoundingClientRect: () => DOMRect }>({
     getBoundingClientRect: () => new DOMRect(),
   })
-  virtualAnchorRef.current = {
+  useSyncLatestRef(virtualAnchorRef, {
     getBoundingClientRect: () => {
       // #3061 — Radix calls this closure repeatedly (layout/scroll/resize)
       // for as long as the link popover stays open, not just once at click
@@ -146,7 +147,7 @@ export function SelectionBubbleMenu({
       const coords = editor.view.coordsAtPos(range.from)
       return new DOMRect(coords.left, coords.top, 0, coords.bottom - coords.top)
     },
-  }
+  })
 
   const state = useEditorState({
     editor,

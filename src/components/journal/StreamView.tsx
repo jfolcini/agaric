@@ -48,6 +48,7 @@ import { useDayMountWindow } from '@/hooks/useDayMountWindow'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { STREAM_BATCH_DAYS, useStreamDates } from '@/hooks/useStreamDates'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import type { DayEntry } from '@/lib/date-utils'
 import { formatDate, formatJournalTitle } from '@/lib/date-utils'
 
@@ -111,9 +112,9 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
   // Latest loadOlder in a ref so the observer callback never goes stale
   // without forcing the observer to tear down on every page-map change.
   const loadOlderRef = useRef(loadOlder)
-  loadOlderRef.current = loadOlder
+  useSyncLatestRef(loadOlderRef, loadOlder)
   const loadingOlderRef = useRef(loadingOlder)
-  loadingOlderRef.current = loadingOlder
+  useSyncLatestRef(loadingOlderRef, loadingOlder)
 
   useEffect(() => {
     if (loading || reachedEnd) return

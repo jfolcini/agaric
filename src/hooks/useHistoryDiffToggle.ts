@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
@@ -22,15 +23,15 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
   // every toggle). Functional setState forms below remain the source of truth
   // for writes.
   const expandedKeysRef = useRef(expandedKeys)
-  expandedKeysRef.current = expandedKeys
+  useSyncLatestRef(expandedKeysRef, expandedKeys)
   const diffCacheRef = useRef(diffCache)
-  diffCacheRef.current = diffCache
+  useSyncLatestRef(diffCacheRef, diffCache)
   // Mirror keyFn into a ref too: callers pass a freshly-allocated inline arrow
   // every render, so depending on keyFn identity would churn handleToggleDiff
   // each render and defeat downstream memoization. The ref always holds the
   // latest keyFn while keeping the callback identity stable.
   const keyFnRef = useRef(keyFn)
-  keyFnRef.current = keyFn
+  useSyncLatestRef(keyFnRef, keyFn)
 
   const handleToggleDiff = useCallback(async (entry: HistoryEntry) => {
     const key = keyFnRef.current(entry)

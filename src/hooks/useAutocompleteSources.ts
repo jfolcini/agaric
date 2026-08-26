@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { isCancellation } from '@/lib/app-error'
 import type { AutocompleteItem } from '@/lib/autocomplete-item'
 import { logger } from '@/lib/logger'
@@ -154,7 +155,7 @@ export function useAutocompleteSources(
   // object identity and needlessly re-runs the effect for the active key,
   // re-firing the idempotent value-fetch each time.
   const selectOptionsRef = useRef(selectOptions)
-  selectOptionsRef.current = selectOptions
+  useSyncLatestRef(selectOptionsRef, selectOptions)
 
   // Phase 4.M3 — shared race-discard hook. The guard bumps on
   // every tag-anchor activation AND on every keystroke while active;

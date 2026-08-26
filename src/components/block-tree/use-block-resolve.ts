@@ -15,6 +15,7 @@ import { matchSorter } from 'match-sorter'
 import { useCallback, useEffect, useRef } from 'react'
 
 import type { PickerItem } from '@/editor/SuggestionList'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { TagCacheRow } from '@/lib/bindings'
@@ -87,10 +88,10 @@ export interface UseBlockResolveReturn {
    *     helper alone misses four and searching the binding alone misses
    *     five. There are NINE creation sites outside
    *     `onCreatePage`: eight do not register, one does
-   *     (`src/components/block-tree/use-block-date-picker.ts:180`, the #4319 site above).
+   *     (`src/components/block-tree/use-block-date-picker.ts:181`, the #4319 site above).
    *  2. THE EIGHT CANNOT REGISTER — they did not forget to.
    *     `useBlockResolve()` has exactly one caller
-   *     (`src/components/editor/BlockTree.tsx:494`), and every one of the eight sits above or
+   *     (`src/components/editor/BlockTree.tsx:495`), and every one of the eight sits above or
    *     beside `BlockTree`: ancestors (`useJournalBlockCreation` via
    *     `JournalPage`/`StreamView`, `App.tsx`, `useAppKeyboardShortcuts`),
    *     sibling subtrees with no BlockTree at all (`usePageCreation` in
@@ -1080,7 +1081,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
   const cache = useResolveStore((s) => s.cache)
 
   const cacheRef = useRef(cache)
-  cacheRef.current = cache
+  useSyncLatestRef(cacheRef, cache)
 
   // Local ref for pagesListRef used in searchPages caching. Lazily
   // filled by `searchPagesViaCache` (scoped to the space active at

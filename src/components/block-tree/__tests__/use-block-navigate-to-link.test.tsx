@@ -12,6 +12,8 @@ import type { TFunction } from 'i18next'
 import { useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
+
 // #2927 phase 5 — the hook now calls the generated `commands.getBlock`, so
 // mocking only the `@/lib/tauri` wrapper no longer intercepts. Back the
 // generated surface instead, resolving the same typed-result envelope `unwrap`
@@ -77,9 +79,9 @@ interface HarnessParams {
 
 function useHarness(params: HarnessParams) {
   const rovingEditorRef = useRef<RovingEditorHandle | null>(params.rovingEditor)
-  rovingEditorRef.current = params.rovingEditor
+  useSyncLatestRef(rovingEditorRef, params.rovingEditor)
   const handleFlushRef = useRef<() => string | null>(params.handleFlush)
-  handleFlushRef.current = params.handleFlush
+  useSyncLatestRef(handleFlushRef, params.handleFlush)
 
   return useBlockNavigateToLink({
     rovingEditorRef,

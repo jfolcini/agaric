@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { Command, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import type { AutocompleteItem } from '@/lib/autocomplete-item'
 
 /** Real DOM ids of the rendered listbox + currently-highlighted option,
@@ -120,11 +121,14 @@ export function AutocompletePopover({
   const virtualRef = useRef<Measurable>({
     getBoundingClientRect: () => anchorRect ?? new DOMRect(),
   })
-  virtualRef.current = useMemo<Measurable>(
-    () => ({
-      getBoundingClientRect: () => anchorRect ?? new DOMRect(),
-    }),
-    [anchorRect],
+  useSyncLatestRef(
+    virtualRef,
+    useMemo<Measurable>(
+      () => ({
+        getBoundingClientRect: () => anchorRect ?? new DOMRect(),
+      }),
+      [anchorRect],
+    ),
   )
 
   // Track the popover content node so we can read cmdk's generated ids

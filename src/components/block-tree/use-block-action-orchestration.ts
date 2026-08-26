@@ -8,6 +8,7 @@ import type { DocNode } from '@/editor/types'
 import { pmEndOfFirstBlock } from '@/editor/types'
 import type { DeleteBlockOpts } from '@/editor/use-block-keyboard'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -245,7 +246,7 @@ export function useBlockActionOrchestration({
   t,
 }: UseBlockActionOrchestrationParams): UseBlockActionOrchestrationReturn {
   const rovingEditorRef = useRef(rovingEditor)
-  rovingEditorRef.current = rovingEditor
+  useSyncLatestRef(rovingEditorRef, rovingEditor)
 
   // Tracks the post-merge setTextSelection setTimeout so we can cancel it on
   // unmount. Without this, a late-firing callback could call

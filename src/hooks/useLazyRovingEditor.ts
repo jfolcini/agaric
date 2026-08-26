@@ -48,6 +48,7 @@ import type {
   RovingEditorHandle,
   RovingEditorOptions,
 } from '@/editor/use-roving-editor'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import type { EditorSurfaceComponent } from '@/types/editor-surface'
 
 const LazyRovingEditorHost = lazy(() =>
@@ -94,7 +95,7 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
   const pendingMountRef = useRef<PendingMount | null>(null)
   const pendingOnUpdateRef = useRef<(() => void) | null>(null)
   const liveHandleRef = useRef<RovingEditorHandle | null>(null)
-  liveHandleRef.current = liveHandle
+  useSyncLatestRef(liveHandleRef, liveHandle)
 
   const requestLoad = useCallback(() => setShouldLoad(true), [])
 

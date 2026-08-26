@@ -44,6 +44,7 @@ import type { RefObject } from 'react'
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 
 import type { PickerItem } from '@/editor/SuggestionList'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 
 /** Maps each editor event name to its handler signature. */
 export interface EditorEventHandlers {
@@ -133,7 +134,7 @@ export function useEditorEventDispatch(): EditorEventDispatch {
   // It points at the stable `flush` thunk, so the ref identity AND its current
   // value are both stable across renders.
   const flushRef = useRef<EditorEventHandlers['flush']>(thunks.flush)
-  flushRef.current = thunks.flush
+  useSyncLatestRef(flushRef, thunks.flush)
 
   // Single post-commit sync. Reads the handlers staged this render and
   // publishes them (or their defaults) to the backing refs. No dependency

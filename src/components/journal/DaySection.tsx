@@ -20,6 +20,7 @@ import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { useSyncLatestRef } from '@/hooks/useSyncLatestRef'
 import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
 import type { DayEntry } from '@/lib/date-utils'
 import { formatDate } from '@/lib/date-utils'
@@ -146,7 +147,7 @@ function useControlledViewportEntry(
 ): React.RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement | null>(null)
   const onEnterRef = useRef(onEnter)
-  onEnterRef.current = onEnter
+  useSyncLatestRef(onEnterRef, onEnter)
 
   useEffect(() => {
     if (!enabled || hasEntered) return
