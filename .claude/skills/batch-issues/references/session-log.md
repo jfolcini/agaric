@@ -1,7 +1,8 @@
 # Session log — numbering, format, and plan-issue bookkeeping
 
-Create one file per session at `docs/session-log/session-NNN-<slug>.md`. `NNN` is an
-unused number in the window **`(max, max + GAP_BOUND]`**, no zero-padding, where
+Create one file per session at `docs/session-log/session-NNNN-<slug>.md`. `NNNN` is an
+unused number in the window **`(max, max + GAP_BOUND]`**, no zero-padding — the digit
+count above just matches today's live numbers, not a fixed width — where
 `GAP_BOUND` is 10 (`scripts/check-session-log-numbering.sh`). `max + 1` is the number
 to take when nothing else is in flight; the window exists so several parallel PRs can
 each hold a distinct valid number instead of every one renumbering the moment a sibling
@@ -46,10 +47,10 @@ what failed or required correction. There is no required metadata table or struc
 section format — the purpose of a session log is to preserve knowledge rather than to
 record metrics.
 
-The `# Session NNN — <title>` heading is the first line of the file — a real H1, one `#`,
+The `# Session NNNN — <title>` heading is the first line of the file — a real H1, one `#`,
 and nothing above it. This is enforced: the `session-log-numbering` pre-commit guard greps
 for `^#[[:space:]]+Session[[:space:]]+[0-9]+` in the staged file and rejects the commit
-with "no '# Session NNN' heading found" if it is missing, so a `##` heading aborts the
+with "no '# Session NNNN' heading found" if it is missing, so a `##` heading aborts the
 commit.
 
 ### Typical structure
@@ -103,9 +104,15 @@ NNNNN passed**, 1 expected fail, 37 skipped. `tsc -b` clean; `oxlint` clean acro
 changed files."]
 ```
 
-Every block above is a placeholder, including the counts under Verification. They are
-bracketed on purpose: an earlier draft of this file carried session 1401's real figures
-there, which an author filling in the obvious blanks would have published as their own.
+Only the bracketed spans above are unwritten placeholders. Everything else in the
+block — the heading, its number, its title, the opening paragraph (`#4338` included),
+and the section titles — is session 1401's real, already-published content, kept
+unbracketed here so the example shows what a log's voice and shape actually looks like.
+It is not a template to fill in: give your own session its own number, title, opening
+paragraph, and section names, and don't carry over any of the surrounding prose. An
+earlier draft of this file made exactly this mistake with the Verification counts,
+which an author filling in only the bracketed blanks would have republished as their
+own; the same risk applies to the unbracketed heading and opening above.
 
 ## Plan-issue bookkeeping
 
@@ -119,8 +126,9 @@ there, which an author filling in the obvious blanks would have published as the
 **Keep docs/FEATURE-MAP.md in sync:** if the session added commands, components, hooks,
 stores, or database tables, update the relevant section.
 
-## Sessions 801–846 and history
+## Archives
 
-Sessions 801–846 already migrated to per-session files; sessions 1–800 remain in the two
-archive files (`docs/session-log/2024-2025.md`, `docs/session-log/2026-sessions-401-800.md`)
-— frozen historical records, never edited.
+Sessions 1–800 live in two archive files (`docs/session-log/2024-2025.md`,
+`docs/session-log/2026-sessions-401-800.md`) — frozen historical records, never edited.
+Session 801 onward is one file per session in this directory, as described above; that
+range has no fixed upper bound, so it is deliberately not restated here as a number.
