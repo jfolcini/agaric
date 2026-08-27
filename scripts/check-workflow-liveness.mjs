@@ -236,15 +236,6 @@ export function runStartedAt(run, workflow) {
 }
 
 /**
- * Classifies one watched workflow from its `schedule`-event run list.
- *
- * Returns a `result` string consumed by `file-scheduled-failures.mjs`, where
- * ONLY the literal `'success'` counts as healthy (`isFailing` there). Every
- * other string is a failure and is rendered verbatim in the tracking issue's
- * status table, so the detail (age, conclusion) travels with the signal while
- * dedup still keys on the workflow name alone.
- */
-/**
  * Filters, times and sorts one workflow's `schedule`-event runs newest-first —
  * the exact selection `classifyWorkflow` and `newestCompletedRunId` (#4400)
  * must never disagree about, since the latter names the run the former's
@@ -252,8 +243,21 @@ export function runStartedAt(run, workflow) {
  * independent copies of "which run is newest" are two copies that can drift,
  * which is the same class of scanner-desync `stripComments`'s docstring
  * warns about, just between functions instead of within one.
+ *
+ * That is also why the corrupt-payload refusal lives HERE rather than in each
+ * caller (#4440 review): `classifyWorkflow` threw on a non-array while
+ * `newestCompletedRunId` returned `null` for the same payload, and null is
+ * the "no run to point at" value the filer's `advanceStreaks` HOLDS on — so a
+ * caller reading only the run id would have taken corrupt data for a quiet
+ * week. Every reader of this selection now refuses the same input, which is
+ * the posture the rest of this file takes: unknown is not green.
  */
 function orderedRuns({ runs, workflow, excludeRunId }) {
+  if (!Array.isArray(runs)) {
+    throw new Error(
+      `${workflow}: the run list is not a JSON array — refusing to assume it is healthy`,
+    )
+  }
   return runs
     .filter(
       (r) => excludeRunId === undefined || String(r?.databaseId ?? '') !== String(excludeRunId),
@@ -267,12 +271,20 @@ function orderedRuns({ runs, workflow, excludeRunId }) {
     .toSorted((a, b) => b.startedAtMs - a.startedAtMs)
 }
 
+/**
+ * Classifies one watched workflow from its `schedule`-event run list.
+ *
+ * Returns a `result` string consumed by `file-scheduled-failures.mjs`, where
+ * ONLY the literal `'success'` counts as healthy (`isFailing` there). Every
+ * other string is a failure and is rendered verbatim in the tracking issue's
+ * status table, so the detail (age, conclusion) travels with the signal while
+ * dedup still keys on the workflow name alone.
+ *
+ * A payload that is not an array of runs THROWS (in `orderedRuns`) rather
+ * than classifying: `Date.parse('nonsense')` is NaN and every `NaN > limit`
+ * is false, so anything swallowed here reads as fresh and healthy.
+ */
 export function classifyWorkflow({ runs, nowMs, workflow, maxAgeHours, excludeRunId }) {
-  if (!Array.isArray(runs)) {
-    throw new Error(
-      `${workflow}: the run list is not a JSON array — refusing to assume it is healthy`,
-    )
-  }
   const considered = orderedRuns({ runs, workflow, excludeRunId })
 
   if (considered.length === 0) {
@@ -307,9 +319,14 @@ export function classifyWorkflow({ runs, nowMs, workflow, maxAgeHours, excludeRu
  * explicit "no run to point at", which that counter must hold on rather than
  * either advance or reset from, exactly like `--skipped-ok`'s `carriedOverJobs`
  * treats "it did not run" as neither a failure nor a recovery.
+ *
+ * Which is exactly why a corrupt payload must NOT come back as null here: a
+ * null is a positive claim that there is no run to point at, and the counter
+ * holds on it, so "the JSON was not a run list" would arrive as a quiet week
+ * (#4440 review). `orderedRuns` throws on that input for every caller — this
+ * function no longer has a return path for data it could not read.
  */
 export function newestCompletedRunId({ runs, workflow, excludeRunId }) {
-  if (!Array.isArray(runs)) return null
   const completed = orderedRuns({ runs, workflow, excludeRunId }).find(
     (r) => r.status === 'completed',
   )
@@ -809,6 +826,15 @@ function selfTestClassification({ check }) {
   // Unusable data throws; it never reads as fresh. `Date.parse('nonsense')` is
   // NaN and every `NaN > limit` is false, so a swallowed parse error here
   // would classify a year-dead cron as healthy.
+  //
+  // Each case requires this file's OWN refusal — every guard here prefixes
+  // the workflow name — not merely that something threw. Two of these
+  // payloads make `runs.filter` raise a bare `TypeError` all by themselves,
+  // so `threw !== null` is true whether the guard exists or not: deleting the
+  // array check left this assertion green (found by mutation-testing it while
+  // fixing #4440's note 4). An assertion satisfied by an accident of the
+  // language is not coverage of a guard.
+  const refusedBy = (err) => err !== null && err.message.startsWith('w.yml: ')
   for (const [label, runs] of [
     ['a run with no createdAt', [{ databaseId: 1, status: 'completed', conclusion: 'success' }]],
     [
@@ -824,7 +850,36 @@ function selfTestClassification({ check }) {
     } catch (err) {
       threw = err
     }
-    check(threw !== null, `classification rejects ${label}`, 'no throw — would read as healthy')
+    check(
+      refusedBy(threw),
+      `classification rejects ${label}`,
+      threw === null
+        ? 'no throw — would read as healthy'
+        : `not this file’s guard: ${threw.message}`,
+    )
+
+    // #4440 review — and so does the OTHER reader of the same selection.
+    // `newestCompletedRunId` used to answer `null` for a payload
+    // `classifyWorkflow` refused, and null is not "unreadable": it is the
+    // explicit "no completed run to point at" that the filer's
+    // `advanceStreaks` HOLDS on. A caller reading only the run id would have
+    // taken corrupt data for a quiet week — the fail-open posture the rest of
+    // this file rejects. Unreachable through `buildResults` today (the
+    // `result` property is evaluated first and throws), which is precisely
+    // why it needs an assertion of its own rather than the end-to-end one.
+    let idThrew = null
+    try {
+      newestCompletedRunId({ runs, workflow: 'w.yml' })
+    } catch (err) {
+      idThrew = err
+    }
+    check(
+      refusedBy(idThrew),
+      `\`newestCompletedRunId\` rejects ${label} too, rather than answering "no run to point at"`,
+      idThrew === null
+        ? 'no throw — a corrupt payload would read as a held streak'
+        : `not this file’s guard: ${idThrew.message}`,
+    )
   }
 }
 

@@ -360,26 +360,36 @@ export function parseKnownLanes(body) {
  * recover) or reset it to "first failure" (data the pre-existing tracked set
  * already refutes).
  *
- * `migrated` is the third state, and it is load-bearing rather than
- * decorative. Two DIFFERENT priors both have no run identity, and the body
- * still distinguishes them even though `{ count, runId }` alone does not:
+ * `migrated` is the third state. It records WHICH of two identity-less priors
+ * a line is — a distinction the body makes and `{ count, runId }` alone does
+ * not:
  *
  *   - a BARE line: some run was observed and counted, and the old format had
  *     nowhere to write down which one;
  *   - a post-#4400 `job|1|` line: this script recorded the lane while there
- *     was no completed run to name at all (`never-ran`/`stale` — see
- *     `newestCompletedRunId`), so nothing has been counted against a run yet.
+ *     was no completed run to name at all (`never-ran`/`no-completed-run` —
+ *     see `newestCompletedRunId`), so nothing has been counted against a run
+ *     yet.
  *
- * Collapsing the two is a real over-count. The first post-merge poll of a
- * migrated lane sees a real run id, which differs from `null`, and would
- * advance the counter to 2 with no new run having happened — the same
- * already-counted run counted twice, i.e. precisely the "a REPEATED
- * observation must not be misread as a NEW one" defect `advanceStreaks`
- * exists to refuse, reintroduced through the migration door. So the flag is
- * carried here, where the distinction is still visible in the text, and
- * `advanceStreaks` holds that first poll instead (see its `migrated` branch).
- * The flag never round-trips: the moment that poll adopts an identity, the
- * line is rewritten as `job|count|runId` and parses as an ordinary entry.
+ * Both must HOLD rather than advance when a real run id first shows up, and
+ * `advanceStreaks` treats them as one rule for that reason (see its
+ * identity-less branch): advancing either counts a failure that was never
+ * observed — for the bare line the same already-counted run counted twice,
+ * for the `job|1|` line a first observation counted as a second. That is the
+ * "a REPEATED observation must not be misread as a NEW one" defect
+ * `advanceStreaks` exists to refuse, reached through the migration door and
+ * through the never-ran door respectively.
+ *
+ * So the flag does NOT steer that decision — the null `runId` does — and it
+ * is deliberately kept anyway, for two reasons. It keeps the body honest
+ * about provenance: a bare line is one this script did not write, and
+ * `buildIssueBody` renders a held migrated entry back BARE so an unrelated
+ * lane's body rewrite cannot silently relabel it as this script's own
+ * output. And it keeps the two priors SEPARABLE: if the rule for one is ever
+ * re-litigated, the other does not change with it by accident. The flag
+ * stops appearing the moment the lane adopts an identity — the line is then
+ * rewritten as `job|count|runId` and parses as an ordinary entry — but until
+ * then it round-trips as itself.
  *
  * The `|` split is UNGUARDED against a job id that itself contains a `|`
  * (here and in `parseKnownLanes`), and deliberately so — the invariant is
@@ -515,29 +525,49 @@ export function escalationThreshold(periodHours) {
  * duplicating it here would either double-comment or need the two paths
  * reconciled for no benefit.
  *
- * A MIGRATED prior (`prior.migrated` — a pre-#4400 bare marker line, see
- * `parseKnownStreaks`) is the one case where a real, comparable identity does
- * NOT advance the counter. Its `count: 1` already stands for a run that was
- * observed and counted under the old format, which simply had nowhere to
- * record WHICH run; on the first poll after this ships, the run this lane is
- * failing on is overwhelmingly likely to be that same one (the watchdog polls
- * daily, the lane it is migrating runs weekly). Advancing would count it
- * twice. So this poll ADOPTS the observed id as the identity of the failure
- * already counted, holds the count, and reports the lane in `advanced` — not
- * because it advanced, but because the adoption has to reach the issue body:
- * `advanced` is what earns a `'sync'` verdict, and a `'noop'` would leave the
- * line bare, re-adopt next poll, and stall the counter at 1 forever.
+ * An IDENTITY-LESS prior — one whose `runId` is null, i.e. whose `count`
+ * stands for a failure no run id was ever written down for — is the one case
+ * where a real, comparable identity does NOT advance the counter. It ADOPTS
+ * the observed id as the identity of the failure already counted, holds the
+ * count, and reports the lane in `advanced` — not because it advanced, but
+ * because the adoption has to reach the issue body: `advanced` is what earns
+ * a `'sync'` verdict, and a `'noop'` would leave the line identity-less,
+ * re-adopt next poll, and stall the counter forever.
  *
- * The alternative — let the migration over-count by one — was considered and
- * rejected. It is tempting because the lane that motivated #4400 (#3388) has
- * already burned three weeks, so escalating a week early looks like a favour.
- * But the favour is worth exactly one week, once, on one lane, and the price
- * is a permanent one: the rendered body would say "2 in a row" about one run,
- * which is a false statement in reader-facing prose, and the counter's whole
- * contract — a count is a count of DISTINCT observed runs — would have an
- * unwritten exception in it. Escalating early also fails in the expensive
- * direction: `escalationThreshold`'s own doc prices a week of extra silence
- * as much cheaper than a comment that teaches readers to expect noise.
+ * Two priors are identity-less, and the rule is the same for both because the
+ * fact is the same for both — nothing has been counted against a nameable run:
+ *
+ *   - a pre-#4400 BARE marker line (`prior.migrated`, see
+ *     `parseKnownStreaks`): its `count: 1` stands for a run that was observed
+ *     and counted under the old format, which simply had nowhere to record
+ *     WHICH run; on the first poll after this ships, the run this lane is
+ *     failing on is overwhelmingly likely to be that same one (the watchdog
+ *     polls daily, the lane it is migrating runs weekly), so advancing would
+ *     count it twice;
+ *   - a `job|N|` line THIS script wrote while the lane had no completed run
+ *     to point at at all (`never-ran`/`no-completed-run` — see
+ *     `newestCompletedRunId` in `check-workflow-liveness.mjs`, which reports
+ *     null rather than guessing). Its count was recorded against no run, so
+ *     the first genuinely observed failing run is the FIRST counted one, not
+ *     the second.
+ *
+ * The second case is the one this rule was widened to cover (#4440 review):
+ * advancing there makes a weekly lane that was `never-ran` when first tracked
+ * escalate after TWO observed failing runs, a week earlier than the N=3 the
+ * rendered body promises its reader, and — worse than the week — the count
+ * stops meaning "distinct observed failing runs" for precisely the lanes this
+ * watchdog exists for (#3388 was `never-ran` when it was first tracked).
+ *
+ * The alternative — let an identity-less prior over-count by one — was
+ * considered and rejected. It is tempting because the lane that motivated
+ * #4400 (#3388) has already burned three weeks, so escalating a week early
+ * looks like a favour. But the favour is worth exactly one week, once, and
+ * the price is a permanent one: the rendered body would say "2 in a row"
+ * about one run, which is a false statement in reader-facing prose, and the
+ * counter's whole contract — a count is a count of DISTINCT observed runs —
+ * would have an unwritten exception in it. Escalating early also fails in the
+ * expensive direction: `escalationThreshold`'s own doc prices a week of extra
+ * silence as much cheaper than a comment that teaches readers to expect noise.
  */
 export function advanceStreaks({ currentFailing, laneById, known, fallbackRunId }) {
   const streaks = new Map(known)
@@ -579,11 +609,21 @@ export function advanceStreaks({ currentFailing, laneById, known, fallbackRunId 
     // the fail-open this whole guard is here to refuse.
     if (runId === null || String(runId) === String(prior.runId)) continue
 
-    // A pre-#4400 bare line: adopt this run as the identity of the failure
-    // its `count: 1` already stands for, and hold. See the doc comment above
-    // — the adoption is pushed to `advanced` so that it is PERSISTED, not
-    // because the count moved.
-    if (prior.migrated) {
+    // An IDENTITY-LESS prior — a pre-#4400 bare line, or a `job|N|` line this
+    // script wrote while the lane had no completed run to name. Adopt this run
+    // as the identity of the failure its count already stands for, and HOLD.
+    // See the doc comment above for why both cases are the same rule; the
+    // adoption is pushed to `advanced` so that it is PERSISTED, not because
+    // the count moved.
+    //
+    // `== null` (permitted by this repo's `eqeqeq` config, which ignores
+    // null) rather than `=== null`: an entry built by a caller that simply
+    // omitted `runId` is identity-less in exactly the same way, and the
+    // alternative is that it falls through to the advance branch — where
+    // `String(undefined)` matches no persisted id and the counter ticks once
+    // per poll. Identity-less is classified POSITIVELY here for that reason;
+    // the advance below runs only on a prior that really does name a run.
+    if (prior.runId == null) {
       streaks.set(job, { count: prior.count, runId })
       advanced.push(job)
       continue
@@ -655,9 +695,11 @@ export function rollBackSuppressedEscalations(streaks, known, suppressed) {
  *                and says it (see `rollBackSuppressedEscalations`).
  *   'sync'     — either some lane recovered, or a still-failing lane's
  *                persisted streak state changed without crossing its
- *                threshold — it observed a new distinct run, or (once, on the
- *                first poll after #4400 shipped) a migrated lane adopted a
- *                run identity for its already-counted failure: rewrite the
+ *                threshold — it observed a new distinct run, or an
+ *                identity-less lane (a pre-#4400 bare line, or one first
+ *                tracked while it had no completed run to name) adopted a run
+ *                identity for the failure its count already stands for and
+ *                HELD, rather than advancing: rewrite the
  *                body (so a recovered lane stops being named, or so the
  *                counter — crossed-but-not-yet-there, or merely identified —
  *                is actually persisted for next time; see `advanceStreaks`),
@@ -805,7 +847,29 @@ export function buildIssueBody({
   out.push(
     ...all.map((j) => {
       const s = streaks.get(j)
-      return s ? `${j}|${s.count}|${s.runId ?? ''}` : j
+      if (!s) return j
+      // A MIGRATED entry is written back BARE — the format it came in as.
+      //
+      // `parseKnownStreaks` mints `migrated` for a line with NO `|` at all,
+      // so rendering one as `job|1|` reads back as an ordinary identity-less
+      // entry and the flag is gone. That erasure needs no poll of its own to
+      // happen: any OTHER lane advancing rewrites the whole body, and this
+      // lane's provenance is destroyed as a side effect of someone else's
+      // news (#4440 review — two weekly lanes, one held with no run to adopt,
+      // one adopting, verdict `'sync'`, body rewritten).
+      //
+      // Bare is a LOSSLESS round trip and the `|` form is not: a migrated
+      // entry is minted in exactly one place, with `count: 1` and
+      // `runId: null`, and `advanceStreaks` either holds it unchanged or
+      // replaces it with an ordinary adopted entry — so `job` re-reads as
+      // the identical `{ count: 1, runId: null, migrated: true }`.
+      //
+      // A lane can stay bare across many polls (a daily one is past its N=1
+      // threshold, so `advanceStreaks` skips it before it can adopt). That
+      // costs nothing: its count can never move either way, and a lane whose
+      // count CAN move rewrites the line the first poll it sees a run id.
+      if (s.migrated) return j
+      return `${j}|${s.count}|${s.runId ?? ''}`
     }),
   )
   out.push('```')
@@ -2903,22 +2967,21 @@ function selfTestEscalation({ check }) {
   // the other half of requirement #1, and the specific case
   // `newestCompletedRunId` was built to report honestly rather than fall
   // back to "assume it is the same as last time" or "assume it is new".
-  {
-    const neverRan = { [lane]: { result: 'never-ran (…)', runId: null, periodHours: 168 } }
-    const created = drive(neverRan, '', 'OPEN')
-    const b = writtenBody(created, '')
-    check(
-      parseKnownStreaks(b).get(lane)?.count === 1,
-      'a lane with no completed run to point at (`runId: null`) still notifies once, at count 1',
-      JSON.stringify([...parseKnownStreaks(b)]),
-    )
-    const repeat = drive(neverRan, b, 'OPEN')
-    check(
-      repeat.length === 0 && parseKnownStreaks(b).get(lane)?.count === 1,
-      'repeated `runId: null` observations never advance the counter, even though the poll keeps happening',
-      JSON.stringify(repeat),
-    )
-  }
+  //
+  // Split out (same cyclomatic-complexity reason as `selfTestMigration`) so
+  // it can carry the whole life of such a lane — including what its FIRST
+  // real run means, which is where the counter's contract with the reader is
+  // actually decided.
+  selfTestNeverRanFirstTracking({
+    check,
+    drive,
+    seqOf,
+    writtenBody,
+    allText,
+    announcesEscalation,
+    lane,
+    failing,
+  })
 
   // MIGRATION — the one path production takes exactly once, on the first poll
   // after this ships. Split out for the same cyclomatic-complexity reason as
@@ -2935,6 +2998,12 @@ function selfTestEscalation({ check }) {
     lane,
     failing,
   })
+
+  // …and the migration state has to survive a body rewrite it did not cause.
+  // `selfTestMigration`'s lane is the ONLY lane in its issue, so nothing there
+  // ever rewrites the body while that lane is still holding — a single-lane
+  // fixture cannot express this at all (#4440 review).
+  selfTestMigrationSurvivesRewrite({ check, drive, seqOf, writtenBody, lane })
 
   // A full recovery clears the tracked streak state, not just the tracked
   // lane set — and a LATER relapse starts the counter over at 1, never
@@ -3138,6 +3207,158 @@ function selfTestMigration({
     seqOf(third) === 'edit,comment' && /3 consecutive observed failures/.test(thirdComment),
     'a migrated lane escalates on its third DISTINCT observed run — no earlier',
     `${seqOf(third)} :: ${thirdComment}`,
+  )
+}
+
+/**
+ * #4440 review — the migration state has to survive a body rewrite that a
+ * DIFFERENT lane caused.
+ *
+ * `buildIssueBody` renders the marker block from `streaks`, and a held
+ * migrated prior has no run id to render, so writing it in the `job|count|
+ * runId` format produces `job|1|` — which `parseKnownStreaks` reads back as
+ * an ordinary identity-less entry with the flag gone. The over-count the
+ * `migrated` state exists to refuse would then re-enter through the RENDERER
+ * rather than the parser.
+ *
+ * TWO lanes are the point of this fixture, not incidental to it. The rewrite
+ * is not something a held lane can trigger on its own — holding is a `'noop'`
+ * — so it takes a second lane whose own adoption earns the `'sync'` that
+ * rewrites the body. Both are weekly, both are pre-#4400 bare lines, and the
+ * one under test has no completed run to point at, which is the state a
+ * newly-watched weekly workflow is in for its first days.
+ */
+function selfTestMigrationSurvivesRewrite({ check, drive, seqOf, writtenBody, lane }) {
+  const other = 'codeql.yml'
+  const bare = buildIssueBody({ all: [lane, other], lanes: [], runUrl: '' })
+  check(
+    parseKnownStreaks(bare).get(lane)?.migrated === true &&
+      parseKnownStreaks(bare).get(other)?.migrated === true,
+    'two-lane migration fixture: both lanes really are pre-#4400 bare lines',
+    JSON.stringify([...parseKnownStreaks(bare)]),
+  )
+
+  // The first post-merge poll. `other` is failing on a real completed run, so
+  // it adopts that id — an `advanced` entry, hence a `'sync'`, hence a body
+  // REWRITE. `lane` has nothing to adopt and is HELD, untouched by anything
+  // that happened this poll except the rewrite itself.
+  const poll = drive(
+    {
+      [lane]: { result: 'never-ran (…)', runId: null, periodHours: 168 },
+      [other]: { result: 'failure (x)', runId: 43000001, periodHours: 168 },
+    },
+    bare,
+    'OPEN',
+  )
+  check(
+    seqOf(poll) === 'edit',
+    'the adopting lane’s sync rewrites the body (the event that puts the held lane at risk)',
+    seqOf(poll),
+  )
+  const rewritten = writtenBody(poll, bare)
+  const held = parseKnownStreaks(rewritten).get(lane)
+  check(
+    held?.migrated === true && held?.count === 1 && held?.runId === null,
+    'the HELD lane survives another lane’s rewrite as a MIGRATED prior, not as `lane|1|`',
+    `${JSON.stringify(held)} :: ${rewritten.slice(rewritten.indexOf(MARKER_START), rewritten.indexOf(MARKER_END))}`,
+  )
+  check(
+    parseKnownStreaks(rewritten).get(other)?.runId === '43000001',
+    'negative control: the ADOPTING lane really was rewritten in the new format (the body did change)',
+    JSON.stringify([...parseKnownStreaks(rewritten)]),
+  )
+
+  // And the consequence that makes the flag worth carrying: the held lane's
+  // first real run is still an ADOPTION, not an advance. Read the prior back
+  // as an ordinary entry and this counts a run nobody observed — a weekly
+  // lane at 2 after one observed failing run.
+  const firstReal = drive(
+    {
+      [lane]: { result: 'failure (x)', runId: 43000002, periodHours: 168 },
+      [other]: { result: 'failure (x)', runId: 43000001, periodHours: 168 },
+    },
+    rewritten,
+    'OPEN',
+  )
+  const adopted = parseKnownStreaks(writtenBody(firstReal, rewritten)).get(lane)
+  check(
+    adopted?.count === 1 && adopted?.runId === '43000002',
+    'after the rewrite, the held lane still ADOPTS its first real run at count 1 rather than advancing to 2',
+    JSON.stringify(adopted),
+  )
+}
+
+/**
+ * #4440 review — a lane FIRST TRACKED while it had no completed run to point
+ * at (`never-ran`/`no-completed-run`, `runId: null`), for its whole life.
+ *
+ * The first half is requirement #1 of #4400: an absent observation is neither
+ * a failure nor a recovery, so repeated null-identity polls neither advance
+ * nor reset. The second half is the one the body's prose depends on. Such a
+ * lane is persisted as `lane|1|` — a count recorded against NO run — so
+ * treating its first genuinely observed failing run as a second observation
+ * escalates a weekly lane after two real failing runs, one week earlier than
+ * the N=3 the rendered body promises its reader, and quietly redefines what
+ * the count counts. The `never-ran` start is not a corner case here: it is
+ * how every newly-watched weekly workflow begins, and how #3388 itself began.
+ */
+function selfTestNeverRanFirstTracking({
+  check,
+  drive,
+  seqOf,
+  writtenBody,
+  allText,
+  announcesEscalation,
+  lane,
+  failing,
+}) {
+  const neverRan = { [lane]: { result: 'never-ran (…)', runId: null, periodHours: 168 } }
+  const created = drive(neverRan, '', 'OPEN')
+  const b = writtenBody(created, '')
+  check(
+    parseKnownStreaks(b).get(lane)?.count === 1,
+    'a lane with no completed run to point at (`runId: null`) still notifies once, at count 1',
+    JSON.stringify([...parseKnownStreaks(b)]),
+  )
+  const repeat = drive(neverRan, b, 'OPEN')
+  check(
+    repeat.length === 0 && parseKnownStreaks(b).get(lane)?.count === 1,
+    'repeated `runId: null` observations never advance the counter, even though the poll keeps happening',
+    JSON.stringify(repeat),
+  )
+
+  // The first run that actually completes and fails. It is this lane's FIRST
+  // observed failing run, so the count it is counted into is 1 — the id is
+  // adopted, the count holds, and the adoption is persisted (`'sync'`).
+  const firstReal = drive(failing(42000001), b, 'OPEN')
+  const afterFirst = writtenBody(firstReal, b)
+  const adopted = parseKnownStreaks(afterFirst).get(lane)
+  check(
+    seqOf(firstReal) === 'edit' && adopted?.count === 1 && adopted?.runId === '42000001',
+    'the first genuinely observed failing run ADOPTS its id and HOLDS at 1 (it is the first, not the second)',
+    `${seqOf(firstReal)} :: ${JSON.stringify(adopted)}`,
+  )
+
+  // Second real run: 2, and silent — this is the assertion that fails if the
+  // adoption above were an advance, because the lane would already be at 3
+  // and escalating here.
+  const secondReal = drive(failing(42000002), afterFirst, 'OPEN')
+  const afterSecond = writtenBody(secondReal, afterFirst)
+  check(
+    !announcesEscalation(allText(secondReal)) &&
+      parseKnownStreaks(afterSecond).get(lane)?.count === 2,
+    'negative control: the SECOND real run reaches 2 and does not escalate',
+    `${JSON.stringify([...parseKnownStreaks(afterSecond)])} :: ${allText(secondReal)}`,
+  )
+
+  // Third real run: three DISTINCT observed failing runs, which is what the
+  // body promises N is — no earlier, and no later.
+  const thirdReal = drive(failing(42000003), afterSecond, 'OPEN')
+  const thirdComment = thirdReal.find((c) => c.sub === 'comment')?.body ?? ''
+  check(
+    seqOf(thirdReal) === 'edit,comment' && /3 consecutive observed failures/.test(thirdComment),
+    'a never-ran-when-first-tracked lane escalates on its THIRD real run — the N the body promises',
+    `${seqOf(thirdReal)} :: ${thirdComment}`,
   )
 }
 
