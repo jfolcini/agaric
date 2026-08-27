@@ -27,7 +27,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e-tauri": "wdio run wdio.conf.ts",
-  "test:e2e-android": "node scripts/android-e2e-safe-area.mjs",
+    "test:e2e-android": "node scripts/android-e2e-safe-area.mjs",
     "typecheck": "tsc -b --noEmit",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json",
     "typecheck:e2e-tauri": "tsc -p tsconfig.wdio.json",

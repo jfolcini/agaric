@@ -35,6 +35,18 @@
 // about itself. A test that asked the app where it thought it was would pass
 // on exactly the builds that are broken.
 //
+// WHAT RUNS THIS — DOCUMENTED, NOT PINNED
+// ---------------------------------------
+// Nothing automatic runs this. `npm run test:e2e-android` is a manual,
+// hardware-gated entry point: it needs a real device or emulator attached over
+// adb, so no CI workflow invokes it — unlike `test:e2e-tauri`, which has
+// `.github/workflows/e2e-tauri-weekly.yml` behind it. Say the consequence out
+// loud rather than let the PR title imply otherwise: as things stand #4301 is
+// DOCUMENTED, not PINNED. Nothing will go red if it regresses; the regression
+// is caught only when a human runs this against a device. Do that after
+// touching MainActivity.kt, the mobile header, or anything else that moves the
+// app's top edge.
+//
 // Usage:
 //   node scripts/android-e2e-safe-area.mjs [--apk <path>] [--serial <id>] [--pkg <id>]
 //
@@ -55,6 +67,16 @@ import { existsSync } from 'node:fs'
  */
 let PKG = 'com.agaric.app'
 const ACTIVITY_CLASS = 'com.agaric.app.MainActivity'
+
+// ── the UI strings this drives on ────────────────────────────────────
+//
+// These are HARDCODED ENGLISH LITERALS copied from `src/lib/i18n/common.ts`.
+// A plain .mjs script cannot import a .ts module, so nothing keeps the two in
+// step: renaming a key's value there, or running against a device whose locale
+// is not English, silently turns every lookup below into "not found". Rather
+// than build a pipeline to share them, the failure paths that use them SAY SO
+// (see `waitForApp`) — a wrong answer that explains how it could be wrong is
+// worth more here than one that is merely confident.
 
 /** `t('sidebar.openMenu')` in `src/lib/i18n/common.ts` — the hamburger's aria-label. */
 const MENU_LABEL = 'Open navigation menu'
@@ -78,6 +100,9 @@ const ONBOARDING_DISMISS = 'Got it'
 const READY_TIMEOUT_MS = 40_000
 const POLL_MS = 750
 
+/** `uiautomator dump` can only write to the device's filesystem, not to ours. */
+const DUMP_PATH = '/sdcard/agaric-e2e.xml'
+
 // ── adb plumbing ─────────────────────────────────────────────────────
 
 let SERIAL = null
@@ -92,7 +117,29 @@ function adb(args, { allowFail = false } = {}) {
   }
 }
 
+/**
+ * Delete the scratch dump from the device.
+ *
+ * Called on EVERY exit path, not just the happy one: a failing run used to
+ * leave `/sdcard/agaric-e2e.xml` behind on someone's phone, and a stale file is
+ * worse than litter — `dumpNodes` tolerates a failed `uiautomator dump` and
+ * then `cat`s whatever is there, so a leftover from an earlier run reads as the
+ * current screen. Best-effort by construction: cleanup must never mask the
+ * diagnosis on its way out.
+ */
+function removeDump() {
+  if (!SERIAL) return
+  try {
+    adb(['shell', 'rm', '-f', DUMP_PATH], { allowFail: true })
+  } catch {
+    // Ignored on purpose — see above.
+  }
+}
+
 function fail(message, detail) {
+  // `process.exit` below skips any pending `finally`, so clean up here rather
+  // than relying on the caller's.
+  removeDump()
   console.error(`\n✗ ${message}`)
   if (detail) console.error(detail)
   process.exit(1)
@@ -145,11 +192,20 @@ function readSafeRect() {
   const wanted = new Set(['statusBars', 'navigationBars', 'displayCutout'])
   const inset = { left: 0, top: 0, right: 0, bottom: 0 }
 
+  // `InsetsSource` lines as they appear in the dump, whatever their shape. Used
+  // only to tell a PARSER problem from a DEVICE STATE one below.
+  const rawSourceLines = section
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('InsetsSource'))
+
   const re =
     /InsetsSource id=\S+ type=(\w+) frame=\[(\d+),(\d+)\]\[(\d+),(\d+)\] visible=(true|false)[^\n]*?sideHint=(\w+)/g
   let m
+  let parsed = 0
   let sources = 0
   while ((m = re.exec(section)) !== null) {
+    parsed += 1
     const [, type, l, t, r, b, visible, side] = m
     if (!wanted.has(type) || visible !== 'true') continue
     const rect = { left: +l, top: +t, right: +r, bottom: +b }
@@ -161,10 +217,36 @@ function readSafeRect() {
     else if (side === 'LEFT') inset.left = Math.max(inset.left, rect.right)
     else if (side === 'RIGHT') inset.right = Math.max(inset.right, display.width - rect.left)
   }
+  // Two very different failures used to share one message. `dumpsys window` is
+  // a debugging dump, not an API: its wording drifts between Android versions.
+  // If the regex above stops matching, "no visible inset sources" is a lie that
+  // sends the reader to fiddle with the device's display settings, when what
+  // actually needs changing is this file. Separate them.
+  if (parsed === 0) {
+    fail(
+      'could not parse ANY `InsetsSource` line out of `dumpsys window`',
+      [
+        '  This is a PARSER mismatch, not a device state: `dumpsys window` is an',
+        '  unstable debugging format and its wording changes between Android',
+        '  versions. Update the regex in readSafeRect() to match this device.',
+        '',
+        rawSourceLines.length > 0
+          ? `  a line it could not parse:\n    ${rawSourceLines[0]}`
+          : '  the dump contains no `InsetsSource` lines at all — the whole section may have been renamed.',
+      ].join('\n'),
+    )
+  }
   if (sources === 0) {
     fail(
       'no visible system-bar inset sources found',
-      'the device may be in an immersive/fullscreen state — this test needs the normal bars shown.',
+      [
+        `  ${parsed} \`InsetsSource\` line(s) parsed cleanly, but none was both visible`,
+        `  and of a type this test wants (${[...wanted].join(', ')}).`,
+        '',
+        '  Most likely the device is in an immersive/fullscreen state — this test',
+        '  needs the normal bars shown. If the bars ARE visible, check whether the',
+        '  platform renamed those types.',
+      ].join('\n'),
     )
   }
 
@@ -182,6 +264,22 @@ function readSafeRect() {
 
 // ── app truth: where the app's views actually are ────────────────────
 
+/**
+ * The device's UI locale (e.g. `en-US`, `es_ES`), or null if unreadable.
+ *
+ * Only consulted when a lookup has already failed: every string this script
+ * matches on is an English literal, so a device set to anything else fails
+ * every one of them, and that is worth naming before the reader goes hunting
+ * through `adb logcat` for an app that is working perfectly.
+ */
+function deviceLocale() {
+  for (const prop of ['persist.sys.locale', 'ro.product.locale']) {
+    const value = adb(['shell', 'getprop', prop], { allowFail: true }).trim()
+    if (value) return value
+  }
+  return null
+}
+
 /** The package owning the focused window, per the window manager. */
 function focusedPackage() {
   const m = adb(['shell', 'dumpsys', 'window'], { allowFail: true }).match(
@@ -192,8 +290,13 @@ function focusedPackage() {
 
 /** Parse `uiautomator dump` into flat nodes with parsed bounds. */
 function dumpNodes() {
-  adb(['shell', 'uiautomator', 'dump', '/sdcard/agaric-e2e.xml'], { allowFail: true })
-  const xml = adb(['shell', 'cat', '/sdcard/agaric-e2e.xml'], { allowFail: true })
+  // Cleared first: `uiautomator dump` is allowed to fail (it does, transiently,
+  // while a window is animating), and the `cat` that follows cannot tell a
+  // fresh dump from the previous poll's leftover. Reading a stale tree here
+  // would report the last screen as if it were this one.
+  adb(['shell', 'rm', '-f', DUMP_PATH], { allowFail: true })
+  adb(['shell', 'uiautomator', 'dump', DUMP_PATH], { allowFail: true })
+  const xml = adb(['shell', 'cat', DUMP_PATH], { allowFail: true })
   const nodes = []
   for (const raw of xml.matchAll(/<node\b[^>]*>/g)) {
     const tag = raw[0]
@@ -296,11 +399,28 @@ async function waitForApp() {
         .join('\n'),
     )
   }
+  // Be explicit that the thing we searched for is a copy, not a binding. This
+  // message fires for a broken app AND for a perfectly healthy app whose label
+  // this script no longer knows, and only one of those is worth debugging.
+  const locale = deviceLocale()
+  const looksEnglish = locale ? /^en([-_]|$)/i.test(locale) : true
   fail(
     `the app never settled on a '${MENU_LABEL}' control within ${READY_TIMEOUT_MS / 1000}s`,
-    sawDialog
-      ? `a '${ONBOARDING_DISMISS}' dialog was dismissed but the app still never settled.`
-      : 'the app may have failed to launch, or the label changed — check `adb logcat`.',
+    [
+      sawDialog
+        ? `  a '${ONBOARDING_DISMISS}' dialog was dismissed but the app still never settled.`
+        : '  the app may have failed to launch — check `adb logcat`.',
+      '',
+      `  BEFORE debugging the app: '${MENU_LABEL}' is a hardcoded ENGLISH literal`,
+      '  in this script, copied from `sidebar.openMenu` in src/lib/i18n/common.ts',
+      '  and checked against it by nothing. Editing that value, or running on a',
+      '  non-English device, produces this exact message with a healthy app.',
+      locale
+        ? `  device locale: ${locale}${
+            looksEnglish ? '' : ' — NOT English, which alone explains this failure.'
+          }`
+        : '  device locale: unreadable (getprop returned nothing).',
+    ].join('\n'),
   )
 }
 
@@ -331,13 +451,35 @@ function assertInsideSafeRect(what, bounds, safe) {
 
 // ── main ─────────────────────────────────────────────────────────────
 
+const USAGE =
+  'usage: node scripts/android-e2e-safe-area.mjs [--apk <path>] [--serial <id>] [--pkg <id>]'
+
+/**
+ * Read `--flag <value>`, or null if the flag is absent.
+ *
+ * The guard is the point. A flag passed as the last argv element, or followed
+ * by another flag, used to yield `undefined` and sail on: `--pkg` alone became
+ * `am start -n undefined/com.agaric.app.MainActivity`, which adb reports as an
+ * activity-not-found deep inside the run instead of as the typo it is.
+ */
+function argValue(argv, flag) {
+  const at = argv.indexOf(flag)
+  if (at === -1) return null
+  const value = argv[at + 1]
+  if (value === undefined || value.startsWith('--')) {
+    fail(
+      `${flag} needs a value`,
+      `  got: ${value === undefined ? '(end of arguments)' : value}\n  ${USAGE}`,
+    )
+  }
+  return value
+}
+
 async function main() {
   const argv = process.argv.slice(2)
-  const apk = argv.includes('--apk') ? argv[argv.indexOf('--apk') + 1] : null
-  const serialArg = argv.includes('--serial')
-    ? argv[argv.indexOf('--serial') + 1]
-    : process.env.ANDROID_SERIAL || null
-  if (argv.includes('--pkg')) PKG = argv[argv.indexOf('--pkg') + 1]
+  const apk = argValue(argv, '--apk')
+  const serialArg = argValue(argv, '--serial') ?? process.env.ANDROID_SERIAL ?? null
+  PKG = argValue(argv, '--pkg') ?? PKG
 
   SERIAL = resolveSerial(serialArg)
   console.log(`device: ${SERIAL}`)
@@ -411,13 +553,22 @@ async function main() {
         '',
         '  If the geometry assertions above passed, the touch is being consumed by',
         '  something drawn over the app rather than by a layout overlap.',
+        '',
+        '  Those markers are hardcoded English literals copied from `sidebar.trash`,',
+        '  `sidebar.templates` and `sidebar.query` in src/lib/i18n/common.ts; renaming',
+        '  one there produces this message with a drawer that opened correctly.',
       ].join('\n'),
     )
   }
   console.log('✓ the nav drawer opened')
 
-  adb(['shell', 'rm', '-f', '/sdcard/agaric-e2e.xml'], { allowFail: true })
   console.log('\n✓ android safe-area e2e passed')
 }
 
-await main()
+// `fail()` cleans up before it exits; this covers the remaining two exits — a
+// clean pass, and an unexpected throw out of `adb()`.
+try {
+  await main()
+} finally {
+  removeDump()
+}
