@@ -2275,6 +2275,22 @@ pass_filenames = false
 files = "^(\\.github/workflows/ci\\.yml|scripts/check-android-trigger\\.mjs)$"
 stages = ["pre-commit"]
 
+# 16 KB Android page-alignment guard (#4425). The guard itself needs a built
+# APK, so it can only run in the two Android CI jobs; what runs here is its
+# `--self-test`, which is where its behaviour is actually pinned — including
+# the assertion that both `ci.yml` and `release.yml` still invoke it. That
+# last one is the point of keying this hook on the WORKFLOWS as well as on
+# the script: deleting the CI step is exactly how a guard stops guarding, and
+# nothing else in the tree would notice.
+[[repos.hooks]]
+id = "android-so-alignment-selftest"
+name = "Android 16 KB alignment guard self-test (#4425)"
+entry = "node scripts/check-android-so-alignment.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^(scripts/check-android-so-alignment\\.mjs|\\.github/workflows/(ci|release)\\.yml)$"
+stages = ["pre-commit"]
+
 # Rust: cargo-machete (unused dependency detection)
 [[repos]]
 repo = "local"

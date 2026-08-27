@@ -233,6 +233,15 @@ Bundles land under `src-tauri/target/release/bundle/`. The exact filenames carry
 
 **AppImage icon fix (Linux):** the AppImage bundle's icon mapping is brittle. After `cargo tauri build`, run `scripts/fix-appimage-icons.sh` to repair `.DirIcon` so file managers display the icon. Set `FIX_APPIMAGE_STRICT=1` to fail the build on a missing icon (CI does this).
 
+**Android 16 KB page size (#4425).** Android 15+ devices can boot with a 16 KB page size, and on those the dynamic linker refuses to map a 4 KB-aligned library — the app does not start at all. NDK r27 emits 16 KB-aligned output for its own build systems, but a Rust cross-compile links through cargo's invocation and inherits none of that, so `src-tauri/build.rs` emits `-Wl,-z,max-page-size=16384` whenever `CARGO_CFG_TARGET_OS == "android"`. It lives there rather than in `.cargo/config.toml` because that file is gitignored (see [Speed up Rust builds (Linux)](#speed-up-rust-builds-linux)) and would never reach CI. Verify any APK or `.so` with:
+
+```bash
+readelf -lW <lib>.so | awk '$1=="LOAD"{print $NF}' | sort -u   # must print 0x4000
+node scripts/check-android-so-alignment.mjs <app.apk|lib.so>   # 0 clean / 2 finding / 3 could-not-verify
+```
+
+The guard also checks the second half of the requirement on APKs: a library the archive **stores** uncompressed is mmap'd in place, so its payload must begin on a 16 KB boundary too. That is zipalign's job — `zipalign -P 16`, not `-p`, which is documented as 4 KB and cannot be combined with `-P`. Both Android CI jobs run the guard, and `release.yml` runs it again on the signed asset.
+
 ## Releasing
 
 One command, from a clean `main`:
