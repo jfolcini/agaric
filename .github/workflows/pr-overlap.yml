@@ -1015,6 +1015,23 @@ jobs:
           # child, a file its parent adds is already on its merge target and
           # would read as a fresh claim off `main`, reintroducing exactly the
           # added-vs-modified false positive this listing exists to prevent.
+          #
+          # The base pin has a SECOND consequence, which is not about stacked
+          # PRs at all (#4452 item 5). `base.sha` is the base commit GitHub
+          # recorded at this PR's LAST PUSH, and it does not move on its own.
+          # So a sibling PR that MERGES a session-log number after that push
+          # is in NEITHER listing: not in this `ls-tree` (its commit is newer
+          # than `base.sha`), and not in `gh pr list --state open` (it is no
+          # longer open). The #3690 stale-claim shape — this PR adding a
+          # number a sibling has already landed — therefore stays invisible
+          # to this job until the PR is pushed again and `base.sha` advances.
+          # Not a hole this job can close from the inside: it is what pinning
+          # the base COSTS, and it is bounded, because a PR must be pushed (or
+          # rebased) to merge in any workflow this repo uses, and that push
+          # re-runs this job against the fresh base. Branch protection
+          # requiring branches to be up to date before merging closes it
+          # outright, which is the same structural fix this file's header
+          # already recommends for the bypass gap.
           git -c core.quotePath=false ls-tree -r --name-only HEAD -- docs/session-log \
             > merged-paths.txt
           echo "session-log files on $(git rev-parse HEAD): $(wc -l < merged-paths.txt)"
@@ -1273,7 +1290,34 @@ jobs:
           # combination — including a bare 1 — is "could not verify". A
           # crashed guard can no longer be reported as a finding.
           verdict="$(sed -n 's/^SESSION_LOG_PR_COLLISION_VERDICT=\([A-Z]*\)$/\1/p' collision.log | tail -n 1)"
-          if [ "$rc" -eq 0 ] && [ "$verdict" = "CLEAN" ]; then
+          # ── #4452 item 5: "verified" has to mean what this run covered ────
+          #
+          # The guard emits `::warning::` lines for every sibling PR whose
+          # changed-file list `gh` truncated: a session-log claim of that
+          # sibling's own, past the cutoff, is INVISIBLE here, so a collision
+          # with it could not be ruled out. Warnings are correctly not
+          # findings and correctly do not change the verdict — but printing
+          # "verified — no open PR shares a session-log number with another"
+          # on top of them claims coverage this run did not have, which is the
+          # thesis this whole workflow argues everywhere else. Nothing merges
+          # unchecked either way (each truncated sibling fails closed on its
+          # OWN run, where its author can act on it); what changes is whether
+          # the log tells the truth about which of the two happened.
+          #
+          # `|| true` on the grep: no matches is exit 1, and this pipeline
+          # runs under `pipefail`. The result is then accepted only if it is
+          # POSITIVELY a run of digits — `[ "$warned" -gt 0 ]` on anything
+          # else returns 2 and, under the step's `-e`, aborts the whole step
+          # over a diagnostic. Falling back to 0 there degrades to the
+          # unqualified "verified" line, which is the pre-#4452 behaviour and
+          # never worse than it.
+          warned="$(grep -c '^::warning::check-session-log-pr-collision:' collision.log || true)"
+          case "$warned" in
+            ''|*[!0-9]*) warned=0 ;;
+          esac
+          if [ "$rc" -eq 0 ] && [ "$verdict" = "CLEAN" ] && [ "$warned" -gt 0 ]; then
+            echo "::warning::session-log-pr-collision: no collision was OBSERVED, but this run did not see the whole board — $warned open PR(s) had a changed-file list truncated by gh's 100-file cap, so a session-log claim of theirs past that cutoff was invisible here. NOT a clean bill of health: each of those PRs fails closed on its own run of this job, so nothing merges unchecked, but THIS run did not rule them out. See the ::warning:: lines above for which PRs."
+          elif [ "$rc" -eq 0 ] && [ "$verdict" = "CLEAN" ]; then
             echo "session-log-pr-collision: verified — no open PR shares a session-log number with another, and none adds a number already on the merge target."
           elif [ "$rc" -eq 20 ] && [ "$verdict" = "COLLISION" ]; then
             echo "::error::session-log-pr-collision: a session-log number would be duplicated in the merge result — either two open PRs claim it, or one adds a number already on the base. See the log above for which, and for the next free number."
