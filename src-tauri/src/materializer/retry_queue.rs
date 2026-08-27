@@ -1445,6 +1445,14 @@ fn payload_string_field(payload: &str, field: &str) -> Option<String> {
 /// carries `(…, created_at, seq, device_id)` — the canonical order — so
 /// `EXPLAIN QUERY PLAN` is byte-identical for both forms on all four gates.
 /// Pinned by the `*_4402` tests below.
+///
+/// "Stated once" is about the LWW comparator specifically: one other
+/// ordering exists on the op log, `draft_recovery.rs`'s `(created_at ASC,
+/// device_id ASC, seq ASC)` pick of the EARLIEST `create_block` for a
+/// block. That is not a competing LWW answer — it is picking a
+/// deterministic chain root among rows that are supposed to be a unique
+/// `create_block`, not resolving a last-writer-wins conflict — so it is
+/// left alone here and is out of scope for this rewrite.
 async fn try_reenqueue_apply_op(
     read_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
@@ -1467,12 +1475,12 @@ async fn try_reenqueue_apply_op(
     // #621: out-of-order-sweep guard. The sweep re-applies minutes-to-hours
     // after the original failure, after later ops already applied. If a
     // LATER `purge_block` (#4402: the canonical LWW order `created_at, seq,
-    // device_id`) targets the same block, re-applying this op would re-insert the
-    // purged block in SQL (`INSERT OR IGNORE`, no purge check) and recreate
-    // the node in the engine. The op the user observed winning is the purge
-    // — drop this one. (`purge_block` is excluded from gating itself only by
-    // the strict "later than" comparison: a purge is never superseded by
-    // itself.)
+    // device_id`) targets the same block, re-applying this op would
+    // re-insert the purged block in SQL (`INSERT OR IGNORE`, no purge
+    // check) and recreate the node in the engine. The op the user observed
+    // winning is the purge — drop this one. (`purge_block` is excluded from
+    // gating itself only by the strict "later than" comparison: a purge is
+    // never superseded by itself.)
     if let Some(block_id) = record.block_id.as_deref() {
         // #621/#850: runtime query() (not the macro) keeps this purge gate
         // adjacent to the edit-gate twin below; both share the LWW predicate.
@@ -4728,6 +4736,11 @@ mod tests {
              re-enqueued. A (created_at, device_id, seq) gate ranks `zzz` above \
              `aaa` and silently DROPS this write"
         );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            1,
+            "#4402: a re-enqueued row is leased, not cleared — it must remain pending"
+        );
         mat.shutdown();
     }
 
@@ -4986,6 +4999,11 @@ mod tests {
             "#4402: the swept edit wins the canonical (created_at, seq, device_id) \
              order (seq 100 > 5), so no later edit supersedes it and it must be \
              re-enqueued (#850 is strict, and its order must be the canonical one)"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            1,
+            "#4402: a re-enqueued row is leased, not cleared — it must remain pending"
         );
         mat.shutdown();
     }
