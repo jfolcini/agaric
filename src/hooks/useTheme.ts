@@ -35,9 +35,20 @@
  * toggle cycled from the OLD value and persisted it over the Settings
  * choice, and (c) an OS `prefers-color-scheme` flip re-applied the stale
  * instance's documentElement classes over the user's explicit choice.
+ *
+ * #4433 — on Android, `MainActivity.kt` no longer paints its own background
+ * behind the status/navigation bars (#4426 insets the webview out of that
+ * strip), so it falls back to native unless told otherwise. The class-apply
+ * effect below also pushes the newly-resolved theme's background colour to
+ * native via `pushThemeBackgroundToNative` (see
+ * `src/lib/platform/android-theme-bridge.ts`), on every resolved-theme
+ * change — including a live OS switch while the preference is `'auto'` — not
+ * only once at activity creation. A no-op off Android.
  */
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
+
+import { pushThemeBackgroundToNative } from '@/lib/platform/android-theme-bridge'
 
 export type ThemePreference =
   | 'light'
@@ -235,6 +246,10 @@ export function useTheme(): UseThemeReturn {
   // Apply theme classes on documentElement whenever resolved theme changes
   useEffect(() => {
     applyThemeClasses(resolved)
+    // #4433 — re-painted on every resolved-theme change, not only once at
+    // Android activity creation; see module doc above and
+    // `android-theme-bridge.ts`. No-op off Android.
+    pushThemeBackgroundToNative(isResolvedDark(resolved))
   }, [resolved])
 
   const setTheme = useCallback((next: ThemePreference) => {

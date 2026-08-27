@@ -12,7 +12,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { __resetThemeStoreForTests, useTheme } from '@/hooks/useTheme'
+import { __resetThemeStoreForTests, type ThemePreference, useTheme } from '@/hooks/useTheme'
+import type { AndroidThemeBridge } from '@/lib/platform/android-theme-bridge'
 
 // Mock matchMedia
 let mockDarkQuery = false
@@ -454,6 +455,115 @@ describe('useTheme', () => {
       } finally {
         Storage.prototype.setItem = original
       }
+    })
+  })
+
+  // ── #4433: the strip behind the Android system bars ─────────────────
+  // The class-apply effect also pushes the resolved theme's background
+  // colour to `window.AgaricThemeBridge` (native), so the bridge integration
+  // itself — not just the pure `parseComputedRgb`/`pushThemeBackgroundToNative`
+  // unit tests in `android-theme-bridge.test.ts` — is exercised through the
+  // real hook, across all seven themes.
+  describe('Android theme bridge (#4433)', () => {
+    let applyBackground: ReturnType<typeof vi.fn<AndroidThemeBridge['applyBackground']>>
+    let originalGetComputedStyle: typeof window.getComputedStyle
+
+    /** Distinct per-theme colour so each assertion below can tell them apart. */
+    const THEME_BACKGROUNDS: Record<
+      Exclude<ThemePreference, 'auto'>,
+      { rgb: string; r: number; g: number; b: number; isDark: boolean }
+    > = {
+      light: { rgb: 'rgb(255, 255, 255)', r: 255, g: 255, b: 255, isDark: false },
+      dark: { rgb: 'rgb(10, 10, 15)', r: 10, g: 10, b: 15, isDark: true },
+      'solarized-light': { rgb: 'rgb(253, 246, 227)', r: 253, g: 246, b: 227, isDark: false },
+      'solarized-dark': { rgb: 'rgb(0, 43, 54)', r: 0, g: 43, b: 54, isDark: true },
+      dracula: { rgb: 'rgb(40, 42, 54)', r: 40, g: 42, b: 54, isDark: true },
+      'one-dark-pro': { rgb: 'rgb(40, 44, 52)', r: 40, g: 44, b: 52, isDark: true },
+    }
+
+    beforeEach(() => {
+      applyBackground = vi.fn<AndroidThemeBridge['applyBackground']>()
+      window.AgaricThemeBridge = { applyBackground }
+      originalGetComputedStyle = window.getComputedStyle
+    })
+
+    afterEach(() => {
+      delete window.AgaricThemeBridge
+      window.getComputedStyle = originalGetComputedStyle
+    })
+
+    function stubComputedBackground(value: string): void {
+      window.getComputedStyle = vi.fn().mockReturnValue({
+        backgroundColor: value,
+      }) as unknown as typeof window.getComputedStyle
+    }
+
+    it('pushes the resolved background colour on mount', () => {
+      stubComputedBackground(THEME_BACKGROUNDS.light.rgb)
+      localStorage.setItem('theme-preference', 'light')
+
+      renderHook(() => useTheme())
+
+      expect(applyBackground).toHaveBeenCalledExactlyOnceWith(255, 255, 255, false)
+    })
+
+    for (const [theme, expected] of Object.entries(THEME_BACKGROUNDS) as [
+      Exclude<ThemePreference, 'auto'>,
+      (typeof THEME_BACKGROUNDS)[keyof typeof THEME_BACKGROUNDS],
+    ][]) {
+      it(`pushes the correct colour + isDark for '${theme}'`, () => {
+        // Mount on a FILLER theme distinct from the one under test — the
+        // effect's dependency is the *resolved* theme literal, so mounting
+        // on the very theme under test (or any theme that resolves to the
+        // same literal) would make `setTheme(theme)` a no-op react to, and
+        // the push would never fire. 'dracula'/'one-dark-pro' are
+        // themselves in the target set, so alternate between them.
+        const filler: Exclude<ThemePreference, 'auto'> =
+          theme === 'dracula' ? 'one-dark-pro' : 'dracula'
+        localStorage.setItem('theme-preference', filler)
+        stubComputedBackground('rgb(1, 2, 3)')
+        const { result } = renderHook(() => useTheme())
+        applyBackground.mockClear()
+
+        stubComputedBackground(expected.rgb)
+        act(() => result.current.setTheme(theme))
+
+        expect(applyBackground).toHaveBeenCalledExactlyOnceWith(
+          expected.r,
+          expected.g,
+          expected.b,
+          expected.isDark,
+        )
+      })
+    }
+
+    it('re-pushes on a live OS switch while the preference is auto', () => {
+      mockDarkQuery = false
+      stubComputedBackground(THEME_BACKGROUNDS.light.rgb)
+      renderHook(() => useTheme())
+      applyBackground.mockClear()
+
+      stubComputedBackground(THEME_BACKGROUNDS.dark.rgb)
+      act(() => {
+        mockDarkQuery = true
+        for (const call of mockAddEventListener.mock.calls) {
+          if (call[0] === 'change') (call[1] as () => void)()
+        }
+      })
+
+      expect(applyBackground).toHaveBeenCalledExactlyOnceWith(10, 10, 15, true)
+    })
+
+    it('never calls the bridge when it is not installed (desktop / iOS)', () => {
+      delete window.AgaricThemeBridge
+      stubComputedBackground(THEME_BACKGROUNDS.light.rgb)
+
+      expect(() => {
+        const { result } = renderHook(() => useTheme())
+        act(() => result.current.setTheme('dracula'))
+      }).not.toThrow()
+
+      expect(applyBackground).not.toHaveBeenCalled()
     })
   })
 })
