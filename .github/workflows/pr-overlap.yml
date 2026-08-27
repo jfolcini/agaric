@@ -1013,6 +1013,62 @@ jobs:
             exit 1
           fi
 
+          # #4431 review round 4 notes 2/4: the 100-file cap above is on the
+          # GraphQL `files(first: 100)` connection `gh pr list --json files`
+          # reads — a connection with no pagination support via that flag,
+          # not a limit on the PR's actual diff. Left as-is, it makes the
+          # guard's OWN run an unclearable refusal for any PR past the cap
+          # (routine for this repo's large batch PRs — a real 411-file PR
+          # exists in its history) and a permanent warning for everyone
+          # else's run, even when the truncated PR touches no session-log
+          # file whatsoever. `gh api .../pulls/<n>/files` is GitHub's SAME
+          # computed file list over the REST endpoint instead, which
+          # paginates normally rather than hard-capping at 100 (verified
+          # empirically against a real >100-file PR while writing this: REST
+          # pagination returned all of them where the GraphQL `files` field
+          # returned only the first 100) — identical trust properties to the
+          # `gh pr list` call just above (GitHub's own computation, no
+          # PR-authored code executed, same $GH_TOKEN), so fetching it here
+          # crosses no new trust boundary.
+          #
+          # Best-effort and additive only: splice the full list in for any
+          # entry `gh pr list` truncated. If the re-fetch itself fails for
+          # any reason (rate limit, network hiccup, a PR beyond even the
+          # REST endpoint's own much higher ceiling), that entry is left
+          # exactly as `gh pr list` returned it — `changedFiles` still
+          # exceeds `files.length`, so the guard's existing truncation
+          # handling (refuse for the self PR, warn naming anyone else) is
+          # the unchanged fail-closed backstop. A bug here can only leave a
+          # PR AS TRUNCATED AS BEFORE, never falsely "complete": the splice
+          # only replaces `.files` when the re-fetch itself succeeded and
+          # produced a non-empty JSON array, and `changedFiles` (the true
+          # count `gh pr list` already reported) is never touched, so a
+          # short or malformed re-fetch still fails the same
+          # `changedFiles > files.length` truncation test the unmodified
+          # entry would have.
+          #
+          # `--jq '.[] | {...}'` (no enclosing `[...]`) plus `jq -s` to
+          # merge, NOT `--jq '[.[] | {...}]'`: `gh api --paginate` applies
+          # the `--jq` filter to EACH PAGE separately and concatenates the
+          # raw text, so a per-page `[...]` wrapper produces one JSON array
+          # PER PAGE concatenated back to back (`[...][...]`) — two adjacent
+          # top-level values, not one valid array. Confirmed the broken form
+          # first, then the fix, against the same real >100-file PR.
+          truncated_numbers="$(jq -r '.[] | select(.changedFiles > (.files | length)) | .number' prs.json)"
+          if [ -n "$truncated_numbers" ]; then
+            while IFS= read -r n; do
+              [ -z "$n" ] && continue
+              if full="$(gh api "repos/$REPO/pulls/$n/files" --paginate \
+                  --jq '.[] | {path: .filename, additions, deletions}' 2>/dev/null | jq -s -c '.')" \
+                  && [ -n "$full" ] \
+                  && echo "$full" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+                jq --argjson n "$n" --argjson files "$full" \
+                    '[.[] | if .number == $n then .files = $files else . end]' \
+                    prs.json > prs.json.tmp && mv prs.json.tmp prs.json
+              fi
+            done <<< "$truncated_numbers"
+          fi
+
       - name: Check for a session-log number that would be duplicated in the merge result
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -1079,7 +1135,7 @@ jobs:
               } >> "$summary"
               exit 0
             fi
-            echo "::error::session-log-pr-collision: could not verify — $GUARD_SCRIPT is missing from the base-branch checkout and this PR does not add it (self-PR file list: $self_adds). Either the guard was deleted or moved without this PR restoring it, or its own open-PR payload could not be trusted. Both are the fail-open #3933 exists to prevent, so this fails."
+            echo "::error::session-log-pr-collision: could not verify — $GUARD_SCRIPT is missing from the base-branch checkout and this PR does not add it (self-PR file list: $self_adds). Most likely the guard was deleted or moved without this PR restoring it — but if you are re-running an OLDER workflow run (GitHub replays that run's original event payload, so its base.sha can predate this guard's own merge to main, or even predate this very PR), that is a transitional artifact of the re-run, not a deletion: re-run the WORKFLOW from the PR's current head instead, or push a new commit, rather than looking for a deletion that never happened. Either way, its own open-PR payload could not be trusted either, and every one of these is the fail-open #3933 exists to prevent, so this fails."
             exit 1
           fi
 

@@ -401,6 +401,17 @@ function shapeProblem(prs) {
  * `session-NNNN-*.md` this script would otherwise catch — is invisible to
  * `pathsOf()` below.
  *
+ * `pr-overlap.yml`'s own "List every open PR's changed files" step
+ * (#4431 review round 4 notes 2/4) already tries to pre-empt this by
+ * splicing in a `gh api .../pulls/<n>/files --paginate` re-fetch — the SAME
+ * GitHub-computed list over the uncapped REST endpoint — for any entry it
+ * finds truncated, BEFORE this script ever runs. That is best-effort: a
+ * failed re-fetch (rate limit, network hiccup, a PR beyond even that
+ * endpoint's own ceiling) leaves the entry exactly as truncated as `gh pr
+ * list` returned it. This function, and the self/other split around it, is
+ * what still catches that — the backstop the workflow's enhancement can
+ * fall through to, not something the enhancement makes obsolete.
+ *
  * @param {{number:number, files:unknown[], changedFiles:number}[]} prs
  */
 function truncatedFilesPrs(prs) {
@@ -535,6 +546,26 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
   // `>=` which fired on it every time. Only the (prLimit+1)th entry actually
   // arriving is proof there are more open PRs than this run is willing to
   // trust.
+  //
+  // This refusal IS the same "collective, unactionable red" shape as the
+  // per-PR file cap below (#4431 review round 4, notes 2 and 4 together):
+  // past the threshold, every open PR's run refuses at once, and no single
+  // author can shrink the repo's total open-PR count. Deliberately left
+  // as a refusal rather than raised or removed, for a reason distinct from
+  // the file cap's: `PR_LIST_LIMIT` (100) is a SELF-IMPOSED defensive
+  // ceiling, not a GitHub API limit — `gh pr list --limit N` paginates
+  // internally for any N, so there is no hard wall here the way the
+  // `files(first: 100)` connection is a wall. It is already 10x this
+  // project's own stated open-PR pipeline cap (see `PR_LIST_LIMIT`'s own
+  // comment in `pr-overlap.yml`), so clearing it needs an order-of-magnitude
+  // surge past a limit this repo's own workflow already enforces elsewhere
+  // — unlike the per-PR file cap, where a single 100+-file PR is "routine,
+  // not exceptional" and has already happened (this file's header cites a
+  // real 411-file one). Raising the number only moves the same cliff
+  // further out without removing it; removing the check entirely
+  // reintroduces the exact truncation-ambiguity #3933 is about, with no
+  // signal left to tell "that's every open PR" from "that's the first N of
+  // more". Kept as a refusal on that basis, not overlooked.
   if (prLimit !== null && prs.length > prLimit) {
     return cannotVerify(
       `the fetched open-PR list has ${prs.length} entr${prs.length === 1 ? 'y' : 'ies'}, which ` +
@@ -614,12 +645,55 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
   collisions.sort((a, b) => a.number - b.number)
   staleClaims.sort((a, b) => a.number - b.number)
 
+  // #4431 review round 4, BLOCKING: a finding is only a FAILURE for the PR
+  // running this check if that PR is one of the claimants. Before this
+  // split, `main()` failed on `collisions.length + staleClaims.length > 0`
+  // computed over the WHOLE board — so PR #A, a dependency bump touching no
+  // session-log file at all, exited 20 (and printed "rebase onto
+  // origin/main and renumber") whenever ANY two OTHER open PRs collided, or
+  // even one OTHER PR held a stale claim. #A's author cannot rebase or
+  // renumber a file that isn't theirs. This is the exact "a gate that is
+  // routinely bypassed protects nothing" shape the header already argues
+  // for the truncation case (`isSelf` above) — applied here one level up.
+  //
+  // With no `--self-pr` (an ad-hoc/self-test call, never the real CI
+  // invocation — see `parseArgs`, which requires it), there is no "self" to
+  // filter by, so nothing is downgraded: every finding stays a hard finding,
+  // matching this function's behaviour before the split existed.
+  const isSelfClaim = (entries) =>
+    selfPr !== null && entries.some((c) => Number(c.pr) === Number(selfPr))
+  const selfCollisions =
+    selfPr === null ? collisions : collisions.filter((c) => isSelfClaim(c.claims))
+  const otherCollisions = selfPr === null ? [] : collisions.filter((c) => !isSelfClaim(c.claims))
+  const selfStaleClaims =
+    selfPr === null ? staleClaims : staleClaims.filter((s) => isSelfClaim(s.claims))
+  const otherStaleClaims = selfPr === null ? [] : staleClaims.filter((s) => !isSelfClaim(s.claims))
+
+  const boardWarnings = [
+    ...otherCollisions.map((c) => {
+      const who = c.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
+      return (
+        `session-${c.number} is claimed by more than one open PR, and THIS PR is not one of ` +
+        `them — ${who}. Not a failure of this PR: each of those PRs fails closed on its own ` +
+        'run of this check, where its author can act on it.'
+      )
+    }),
+    ...otherStaleClaims.map((s) => {
+      const who = s.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
+      return (
+        `session-${s.number} is already on the merge target and newly added by ${who}, none ` +
+        'of which is this PR. Not a failure of this PR: each of those PRs fails closed on its ' +
+        'own run of this check, where its author can act on it.'
+      )
+    }),
+  ]
+
   return {
     verified: true,
     reason: null,
-    warnings,
-    collisions,
-    staleClaims,
+    warnings: [...warnings, ...boardWarnings],
+    collisions: selfCollisions,
+    staleClaims: selfStaleClaims,
     suggestion: suggestNextFree(claims, [...merged.byNumber.keys()]),
   }
 }
@@ -800,13 +874,13 @@ export function duplicatedNumberCount(result) {
  */
 function reportFindings(result) {
   const total = duplicatedNumberCount(result)
-  console.error(
+  const lines = [
     `::error::check-session-log-pr-collision: ${total} session-log number(s) would be duplicated in the merge result`,
-  )
+  ]
   for (const c of result.collisions) {
     const who = c.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
-    console.error(`  session-${c.number}: claimed by more than one open PR — ${who}`)
-    console.error('    One of these PRs must renumber; neither branch can see the other.')
+    lines.push(`  session-${c.number}: claimed by more than one open PR — ${who}`)
+    lines.push('    One of these PRs must renumber; neither branch can see the other.')
   }
   for (const s of result.staleClaims) {
     const who = s.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
@@ -816,21 +890,33 @@ function reportFindings(result) {
     const shown = s.mergedPaths.slice(0, 3).map((p) => `\`${p}\``)
     const rest = s.mergedPaths.length - shown.length
     const where = rest > 0 ? `${shown.join(', ')} (and ${rest} more)` : shown.join(', ')
-    console.error(
-      `  session-${s.number}: already on the merge target as ${where}, ` +
-        `and newly added by ${who}`,
+    lines.push(
+      `  session-${s.number}: already on the merge target as ${where}, and newly added by ${who}`,
     )
-    console.error(
+    lines.push(
       '    Either YOUR BASE IS STALE — that number was free when the file was committed and a ' +
         'sibling PR has merged it since — or the number is simply wrong. Either way ' +
         `${NUMBERING_GUARD} will not catch it again, because it only ever inspects STAGED ` +
         'additions: rebase onto origin/main and renumber.',
     )
   }
-  console.error(`  ${nextFreeSentence(result.suggestion)}`)
-  console.error(
+  lines.push(`  ${nextFreeSentence(result.suggestion)}`)
+  lines.push(
     '  Rebase onto the freshest origin/main first, since another PR may claim it before you push.',
   )
+  // `writeSync`, not `console.error` (#4431 review round 4 note 1): the CI
+  // step runs this guard under `2>&1 | tee collision.log`, and a write to a
+  // PIPE is ASYNCHRONOUS in node — the exact hazard `finish()`'s verdict
+  // line already guards against with `writeSync`. `console.error` here is
+  // the same hazard one level up: `main()` calls `finish()` (which
+  // `process.exit`s) immediately after this function returns, so a long
+  // finding list queued as async pipe writes can be truncated while the
+  // SYNCHRONOUS verdict line still survives — a red job carrying
+  // `COLLISION` with none of the explanation for which numbers collided.
+  // One `writeSync` call, not one per line: matches `finish()`'s own
+  // single-syscall shape and avoids N interleavable async gaps becoming N
+  // truncation points instead of one.
+  writeSync(2, `${lines.join('\n')}\n`)
 }
 
 /**
@@ -1212,6 +1298,120 @@ function runClaimSemanticsCases(ok, fail) {
       mergedPaths: BASE,
     }),
     (r) => r.verified && duplicatedNumberCount(r) === 1,
+  )
+}
+
+/**
+ * #4431 review round 4, BLOCKING: a finding only fails THIS run when the
+ * self PR is one of the claimants. Before this split, `main()` failed on
+ * `collisions.length + staleClaims.length > 0` computed over the WHOLE
+ * board, so a dependency-bump PR touching no session-log file at all exited
+ * 20 (and was told to "rebase onto origin/main and renumber") whenever ANY
+ * two OTHER open PRs collided, or even one OTHER PR held a stale claim —
+ * remedy text aimed at an author who cannot act on it. These cases pin the
+ * fix: an uninvolved self PR downgrades third-party findings to `warnings`
+ * and reports `verified` with no collision/staleClaim; a self PR that IS a
+ * claimant still gets the hard finding, per number, independent of any
+ * OTHER number's third-party finding in the same run.
+ *
+ * @param {(name: string) => void} ok
+ * @param {(name: string, detail: string) => void} fail
+ */
+function runSelfAttributionCases(ok, fail) {
+  const check = (name, r, predicate) => {
+    if (predicate(r)) ok(name)
+    else fail(name, JSON.stringify(r))
+  }
+
+  // Case 22: the failure scenario verbatim — #B and #C collide on
+  // session-1319, #A (self) is a dependency bump touching no session-log
+  // file at all. Falsify by reverting the self/other split in `analyze()`
+  // (stop filtering `collisions`/`staleClaims` by `isSelfClaim`): this goes
+  // from `verified, no finding, one warning` to a hard collision reported
+  // against #A, which is not a claimant of anything.
+  check(
+    'an uninvolved self PR sees a third-party collision as a warning, not a failure',
+    analyze({
+      prs: [
+        pr(101, ['package.json', 'package-lock.json']),
+        pr(102, ['docs/session-log/session-1319-tooling.md']),
+        pr(103, ['docs/session-log/session-1319-pairing.md']),
+      ],
+      selfPr: 101,
+      mergedPaths: [],
+    }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 0 &&
+      r.staleClaims.length === 0 &&
+      r.warnings.length === 1 &&
+      /#102/.test(r.warnings[0]) &&
+      /#103/.test(r.warnings[0]) &&
+      /not one of them|not this PR|not a failure/i.test(r.warnings[0]),
+  )
+
+  // Case 23 (complement of 22): same shape, but self IS one of the two
+  // claimants — must still be a hard finding. Proves the fix does not
+  // overcorrect into "collisions never fail".
+  check(
+    'a self PR that IS a claimant still gets a hard collision finding',
+    analyze({
+      prs: [
+        pr(101, ['docs/session-log/session-1319-tooling.md']),
+        pr(102, ['docs/session-log/session-1319-pairing.md']),
+      ],
+      selfPr: 101,
+      mergedPaths: [],
+    }),
+    (r) => r.verified && r.collisions.length === 1 && r.collisions[0].number === 1319,
+  )
+
+  // Case 24: the stale-claim half of the same bug — the reviewer's own
+  // "needs only ONE other PR" variant. #102 alone adds a file numbered
+  // session-1404, already on the merge target; #101 (self) touches nothing
+  // under docs/session-log at all.
+  check(
+    'an uninvolved self PR sees a third-party stale claim as a warning, not a failure',
+    analyze({
+      prs: [pr(101, ['src/lib/search.ts']), pr(102, ['docs/session-log/session-1404-new.md'])],
+      selfPr: 101,
+      mergedPaths: ['docs/session-log/session-1404-original.md'],
+    }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 0 &&
+      r.staleClaims.length === 0 &&
+      r.warnings.length === 1 &&
+      /#102/.test(r.warnings[0]),
+  )
+
+  // Case 25: independence per number. Self (#101) collides on session-1319
+  // with #102, while an UNRELATED pair (#201/#202) collides on
+  // session-1400 — self is not a claimant of THAT number. The self finding
+  // must still fail; the other pair's must still be a warning, in the SAME
+  // run. Proves the filter is per-finding, not "any self involvement anywhere
+  // clears everything" or "any third-party finding anywhere suppresses self's
+  // own".
+  check(
+    "self's own collision still fails even alongside an unrelated third-party collision",
+    analyze({
+      prs: [
+        pr(101, ['docs/session-log/session-1319-tooling.md']),
+        pr(102, ['docs/session-log/session-1319-pairing.md']),
+        pr(201, ['docs/session-log/session-1400-a.md']),
+        pr(202, ['docs/session-log/session-1400-b.md']),
+      ],
+      selfPr: 101,
+      mergedPaths: [],
+    }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 1 &&
+      r.collisions[0].number === 1319 &&
+      r.warnings.length === 1 &&
+      /1400/.test(r.warnings[0]) &&
+      /#201/.test(r.warnings[0]) &&
+      /#202/.test(r.warnings[0]),
   )
 }
 
@@ -1618,6 +1818,49 @@ function runStep(dir, stepPath, guardScript) {
 }
 
 /**
+ * #4431 review round 4 note 1: `reportFindings` must write with the same
+ * synchronous mechanism `finish()` already uses for the verdict line, not
+ * `console.error`. Node's writes to a PIPE are asynchronous, and `finish()`
+ * calls `process.exit` immediately after `reportFindings` returns without
+ * waiting for anything still in flight — so a long finding list queued as
+ * async writes can be silently truncated under the CI step's
+ * `2>&1 | tee collision.log` while the SYNCHRONOUS verdict line still
+ * survives, producing a red job with `COLLISION` and none of the
+ * explanation for which numbers collided. The actual OS-level race (a pipe
+ * whose reader is slow enough to leave bytes queued when the writer exits)
+ * is not something a fast, deterministic self-test can reliably force —
+ * `spawnSync`'s own pipe draining hides it — so this checks the SOURCE
+ * mechanically instead: the same shape `extractStepShell`'s marker-comment
+ * extraction and the `GAP_BOUND` cross-guard check already use elsewhere in
+ * this file for a fact about text rather than about one program run.
+ *
+ * @param {(name: string) => void} ok
+ * @param {(name: string, detail: string) => void} fail
+ */
+function runFindingsOutputCases(ok, fail) {
+  const src = readFileSync(realpathSync(import.meta.filename), 'utf8')
+  // `\n\}` — a newline immediately followed by a ZERO-INDENT `}` — matches
+  // only the function's OWN closing brace: every closing brace of a nested
+  // block inside `reportFindings` (the two `for` loops) is indented at
+  // least two spaces, so it cannot satisfy this pattern first.
+  const m = /function reportFindings\(result\) \{[\s\S]*?\n\}/.exec(src)
+  if (m === null) {
+    fail(
+      "`reportFindings`'s source could be located for the writeSync check",
+      'regex did not match — the function signature or its closing-brace shape changed',
+    )
+    return
+  }
+  ok("`reportFindings`'s source could be located for the writeSync check")
+  const body = m[0]
+  if (/writeSync\(2,/.test(body) && !/console\.error\(/.test(body)) {
+    ok('`reportFindings` writes findings with `writeSync`, not `console.error`')
+  } else {
+    fail('`reportFindings` writes findings with `writeSync`, not `console.error`', body)
+  }
+}
+
+/**
  * The process/step half of the self-test.
  *
  * @param {(name: string) => void} ok
@@ -1855,10 +2098,12 @@ function runSelfTest() {
 
   runCoreCases(ok, fail)
   runClaimSemanticsCases(ok, fail)
+  runSelfAttributionCases(ok, fail)
   runSuggestionCases(ok, fail)
   runMalformedPayloadCases(ok, fail)
   runTruncationCases(ok, fail)
   runPrLimitCases(ok, fail)
+  runFindingsOutputCases(ok, fail)
   runProcessCases(ok, fail)
 
   if (failures.length > 0) {
