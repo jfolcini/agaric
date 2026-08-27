@@ -93,11 +93,49 @@ guard that reads one known file — and crucially the failure mode is loud, a th
 or a red assertion, never a silent pass. A guard that fails closed is allowed to be
 approximate.
 
+## The guard needed a guard
+
+Review of the PR found four more things in that scanner, and the first is the sharpest:
+**the identifier-boundary fix from the previous round had no regression test.** Stripping
+it back to a bare `indexOf` left all four assertions green, because the live component has
+no sibling `SelectionBubbleMenu*` declaration and every inline fixture declared only
+`function SelectionBubbleMenu(`. The fix was correct and completely unpinned — one edit
+away from silently reverting. A fixture declaring `function SelectionBubbleMenuHeader`
+ahead of the real component now locks it in.
+
+Two more scanner assumptions were doing unearned work. `indexOf('{', parenEnd)` took the
+first brace after the parameter list, which is the body brace only because
+`React.ReactElement` happens to contain no brace — an inline object return type would send
+the scan into the annotation. And the paren-matching loop was quote-aware but not
+comment-aware, so an apostrophe inside a parameter comment (`// the block we don't own`,
+entirely idiomatic here) would latch the quote state and swallow every `)` until the next
+apostrophe anywhere in the file. Both fail closed, which is why they were notes rather than
+blockers, and both are fixed with fixtures — disabled one at a time *and together*, since
+three fixes to one scanner can mask each other.
+
+The fourth was a real false-positive rather than a fragility. `isDirectiveFirstStatement`
+demanded the directive be literally the first token, but a JS directive prologue may hold
+several entries and the compiler reads the whole run — so adding `'use client'` above
+`'use no memo'` would have reddened an opt-out that still works. The rule now accepts a
+directive anywhere in the leading prologue and still rejects a real statement between two
+directives. The stricter version was not a deliberate house rule; it was a misreading of
+the requirement, stated in a docstring as if it were the compiler's.
+
+And the phrase collision was retired rather than documented: all three surviving
+"syntax-only" sites now say what they actually mean — render-prop opacity, flow-insensitive
+analysis — so `grep -rn "syntax-only" src/` returns exactly one line, the one that denies
+the claim. Leaving the phrase in place would have preserved the ambiguity that generated
+the over-broad note in the first place, which is a strange thing for a PR about that
+ambiguity to do.
+
 ## What shipped
 
 - The `useRovingTabindex.test.tsx` comment, restated against what was measured.
 - The `SelectionBubbleMenu.tsx` CI-gate wording, corrected without over-correcting.
 - `SelectionBubbleMenu.use-no-memo-directive.test.ts`, a falsified positional guard for
   the directive, plus the identifier-boundary fix review found in it.
-- Three sites deliberately left untouched, with the reasoning recorded above so the next
-  reader does not re-litigate them.
+- Three sites deliberately left untouched on the (a)/(b) grounds, then reworded anyway so
+  the collided phrase stops existing.
+- Four review-round fixes to the guard itself: the untested boundary fix now pinned, the
+  return-type and parameter-comment assumptions closed, and the directive-prologue rule
+  corrected from a misread requirement to the real one.

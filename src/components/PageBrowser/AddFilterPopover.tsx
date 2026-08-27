@@ -569,9 +569,9 @@ export function AddFilterPopover({
             `HasParentMatchingEditor`, which itself carries an open
             react(refs) finding of the same "ref-touching callback reachable
             from a call made during render" shape (see the comment there).
-            oxlint's syntax-only analysis can't see through the render-prop
-            boundary to know the callbacks below don't touch a ref
-            themselves, so it flags the call site conservatively. Left open. */}
+            oxlint can't see through the render-prop boundary to know the
+            callbacks below don't touch a ref themselves, so it flags the
+            call site conservatively. Left open. */}
         {editor === 'hasParent' &&
           renderHasParentEditor?.({
             onBack: () => setEditor(null),

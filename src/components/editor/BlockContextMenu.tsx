@@ -957,8 +957,8 @@ export function BlockContextMenu({
   // el }`) that only writes `.current` when React attaches the DOM node —
   // never during render. Handing the ref object itself down to a consumer so
   // it can register into it later is the intended, safe use of a ref; oxlint
-  // flags the hand-off itself because it is syntax-only and can't see that
-  // the actual mutation is deferred. Left open.
+  // flags the hand-off itself because its analysis is flow-insensitive and
+  // can't see that the actual mutation is deferred. Left open.
 
   const menu = (
     <div

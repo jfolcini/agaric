@@ -118,9 +118,10 @@ export function HasParentMatchingEditor({
   // #4406 — `renderBuilder` (the recursive render-prop below) is invoked
   // synchronously during THIS render and receives `handleAddLeaf`/
   // `handleAddGroup`, callbacks that mutate `nextId` (a ref). oxlint's
-  // syntax-only react(refs) rule can't prove `renderBuilder` never calls
-  // them synchronously (it never does in practice — they're event
-  // handlers), so it conservatively flags the ref as reachable from render.
+  // react(refs) rule can't see through the render-prop boundary to prove
+  // `renderBuilder` never calls them synchronously (it never does in
+  // practice — they're event handlers), so it conservatively flags the ref
+  // as reachable from render.
   // Left open: `nextId` is a monotonic id counter and there is no
   // non-ref way to keep one across renders without triggering a re-render
   // on every id mint.
