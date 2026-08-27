@@ -978,6 +978,7 @@ describe('PageBlockStore', () => {
       function Probe(): ReactElement {
         const map = usePageBlockStore((s) => s.blocksById)
         const renderedRef = useRef(0)
+        // oxlint-disable-next-line react/refs -- render-count probe: this test asserts the exact number of re-renders a store subscription causes, so incrementing a ref during render is the mechanism under test (#4409)
         renderedRef.current++
         // oxlint-disable-next-line react/globals -- publishes the render count to an outer variable so the assertion after render can read it; test-only instrumentation, not production render logic (#4409)
         renderCount = renderedRef.current
