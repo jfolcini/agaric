@@ -218,13 +218,20 @@ export function countBySeverity(report) {
 }
 
 /**
- * One row per (rule, severity) PAIR, not per rule. A rule's severity is not a
- * property of the rule: `.oxlintrc.json`'s `overrides` block downgrades
- * `typescript/require-await` under tests while it stays `error` everywhere
- * else, so keying on the code alone and keeping the first severity seen would
- * label every one of its findings by whichever file the linter happened to
- * reach first — and a table that reports 40 errors as `warning` is worse for
- * triage than no table.
+ * One row per (rule, severity) PAIR, not per rule. A rule's severity is not
+ * fixed by its name alone — oxlint's `overrides` mechanism lets a `files:`
+ * scoped block enable the same rule at a different severity than it carries
+ * elsewhere, so a config change could put one rule's findings under two
+ * severities in a single report. (Today's config does not: the one override
+ * that touches a `typescript(...)` rule — `.oxlintrc.json:166` — sets
+ * `typescript/require-await` to `"off"` under tests, which emits no
+ * diagnostics to collide with, and no other rule is enabled at more than one
+ * severity.) Keying on the code alone and keeping the first severity seen
+ * would, under such a config, label every one of a rule's findings by
+ * whichever file the linter happened to reach first — and a table that
+ * reports 40 errors as `warning` is worse for triage than no table. Pairing
+ * on (rule, severity) is defensive against that config, not a fix for one
+ * that exists today.
  */
 export function countByRule(report) {
   const counts = new Map()
@@ -475,6 +482,12 @@ export function collectProblems({ exitCode, reportText, probe }) {
   }
   for (const p of checkCanary(probes.canary)) problems.push(broken(p))
   for (const p of checkTypeAwareWasUsed(report, probes.baseline)) problems.push(broken(p))
+  // Stashed as a non-index property: existing callers that treat this as a
+  // plain problems array (`.length`, `.some`, spreads, `JSON.stringify`) are
+  // unaffected — JSON.stringify on an array ignores non-index own
+  // properties — but `runGuard` can reuse the already-parsed report instead
+  // of re-parsing the same `-f json` text a second time.
+  problems.report = report
   return problems
 }
 
@@ -493,8 +506,11 @@ export function runGuard({ exitCode, reportPath, probe = runProbes }) {
   // Reachable: `collectProblems` pushes an `unverifiable` when the probes
   // cannot be run at all. See its probe block.
   if (problems.length > 0) return { code: EXIT_UNVERIFIABLE, problems }
-  const { report } = parseReport(reportText)
-  return { code: EXIT_CLEAN, problems, report }
+  // `problems.length === 0` is only reachable via `collectProblems`'s final
+  // `return problems`, which always stashes the parsed report first — so
+  // `.report` is guaranteed set here, and re-parsing `reportText` (several
+  // hundred KB of `-f json` on a real report) would be redundant.
+  return { code: EXIT_CLEAN, problems, report: problems.report }
 }
 
 // ---------------------------------------------------------------------------
@@ -746,11 +762,12 @@ function selfTestCounting({ check }) {
     JSON.stringify(bySeverity),
   )
 
-  // Note 6: `.oxlintrc.json`'s overrides block downgrades
-  // `typescript/require-await` under tests while it stays `error` elsewhere,
-  // so one rule really can carry two severities in a single report. Keying
-  // the table on the code alone kept whichever severity was seen FIRST,
-  // which would label 40 errors `warning` purely by file order.
+  // Note 6: a config's `overrides` mechanism CAN enable one rule at two
+  // severities across a report (today's config does not — see the
+  // `countByRule` doc comment above); this fixture stands in for that case
+  // synthetically. Keying the table on the code alone would keep whichever
+  // severity was seen FIRST, which would label 40 errors `warning` purely by
+  // file order.
   const mixed = JSON.parse(
     goodReport([
       warnDiag('typescript(require-await)'),
