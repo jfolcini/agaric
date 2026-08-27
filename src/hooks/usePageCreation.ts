@@ -86,72 +86,75 @@ export function usePageCreation({
     [],
   )
 
-  const handleCreatePage = useCallback(async () => {
-    const name = newPageName.trim() || t('pageBrowser.untitled')
-    // Phase 2 — a page must belong to a space. On the rare
-    // first-boot path where `SpaceStore` has not yet hydrated we
-    // refuse to create and surface a toast rather than silently
-    // creating an unscoped page. The `isReady` gate above normally
-    // prevents this branch from firing.
-    const activeSpaceId = useSpaceStore.getState().currentSpaceId
-    if (activeSpaceId == null) {
-      notify.error(t('pageBrowser.spaceNotReady'))
-      return
-    }
-    setIsCreating(true)
-    try {
-      const newId = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
-      // #4338 — a page the user has just NAMED is the strongest picker
-      // candidate there is; publish it so a warm `pagesListRef` can offer it
-      // to `[[` without waiting for a space switch to clear the cache.
-      notifyPageAdded(newId, name)
-      setNewPageName('')
-      // The optimistic prepend assumes the new page belongs
-      // at the top of the *current* result set. That only holds when no
-      // compound-filter chips are active: with chips the server decides
-      // membership (the new page may or may not match), and the prepended
-      // row also lacks the metadata the density rows read. When chips are
-      // active we refetch from page 1 instead, so the new page surfaces
-      // only if it actually matches — and with full metadata. The fast
-      // optimistic path is kept for the unfiltered case (the common one).
-      if (wireFilters.length > 0) {
-        reload()
-      } else {
-        const newPage: BlockRow = {
-          id: newId,
-          block_type: 'page',
-          content: name,
-          parent_id: null,
-          position: null,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-          page_id: newId,
+  const handleCreatePage = useCallback(
+    async function handleCreatePage() {
+      const name = newPageName.trim() || t('pageBrowser.untitled')
+      // Phase 2 — a page must belong to a space. On the rare
+      // first-boot path where `SpaceStore` has not yet hydrated we
+      // refuse to create and surface a toast rather than silently
+      // creating an unscoped page. The `isReady` gate above normally
+      // prevents this branch from firing.
+      const activeSpaceId = useSpaceStore.getState().currentSpaceId
+      if (activeSpaceId == null) {
+        notify.error(t('pageBrowser.spaceNotReady'))
+        return
+      }
+      setIsCreating(true)
+      try {
+        const newId = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
+        // #4338 — a page the user has just NAMED is the strongest picker
+        // candidate there is; publish it so a warm `pagesListRef` can offer it
+        // to `[[` without waiting for a space switch to clear the cache.
+        notifyPageAdded(newId, name)
+        setNewPageName('')
+        // The optimistic prepend assumes the new page belongs
+        // at the top of the *current* result set. That only holds when no
+        // compound-filter chips are active: with chips the server decides
+        // membership (the new page may or may not match), and the prepended
+        // row also lacks the metadata the density rows read. When chips are
+        // active we refetch from page 1 instead, so the new page surfaces
+        // only if it actually matches — and with full metadata. The fast
+        // optimistic path is kept for the unfiltered case (the common one).
+        if (wireFilters.length > 0) {
+          reload()
+        } else {
+          const newPage: BlockRow = {
+            id: newId,
+            block_type: 'page',
+            content: name,
+            parent_id: null,
+            position: null,
+            deleted_at: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+            page_id: newId,
+          }
+          setPages((prev) => [newPage, ...prev])
+          // Keep the count chip in step with the optimistic prepend (mirror
+          // of the D20 delete decrement). The chip-active branch above
+          // refetches, which re-runs the backend COUNT, so no manual bump
+          // is needed there.
+          setDisplayTotalCount((cur) => (typeof cur === 'number' ? cur + 1 : cur))
         }
-        setPages((prev) => [newPage, ...prev])
-        // Keep the count chip in step with the optimistic prepend (mirror
-        // of the D20 delete decrement). The chip-active branch above
-        // refetches, which re-runs the backend COUNT, so no manual bump
-        // is needed there.
-        setDisplayTotalCount((cur) => (typeof cur === 'number' ? cur + 1 : cur))
+        onPageSelect?.(newId, name)
+      } catch (error) {
+        // Issue #106 — distinguish duplicate-name conflicts from generic
+        // DB failures. A conflict is user-actionable ("pick a different
+        // name"), not a system error worth a Retry button.
+        if (isConflict(error)) {
+          notify.error(t('pageBrowser.duplicateName'))
+        } else {
+          notify.error(t('pageBrowser.createFailed', { error: String(error) }), {
+            action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
+          })
+        }
       }
-      onPageSelect?.(newId, name)
-    } catch (error) {
-      // Issue #106 — distinguish duplicate-name conflicts from generic
-      // DB failures. A conflict is user-actionable ("pick a different
-      // name"), not a system error worth a Retry button.
-      if (isConflict(error)) {
-        notify.error(t('pageBrowser.duplicateName'))
-      } else {
-        notify.error(t('pageBrowser.createFailed', { error: String(error) }), {
-          action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
-        })
-      }
-    }
-    setIsCreating(false)
-  }, [newPageName, setPages, setDisplayTotalCount, t, onPageSelect, wireFilters, reload])
+      setIsCreating(false)
+    },
+    [newPageName, setPages, setDisplayTotalCount, t, onPageSelect, wireFilters, reload],
+  )
 
   const handleCreateUnder = useCallback((namespacePath: string) => {
     setNewPageName(`${namespacePath}/`)

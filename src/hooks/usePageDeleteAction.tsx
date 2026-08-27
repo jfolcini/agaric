@@ -171,47 +171,50 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
     [t],
   )
 
-  const handleConfirm = useCallback(async () => {
-    if (!target) return
-    const { id, onDeleted, onFailed } = target
-    setDeletingId(id)
-    try {
-      unwrap(await commands.deleteBlock(id))
-      setResolveDeletedStatus(target, true)
-      // #4007 — the `[[` picker's page-name cache is filled once per space
-      // and has no other delete signal; without this it keeps offering the
-      // deleted page for the rest of the session.
-      notifyPageRemoved(id)
-      // #3626 — a deleted page must stop lighting up the calendar. The
-      // journal's own DaySection routes its delete through here too, so this
-      // one call covers every surface that can remove a journal page.
-      invalidateCalendarPageDates()
-      notify.success(t('pageDeleteAction.deleted'), {
-        action: {
-          label: t('pageDeleteAction.undo'),
-          onClick: () => handleUndo(target),
-        },
-      })
-      onDeleted?.(id)
-    } catch (err) {
-      logger.error('usePageDeleteAction', 'Failed to delete page', { pageId: id }, err)
-      onFailed?.(id, err)
-      notify.error(t('pageDeleteAction.deleteFailed'), {
-        action: {
-          label: t('pageDeleteAction.retry'),
-          onClick: () => {
-            handleConfirm().catch(() => {
-              /* error already surfaced */
-            })
+  const handleConfirm = useCallback(
+    async function handleConfirm() {
+      if (!target) return
+      const { id, onDeleted, onFailed } = target
+      setDeletingId(id)
+      try {
+        unwrap(await commands.deleteBlock(id))
+        setResolveDeletedStatus(target, true)
+        // #4007 — the `[[` picker's page-name cache is filled once per space
+        // and has no other delete signal; without this it keeps offering the
+        // deleted page for the rest of the session.
+        notifyPageRemoved(id)
+        // #3626 — a deleted page must stop lighting up the calendar. The
+        // journal's own DaySection routes its delete through here too, so this
+        // one call covers every surface that can remove a journal page.
+        invalidateCalendarPageDates()
+        notify.success(t('pageDeleteAction.deleted'), {
+          action: {
+            label: t('pageDeleteAction.undo'),
+            onClick: () => handleUndo(target),
           },
-        },
-      })
-      // Re-throw so ConfirmDialog stays open per its async-rejection contract.
-      throw err
-    } finally {
-      setDeletingId(null)
-    }
-  }, [handleUndo, t, target])
+        })
+        onDeleted?.(id)
+      } catch (err) {
+        logger.error('usePageDeleteAction', 'Failed to delete page', { pageId: id }, err)
+        onFailed?.(id, err)
+        notify.error(t('pageDeleteAction.deleteFailed'), {
+          action: {
+            label: t('pageDeleteAction.retry'),
+            onClick: () => {
+              handleConfirm().catch(() => {
+                /* error already surfaced */
+              })
+            },
+          },
+        })
+        // Re-throw so ConfirmDialog stays open per its async-rejection contract.
+        throw err
+      } finally {
+        setDeletingId(null)
+      }
+    },
+    [handleUndo, t, target],
+  )
 
   const handleOpenChange = useCallback((open: boolean) => {
     if (!open) setTarget(null)

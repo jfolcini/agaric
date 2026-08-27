@@ -379,6 +379,7 @@ describe('useToolbarOverflow', () => {
       onResult: (r: { visible: ToolbarItem[]; overflowed: ToolbarItem[] }) => void
     }): React.ReactElement {
       const [n, setN] = React.useState(5)
+      // oxlint-disable-next-line react/globals -- test harness: publishes the setState setter to an outer variable so the test can drive item-count changes from outside the React tree; not production render logic (#4409)
       setCount = setN
       const items: ToolbarItem[] = Array.from({ length: n }, (_, i) => ({
         kind: 'button' as const,

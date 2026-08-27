@@ -72,6 +72,7 @@ export function SelectTrigger({ children: _children, ...props }: SelectTriggerPr
   // Capture the latest trigger props so SelectContent can forward them
   // onto the native <select>. The trigger itself renders nothing — the
   // rendered element lives inside SelectContent.
+  // oxlint-disable-next-line react/immutability -- test mock: SelectTrigger and SelectContent are siblings under one Provider and React renders them synchronously in document order within a single (non-concurrent, jsdom) test render, so this ref hand-off is safe here; not a pattern used in production code (#4409)
   ctx.triggerPropsRef.current = { ...props }
   return null
 }

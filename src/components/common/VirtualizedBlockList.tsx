@@ -216,6 +216,7 @@ export function VirtualizedBlockList<B extends { id: string }>({
     [rowCount],
   )
 
+  // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. Nothing but the numeric `row.start` reaches a child: `styleForOffset` is an LRU keyed on that number (a pure function of its key, so it cannot return a style for a different offset) and `measureRef` is the constructor-bound `measureElement`. react-virtual 3.14.10 builds the Virtualizer once (`useState(() => new Virtualizer(...))`) and virtual-core 3.17.8 assigns `measureElement` in the constructor, so the function identities the rule names never change; what does change per render is `getVirtualItems()`/`getTotalSize()`, both read in this render body. (#4409)
   const virtualizer = useVirtualizer({
     count: blocks.length,
     getScrollElement: () => scrollRef.current,

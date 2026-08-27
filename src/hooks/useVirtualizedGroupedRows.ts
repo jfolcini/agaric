@@ -129,6 +129,7 @@ export function useVirtualizedGroupedRows<TGroup, TItem extends { id: string }>(
     [virtualRows, headerHeight, itemHeight],
   )
 
+  // oxlint-disable-next-line react/incompatible-library -- NOT the same argument as the six .tsx sites, and worth reading before copying one of them here. This file is `.ts`, outside the babel include in vite.config.ts (`/\.[jt]sx(?:$|\?)/`), so the React Compiler never processes it — and therefore never learns that its three consumers (DonePanel, DuePanel, AgendaResults, all `.tsx` and all compiled) touch an incompatible library. The skip-memoization bail-out the diagnostic relies on does NOT fire for them; only the shape of their code makes them safe. What actually crosses a memo boundary there is `liRef={virtualizer.measureElement}` into the memoed `BlockListItem`, and `measureElement` is assigned once in the Virtualizer constructor (virtual-core 3.17.8) so its identity never changes; `getVirtualItems()`/`getTotalSize()` are read in each consumer's own render body. The compiler-on check that structural argument cannot supply is e2e/agenda-virtualization.spec.ts, which runs the production build (`npm run build:e2e` leaves the compiler on) and asserts the agenda list both windows and RECYCLES rows while scrolling — the exact symptom a frozen `getVirtualItems()` memo would produce (#4409)
   const virtualizer = useVirtualizer<HTMLDivElement, Element>({
     count: virtualRows.length,
     getScrollElement: () => scrollParentRef.current,

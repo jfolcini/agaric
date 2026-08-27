@@ -368,6 +368,7 @@ describe('PageBlockStore', () => {
       // context hands to consumers (usePageBlockStoreApi reads PageBlockContext).
       let contextStore: StoreApi<PageBlockState> | undefined
       function Probe(): null {
+        // oxlint-disable-next-line react/globals -- test harness: captures the context value into an outer variable so the assertion after render can compare store identity; not production render logic (#4409)
         contextStore = useContext(PageBlockContext) ?? undefined
         return null
       }

@@ -111,10 +111,17 @@
     // finding printed on every run while the burn-down triages them bucket by
     // bucket; #4377 carries the per-rule counts and the triage state.
     //
-    // Ratchet: when a rule's count reaches zero, delete its line here — the
-    // `correctness` category default takes over and it becomes `error` again.
-    // This is the same warn -> burn-down -> error ratchet #188 ran for the
-    // biome -> oxc migration.
+    // Ratchet: when a rule's count reaches zero, promote its line here to
+    // `error` (the `correctness` category default it would fall back to on
+    // deletion is also `error`; spelling it out keeps the burn-down state
+    // readable and survives a category retune). This is the same warn ->
+    // burn-down -> error ratchet #188 ran for the biome -> oxc migration.
+    //
+    // #4409 drove six of the eight to zero and promoted them below. Only
+    // `react/refs` and `react/set-state-in-effect` are still burning down
+    // (#4406 / #4407); they must stay at `warn` until their counts reach
+    // zero, and `npm run lint` deliberately carries no `--max-warnings` so
+    // those two keep printing without failing the build.
     //
     // NOTE: these rule names do not exist in oxlint <= 1.78, and oxlint
     // rejects the ENTIRE config file on an unknown rule name ("Rule 'refs' not
@@ -123,12 +130,12 @@
     // other.
     "react/refs": "warn",
     "react/set-state-in-effect": "warn",
-    "react/immutability": "warn",
-    "react/globals": "warn",
-    "react/incompatible-library": "warn",
-    "react/static-components": "warn",
-    "react/preserve-manual-memoization": "warn",
-    "react/purity": "warn"
+    "react/immutability": "error",
+    "react/globals": "error",
+    "react/incompatible-library": "error",
+    "react/static-components": "error",
+    "react/preserve-manual-memoization": "error",
+    "react/purity": "error"
   },
   "overrides": [
     {

@@ -330,20 +330,23 @@ export function useSyncTrigger() {
     [setState],
   )
 
-  const scheduleNext = useCallback(() => {
-    if (!mountedRef.current) return
-    // #748: cancel any pending timer before arming so there is never more
-    // than one live chain. Without this, a resume that re-arms while a
-    // prior `scheduleNext` timer is mid-`syncAll()` (fired, not yet
-    // re-armed) would leak a second concurrent chain when that run's
-    // `.then(scheduleNext)` resolves.
-    if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(() => {
-      syncAll().then(() => {
-        if (mountedRef.current) scheduleNext()
-      })
-    }, intervalRef.current)
-  }, [syncAll])
+  const scheduleNext = useCallback(
+    function scheduleNext() {
+      if (!mountedRef.current) return
+      // #748: cancel any pending timer before arming so there is never more
+      // than one live chain. Without this, a resume that re-arms while a
+      // prior `scheduleNext` timer is mid-`syncAll()` (fired, not yet
+      // re-armed) would leak a second concurrent chain when that run's
+      // `.then(scheduleNext)` resolves.
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => {
+        syncAll().then(() => {
+          if (mountedRef.current) scheduleNext()
+        })
+      }, intervalRef.current)
+    },
+    [syncAll],
+  )
 
   // Sync on mount + recursive scheduled resync
   useEffect(() => {

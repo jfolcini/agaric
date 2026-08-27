@@ -31,7 +31,7 @@ export interface UseBlockNavigationOptions {
   untitledLabel?: string | undefined
 }
 
-/** Per-row handler bundle: stable function identities, keyed by block id. */
+/** Per-row handler bundle: stable function identities, keyed by (block id, page id). */
 export interface BlockRowHandlers {
   onClick: () => void
   onKeyDown: (e: React.KeyboardEvent) => void
@@ -44,8 +44,10 @@ export interface UseBlockNavigationReturn {
   handleBlockKeyDown: (e: React.KeyboardEvent, block: BlockRow) => void
   /**
    * Stable per-block handler factory — returns the same `onClick`/`onKeyDown`
-   * functions across renders for the same block id. Required so
-   * `BlockListItem`'s `React.memo` can actually drop re-renders.
+   * functions across renders for the same (block id, page id) pair. Required
+   * so `BlockListItem`'s `React.memo` can actually drop re-renders. A row
+   * whose `page_id` has changed gets a fresh bundle rather than a closure
+   * still pointing at the old page.
    */
   getRowHandlers: (block: BlockRow) => BlockRowHandlers
 }
@@ -79,16 +81,31 @@ export function useBlockNavigation({
   // Tier 1.4: per-block stable handlers. Cache is invalidated whenever the
   // underlying click/keydown callbacks change identity (which themselves
   // only change when onNavigateToPage / pageTitles / untitledLabel change).
+  //
+  // The cache key is (block.id, block.page_id), not block.id alone. The
+  // cached closures capture the whole `block`, but the only fields they can
+  // ever observe are `block.id` and `block.page_id` (handleBlockKeyDown
+  // delegates to handleBlockClick, which reads exactly those two). Keying on
+  // the id alone made a same-id row whose `page_id` had changed keep
+  // navigating with the stale capture — reachable in AgendaResults, where
+  // page-title resolution runs in an async effect AFTER the render that first
+  // shows the moved row, so `pageTitles` (and with it the whole cache) is not
+  // replaced until the batchResolve IPC comes back. Including page_id in the
+  // key closes that window and makes the entry a genuine function of its key.
   const getRowHandlers = useMemo(() => {
     const cache = new Map<string, BlockRowHandlers>()
     return (block: BlockRow): BlockRowHandlers => {
-      let entry = cache.get(block.id)
+      // NUL separator: neither a ULID nor a page id can contain one, so the
+      // composite key cannot collide with a different (id, page_id) pair.
+      const key = `${block.id}\u0000${block.page_id ?? ''}`
+      let entry = cache.get(key)
       if (!entry) {
         entry = {
           onClick: () => handleBlockClick(block),
           onKeyDown: (e: React.KeyboardEvent) => handleBlockKeyDown(e, block),
         }
-        cache.set(block.id, entry)
+        // oxlint-disable-next-line react/immutability -- `cache` is a Map allocated once (per handleBlockClick/handleBlockKeyDown identity) and only ever grown with entries that are a pure, deterministic function of the key (block.id, block.page_id) plus the two captured callbacks; a discarded/duplicate render (StrictMode double-invoke, an interrupted concurrent render) only recomputes a behaviourally identical entry for the same key, so this mutation is idempotent and produces no observable difference (#4409)
+        cache.set(key, entry)
       }
       return entry
     }
