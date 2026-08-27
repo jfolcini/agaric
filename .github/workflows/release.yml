@@ -172,6 +172,13 @@ jobs:
         # failure; the INSTALL decides. Measured trace + exit codes in
         # .github/actions/apt-install/action.yml.
         #
+        # CONFIRMED on a noble host (2026-08-27), not inferred from the
+        # package description: `dpkg -S /usr/bin/dbus-run-session` answers
+        # `dbus-daemon: /usr/bin/dbus-run-session` on ubuntu 24.04, the same
+        # release the runner image uses. Review of #4424 suspected the
+        # binary had moved to `dbus-bin` in the noble source split; it has
+        # not. `dbus-bin` exists (1.14.10-4ubuntu4.1) but does not own it.
+        #
         # `dbus-run-session` lives here, in `dbus-daemon` (pinned below), NOT
         # in `dbus-x11`. Verified against the noble package index and this
         # runner's own image: `dbus-x11` ships only `dbus-launch`
@@ -584,12 +591,21 @@ jobs:
             # more evidence than `command -v` alone, at the cost of at most a
             # few seconds paid once, on the final attempt only.
             if [ "${attempt:-1}" -ge "$MAX_BOOT_ATTEMPTS" ] && [ "$MAX_BOOT_ATTEMPTS" -gt 1 ]; then
-              if command -v dbus-run-session >/dev/null 2>&1 \
-                && timeout 10 dbus-run-session -- true >/dev/null 2>&1; then
+              if ! command -v dbus-run-session >/dev/null 2>&1; then
+                # Binary absent: image drift. The apt pin above should make
+                # this unreachable, so reaching it means the pin no longer
+                # covers what it claims.
+                echo "::warning::Final attempt: dbus-run-session is NOT INSTALLED (image drift — the apt pin no longer provides it); booting WITHOUT it, so a missing session bus degrades to the previous behaviour instead of gating the release." >&2
+                launcher=()
+              elif timeout -k 5 10 dbus-run-session -- true >/dev/null 2>&1; then
                 echo "Final attempt: dbus-run-session probed healthy (started and tore down a real bus); keeping it for this attempt too."
                 launcher=(dbus-run-session --)
               else
-                echo "::warning::Final attempt: dbus-run-session missing or failed a live probe; booting WITHOUT it, so a broken session bus degrades to the previous behaviour instead of gating the release." >&2
+                # Binary present but cannot start a bus: the #4418 case.
+                # Distinguishing these two is the entire reason the probe
+                # replaced a bare `command -v`, so the annotation a
+                # maintainer actually reads must distinguish them too.
+                echo "::warning::Final attempt: dbus-run-session IS INSTALLED but FAILED a live probe (present, cannot start a bus — the #4418 shape); booting WITHOUT it, so a broken session bus degrades to the previous behaviour instead of gating the release." >&2
                 launcher=()
               fi
             elif command -v dbus-run-session >/dev/null 2>&1; then

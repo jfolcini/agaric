@@ -1042,6 +1042,15 @@ if [ "${1:-}" = "--self-test" ]; then
     # LEVEL, where anchored and unanchored agree — must still agree with
     # _validate.yml, or the divergence is wider than documented.
     #
+    # Hence the `.+` on each toml alternative in the exclusion below. An
+    # UNANCHORED `prek\.toml$` also strips the root copies, so all four of
+    # prek.toml / .taplo.toml / lychee.toml / .gitleaks.toml — every one of
+    # them tracked and at the root — would leave `_tracked` entirely and
+    # never be compared, while this comment claimed they were. Deleting
+    # `^prek\.toml$` from `_validate.yml`'s `ci_re` (a NARROWING edit, the
+    # unsafe direction) then still reported green. `.+` excludes only the
+    # nested and prefixed copies that are the actual documented divergence.
+    #
     # `_vy` is resolved via `${BASH_SOURCE[0]}`, not a bare relative path:
     # this self-test runs BEFORE the `cd "$REPO_ROOT"` further down, so a
     # relative path would silently vanish (and this whole ratchet with it)
@@ -1112,7 +1121,8 @@ if [ "${1:-}" = "--self-test" ]; then
             # `git ls-files` returning EMPTY — no git, not a repo, an
             # exported tarball, a container without git — must fail CLOSED,
             # not report a pass having compared zero paths: every sibling
-            # guard in this block does (`[ ! -f "$_vy" ]`, `[ -z "$_vci" ]`),
+            # guard in this block does (`[ ! -f "$_vy" ]`, and the
+            # `_vci_count -ne 1` cardinality check above),
             # and this ratchet is not exempt just because its failure mode
             # is a command returning nothing instead of a missing file.
             #
@@ -1127,7 +1137,7 @@ if [ "${1:-}" = "--self-test" ]; then
             # here would make this loop flag that exact documented case as
             # "wider than documented" and tell you to update a note that
             # already says it — the failure this fix (#4424) closes.
-            _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$')
+            _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '^scripts/.*\.sh$|.+prek\.toml$|.+\.taplo\.toml$|.+lychee\.toml$|.+\.gitleaks\.toml$')
             if [ -z "$_tracked" ]; then
                 st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with _validate.yml" \
                     "git ls-files returned no tracked paths — the comparison would silently pass having checked zero"
