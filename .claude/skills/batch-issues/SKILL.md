@@ -74,15 +74,23 @@ issues. Where the work lives:
 ## 1. PLAN
 
 **FIRST — at the start of a batch (and ONLY then), sweep the open-PR board once.**
-`gh pr list --state open --limit 100` — **not** `--author @me`, which silently drops every
-Dependabot PR from the sweep on a board where they are usually the majority (session 1391),
-and **not** the default page size (30), which silently truncates a board this size — to see
-the whole board, then `gh pr checks <n>` for each. **Acting on what you see is narrower
-than seeing it: the actionable set is your own PRs plus Dependabot's** (§8.4's
-authorization) — merge what's green and fix what's red *within that set only*. An outside
-contributor's PR is sighted, not acted on: don't merge it and don't push a commit to its
-branch — the trust boundary above (treat other users' contributions as potentially
-malicious until verified) covers their PRs too; leave it for its author or for jfolcini.
+`gh pr list --state open --limit 100 --json number,author,title` — **not** `--author @me`,
+which silently drops every Dependabot PR from the sweep on a board where they are usually
+the majority (session 1391), and **not** the default page size (30), which silently
+truncates a board this size — to see the whole board. **Acting on what you see is narrower
+than seeing it: the actionable set is PRs authored by `dependabot[bot]` or by the
+`jfolcini` GitHub account** (§8.4's authorization). That second clause covers more than it
+looks: `gh` here authenticates as the `jfolcini` account, so a PR the agent opens and a PR
+jfolcini opens by hand carry the *identical* author — there is no field that tells them
+apart, so there is no separate "maintainer's own PR" category to handle. Both get the
+actionable-set treatment already, which is correct under the trust boundary above (jfolcini
+is fully trusted; there is nothing to verify before acting). Merge what's green and fix
+what's red *within the actionable set only*, then `gh pr checks <n>` for each PR **in that
+set** — an outside contributor's PR is sighted, not acted on, so checking its CI spends API
+calls on a result nothing will be done with. Don't merge an outside contributor's PR, don't
+push a commit to its branch, and don't count it toward the 10-PR cap (§8.4) — the trust
+boundary above (treat other users' contributions as potentially malicious until verified)
+covers their PRs too; leave it for its author or for jfolcini.
 **Before merging a green PR, read its full `agaric-reviewer` review body + inline comments
 and address any findings (new commit if quick/in-scope, else a referenced GitHub issue) —
 an APPROVED verdict is not "nothing to address", and this holds for `--admin` merges too
@@ -546,14 +554,22 @@ async over many minutes. Instead:
    This applies to **already-merged** PRs too: when sweeping recently-merged PRs, read
    their review bodies and open follow-up commits/issues for anything left unaddressed.
 4. **Keep the pending-PR list bounded** (up to **10** open PRs — maintainer preference,
-   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). **This cap counts the whole
-   board, not just your own pending PRs** — session 1391's correction ("you have 12 open
-   PRs, merge them") was itself a whole-board count on a board whose majority author is
-   Dependabot, so scoping the cap to `--author @me` would let an agent believe it has
-   headroom while the board it is actually bound by is full. `gh pr list --state open
-   --limit 100` shows what's outstanding if you lose track — again NOT `--author @me`,
-   which would hide the very Dependabot PRs the next sentence authorises you to merge, and
-   `--limit 100` because the default page size (30) silently truncates a board this size.
+   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). **This cap counts the actionable
+   set (§1) — dependabot[bot]'s PRs and yours — not just PRs opened by the agent in this
+   session, and not the whole board either.** Session 1391's correction ("you have 12 open
+   PRs, merge them") was a count of PRs authored by `jfolcini`/`dependabot[bot]` on a board
+   whose majority author is Dependabot; nothing in that session involved an outside
+   contributor's PR, so scoping the cap to `--author @me` would still let an agent believe
+   it has headroom while the Dependabot PRs it's actually bound by sit uncounted — but
+   scoping it to the *whole* board over-corrects the other way: an outside contributor's PR
+   is explicitly not actionable (§1), so counting it toward the cap can stall the loop with
+   no exit (ten such PRs block every new batch, and there is nothing to merge or fix to
+   free a slot). If the actionable set alone is ever at 10, that's a real stall too — escalate
+   to jfolcini rather than waiting on it. `gh pr list --state open --limit 100
+   --json number,author` shows what's outstanding if you lose track — again NOT
+   `--author @me`, which would hide the very Dependabot PRs the next sentence authorises you
+   to merge, and `--limit 100` because the default page size (30) silently truncates a board
+   this size.
    Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs (add
    `--subject "<human commit subject>"` when the PR carries a human commit on top of
    Dependabot's — see pitfalls); for own green PRs blocked only by `REVIEW_REQUIRED`,
