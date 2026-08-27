@@ -55,7 +55,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, writeSync } from 'node:fs'
 
 /**
  * The application id to drive. Overridable with `--pkg` because a locally
@@ -112,6 +112,19 @@ function adb(args, { allowFail = false } = {}) {
   try {
     return execFileSync('adb', full, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
   } catch (err) {
+    // A missing `adb` on PATH is the failure a first-time runner is most
+    // likely to hit, and left unhandled it throws a raw ENOENT stack instead
+    // of one of this script's own diagnostics. Every call in this file goes
+    // through this wrapper (including the one `resolveSerial` makes before
+    // `SERIAL` is even set — `adb()` degrades to plain `adb <args>` while
+    // `SERIAL` is null), so catching it once here covers every call site.
+    if (err.code === 'ENOENT') {
+      fail(
+        "'adb' is not on PATH",
+        '  install the Android SDK platform-tools and add them to PATH, then re-run\n' +
+          '  (Android Studio installs them under <sdk>/platform-tools).',
+      )
+    }
     if (allowFail) return ''
     throw new Error(`adb ${full.join(' ')} failed: ${err.stderr || err.message}`)
   }
@@ -136,17 +149,41 @@ function removeDump() {
   }
 }
 
+// Re-entrancy guard: `fail()` calls `removeDump()`, which calls `adb()`,
+// which itself calls `fail()` on an ENOENT (see `adb()`'s catch). If `adb`
+// vanishes from PATH mid-run — after `SERIAL` is already set, so
+// `removeDump` does not short-circuit — that is a `fail → removeDump → adb →
+// fail → …` cycle with no base case. `process.exit()` terminates immediately
+// regardless of call-stack depth, so detecting the re-entry and exiting right
+// there (skipping the second cleanup attempt, which is what would loop) is
+// enough to stop it without ever unwinding the recursion.
+let failing = false
+
 function fail(message, detail) {
+  if (failing) process.exit(1)
+  failing = true
   // `process.exit` below skips any pending `finally`, so clean up here rather
   // than relying on the caller's.
   removeDump()
-  console.error(`\n✗ ${message}`)
-  if (detail) console.error(detail)
+  // NOT `console.error`: when stderr is a pipe (`… 2>&1 | tee log.txt`,
+  // exactly how this script is meant to be run unattended) Node's stream
+  // write is ASYNCHRONOUS, and `process.exit()` tears the process down
+  // before a pending write flushes — the message is silently dropped. That
+  // message is the entire point of this function, so it cannot go through
+  // the async path. `writeSync` on fd 2 blocks until the bytes are actually
+  // written, which guarantees they land before `process.exit` runs.
+  writeSync(2, `\n✗ ${message}\n`)
+  if (detail) writeSync(2, `${detail}\n`)
   process.exit(1)
 }
 
 function resolveSerial(requested) {
-  const listed = execFileSync('adb', ['devices'], { encoding: 'utf8' })
+  // Routed through `adb()`, not a bare `execFileSync`, so a missing `adb`
+  // surfaces the same diagnostic as every other call in this script (see the
+  // ENOENT handling in `adb()`) instead of an uncaught stack. `SERIAL` is
+  // still null here, so `adb()` runs plain `adb devices` with no `-s` prefix
+  // — identical to the call this replaces.
+  const listed = adb(['devices'])
     .split('\n')
     .slice(1)
     .map((l) => l.trim())
@@ -175,6 +212,29 @@ function resolveSerial(requested) {
  * Mirrors what `WindowInsetsCompat.getInsets(systemBars() | displayCutout())`
  * computes natively: each visible source contributes to the edge named by its
  * `sideHint`, and the largest contribution per edge wins.
+ *
+ * This used to also parse `mDisplayFrame` out of the same dump and compute
+ * each edge as `display.{width,height} - inset.{right,bottom}`, where
+ * `inset.{right,bottom}` was itself `display.{width,height} - rect.{left,top}`.
+ * The display term cancels out of that round trip algebraically —
+ * `safe.bottom = height - (height - rect.top) = rect.top` for whatever value
+ * `height` held — so the safe rect's correctness never actually depended on
+ * `mDisplayFrame` being read correctly. What it bought instead was a new
+ * failure mode: the regex matched the FIRST `mDisplayFrame` anywhere after
+ * the `WindowInsetsStateController` marker with no bound on how far past it,
+ * so it could pick up a later, unrelated window's frame, and a dump that
+ * omitted the line failed the whole run for a value the result never used.
+ * Removed rather than hardened — the near edge of a TOP/LEFT source and the
+ * near edge of a BOTTOM/RIGHT source are exactly the safe rect's edges on
+ * their own, with no display size needed to state them.
+ *
+ * The one thing this loses: on an edge with NO source at all (there is
+ * usually no left/right system bar on a phone), the true safe edge is the
+ * physical display edge, and there is now nothing in this function that
+ * knows what that is. `safe.right`/`safe.bottom` are left as `Infinity` in
+ * that case — an honest "unconstrained on this edge", not a guess — and
+ * `assertFillsSafeRect` below skips checking an edge it has no finite value
+ * for rather than fabricate one.
  */
 function readSafeRect() {
   const dump = adb(['shell', 'dumpsys', 'window'])
@@ -182,15 +242,8 @@ function readSafeRect() {
   if (start < 0) fail('could not find WindowInsetsStateController in `dumpsys window`')
   const section = dump.slice(start)
 
-  const frameMatch = section.match(/mDisplayFrame=Rect\((\d+), (\d+) - (\d+), (\d+)\)/)
-  if (!frameMatch) fail('could not read mDisplayFrame from `dumpsys window`')
-  const display = {
-    width: Number(frameMatch[3]),
-    height: Number(frameMatch[4]),
-  }
-
   const wanted = new Set(['statusBars', 'navigationBars', 'displayCutout'])
-  const inset = { left: 0, top: 0, right: 0, bottom: 0 }
+  const safe = { left: 0, top: 0, right: Infinity, bottom: Infinity }
 
   // `InsetsSource` lines as they appear in the dump, whatever their shape. Used
   // only to tell a PARSER problem from a DEVICE STATE one below.
@@ -212,10 +265,10 @@ function readSafeRect() {
     // A zero-area source claims nothing.
     if (rect.right <= rect.left || rect.bottom <= rect.top) continue
     sources += 1
-    if (side === 'TOP') inset.top = Math.max(inset.top, rect.bottom)
-    else if (side === 'BOTTOM') inset.bottom = Math.max(inset.bottom, display.height - rect.top)
-    else if (side === 'LEFT') inset.left = Math.max(inset.left, rect.right)
-    else if (side === 'RIGHT') inset.right = Math.max(inset.right, display.width - rect.left)
+    if (side === 'TOP') safe.top = Math.max(safe.top, rect.bottom)
+    else if (side === 'BOTTOM') safe.bottom = Math.min(safe.bottom, rect.top)
+    else if (side === 'LEFT') safe.left = Math.max(safe.left, rect.right)
+    else if (side === 'RIGHT') safe.right = Math.min(safe.right, rect.left)
   }
   // Two very different failures used to share one message. `dumpsys window` is
   // a debugging dump, not an API: its wording drifts between Android versions.
@@ -250,16 +303,7 @@ function readSafeRect() {
     )
   }
 
-  return {
-    display,
-    inset,
-    safe: {
-      left: inset.left,
-      top: inset.top,
-      right: display.width - inset.right,
-      bottom: display.height - inset.bottom,
-    },
-  }
+  return { safe }
 }
 
 // ── app truth: where the app's views actually are ────────────────────
@@ -329,6 +373,21 @@ function hasOnboarding(nodes) {
   return nodes.some((n) => (n.text || n.desc).trim() === ONBOARDING_DISMISS && area(n.bounds) > 0)
 }
 
+/**
+ * Cap on `dismissOnboarding` invocations within one `waitForApp` run.
+ *
+ * Onboarding dialogs can legitimately stack (gesture coach-mark, then space
+ * onboarding), but that is at most two or three taps, not an open-ended
+ * number. Without a cap, a node whose text is exactly "Got it" but that is
+ * NOT actually dismissable (e.g. covered by something else, or a real bug
+ * that re-shows the same dialog) gets tapped on every non-clean poll for the
+ * whole `READY_TIMEOUT_MS` window — roughly 53 injected taps at the default
+ * 750ms cadence — and the eventual failure message said a dialog "was
+ * dismissed", past tense, as if that succeeded. This cap turns that into a
+ * small, bounded, and honestly-reported loop instead.
+ */
+const MAX_DISMISS_TAPS = 5
+
 /** Tap a first-run onboarding dialog away, if one is up. Returns true if it tapped. */
 function dismissOnboarding(nodes) {
   const btn = nodes.find(
@@ -357,7 +416,7 @@ async function waitForApp() {
   const deadline = Date.now() + READY_TIMEOUT_MS
   let nodes = []
   let clean = 0
-  let sawDialog = false
+  let dismissTaps = 0
   while (Date.now() < deadline) {
     nodes = dumpNodes()
     if (findMenuButton(nodes) && !hasOnboarding(nodes)) {
@@ -367,8 +426,8 @@ async function waitForApp() {
       clean = 0
       // Onboarding dialogs can stack (gesture coach-mark, then space
       // onboarding), so this keeps clearing them rather than clearing one and
-      // giving up.
-      if (dismissOnboarding(nodes)) sawDialog = true
+      // giving up — but only up to MAX_DISMISS_TAPS; see its comment.
+      if (dismissTaps < MAX_DISMISS_TAPS && dismissOnboarding(nodes)) dismissTaps += 1
     }
     await new Promise((r) => setTimeout(r, POLL_MS))
   }
@@ -407,9 +466,13 @@ async function waitForApp() {
   fail(
     `the app never settled on a '${MENU_LABEL}' control within ${READY_TIMEOUT_MS / 1000}s`,
     [
-      sawDialog
-        ? `  a '${ONBOARDING_DISMISS}' dialog was dismissed but the app still never settled.`
-        : '  the app may have failed to launch — check `adb logcat`.',
+      dismissTaps === 0
+        ? '  the app may have failed to launch — check `adb logcat`.'
+        : dismissTaps >= MAX_DISMISS_TAPS
+          ? `  a '${ONBOARDING_DISMISS}' node was tapped ${dismissTaps} times (the cap) without ever` +
+            `\n  clearing — this looks like a node that is tapped in a loop, not a dialog` +
+            '\n  that was dismissed. Check whether it is actually reachable/dismissable.'
+          : `  a '${ONBOARDING_DISMISS}' dialog was tapped ${dismissTaps} time(s) but the app still never settled.`,
       '',
       `  BEFORE debugging the app: '${MENU_LABEL}' is a hardcoded ENGLISH literal`,
       '  in this script, copied from `sidebar.openMenu` in src/lib/i18n/common.ts',
@@ -447,6 +510,60 @@ function assertInsideSafeRect(what, bounds, safe) {
     )
   }
   console.log(`✓ ${what} is inside the safe rect ${fmt(safe)} (bounds ${fmt(bounds)})`)
+}
+
+/**
+ * Slack for the fills-the-rect check below. `safe` comes from `dumpsys
+ * window` and `bounds` from `uiautomator dump` — two distinct `adb shell`
+ * calls, not one atomic snapshot — so a pixel or two of drift between them is
+ * expected, not a bug.
+ */
+const FILL_TOLERANCE_PX = 2
+
+/**
+ * `assertInsideSafeRect` proves a view does not overlap a system bar; it says
+ * nothing about whether the view actually reaches every edge of the space
+ * available to it. A webview whose layout collapsed to a small rect well
+ * inside the safe area passes that containment check trivially — assertion 3
+ * (the tap) then fails too in practice, but its message blames touch
+ * consumption, which sends the reader looking for an overlapping view instead
+ * of at the layout. This asserts the positive claim instead: the webview's
+ * bounds actually reach the safe rect's edges, not just stay inside them.
+ *
+ * Only meaningful for the webview — nothing else in this script is expected
+ * to fill the whole safe area, and in particular the hamburger button should
+ * not.
+ *
+ * Only edges the system actually constrains (a FINITE `safe` value) are
+ * checked. An axis with no system-bar source at all — typically left/right on
+ * a phone with no side cutout, see `readSafeRect` — has no independently-known
+ * "true" edge to compare against without trusting a second, unverified
+ * display-size source, so it is left unchecked rather than guessed at. In
+ * practice the edges that matter for #4301 (top/bottom: a status bar and a
+ * nav/gesture bar are essentially always present) are exactly the ones this
+ * can check.
+ */
+function assertFillsSafeRect(what, bounds, safe) {
+  const misses = Object.keys(safe).filter(
+    (edge) =>
+      Number.isFinite(safe[edge]) && Math.abs(bounds[edge] - safe[edge]) > FILL_TOLERANCE_PX,
+  )
+  if (misses.length > 0) {
+    fail(
+      `${what} does not fill the safe rect`,
+      [
+        `  ${what} bounds: ${fmt(bounds)}`,
+        `  safe rect: ${fmt(safe)}`,
+        `  mismatched edge(s): ${misses.join(', ')}`,
+        '',
+        '  The webview is inside the safe area but smaller than it on at least',
+        '  one constrained edge — a collapsed or mis-measured layout, not a bar',
+        '  overlap. If assertion 3 also fails, that is a symptom of this, not an',
+        '  independent cause.',
+      ].join('\n'),
+    )
+  }
+  console.log(`✓ ${what} fills the safe rect on every constrained edge`)
 }
 
 // ── main ─────────────────────────────────────────────────────────────
@@ -499,12 +616,15 @@ async function main() {
 
   let nodes = await waitForApp()
 
-  const { display, inset, safe } = readSafeRect()
-  console.log(
-    `display ${display.width}x${display.height}, system-bar insets ` +
-      `l=${inset.left} t=${inset.top} r=${inset.right} b=${inset.bottom}`,
-  )
-  if (inset.top === 0 && inset.bottom === 0) {
+  const { safe } = readSafeRect()
+  console.log(`system-bar safe rect: ${fmt(safe)}`)
+  // `safe.top` defaults to 0 and `safe.bottom` defaults to `Infinity` when no
+  // source constrains that edge (see `readSafeRect`), so "no vertical inset at
+  // all" — the case this test fundamentally needs NOT to be true, since it's
+  // built around a status bar (top) and a nav/gesture bar (bottom) — is
+  // exactly the case where neither default moved. Left/right are not part of
+  // this check: most phones have no side inset at all, and that is fine.
+  if (safe.top === 0 && !Number.isFinite(safe.bottom)) {
     fail(
       'the device reports no system-bar insets at all',
       'nothing to assert — this test needs a device that shows a status/navigation bar.',
@@ -518,6 +638,7 @@ async function main() {
     .toSorted((a, b) => area(b.bounds) - area(a.bounds))[0]
   if (!webview) fail('no android.webkit.WebView node found in the app hierarchy')
   assertInsideSafeRect('the webview', webview.bounds, safe)
+  assertFillsSafeRect('the webview', webview.bounds, safe)
 
   // 2. …and so must the control the user is trying to hit.
   const menu = findMenuButton(nodes)

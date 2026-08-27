@@ -942,8 +942,16 @@
     @apply border-border;
   }
 
-  /* Safe-area insets, indirected through variables so ONE platform can
-   * override them.
+  /* Safe-area insets, indirected through variables rather than read as
+   * `env()` directly at each call site. There is no live override today —
+   * the one override this indirection existed for (an Android JS injection of
+   * these same variables) is gone; see the "WHY NOT PUSH THE INSETS INTO CSS"
+   * note in `MainActivity.kt`. The indirection is kept anyway: every consumer
+   * goes through ONE definition, so if a future platform or a test seam ever
+   * needs to override these values again, that is a one-line change here
+   * instead of a hunt through every className that reads a safe-area value.
+   * Consumers should read `var(--safe-area-*)`, never `env(safe-area-inset-*)`
+   * directly — enforced by `App.test.tsx` and `QuickCaptureFab.test.tsx`.
    *
    * `env(safe-area-inset-*)` carries the iOS notch / home-indicator insets and
    * resolves to `0px` on desktop, which is what these variables are for.

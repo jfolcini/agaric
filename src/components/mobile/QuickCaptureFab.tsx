@@ -26,9 +26,10 @@
  * overlaps that toolbar (z-30) and swallows the "More" tap
  * (`formatting-toolbar-mobile` e2e). So the FAB sits a 5rem (80px) offset
  * above the edge — enough to clear the 47px toolbar with margin — stacked
- * on the iOS home-indicator inset via `safe-area-inset-bottom`. (This
- * restores the offset #1747 removed: it was never reserving space for a
- * non-existent TabBar, it was clearing the FormattingToolbar.)
+ * on the bottom safe-area inset via `var(--safe-area-bottom)` (see
+ * `index.css` — every consumer reads the variable, never `env()` directly).
+ * (This restores the offset #1747 removed: it was never reserving space for
+ * a non-existent TabBar, it was clearing the FormattingToolbar.)
  */
 
 import { PenLine } from 'lucide-react'
@@ -59,7 +60,7 @@ export function QuickCaptureFab({
       // Pinned bottom-right. The 5rem (80px) offset clears the bottom-fixed
       // touch FormattingToolbar (~47px) so the FAB never overlaps its
       // right-aligned "More" button, stacked on the iOS home-indicator inset.
-      className="fixed right-4 z-40 size-14 rounded-full shadow-(--shadow-overlay) bottom-[calc(5rem+env(safe-area-inset-bottom))]"
+      className="fixed right-4 z-40 size-14 rounded-full shadow-(--shadow-overlay) bottom-[calc(5rem+var(--safe-area-bottom))]"
     >
       <PenLine className="size-6" aria-hidden="true" />
     </Button>

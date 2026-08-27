@@ -38,12 +38,18 @@ import androidx.core.view.WindowInsetsCompat
  * ----------------------------------------------------------------
  * Accepted knowingly. Before this change the webview painted the full display,
  * so the app's own background filled the strip behind the status bar. Now that
- * strip is the Android theme's DayNight `windowBackground`, which follows the
- * OS uiMode and nothing else. The app's theme is a web-layer preference the
- * native side never sees — `src/hooks/useTheme.ts` offers seven (light, dark,
- * auto, solarized-light, solarized-dark, dracula, one-dark-pro), settable
- * independently of the OS — so a user running a dark in-app theme while the OS
- * is in light mode gets a pale band above a dark app.
+ * strip is the Android theme's DayNight `windowBackground`, resolved once when
+ * the activity is created. It does NOT track OS light/dark switches live: the
+ * `<activity>` declares `android:configChanges="…|uiMode"`, so a uiMode change
+ * is delivered to the running activity instead of recreating it, and nothing
+ * here re-resolves or re-applies `windowBackground` in response — the band
+ * keeps whatever colour it had at last activity creation until the activity is
+ * actually recreated (e.g. the app is restarted). The app's theme is a
+ * web-layer preference the native side never sees either way —
+ * `src/hooks/useTheme.ts` offers seven (light, dark, auto, solarized-light,
+ * solarized-dark, dracula, one-dark-pro), settable independently of the OS —
+ * so a user running a dark in-app theme can get a pale band above a dark app,
+ * and that mismatch can outlive an OS theme switch that happens mid-session.
  *
  * Closing that gap means pushing the resolved theme colour from the web layer
  * down to native, i.e. re-introducing exactly the native<->web channel whose
@@ -108,12 +114,15 @@ class MainActivity : TauriActivity() {
       }
       // `host` is the activity's content frame, and it is SHARED: anything else
       // added to it is inset by the same padding. That includes a
-      // `WebChromeClient` fullscreen video surface and the camera preview used
-      // for QR pairing. Correct for ordinary content, wrong for anything that
-      // wants the whole display — so if a camera or video view ever looks
-      // letterboxed by exactly the status/navigation bar heights, this is why,
-      // and the fix is to inset the webview's own frame rather than the shared
-      // parent, not to drop the padding.
+      // `WebChromeClient` fullscreen video surface — QR pairing has no native
+      // camera view to worry about; it scans through the webview's own
+      // `getUserMedia` (see `src/components/peers/QrScanner.tsx`), so that
+      // preview is inset along WITH the webview, not as a sibling of it.
+      // Correct for ordinary content, wrong for anything that wants the whole
+      // display — so if a fullscreen video view ever looks letterboxed by
+      // exactly the status/navigation bar heights, this is why, and the fix is
+      // to inset the webview's own frame rather than the shared parent, not to
+      // drop the padding.
       //
       // Padding triggers a re-layout, which re-dispatches these same insets, so
       // the equality check is what terminates the loop — not an optimisation.

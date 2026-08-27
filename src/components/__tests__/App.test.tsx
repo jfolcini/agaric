@@ -1827,9 +1827,10 @@ describe('App', () => {
       // not compute `env()` values).
       const cls = main?.getAttribute('class') ?? ''
       // The VARIABLE, not `env()` directly: `index.css` declares
-      // `--safe-area-*` with `env()` as the fallback so the inset has exactly
-      // one definition site to override. Asserting the variable is what keeps
-      // consumers going through it.
+      // `--safe-area-*` as the one definition site for these insets, and
+      // every consumer — this scroller, `SpaceTopStripe`, `QuickCaptureFab`
+      // (see its own test) — reads the variable rather than `env()`
+      // directly, so a future override point never has to hunt call sites.
       expect(cls).toContain('var(--safe-area-bottom)')
       expect(cls).toContain('pb-[calc(1rem+var(--safe-area-bottom))]')
       expect(cls).not.toContain('env(safe-area-inset-bottom)')
