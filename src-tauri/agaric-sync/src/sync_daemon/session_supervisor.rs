@@ -3085,14 +3085,6 @@ mod tests {
             .collect()
     }
 
-    /// The bug #4120 note 1 is about: a responder-only device dials, fails, and
-    /// re-raises the red toast on every cycle, forever.
-    ///
-    /// The first failure is news and must land. The second, third and
-    /// hundredth say the same thing about the same unchanged condition — while
-    /// the peer's own inbound sessions keep stamping `streamed_at`, i.e. while
-    /// the pair is visibly exchanging data. Only the repeat is suppressed, and
-    /// the backoff is booked either way.
     /// #4385: `record_initiator_failure` must hand the scheduler the
     /// MEMBERSHIP answer, so a real peer's retry hint outlives an unpaired
     /// announcer flood.
@@ -3211,6 +3203,14 @@ mod tests {
         );
     }
 
+    /// The bug #4120 note 1 is about: a responder-only device dials, fails, and
+    /// re-raises the red toast on every cycle, forever.
+    ///
+    /// The first failure is news and must land. The second, third and
+    /// hundredth say the same thing about the same unchanged condition — while
+    /// the peer's own inbound sessions keep stamping `streamed_at`, i.e. while
+    /// the pair is visibly exchanging data. Only the repeat is suppressed, and
+    /// the backoff is booked either way.
     #[test]
     fn a_repeat_pull_failure_against_a_peer_still_pulling_from_us_is_reported_once_4120() {
         let typed = Arc::new(RecordingEventSink::new());
