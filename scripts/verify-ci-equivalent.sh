@@ -1034,8 +1034,10 @@ if [ "${1:-}" = "--self-test" ]; then
     #   (b) the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
     #       `.gitleaks.toml`) are anchored to the repo root in
     #       `_validate.yml` (`^prek\.toml$`, …) but UNANCHORED here
-    #       (`prek\.toml$`, …), so a NESTED copy of one of those filenames
-    #       (e.g. `docs/prek.toml`) is CI here and not there too.
+    #       (`prek\.toml$`, …), so ANY path merely ENDING in one of those
+    #       filenames — a nested copy (`docs/prek.toml`) or a differently
+    #       prefixed file at the repo root (`myprek.toml`) alike — is CI
+    #       here and not there too.
     # Every other CI path — including these same filenames at the repo TOP
     # LEVEL, where anchored and unanchored agree — must still agree with
     # _validate.yml, or the divergence is wider than documented.
@@ -1061,17 +1063,21 @@ if [ "${1:-}" = "--self-test" ]; then
                 st_bad "divergence ratchet: scripts/*.sh is CI here and NOT in _validate.yml" \
                     "ours=$_ours theirs=$_theirs — if _validate.yml gained a scripts/ arm, update the divergence note"
             fi
-            # The four toml arms are unanchored here but anchored there — a
-            # NESTED copy of each filename must diverge the same documented
-            # way scripts/*.sh does above.
-            for _p in docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml; do
+            # The four toml arms are unanchored here but anchored there, so
+            # ANY path merely ENDING in one of the four filenames must
+            # diverge the same documented way scripts/*.sh does above — not
+            # just a nested copy (`docs/prek.toml`) but also a differently
+            # prefixed file sitting at the repo root (`myprek.toml`), which
+            # the unanchored regex matches just as readily.
+            for _p in docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml \
+                      myprek.toml custom.taplo.toml oldlychee.toml backup.gitleaks.toml; do
                 _a=no; _b=no
                 printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _a=yes
                 printf '%s\n' "$_p" | grep -qE "$_vci" && _b=yes
                 if [ "$_a" = yes ] && [ "$_b" = no ]; then
-                    st_ok "divergence ratchet: nested $_p is CI here and NOT in _validate.yml (documented, unanchored-toml divergence)"
+                    st_ok "divergence ratchet: unanchored $_p is CI here and NOT in _validate.yml (documented, unanchored-toml divergence)"
                 else
-                    st_bad "divergence ratchet: nested $_p is CI here and NOT in _validate.yml" \
+                    st_bad "divergence ratchet: unanchored $_p is CI here and NOT in _validate.yml" \
                         "ours=$_a theirs=$_b — if the toml arms got (un)anchored to match, update the divergence note"
                 fi
             done
@@ -1082,24 +1088,43 @@ if [ "${1:-}" = "--self-test" ]; then
             # made the "fails closed if a new one opens anywhere else" claim
             # in the comment above CI_PATH_RE untrue: a new arm added to
             # either regex covering a path outside that list (e.g. a future
-            # `^Justfile$`) would pass silently. Run both regexes over the
-            # actual tracked tree instead, so the claim is literally true.
-            _mismatch=""
-            while IFS= read -r _p; do
-                # scripts/*.sh is the one documented divergence already
-                # asserted above; skip it here so it isn't double-counted.
-                case "$_p" in
-                    scripts/*.sh) continue ;;
-                esac
-                _a=no; _b=no
-                printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _a=yes
-                printf '%s\n' "$_p" | grep -qE "$_vci" && _b=yes
-                [ "$_a" = "$_b" ] || _mismatch="$_mismatch $_p(ours=$_a,theirs=$_b)"
-            done < <(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files)
-            if [ -z "$_mismatch" ]; then
-                st_ok "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml"
+            # `^Justfile$`) would pass silently, PROVIDED that path is
+            # already tracked. Run both regexes over the actual tracked
+            # tree instead, so the claim holds for any currently tracked
+            # path — see the note above CI_PATH_RE for the residual gap
+            # (a not-yet-tracked path).
+            #
+            # Two `grep -E` passes over the WHOLE tracked-file list, diffed
+            # with `comm`, replace what used to fork a `printf | grep` pair
+            # PER TRACKED FILE — roughly 9.6k processes at this repo's
+            # ~4810 tracked paths — with a handful total, regardless of
+            # tree size. This hook runs before every push (prek.toml calls
+            # it "Fast: exercised before the verifier body").
+            #
+            # `git ls-files` returning EMPTY — no git, not a repo, an
+            # exported tarball, a container without git — must fail CLOSED,
+            # not report a pass having compared zero paths: every sibling
+            # guard in this block does (`[ ! -f "$_vy" ]`, `[ -z "$_vci" ]`),
+            # and this ratchet is not exempt just because its failure mode
+            # is a command returning nothing instead of a missing file.
+            _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '^scripts/.*\.sh$')
+            if [ -z "$_tracked" ]; then
+                st_bad "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml" \
+                    "git ls-files returned no tracked paths — the comparison would silently pass having checked zero"
             else
-                st_bad "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml" "$_mismatch"
+                _ours_list=$(printf '%s\n' "$_tracked" | grep -E "$CI_PATH_RE" | sort -u)
+                _theirs_list=$(printf '%s\n' "$_tracked" | grep -E "$_vci" | sort -u)
+                _mismatch=$(
+                    comm -23 <(printf '%s\n' "$_ours_list" | sed '/^$/d') <(printf '%s\n' "$_theirs_list" | sed '/^$/d') | sed 's/$/(ours=yes,theirs=no)/'
+                    comm -13 <(printf '%s\n' "$_ours_list" | sed '/^$/d') <(printf '%s\n' "$_theirs_list" | sed '/^$/d') | sed 's/$/(ours=no,theirs=yes)/'
+                )
+                _count=$(printf '%s\n' "$_tracked" | wc -l)
+                if [ -z "$_mismatch" ]; then
+                    st_ok "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml ($_count paths compared)"
+                else
+                    st_bad "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml" \
+                        "$(printf '%s' "$_mismatch" | tr '\n' ' ')"
+                fi
             fi
         fi
     fi
@@ -2448,16 +2473,21 @@ else
     #   (b) the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
     #       `.gitleaks.toml`) are anchored to the repo root in
     #       `_validate.yml` (`^prek\.toml$`, …) but UNANCHORED here
-    #       (`prek\.toml$`, …), so a nested copy of one of those filenames
-    #       (e.g. `docs/prek.toml`) is CI here and not there too.
+    #       (`prek\.toml$`, …), so ANY path merely ENDING in one of those
+    #       filenames — a nested copy (`docs/prek.toml`) or a differently
+    #       prefixed file at the repo root (`myprek.toml`) alike — is CI
+    #       here and not there too.
     # Both asymmetries are deliberate and in the SAFE direction — CI does
     # strictly more than the local gate, never less — so this is no longer a
     # mirror. Unlike the stale version of this note, the parity IS now
     # ratcheted: the --self-test divergence-ratchet checks fail closed if
-    # either gap widens, narrows, or a new one opens anywhere else, so this
-    # note itself is what they mean by "update the divergence note" on
-    # failure. Widening `_validate.yml` to match is a separate change with
-    # its own blast radius.
+    # either gap widens, narrows, or a new one opens for any CURRENTLY
+    # TRACKED path — the checks scan `git ls-files`, so an arm added for a
+    # path that is not yet tracked (a future `^Justfile$`, say, before any
+    # Justfile is committed) still passes silently — so this note itself is
+    # what they mean by "update the divergence note" on failure. Widening
+    # `_validate.yml` to match is a separate change with its own blast
+    # radius.
     #
     # Otherwise mirrors `_validate.yml`'s classifier: a changed file matching neither docs nor any known category
     # (frontend/backend/ci) — e.g. rust-toolchain.toml, .cargo/config.toml, a

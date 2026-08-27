@@ -851,12 +851,12 @@ jobs:
               echo "       Otherwise '\$code' is the tell — it is a STRING now, not an" >&2
               echo "       exit status: 'timeout' = alive at the deadline but never produced" >&2
               echo "       the artifact; 'exited:N' = ended on its own before booting" >&2
-              echo "       (134 = SIGABRT under panic=abort, 0 = a quiet false start);" >&2
-              echo "       'exited-after-boot:N' = a later boot phase failed. ('alive' cannot" >&2
-              echo "       appear here — it requires booted=1, which requires the log file" >&2
-              echo "       this branch just proved absent.) There is no" >&2
-              echo "       124 any more — the step no longer uses timeout(1). Or the sandbox" >&2
-              echo "       override was not honoured. Sandbox tree:" >&2
+              echo "       (134 = SIGABRT under panic=abort, 0 = a quiet false start)." >&2
+              echo "       ('alive' and 'exited-after-boot:N' cannot appear here — both" >&2
+              echo "       require booted=1, which requires the log file this branch just" >&2
+              echo "       proved absent.) There is no" >&2
+              echo "       124 any more — \$code never carries a timeout(1) status. Or the" >&2
+              echo "       sandbox override was not honoured. Sandbox tree:" >&2
               find "$SANDBOX" -maxdepth 3 >&2 || true
               # #4418 — the 0.9.9 failure left nothing to diagnose with: the
               # captured boot.log held one dbus warning and the step stopped.
