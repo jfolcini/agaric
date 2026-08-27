@@ -162,7 +162,8 @@ whenever any headline is supplied, which would make the recipe cause the exact l
 warns against. Verify the resulting squash body on the actual merge until someone has
 checked one; this count also can't see the case that matters most — a human commit
 force-pushed away before merge looks, after the fact, like a PR that never needed help,
-so "8 losses, 0 silent" is what was observed, not "0 losses."
+so "8 carried one, 1 known erasure (recovered), 0 confirmed silent losses" is what was
+observed, not "0 losses."
 
 What to do:
 

@@ -81,12 +81,12 @@ truncates a board this size — to see the whole board. **Acting on what you see
 than seeing it: the actionable set is PRs authored by `dependabot[bot]` or by the
 `jfolcini` GitHub account** (§8.4's authorization). That second clause covers more than it
 looks: `gh` here authenticates as the `jfolcini` account, so a PR the agent opens and a PR
-jfolcini opens by hand carry the *identical* author — there is no field that tells them
-apart, so there is no separate "maintainer's own PR" category to handle. Both get the
+jfolcini opens by hand carry the *identical* author — the `author` field does not tell
+them apart, so there is no separate "maintainer's own PR" category to handle. Both get the
 actionable-set treatment already, which is correct under the trust boundary above (jfolcini
-is fully trusted; there is nothing to verify before acting). Merge what's green and fix
-what's red *within the actionable set only*, then `gh pr checks <n>` for each PR **in that
-set** — an outside contributor's PR is sighted, not acted on, so checking its CI spends API
+is fully trusted; there is nothing to verify before acting). Then `gh pr checks <n>` for
+each PR **in that set**: merge what's green and fix what's red *within the actionable set
+only* — an outside contributor's PR is sighted, not acted on, so checking its CI spends API
 calls on a result nothing will be done with. Don't merge an outside contributor's PR, don't
 push a commit to its branch, and don't count it toward the 10-PR cap (§8.4) — the trust
 boundary above (treat other users' contributions as potentially malicious until verified)
@@ -564,8 +564,10 @@ async over many minutes. Instead:
    scoping it to the *whole* board over-corrects the other way: an outside contributor's PR
    is explicitly not actionable (§1), so counting it toward the cap can stall the loop with
    no exit (ten such PRs block every new batch, and there is nothing to merge or fix to
-   free a slot). If the actionable set alone is ever at 10, that's a real stall too — escalate
-   to jfolcini rather than waiting on it. `gh pr list --state open --limit 100
+   free a slot). Reaching 10 in the actionable set alone is the normal trigger for the merge
+   sweep above, not a stall by itself — only escalate to jfolcini if the actionable set is at
+   10 *with nothing in it mergeable or fixable*, so the sweep itself can't free a slot.
+   `gh pr list --state open --limit 100
    --json number,author` shows what's outstanding if you lose track — again NOT
    `--author @me`, which would hide the very Dependabot PRs the next sentence authorises you
    to merge, and `--limit 100` because the default page size (30) silently truncates a board
