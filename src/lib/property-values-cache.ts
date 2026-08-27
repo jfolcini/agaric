@@ -1,6 +1,6 @@
 /**
  * property-values-cache — TanStack Query-backed cache for
- * `listPropertyValues(key)` results, keyed on the property `key`.
+ * `commands.listPropertyValues(key)` results, keyed on the property `key`.
  *
  * #1425: powers the property-VALUE autocomplete (the value side of a
  * `prop:key=value` editor). #2596 (pilot proof-point 1): the hand-rolled
@@ -60,7 +60,7 @@ export const propertyValuesQueryFn = async (key: string): Promise<string[]> => {
 }
 
 /**
- * Trigger (or join) a single in-flight `listPropertyValues(key)` fetch.
+ * Trigger (or join) a single in-flight `commands.listPropertyValues(key)` fetch.
  * Returns a promise that resolves to the cached array. A cache hit resolves
  * synchronously; two concurrent calls share one in-flight promise, so they
  * fire ONE IPC. After resolution the entry is cached until

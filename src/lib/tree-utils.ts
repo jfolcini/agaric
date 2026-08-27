@@ -494,7 +494,8 @@ export function getProjection(
  * Compute a safe position value for inserting a block among new siblings.
  *
  * Given the flat tree, the projected parent, and the drop target, compute the
- * **0-based sibling slot** to pass to `moveBlock(blockId, parentId, newIndex)`
+ * **0-based sibling slot** to pass to
+ * `commands.moveBlock(blockId, newParentId, newIndex)`
  * (#400). The slot is an insertion index among the target parent's children
  * **excluding the active block** — matching the backend's `LoroTree::mov_to`
  * semantics. The backend derives the convergent fractional key from this slot,

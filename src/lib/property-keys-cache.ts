@@ -1,6 +1,6 @@
 /**
  * property-keys-cache — TanStack Query-backed cache for
- * `listPropertyKeys()` results, keyed on the active `spaceId`.
+ * `commands.listPropertyKeys()` results, keyed on the active `spaceId`.
  *
  * #2596 (pilot proof-point 1): the hand-rolled module-level cache
  * (Map / in-flight dedup / subscriber set / epoch race-guard) that used to
@@ -62,7 +62,7 @@ export const propertyKeysQueryFn = async (): Promise<string[]> => {
 }
 
 /**
- * Trigger (or join) a single in-flight `listPropertyKeys()` fetch for
+ * Trigger (or join) a single in-flight `commands.listPropertyKeys()` fetch for
  * `spaceKey`. Returns a promise that resolves to the cached array. A cache
  * hit resolves synchronously with the cached value; a second concurrent
  * call before the first resolves shares the same in-flight promise, so two

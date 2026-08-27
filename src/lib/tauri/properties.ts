@@ -133,10 +133,3 @@ export async function listPropertyDefs(opts?: {
 }): Promise<PageResponse<PropertyDefinition>> {
   return unwrap(await commands.listPropertyDefs(opts?.cursor ?? null, opts?.limit ?? null))
 }
-
-// ---------------------------------------------------------------------------
-// Sync / Peer-ref commands
-// ---------------------------------------------------------------------------
-// NOTE: Only peer_refs CRUD exists on the backend so far. Full sync protocol
-// commands (startPairing, startSync, etc.) will be added when the backend
-// implements them.

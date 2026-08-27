@@ -2,7 +2,7 @@
  * useSyncWithTimeout — reusable hook for sync operations with timeout.
  *
  * Wraps a sync function with Promise.race against a configurable timeout.
- * On timeout, calls cancelSync() to abort the in-progress sync session.
+ * On timeout, calls commands.cancelSync() to abort the in-progress sync session.
  * Tracks loading state and re-throws errors for the caller to handle.
  */
 
@@ -38,14 +38,15 @@ export function useSyncWithTimeout(timeoutMs = 60_000) {
       } catch (err) {
         if (err instanceof Error && err.message === 'Sync timed out') {
           // Cleanup must not mask the timeout error the caller expects: a
-          // failing cancelSync() (backend down / IPC error — the same
-          // conditions that cause the timeout) would otherwise replace `err`.
+          // failing commands.cancelSync() (backend down / IPC error — the
+          // same conditions that cause the timeout) would otherwise replace
+          // `err`.
           try {
             unwrap(await commands.cancelSync())
           } catch (cancelErr) {
             logger.warn(
               'useSyncWithTimeout',
-              'cancelSync failed after timeout',
+              'commands.cancelSync failed after timeout',
               undefined,
               cancelErr,
             )

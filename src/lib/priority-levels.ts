@@ -8,7 +8,7 @@
  * Loading/save flow:
  *   1. App boot → `listPropertyDefs()` → parse priority def → `setPriorityLevels(parsed)`
  *   2. User edits priority options in the Properties tab →
- *      `updatePropertyDefOptions('priority', ...)` succeeds →
+ *      `commands.updatePropertyDefOptions('priority', ...)` succeeds →
  *      `setPriorityLevels(parsedOptions)` → subscribers re-render.
  *
  * Pure functions (`priorityColor`, `priorityRank`) read synchronously via

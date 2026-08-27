@@ -6,7 +6,7 @@
  * `PageHeader.tsx` during the design-system maintainability pass
  * (Phase 3b) to keep the orchestrator lean.
  *
- * The persistence layer (`getPageAliases` / `setPageAliases`) and the
+ * The persistence layer (`commands.getPageAliases` / `commands.setPageAliases`) and the
  * accessibility announcements (`announce`) live behind module imports
  * so the hook itself is render-only: tests render it with `renderHook`
  * and mock those modules.
