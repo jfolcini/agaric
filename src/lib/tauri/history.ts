@@ -66,14 +66,23 @@ export interface UndoResult {
 /**
  * Undo the Nth most-recent undoable op on a page.
  *
- * #4410 — no production call site: `undoDeleteOf` (`@/stores/undo`) now goes
- * through the ref-addressed `undoOp` exclusively. This wrapper is kept only
- * because `src/stores/__tests__/undo.test.ts`'s #4328 positional-undo
- * regression tests assert `mockedUndoPageOp` is `.not.toHaveBeenCalled()` —
- * a real, importable/mockable symbol here is load-bearing for proving the
- * new ref-addressed path never falls back to the old positional one.
- * Deleting it would require rewriting those regression assertions away, not
- * just deleting dead code. Re-evaluate if that test file changes.
+ * No production call site: `undoDeleteOf` (`@/stores/undo`) now goes through
+ * the ref-addressed `undoOp` exclusively. PR #4410 (which deleted 37 other
+ * dead wrappers from this layer) considered and rejected deleting this one
+ * too, for a reason specific to it and not to the other 36: three
+ * `.not.toHaveBeenCalled()` assertions in `src/stores/__tests__/undo.test.ts`
+ * (lines 1789, 1807, 1878) are live #4328 regression guards against the
+ * positional-undo bug, where `undoDeleteOf` reversed the op at the delete's
+ * LIST index instead of its own (device_id, seq) ref once a prior undo had
+ * appended a reverse row out of band. One of the three
+ * (`mockedUndoPageOp.mockImplementation` at line 1850) doesn't just assert
+ * non-invocation — it reproduces the old positional behavior, so the test
+ * reddens on a regression rather than passing vacuously. Those assertions
+ * need a real, importable/mockable `undoPageOp` symbol to spy on; removing
+ * this function means rewriting them to prove the negative some other way
+ * first (e.g. asserting on `commands.undoPageOp` directly), not just deleting
+ * dead code. Re-evaluate only after that test file no longer imports this
+ * symbol from `@/lib/tauri`.
  */
 export async function undoPageOp(params: {
   pageId: string
