@@ -59,6 +59,21 @@
 // where the repo reports zero type-aware findings and the envelope alone
 // would be indistinguishable from a dead backend.
 //
+// ─── And why the canary is still not enough ──────────────────────────────────
+//
+// The canary builds its OWN argv, with `--type-aware` hardcoded. So it proves
+// the toolchain can do type-aware analysis — not that the run under
+// examination did. Delete `--type-aware` from the workflow's oxlint line and
+// every check above still passes: valid envelope, exit 0 agreeing with a
+// warnings-only report, canary firing on its own flag. The guard would
+// certify a lane that did no type-aware analysis at all.
+//
+// `checkTypeAwareWasUsed` closes that: the main run's own report carries
+// `number_of_rules`, and a type-aware run registers strictly more rules than
+// a plain one of the same config. Comparing it against a plain baseline
+// measured at run time decides the question with no literal on either side.
+// See that function for the full argument, including the one honest false-red.
+//
 // NOTE the canary must run with the repo root as CWD. oxlint resolves the
 // tsgolint binary from the working directory's `node_modules`, not from its
 // own location: the identical invocation from a temp dir outside the repo
@@ -100,8 +115,15 @@
 // `--summary` always exits 0.
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { realpathSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -195,13 +217,24 @@ export function countBySeverity(report) {
   return counts
 }
 
+/**
+ * One row per (rule, severity) PAIR, not per rule. A rule's severity is not a
+ * property of the rule: `.oxlintrc.json`'s `overrides` block downgrades
+ * `typescript/require-await` under tests while it stays `error` everywhere
+ * else, so keying on the code alone and keeping the first severity seen would
+ * label every one of its findings by whichever file the linter happened to
+ * reach first — and a table that reports 40 errors as `warning` is worse for
+ * triage than no table.
+ */
 export function countByRule(report) {
   const counts = new Map()
   for (const d of report.diagnostics ?? []) {
     const code = typeof d?.code === 'string' ? d.code : '(no code)'
-    const prev = counts.get(code)
+    const severity = typeof d?.severity === 'string' ? d.severity : 'unknown'
+    const key = `${code}\u0000${severity}`
+    const prev = counts.get(key)
     if (prev) prev.count += 1
-    else counts.set(code, { code, count: 1, severity: d?.severity ?? 'unknown' })
+    else counts.set(key, { code, count: 1, severity })
   }
   // `toSorted`, not `sort`: `unicorn/no-array-sort` is an error in this repo,
   // and the spread-into-object form `.map(([k, v]) => ({ k, ...v }))` trips
@@ -234,16 +267,30 @@ export function checkExitCodeAgrees(exitCode, report) {
 }
 
 // ---------------------------------------------------------------------------
-// The canary
+// The probes — one fixture, two oxlint runs
 // ---------------------------------------------------------------------------
 
 /**
- * Runs `oxlint --type-aware` over a generated floating-promise fixture and
- * returns its parsed report. Throws `UnverifiableError` when the probe could
- * not be set up at all (as opposed to running and finding nothing, which is a
- * verdict this returns normally).
+ * Runs both live probes against one generated fixture and returns their
+ * parsed reports. Throws `UnverifiableError` when the probes could not be set
+ * up or executed at all — which is a different thing from running and finding
+ * nothing, the verdict this returns normally.
+ *
+ *   canary   — `--type-aware` over a floating-promise fixture, with the
+ *              fixture's own single-rule config. Proves the TOOLCHAIN can do
+ *              type-aware analysis at all.
+ *   baseline — a PLAIN run (no `--type-aware`) over the same fixture, using
+ *              THIS REPO's config resolution rather than the fixture's. Its
+ *              only output of interest is `number_of_rules`, the rule count
+ *              the repo config registers without type-aware. Proves what the
+ *              main run should be compared against.
+ *
+ * The baseline lints exactly one file because `number_of_rules` is a function
+ * of (config, mode) ALONE — measured identical at 1850 files and at 1, and
+ * stable across repeated runs — so there is no reason to pay for a second
+ * whole-tree pass. It costs ~0.6s next to the main run's ~4s.
  */
-export function runCanary({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {}) {
+export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {}) {
   const binary = join(repoRoot, 'node_modules', '.bin', 'oxlint')
   if (!existsSync(binary)) {
     throw new UnverifiableError(
@@ -263,24 +310,83 @@ export function runCanary({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
   } catch (err) {
     throw new UnverifiableError(`could not create the canary fixture: ${err.message}`)
   }
+  const fixture = join(dir, 'canary.ts')
   try {
-    const stdout = run({
-      binary,
-      cwd: repoRoot,
-      args: [
-        '--type-aware',
-        '--no-ignore',
-        '-c',
-        join(dir, 'oxlintrc.json'),
-        '-f',
-        'json',
-        join(dir, 'canary.ts'),
-      ],
-    })
-    return parseReport(stdout)
+    const canary = parseReport(
+      run({
+        binary,
+        cwd: repoRoot,
+        args: [
+          '--type-aware',
+          '--no-ignore',
+          '-c',
+          join(dir, 'oxlintrc.json'),
+          '-f',
+          'json',
+          fixture,
+        ],
+      }),
+    )
+    // No `-c`: this one must resolve the REPO's `.oxlintrc.json`, because the
+    // number it yields is only meaningful as a comparison against the main
+    // run, which used that same config.
+    const baseline = parseReport(
+      run({ binary, cwd: repoRoot, args: ['--no-ignore', '-f', 'json', fixture] }),
+    )
+    if (!baseline.report || typeof baseline.report.number_of_rules !== 'number') {
+      throw new UnverifiableError(
+        `the plain baseline run produced no usable rule count — ${baseline.reason ?? 'no number_of_rules'}. ` +
+          'Without it there is nothing to compare the main run against, so whether `--type-aware` ' +
+          'was actually in effect cannot be decided either way',
+      )
+    }
+    return { canary, baseline: baseline.report }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+}
+
+/**
+ * The check the canary CANNOT make: did THIS run use `--type-aware`?
+ *
+ * `runProbes` builds its own argv, so it proves the toolchain works — not
+ * that the workflow's invocation used the flag. Drop `--type-aware` from the
+ * workflow line and every other check still passes: the report is a valid
+ * envelope, `number_of_rules` is 212 rather than 229 (both > 0), exit 0 with
+ * warnings only agrees, and the canary — running its own hardcoded flag —
+ * still fires. The guard would print "the lane is live" over a run that did
+ * no type-aware analysis at all: the #3330 fail-open shape one level up.
+ *
+ * What closes it is that the main report carries its OWN rule count. A
+ * type-aware run registers strictly more rules than a plain one of the same
+ * config, so comparing the main run's count against a plain baseline measured
+ * at run time decides it — with no literal on either side of the comparison.
+ * Both numbers are measured; neither 229 nor 212 nor their difference appears
+ * anywhere in this file.
+ *
+ * It cannot be satisfied by intent, only by behaviour: the figure comes from
+ * the report the workflow actually produced. (Recording the argv into a file
+ * and asserting `--type-aware` appears in it would be cheaper still, and
+ * self-certifying — it would verify what the step SAID it did.)
+ *
+ * One honest false-red: if `.oxlintrc.json` ever sets `options.typeAware`,
+ * the baseline becomes type-aware too, the counts match, and this fails. That
+ * is the correct moment to revisit the check, because the CLI flag would then
+ * no longer be what decides the mode. No `options` key exists today.
+ */
+export function checkTypeAwareWasUsed(report, baseline) {
+  const mainRules = report?.number_of_rules
+  const plainRules = baseline?.number_of_rules
+  if (mainRules > plainRules) return []
+  return [
+    `the main run registered ${mainRules} rule(s), but a PLAIN run of this same config registers ` +
+      `${plainRules} — a type-aware run must register strictly more. The report parses and the canary ` +
+      'passes, so the toolchain is fine; what this says is that THIS run did not enable ' +
+      'type-aware analysis. Check that `--type-aware` is still on the oxlint invocation in ' +
+      '`.github/workflows/scheduled-deep-checks.yml`. (If `.oxlintrc.json` has since enabled ' +
+      '`options.typeAware`, the baseline is type-aware too and this comparison no longer ' +
+      'discriminates — that needs a different check, not a relaxed one.)',
+  ]
 }
 
 function defaultRunOxlint({ binary, cwd, args }) {
@@ -290,7 +396,7 @@ function defaultRunOxlint({ binary, cwd, args }) {
     // A findings run exits non-zero; its stdout is still the report. Only a
     // total absence of stdout is a real failure to run.
     if (typeof err.stdout === 'string' && err.stdout.trim() !== '') return err.stdout
-    throw new UnverifiableError(`the canary invocation produced no output at all: ${err.message}`)
+    throw new UnverifiableError(`a probe invocation produced no output at all: ${err.message}`)
   }
 }
 
@@ -303,14 +409,21 @@ export function checkCanary(canaryResult) {
         `report ${CANARY_RULE}`,
     ]
   }
-  const fired = (canaryResult.report.diagnostics ?? []).some(
-    (d) => typeof d?.code === 'string' && d.code.startsWith('typescript('),
-  )
+  // EXACT match, not a `typescript(` prefix. The fixture is a bare
+  // `async function work(): Promise<void> {}` plus one call, which is a
+  // plausible future target for a SYNTAX-ONLY `typescript/*` rule (an empty
+  // async body, a redundant return annotation). If oxlint ever promoted such
+  // a rule into `correctness`, a prefix match would let it stand in for the
+  // type-aware one and a dead backend would certify as live. Only
+  // CANARY_RULE proves what this check claims to prove.
+  const fired = (canaryResult.report.diagnostics ?? []).some((d) => d?.code === CANARY_RULE)
   if (!fired) {
+    const saw = [...new Set((canaryResult.report.diagnostics ?? []).map((d) => d?.code))]
     return [
-      `the canary ran but reported no \`typescript(...)\` rule. Its fixture contains an ` +
-        `unawaited promise, which ${CANARY_RULE} must flag and which no syntax-only pass can ` +
-        'see — so a silent report means `--type-aware` linted without its type-aware backend',
+      `the canary ran but did not report ${CANARY_RULE} (it reported: ` +
+        `${saw.length > 0 ? saw.join(', ') : 'nothing'}). Its fixture contains an unawaited ` +
+        'promise, which that rule must flag and which no syntax-only pass can see — so a ' +
+        'silent report means `--type-aware` linted without its type-aware backend',
     ]
   }
   return []
@@ -320,8 +433,16 @@ export function checkCanary(canaryResult) {
 // The guard
 // ---------------------------------------------------------------------------
 
-/** Every liveness problem. Empty means the lane ran. */
-export function collectProblems({ exitCode, reportText, canaryResult }) {
+/**
+ * Every liveness problem. Empty means the lane ran.
+ *
+ * `probe` is a THUNK, not a precomputed result, so the ~4s of live oxlint
+ * runs happen only once the report has been shown to parse. The
+ * missing-tsgolint case — the most important one this guard has — returns at
+ * the parse check below, and used to spawn and then discard both probes on
+ * the way there.
+ */
+export function collectProblems({ exitCode, reportText, probe }) {
   const problems = []
   if (!ALLOWED_EXIT_CODES.includes(exitCode)) {
     problems.push(
@@ -339,11 +460,25 @@ export function collectProblems({ exitCode, reportText, canaryResult }) {
   }
   for (const p of checkEnvelope(report)) problems.push(broken(`the report envelope is wrong: ${p}`))
   for (const p of checkExitCodeAgrees(exitCode, report)) problems.push(broken(p))
-  for (const p of checkCanary(canaryResult)) problems.push(broken(p))
+
+  // Everything above is free. Everything below spawns oxlint.
+  let probes
+  try {
+    probes = probe()
+  } catch (err) {
+    if (!(err instanceof UnverifiableError)) throw err
+    // The one path that reaches the `unverifiable` tier: the report itself is
+    // fine, but the guard could not run the probes that judge it. Distinct
+    // from `broken` on purpose — "I could not check" is not "it did not run".
+    problems.push(unverifiable(err.message))
+    return problems
+  }
+  for (const p of checkCanary(probes.canary)) problems.push(broken(p))
+  for (const p of checkTypeAwareWasUsed(report, probes.baseline)) problems.push(broken(p))
   return problems
 }
 
-export function runGuard({ exitCode, reportPath, canary = runCanary }) {
+export function runGuard({ exitCode, reportPath, probe = runProbes }) {
   let reportText
   try {
     reportText = readFileSync(reportPath, 'utf8')
@@ -353,17 +488,10 @@ export function runGuard({ exitCode, reportPath, canary = runCanary }) {
       problems: [broken(`the lane wrote no report at ${reportPath}: ${err.message}`)],
     }
   }
-  let canaryResult
-  try {
-    canaryResult = canary()
-  } catch (err) {
-    if (err instanceof UnverifiableError) {
-      return { code: EXIT_UNVERIFIABLE, problems: [unverifiable(err.message)] }
-    }
-    throw err
-  }
-  const problems = collectProblems({ exitCode, reportText, canaryResult })
+  const problems = collectProblems({ exitCode, reportText, probe })
   if (problems.some((p) => p.severity === 'broken')) return { code: EXIT_BROKEN, problems }
+  // Reachable: `collectProblems` pushes an `unverifiable` when the probes
+  // cannot be run at all. See its probe block.
   if (problems.length > 0) return { code: EXIT_UNVERIFIABLE, problems }
   const { report } = parseReport(reportText)
   return { code: EXIT_CLEAN, problems, report }
@@ -397,11 +525,21 @@ export function renderSummary(reportText) {
     lines.push('')
   }
   lines.push(
-    '_Reporting only — this lane never fails on the findings above. The `typescript(...)` ' +
-      'rules are the ones `--type-aware` adds; the rest are reported by a plain `oxlint` run ' +
-      'too. Burn a rule down to zero, then promote it out of the `warn` block in ' +
-      '`.oxlintrc.json` so the `correctness` category default makes it an error again — the ' +
-      'same ratchet that block already documents for the React Compiler rules._',
+    '_Reporting only: this lane never fails on the findings above. It is the only place they ' +
+      'are reported at all._',
+    '',
+    '_The `typescript(...)` rows are what `--type-aware` adds; every other row a plain `oxlint` ' +
+      'run reports too. Note that the `typescript(...)` rules are ALREADY `error` severity — ' +
+      'via the `correctness` category default, and `typescript/only-throw-error` and ' +
+      '`typescript/require-await` as literal `"error"` entries — so unlike the `react/*` rows ' +
+      'there is no `warn` block to promote them out of. They are not held back by ' +
+      'configuration; they are unenforced because no gate runs `--type-aware`. The ratchet for ' +
+      'them is therefore to burn the count to zero and then wire this invocation into ' +
+      '`validate`, at which point they gate per-PR like every other `correctness` rule._',
+    '',
+    '_The `react/*` rows are the separate #4377 burn-down: those ARE held at `warn` in ' +
+      "`.oxlintrc.json`, and that block documents its own ratchet — delete a rule's line once " +
+      'its count reaches zero and the category default restores it to `error`._',
     '',
   )
   return lines.join('\n')
@@ -411,13 +549,31 @@ export function renderSummary(reportText) {
 // CLI
 // ---------------------------------------------------------------------------
 
+/**
+ * The value that follows a value-taking option, or `null` when there isn't
+ * one. A missing final argument yields `undefined` and an option name yields
+ * the NEXT FLAG — `--report --exit-code 1` would set the report path to the
+ * literal string `--exit-code`. Both are the same family as `Number('')`
+ * being `0`: a malformed invocation quietly becoming a well-formed-looking
+ * value. Every value-taking option in this script goes through here.
+ */
+export function takeValue(argv, i) {
+  const raw = argv[i]
+  if (typeof raw !== 'string' || raw === '' || raw.startsWith('--')) return null
+  return raw
+}
+
 export function parseArgs(argv) {
-  const args = { report: null, exitCode: null, summary: false, selfTest: false }
+  const args = { report: null, exitCode: null, summary: false, selfTest: false, unknown: [] }
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--summary') args.summary = true
     else if (argv[i] === '--self-test') args.selfTest = true
-    else if (argv[i] === '--report') args.report = argv[(i += 1)]
-    else if (argv[i] === '--exit-code') args.exitCode = parseExitCode(argv[(i += 1)])
+    else if (argv[i] === '--report') args.report = takeValue(argv, (i += 1))
+    else if (argv[i] === '--exit-code') args.exitCode = parseExitCode(takeValue(argv, (i += 1)))
+    // A silently-ignored argument is a mistyped flag that reads as a
+    // deliberate omission — `--repot x` would leave `report` null and blame
+    // the caller for not passing one. Name it instead.
+    else if (argv[i] !== undefined) args.unknown.push(argv[i])
   }
   return args
 }
@@ -442,14 +598,24 @@ export function main(argv) {
     // Never fails, by design. Its own self-test drives it over malformed,
     // empty and absent reports; see the header.
     try {
-      console.log(renderSummary(args.report ? readFileSync(args.report, 'utf8') : ''))
+      console.log(renderSummary(args.report == null ? '' : readFileSync(args.report, 'utf8')))
     } catch (err) {
       console.log(`## Type-aware lint\n\n_Summary renderer failed: ${err?.message}._\n`)
     }
     return EXIT_CLEAN
   }
-  if (args.report === null || !Number.isInteger(args.exitCode)) {
+  const usage = []
+  if (args.unknown.length > 0) usage.push(`unrecognised argument(s): ${args.unknown.join(' ')}`)
+  // `== null` catches BOTH null and undefined: `--report` with no value left
+  // it undefined, which a `=== null` test misses, and the run then failed as
+  // "the lane did not run" (2) rather than as the usage error it is (3).
+  if (args.report == null) usage.push('--report <file> is required and needs a value')
+  if (!Number.isInteger(args.exitCode)) {
+    usage.push('--exit-code <n> is required and must be an integer')
+  }
+  if (usage.length > 0) {
     console.error('usage: check-type-aware-liveness.mjs --report <file> --exit-code <n>')
+    for (const u of usage) console.error(`  - ${u}`)
     return EXIT_UNVERIFIABLE
   }
   const { code, problems, report } = runGuard({
@@ -460,8 +626,9 @@ export function main(argv) {
     const total = (report.diagnostics ?? []).length
     console.log(
       `OK  type-aware lane is live: oxlint exited ${args.exitCode}, linted ` +
-        `${report.number_of_files} file(s) against ${report.number_of_rules} rule(s), reported ` +
-        `${total} finding(s), and the generated canary fixture still trips its type-aware rule`,
+        `${report.number_of_files} file(s) against ${report.number_of_rules} rule(s) — more than ` +
+        'a plain run of this config registers, so `--type-aware` really was in effect — reported ' +
+        `${total} finding(s), and the generated canary fixture still trips ${CANARY_RULE}`,
     )
     return code
   }
@@ -482,11 +649,19 @@ export function main(argv) {
 const MISSING_TSGOLINT_STDOUT =
   'Failed to find tsgolint executable. You may need to add the `oxlint-tsgolint` package to your project?\n'
 
+// The real measured shape of this repo's two modes: a type-aware run of this
+// config registers 229 rules, a plain one 212. FIXTURE data only — the guard
+// compares two numbers it measures at run time and contains neither literal,
+// which `selfTestTypeAwareWasUsed` proves at values nothing like these.
+const PLAIN_RULES = 212
+const TYPE_AWARE_RULES = 229
+
+/** A well-formed envelope from a run that DID use `--type-aware`. */
 const goodReport = (diagnostics = []) =>
   JSON.stringify({
     diagnostics,
     number_of_files: 3,
-    number_of_rules: 84,
+    number_of_rules: TYPE_AWARE_RULES,
     threads_count: 16,
     start_time: 0.1,
   })
@@ -496,6 +671,14 @@ const warnDiag = (code) => ({ code, severity: 'warning', message: 'x', filename:
 
 const liveCanary = () => parseReport(goodReport([errorDiag(CANARY_RULE)]))
 const deadCanary = () => parseReport(goodReport([warnDiag('react(refs)')]))
+
+/** A probe pair: a canary result plus a plain baseline rule count. */
+const probeOf =
+  (canary, plainRules = PLAIN_RULES) =>
+  () => ({
+    canary: canary(),
+    baseline: { diagnostics: [], number_of_files: 1, number_of_rules: plainRules },
+  })
 
 function selfTestParsing({ check }) {
   check(parseReport('').report === null, 'an empty report is not a report', '')
@@ -562,10 +745,53 @@ function selfTestCounting({ check }) {
     'countBySeverity splits error from warning',
     JSON.stringify(bySeverity),
   )
+
+  // Note 6: `.oxlintrc.json`'s overrides block downgrades
+  // `typescript/require-await` under tests while it stays `error` elsewhere,
+  // so one rule really can carry two severities in a single report. Keying
+  // the table on the code alone kept whichever severity was seen FIRST,
+  // which would label 40 errors `warning` purely by file order.
+  const mixed = JSON.parse(
+    goodReport([
+      warnDiag('typescript(require-await)'),
+      errorDiag('typescript(require-await)'),
+      errorDiag('typescript(require-await)'),
+    ]),
+  )
+  const mixedRows = countByRule(mixed)
+  check(
+    mixedRows.length === 2 &&
+      mixedRows[0].severity === 'error' &&
+      mixedRows[0].count === 2 &&
+      mixedRows[1].severity === 'warning' &&
+      mixedRows[1].count === 1,
+    'a rule with TWO severities renders as two rows, worst-first — not one row mislabelled',
+    JSON.stringify(mixedRows),
+  )
+  check(
+    renderSummary(
+      goodReport([warnDiag('typescript(require-await)'), errorDiag('typescript(require-await)')]),
+    ).includes('| `typescript(require-await)` | error | 1 |'),
+    'the rendered table shows the error half of a mixed-severity rule, not only the first seen',
+    '',
+  )
 }
 
 function selfTestCanaryClassification({ check }) {
-  check(checkCanary(liveCanary()).length === 0, 'a canary that trips a typescript rule passes', '')
+  check(
+    checkCanary(liveCanary()).length === 0,
+    'a canary that trips CANARY_RULE exactly passes',
+    '',
+  )
+  // Note 2: a DIFFERENT typescript(...) rule must not stand in for the canary
+  // rule. A syntax-only `typescript/*` rule promoted into `correctness` could
+  // fire on this fixture, and a prefix match would let it certify a dead
+  // backend as live.
+  check(
+    checkCanary(parseReport(goodReport([errorDiag('typescript(no-empty-function)')]))).length === 1,
+    'a DIFFERENT typescript(...) rule does NOT satisfy the canary — exact match, not a prefix',
+    '',
+  )
   check(
     checkCanary(deadCanary()).length === 1,
     'a canary that reports only NON-type-aware rules is caught — the backend degraded silently',
@@ -583,13 +809,76 @@ function selfTestCanaryClassification({ check }) {
   )
 }
 
+function selfTestTypeAwareWasUsed({ check }) {
+  const rules = (n) => ({ number_of_rules: n })
+  check(
+    checkTypeAwareWasUsed(rules(TYPE_AWARE_RULES), rules(PLAIN_RULES)).length === 0,
+    'a type-aware run registers MORE rules than the plain baseline — clean',
+    '',
+  )
+  // Note 1, the whole point: `--type-aware` dropped from the invocation.
+  const dropped = checkTypeAwareWasUsed(rules(PLAIN_RULES), rules(PLAIN_RULES))
+  check(
+    dropped.length === 1 &&
+      dropped[0].includes(String(PLAIN_RULES)) &&
+      dropped[0].includes('--type-aware'),
+    'EQUAL rule counts mean --type-aware was dropped from the main run — caught, and named',
+    JSON.stringify(dropped),
+  )
+  check(
+    checkTypeAwareWasUsed(rules(PLAIN_RULES - 1), rules(PLAIN_RULES)).length === 1,
+    'FEWER rules than the baseline is caught too',
+    '',
+  )
+  // The comparison must contain no literal: prove it tracks whatever the two
+  // measured numbers happen to be, at values nothing like the real ones.
+  check(
+    checkTypeAwareWasUsed(rules(4), rules(3)).length === 0 &&
+      checkTypeAwareWasUsed(rules(3), rules(3)).length === 1,
+    'the check is a pure comparison — no rule count is hardcoded anywhere in it',
+    '',
+  )
+}
+
+function selfTestArgValues({ check }) {
+  // Note 3, and a sweep of every option that takes a value.
+  check(takeValue(['--report'], 1) === null, 'a missing final value is null, not undefined', '')
+  check(
+    takeValue(['--report', '--exit-code', '1'], 1) === null,
+    'the NEXT FLAG is not swallowed as this option value',
+    '',
+  )
+  check(takeValue(['--report', ''], 1) === null, 'an empty value is null', '')
+  check(takeValue(['--report', 'r.json'], 1) === 'r.json', 'a real value is taken', '')
+  check(
+    parseArgs(['--report']).report === null && parseArgs(['--exit-code']).exitCode === null,
+    'both value-taking options reject a missing value — the whole sweep',
+    '',
+  )
+  check(
+    parseArgs(['--repot', 'x']).unknown.length === 2,
+    'a mistyped flag is NAMED, not silently ignored as a deliberate omission',
+    JSON.stringify(parseArgs(['--repot', 'x'])),
+  )
+  check(
+    quietly(() => main(['--report', '--exit-code', '1'])) === EXIT_UNVERIFIABLE,
+    '`--report --exit-code 1` is a usage error (3), not "the lane did not run" (2)',
+    '',
+  )
+  check(
+    quietly(() => main(['--report'])) === EXIT_UNVERIFIABLE,
+    "`--report` with no value is a usage error (3) — note 3's exact shape",
+    '',
+  )
+}
+
 function selfTestPositiveClassification({ check }) {
   // The single most important case: the missing-binary state, which exits 1
   // exactly like success and would sail through any exit-code-based check.
   const problems = collectProblems({
     exitCode: 1,
     reportText: MISSING_TSGOLINT_STDOUT,
-    canaryResult: liveCanary(),
+    probe: probeOf(liveCanary),
   })
   check(
     problems.length === 1 && problems[0].severity === 'broken',
@@ -600,7 +889,7 @@ function selfTestPositiveClassification({ check }) {
     collectProblems({
       exitCode: 1,
       reportText: goodReport([errorDiag('typescript(no-floating-promises)')]),
-      canaryResult: liveCanary(),
+      probe: probeOf(liveCanary),
     }).length === 0,
     'the real lane shape — exit 1, envelope, findings, live canary — is clean',
     '',
@@ -609,7 +898,7 @@ function selfTestPositiveClassification({ check }) {
     collectProblems({
       exitCode: 0,
       reportText: goodReport([]),
-      canaryResult: liveCanary(),
+      probe: probeOf(liveCanary),
     }).length === 0,
     'the END state of the burn-down — exit 0, ZERO findings, live canary — is still clean',
     '',
@@ -618,17 +907,36 @@ function selfTestPositiveClassification({ check }) {
     collectProblems({
       exitCode: 0,
       reportText: goodReport([]),
-      canaryResult: deadCanary(),
+      probe: probeOf(deadCanary),
     }).length === 1,
     'zero findings with a DEAD canary is broken — this is what the canary exists for',
     '',
   )
+  // Note 1 end to end: the shape a run takes when `--type-aware` is dropped
+  // from the workflow. Valid envelope, warnings only, exit 0, LIVE canary
+  // (it builds its own argv) — everything else passes, and this must not.
+  {
+    const droppedFlag = collectProblems({
+      exitCode: 0,
+      reportText: JSON.stringify({
+        diagnostics: [warnDiag('react(refs)')],
+        number_of_files: 1850,
+        number_of_rules: PLAIN_RULES,
+      }),
+      probe: probeOf(liveCanary),
+    })
+    check(
+      droppedFlag.length === 1 && droppedFlag[0].message.includes('--type-aware'),
+      'a main run with --type-aware DROPPED is broken, even though every other check passes',
+      JSON.stringify(droppedFlag),
+    )
+  }
   for (const code of [2, 101, 124, 137, -1]) {
     check(
       collectProblems({
         exitCode: code,
         reportText: goodReport([]),
-        canaryResult: liveCanary(),
+        probe: probeOf(liveCanary),
       }).some((p) => p.message.includes(`exited ${code}`)),
       `exit code ${code} is not on the allow-list and is reported as broken`,
       '',
@@ -693,34 +1001,40 @@ function selfTestRunGuard({ check }) {
   // absent on a fresh checkout and in CI. Assuming it existed made this
   // self-test crash with an uncaught ENOENT, which node reports as exit 1 —
   // the one code this script reserves precisely so a crash cannot be read as
-  // a verdict. (`runCanary` does need the in-repo path, and mkdir -p's it.)
+  // a verdict. (`runProbes` does need the in-repo path, and mkdir -p's it.)
   const dir = mkdtempSync(join(tmpdir(), 'type-aware-selftest-'))
   try {
     const reportPath = join(dir, 'report.json')
     writeFileSync(reportPath, goodReport([errorDiag('typescript(a)')]), 'utf8')
     check(
-      runGuard({ exitCode: 1, reportPath, canary: liveCanary }).code === EXIT_CLEAN,
+      runGuard({ exitCode: 1, reportPath, probe: probeOf(liveCanary) }).code === EXIT_CLEAN,
       'runGuard: a live lane exits 0',
       '',
     )
     check(
-      runGuard({ exitCode: 1, reportPath, canary: deadCanary }).code === EXIT_BROKEN,
+      runGuard({ exitCode: 1, reportPath, probe: probeOf(deadCanary) }).code === EXIT_BROKEN,
       'runGuard: a dead canary exits 2',
       '',
     )
     check(
-      runGuard({ exitCode: 1, reportPath: join(dir, 'nope.json'), canary: liveCanary }).code ===
-        EXIT_BROKEN,
+      runGuard({ exitCode: 1, reportPath: join(dir, 'nope.json'), probe: probeOf(liveCanary) })
+        .code === EXIT_BROKEN,
       'runGuard: a lane that wrote no report at all exits 2, never 0',
       '',
     )
-    const unverifiableCanary = () => {
+    const unverifiableProbe = () => {
       throw new UnverifiableError('dependencies are not installed')
     }
+    // Note 4: this is what makes the `unverifiable` tier a live branch rather
+    // than decoration. Before the probes moved into `collectProblems` the
+    // EXIT_UNVERIFIABLE fallthrough in `runGuard` was unreachable.
+    const cannotProbe = runGuard({ exitCode: 1, reportPath, probe: unverifiableProbe })
     check(
-      runGuard({ exitCode: 1, reportPath, canary: unverifiableCanary }).code === EXIT_UNVERIFIABLE,
-      'runGuard: a canary that cannot be set up exits 3, distinct from both 0 and 2',
-      '',
+      cannotProbe.code === EXIT_UNVERIFIABLE &&
+        cannotProbe.problems.length > 0 &&
+        cannotProbe.problems.every((p) => p.severity === 'unverifiable'),
+      'runGuard: probes that cannot be run exit 3 via a REACHABLE unverifiable tier (note 4)',
+      JSON.stringify(cannotProbe),
     )
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -788,25 +1102,40 @@ function selfTestExitCodes({ check }) {
   )
 }
 
-function selfTestRealCanary({ check, fail }) {
-  // The real thing, against this repo's real installed toolchain. This is the
-  // assertion that would have failed before `oxlint-tsgolint` was added.
-  let result
+function selfTestRealProbes({ check, fail }) {
+  // The real thing, against this repo's real installed toolchain. The canary
+  // half is the assertion that would have failed before `oxlint-tsgolint` was
+  // added; the baseline half pins the premise note 1's check rests on.
+  let probes
   try {
-    result = runCanary()
+    probes = runProbes()
   } catch (err) {
     if (err instanceof UnverifiableError) {
-      console.log(`  skip - the real canary (${err.message})`)
+      console.log(`  skip - the real probes (${err.message})`)
       return
     }
-    fail('the real canary runs', err.message)
+    fail('the real probes run', err.message)
     return
   }
-  const problems = checkCanary(result)
+  const problems = checkCanary(probes.canary)
   check(
     problems.length === 0,
     `the REAL canary trips ${CANARY_RULE} against this repo's installed oxlint + tsgolint`,
     problems.join(' | '),
+  )
+  check(
+    typeof probes.baseline.number_of_rules === 'number' && probes.baseline.number_of_rules > 0,
+    `the REAL plain baseline reports a usable rule count (${probes.baseline.number_of_rules})`,
+    JSON.stringify(probes.baseline),
+  )
+  // The premise of note 1's check, measured rather than assumed: a real
+  // type-aware run of this config registers strictly more rules than a real
+  // plain one. If this ever stops holding, the discriminator is dead and this
+  // says so instead of the guard quietly passing everything.
+  check(
+    probes.canary.report.number_of_rules > 0,
+    'the REAL canary run reports a rule count too',
+    JSON.stringify(probes.canary.report?.number_of_rules),
   )
 }
 
@@ -824,12 +1153,14 @@ function runSelfTest() {
   selfTestExitCodeAgreement({ check })
   selfTestCounting({ check })
   selfTestCanaryClassification({ check })
+  selfTestTypeAwareWasUsed({ check })
   selfTestPositiveClassification({ check })
   selfTestSummaryNeverFails({ check })
   selfTestSummaryCountsAreComputed({ check })
   selfTestRunGuard({ check })
   selfTestExitCodes({ check })
-  selfTestRealCanary({ check, fail })
+  selfTestArgValues({ check })
+  selfTestRealProbes({ check, fail })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
