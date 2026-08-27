@@ -153,6 +153,18 @@ export const PROFILES = Object.freeze({
     // no matter how weekly the containing workflow is. The standing prose in
     // `buildIssueBody` must not promise an N=3 this profile can never reach.
     weeklyEscalation: false,
+    // #4481 review note 3 — the "why N stays 1" clause used to be hard-coded
+    // inside `buildIssueBody`'s `weeklyEscalation: false` branch, keyed off
+    // this boolean rather than off THIS profile: a future profile that also
+    // sets `weeklyEscalation: false` for an unrelated reason (e.g. a
+    // daily-cadence workflow profile, where lanes really are workflows with
+    // their own polling cadence) would silently inherit deep-checks' "jobs
+    // inside a single scheduled run" claim and render a false explanation.
+    // Owning the sentence here makes a new false-profile author write their
+    // OWN reason instead of getting this one for free — see the profile
+    // self-tests in `runSelfTest` (§11) and `selfTestEscalationPromiseMatchesProfile`.
+    escalationCeilingReason:
+      'its lanes are jobs inside a single scheduled run, not workflows with their own polling cadence, so there is nothing to count past the first observed failure',
   }),
   'workflow-watchdog': Object.freeze({
     title:
@@ -832,10 +844,20 @@ export function buildIssueBody({
   // handling), surviving in a third place. Conditioned on the PROFILE, not on
   // the lanes actually failing this run, because the promise is about what
   // this profile's escalation contract CAN ever do, not about today's set.
+  //
+  // #4481 review note 1 — the `weeklyEscalation: true` branch used to close
+  // with "three observations really are three weeks unfixed", true only
+  // while a genuine weekly `failure (…)` run was the sole way to reach a
+  // streak of 3. This PR made a `stale` lane advance its streak on
+  // consecutive DAILY watchdog polls (see `buildResults` in
+  // `check-workflow-liveness.mjs` and the `streaking` comment just below),
+  // so within this SAME profile three observations can now be three days,
+  // not three weeks. Worded so it holds for both lane shapes at once rather
+  // than naming a unit the paragraph cannot always deliver.
   out.push(
     profile.weeklyEscalation
-      ? `The one exception (#4400) is escalation: a ${profile.unit} still failing on its **Nth consecutive OBSERVED run** earns exactly one further comment. N is three for a weekly ${profile.unit} — one this reporter polls far more often than it actually runs, so three observations really are three weeks unfixed — and one for everything else, which is another way of saying those get only their first-failure comment. Escalation fires once; afterwards the ${profile.unit} goes back to being tracked in silence until it recovers, so a persistent failure still cannot spam this thread.`
-      : `The one exception (#4400) is escalation: a ${profile.unit} still failing on its **Nth consecutive OBSERVED run** earns exactly one further comment. N is one for every ${profile.unit} this profile tracks — its ${profile.units} are jobs inside a single scheduled run, not workflows with their own polling cadence, so there is nothing to count past the first observed failure and escalation here is just that first-failure comment, never a repeat. Escalation fires once; afterwards the ${profile.unit} goes back to being tracked in silence until it recovers, so a persistent failure still cannot spam this thread.`,
+      ? `The one exception (#4400) is escalation: a ${profile.unit} still failing on its **Nth consecutive OBSERVED run** earns exactly one further comment. N is three for a weekly ${profile.unit} — one this reporter polls far more often than it actually runs, so three observations are three of whatever is actually happening: three of the ${profile.unit}'s own weekly runs for a lane genuinely running and failing (three weeks unfixed), or three of this reporter's own daily polls for a lane that has gone stale and never ran at all (three days unfixed) — and one for everything else, which is another way of saying those get only their first-failure comment. Escalation fires once; afterwards the ${profile.unit} goes back to being tracked in silence until it recovers, so a persistent failure still cannot spam this thread.`
+      : `The one exception (#4400) is escalation: a ${profile.unit} still failing on its **Nth consecutive OBSERVED run** earns exactly one further comment. N is one for every ${profile.unit} this profile tracks — ${profile.escalationCeilingReason} — so escalation here is just that first-failure comment, never a repeat. Escalation fires once; afterwards the ${profile.unit} goes back to being tracked in silence until it recovers, so a persistent failure still cannot spam this thread.`,
   )
   out.push('')
   out.push(`### Tracked failing ${profile.units} (${all.length})`)
@@ -878,11 +900,16 @@ export function buildIssueBody({
   // per-lane `runId` (its `toJSON(needs)` payload has no such key), so
   // `advanceStreaks` falls back to this invocation's own identity and these
   // lines read `job|1|https://github.com/…/runs/NNN` — a full run URL inside a
-  // block whose prose above calls itself machine-readable. Behaviour there is
-  // unchanged (`parseKnownLanes` takes field 0, and a daily lane's threshold
-  // of 1 means the count never moves off 1), but the body a reader sees does
-  // change, which is why it is called out here rather than left to be
-  // rediscovered from a diff.
+  // block whose prose above calls itself machine-readable. For deep-checks
+  // that count never moves off 1 (a daily lane's threshold IS 1), but
+  // `advanceStreaks` falls back to the same run-URL identity for a
+  // watchdog-only case #4481 added: a `stale` lane (dead cron) has no
+  // completed run to name either, so it ALSO renders a run URL here — except
+  // its threshold is 3 (weekly, `periodHours: 168`), so this same
+  // `job|count|runId` shape can carry counts up to 3, not just 1. Behaviour
+  // is otherwise unchanged (`parseKnownLanes` takes field 0 regardless), but
+  // the body a reader sees does change, which is why it is called out here
+  // rather than left to be rediscovered from a diff.
   out.push(
     ...all.map((j) => {
       const s = streaks.get(j)
@@ -3797,6 +3824,15 @@ function selfTestEscalationPromiseMatchesProfile({ check, lanesOf }) {
     'the deep-checks body (no lane ever carries `periodHours`) does not promise an N=3 escalation none of its lanes can ever reach',
     deepChecksBody.slice(0, 900),
   )
+  // #4481 review note 3 — pins that the "why N stays 1" clause is actually
+  // DERIVED from `PROFILES['deep-checks'].escalationCeilingReason` rather
+  // than from a copy of its text hard-coded in `buildIssueBody`: if the two
+  // ever drift apart (someone edits one and not the other), this fails.
+  check(
+    deepChecksBody.includes(PROFILES['deep-checks'].escalationCeilingReason),
+    "the deep-checks body's N=1 explanation is the profile's OWN `escalationCeilingReason`, not a copy hard-coded in `buildIssueBody`",
+    deepChecksBody.slice(0, 900),
+  )
 
   const watchdogLanes = [{ job: 'codeql.yml', result: 'failure (x)', periodHours: 168 }]
   const watchdogBody = buildIssueBody({
@@ -4153,6 +4189,30 @@ function runSelfTest() {
       JSON.stringify(
         Object.fromEntries(
           Object.entries(PROFILES).map(([k, p]) => [k, typeof p.weeklyEscalation]),
+        ),
+      ),
+    )
+    // #4481 review note 3 — the false-branch "why N stays 1" sentence used to
+    // be a string literal hard-coded inside `buildIssueBody`, reached by
+    // `weeklyEscalation === false` alone. A second profile that ALSO set
+    // `weeklyEscalation: false` for a different reason (its lanes really are
+    // daily-cadence workflows, not jobs inside one run) would inherit
+    // deep-checks' claim for free and render a false explanation — the exact
+    // deny-list-by-shape trap this PR fixed for `carriesRunId`, reappearing
+    // in the prose selector. Requiring every `weeklyEscalation: false`
+    // profile to own a non-empty `escalationCeilingReason` string turns a
+    // missing (or copy-pasted) reason into a failing self-test instead of a
+    // silently wrong sentence.
+    check(
+      Object.values(PROFILES)
+        .filter((p) => p.weeklyEscalation === false)
+        .every((p) => typeof p.escalationCeilingReason === 'string' && p.escalationCeilingReason),
+      "every `weeklyEscalation: false` profile OWNS a non-empty `escalationCeilingReason` (no profile inherits another's justification)",
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(PROFILES)
+            .filter(([, p]) => p.weeklyEscalation === false)
+            .map(([k, p]) => [k, typeof p.escalationCeilingReason]),
         ),
       ),
     )

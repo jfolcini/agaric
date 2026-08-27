@@ -355,59 +355,6 @@ export function newestCompletedRunId({ runs, workflow, excludeRunId }) {
 }
 
 /**
- * Classifies every watched workflow into the `${{ toJSON(needs) }}` shape.
- *
- * #4456 — `stale` deliberately gets NO `runId` key at all, never the newest
- * completed run's id. That id is the wrong identity for it: `stale` means the
- * watched workflow's SCHEDULE has stopped firing, so the newest completed run
- * (if there is even one) is frozen wherever it last was — often an old,
- * successful run with nothing to do with why the workflow is unhealthy now.
- * Handing that frozen id to `advanceStreaks` as `runId` made a dead cron
- * compare "equal to last time" on every single poll, forever: the counter
- * held at 1 and the worst failure mode this watchdog exists to catch — a
- * schedule that has stopped running at all — was structurally exempt from
- * ever escalating (jfolcini, review of #4440).
- *
- * Omitting the key (rather than writing an explicit `null`, which is
- * `never-ran`'s and `no-completed-run`'s "identity unknowable, HOLD" — see
- * `advanceStreaks`) makes `parseNeeds` never set `runId` on that lane, so
- * `advanceStreaks` falls back to `fallbackRunId`: THIS watchdog RUN's own
- * identity. That is exactly the mechanism the deep-checks profile already
- * relies on for every one of its own lanes ("one invocation of this script
- * already IS one real occurrence" — see `advanceStreaks`'s doc), applied here
- * for the same reason: a watchdog poll that observes "still not running" IS a
- * new, real, distinct observation of the dead cron, even though the cron
- * itself has produced nothing new to point at. A `stale` lane on a weekly
- * cadence (`periodHours: 168`, `escalationThreshold` 3) now escalates after
- * three DISTINCT daily polls that observe it still stale, instead of never.
- *
- * `never-ran` and `no-completed-run` keep the pre-#4456 null-hold behaviour
- * on purpose (`newestCompletedRunId` already answers `null` for both, so no
- * special case is needed for them here), and `carriesRunId` below says so
- * POSITIVELY rather than by exclusion — see its doc for why the shape of that
- * test is load-bearing.
- *
- * `no-completed-run` really is short-lived: `classifyWorkflow` reaches it only
- * when `considered[0]` is INSIDE the freshness window and merely
- * queued/in-progress, so the next poll either sees it complete (a real id,
- * adopted) or sees it age past `maxAgeHours` and reclassify as `stale`, at
- * which point THIS escalation path takes over.
- *
- * `never-ran` is NOT short-lived, and this is a stated RESIDUAL rather than a
- * claim that it resolves (review of #4456 — an earlier draft of this comment
- * asserted it "resolves into `stale` once `maxAgeHours` elapses", which is
- * false: `classifyWorkflow` returns `never-ran` from `considered.length === 0`
- * and reaches the `stale` branch only via `considered[0]`, so a workflow that
- * has never produced ONE `schedule` run — a cron that has never fired, a
- * schedule GitHub never enabled — stays `never-ran` for as long as that holds,
- * verified by classifying an empty run list at +1d/+30d/+365d). Such a lane
- * still gets exactly one first-failure comment and is then held at count 1
- * forever, i.e. the #4456 exemption survives in that one state. It is left
- * alone here deliberately: the null-hold for `never-ran` is the rule the #4440
- * review widened ON PURPOSE (see `advanceStreaks`'s identity-less-prior doc),
- * and reversing it is a second design decision, not a consequence of this one.
- */
-/**
  * #4456 — whether a `classifyWorkflow` verdict's lane should carry
  * `newestCompletedRunId`'s answer as its `runId`.
  *
@@ -438,6 +385,59 @@ export function carriesRunId(result) {
   )
 }
 
+/**
+ * Classifies every watched workflow into the `${{ toJSON(needs) }}` shape.
+ *
+ * #4456 — `stale` deliberately gets NO `runId` key at all, never the newest
+ * completed run's id. That id is the wrong identity for it: `stale` means the
+ * watched workflow's SCHEDULE has stopped firing, so the newest completed run
+ * (if there is even one) is frozen wherever it last was — often an old,
+ * successful run with nothing to do with why the workflow is unhealthy now.
+ * Handing that frozen id to `advanceStreaks` as `runId` made a dead cron
+ * compare "equal to last time" on every single poll, forever: the counter
+ * held at 1 and the worst failure mode this watchdog exists to catch — a
+ * schedule that has stopped running at all — was structurally exempt from
+ * ever escalating (jfolcini, review of #4440).
+ *
+ * Omitting the key (rather than writing an explicit `null`, which is
+ * `never-ran`'s and `no-completed-run`'s "identity unknowable, HOLD" — see
+ * `advanceStreaks`) makes `parseNeeds` never set `runId` on that lane, so
+ * `advanceStreaks` falls back to `fallbackRunId`: THIS watchdog RUN's own
+ * identity. That is exactly the mechanism the deep-checks profile already
+ * relies on for every one of its own lanes ("one invocation of this script
+ * already IS one real occurrence" — see `advanceStreaks`'s doc), applied here
+ * for the same reason: a watchdog poll that observes "still not running" IS a
+ * new, real, distinct observation of the dead cron, even though the cron
+ * itself has produced nothing new to point at. A `stale` lane on a weekly
+ * cadence (`periodHours: 168`, `escalationThreshold` 3) now escalates after
+ * three DISTINCT daily polls that observe it still stale, instead of never.
+ *
+ * `never-ran` and `no-completed-run` keep the pre-#4456 null-hold behaviour
+ * on purpose (`newestCompletedRunId` already answers `null` for both, so no
+ * special case is needed for them here), and `carriesRunId` above says so
+ * POSITIVELY rather than by exclusion — see its doc for why the shape of that
+ * test is load-bearing.
+ *
+ * `no-completed-run` really is short-lived: `classifyWorkflow` reaches it only
+ * when `considered[0]` is INSIDE the freshness window and merely
+ * queued/in-progress, so the next poll either sees it complete (a real id,
+ * adopted) or sees it age past `maxAgeHours` and reclassify as `stale`, at
+ * which point THIS escalation path takes over.
+ *
+ * `never-ran` is NOT short-lived, and this is a stated RESIDUAL rather than a
+ * claim that it resolves (review of #4456 — an earlier draft of this comment
+ * asserted it "resolves into `stale` once `maxAgeHours` elapses", which is
+ * false: `classifyWorkflow` returns `never-ran` from `considered.length === 0`
+ * and reaches the `stale` branch only via `considered[0]`, so a workflow that
+ * has never produced ONE `schedule` run — a cron that has never fired, a
+ * schedule GitHub never enabled — stays `never-ran` for as long as that holds,
+ * verified by classifying an empty run list at +1d/+30d/+365d). Such a lane
+ * still gets exactly one first-failure comment and is then held at count 1
+ * forever, i.e. the #4456 exemption survives in that one state. It is left
+ * alone here deliberately: the null-hold for `never-ran` is the rule the #4440
+ * review widened ON PURPOSE (see `advanceStreaks`'s identity-less-prior doc),
+ * and reversing it is a second design decision, not a consequence of this one.
+ */
 export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WATCHED }) {
   const out = {}
   for (const entry of watched) {

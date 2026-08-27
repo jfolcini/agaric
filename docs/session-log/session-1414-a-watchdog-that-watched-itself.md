@@ -92,6 +92,46 @@ options are raising the cap or splitting setup into its own job, and that is a d
 issue asked for and this work does not make. So the issue stays open with the state recorded,
 rather than being closed on half a fix.
 
+## The prose the fix made false
+
+Review found the same defect one paragraph above where this batch had just fixed it. The
+escalation text explaining `weeklyEscalation: true` said "three observations really are three
+weeks unfixed" — true while only genuine weekly failures could reach three, and false the
+moment stale lanes started counting daily polls. The change that made stale lanes escalate
+made its own neighbouring sentence wrong.
+
+It now says three observations are three of whatever is actually happening: three of the
+lane's own weekly runs for a failing lane, three of the reporter's daily polls for a dead
+cron. Both true, and the distinction is the point.
+
+The `false` branch had a subtler version of the same problem. Its justification — that the
+profile's units are jobs inside a single scheduled run rather than workflows with their own
+cadence — was hard-coded behind a **generically named boolean**. A future daily-cadence
+profile would legitimately set `weeklyEscalation: false` and render an explanation that is
+false for it. That is the deny-list-by-shape trap this batch spent its time arguing against,
+reappearing in the prose selector rather than in a guard.
+
+The fix moves the justification onto the profile: a profile that caps escalation must now
+supply its own reason, and the sentence is derived from the profile rather than from the
+boolean. Two assertions pin it — that the rendered body contains the profile's own string
+verbatim (proving derivation rather than a copy), and that every capping profile declares
+one.
+
+## Ruling out a path instead of testing it
+
+One note asked whether manual `workflow_dispatch` runs could now compress three days of
+polls into an afternoon, since stale streaks key on the watchdog's own run URL and each
+dispatch has a distinct one.
+
+The honest answer turned out to be that the path does not exist. The filer appends
+`--dry-run` for any non-schedule event, and under dry-run `main` computes the streak and the
+body and then returns before any write. A dispatch run's computed escalation is discarded
+every time, so there is no path by which manual runs advance the persisted count.
+
+Writing a test for that would have been worse than useless — it would assert a behaviour the
+wiring makes unreachable, and would keep passing if the wiring changed. The finding is
+recorded at the `--dry-run` conditional itself, where someone removing it will read it.
+
 ## What shipped
 
 - #4456 — stale lanes escalate on poll identity; the gate is an allow-list; the N=3 promise
