@@ -2778,6 +2778,61 @@ pass_filenames = false
 files = "^scripts/check-prek-version-pin\\.mjs$"
 stages = ["pre-commit"]
 
+# tsgolint-version-pin (#4408): the third pin guard, for the pair that makes
+# `oxlint --type-aware` meaningful. `oxlint-tsgolint` is a typescript-go
+# binary versioned to track a TypeScript release (7.0.2001 ships TS 7.0.2's
+# checker) and it embeds its own compiler rather than reading the
+# `typescript` package, so `typescript` and `oxlint-tsgolint` have to be
+# bumped together. oxlint declares the tsgolint peer as OPTIONAL, which means
+# npm resolves a missing or stale one without a word: absent, `--type-aware`
+# refuses to start; stale, it starts and quietly analyses current source
+# against an older checker, exiting 0. The guard reads resolved versions out
+# of package-lock.json, so it gives the same verdict before `npm install`.
+# Exit codes are 0/2/3 (not the siblings' 0/1/2) so a crash — node's exit 1 —
+# cannot be mistaken for a real finding; see the script header.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "tsgolint-version-pin"
+name = "typescript/oxlint-tsgolint: type-aware lint version pin (package.json vs. package-lock.json)"
+entry = "node scripts/check-tsgolint-version-pin.mjs"
+language = "system"
+pass_filenames = false
+files = "^(package\\.json|package-lock\\.json)$"
+stages = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "tsgolint-version-pin-self-test"
+name = "typescript/oxlint-tsgolint: type-aware lint version pin guard self-test"
+entry = "node scripts/check-tsgolint-version-pin.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-tsgolint-version-pin\\.mjs$"
+stages = ["pre-commit"]
+
+# type-aware-liveness-selftest (#4408): the fixture suite behind the
+# `type-aware-lint` lane's liveness guard in scheduled-deep-checks.yml. The
+# lane is reporting-only, so this guard is the only thing standing between
+# "ran and found 397" and "did not run at all" — and the two are genuinely
+# hard to tell apart, because oxlint exits 1 for BOTH (findings exist, and
+# also: tsgolint missing, unknown flag, rejected config, absent path). The
+# suite pins the positive classification, the canary that proves the
+# type-aware backend is engaged, and the renderer's cannot-fail property.
+# Self-test only, no repo-scanning hook: the guard judges one CI run's output
+# and has nothing to say about a working tree.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "type-aware-liveness-selftest"
+name = "type-aware lint lane: liveness guard + summary renderer self-test"
+entry = "node scripts/check-type-aware-liveness.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-type-aware-liveness\\.mjs$"
+stages = ["pre-commit"]
+
 # cache-poisoning-suppressions: `.github/zizmor.yml` used to suppress
 # zizmor's cache-poisoning finding on four ci.yml steps by LINE NUMBER — a
 # key for "whatever is on this line today", not for the step. An unrelated
