@@ -73,10 +73,20 @@ const ARTIFACTS_DIR = path.resolve(rootDir, 'e2e-tauri', 'artifacts')
 // spec reporter; the screenshot + uploaded artifacts carry the full picture.
 const DIAG_EXCERPT_CAP = 3000
 
-/** Make a string safe as a single path segment for a screenshot filename. */
+/**
+ * Make a string safe as a single path segment.
+ *
+ * `.` survives the character filter (a spec title may legitimately contain
+ * one), so the all-dots cases are rejected explicitly: this value is used as a
+ * DIRECTORY name by `rescueAppLogs`, not only as a filename, and a segment of
+ * `.` or `..` traverses instead of naming. Not reachable from this repo's own
+ * spec titles today — which is exactly why it is worth pinning before some
+ * future title makes it reachable.
+ */
 function sanitizeForFilename(value: string): string {
   const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
-  return (cleaned || 'failure').slice(0, 120)
+  if (cleaned === '' || /^\.+$/.test(cleaned)) return 'failure'
+  return cleaned.slice(0, 120)
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +139,24 @@ export interface WaitFailure {
  * Recover the selector AND the awaited state from a failing WDIO wait message.
  *
  * WDIO renders these as `element ("<selector>") still not <state> after Nms`
- * (the five templates live in webdriverio/build/node.js). The selector
+ * (the five templates live in webdriverio/build/node.js). THIS IS AN INPUT
+ * CONTRACT WITH A DEPENDENCY, not a fact about our code, and every test below
+ * feeds a hand-written message — so the pin is here rather than in an
+ * assertion that could only agree with itself. Read verbatim out of the
+ * INSTALLED `webdriverio` 9.31.1 bundle (`node_modules/webdriverio/build/
+ * node.js`, the `waitForClickable`/`waitForDisplayed`/`waitForEnabled`/
+ * `waitForExist` command bodies), against `"@wdio/cli": "^9.31.1"` in
+ * package.json:
+ *
+ *     `element ("${this.selector}") still ${reverse ? '' : 'not '}` +
+ *       `displayed${withinViewport ? ' within viewport' : ''} after ${timeout}ms`
+ *
+ * If a `@wdio/*` bump rewords that template this parser stops matching and the
+ * lane degrades to "failure is not an element wait — no visibility probe":
+ * safe, silent, and it re-opens the ambiguity #4428 exists to close. A red
+ * weekly run whose log says that for an obvious `waitForDisplayed` timeout is
+ * the symptom; re-read the template at the path above before touching the
+ * regex. The selector
  * routinely contains `"` (every `[data-testid="…"]`), so the capture is GREEDY
  * and pinned between ` still not ` and the ` after <n>ms` tail — neither of
  * which a selector can contain. Returns `undefined` for any other failure (a
@@ -353,7 +380,7 @@ export function probeVisibilityInPage(selector: string): VisibilityProbe {
  * always an answer to "is the asserted state missing, or merely invisible?" —
  * for the state that was ACTUALLY awaited.
  *
- * Three rules govern every branch, all of them learned the expensive way:
+ * Four rules govern every branch, all of them learned the expensive way:
  *
  *   1. The verdict answers `wait.waitedFor`, never a state the probe finds
  *      easier to measure. A `clickable` wait gets no `displayed` verdict.
@@ -364,6 +391,14 @@ export function probeVisibilityInPage(selector: string): VisibilityProbe {
  *      selector carries the scope caveat. `absent` is the one exception, and
  *      only because a scoped lookup can match nothing a document-wide one
  *      misses.
+ *   4. ONE message carries exactly ONE verdict. The probe's facts co-occur
+ *      freely — a `[disabled]` button inside a `display:none` container is
+ *      both hidden and blocked — so where several could each be called a
+ *      cause, VISIBILITY WINS and the rest are printed as additional facts
+ *      under it. Two verdicts in one message ("RENDERING failure" followed by
+ *      "INTERACTION failure rather than a rendering one") is rule 2's failure
+ *      wearing a disguise: it reads as confidence and leaves the reader with
+ *      exactly the ambiguity this function exists to remove.
  */
 export function explainVisibilityProbe(wait: WaitFailure, probe: VisibilityProbe): string {
   const head = `[afterTest] why "${wait.selector}" never became ${wait.waitedFor}:`
@@ -456,7 +491,38 @@ export function explainVisibilityProbe(wait: WaitFailure, probe: VisibilityProbe
       probe.checkVisibility === false ||
       probe.width === 0 ||
       probe.height === 0
-    if (probe.blockedBy.length > 0) {
+    // This test comes FIRST, ahead of `blockedBy`, and that order is the whole
+    // point of the branch (rule 2). The two are not mutually exclusive — a
+    // `[disabled]` button inside a `display:none` container has both a hiding
+    // ancestor and an interaction fact — and the block above has, by then,
+    // already printed "this is a RENDERING failure ... NOT a failure of the
+    // feature under test". Reaching the `blockedBy` arm from that state
+    // appended "this reads as an INTERACTION failure rather than a rendering
+    // one" directly underneath it: one message, two verdicts, pointing
+    // opposite ways, which is precisely the ambiguity this diagnostic exists to
+    // remove. The interaction facts are still worth printing in that state —
+    // but as ADDITIONAL facts under the rendering verdict, never as a rival to
+    // it.
+    if (visibilityAlreadyExplains) {
+      parts.push(
+        `That is on its own enough to fail a \`${wait.waitedFor}\` wait — an element that is not ` +
+          'visible is neither clickable nor enabled — so no separate interaction cause is needed.',
+      )
+      // The facts the two arms below would have printed are not discarded with
+      // the verdict they carried: only the VERDICT is suppressed here.
+      const alsoBearing = [...probe.blockedBy]
+      if (probe.inViewport === false) {
+        alsoBearing.push('its box does not intersect the viewport')
+      }
+      if (alsoBearing.length > 0) {
+        parts.push(
+          `ADDITIONALLY, bearing on \`${wait.waitedFor}\`: ${alsoBearing.join('; ')}. Reported as ` +
+            'extra facts, NOT as a competing verdict: each of these can fail the wait on its own, but ' +
+            'the rendering cause named above is already sufficient, so fix that first and re-run ' +
+            'before reading anything into these.',
+        )
+      }
+    } else if (probe.blockedBy.length > 0) {
       parts.push(
         `BEARING ON \`${wait.waitedFor}\`: ${probe.blockedBy.join('; ')}. Each of these can fail the ` +
           'wait on an element that is fully visible, so this reads as an INTERACTION failure rather ' +
@@ -466,11 +532,6 @@ export function explainVisibilityProbe(wait: WaitFailure, probe: VisibilityProbe
       parts.push(
         `BEARING ON \`${wait.waitedFor}\`: its box does not intersect the viewport, so nothing can ` +
           'be clicked there without scrolling first.',
-      )
-    } else if (visibilityAlreadyExplains) {
-      parts.push(
-        `That is on its own enough to fail a \`${wait.waitedFor}\` wait — an element that is not ` +
-          'visible is neither clickable nor enabled — so no separate interaction cause is needed.',
       )
     } else {
       parts.push(
@@ -635,6 +696,12 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
   }
 }
 
+/** Labels already copied by `rescueAppLogs` in this process. See below. */
+const rescuedLogLabels = new Set<string>()
+
+/** Directory name for the session-level rescue; never a spec title. */
+const SESSION_LOG_LABEL = 'session'
+
 /**
  * Copy the APP's own log out of the sandbox before teardown destroys it
  * (#4428).
@@ -651,8 +718,19 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
  *
  * Copied into `ARTIFACTS_DIR`, which the weekly workflow already uploads.
  * Best-effort: a diagnostics failure must never mask the real test failure.
+ *
+ * Called from BOTH `afterTest` (per failing test) and `afterSession` (once per
+ * session, under `SESSION_LOG_LABEL`), which is the only call that can fire for
+ * the failures this exists for: `afterTest` never runs when the failure is in
+ * `beforeSession`/`before` or when the app never boots at all. IDEMPOTENT per
+ * label — a label already copied in this process is reported and skipped, so
+ * the extra call site can neither duplicate work nor half-overwrite a copy that
+ * is already sitting in the artifact directory.
  */
 function rescueAppLogs(label: string): string {
+  if (rescuedLogLabels.has(label)) {
+    return `already rescued under "${label}" earlier in this session — not copying again.`
+  }
   const vault = sandboxVaultDir
   if (!vault) return 'no sandbox vault was recorded — nothing to rescue.'
   const logDir = path.join(vault, 'logs')
@@ -666,6 +744,7 @@ function rescueAppLogs(label: string): string {
   for (const name of names) {
     copyFileSync(path.join(logDir, name), path.join(destination, name))
   }
+  rescuedLogLabels.add(label)
   return `rescued ${String(names.length)} app log file(s) into ${destination}`
 }
 
@@ -842,9 +921,39 @@ export const config: WebdriverIO.Config = {
     console.warn(`[sandbox] verified: the app is using the throwaway vault ${vault}`)
   },
 
+  // -------------------------------------------------------------------------
+  // The SESSION-level log rescue (#4428) — the one that covers the failures
+  // `afterTest` structurally cannot.
+  //
+  // `afterTest` runs per test, so a session that never reaches a test never
+  // calls it: a panic during boot (the 08-17 run — `SetLoggerError`, all 6
+  // workers dead, not one test completed), or the 120s `notes.db` timeout in
+  // the `before` hook above. Those are exactly the runs where the backend's own
+  // log is the ONLY evidence that exists — the screenshot, the page source and
+  // the visibility probe all need a live session, and there is none. Until this
+  // call the sandbox holding that log was deleted here, unconditionally,
+  // seconds after it was written.
+  //
+  // Two properties this must keep, in order:
+  //
+  //   * `removeSandbox()` runs from `finally`, so a rescue that throws can
+  //     never leak the throwaway vault. Diagnostics that leak sandbox
+  //     directories are a worse trade than no diagnostics — the leak is
+  //     permanent litter in `$TMPDIR`, the missing log costs one re-run.
+  //   * `rescueAppLogs` is idempotent per label, so this call and every
+  //     `afterTest` call coexist without duplicating or half-overwriting a
+  //     copy. This one uses its own label rather than a spec title, so it is
+  //     never the same directory as a per-test rescue.
+  // -------------------------------------------------------------------------
   afterSession: () => {
     killTauriDriver()
-    removeSandbox()
+    try {
+      console.warn(`[afterSession] app logs: ${rescueAppLogs(SESSION_LOG_LABEL)}`)
+    } catch (error) {
+      console.warn(`[afterSession] app log rescue failed: ${String(error)}`)
+    } finally {
+      removeSandbox()
+    }
   },
 
   // No sandbox cleanup here on purpose. Each session's directory is removed by
@@ -857,11 +966,17 @@ export const config: WebdriverIO.Config = {
   //
   // The weekly lane runs once, headless, on CI with no local WebKit driver to
   // reproduce a failure — so a red run must carry its own evidence. On any
-  // failing test this captures: (a) a screenshot, (b) a DISTILLED page-source
-  // excerpt (the set of `data-testid`s present + text fragments around every
-  // "wdio" marker — NOT the full HTML), and (c) the current URL and the
-  // sidebar's innerHTML. Each capture is independently try/caught: a
-  // diagnostics failure must never mask the real test failure or abort teardown.
+  // failing test this captures: (a) a screenshot, (a2) the VISIBILITY VERDICT
+  // for the element the wait was watching — "missing" vs "merely invisible",
+  // #4428 — (a3) the app's own `agaric.log*` copied out of the sandbox before
+  // `afterSession` deletes it, (b) a DISTILLED page-source excerpt (the set of
+  // `data-testid`s present + text fragments around every "wdio" marker — NOT
+  // the full HTML), and (c) the current URL and the sidebar's innerHTML. Each
+  // capture is independently try/caught: a diagnostics failure must never mask
+  // the real test failure or abort teardown.
+  //
+  // (a3) is ALSO taken once per session from `afterSession` above, because this
+  // hook does not run at all when the failure precedes the first test.
   // -------------------------------------------------------------------------
   afterTest: async (test, _context, result) => {
     if (result.passed) return

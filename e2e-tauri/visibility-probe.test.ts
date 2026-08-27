@@ -264,6 +264,53 @@ describe('explainVisibilityProbe — note 1: the verdict answers the verb that w
     expect(message).toContain('`within viewport` half')
   })
 
+  it('issues ONE verdict when a hiding cause and an interaction fact co-occur', () => {
+    // The shape the review caught: a `disabled` button inside a `display:none`
+    // container. `hiddenBy` and `blockedBy` are independent facts and nothing
+    // stops both being populated, so the first block printed "this is a
+    // RENDERING failure ... NOT a failure of the feature under test" and the
+    // interaction block, testing `blockedBy` BEFORE `visibilityAlreadyExplains`,
+    // appended "this reads as an INTERACTION failure rather than a rendering
+    // one" directly underneath it. One message, two verdicts, opposite ways.
+    const message = explainVisibilityProbe(
+      { selector: 'button*=Add Tag', waitedFor: 'clickable' },
+      presentProbe({
+        hiddenBy: ['ancestor 2 level(s) up <div class="dialog"> — display:none'],
+        checkVisibility: false,
+        blockedBy: ['the element itself carries the [disabled] attribute'],
+      }),
+    )
+    expect(message).toContain('RENDERING')
+    expect(message).not.toContain('INTERACTION failure')
+    expect(message).toContain('enough to fail a `clickable` wait')
+    // The interaction FACT survives; only its rival verdict is suppressed.
+    expect(message).toContain('ADDITIONALLY')
+    expect(message).toContain('[disabled]')
+    expect(message).toContain('NOT as a competing verdict')
+    expect(message).not.toContain('NO VERDICT')
+  })
+
+  it('reaches that co-occurrence from a real DOM, not just a hand-built probe', () => {
+    // Reachability, not construction: `probeVisibilityInPage` is what fills
+    // both arrays on a red run, so the branch is exercised from the DOM the
+    // reviewer named rather than from a `presentProbe` override.
+    document.body.innerHTML = `
+      <div class="dialog" style="display: none">
+        <button data-testid="add-tag" disabled>Add Tag</button>
+      </div>`
+    const probe = probeVisibilityInPage('[data-testid="add-tag"]')
+    expect(probe.hiddenBy.length).toBeGreaterThan(0)
+    expect(probe.blockedBy.length).toBeGreaterThan(0)
+    const message = explainVisibilityProbe(
+      { selector: '[data-testid="add-tag"]', waitedFor: 'clickable' },
+      probe,
+    )
+    expect(message).toContain('HIDDEN BY')
+    expect(message).not.toContain('INTERACTION failure')
+    expect(message).toContain('ADDITIONALLY')
+    document.body.innerHTML = ''
+  })
+
   it('does not explain an `existing` failure with hiding — a hidden element exists', () => {
     const message = explainVisibilityProbe(
       { selector: '[data-testid="task-marker"]', waitedFor: 'existing' },

@@ -247,10 +247,23 @@ jobs:
         # dependency tree: with `if-no-files-found: ignore` the step now yields
         # NO artifact rather than a misleading one.
         #
+        # The exclusion is `!**/node_modules/**`, not `!node_modules/**`: the
+        # latter matches the TOP-LEVEL tree only, while the pattern it has to
+        # cancel (`**/*.log`) reaches every depth. `.gitignore:10` is a bare
+        # `node_modules`, which git applies at any depth; `!**/node_modules/**`
+        # is the spelling that covers that same set here. (Nothing nested
+        # exists in this tree today — this is the defensive spelling, not a fix
+        # for an observed miss.) The comment lives here rather than beside the
+        # pattern because `path: |` is a literal block scalar: a `#` line
+        # inside it is DATA handed to the globber, not a comment.
+        #
         # The evidence that does exist is in `e2e-tauri-diagnostics` below:
-        # wdio.conf.ts's `afterTest` now copies the app's own
+        # wdio.conf.ts now copies the app's own
         # `<AGARIC_DATA_DIR>/logs/agaric.log*` into `e2e-tauri/artifacts/`
-        # before `afterSession` deletes the throwaway vault that holds it.
+        # before the throwaway vault that holds it is deleted — from
+        # `afterTest` per failing test, and from `afterSession` once per
+        # session, which is the only one of the two that fires when the app
+        # never boots and no test ever runs.
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -259,7 +272,7 @@ jobs:
             logs/
             wdio-logs*/
             **/*.log
-            !node_modules/**
+            !**/node_modules/**
           if-no-files-found: ignore
           retention-days: 14
 
