@@ -200,6 +200,11 @@ export const SCANNED_EXTENSIONS = new Map([
  * file walked IN ORDER, so a delimiter can only ever be read in the role it
  * actually plays.
  *
+ * Exported (unchanged otherwise) so `check-hook-deps.mjs` can run its own
+ * `blankRemainingPyTripleQuoted` second pass on this function's OUTPUT
+ * directly, before `stripLineComments`'s `#`-comment-line filter runs — see
+ * that pass's doc comment (#4477 note 4) for why the ORDER matters.
+ *
  * A docstring is a triple-quoted literal that OPENS a statement: at the start
  * of a line, after indentation and after any of the `r`/`b`/`u`/`f` prefixes.
  * That is where a module, class or function docstring always begins and where
@@ -237,7 +242,7 @@ export const SCANNED_EXTENSIONS = new Map([
  *
  * Blanked rather than deleted so line structure — and therefore the per-line
  * detectors below — is unchanged; see `stripLineComments`. */
-function blankPyDocstrings(text) {
+export function blankPyDocstrings(text) {
   const DELIM_RE = /"""|'''/g
   let out = ''
   let pos = 0

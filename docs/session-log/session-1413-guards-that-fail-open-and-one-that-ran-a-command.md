@@ -112,6 +112,58 @@ The issue's own acceptance said it: *do not leave a comment asserting an invaria
 checks.* This batch was two-thirds of the way to doing exactly that — the first pass fixed
 the verdict and left the comment, which would have closed the issue on a partial fix.
 
+## The fail-open one was deeper than the note said
+
+Review of the PR found a fail-open case in the new Python triple-quote pass, which is a
+pointed thing to find in a batch about guards that fail open. The reported shape was
+delimiter pairing without quote context. The actual cause was worse and one layer up: the
+pass was running on text that had already had `#`-comment lines *deleted*. A non-docstring
+triple-quoted literal whose closing delimiter happened to sit on a line spelled like a
+comment had that close silently removed, which orphaned the real open, which then mis-paired
+with a much later delimiter and blanked genuine code (a real `import`) as collateral. A
+missed dependency edge, reported as nothing.
+
+The fix is an ordering one: blank the docstrings, then blank the remaining triple-quoted
+literals, and only then drop comment lines. It also let the duplicated helper go: the pass
+now imports `blankPyDocstrings` from its original home rather than keeping a second copy, so
+the two consumers cannot drift.
+
+Worth noting what made this findable. The earlier round deliberately duplicated rather than
+widened the shared helper, and justified it by widening the shared one and watching the other
+guard's assertion go red. That was the right call and it was verified. But the duplicate was
+then fed a *differently preprocessed* input than its sibling, and that difference is where the
+bug lived — not in either function, but in the pipeline around one of them.
+
+(Writing this section hit the same class of bug: the prose contains the delimiter it is about,
+which terminated the string literal carrying it. The tooling and the subject matter agreed.)
+
+## Measuring instead of guessing about cost
+
+One note was about a self-test streaming 65 MiB through a pipe on every run to prove an
+`ENOBUFS` classification. The temptation is to either wave it through or "optimise" it on
+instinct. Measured instead, three runs each: the case cost about 110 ms and 130 MB per
+invocation, and would scale in lockstep if the buffer constant were ever raised — which the
+error message itself invites.
+
+So it was reduced rather than merely recorded: the probe takes an optional buffer override,
+the self-test drives it with 4 KiB instead of the real 64 MiB, and the same `ENOBUFS` code
+path proves the same classification. Re-measured after: the cost is gone. Both numbers are in
+the comment, because the next person to look will want to know whether it was ever actually
+expensive.
+
+## A residual collision, documented rather than half-fixed
+
+Reserving `SESSION_LOG_LABEL` in the sanitizer maps a root-level test titled `session` to
+`session-test` — which is also the ordinary label of `describe('session')` + `it('test')`.
+Strictly better than the bug it replaced, and within the sanitizer's existing many-to-one
+behaviour, but not *proof* of separation.
+
+A genuinely collision-proof scheme exists: reserve a value the sanitizer can never emit — one
+with a leading hyphen, or all dots. But `SESSION_LOG_LABEL`'s value is the real on-disk CI
+artifact directory name and is pinned by literal in committed assertions, so changing it is
+not a drive-by. Documented at both the sanitizer and the test, with the concrete collision
+spelled out, so whoever needs it has the analysis rather than a surprise.
+
 ## What shipped
 
 - #4466 — five guard fixes, including the shell removal and the grammar that replaced the

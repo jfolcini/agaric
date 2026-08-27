@@ -509,13 +509,17 @@ export function assertSameTarget(report, baseline) {
  */
 const OXLINT_PROBE_MAX_BUFFER = 64 * 1024 * 1024
 
-export function defaultRunOxlint({ binary, cwd, args }) {
+// `maxBuffer` defaults to the real threshold above and is otherwise never
+// passed except by `selfTestMaxBufferOverflow` (#4477 note 6), which uses a
+// tiny override so proving the ENOBUFS classification does not cost
+// whatever `OXLINT_PROBE_MAX_BUFFER` happens to be set to.
+export function defaultRunOxlint({ binary, cwd, args, maxBuffer = OXLINT_PROBE_MAX_BUFFER }) {
   try {
     return execFileSync(binary, args, {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      maxBuffer: OXLINT_PROBE_MAX_BUFFER,
+      maxBuffer,
     })
   } catch (err) {
     // #4461 note 2: a maxBuffer overflow must be diagnosed as what it is, not
@@ -532,7 +536,7 @@ export function defaultRunOxlint({ binary, cwd, args }) {
     // stdout fallback ever sees the truncated bytes.
     if (err.code === 'ENOBUFS') {
       throw new UnverifiableError(
-        `a probe invocation's output exceeded the ${OXLINT_PROBE_MAX_BUFFER}-byte buffer and ` +
+        `a probe invocation's output exceeded the ${maxBuffer}-byte buffer and ` +
           'was truncated — a buffer-size problem, not a missing rule count and not a broken ' +
           'backend. Raise OXLINT_PROBE_MAX_BUFFER if the report has genuinely grown past it',
       )
@@ -1157,15 +1161,31 @@ function selfTestBaselineOrdering({ check }) {
  * directly — the real function, a real child process, a real overflow — so
  * this proves the CLASSIFICATION, not just that `ENOBUFS` happens to be a
  * string this file recognises somewhere.
+ *
+ * #4477 note 6: this used to push `OXLINT_PROBE_MAX_BUFFER + 1 MiB` (~65 MiB)
+ * through the pipe on every `--self-test`. Measured before changing anything
+ * (`/usr/bin/time -v node scripts/check-type-aware-liveness.mjs --self-test`,
+ * three runs each): ~0.05 s / ~55 MB peak RSS for the whole self-test WITHOUT
+ * this case, ~0.16 s / ~185 MB WITH it — this one case alone cost roughly
+ * 110 ms and 130 MB every run, and that cost was tied to the real 64 MiB
+ * constant, so it would have grown in lockstep with any future raise of
+ * `OXLINT_PROBE_MAX_BUFFER`, exactly as the error message above invites. The
+ * classification under test is `err.code === 'ENOBUFS'`, which node raises
+ * identically no matter how small the configured buffer is, so this now
+ * drives `defaultRunOxlint` with a 4 KiB override (see its `maxBuffer`
+ * parameter) instead of the real constant: same code path, same proof, and a
+ * cost that no longer scales with `OXLINT_PROBE_MAX_BUFFER` at all.
  */
 function selfTestMaxBufferOverflow({ check }) {
-  const oversized = OXLINT_PROBE_MAX_BUFFER + 1024 * 1024
+  const testMaxBuffer = 4096
+  const oversized = testMaxBuffer * 2
   let threw = null
   try {
     defaultRunOxlint({
       binary: '/bin/sh',
       cwd: process.cwd(),
       args: ['-c', `yes x | head -c ${oversized}`],
+      maxBuffer: testMaxBuffer,
     })
   } catch (err) {
     threw = err

@@ -100,6 +100,28 @@ export const SESSION_LOG_LABEL = 'session'
  * titled "session" (no enclosing `describe`, so `test.parent` is `''`)
  * sanitizes to exactly that string. Suffixed rather than rejected, so the
  * function still returns something legible for a screenshot/log-dir name.
+ *
+ * NOT collision-proof (#4477 note 1): the suffix, `session-test`, is itself
+ * an ORDINARY reachable label — exactly what `describe('session')` +
+ * `it('test')` sanitizes to with no reservation involved, since this
+ * function is already many-to-one (any run of characters outside
+ * `[a-zA-Z0-9._-]` collapses to one hyphen). Whichever of those two shapes'
+ * `afterTest` call fires first still claims `app-logs/session-test`
+ * idempotently, and the other is skipped as "already rescued" — the same
+ * failure mode this reservation exists to close, one level removed. Strictly
+ * better than the bug fixed here (that one swallowed the MORE COMPLETE
+ * session-level rescue; this one is between two ordinary per-test rescues,
+ * and needs both specific shapes present in the same run) and consistent
+ * with this function's existing many-to-one behaviour elsewhere, so it is
+ * documented rather than treated as closed. A collision-proof reservation is
+ * possible in principle — pick a `SESSION_LOG_LABEL` this function can PROVE
+ * no title can ever produce, e.g. one with a leading/trailing hyphen or
+ * composed only of dots, both already structurally impossible outputs of
+ * `truncated` above — but `SESSION_LOG_LABEL` names the real on-disk CI
+ * artifact directory and is pinned by literal value in
+ * `e2e-tauri/session-log-label.test.ts`, so changing it is a deliberate,
+ * reviewed decision, not a drive-by. See that file's last test for the
+ * concrete demonstration.
  */
 export function sanitizeForFilename(value: string): string {
   const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')

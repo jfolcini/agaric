@@ -169,7 +169,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 
 import { parse as parseToml } from 'smol-toml'
 
-import { stripLineComments } from './check-git-fixture-isolation.mjs'
+import { blankPyDocstrings, stripLineComments } from './check-git-fixture-isolation.mjs'
 import {
   blankStringsAndTemplates,
   ScanError,
@@ -331,7 +331,12 @@ function declaredPackages(repoRoot) {
  * `node_modules/foo/node_modules/bar` for a version conflict); taking
  * everything after the LAST `node_modules/` recovers the package name
  * (scoped names such as `@scope/name` contain no further `/node_modules/`,
- * so the split does not cut them).
+ * so the split does not cut them). An older lockfileVersion 1 lockfile has
+ * no `packages` map at all (only a `dependencies` tree this function does
+ * not read) -- `lockfilePackages` itself warns LOUDLY when it sees that
+ * shape (#4477 note 5) rather than returning the same empty `Set` a
+ * genuinely-resolves-nothing lockfile would, which this repo's own
+ * lockfileVersion 3 file can never trigger.
  *
  * @type {Map<string, Set<string>>}
  */
@@ -342,7 +347,29 @@ function lockfilePackages(repoRoot) {
   if (hit) return hit
   const names = new Set()
   try {
-    const lock = JSON.parse(readFileSync(resolve(repoRoot, 'package-lock.json'), 'utf8'))
+    const lockPath = resolve(repoRoot, 'package-lock.json')
+    const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+    // A lockfileVersion 1 (npm <= 6) or 2-without-packages lockfile has no
+    // top-level `packages` map at all -- only the older nested `dependencies`
+    // tree this function does not read. That makes `names` come back EMPTY,
+    // same as "no lockfile" -- but unlike that case it is silent (#4477
+    // note 5): the catch below's comment covers a MISSING or unparseable
+    // lockfile, not a present, parseable, merely OLDER-SCHEMA one, and an
+    // empty Set looks exactly like a legitimate "this lockfile resolved
+    // nothing" answer. Say so loudly instead, once per repo root -- fail
+    // CLOSED still (every hoisted transitive-only import still falls to
+    // UNVERIFIABLE below), but not for a reason anyone reading the guard's
+    // own output could otherwise tell apart from "nothing to see here".
+    if (lock?.packages === undefined) {
+      console.error(
+        `WARNING: ${lockPath} has no top-level "packages" map (lockfileVersion ` +
+          `${lock?.lockfileVersion ?? '<unset>'}, an npm <= 6 shape this guard does not read) ` +
+          '-- every package that lockfile alone resolved (not declared directly in ' +
+          'package.json) will read UNVERIFIABLE below for a reason that has nothing to do ' +
+          'with any hook change. Regenerate it at lockfileVersion >= 2 (a plain `npm install` ' +
+          'on a current npm does this) to fix this rather than working around it hook by hook.',
+      )
+    }
     for (const key of Object.keys(lock?.packages ?? {})) {
       const name = key.split('node_modules/').pop()
       if (name) names.add(name)
@@ -578,25 +605,26 @@ function resolvePyModule(repoRoot, scriptRepoDir, moduleName) {
 }
 
 /**
- * Blank every triple-quoted Python string literal STILL PRESENT after
- * `stripLineComments(text, 'py')` has run (#4466 note 3).
+ * Blank every triple-quoted Python string literal `blankPyDocstrings`
+ * (check-git-fixture-isolation.mjs) left alone (#4466 note 3).
  *
- * `stripLineComments`'s own `blankPyDocstrings` (check-git-fixture-
- * isolation.mjs) deliberately blanks ONLY a triple-quoted literal that OPENS
- * A STATEMENT — at the start of a line, indentation and string prefix
+ * `blankPyDocstrings` deliberately blanks ONLY a triple-quoted literal that
+ * OPENS A STATEMENT — at the start of a line, indentation and string prefix
  * aside. That is the right rule for ITS consumer: `hasFixtureGitInit` must
  * still see `subprocess.run("""git init""")` as the real code it is, and
  * that file's own doc comment gives exactly that example. This scanner has
  * the opposite need: an `import`/`from` line found INSIDE ANY triple-quoted
  * string — say `TEMPLATE = """\n    import subprocess\n"""`, a fixture or
  * template constant, where `TEMPLATE = ` precedes the delimiter so the
- * line-start rule leaves it un-blanked — is not a real import no matter
- * where in the file the string sits, because text inside a string literal
- * is never executed. Before this pass, `PY_PLAIN_IMPORT_RE` had no
- * equivalent to the "not a quoted string" check `extractPyDeps` already
- * applies to a `spec_from_file_location(` match (the `prev === "'"` guard
- * below) — the two halves of this same scanner disagreed about the
- * identical hazard.
+ * line-start rule leaves it un-blanked — is not code the Python interpreter
+ * executes as a statement no matter where in the file the string sits. (A
+ * string later handed to `exec(`/`eval(` IS a run-time execution hazard —
+ * that is a *different* gap, one `extractPyDeps` already reports as
+ * UNVERIFIABLE via the `exec(`/`execfile(` marker below rather than papering
+ * over it here.) Before this pass, `PY_PLAIN_IMPORT_RE` had no equivalent to
+ * the "not a quoted string" check `extractPyDeps` already applies to a
+ * `spec_from_file_location(` match (the `prev === "'"` guard below) — the
+ * two halves of this same scanner disagreed about the identical hazard.
  *
  * Rather than widen `blankPyDocstrings` itself — which every OTHER consumer
  * of `stripLineComments('py')` relies on to keep non-docstring triple-quoted
@@ -610,6 +638,22 @@ function resolvePyModule(repoRoot, scriptRepoDir, moduleName) {
  * Same two conservatisms as `blankPyDocstrings`, and for the same reasons
  * (see its doc comment): an UNTERMINATED literal ends the walk rather than
  * blanking to EOF, and an escaped delimiter inside a literal is not modelled.
+ *
+ * MUST run on `blankPyDocstrings`'s OUTPUT DIRECTLY — i.e. before
+ * `stripLineComments`'s `#`-comment-LINE filter, not after it as an earlier
+ * version of this pass did (#4477 note 4). That filter drops a whole line
+ * matching `/^\s*#/` with no idea it might sit inside a still-open,
+ * non-docstring triple-quoted literal — e.g. a line that is really the
+ * TAIL of `OPEN = """`'s string, spelled `# """`, which also happens to
+ * carry this scanner's own closing delimiter. Deleting that line does not
+ * just lose a comment: it deletes the ONLY `"""` that this pass would have
+ * paired as `OPEN`'s close, so the naive next-occurrence search below then
+ * pairs `OPEN` with a wholly unrelated LATER `"""` instead — blanking every
+ * real statement in between, imports included, as collateral. Running this
+ * pass first means every delimiter `blankPyDocstrings` left untouched is
+ * still exactly where the raw source put it when this pass pairs them, and
+ * the comment-line filter only ever removes text this pass has already
+ * turned into blank space or genuine non-code.
  */
 function blankRemainingPyTripleQuoted(text) {
   const DELIM_RE = /"""|'''/g
@@ -635,25 +679,42 @@ function blankRemainingPyTripleQuoted(text) {
   return out
 }
 
+/** The `#`-comment-only-LINE half of `stripLineComments(text, 'py')`, kept
+ * as its own step so it can run AFTER `blankRemainingPyTripleQuoted` rather
+ * than before (#4477 note 4 — see that function's doc comment for why the
+ * order matters: this filter drops a whole line with no idea it might be
+ * carrying a still-live triple-quote delimiter). `blankPyDocstrings` already
+ * blanks (not deletes) every docstring-shaped literal by the time this runs,
+ * so this is the ONLY line-shape check left to apply — identical regex to
+ * `stripLineComments`'s own 'py'/'sh' branch. */
+function stripHashCommentLines(text) {
+  return text
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n')
+}
+
 /**
  * Extract Python `spec_from_file_location` dependencies, plus unresolved
  * markers for `sys.path.insert`/`append` (a plain `import` after a path
  * splice cannot be statically resolved to a file) and `exec(`/`execfile(`
  * (code run from a computed string is opaque to a static scan).
  *
- * `stripLineComments(text, 'py')` (reused from check-git-fixture-
- * isolation.mjs, #3722/#4015) blanks triple-quoted docstrings and drops
- * `#`-comment-only lines, so a docstring or comment merely NAMING
+ * Docstrings are blanked (`blankPyDocstrings`, check-git-fixture-
+ * isolation.mjs, #3722/#4015), every OTHER triple-quoted literal is then
+ * blanked too (`blankRemainingPyTripleQuoted`, #4466 note 3), and only THEN
+ * are `#`-comment-only lines dropped (`stripHashCommentLines`) — that order,
+ * not `stripLineComments(text, 'py')`'s combined one, is load-bearing
+ * (#4477 note 4). Together this means a docstring or comment merely NAMING
  * `spec_from_file_location(` in prose is not mistaken for a real call — the
  * same protection #3997's review found missing for the "indented inside a
  * function" shape, which this fixes by not requiring a column-0 anchor at
- * all (the position just has to survive comment/docstring stripping).
- * `blankRemainingPyTripleQuoted` then blanks every OTHER triple-quoted
- * string too (#4466 note 3), so a plain import sitting inside one reads the
- * same as one sitting inside a docstring: not code.
+ * all (the position just has to survive comment/docstring stripping) — and
+ * a plain import sitting inside any triple-quoted string reads the same as
+ * one sitting inside a docstring: not code.
  */
 function extractPyDeps(rawText) {
-  const stripped = blankRemainingPyTripleQuoted(stripLineComments(rawText, 'py'))
+  const stripped = stripHashCommentLines(blankRemainingPyTripleQuoted(blankPyDocstrings(rawText)))
   const specs = []
   const plainModules = []
   const unresolved = []
@@ -1635,6 +1696,28 @@ function buildInProcessFixture(tmp) {
       '"""\n' +
       'x = 1\n',
   )
+  // #4477 note 4: a REAL import sitting between two non-docstring-shaped
+  // `"""` delimiters, where the line carrying the SECOND delimiter of the
+  // FIRST pair also happens to look like a whole-line `#` comment. Real
+  // Python semantics: `OPEN`'s string opens on line 1 and closes on line 2
+  // (the very next `"""`, wherever it is spelled), so `import py_sibling` on
+  // line 3 is genuine code, not string content — `CLOSE = """` on line 4 is
+  // a second, separately unterminated literal.
+  //
+  // `stripLineComments`'s `#`-comment-LINE filter has no idea line 2 is
+  // carrying this scanner's own closing delimiter — it just sees a line
+  // starting with `#` and deletes it whole. Doing that BEFORE
+  // `blankRemainingPyTripleQuoted` runs erases the only "for" that pass
+  // would have paired with line 1's `OPEN`, so its naive next-occurrence
+  // search instead pairs `OPEN` with line 4's unrelated `CLOSE` delimiter —
+  // blanking the real import in between as collateral: a missed dependency
+  // edge (fail OPEN), not the fail-closed direction every other case in
+  // this file takes. Running that pass on `blankPyDocstrings`'s output
+  // directly, before the comment-line filter, is the fix.
+  writeFileSync(
+    join(scriptsDir, 'py-comment-line-collision.py'),
+    'OPEN = """\n' + '# """\n' + 'import py_sibling\n' + 'CLOSE = """\n',
+  )
 
   // A script whose only hook matches it in `files:` and then removes it
   // again in `exclude:` -- the own-script slot's mirror of `excluded-dep`
@@ -1846,6 +1929,11 @@ files = "^scripts/py-docstring-mention\\\\.py$"
 id = "py-string-import"
 entry = "python3 scripts/py-string-import.py"
 files = "^scripts/py-string-import\\\\.py$"
+
+[[repos.hooks]]
+id = "py-comment-line-collision"
+entry = "python3 scripts/py-comment-line-collision.py"
+files = "^scripts/py-comment-line-collision\\\\.py$"
 
 [[repos.hooks]]
 id = "good-sh"
@@ -2079,6 +2167,24 @@ function runSelfTest() {
       )
     }
 
+    // #4477 note 4: a real import between two non-docstring `"""` pairs,
+    // where the first pair's closing delimiter sits on a line that ALSO
+    // looks like a whole-line `#` comment. Filtering comment lines before
+    // (rather than after) `blankRemainingPyTripleQuoted` runs deletes that
+    // delimiter, so the pass mis-pairs `OPEN` with the unrelated later
+    // `CLOSE` and blanks the real import as collateral -- a MISSED
+    // dependency edge (fail-open), the opposite direction from every other
+    // case here. This must be FLAGGED (the edge found, `files:` doesn't
+    // cover it), not silently clean.
+    if (brokenPairs.has('py-comment-line-collision::scripts/py_sibling.py')) {
+      ok('a real import next to a comment-shaped delimiter line is still found (note 4)')
+    } else {
+      fail(
+        'comment-shaped delimiter line does not hide a real import',
+        JSON.stringify({ broken, unverifiable }),
+      )
+    }
+
     if (!brokenIds.has('good-sh')) ok('good-sh (self+dep unioned) is clean')
     else fail('good-sh is clean', JSON.stringify(broken))
 
@@ -2288,6 +2394,7 @@ function runSelfTest() {
 
   runCliSelfTest(ok, fail)
   runUpdateBaselineGrowthSelfTest(ok, fail)
+  runLockfileSchemaSelfTest(ok, fail)
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
@@ -2574,6 +2681,84 @@ function runUpdateBaselineGrowthSelfTest(ok, fail) {
     else fail('no-op update exits 0', `code=${noopCode}`)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+/**
+ * #4477 note 5: `lockfilePackages` must warn LOUDLY when the committed
+ * `package-lock.json` has no top-level `packages` map (lockfileVersion 1,
+ * npm <= 6) instead of silently returning the same empty `Set` a lockfile
+ * that genuinely resolves nothing would produce. Two fixtures, each its own
+ * `repoRoot` so `lockfilePackagesCache` cannot leak a verdict from one into
+ * the other: an OLDER-schema lockfile must warn, this repo's own
+ * lockfileVersion 3 shape must not.
+ */
+function runLockfileSchemaSelfTest(ok, fail) {
+  const buildMinimalBareImportFixture = (tmp) => {
+    const scriptsDir = join(tmp, 'scripts')
+    mkdirSync(scriptsDir, { recursive: true })
+    writeFileSync(
+      join(scriptsDir, 'bare-import.mjs'),
+      "import { thing } from 'totally-unresolvable-pkg'\nexport const x = thing\n",
+    )
+    writeFileSync(
+      join(tmp, 'prek.toml'),
+      '\n[[repos]]\nrepo = "local"\n[[repos.hooks]]\n' +
+        'id = "bare-import"\n' +
+        'entry = "node scripts/bare-import.mjs"\n' +
+        'files = "^scripts/bare-import\\\\.mjs$"\n',
+    )
+  }
+
+  const runCapturingStderr = (prekTomlPath) => {
+    const lines = []
+    const origError = console.error
+    console.error = (...args) => lines.push(args.map(String).join(' '))
+    try {
+      analyze(prekTomlPath)
+    } finally {
+      console.error = origError
+    }
+    return lines
+  }
+
+  const oldSchemaTmp = mkdtempSync(join(os.tmpdir(), 'hook-deps-lockschema-old-'))
+  const newSchemaTmp = mkdtempSync(join(os.tmpdir(), 'hook-deps-lockschema-new-'))
+  try {
+    buildMinimalBareImportFixture(oldSchemaTmp)
+    writeFileSync(
+      join(oldSchemaTmp, 'package-lock.json'),
+      JSON.stringify({
+        name: 'fixture',
+        lockfileVersion: 1,
+        dependencies: { 'totally-unresolvable-pkg': { version: '1.0.0' } },
+      }),
+    )
+    const oldSchemaStderr = runCapturingStderr(join(oldSchemaTmp, 'prek.toml'))
+    if (oldSchemaStderr.some((line) => line.includes('no top-level "packages" map'))) {
+      ok('a lockfileVersion 1 lockfile (no "packages" map) warns loudly, not silently (note 5)')
+    } else {
+      fail('older lockfile schema warns loudly', JSON.stringify(oldSchemaStderr))
+    }
+
+    buildMinimalBareImportFixture(newSchemaTmp)
+    writeFileSync(
+      join(newSchemaTmp, 'package-lock.json'),
+      JSON.stringify({
+        name: 'fixture',
+        lockfileVersion: 3,
+        packages: { 'node_modules/totally-unresolvable-pkg': { version: '1.0.0' } },
+      }),
+    )
+    const newSchemaStderr = runCapturingStderr(join(newSchemaTmp, 'prek.toml'))
+    if (!newSchemaStderr.some((line) => line.includes('no top-level "packages" map'))) {
+      ok('a lockfileVersion 3 lockfile (has "packages") does not false-positive the warning')
+    } else {
+      fail('lockfileVersion 3 lockfile does not warn', JSON.stringify(newSchemaStderr))
+    }
+  } finally {
+    rmSync(oldSchemaTmp, { recursive: true, force: true })
+    rmSync(newSchemaTmp, { recursive: true, force: true })
   }
 }
 

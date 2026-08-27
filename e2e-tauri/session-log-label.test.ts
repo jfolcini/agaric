@@ -28,6 +28,16 @@
 // assert concrete expected strings throughout (not mere inequality), so a
 // vacuous pass — e.g. both sides sanitizing to `''` or `undefined` — cannot
 // slip through.
+//
+// NOT A FULL FIX (#4477 note 1). The chosen suffix, `session-test`, is
+// itself an ORDINARY reachable label — the exact string `describe('session')`
+// + `it('test')` sanitizes to with no reservation involved. Since
+// `rescueAppLogs` is idempotent per label, that specific pair of test shapes
+// can still collide with each other, the same way the original bug collided
+// a root-level "session" test with the session-level rescue. See the last
+// test below for the concrete demonstration and why this is documented
+// rather than "closed": strictly better than the bug fixed, but not
+// collision-proof.
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it } from 'vitest'
@@ -83,5 +93,39 @@ describe('sanitizeForFilename — SESSION_LOG_LABEL reservation (#4457)', () => 
     // call site itself; the session rescue still lands at "session".
     expect(SESSION_LOG_LABEL).toBe('session')
     expect(sanitizeForFilename(SESSION_LOG_LABEL)).not.toBe(SESSION_LOG_LABEL)
+  })
+
+  it('DOCUMENTS a narrower residual collision: the reserved suffix is itself an ordinary label (#4477 note 1)', () => {
+    // The reservation above trades one collision for a NARROWER one, not a
+    // closed one. `describe('session')` + `it('test')` produces exactly the
+    // same label this file's afterTest expression always would — no
+    // reservation involved, this is just `sanitizeForFilename`'s ordinary
+    // many-to-one behaviour (any run of non-alnum/`.`/`_`/`-` characters
+    // collapses to one hyphen) — and it happens to equal the SUFFIXED value
+    // a root-level "session" test now maps to. `rescueAppLogs` is still
+    // idempotent per label (wdio.conf.ts), so whichever of these two shapes'
+    // afterTest call fires first still claims `app-logs/session-test`, and
+    // the other is skipped as "already rescued" — the SAME failure mode
+    // #4457 fixed, one level removed.
+    //
+    // Still strictly better than the bug this fixed: that bug let a
+    // root-level "session" test swallow the SESSION-level rescue, the MORE
+    // COMPLETE one taken after the driver is killed; this residual collision
+    // is between two ordinary PER-TEST rescues of comparable completeness,
+    // and only fires when BOTH specific shapes are present in the same run.
+    // A collision-proof reservation is possible in principle — reserve a
+    // value `sanitizeForFilename` can PROVE no title can ever produce (e.g.
+    // one with a leading/trailing hyphen, or composed only of dots — both
+    // already structurally impossible outputs of this function — rather
+    // than a reachable string like "session-test") — but `SESSION_LOG_LABEL`
+    // names the real on-disk CI artifact directory
+    // (`ARTIFACTS_DIR/app-logs/<label>`) and is pinned by literal value in
+    // the tests above, so changing it is not a drive-by fix; it is left
+    // documented rather than "fixed" into a false sense of closure.
+    const rootLevelSessionLabel = sanitizeForFilename(SESSION_LOG_LABEL)
+    const describeSessionItTestLabel = sanitizeForFilename(`${'session'}-${'test'}`)
+    expect(rootLevelSessionLabel).toBe('session-test')
+    expect(describeSessionItTestLabel).toBe('session-test')
+    expect(describeSessionItTestLabel).toBe(rootLevelSessionLabel)
   })
 })
