@@ -186,13 +186,26 @@ pub async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTable
 ///
 /// # `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor
 ///
-/// Note for anyone grepping the tree for op-log ordering after #4402: this
-/// `ORDER BY` is now the ONLY remaining `device_id`-before-`seq` comparator
-/// with an LWW shape. That is deliberate and the rest of this section says
-/// why — the value is opaque and never compared across devices, so it is not
-/// an LWW decision at all. Do not "fix" it to the canonical
-/// `(created_at, seq, device_id)` for consistency: that would change a
-/// wire-adjacent value for no gain.
+/// Note for anyone grepping the tree for op-log ordering after #4402: #4402
+/// canonicalised the sweep/history/reverse comparators
+/// (`agaric_store::op_log::BlockEditScan`, `commands::history`, `reverse::*`)
+/// onto `(created_at, seq, device_id)` and left none of the
+/// `device_id`-before-`seq` shape behind in those layers. This `ORDER BY` — in
+/// the snapshot layer, not one of them — keeps that shape deliberately, and
+/// the rest of this section says why: the value is opaque and never compared
+/// across devices, so it is not an LWW decision at all. Do not "fix" it to the
+/// canonical `(created_at, seq, device_id)` for consistency: that would change
+/// a wire-adjacent value for no gain.
+///
+/// This does NOT mean `(created_at, device_id, seq)` is extinct elsewhere:
+/// `db::recovery` replays in that order as its own LWW convention
+/// (`recover_blocks_from_op_log`, `recover_derived_state_from_op_log`, and —
+/// the pass #4455 is actually about — `recover_attachments_from_op_log`), and
+/// `ATTACHMENT_REPLAYABLE` there carries no `is_replicated` filter — it
+/// replays both provenances, so a same-millisecond cross-device
+/// `rename_attachment`/`delete_attachment` pair can resolve to a different
+/// winner there than in `commands::history` / `reverse::*`. That divergence
+/// is tracked as #4455, not fixed by this comment.
 ///
 /// The "latest hash" returned here is selected via `ORDER BY created_at DESC,
 /// device_id DESC, seq DESC LIMIT 1` — i.e. wall-clock-ordered. Because two

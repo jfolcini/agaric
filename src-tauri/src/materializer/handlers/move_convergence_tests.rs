@@ -2813,3 +2813,163 @@ async fn unsweep_short_circuits_a_move_within_one_cohort_4188() {
          own cascade produced"
     );
 }
+
+// ======================================================================
+// #4468 — the un-sweep mirror and a block that is absent from the engine
+// ======================================================================
+
+/// Thread-safe buffered writer usable as a `tracing_subscriber::fmt` writer,
+/// so a test can read the events production actually emitted. Mirrors the
+/// `db::tests::BufWriter` precedent (that one is private to its module).
+#[derive(Clone, Default)]
+struct EventBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for EventBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for EventBuf {
+    type Writer = EventBuf;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl EventBuf {
+    fn contents(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+/// Is `block_id` present in the per-space engine's tree? The exact probe the
+/// #4468 guard makes, so the preconditions below classify POSITIVELY (this
+/// block is known-present / known-absent) rather than inferring membership.
+fn engine_has_block(state: &agaric_engine::loro::shared::LoroState, block_id: &str) -> bool {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEVICE_ID)
+        .expect("for_space (membership probe)");
+    let present = guard
+        .engine_mut()
+        .read_block(block_id)
+        .expect("read_block")
+        .is_some();
+    drop(guard);
+    present
+}
+
+/// #4468 — a cohort member ABSENT from the per-space engine must be SKIPPED by
+/// the un-sweep mirror, not fed to `engine_apply`.
+///
+/// # The asymmetry this pins
+///
+/// `dispatch_unswept_cohort` picks a payload per member: `None` ⇒
+/// `RestoreBlock`, `Some(ts)` ⇒ `DeleteBlock`. On a block the engine has never
+/// seen, the engine's `apply_restore_block` returns `Ok` (an explicit silent
+/// no-op, mirroring the SQL UPDATE that matches zero rows) but
+/// `apply_delete_block` goes through `get_block_map`, which ERRORS on a missing
+/// node — and `engine_apply` converts that error into
+/// `merge::divergence::record` plus a `warn!` carrying the stable
+/// `engine_apply_diverged` marker.
+///
+/// So the SAME absent block is a no-op on one arm and a durable divergence
+/// signal on the other. And the arm that signals is reached precisely because
+/// engine routing failed: a block projected SQL-only during a no-space window,
+/// later given a `space_id`, is a legitimate state. The guard is the one the
+/// engine arm's inline sweep mirror already uses (`loro_apply`, the #4112 sweep
+/// block: `if engine.read_block(id)?.is_some()`).
+///
+/// # Why the assertion is a PAIR
+///
+/// "No divergence was recorded" is true for two reasons: the guard fired, OR
+/// control never reached the loop at all (an empty cohort, or the no-space
+/// early return, both of which are silent). A quiet log alone would therefore
+/// prove nothing. The discriminator only the intended path produces is the
+/// pair: quiet log AND the PRESENT member's engine register carrying the
+/// settled cohort ts — which only a run that entered the loop and dispatched
+/// can produce.
+///
+/// Reddens on removing the guard (the absent member reaches `get_block_map`
+/// and `engine_apply_diverged` lands in the log) and on a guard that over-fires
+/// (the present member is skipped too and its register stays `None`).
+#[tokio::test]
+async fn the_unswept_mirror_skips_a_block_absent_from_the_engine_4468() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    // Never created through the pipeline, so it lives in no engine — the
+    // shape of a block SQL projected during a no-space window.
+    // Crockford base32 (AGENTS.md invariant #8) excludes I/L/O/U, as every
+    // other fixture id in this file does.
+    const SQL_ONLY_ID: &str = "01HZ0000000000000000MVSQ1A";
+    // Distinguishable from every timestamp the fixture stamps, so the
+    // register assertion below cannot pass on a coincidence.
+    const COHORT_TS: i64 = 1_700_000_000_123;
+
+    let (_dir, pool, state) = seed_engine_world("unswept_absent_block.db").await;
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
+
+    assert!(
+        engine_has_block(&state, C1A_ID),
+        "precondition: C1A must BE in the engine — it is the member whose \
+         successful dispatch discriminates 'the guard fired' from 'control \
+         never reached the loop'"
+    );
+    assert!(
+        !engine_has_block(&state, SQL_ONLY_ID),
+        "precondition: the SQL-only id must be ABSENT from the engine, or the \
+         guard has nothing to guard against and this test cannot redden"
+    );
+
+    let root = append_move(&pool, C1A_ID, P2_ID, MOVE_INDEX).await;
+    // Both members take the `Some(ts)` arm — the one that errors on a missing
+    // node. Same payload shape, so the ONLY difference between them is engine
+    // membership.
+    let unswept = vec![
+        super::apply::UnsweptBlock {
+            block_id: C1A_ID.to_string(),
+            deleted_at: Some(COHORT_TS),
+        },
+        super::apply::UnsweptBlock {
+            block_id: SQL_ONLY_ID.to_string(),
+            deleted_at: Some(COHORT_TS),
+        },
+    ];
+
+    let writer = EventBuf::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("warn"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let log_guard = tracing::subscriber::set_default(subscriber);
+
+    super::apply::dispatch_unswept_cohort(&root, &unswept, Some(&space), &state).await;
+
+    drop(log_guard);
+    let log = writer.contents();
+
+    // Half 1 of the pair: the mirror RAN.
+    assert_eq!(
+        engine_deleted_at(&state, C1A_ID),
+        Some(COHORT_TS.to_string()),
+        "the present member must still be mirrored at the settled cohort ts — \
+         a guard that skipped it too would silence the log for the wrong reason"
+    );
+    // Half 2: and it stayed quiet about the absent one.
+    assert!(
+        !log.contains("engine_apply_diverged"),
+        "#4468: a block absent from the engine is a legitimate state (SQL-only \
+         projection during a no-space window), not drift — the mirror must skip \
+         it rather than raise the durable divergence signal. Captured warn \
+         output: {log}"
+    );
+}

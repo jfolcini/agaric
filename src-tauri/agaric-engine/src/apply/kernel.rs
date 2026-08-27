@@ -385,28 +385,6 @@ impl ChunkAccumulator {
 /// can resolve the space inline; post-delete-UPDATE the cohort is
 /// dead, so we capture the space at the same pre-UPDATE moment as the
 /// cohort itself.
-/// #4390 — one block whose INHERITED tombstone a `MoveBlock`'s un-sweep
-/// cleared, paired with the `deleted_at` the move's WHOLE tail left on it.
-///
-/// The pairing is the point. The un-sweep clears, and then
-/// `sweep_move_under_tombstoned_ancestor` — the tail's other half — may
-/// re-stamp the very same rows at the cohort the block's NEW position implies
-/// (#4188's shape). A post-commit mirror that assumed "un-swept ⇒ restore"
-/// would then leave the engine holding `NULL` while SQL holds the new cohort
-/// ts: #4204's divergence traded for #4188's. So the final SQL value is read
-/// back after the tail, in the same transaction that commits it, and the
-/// mirror simply reproduces it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnsweptBlock {
-    /// The block whose tombstone was re-derived.
-    pub block_id: String,
-    /// Its `deleted_at` after the whole move tail: `None` when the new
-    /// position implies no cohort (#4204 — a genuine resurrection, ruled on
-    /// 2026-08-26), `Some(ts)` when the sweep re-stamped it at the new
-    /// ancestor's cohort (#4188).
-    pub deleted_at: Option<i64>,
-}
-
 #[derive(Debug, Default)]
 pub struct ApplyEffects {
     /// Block ids restored by a `RestoreBlock` apply — seed AND every
@@ -453,10 +431,44 @@ pub struct ApplyEffects {
     /// Space id for [`Self::unswept_cohort`], resolved with
     /// `resolve_soft_deleted_block_space` — NOT `resolve_block_space`, which
     /// filters `deleted_at IS NULL` and would answer `None` for exactly the
-    /// #4188 half (the rows the sweep re-stamped). `None` only when the block
-    /// carries a NULL `space_id` (pre-spaces data), in which case there is no
-    /// engine to mirror onto.
+    /// #4188 half (the rows the sweep re-stamped).
+    ///
+    /// `None` whenever that resolver answers `None`, which is broader than
+    /// "pre-spaces data": it reads `blocks.space_id` ALONE
+    /// (`SELECT space_id FROM blocks WHERE id = ?1 LIMIT 1`), with none of
+    /// `resolve_block_space`'s `COALESCE(b.space_id, p.space_id)` fallback to
+    /// the owning page. So it also answers `None` for a block whose own column
+    /// has not been propagated yet while its page IS spaced, and for a block
+    /// row that is absent entirely. Either way there is no engine this apply
+    /// can name, so the mirror is skipped — metered, on the same counter as
+    /// the delete/restore fan-outs' unresolved-space skip (#2031). This
+    /// matches #2868's purge helper, which resolves the same way for the same
+    /// reason.
     pub unswept_space_id: Option<agaric_store::space::SpaceId>,
+}
+
+/// One block whose INHERITED tombstone a `MoveBlock`'s un-sweep re-derived,
+/// paired with the `deleted_at` the move's WHOLE tail left on it (#4390). An
+/// element of [`ApplyEffects::unswept_cohort`]; carries no cohort or space of
+/// its own — those live on [`ApplyEffects`].
+///
+/// The pairing is the point. The un-sweep clears, and then
+/// `sweep_move_under_tombstoned_ancestor` — the tail's other half — may
+/// re-stamp the very same rows at the cohort the block's NEW position implies
+/// (#4188's shape). A post-commit mirror that assumed "un-swept ⇒ restore"
+/// would then leave the engine holding `NULL` while SQL holds the new cohort
+/// ts: #4204's divergence traded for #4188's. So the final SQL value is read
+/// back after the tail, in the same transaction that commits it, and the
+/// mirror simply reproduces it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsweptBlock {
+    /// The block whose tombstone was re-derived.
+    pub block_id: String,
+    /// Its `deleted_at` after the whole move tail: `None` when the new
+    /// position implies no cohort (#4204 — a genuine resurrection, ruled on
+    /// 2026-08-26), `Some(ts)` when the sweep re-stamped it at the new
+    /// ancestor's cohort (#4188).
+    pub deleted_at: Option<i64>,
 }
 
 /// Core apply-op logic operating on a bare [`sqlx::SqliteConnection`].

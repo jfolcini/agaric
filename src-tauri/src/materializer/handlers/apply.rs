@@ -627,6 +627,19 @@ pub(crate) async fn dispatch_delete_descendants(
 /// answers for a row that is soft-deleted. `resolve_block_space` would return
 /// `None` for exactly the #4188 half.
 ///
+/// # Blocks absent from this engine (#4468)
+///
+/// A block projected SQL-only during a no-space window never entered the
+/// engine, and the two payload arms below disagree about that state:
+/// `apply_restore_block` no-ops on a missing node, while `apply_delete_block`
+/// goes through `get_block_map`, which ERRORS — and `engine_apply` turns that
+/// error into a `merge::divergence::record` plus a `warn!`. That signal would
+/// then fire on the arm reached *because* engine routing failed, i.e. for a
+/// legitimate state rather than for drift. So membership is probed first and a
+/// known-absent block is skipped, the same guard the engine arm's inline sweep
+/// mirror uses for the same case (`agaric_engine::apply::loro_apply`, the
+/// #4112 sweep block: `if engine.read_block(id)?.is_some()`).
+///
 /// # Not covered: recovery's third interpreter
 ///
 /// `db/recovery.rs`'s `move_block` arm hand-rolls the same un-sweep and is
@@ -651,8 +664,11 @@ pub(crate) async fn dispatch_unswept_cohort(
     }
 
     let Some(space_id) = space_id else {
-        // The moved block carries a NULL `space_id` (pre-spaces data), so
-        // there is no canonical engine to mirror onto. The SQL re-derivation
+        // `resolve_soft_deleted_block_space` answered `None`, so this apply
+        // cannot name an engine: the block's own `blocks.space_id` is NULL —
+        // pre-spaces data, or a row whose column has not been propagated yet
+        // (that resolver reads the column ALONE, with no `COALESCE` fallback
+        // to the owning page) — or the row is gone. The SQL re-derivation
         // still stands as the durable outcome. Metered on the same counter as
         // the delete/restore fan-outs' unresolved-space skip (#2031) so the
         // divergence is observable rather than silent.
@@ -664,7 +680,41 @@ pub(crate) async fn dispatch_unswept_cohort(
         return;
     };
 
+    // #4468: probe engine membership up front, under ONE guard that is
+    // released before `engine_apply` takes its own. Only a KNOWN-absent block
+    // (`Ok(None)`) is collected — a `read_block` error dispatches exactly as it
+    // did before, so the guard can never swallow a mirror the engine could
+    // have taken. A registry failure is `engine_apply`'s own to report, with
+    // the detail, so nothing is probed and nothing is skipped in that case.
+    let absent: std::collections::HashSet<&str> =
+        match state.registry.for_space(space_id, &root_record.device_id) {
+            Ok(mut guard) => {
+                let engine = guard.engine_mut();
+                let ids = unswept
+                    .iter()
+                    .filter(|b| matches!(engine.read_block(b.block_id.as_str()), Ok(None)))
+                    .map(|b| b.block_id.as_str())
+                    .collect();
+                drop(guard);
+                ids
+            }
+            Err(_) => std::collections::HashSet::new(),
+        };
+
     for block in unswept {
+        if absent.contains(block.block_id.as_str()) {
+            // Never entered this engine (SQL-only projection during a
+            // no-space window). Skipping is what `apply_restore_block`
+            // already does for the `None` arm; without this the `Some(_)`
+            // arm would instead raise a divergence signal for a legitimate
+            // state. See this function's "Blocks absent from this engine".
+            tracing::trace!(
+                seq = root_record.seq,
+                block_id = %block.block_id,
+                "un-sweep fanout: block absent from the engine; skipping (#4468)",
+            );
+            continue;
+        }
         let payload = match block.deleted_at {
             // #4204: the new position implies no cohort — the block is live in
             // SQL, so the engine must agree or the next import undoes it.
