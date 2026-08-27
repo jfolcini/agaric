@@ -43,6 +43,42 @@
  * cannot make the append-only-into-a-filled-list promise must treat 'added'
  * as an {@link invalidateNameCaches}, not as an insert.
  *
+ * #4391 — `added` / `renamed` / `removed` all carry `spaceId`, the space the
+ * publisher had in hand when it decided to act (the same value it passed to
+ * the backend create/mutate call, NOT a fresh read taken at emit time — see
+ * below for why that distinction matters). `subscribeToNameChanges`'s one
+ * subscriber (`useBlockResolve`) drops any event whose `spaceId` does not
+ * equal the space that is LIVE when the event arrives, before the #4008 latch
+ * guard and before the generation bump. Every publisher already had this
+ * value in hand (it is what they passed to `createPageInSpace` /
+ * `createBlock` / `editBlock`); the field just gives the subscriber a way to
+ * check it.
+ *
+ * Why "captured at the decision" and not "current at emit": a publisher that
+ * instead read the space fresh, right before calling `notifyPageAdded`,
+ * would — for the specific race this closes — read the NEW space if the user
+ * switched between the backend write and the emit, and so mislabel the event
+ * as belonging to the space that happens to be active rather than the space
+ * the row actually landed in. That is not a smaller bug than the one this
+ * closes: it would tag a foreign-space row as belonging to the *current*
+ * space and the subscriber would applaud it in. The row's true space is a
+ * fact fixed at the moment the backend call was made; the field must carry
+ * that fact, not a re-guess.
+ *
+ * `paste-internalize.ts` was the widest window (#4391's report): it captures
+ * `spaceId` once at internalizer-build time and reuses it for the whole
+ * paste, so a switch mid-paste is a real, reachable interleaving, not a
+ * theoretical one. It already had the right value in hand — `spaceId`, the
+ * same const passed to `createPageInSpace` — so closing the class needed no
+ * new capture there, just threading the existing value onto the event.
+ *
+ * `invalidated` carries no `spaceId` and is NOT scoped: it says "drop
+ * everything", which is always a safe (if occasionally wasteful) thing to do
+ * regardless of which space is live when it fires — the caller who reaches
+ * for it (a restore, a sync/MCP write) does not know a single id to describe
+ * a narrower event with, so there is nothing space-specific to compare
+ * against in the first place.
+ *
  * {@link invalidateNameCaches} remains the escape hatch for a mutation that
  * ADDS rows back but CANNOT describe them one at a time — a restore-from-
  * trash, or an out-of-band write (sync / MCP). The empty-cache latch is not
@@ -67,16 +103,22 @@ export type NameChangeEntity = 'page' | 'tag'
 
 export type NameChange =
   /**
-   * `id` has just been created and displays as `name` (#4338). Subscribers
+   * `id` has just been created and displays as `name` (#4338), in `spaceId`
+   * (#4391 — the space the publisher captured when it decided to create,
+   * not necessarily the space live when this event is dispatched). Subscribers
    * must apply it with the #4008 guard — append ONLY into an already-filled
-   * cache — see the module docblock.
+   * cache — AND the #4391 guard — drop it outright when `spaceId` does not
+   * match the live active space — see the module docblock.
    */
-  | { kind: 'added'; entity: NameChangeEntity; id: string; name: string }
-  /** `id` now displays as `name` (rename / title edit). */
-  | { kind: 'renamed'; entity: NameChangeEntity; id: string; name: string }
-  /** `id` is gone (soft-delete, purge) and must stop being offered. */
-  | { kind: 'removed'; entity: NameChangeEntity; id: string }
-  /** Unknown-shape change — subscribers must drop everything they cached. */
+  | { kind: 'added'; entity: NameChangeEntity; id: string; name: string; spaceId: string }
+  /** `id` now displays as `name` (rename / title edit) in `spaceId` (#4391). */
+  | { kind: 'renamed'; entity: NameChangeEntity; id: string; name: string; spaceId: string }
+  /** `id` is gone (soft-delete, purge) from `spaceId` (#4391) and must stop being offered. */
+  | { kind: 'removed'; entity: NameChangeEntity; id: string; spaceId: string }
+  /**
+   * Unknown-shape change — subscribers must drop everything they cached.
+   * Deliberately carries no `spaceId` (#4391) — see the module docblock.
+   */
   | { kind: 'invalidated' }
 
 export type NameChangeListener = (change: NameChange) => void
@@ -159,39 +201,58 @@ function emit(change: NameChange): void {
  * per day panel) — a real gap, but a distinct behaviour change to working
  * code rather than part of the missing-publisher bug #4338 describes, and one
  * that deserves its own test for the cross-instance case.
+ *
+ * `spaceId` (#4391, required — not optional: a call site that has none in
+ * hand fails to compile rather than silently emitting an unscoped event) is
+ * the space the caller passed to its OWN `createPageInSpace` call — the
+ * value it already had, not a fresh read. See the module docblock for why
+ * that distinction is load-bearing.
  */
-export function notifyPageAdded(pageId: string, title: string): void {
-  emit({ kind: 'added', entity: 'page', id: pageId, name: title })
+export function notifyPageAdded(pageId: string, title: string, spaceId: string): void {
+  emit({ kind: 'added', entity: 'page', id: pageId, name: title, spaceId })
 }
 
 /**
- * A tag has just been CREATED and displays as `name` (#4338). Call AFTER the
- * backend write commits. `notifyPageAdded`'s note applies verbatim; the
- * out-of-hook tag creation sites are `TagList.tsx` (the Tags view create
- * form) and `paste-internalize.ts` (a pasted `#tag` that did not exist).
+ * A tag has just been CREATED and displays as `name` (#4338), in `spaceId`
+ * (#4391 — see `notifyPageAdded`). Call AFTER the backend write commits.
+ * `notifyPageAdded`'s note applies verbatim; the out-of-hook tag creation
+ * sites are `TagList.tsx` (the Tags view create form) and
+ * `paste-internalize.ts` (a pasted `#tag` that did not exist).
  */
-export function notifyTagAdded(tagId: string, name: string): void {
-  emit({ kind: 'added', entity: 'tag', id: tagId, name })
+export function notifyTagAdded(tagId: string, name: string, spaceId: string): void {
+  emit({ kind: 'added', entity: 'tag', id: tagId, name, spaceId })
 }
 
-/** A page now displays as `title`. Call AFTER the backend write commits. */
-export function notifyPageRenamed(pageId: string, title: string): void {
-  emit({ kind: 'renamed', entity: 'page', id: pageId, name: title })
+/**
+ * A page now displays as `title`, in `spaceId` (#4391). Call AFTER the
+ * backend write commits.
+ */
+export function notifyPageRenamed(pageId: string, title: string, spaceId: string): void {
+  emit({ kind: 'renamed', entity: 'page', id: pageId, name: title, spaceId })
 }
 
-/** A page was deleted (soft-delete or purge). Call AFTER the write commits. */
-export function notifyPageRemoved(pageId: string): void {
-  emit({ kind: 'removed', entity: 'page', id: pageId })
+/**
+ * A page was deleted (soft-delete or purge) from `spaceId` (#4391). Call
+ * AFTER the write commits.
+ */
+export function notifyPageRemoved(pageId: string, spaceId: string): void {
+  emit({ kind: 'removed', entity: 'page', id: pageId, spaceId })
 }
 
-/** A tag now displays as `name`. Call AFTER the backend write commits. */
-export function notifyTagRenamed(tagId: string, name: string): void {
-  emit({ kind: 'renamed', entity: 'tag', id: tagId, name })
+/**
+ * A tag now displays as `name`, in `spaceId` (#4391). Call AFTER the backend
+ * write commits.
+ */
+export function notifyTagRenamed(tagId: string, name: string, spaceId: string): void {
+  emit({ kind: 'renamed', entity: 'tag', id: tagId, name, spaceId })
 }
 
-/** A tag was deleted or purged. Call AFTER the write commits. */
-export function notifyTagRemoved(tagId: string): void {
-  emit({ kind: 'removed', entity: 'tag', id: tagId })
+/**
+ * A tag was deleted or purged from `spaceId` (#4391). Call AFTER the write
+ * commits.
+ */
+export function notifyTagRemoved(tagId: string, spaceId: string): void {
+  emit({ kind: 'removed', entity: 'tag', id: tagId, spaceId })
 }
 
 /**

@@ -50,6 +50,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { i18n, t } from '@/lib/i18n'
+import type { NameChange } from '@/lib/name-change-bus'
 import {
   invalidateNameCaches,
   notifyPageAdded,
@@ -57,6 +58,7 @@ import {
   notifyTagAdded,
   notifyTagRemoved,
   notifyTagRenamed,
+  subscribeToNameChanges,
 } from '@/lib/name-change-bus'
 import { renamePage } from '@/stores/page-rename'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -3841,7 +3843,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      notifyTagRenamed('T_Z', 'aardvark')
+      notifyTagRenamed('T_Z', 'aardvark', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
@@ -3882,7 +3884,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      notifyTagRenamed('T_EMOJI', '🎯')
+      notifyTagRenamed('T_EMOJI', '🎯', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
@@ -3913,7 +3915,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      notifyTagRenamed('T_SHORT', 'ab')
+      notifyTagRenamed('T_SHORT', 'ab', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
@@ -4107,7 +4109,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      notifyTagRenamed('T_THIRD', 'zzz-third')
+      notifyTagRenamed('T_THIRD', 'zzz-third', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
@@ -4176,7 +4178,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      notifyTagRenamed('T_THIRD', 'zzz-third')
+      notifyTagRenamed('T_THIRD', 'zzz-third', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
@@ -4208,7 +4210,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     // The shared page-delete flow (`usePageDeleteAction`) emits this after
     // its `deleteBlock` commits.
     act(() => {
-      notifyPageRemoved('P_DEL')
+      notifyPageRemoved('P_DEL', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -4237,7 +4239,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
 
     // The Tags view's rename flow emits this after `editBlock` commits.
     act(() => {
-      notifyTagRenamed('T_REN', 'newtag')
+      notifyTagRenamed('T_REN', 'newtag', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
@@ -4267,7 +4269,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
 
     // The Tags view's delete flow emits this after `deleteBlock` + `purgeBlock`.
     act(() => {
-      notifyTagRemoved('T_DEL')
+      notifyTagRemoved('T_DEL', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
@@ -4415,7 +4417,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
 
     act(() => {
       renamePage('P_SOMEWHERE_ELSE', 'Irrelevant')
-      notifyPageRemoved('P_ALSO_UNKNOWN')
+      notifyPageRemoved('P_ALSO_UNKNOWN', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -4425,6 +4427,162 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
 
     expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
     expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_ONLY'])
+  })
+})
+
+// ── Space-scoped drop (#4391) ────────────────────────────────────────────
+//
+// Every publisher already reads `currentSpaceId`/`activeSpaceId` right
+// before its create/rename/remove, and a space switch clears both caches —
+// which is why this was safe in practice for as long as it was. But neither
+// of those is structural: a create whose captured-space read and emit
+// straddle a switch (`paste-internalize.ts`'s multi-block paste is the
+// widest window — it captures `spaceId` once and reuses it for the whole
+// paste) can still land, post-switch, on an already-re-warmed cache for the
+// NEW space. `NameChange` now carries `spaceId`, and the subscriber drops
+// any event whose `spaceId` does not match the space it is live-showing,
+// before the #4008 latch guard and before the #4055 generation bump.
+//
+// The positive control — a MATCHING space id still applies into a warm
+// cache — is not duplicated here: it is every test in the '#4338' bus-added
+// describe block above, each of which now passes the space that is ALSO the
+// live active space (`'SPACE_TEST'`, this file's default). A subscriber that
+// dropped every event, scoped or not, would fail every one of those.
+describe('picker name caches — space-scoped drop (#4391)', () => {
+  function pageRow(id: string, content: string) {
+    return {
+      id,
+      content,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+  }
+
+  afterEach(() => {
+    mockedListAllPagesInSpace.mockReset()
+  })
+
+  it("drops an 'added' event whose captured space differs from the live active space, without appending it", async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_EXISTING', 'Existing Page')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Warm the cache FIRST — an empty cache would let this test pass for the
+    // WRONG reason (the #4008 latch guard, not the #4391 space check).
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+
+    // Prove the event actually reaches the bus, independent of what
+    // `useBlockResolve`'s own listener does with it — a dropped-and-never-
+    // fired event and a dropped-on-purpose event would otherwise look
+    // identical from `pagesListRef` alone.
+    const seen: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => seen.push(c))
+
+    // The creating site's own space read (SPACE_B) straddled a switch: the
+    // live active space (this file's default, `SPACE_TEST`) is different by
+    // the time the event is dispatched.
+    act(() => {
+      notifyPageAdded('P_FOREIGN', 'Foreign Page', 'SPACE_B')
+    })
+    unsubscribe()
+
+    expect(seen).toEqual([
+      { kind: 'added', entity: 'page', id: 'P_FOREIGN', name: 'Foreign Page', spaceId: 'SPACE_B' },
+    ])
+
+    // Not appended — the foreign-space row this issue is about.
+    expect(result.current.pagesListRef.current).toEqual([
+      { id: 'P_EXISTING', title: 'Existing Page' },
+    ])
+
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(1)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).not.toContain('P_FOREIGN')
+  })
+
+  // The generation half of the same guard: a mismatch must cost this hook
+  // NOTHING, not even a forced re-fetch for a row that was never going to be
+  // shown here. Mirrors the #4338 "bumps the generation" test's in-flight-fill
+  // technique exactly, but asserts the OPPOSITE outcome — the pre-event
+  // snapshot must WIN, because nothing bumped the generation to reject it.
+  it("does NOT bump the generation for an 'added' event whose captured space differs from the live active space", async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // A short-query fill is in flight against an empty cache.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('')
+    })
+
+    // A foreign-space create lands mid-flight.
+    const seen: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => seen.push(c))
+    act(() => {
+      notifyPageAdded('P_FOREIGN', 'Foreign Page', 'SPACE_B')
+    })
+    unsubscribe()
+    expect(seen).toHaveLength(1) // proves it fired, same as the test above
+
+    // The fill resolves with a snapshot that predates the (dropped) event.
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      resolveFetch([pageRow('P_PRE_EXISTING', 'Pre-existing Page')])
+      items = (await inFlight) as typeof items
+    })
+
+    // A real (matching-space) create would have rejected this write (see the
+    // #4338 test of the same shape). A dropped, foreign-space one must not:
+    // the pre-event snapshot is exactly what a fresh fill would return, so it
+    // both persists AND is returned to this caller.
+    expect(result.current.pagesListRef.current).toEqual([
+      { id: 'P_PRE_EXISTING', title: 'Pre-existing Page' },
+    ])
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_PRE_EXISTING'])
+  })
+
+  // Generalizes the guard past 'added': the issue that motivated it treats
+  // 'renamed' and 'removed' as the same theoretical exposure ("a partial
+  // field is worse than none"), so a foreign-space 'removed' must be dropped
+  // too, not just fail to apply by coincidence.
+  it("drops a 'removed' event whose captured space differs from the live active space, leaving the row in place", async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_KEEP', 'Should Survive'),
+      pageRow('P_OTHER', 'Other Page'),
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    const seen: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => seen.push(c))
+    act(() => {
+      notifyPageRemoved('P_KEEP', 'SPACE_B')
+    })
+    unsubscribe()
+    expect(seen).toEqual([{ kind: 'removed', entity: 'page', id: 'P_KEEP', spaceId: 'SPACE_B' }])
+
+    // Still there — a real (matching-space) removal is pinned separately by
+    // 'a page deleted elsewhere stops being offered on the next read' above.
+    expect(result.current.pagesListRef.current.map((p) => p.id)).toContain('P_KEEP')
   })
 })
 
@@ -4634,7 +4792,7 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     })
 
     act(() => {
-      notifyTagRemoved('T_DOOMED')
+      notifyTagRemoved('T_DOOMED', 'SPACE_TEST')
     })
 
     // The IPC resolves with a snapshot from BEFORE the removal — the
@@ -5743,7 +5901,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
     // A page is created somewhere with no access to this hook — the command
     // palette, say — and publishes on the bus.
     act(() => {
-      notifyPageAdded('P_PALETTE', 'Untitled')
+      notifyPageAdded('P_PALETTE', 'Untitled', 'SPACE_TEST')
     })
 
     expect(result.current.pagesListRef.current).toEqual([
@@ -5771,7 +5929,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
     expect(result.current.pagesListRef.current).toEqual([])
 
     act(() => {
-      notifyPageAdded('P_PALETTE', 'Untitled')
+      notifyPageAdded('P_PALETTE', 'Untitled', 'SPACE_TEST')
     })
 
     // Still empty — the row is skipped, not inserted.
@@ -5821,7 +5979,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
 
     // The emit lands after the fill already cached the row.
     act(() => {
-      notifyPageAdded('P_PASTED', 'Pasted Page')
+      notifyPageAdded('P_PASTED', 'Pasted Page', 'SPACE_TEST')
     })
 
     // One entry, not two. A duplicate id would be offered twice by the `[[`
@@ -5851,7 +6009,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
     // applying is the ONLY thing that can stop the racing fill from
     // persisting a snapshot that predates the page.
     act(() => {
-      notifyPageAdded('P_PASTED', 'Pasted Page')
+      notifyPageAdded('P_PASTED', 'Pasted Page', 'SPACE_TEST')
     })
 
     let staleItems: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -5896,7 +6054,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
     expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
 
     act(() => {
-      notifyPageAdded('P_JOURNAL', '2025-06-01')
+      notifyPageAdded('P_JOURNAL', '2025-06-01', 'SPACE_TEST')
     })
 
     expect(monday.result.current.pagesListRef.current.map((p) => p.id)).toContain('P_JOURNAL')
@@ -5918,7 +6076,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
 
     // A `#tag` internalized from a paste, say.
     act(() => {
-      notifyTagAdded('T_PASTED', 'pastedtag')
+      notifyTagAdded('T_PASTED', 'pastedtag', 'SPACE_TEST')
     })
 
     // `usage_count: 0` — the tag is not applied to any block yet, exactly
@@ -5950,7 +6108,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
     expect(result.current.tagsListRef.current).toEqual([])
 
     act(() => {
-      notifyTagAdded('T_FIRST', 'first')
+      notifyTagAdded('T_FIRST', 'first', 'SPACE_TEST')
     })
     expect(result.current.tagsListRef.current).toEqual([])
 
@@ -5983,7 +6141,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
     })
 
     act(() => {
-      notifyPageAdded('P_NEW', 'Untitled')
+      notifyPageAdded('P_NEW', 'Untitled', 'SPACE_TEST')
     })
     act(() => {
       renamePage('P_NEW', 'Quarterly Review')

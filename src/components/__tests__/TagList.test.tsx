@@ -1015,7 +1015,13 @@ describe('TagList', () => {
 
         await waitFor(() =>
           expect(changes).toEqual([
-            { kind: 'renamed', entity: 'tag', id: 'T1', name: 'after-rename' },
+            {
+              kind: 'renamed',
+              entity: 'tag',
+              id: 'T1',
+              name: 'after-rename',
+              spaceId: 'SPACE_TEST',
+            },
           ]),
         )
       } finally {
@@ -1052,7 +1058,7 @@ describe('TagList', () => {
 
         await waitFor(() =>
           expect(changes).toEqual([
-            { kind: 'added', entity: 'tag', id: 'T_NEW', name: 'brandnew' },
+            { kind: 'added', entity: 'tag', id: 'T_NEW', name: 'brandnew', spaceId: 'SPACE_TEST' },
           ]),
         )
       } finally {
@@ -1079,7 +1085,11 @@ describe('TagList', () => {
         await user.click(findTrashButton(tag.closest('li') as HTMLElement))
         await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
 
-        await waitFor(() => expect(changes).toEqual([{ kind: 'removed', entity: 'tag', id: 'T1' }]))
+        await waitFor(() =>
+          expect(changes).toEqual([
+            { kind: 'removed', entity: 'tag', id: 'T1', spaceId: 'SPACE_TEST' },
+          ]),
+        )
       } finally {
         unsubscribe()
       }

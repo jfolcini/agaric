@@ -25,6 +25,7 @@
 import { notifyPageRenamed } from '@/lib/name-change-bus'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 /**
@@ -35,10 +36,22 @@ import { useTabsStore } from '@/stores/tabs'
  * only be reached through `@/lib/name-change-bus`.
  *
  * Call this AFTER the backend write commits — it does no IPC of its own.
+ *
+ * #4391 — reads the active space itself rather than asking every one of its
+ * five call sites (PageHeader, undo/redo, HistoryPanel's two restore paths)
+ * to thread one in: this IS the single entry point, so centralizing the read
+ * here means no caller can pass the wrong space (or forget to). Read
+ * synchronously, in the same tick as the call — there is no `await` between
+ * a caller deciding to rename and reaching here, so "the space captured at
+ * the decision" and "the space live right now" are the same value. `null`
+ * (no active space) skips the bus notification — there is no space to scope
+ * a picker-cache patch to — but the tabs/recents/resolve fan-out above still
+ * runs unconditionally; none of those three are space-scoped.
  */
 export function renamePage(pageId: string, title: string): void {
   useTabsStore.getState().renamePage(pageId, title)
   useRecentPagesStore.getState().renamePage(pageId, title)
   useResolveStore.getState().set(pageId, title, false)
-  notifyPageRenamed(pageId, title)
+  const spaceId = useSpaceStore.getState().currentSpaceId
+  if (spaceId != null) notifyPageRenamed(pageId, title, spaceId)
 }

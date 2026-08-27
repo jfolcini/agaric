@@ -262,6 +262,10 @@ export function PageBrowserBatchToolbar({
   const handleTrash = useCallback(async () => {
     if (selectedIds.length === 0 || busy) return
     const ids = [...selectedIds]
+    // #4391 — captured before the awaited delete, same as every other
+    // publisher: the space this batch belongs to, not whatever is active
+    // once the IPC settles.
+    const spaceId = currentSpaceId
     setBusy(true)
     try {
       const count = await deleteBlocksByIds(ids)
@@ -270,10 +274,13 @@ export function PageBrowserBatchToolbar({
       // #4008 review note 3 — one event per id is O(ids x listeners x pages)
       // synchronous work; above the measured threshold collapse it into a
       // single invalidation (see `NAME_CACHE_FANOUT_MAX_IDS`).
-      if (ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
+      //
+      // #4391 — no active space (`spaceId == null`) also falls back to a
+      // full invalidation: there is no space to scope a per-id event to.
+      if (spaceId == null || ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
         invalidateNameCaches()
       } else {
-        for (const id of ids) notifyPageRemoved(id)
+        for (const id of ids) notifyPageRemoved(id, spaceId)
       }
       onClearSelection()
       onMutated()
@@ -302,7 +309,7 @@ export function PageBrowserBatchToolbar({
     } finally {
       setBusy(false)
     }
-  }, [selectedIds, busy, onClearSelection, onMutated, handleUndoTrash, t])
+  }, [selectedIds, busy, currentSpaceId, onClearSelection, onMutated, handleUndoTrash, t])
 
   const handleAddTag = useCallback(async () => {
     if (selectedIds.length === 0 || selectedTagId === '' || busy) return

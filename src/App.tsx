@@ -382,7 +382,7 @@ function App() {
       // this a warm `pagesListRef` never learns about it, and because
       // `applyPageNameChange`'s 'renamed' arm bails on an id it has never
       // seen, the title the user is about to type here would be dropped too.
-      notifyPageAdded(newId, 'Untitled')
+      notifyPageAdded(newId, 'Untitled', currentSpaceId)
       navigateToPage(newId, 'Untitled')
       announce(t('announce.newPageCreated'))
     } catch (err) {

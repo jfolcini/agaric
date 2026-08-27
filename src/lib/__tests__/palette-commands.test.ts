@@ -96,6 +96,7 @@ describe('PALETTE_COMMANDS — create-new-page publishes to the name-change bus 
             entity: 'page',
             id: 'P_PALETTE_000000000000000',
             name: 'Untitled',
+            spaceId: 'SPACE_TEST',
           },
         ]),
       )

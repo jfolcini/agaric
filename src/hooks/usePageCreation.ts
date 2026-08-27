@@ -105,7 +105,7 @@ export function usePageCreation({
         // #4338 — a page the user has just NAMED is the strongest picker
         // candidate there is; publish it so a warm `pagesListRef` can offer it
         // to `[[` without waiting for a space switch to clear the cache.
-        notifyPageAdded(newId, name)
+        notifyPageAdded(newId, name, activeSpaceId)
         setNewPageName('')
         // The optimistic prepend assumes the new page belongs
         // at the top of the *current* result set. That only holds when no

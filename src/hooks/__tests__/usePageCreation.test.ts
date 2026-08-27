@@ -143,6 +143,7 @@ describe('usePageCreation', () => {
         entity: 'page',
         id: 'NEW_ID_0000000000000000009',
         name: 'Quarterly Review',
+        spaceId: 'SPACE_A',
       },
     ])
   })

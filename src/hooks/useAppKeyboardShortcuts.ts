@@ -325,7 +325,7 @@ function tryCreateNewPage(e: KeyboardEvent, t: (key: string) => string): boolean
       useResolveStore.getState().set(newId, 'Untitled', false)
       // #4338 — publish the create so warm picker caches stay right. Same
       // rationale as `App.tsx`'s `handleNewPage`, which this mirrors.
-      notifyPageAdded(newId, 'Untitled')
+      notifyPageAdded(newId, 'Untitled', currentSpaceId)
       useTabsStore.getState().navigateToPage(newId, 'Untitled')
       announce(t('announce.newPageCreated'))
     })

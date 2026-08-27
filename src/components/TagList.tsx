@@ -23,7 +23,12 @@ import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { isConflict } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
-import { notifyTagAdded, notifyTagRemoved, notifyTagRenamed } from '@/lib/name-change-bus'
+import {
+  invalidateNameCaches,
+  notifyTagAdded,
+  notifyTagRemoved,
+  notifyTagRenamed,
+} from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import {
   clearTagColor,
@@ -139,7 +144,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // (see `handleDeleteTag` / the rename handler below); the CREATE was
       // the one mutation it made silently, so a warm `#`-picker cache kept
       // missing a tag created here for the rest of the session.
-      notifyTagAdded(resp.id, newTag.name)
+      //
+      // #4391 — no active space (the same `spaceId == null` branch the
+      // `createBlock` call above already handles) means an UNSCOPED tag: no
+      // space's picker cache should show it, so there is nothing to notify.
+      if (spaceId != null) notifyTagAdded(resp.id, newTag.name, spaceId)
     } catch (error) {
       logger.error('TagList', 'failed to create tag', { name }, error)
       // Issue #106 — surface unique-constraint violations distinctly so
@@ -155,6 +164,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
 
   const handleDeleteTag = useCallback(
     async (tagId: string) => {
+      // #4391 — captured before the awaited delete/purge IPCs, same as
+      // `handleCreateTag`'s `spaceId` above: the space this view's tag list
+      // was loaded for, not whatever happens to be active once the mutation
+      // settles.
+      const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         // purge_block_inner requires the block to be soft-deleted first
         // (deleteBlock), then purged (purgeBlock). Without the soft-delete
@@ -167,7 +181,12 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         // #4007 — the `#` picker caches the tag list once per space and had
         // no delete signal at all; without this it keeps offering a purged
         // tag for the rest of the session.
-        notifyTagRemoved(tagId)
+        //
+        // #4391 — no active space means no picker cache is showing this tag
+        // right now; fall back to a full invalidation rather than silently
+        // dropping the removal.
+        if (spaceId != null) notifyTagRemoved(tagId, spaceId)
+        else invalidateNameCaches()
       } catch (error) {
         logger.error('TagList', 'failed to delete tag', { tagId }, error)
         notify.error(t('tags.deleteFailed'))
@@ -192,6 +211,9 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         notify.error(t('tags.duplicateName'))
         return
       }
+      // #4391 — captured before the awaited `editBlock`, same rationale as
+      // `handleDeleteTag`'s capture above.
+      const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         await editBlock(renameTarget.id, trimmed)
         setTags((prev) =>
@@ -199,7 +221,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         )
         useResolveStore.getState().set(renameTarget.id, trimmed, false)
         // #4007 — mirror the page-rename fan-out for the `#` picker's cache.
-        notifyTagRenamed(renameTarget.id, trimmed)
+        // #4391 — no active space: fall back to a full invalidation, same as
+        // `handleDeleteTag`.
+        if (spaceId != null) notifyTagRenamed(renameTarget.id, trimmed, spaceId)
+        else invalidateNameCaches()
         notify.success(t('tags.renameSuccess'))
       } catch (error) {
         logger.warn(

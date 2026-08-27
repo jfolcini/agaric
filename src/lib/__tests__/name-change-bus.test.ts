@@ -30,10 +30,10 @@ describe('name-change bus (#4007)', () => {
     const unsubA = subscribeToNameChanges((c) => a.push(c))
     const unsubB = subscribeToNameChanges((c) => b.push(c))
     try {
-      notifyPageRenamed('P1', 'New Title')
-      notifyPageRemoved('P2')
-      notifyTagRenamed('T1', 'newtag')
-      notifyTagRemoved('T2')
+      notifyPageRenamed('P1', 'New Title', 'SPACE_1')
+      notifyPageRemoved('P2', 'SPACE_1')
+      notifyTagRenamed('T1', 'newtag', 'SPACE_1')
+      notifyTagRemoved('T2', 'SPACE_1')
       invalidateNameCaches()
     } finally {
       unsubA()
@@ -41,10 +41,10 @@ describe('name-change bus (#4007)', () => {
     }
 
     const expected: NameChange[] = [
-      { kind: 'renamed', entity: 'page', id: 'P1', name: 'New Title' },
-      { kind: 'removed', entity: 'page', id: 'P2' },
-      { kind: 'renamed', entity: 'tag', id: 'T1', name: 'newtag' },
-      { kind: 'removed', entity: 'tag', id: 'T2' },
+      { kind: 'renamed', entity: 'page', id: 'P1', name: 'New Title', spaceId: 'SPACE_1' },
+      { kind: 'removed', entity: 'page', id: 'P2', spaceId: 'SPACE_1' },
+      { kind: 'renamed', entity: 'tag', id: 'T1', name: 'newtag', spaceId: 'SPACE_1' },
+      { kind: 'removed', entity: 'tag', id: 'T2', spaceId: 'SPACE_1' },
       { kind: 'invalidated' },
     ]
     expect(a).toEqual(expected)
@@ -58,26 +58,26 @@ describe('name-change bus (#4007)', () => {
     const seen: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((c) => seen.push(c))
     try {
-      notifyPageAdded('P_NEW', 'Quarterly Review')
-      notifyTagAdded('T_NEW', 'urgent')
+      notifyPageAdded('P_NEW', 'Quarterly Review', 'SPACE_1')
+      notifyTagAdded('T_NEW', 'urgent', 'SPACE_1')
     } finally {
       unsubscribe()
     }
 
     expect(seen).toEqual([
-      { kind: 'added', entity: 'page', id: 'P_NEW', name: 'Quarterly Review' },
-      { kind: 'added', entity: 'tag', id: 'T_NEW', name: 'urgent' },
+      { kind: 'added', entity: 'page', id: 'P_NEW', name: 'Quarterly Review', spaceId: 'SPACE_1' },
+      { kind: 'added', entity: 'tag', id: 'T_NEW', name: 'urgent', spaceId: 'SPACE_1' },
     ])
   })
 
   it('stops delivering after unsubscribe', () => {
     const seen: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((c) => seen.push(c))
-    notifyPageRemoved('P1')
+    notifyPageRemoved('P1', 'SPACE_1')
     unsubscribe()
-    notifyPageRemoved('P2')
+    notifyPageRemoved('P2', 'SPACE_1')
 
-    expect(seen).toEqual([{ kind: 'removed', entity: 'page', id: 'P1' }])
+    expect(seen).toEqual([{ kind: 'removed', entity: 'page', id: 'P1', spaceId: 'SPACE_1' }])
   })
 
   it('a throwing subscriber does not starve the others', () => {
@@ -87,13 +87,13 @@ describe('name-change bus (#4007)', () => {
     })
     const unsubB = subscribeToNameChanges((c) => seen.push(c))
     try {
-      expect(() => notifyTagRemoved('T9')).not.toThrow()
+      expect(() => notifyTagRemoved('T9', 'SPACE_1')).not.toThrow()
     } finally {
       unsubA()
       unsubB()
     }
 
-    expect(seen).toEqual([{ kind: 'removed', entity: 'tag', id: 'T9' }])
+    expect(seen).toEqual([{ kind: 'removed', entity: 'tag', id: 'T9', spaceId: 'SPACE_1' }])
   })
 
   it('an unsubscribe mid-dispatch drops only that listener, never its neighbour', () => {
@@ -115,7 +115,7 @@ describe('name-change bus (#4007)', () => {
       seen.push('c')
     })
     try {
-      notifyPageRemoved('P1')
+      notifyPageRemoved('P1', 'SPACE_1')
     } finally {
       unsubA()
       b.unsubscribe?.()

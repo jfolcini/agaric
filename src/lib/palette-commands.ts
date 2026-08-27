@@ -222,7 +222,7 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
         .then((newId) => {
           useResolveStore.getState().set(newId, 'Untitled', false)
           // #4338 — publish the create so warm picker caches stay right.
-          notifyPageAdded(newId, 'Untitled')
+          notifyPageAdded(newId, 'Untitled', currentSpaceId)
           useTabsStore.getState().navigateToPage(newId, 'Untitled')
           announce(t('announce.newPageCreated'))
         })

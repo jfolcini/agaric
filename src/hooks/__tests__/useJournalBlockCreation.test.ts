@@ -158,7 +158,9 @@ describe('useJournalBlockCreation', () => {
       unsubscribe()
     }
 
-    expect(changes).toEqual([{ kind: 'added', entity: 'page', id: 'PNEW', name: '2025-06-15' }])
+    expect(changes).toEqual([
+      { kind: 'added', entity: 'page', id: 'PNEW', name: '2025-06-15', spaceId: 'SPACE_TEST' },
+    ])
   })
 
   it('publishes nothing when the day already has a page', async () => {

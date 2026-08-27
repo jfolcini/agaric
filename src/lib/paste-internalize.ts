@@ -116,7 +116,7 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
         // clearest picker relevance in the app: the name is already in use as
         // a `[[link]]`, so the very next `[[` on it must offer the page
         // rather than a second "Create new page".
-        notifyPageAdded(newId, name)
+        notifyPageAdded(newId, name, spaceId)
         return newId
       } catch (err) {
         logger.warn('page-blocks', 'import: page create failed', { name }, err)
@@ -139,7 +139,7 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
         useResolveStore.getState().set(block.id, name, false)
         // #4338 — the `#` picker's `tagsListRef` needs the same signal the
         // page branch above gets, for the same reason.
-        notifyTagAdded(block.id, name)
+        notifyTagAdded(block.id, name, spaceId)
         return block.id
       } catch (err) {
         logger.warn('page-blocks', 'import: tag create failed', { name }, err)
