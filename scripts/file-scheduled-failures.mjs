@@ -22,8 +22,10 @@
 //     ALREADY-tracked lane crosses its Nth-consecutive-OBSERVED-failure
 //     threshold (#4400: a weekly lane's Nth distinct red run is real news
 //     that "no new lane" would otherwise discard forever),
-//   * silently syncs the body when a lane recovers, or a still-failing lane
-//     advances toward that threshold without crossing it,
+//   * silently syncs the body when a lane recovers, when a still-failing lane
+//     advances toward that threshold without crossing it, or (once, on the
+//     first poll after #4400) when a lane tracked under the pre-#4400 format
+//     adopts a run identity for the failure already counted against it,
 //   * CLOSES the issue when every lane is green again,
 //   * does nothing at all when nothing changed — including a poll that
 //     observed no NEW run of an already-tracked failing lane.
@@ -348,15 +350,36 @@ export function parseKnownLanes(body) {
  *
  * A pre-#4400 bare line (no `|`) is a lane that WAS tracked under the old
  * format, with no recorded count or run identity. It is read as `{ count: 1,
- * runId: null }` — "failing at least once, identity unknown" — rather than
- * dropped: dropping it would re-report an already-known lane as brand new on
- * the first run after this ships, which is exactly the false alarm the
+ * runId: null, migrated: true }` — "failing at least once, identity unknown,
+ * and unknown because this line predates the format that records it" — rather
+ * than dropped: dropping it would re-report an already-known lane as brand new
+ * on the first run after this ships, which is exactly the false alarm the
  * `parseKnownLanes` migration note (see the file header, "Why this was not
- * bundled into #4393") warned a naive migration would cause. `runId: null`
- * then does its normal job in `advanceStreaks`: the very next DISTINCT run
- * this lane fails advances it to `count: 2`, rather than assuming it was
- * already at 2 or 3 (data this format change cannot recover) or resetting it
- * to "first failure" (data the pre-existing tracked set already refutes).
+ * bundled into #4393") warned a naive migration would cause. It also does not
+ * assume the lane was already at 2 or 3 (data this format change cannot
+ * recover) or reset it to "first failure" (data the pre-existing tracked set
+ * already refutes).
+ *
+ * `migrated` is the third state, and it is load-bearing rather than
+ * decorative. Two DIFFERENT priors both have no run identity, and the body
+ * still distinguishes them even though `{ count, runId }` alone does not:
+ *
+ *   - a BARE line: some run was observed and counted, and the old format had
+ *     nowhere to write down which one;
+ *   - a post-#4400 `job|1|` line: this script recorded the lane while there
+ *     was no completed run to name at all (`never-ran`/`stale` — see
+ *     `newestCompletedRunId`), so nothing has been counted against a run yet.
+ *
+ * Collapsing the two is a real over-count. The first post-merge poll of a
+ * migrated lane sees a real run id, which differs from `null`, and would
+ * advance the counter to 2 with no new run having happened — the same
+ * already-counted run counted twice, i.e. precisely the "a REPEATED
+ * observation must not be misread as a NEW one" defect `advanceStreaks`
+ * exists to refuse, reintroduced through the migration door. So the flag is
+ * carried here, where the distinction is still visible in the text, and
+ * `advanceStreaks` holds that first poll instead (see its `migrated` branch).
+ * The flag never round-trips: the moment that poll adopts an identity, the
+ * line is rewritten as `job|count|runId` and parses as an ordinary entry.
  *
  * The `|` split is UNGUARDED against a job id that itself contains a `|`
  * (here and in `parseKnownLanes`), and deliberately so — the invariant is
@@ -377,7 +400,7 @@ export function parseKnownStreaks(body) {
   for (const line of markerBlockLines(body)) {
     const [job, countStr, runIdRaw] = line.split('|')
     if (countStr === undefined) {
-      map.set(job, { count: 1, runId: null })
+      map.set(job, { count: 1, runId: null, migrated: true })
       continue
     }
     const count = Number.parseInt(countStr, 10)
@@ -491,6 +514,30 @@ export function escalationThreshold(periodHours) {
  * already the existing `newOnes`/`'notify'` verdict in `decideAction`, and
  * duplicating it here would either double-comment or need the two paths
  * reconciled for no benefit.
+ *
+ * A MIGRATED prior (`prior.migrated` — a pre-#4400 bare marker line, see
+ * `parseKnownStreaks`) is the one case where a real, comparable identity does
+ * NOT advance the counter. Its `count: 1` already stands for a run that was
+ * observed and counted under the old format, which simply had nowhere to
+ * record WHICH run; on the first poll after this ships, the run this lane is
+ * failing on is overwhelmingly likely to be that same one (the watchdog polls
+ * daily, the lane it is migrating runs weekly). Advancing would count it
+ * twice. So this poll ADOPTS the observed id as the identity of the failure
+ * already counted, holds the count, and reports the lane in `advanced` — not
+ * because it advanced, but because the adoption has to reach the issue body:
+ * `advanced` is what earns a `'sync'` verdict, and a `'noop'` would leave the
+ * line bare, re-adopt next poll, and stall the counter at 1 forever.
+ *
+ * The alternative — let the migration over-count by one — was considered and
+ * rejected. It is tempting because the lane that motivated #4400 (#3388) has
+ * already burned three weeks, so escalating a week early looks like a favour.
+ * But the favour is worth exactly one week, once, on one lane, and the price
+ * is a permanent one: the rendered body would say "2 in a row" about one run,
+ * which is a false statement in reader-facing prose, and the counter's whole
+ * contract — a count is a count of DISTINCT observed runs — would have an
+ * unwritten exception in it. Escalating early also fails in the expensive
+ * direction: `escalationThreshold`'s own doc prices a week of extra silence
+ * as much cheaper than a comment that teaches readers to expect noise.
  */
 export function advanceStreaks({ currentFailing, laneById, known, fallbackRunId }) {
   const streaks = new Map(known)
@@ -531,6 +578,16 @@ export function advanceStreaks({ currentFailing, laneById, known, fallbackRunId 
     // and tick once per daily poll on a workflow that has never run at all —
     // the fail-open this whole guard is here to refuse.
     if (runId === null || String(runId) === String(prior.runId)) continue
+
+    // A pre-#4400 bare line: adopt this run as the identity of the failure
+    // its `count: 1` already stands for, and hold. See the doc comment above
+    // — the adoption is pushed to `advanced` so that it is PERSISTED, not
+    // because the count moved.
+    if (prior.migrated) {
+      streaks.set(job, { count: prior.count, runId })
+      advanced.push(job)
+      continue
+    }
 
     const count = prior.count + 1
     streaks.set(job, { count, runId })
@@ -596,13 +653,16 @@ export function rollBackSuppressedEscalations(streaks, known, suppressed) {
  *                crossing that loses that race is DEFERRED, not dropped —
  *                `main()` rolls its advance back so the next run re-crosses
  *                and says it (see `rollBackSuppressedEscalations`).
- *   'sync'     — either some lane recovered, or a still-failing lane
- *                observed a new distinct run without crossing its threshold:
- *                rewrite the body (so a recovered lane stops being named, or
- *                so the crossed-but-not-yet-there counter is actually
- *                persisted for next time — see `advanceStreaks`), but do not
- *                comment. Neither a partial recovery nor an unescalated
- *                repeat is news.
+ *   'sync'     — either some lane recovered, or a still-failing lane's
+ *                persisted streak state changed without crossing its
+ *                threshold — it observed a new distinct run, or (once, on the
+ *                first poll after #4400 shipped) a migrated lane adopted a
+ *                run identity for its already-counted failure: rewrite the
+ *                body (so a recovered lane stops being named, or so the
+ *                counter — crossed-but-not-yet-there, or merely identified —
+ *                is actually persisted for next time; see `advanceStreaks`),
+ *                but do not comment. Neither a partial recovery nor an
+ *                unescalated repeat is news.
  *   'close'    — everything is green again and the issue tracked something.
  *                A permanently-open "the workflow is red" issue is a lie that
  *                trains people to ignore it, which is the whole failure mode
@@ -693,8 +753,18 @@ export function buildIssueBody({
     `${profile.why} It is a rolling issue: it reopens when a ${profile.unit} newly fails and closes itself once every ${profile.unit} is healthy again.`,
   )
   out.push('')
+  // #4400 — this paragraph is the reader-facing contract for when this thread
+  // makes noise, and it sits inside the very issue the escalation comments on,
+  // so it has to describe the escalation path too. Before #4400 it truthfully
+  // said a still-red ${unit} is never re-commented; that sentence survived the
+  // feature that made it false for weekly lanes, which is exactly the drift
+  // this comment exists to make expensive to repeat.
   out.push(
-    `A ${profile.unit} that stays red across runs is NOT re-commented — only a newly-failing ${profile.unit} produces a comment, so a persistent failure never spams this thread.`,
+    `A ${profile.unit} that stays red is NOT re-commented run after run: a comment is sent when a ${profile.unit} newly fails, and the runs in between only update this issue's body — silently, with no notification.`,
+  )
+  out.push('')
+  out.push(
+    `The one exception (#4400) is escalation: a ${profile.unit} still failing on its **Nth consecutive OBSERVED run** earns exactly one further comment. N is three for a weekly ${profile.unit} — one this reporter polls far more often than it actually runs, so three observations really are three weeks unfixed — and one for everything else, which is another way of saying those get only their first-failure comment. Escalation fires once; afterwards the ${profile.unit} goes back to being tracked in silence until it recovers, so a persistent failure still cannot spam this thread.`,
   )
   out.push('')
   out.push(`### Tracked failing ${profile.units} (${all.length})`)
@@ -1679,15 +1749,26 @@ function writeNotifyOrSync({
   profile,
 }) {
   const isNotifyClass = action === 'notify' || action === 'escalate'
-  // Reopening is a notification-class action, so only a genuinely NEW
-  // failure or an escalation does it (#4400: an escalating lane cannot
-  // realistically find the issue closed — it has been red the whole time —
-  // but the same guard costs nothing and keeps the two branches symmetric
-  // rather than one of them silently relying on an invariant the other
-  // enforces). A 'sync' (partial recovery, or an unescalated repeat) against
-  // an issue a maintainer chose to close while lanes were still red just
-  // updates the body — consistent with the 'noop' branch in `main()`, which
-  // also leaves such an issue closed.
+  // Reopening is a notification-class action, so only a genuinely NEW failure
+  // or an escalation does it. A 'sync' (partial recovery, or an unescalated
+  // repeat) against an issue a maintainer chose to close while lanes were
+  // still red just updates the body — consistent with the 'noop' branch in
+  // `main()`, which also leaves such an issue closed.
+  //
+  // #4400 — an escalating lane really can find the issue closed, and this is
+  // the branch that decides what happens then. The 'sync' case immediately
+  // above is not hypothetical: every below-threshold advance takes it, so a
+  // weekly lane that a maintainer closed the issue on keeps silently editing
+  // that closed issue, week after week, until its Nth consecutive observed
+  // failure — at which point this line REOPENS it. State the consequence
+  // rather than lean on an invariant: a manual close does not stick for a
+  // weekly lane. That is deliberate. Escalation is notification-class for the
+  // same reason 'notify' is — it is a data point the reader has not been told,
+  // and a closed issue tells them nothing — so the alternative would be to
+  // comment into a closed issue nobody is subscribed to reading, which is the
+  // silence this feature exists to end. A maintainer who wants a lane to stop
+  // reporting has to fix it, drop its `periodHours` decoration, or stop
+  // watching it; closing the issue only silences the below-threshold syncs.
   if (isNotifyClass && existingIssue.state === 'CLOSED') {
     gh(['issue', 'reopen', number, '--repo', repo])
   }
@@ -2723,9 +2804,19 @@ function selfTestEscalation({ check }) {
   check(seqOf(calls) === 'create', 'week 1 (first failure): files the tracking issue', seqOf(calls))
   let body = writtenBody(calls, '')
   const allText = (cs) => cs.map((c) => c.body).join('\n')
+  // The negative controls below match the escalation ANNOUNCEMENT, not the
+  // word "escalat". Every issue body now carries a standing paragraph
+  // explaining the escalation policy (that is deliberate — the body is the
+  // reader's contract for when this thread makes noise), so a bare
+  // /escalat/i over the written text is true on run one and proves nothing.
+  // These two patterns are `buildEscalationComment`'s own: its lead-in, and
+  // the parenthesised per-lane count that only it renders (the body's
+  // streaking line says "(N in a row)" instead).
+  const announcesEscalation = (t) =>
+    /Still red, not new/.test(t) || /consecutive observed failures\)/.test(t)
   check(
-    !/escalat/i.test(allText(calls)),
-    'negative control: the FIRST failure never mentions escalation',
+    !announcesEscalation(allText(calls)),
+    'negative control: the FIRST failure never announces an escalation',
     allText(calls),
   )
   check(
@@ -2761,7 +2852,7 @@ function selfTestEscalation({ check }) {
     JSON.stringify([...parseKnownStreaks(body)]),
   )
   check(
-    !/escalat/i.test(allText(calls)),
+    !announcesEscalation(allText(calls)),
     'negative control: the SECOND consecutive failure does not escalate either',
     allText(calls),
   )
@@ -2828,6 +2919,22 @@ function selfTestEscalation({ check }) {
       JSON.stringify(repeat),
     )
   }
+
+  // MIGRATION — the one path production takes exactly once, on the first poll
+  // after this ships. Split out for the same cyclomatic-complexity reason as
+  // `selfTestSkippedCarryOverGhCalls` above, and handed this function's own
+  // stub-`gh` driver so it exercises the identical end-to-end path rather
+  // than a second, subtly different harness.
+  selfTestMigration({
+    check,
+    drive,
+    seqOf,
+    writtenBody,
+    allText,
+    announcesEscalation,
+    lane,
+    failing,
+  })
 
   // A full recovery clears the tracked streak state, not just the tracked
   // lane set — and a LATER relapse starts the counter over at 1, never
@@ -2945,6 +3052,96 @@ function selfTestEscalation({ check }) {
 }
 
 /**
+ * #4400 — the MIGRATION poll: a rolling issue whose marker block was written
+ * by the pre-#4400 code, i.e. BARE job ids with no `|count|runId`.
+ *
+ * Driven through `selfTestEscalation`'s stub-`gh` harness (passed in, same
+ * shape as `selfTestSkippedCarryOverGhCalls`) rather than against a
+ * hand-built prior, because half of what is under test is that the fixture is
+ * genuinely old-format — a prior built by hand would be whatever shape the
+ * test author believed `parseKnownStreaks` returns.
+ */
+function selfTestMigration({
+  check,
+  drive,
+  seqOf,
+  writtenBody,
+  allText,
+  announcesEscalation,
+  lane,
+  failing,
+}) {
+  // MIGRATION — a body written by the pre-#4400 code, whose marker line is a
+  // BARE job id with no `|count|runId`. This is the one path production takes
+  // exactly once, on the first poll after this PR merges, and it is the path
+  // that is easiest to get wrong in the direction nobody notices: the lane's
+  // already-reported run id differs from the migrated prior's `null`, so a
+  // naive compare advances the counter to 2 with no new run having happened
+  // and a #3388-shaped lane escalates a week early. Pinned end to end,
+  // through the real bare-format body rather than a hand-built prior, because
+  // the fixture being genuinely old-format is half of what is under test.
+  const bare = buildIssueBody({ all: [lane], lanes: [], runUrl: '' })
+  check(
+    !bare.includes(`${lane}|`) && parseKnownStreaks(bare).get(lane)?.migrated === true,
+    'migration fixture: the pre-#4400 body really is a BARE marker line, read back as migrated',
+    JSON.stringify([...parseKnownStreaks(bare)]),
+  )
+  // Poll 1 after the merge: the lane is red on the same run the old format
+  // already counted. Adopt that identity, HOLD the count.
+  const first = drive(failing(41000001), bare, 'OPEN')
+  check(
+    seqOf(first) === 'edit',
+    'the first post-migration poll syncs the adopted run id into the body, and does not comment',
+    seqOf(first),
+  )
+  check(
+    !announcesEscalation(allText(first)),
+    'negative control: the migration poll does not escalate (this is where the over-count would show)',
+    allText(first),
+  )
+  let migrated = writtenBody(first, bare)
+  const after = parseKnownStreaks(migrated).get(lane)
+  check(
+    after?.count === 1 && after?.runId === '41000001' && after?.migrated === undefined,
+    'migration HOLDS at count 1, adopts the observed run id, and stops being migrated',
+    JSON.stringify(after),
+  )
+  // …and the adoption really is persisted: a repeat poll of the same run is
+  // now an ordinary no-op rather than a second adoption, which is what
+  // proves the counter is not stalled at 1 forever.
+  const sameRunAgain = drive(failing(41000001), migrated, 'OPEN')
+  check(
+    sameRunAgain.length === 0,
+    'a repeat poll after the migration adoption writes nothing at all (the adoption stuck)',
+    seqOf(sameRunAgain),
+  )
+  // The genuinely NEXT distinct run is the one that advances to 2 — the
+  // guarantee `advanceStreaks`' doc states.
+  const second = drive(failing(41000002), migrated, 'OPEN')
+  check(
+    seqOf(second) === 'edit' && !announcesEscalation(allText(second)),
+    'the first DISTINCT run after migration advances the migrated lane without escalating it',
+    `${seqOf(second)} :: ${allText(second)}`,
+  )
+  migrated = writtenBody(second, migrated)
+  check(
+    parseKnownStreaks(migrated).get(lane)?.count === 2,
+    'that distinct run takes the migrated lane to 2, not 3',
+    JSON.stringify([...parseKnownStreaks(migrated)]),
+  )
+  // So a migrated lane escalates on its THIRD distinct observed run, not
+  // its second: three real weeks after the migration poll, exactly like a
+  // lane that had been tracked under the new format all along.
+  const third = drive(failing(41000003), migrated, 'OPEN')
+  const thirdComment = third.find((c) => c.sub === 'comment')?.body ?? ''
+  check(
+    seqOf(third) === 'edit,comment' && /3 consecutive observed failures/.test(thirdComment),
+    'a migrated lane escalates on its third DISTINCT observed run — no earlier',
+    `${seqOf(third)} :: ${thirdComment}`,
+  )
+}
+
+/**
  * #4400 — the run-identity comparison, pinned directly at the TYPES it faces
  * in production rather than only through the end-to-end chain above.
  *
@@ -3025,6 +3222,80 @@ function selfTestStreakTypes({ check }) {
     urlSame.advanced.length === 0 && urlSame.streaks.get(lane).count === 2,
     'the string `fallbackRunId` identity (deep-checks) holds against its own persisted form',
     JSON.stringify([...urlSame.streaks]),
+  )
+}
+
+function selfTestBodySize({ check, lanesOf }) {
+  // 7. The body stays small. There is no unbounded list here (one line per
+  //    job), so a body that grows past this bound means someone started
+  //    embedding logs — which is how the sibling filers hit GitHub's 65536
+  //    422 and wedged their weekly job red (#3257).
+  //
+  //    #4400 — measured against the SHIPPED shapes, `streaks` and all. Passing
+  //    no `streaks` renders the pre-#4400 bare-job-id block, so the bound
+  //    would be a bound on a body this script does not write any more: the
+  //    marker line now carries `|count|runId`, and a count above 1 also puts
+  //    the lane in the `streaking` prose enumeration above the block — a
+  //    SECOND O(lanes) growth. A guard that measures a format other than the
+  //    one that runs reports a property of the wrong thing, which is the
+  //    defect class this file's review history is made of.
+  //
+  //    The two growths are pinned as the two shapes that actually ship, not
+  //    summed into one fixture, because no profile produces both at once:
+  //      - deep-checks supplies no per-lane `runId`, so every line carries
+  //        `fallbackRunId` (a full run URL — the longest identity rendered
+  //        here), while its lanes carry no `periodHours`, so
+  //        `escalationThreshold` is 1, counts never leave 1, and the
+  //        `streaking` line never appears;
+  //      - the watchdog is the profile whose counts leave 1, and it always
+  //        supplies its own `runId` — `gh`'s numeric `databaseId`, or null.
+  //    Summed, 40 lanes render 9076 chars, over this cap: if a profile ever
+  //    starts producing BOTH (a deep-checks lane gaining a `periodHours`
+  //    decoration is all it would take), this cap is what has to move, and
+  //    this comment is the measurement to move it against. Nothing shipping
+  //    today is close — 40 lanes is already ~3.6x the largest real profile
+  //    (11 deep-checks jobs, 6 watched workflows).
+  //
+  //    Measured at 40 lanes: 7134 (deep-checks shape) and 7356 (watchdog
+  //    shape) against the 8000 cap; the pre-#4400 bare block this used to
+  //    measure was 4854, i.e. the old guard bounded a body ~2.5k smaller than
+  //    the one that ships. The thing near the cap is the FIXTURE, not any
+  //    real profile, so if a future paragraph of body prose tips this red,
+  //    shrink the fixture back toward the real lane counts rather than
+  //    raising the cap: the cap is a tripwire for someone embedding logs
+  //    here, not a capacity budget, and raising it is permanent.
+  const many = Object.fromEntries(
+    Array.from({ length: 40 }, (_, i) => [`some-rather-long-lane-name-${i}`, 'failure']),
+  )
+  const lanes = lanesOf(many)
+  const all = failingJobs(lanes)
+  // Deep-checks shape: a full run URL on every marker line, count 1.
+  const runUrl = 'https://github.com/owner/repo/actions/runs/17654321012'
+  const urlBody = buildIssueBody({
+    all,
+    lanes,
+    runUrl: 'https://example/run',
+    streaks: new Map(all.map((j) => [j, { count: 1, runId: runUrl }])),
+  })
+  check(
+    urlBody.length <= MAX_BODY_CHARS && urlBody.includes(`|1|${runUrl}`),
+    'an all-lanes-red body in the deep-checks shipped format (full run URL per line) stays under the issue-body limit',
+    `len=${urlBody.length} cap=${MAX_BODY_CHARS} hasUrlLine=${urlBody.includes(`|1|${runUrl}`)}`,
+  )
+  // Watchdog shape: numeric run ids, counts above 1, so every lane also
+  // lands in the `streaking` enumeration.
+  const streakBody = buildIssueBody({
+    all,
+    lanes,
+    runUrl: 'https://example/run',
+    streaks: new Map(all.map((j, i) => [j, { count: 3, runId: 17654321012 + i }])),
+  })
+  check(
+    streakBody.length <= MAX_BODY_CHARS &&
+      streakBody.includes('|3|17654321012') &&
+      streakBody.includes('(3 in a row)'),
+    'an all-lanes-red body in the watchdog shipped format (counts plus the streaking enumeration) stays under the issue-body limit',
+    `len=${streakBody.length} cap=${MAX_BODY_CHARS} hasMarker=${streakBody.includes('|3|17654321012')} hasStreaking=${streakBody.includes('(3 in a row)')}`,
   )
 }
 
@@ -3206,20 +3477,25 @@ function runSelfTest() {
     )
   }
 
-  // 7. The body stays small. There is no unbounded list here (one line per
-  //    job), so a body that grows past this bound means someone started
-  //    embedding logs — which is how the sibling filers hit GitHub's 65536
-  //    422 and wedged their weekly job red (#3257).
+  // 7. The body-size bound, split into its own function to keep this one
+  //    under the repo's cyclomatic-complexity budget (same reason
+  //    `selfTestGhCallSequence` was split out).
+  selfTestBodySize({ check, lanesOf })
+
+  // 7b. The body's standing prose is a CONTRACT with the reader, and it sits
+  //     in the very issue the escalation comments on. Pinned because it has
+  //     already drifted once: before #4400 the paragraph truthfully said a
+  //     still-red lane is never re-commented, the escalation feature made that
+  //     false for weekly lanes, and nothing failed — prose is the one part of
+  //     this body no other assertion reads.
   {
-    const many = Object.fromEntries(
-      Array.from({ length: 40 }, (_, i) => [`some-rather-long-lane-name-${i}`, 'failure']),
-    )
-    const lanes = lanesOf(many)
-    const body = buildIssueBody({ all: failingJobs(lanes), lanes, runUrl: 'https://example/run' })
+    const lanes = lanesOf({ mutants: 'failure' })
+    const body = buildIssueBody({ all: failingJobs(lanes), lanes, runUrl: undefined })
     check(
-      body.length <= MAX_BODY_CHARS,
-      'an all-lanes-red body stays well under the issue-body limit',
-      `len=${body.length} > ${MAX_BODY_CHARS}`,
+      /Nth consecutive OBSERVED run/.test(body) &&
+        !/only a newly-failing .* produces a comment/.test(body),
+      'the body prose describes escalation, and no longer claims a still-red lane is never re-commented',
+      body.slice(0, 800),
     )
   }
 
