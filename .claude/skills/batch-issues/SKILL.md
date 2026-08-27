@@ -12,7 +12,8 @@ Detailed material lives in `references/` — load it only when the trigger fires
 
 - `references/pitfalls.md` — the war-story failure modes (git-stash scramble, oxfmt
   comment detach, role-swap test breaks, cargo-check-all-targets, dev.db schema drift,
-  timestamp-column coupling, chained-PR ordering).
+  timestamp-column coupling, chained-PR ordering, a human commit on a Dependabot branch
+  erased by force-push or squash).
 - `references/session-log.md` — session-log numbering, format, and plan-issue bookkeeping.
 - `references/codegen-and-sql.md` — `.sqlx` regen, specta bindings, SQL migration recipe,
   architectural invariants.
@@ -73,23 +74,40 @@ issues. Where the work lives:
 ## 1. PLAN
 
 **FIRST — at the start of a batch (and ONLY then), sweep the open-PR board once.**
-`gh pr list --author @me --state open`, then `gh pr checks <n>` for each: merge what's
-green, fix what's red. **Before merging a green PR, read its full `agaric-reviewer` review
-body + inline comments and address any findings (new commit if quick/in-scope, else a
-referenced GitHub issue) — an APPROVED verdict is not "nothing to address", and this holds
-for `--admin` merges too (§8 spells out the exact commands and the #2763/#2767 misses).**
-Do NOT re-poll PR CI between these checkpoints — not on every
-wake-up, not after every subagent completion (maintainer feedback 2026-06-10: "reconciling
-PRs all the time is not necessary"). Green PRs can sit until the next batch boundary or
-until the 10-PR cap needs a slot; nothing rots in an hour. **Any red is yours to fix** —
-even a failure *inherited from `main`* (a lint/zizmor finding that landed on `main` and
-now reds every PR). "Not from my diff" is NOT a reason to skip it: a red check blocks
-otherwise-green merges and stalls the loop. Diagnose from
-`gh run view --job <id> --log-failed`, fix the **underlying cause** (prefer a real fix over
-a suppression; suppress only with a justifying comment). If the cause lives on `main`, fix
-it in a dedicated small PR off `origin/main` so it merges first and clears every inherited
-failure. Reds need a fix pushed before the new batch starts; greens just need the one
-merge sweep.
+`gh pr list --state open --limit 100 --json number,author,title` — **not** `--author @me`,
+which silently drops every Dependabot PR from the sweep on a board where they are usually
+the majority (session 1391), and **not** the default page size (30), which silently
+truncates a board this size — to see the whole board. **Acting on what you see is narrower
+than seeing it: the actionable set is PRs authored by `dependabot[bot]` or by the
+`jfolcini` GitHub account** (§8.4's authorization). That second clause covers more than it
+looks: `gh` here authenticates as the `jfolcini` account, so a PR the agent opens and a PR
+jfolcini opens by hand carry the *identical* author — the `author` field does not tell
+them apart, so there is no separate "maintainer's own PR" category to handle. Both get the
+actionable-set treatment already, which is correct under the trust boundary above (jfolcini
+is fully trusted; there is nothing to verify before acting). Then `gh pr checks <n>` for
+each PR **in that set**: merge what's green and fix what's red *within the actionable set
+only* — an outside contributor's PR is sighted, not acted on, so checking its CI spends API
+calls on a result nothing will be done with. Don't merge an outside contributor's PR, don't
+push a commit to its branch, and don't count it toward the 10-PR cap (§8.4) — the trust
+boundary above (treat other users' contributions as potentially malicious until verified)
+covers their PRs too; leave it for its author or for jfolcini.
+**Before merging a green PR, read its full `agaric-reviewer` review body + inline comments
+and address any findings (new commit if quick/in-scope, else a referenced GitHub issue) —
+an APPROVED verdict is not "nothing to address", and this holds for `--admin` merges too
+(§8 spells out the exact commands and the #2763/#2767 misses).** Do NOT re-poll PR CI
+between these checkpoints — not on every wake-up, not after every subagent completion
+(maintainer feedback 2026-06-10: "reconciling PRs all the time is not necessary"). Green
+PRs in your actionable set can sit until the next batch boundary or until the 10-PR cap
+needs a slot; nothing rots in an hour. **Any red PR in your actionable set is yours to
+fix** — even a failure *inherited from `main`* (a lint/zizmor finding that landed on `main`
+and now reds every PR). If the red PR is Dependabot's own, a fix commit pushed onto its
+branch is exposed to a hazard the branch owner can trigger without warning — see pitfalls.
+"Not from my diff" is NOT a reason to skip it: a red check blocks otherwise-green merges
+and stalls the loop. Diagnose from `gh run view --job <id> --log-failed`, fix the
+**underlying cause** (prefer a real fix over a suppression; suppress only with a justifying
+comment). If the cause lives on `main`, fix it in a dedicated small PR off `origin/main` so
+it merges first and clears every inherited failure. Reds need a fix pushed before the new
+batch starts; greens just need the one merge sweep.
 
 Pick **one** of: a `plan` issue (group its sub-items into a 3-6 item batch), a non-`plan`
 issue (ship as its own PR), or a code-scanning/Dependabot alert. Leave the rest for later.
@@ -509,7 +527,11 @@ async over many minutes. Instead:
    cap blocks a new PR. One sweep, all PRs at once; never poll CI per-wake-up or
    per-subagent-completion (maintainer feedback 2026-06-10):
    - `gh pr checks <prevPR>`. All green + mergeable → **read the full review before
-     merging** (see below), then merge (`gh pr merge <prevPR> --squash --delete-branch`);
+     merging** (see below), then merge (`gh pr merge <prevPR> --squash --delete-branch`;
+     for a Dependabot PR carrying a human commit, add `--subject "<human commit subject>"`
+     — this CLI path takes the repo default silently otherwise, and the diagnosis never
+     reaches `main`'s subject line; see pitfalls' "A commit pushed onto a Dependabot branch
+     survives only if you make it survive");
      `Closes #NN` then fires.
    - Any failed → diagnose (`gh run view --log-failed`), fix on that branch (new commit,
      push), leave for the *next* checkpoint sweep. Don't merge red.
@@ -524,19 +546,38 @@ async over many minutes. Instead:
    `gh api repos/jfolcini/agaric/pulls/<n>/comments`. Note the reviewer routinely
    **APPROVES while still listing findings/caveats/out-of-scope bugs** in the body — an
    APPROVED verdict is NOT "nothing to address". For every actionable finding:
-   - quick + in-scope → fix it in a new commit on the branch, push, re-verify, THEN merge;
+   - quick + in-scope → fix it in a new commit on the branch, push, re-verify, THEN merge
+     (a Dependabot branch needs the push verified by SHA, not exit code — see pitfalls);
    - larger / out-of-scope / latent-elsewhere → `gh issue create` and reference it (a PR
      comment or the issue link), THEN merge — never merge and silently drop it.
    - `CHANGES_REQUESTED` blocks the merge outright until the request is resolved.
    This applies to **already-merged** PRs too: when sweeping recently-merged PRs, read
    their review bodies and open follow-up commits/issues for anything left unaddressed.
 4. **Keep the pending-PR list bounded** (up to **10** open PRs — maintainer preference,
-   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). `gh pr list --author @me --state open` shows what's outstanding if you lose
-   track. Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs;
-   for own green PRs blocked only by `REVIEW_REQUIRED`, `--admin` is sanctioned — but only
-   when the required checks (`validate-all`, `dco`) are green. Those are the
-   branch-protection CONTEXT names; `statusCheckRollup` reports the first as
-   `validate / validate-all`, so match on the suffix — see the recipe above.
+   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). **This cap counts the actionable
+   set (§1) — dependabot[bot]'s PRs and yours — not just PRs opened by the agent in this
+   session, and not the whole board either.** Session 1391's correction ("you have 12 open
+   PRs, merge them") was a count of PRs authored by `jfolcini`/`dependabot[bot]` on a board
+   whose majority author is Dependabot; nothing in that session involved an outside
+   contributor's PR, so scoping the cap to `--author @me` would still let an agent believe
+   it has headroom while the Dependabot PRs it's actually bound by sit uncounted — but
+   scoping it to the *whole* board over-corrects the other way: an outside contributor's PR
+   is explicitly not actionable (§1), so counting it toward the cap can stall the loop with
+   no exit (ten such PRs block every new batch, and there is nothing to merge or fix to
+   free a slot). Reaching 10 in the actionable set alone is the normal trigger for the merge
+   sweep above, not a stall by itself — only escalate to jfolcini if the actionable set is at
+   10 *with nothing in it mergeable or fixable*, so the sweep itself can't free a slot.
+   `gh pr list --state open --limit 100
+   --json number,author` shows what's outstanding if you lose track — again NOT
+   `--author @me`, which would hide the very Dependabot PRs the next sentence authorises you
+   to merge, and `--limit 100` because the default page size (30) silently truncates a board
+   this size.
+   Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs (add
+   `--subject "<human commit subject>"` when the PR carries a human commit on top of
+   Dependabot's — see pitfalls); for own green PRs blocked only by `REVIEW_REQUIRED`,
+   `--admin` is sanctioned — but only when the required checks (`validate-all`, `dco`) are
+   green. Those are the branch-protection CONTEXT names; `statusCheckRollup` reports the
+   first as `validate / validate-all`, so match on the suffix — see the recipe above.
 
 **An ABSENT check is not a passing check.** On a freshly-pushed PR the required checks do
 not exist yet, and that is exactly when you poll. A filter like

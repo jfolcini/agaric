@@ -118,6 +118,71 @@ of that path. Those two are still worth care in a shared-`.git` worktree — the
 concurrent agent can move — but they fail in other ways, not this one. If a batch outlives a
 merge cycle, capture the base SHA at start and use the SHA thereafter.
 
+### A commit pushed onto a Dependabot branch survives only if you make it survive
+
+Fixing a red Dependabot PR sometimes needs a human commit — a test-assertion fix, a
+lockfile relock, an `overrides` entry, a paired package bumped alongside it. Pushing it
+onto **Dependabot's own branch** is the easy move, but that branch is not yours, and two
+things erase the commit without warning:
+
+- **Force-push.** A `@dependabot rebase`/`recreate`, or a newer upstream release
+  superseding the group, force-pushes the branch; any commit that isn't
+  `dependabot[bot]`'s vanishes with no trace, and the PR reds again with no record it
+  was ever diagnosed (#4360). One confirmed erasure, recovered: **#3237**, where a
+  rebase silently won the race and `git ls-remote origin <branch>` right after pushing
+  showed a SHA that had never been pushed — caught **by SHA, not exit code**
+  (`docs/session-log/session-1242-retiring-surface.md`), recovered with
+  `git rebase --onto FETCH_HEAD` + `--force-with-lease`. One ordering-adjacent
+  near-miss, not an erasure: **#4326**, where Dependabot's own push collided with an
+  in-flight human push and rejected it outright — loud, not silent (#4360's own
+  account) — the human commits landed after Dependabot's and all three survived to the
+  merge; nothing was lost there. Verify the push landed by SHA regardless — a rejected
+  push is loud, a silently superseded one is not.
+- **Close-and-reopen under a new number.** Dependabot sometimes closes the PR and opens
+  a replacement instead of rebasing in place. Live example: #3451 (`bump rmcp … to
+  3.0.0`) was closed as superseded on 2026-08-05, reopened five days later as #3780.
+  Anything pushed or commented on #3451 is stranded there, invisible from #3780.
+
+**The squash message is a smaller, separate hazard, and less settled than it reads.**
+This repo's squash settings (`gh api repos/jfolcini/agaric --jq
+'.squash_merge_commit_title, .squash_merge_commit_message'`) are
+`COMMIT_OR_PR_TITLE`/`COMMIT_MESSAGES`: by default the subject falls back to the PR
+title but the body concatenates every commit, so the human diagnosis survives somewhere
+even untouched. Recipe: `gh pr merge <n> --squash --subject "<human commit subject>"`,
+leaving `--body` unset, on the theory that the default concatenation then still runs in
+the body.
+
+**That combination is now observed, and the recipe holds.** PR #4436 (two commits) was
+merged with `--squash --subject "…"` and `--body` unset; the resulting squash commit on
+`main` (`d8b2840`) carries the supplied subject as its headline and **both** commit
+messages, bulleted, in its body. So `--subject` sets the headline without displacing the
+default `COMMIT_MESSAGES` concatenation — passing it is safe, and the bump line survives.
+
+That was worth checking rather than assuming. Of 60 recently-merged Dependabot PRs
+(2026-07-29–08-26), 8 (13%) carried a non-Dependabot commit: 5 kept the untouched
+default, and the other 3 (#3780, #3779, #3771) had *both* subject and body overridden —
+the bump line gone from all three. No case in that sample used `--subject` alone, so
+until #4436 the recipe rested on inference from the settings, and was equally consistent
+with gh replacing the body whenever any headline was supplied — which would have made it
+cause the exact loss it warns against.
+
+The 8 also can't see the case that matters most: a human commit force-pushed away before
+merge looks, after the fact, like a PR that never needed help. So "8 carried one, 1 known
+erasure (recovered), 0 confirmed silent losses" is what was observed, not "0 losses."
+
+What to do:
+
+- **Stands alone** (a test assertion, an `overrides` entry, most application-code fixes)
+  → its own branch off `main`, its own PR, merged independently — the Dependabot PR then
+  rebases onto a `main` that already has the fix. Immune to both destruction paths
+  above.
+- **Can't stand alone** (a lockfile relock is meaningless without the bump — see
+  [AGENTS.md § Coupled Dependency
+  Updates](../../../../AGENTS.md#coupled-dependency-updates)) → leave it on Dependabot's
+  branch, `gh pr comment <n>` stating what broke and what you did, verify the push
+  landed by SHA (above), and use the recipe above at merge time, checking the resulting
+  body per the caveat above.
+
 ## Lint / format
 
 ### `oxfmt --write` detaches `oxlint-disable-next-line` comments — re-run oxlint AFTER formatting
