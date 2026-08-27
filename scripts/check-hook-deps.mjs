@@ -133,17 +133,28 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { parse as parseToml } from 'smol-toml'
 
 import { stripLineComments } from './check-git-fixture-isolation.mjs'
-import { blankStringsAndTemplates, stripComments as stripJsComments } from './lib/js-scanner.mjs'
+import {
+  blankStringsAndTemplates,
+  ScanError,
+  stripComments as stripJsComments,
+} from './lib/js-scanner.mjs'
 
 const __dirname = import.meta.dirname
 const REPO_ROOT = resolve(__dirname, '..')
 const BASELINE_PATH = resolve(__dirname, 'hook-deps-baseline.json')
 const UNVERIFIABLE_BASELINE_PATH = resolve(__dirname, 'hook-deps-unverifiable-baseline.json')
 // Prefix of the in-repo CLI self-test fixture tree (see runCliSelfTest).
-// Dot-leading so it sorts out of the way; swept at start-up, AND listed in
-// .gitignore -- the two cover different failure modes, the sweep bounding a
-// stranded tree's lifetime and the ignore rule stopping one that exists
-// right now from riding along on a `git add -A`.
+//
+// The leading dot is LOAD-BEARING, not cosmetic: `listGuardedScripts` in
+// check-git-fixture-isolation.mjs skips dot-prefixed directories outright
+// (`if (entry.name.startsWith('.')) continue`), so a concurrent run of that
+// sibling guard never walks this fixture tree. Rename the prefix without the
+// dot and that isolation breaks silently.
+//
+// Swept at start-up AND listed in .gitignore -- the two cover different
+// failure modes, the sweep bounding a stranded tree's lifetime and the ignore
+// rule stopping one that exists right now from riding along on a
+// `git add -A`.
 const CLI_FIXTURE_PREFIX = '.hookdeps-cli-selftest-'
 
 // ─── prek.toml parsing ──────────────────────────────────────────────────
@@ -411,11 +422,53 @@ function resolvePySpec(repoRoot, scriptRepoDir, argText) {
 const SH_FILENAME_RE = /([\w-]+\.sh)\b/g
 
 /**
+ * Drop a TRAILING `#` comment from one shell line.
+ *
+ * `stripLineComments(text, 'sh')` only removes lines that are ENTIRELY a
+ * comment, so `. "$DIR/lib/shared.sh" # superseded lib/legacy-helper.sh`
+ * arrives here intact -- and `SH_FILENAME_RE` would then harvest
+ * `legacy-helper.sh` out of the prose, guess `scripts/lib/legacy-helper.sh`
+ * for it, find nothing there, and redden the hook. A commit failed by a
+ * comment.
+ *
+ * A `#` opens a comment only at the start of a word (start of line, or
+ * preceded by whitespace) and only OUTSIDE quotes -- `"a # b"` is data. The
+ * quote tracking is what stops the cut from swallowing the rest of a real
+ * statement; a naive first-`#` cut would fail closed here (the line would
+ * lose every `.sh` name and read as "no literal filename" -> UNVERIFIABLE)
+ * rather than fail open, but a spurious UNVERIFIABLE is still a hook nobody
+ * can check. Backslash escapes are honoured; `$#` and `${#x}` are not
+ * word-initial, so they are left alone by construction.
+ */
+function stripShTrailingComment(line) {
+  let quote = null
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (c === '\\') {
+      i++
+      continue
+    }
+    if (quote) {
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      continue
+    }
+    if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i)
+  }
+  return line
+}
+
+/**
  * Extract shell `.`/`source` dependencies (either keyword, mirroring
  * `sourcesSharedGuard`'s own recognised forms — #3997's review found only
  * the dot form was matched before), at ANY indent, naming a `.sh` file
  * anywhere in the statement — under `lib/`, or a sibling of the sourcing
- * script (#3997 review: "a shell dep not under lib/"). A source/dot
+ * script (#3997 review: "a shell dep not under lib/"). A TRAILING `#`
+ * comment is removed first (`stripShTrailingComment`), so a filename that
+ * appears only in prose is not mistaken for an edge. A source/dot
  * statement with no literal `.sh` filename anywhere (a fully dynamic
  * `. "$VAR"`) cannot be resolved and is reported unresolved rather than
  * silently dropped.
@@ -425,7 +478,9 @@ function extractShDeps(rawText, repoRoot, scriptRepoDir) {
   const specs = []
   const unresolved = []
   for (const rawLine of stripped.split('\n')) {
-    const trimmed = rawLine.trim()
+    // Trailing `#` comments first -- a filename named only in prose is not a
+    // dependency (see stripShTrailingComment).
+    const trimmed = stripShTrailingComment(rawLine.trim()).trim()
     if (!/^(?:\.|source)\s+\S/.test(trimmed)) continue
     const names = [...trimmed.matchAll(SH_FILENAME_RE)].map((m) => m[1])
     if (names.length === 0) {
@@ -476,7 +531,30 @@ function extractDirectDepsUncached(repoRoot, scriptRel) {
   const scriptRepoDir = dirname(scriptRel)
 
   if (scriptRel.endsWith('.mjs') || scriptRel.endsWith('.js')) {
-    const { specs, unresolved } = extractJsDeps(text)
+    let extracted
+    try {
+      extracted = extractJsDeps(text)
+    } catch (err) {
+      // `js-scanner.mjs` fails CLOSED: `stripComments` /
+      // `blankStringsAndTemplates` THROW `ScanError` on an unterminated
+      // literal or an ASI-ambiguous `/` rather than guess. Uncaught, that
+      // aborts `hook-deps` -- an `always_run` hook, so EVERY commit -- with
+      // a raw Node stack trace naming js-scanner internals and not the file
+      // at fault: the same "what even is this error -> --no-verify" outcome
+      // `readJsonArray`'s try/catch exists to prevent. A file this scan
+      // cannot tokenise is exactly what UNVERIFIABLE means, so report it
+      // that way (the hook still fails the guard until it is baselined --
+      // this is not a silent skip) and name the file and the reason.
+      // Caught broadly, not just `ScanError`: any other throw from the
+      // tokenizer is equally un-actionable as a stack trace, and
+      // UNVERIFIABLE fails closed too, so widening cannot fail open.
+      const kind = err instanceof ScanError ? 'ScanError' : (err?.name ?? 'Error')
+      return {
+        deps: [],
+        unresolved: [`${scriptRel} could not be tokenised (${kind}: ${err?.message})`],
+      }
+    }
+    const { specs, unresolved } = extracted
     const deps = specs
       .map((spec) => resolveJsSpec(repoRoot, scriptRepoDir, spec))
       .filter((d) => d && d !== scriptRel)
@@ -943,6 +1021,21 @@ function buildInProcessFixture(tmp) {
     "const name = 'shared'\nconst s = require('./lib/' + name + '.mjs')\n",
   )
 
+  // A dependency the shared tokenizer REFUSES to scan. `js-scanner.mjs`
+  // fails CLOSED -- it throws `ScanError` rather than guess (here: an
+  // ASI-ambiguous `/` after `i++` across a newline). The throw must be
+  // caught and turned into an UNVERIFIABLE hook: `hook-deps` is
+  // `always_run`, so an uncaught one aborts EVERY commit with a raw Node
+  // stack trace, which is the "what even is this error -> --no-verify"
+  // outcome `readJsonArray` was written to avoid. It sits one hop DOWN the
+  // closure on purpose: the catch has to cover the whole recursion, not
+  // just the entry script.
+  writeFileSync(join(libDir, 'unscannable.mjs'), 'let i = 0\ni++\n/re/.test("x")\n')
+  writeFileSync(
+    join(scriptsDir, 'scan-throws.mjs'),
+    "import './lib/unscannable.mjs'\nexport const w = 1\n",
+  )
+
   // A shared Python lib + two consumers (one correct, one not) + one with
   // an INDENTED (inside a function) spec_from_file_location -- #3997-review
   // gap 8.
@@ -1042,6 +1135,28 @@ function buildInProcessFixture(tmp) {
     join(scriptsDir, 'dynamic-source.sh'),
     '#!/usr/bin/env bash\nGUARD="$1"\n. "$GUARD"\n',
   )
+  // A TRAILING `#` comment on the source line. `stripLineComments(_, 'sh')`
+  // only drops WHOLE-comment lines, so this text survives into `trimmed`,
+  // and `SH_FILENAME_RE` harvests every `.sh` name on the line -- including
+  // one that exists only in the prose. The `/lib/` branch then rewrites it
+  // to a `scripts/lib/` path that does not exist, and the hook goes
+  // UNVERIFIABLE: a red commit caused by a comment.
+  writeFileSync(
+    join(scriptsDir, 'trailing-comment.sh'),
+    '#!/usr/bin/env bash\n' +
+      '. "$(dirname "$0")/lib/shared.sh" # superseded lib/legacy-helper.sh\n',
+  )
+  // ...and the converse: a `#` that is INSIDE quotes is not a comment, so
+  // truncating at it would throw away the rest of the statement. On a
+  // `.`/`source` line the sourced path is the first word, so the only shape
+  // that can put a quoted `#` AHEAD of the filename is a parameter-expansion
+  // default inside the path itself -- contrived, but it is the shape that
+  // pins the property, and a naive first-`#` cut turns this line into
+  // "no literal .sh filename" (UNVERIFIABLE) instead of a resolved edge.
+  writeFileSync(
+    join(scriptsDir, 'quoted-hash-source.sh'),
+    '#!/usr/bin/env bash\n' + '. "${DIR:-\' # default\'}/lib/shared.sh"\n',
+  )
 
   return { scriptsDir, libDir }
 }
@@ -1094,6 +1209,11 @@ files = "^scripts/export-from\\\\.mjs$"
 id = "dynamic-require-js"
 entry = "node scripts/dynamic-require.mjs"
 files = "^scripts/dynamic-require\\\\.mjs$"
+
+[[repos.hooks]]
+id = "scan-throws-js"
+entry = "node scripts/scan-throws.mjs"
+files = "^scripts/scan-throws\\\\.mjs$"
 
 [[repos.hooks]]
 id = "good-py"
@@ -1159,6 +1279,16 @@ files = "^scripts/sources-sibling\\\\.sh$"
 id = "dynamic-source-sh"
 entry = "bash scripts/dynamic-source.sh"
 files = "^scripts/dynamic-source\\\\.sh$"
+
+[[repos.hooks]]
+id = "trailing-comment-sh"
+entry = "bash scripts/trailing-comment.sh"
+files = "^scripts/trailing-comment\\\\.sh$"
+
+[[repos.hooks]]
+id = "quoted-hash-source-sh"
+entry = "bash scripts/quoted-hash-source.sh"
+files = "^scripts/quoted-hash-source\\\\.sh$"
 
 [[repos.hooks]]
 id = "always-run-bad"
@@ -1282,6 +1412,12 @@ function runSelfTest() {
       fail('dynamic require() argument is unverifiable', JSON.stringify(unverifiable))
     }
 
+    if (unverifiableIds.has('scan-throws-js')) {
+      ok('a dependency the tokenizer refuses to scan is UNVERIFIABLE, not an uncaught throw')
+    } else {
+      fail('unscannable dependency is unverifiable', JSON.stringify(unverifiable))
+    }
+
     if (!brokenIds.has('good-py')) ok('good-py (self+dep unioned) is clean')
     else fail('good-py is clean', JSON.stringify(broken))
 
@@ -1346,6 +1482,30 @@ function runSelfTest() {
       ok('a shell dep NOT under lib/ (a sibling script) is found (review gap 2)')
     } else {
       fail('sibling shell dep is found', JSON.stringify(broken))
+    }
+
+    if (
+      !unverifiableIds.has('trailing-comment-sh') &&
+      brokenPairs.has('trailing-comment-sh::scripts/lib/shared.sh')
+    ) {
+      ok('a .sh name that appears only in a TRAILING # comment does not redden the hook')
+    } else {
+      fail(
+        'trailing shell comment is not harvested as a dependency',
+        JSON.stringify({ broken, unverifiable }),
+      )
+    }
+
+    if (
+      !unverifiableIds.has('quoted-hash-source-sh') &&
+      brokenPairs.has('quoted-hash-source-sh::scripts/lib/shared.sh')
+    ) {
+      ok('a `#` inside quotes is NOT a comment, so the rest of the statement is still scanned')
+    } else {
+      fail(
+        'quoted # does not truncate the source statement',
+        JSON.stringify({ broken, unverifiable }),
+      )
     }
 
     if (unverifiableIds.has('dynamic-source-sh')) {
