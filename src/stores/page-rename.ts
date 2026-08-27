@@ -25,7 +25,6 @@
 import { notifyPageRenamed } from '@/lib/name-change-bus'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useResolveStore } from '@/stores/resolve'
-import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
 /**
@@ -37,21 +36,44 @@ import { useTabsStore } from '@/stores/tabs'
  *
  * Call this AFTER the backend write commits — it does no IPC of its own.
  *
- * #4391 — reads the active space itself rather than asking every one of its
- * five call sites (PageHeader, undo/redo, HistoryPanel's two restore paths)
- * to thread one in: this IS the single entry point, so centralizing the read
- * here means no caller can pass the wrong space (or forget to). Read
- * synchronously, in the same tick as the call — there is no `await` between
- * a caller deciding to rename and reaching here, so "the space captured at
- * the decision" and "the space live right now" are the same value. `null`
- * (no active space) skips the bus notification — there is no space to scope
- * a picker-cache patch to — but the tabs/recents/resolve fan-out above still
+ * #4391 — `spaceId` is the space the CALLER had in hand when it decided to
+ * rename, threaded in rather than read here. It is required (not defaulted,
+ * not optional) so a new call site fails to compile instead of silently
+ * emitting a mislabelled event, and it is `string | null` because "no active
+ * space" is a real state the callers can be in.
+ *
+ * This function cannot capture the value itself. It is synchronous, so
+ * "capture at entry" and "read at emit" are the same tick and the same
+ * value — capturing here would be a no-op. The `await` that matters is in
+ * every one of the five callers, BETWEEN the user's decision and this call:
+ * `PageHeader.persistTitle` (after `editBlock`), `PageHeader`'s undo/redo
+ * title refresh (after the undo IPC, `load()` and `getBlock`),
+ * `HistoryPanel`'s restore and undo-restore (after `getBlock` / `editBlock`),
+ * and `useUndoShortcuts.refreshAfterUndoRedo` (after the undo/redo IPC and
+ * `load()`). A read taken here would therefore be a FRESH read at emit time,
+ * which the name-change-bus docblock explains is worse than no scoping: a
+ * rename started in space A while the user switches to B would be labelled
+ * `B` and let into B's warm cache, aborting an in-flight B fill (the
+ * one-keystroke empty picker at `src/components/block-tree/use-block-resolve.ts:1132-1142`).
+ *
+ * `null` skips the bus notification — there is no space to scope a
+ * picker-cache patch to — but the tabs/recents/resolve fan-out above still
  * runs unconditionally; none of those three are space-scoped.
+ *
+ * The three sibling publishers that fall back to `invalidateNameCaches()` on
+ * a null space (`src/components/TagList.tsx:189`/`:227`, `src/hooks/usePageDeleteAction.tsx:191`,
+ * `src/components/pages/PageBrowserBatchToolbar.tsx:280`) are being deliberately conservative
+ * about a case that cannot arise: `use-block-resolve.ts`'s space-switch
+ * subscriber clears BOTH name caches on any `currentSpaceId` transition,
+ * including a transition to `null`, and both lazy fills short-circuit to `[]`
+ * while the space is `null` (`searchPagesViaCache`, and `searchTags`'s inline
+ * fill). So with no active space both caches are provably empty and there is
+ * nothing for an invalidation to drop. Dropping the notification is the
+ * cheaper equivalent, not a weaker one.
  */
-export function renamePage(pageId: string, title: string): void {
+export function renamePage(pageId: string, title: string, spaceId: string | null): void {
   useTabsStore.getState().renamePage(pageId, title)
   useRecentPagesStore.getState().renamePage(pageId, title)
   useResolveStore.getState().set(pageId, title, false)
-  const spaceId = useSpaceStore.getState().currentSpaceId
   if (spaceId != null) notifyPageRenamed(pageId, title, spaceId)
 }

@@ -32,18 +32,27 @@ import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
+import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
-/** Reload block store and refresh page title in nav store after undo/redo. */
-async function refreshAfterUndoRedo(pageId: string): Promise<void> {
+/**
+ * Reload block store and refresh page title in nav store after undo/redo.
+ *
+ * #4391 — `spaceId` is threaded in, not read here: by the time this runs the
+ * undo/redo IPC has already awaited, and `load()` and `getBlock` await again
+ * below, so a read taken here would be a fresh emit-time read of a value the
+ * user may have changed in between. Callers capture it in the tick the
+ * user's undo/redo gesture is handled. See `@/stores/page-rename`.
+ */
+async function refreshAfterUndoRedo(pageId: string, spaceId: string | null): Promise<void> {
   await getPageStore(pageId)?.getState().load()
   try {
     const pageBlock = unwrap(await commands.getBlock(pageId))
     if (pageBlock?.content) {
       // #3322 — one fan-out to every store that holds a title copy (tabs +
       // recents + resolve); see `@/stores/page-rename`.
-      renamePage(pageId, pageBlock.content)
+      renamePage(pageId, pageBlock.content, spaceId)
     }
   } catch {
     // Page title refresh is best-effort
@@ -74,6 +83,11 @@ function snakeToCamel(s: string | null | undefined): string {
  * are surfaced as an error toast and swallowed).
  */
 export async function performPageUndo(pageId: string): Promise<void> {
+  // #4391 — every route into here (the Ctrl+Z handler, `performActivePageUndo`
+  // and the swipe-to-delete toast action) reaches this line synchronously from
+  // the user's gesture, so this is the last point before the first `await`
+  // and the space the user decided to undo IN. See `@/stores/page-rename`.
+  const spaceId = useSpaceStore.getState().currentSpaceId
   try {
     const result = await useUndoStore.getState().undo(pageId)
     if (!result) return
@@ -81,7 +95,7 @@ export async function performPageUndo(pageId: string): Promise<void> {
     const message = translate(opKey, { defaultValue: translate('undo.undoneMessage') })
     notify(message, { duration: 1500 })
     announce(translate('announce.undone'))
-    await refreshAfterUndoRedo(pageId)
+    await refreshAfterUndoRedo(pageId, spaceId)
   } catch {
     notify.error(translate('undo.undoFailedMessage'))
     announce(translate('announce.undoFailed'))
@@ -187,6 +201,9 @@ export function useUndoShortcuts(): void {
       // (#724) so Settings rebinds are honoured.
       if (matchesShortcutBinding(e, 'redoLastUndoneOp')) {
         e.preventDefault()
+        // #4391 — capture the space in the keystroke's own tick, before the
+        // redo IPC awaits. See `@/stores/page-rename`.
+        const spaceId = useSpaceStore.getState().currentSpaceId
         useUndoStore
           .getState()
           .redo(pageId)
@@ -197,7 +214,7 @@ export function useUndoShortcuts(): void {
               const message = t(opKey, { defaultValue: t('undo.redoneMessage') })
               notify(message, { duration: 1500 })
               announce(t('announce.redone'))
-              await refreshAfterUndoRedo(pageId)
+              await refreshAfterUndoRedo(pageId, spaceId)
             }
           })
           .catch(() => {

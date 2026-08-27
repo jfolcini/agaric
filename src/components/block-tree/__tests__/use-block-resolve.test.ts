@@ -3776,7 +3776,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     // (b) rename through `@/stores/page-rename` — the documented fan-out
     // entry point every rename surface (PageHeader, undo/redo) goes through.
     act(() => {
-      renamePage('P_REN', 'New Name')
+      renamePage('P_REN', 'New Name', 'SPACE_TEST')
     })
 
     // (c) the SECOND read, served from the primed cache.
@@ -3813,7 +3813,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      renamePage('P_Z', 'Aardvark')
+      renamePage('P_Z', 'Aardvark', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -3953,7 +3953,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      renamePage('P_K', 'K') // Kelvin sign, NOT ascii 'K'
+      renamePage('P_K', 'K', 'SPACE_TEST') // Kelvin sign, NOT ascii 'K'
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -4005,7 +4005,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      renamePage('P_EMOJI', '🎯')
+      renamePage('P_EMOJI', '🎯', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -4042,7 +4042,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     // Force a resort of the WHOLE cache via an unrelated rename, same as
     // every other test in this block.
     act(() => {
-      renamePage('P_Z', 'Zebra')
+      renamePage('P_Z', 'Zebra', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -4081,7 +4081,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      renamePage('P_THIRD', 'zzz-third')
+      renamePage('P_THIRD', 'zzz-third', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -4147,7 +4147,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      renamePage('P_THIRD', 'zzz-third')
+      renamePage('P_THIRD', 'zzz-third', 'SPACE_TEST')
     })
 
     let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
@@ -4416,7 +4416,7 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
     })
 
     act(() => {
-      renamePage('P_SOMEWHERE_ELSE', 'Irrelevant')
+      renamePage('P_SOMEWHERE_ELSE', 'Irrelevant', 'SPACE_TEST')
       notifyPageRemoved('P_ALSO_UNKNOWN', 'SPACE_TEST')
     })
 
@@ -4750,7 +4750,7 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     // The rename fans out via `@/stores/page-rename`, same as the #4007
     // tests above.
     act(() => {
-      renamePage('P_REN', 'New Name')
+      renamePage('P_REN', 'New Name', 'SPACE_TEST')
     })
 
     // The IPC resolves with the PRE-RENAME snapshot — after the rename,
@@ -4887,7 +4887,7 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     })
     // A rename fires while SPACE_B is active — the listener doesn't care.
     act(() => {
-      renamePage('P_ELSEWHERE', 'Renamed While Away')
+      renamePage('P_ELSEWHERE', 'Renamed While Away', 'SPACE_B')
     })
     act(() => {
       useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
@@ -6144,7 +6144,7 @@ describe("the name-change bus 'added' event (#4338)", () => {
       notifyPageAdded('P_NEW', 'Untitled', 'SPACE_TEST')
     })
     act(() => {
-      renamePage('P_NEW', 'Quarterly Review')
+      renamePage('P_NEW', 'Quarterly Review', 'SPACE_TEST')
     })
 
     expect(result.current.pagesListRef.current).toContainEqual({

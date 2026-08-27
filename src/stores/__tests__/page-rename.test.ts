@@ -46,7 +46,7 @@ describe('renamePage fan-out', () => {
     useTabsStore.getState().navigateToPage(PAGE, 'Old')
     expect(selectRecentPagesForSpace(useRecentPagesStore.getState(), SPACE)[0]?.title).toBe('Old')
 
-    renamePage(PAGE, 'New')
+    renamePage(PAGE, 'New', SPACE)
 
     expect(selectPageStack(useTabsStore.getState()).at(-1)).toEqual({
       pageId: PAGE,
@@ -65,7 +65,7 @@ describe('renamePage fan-out', () => {
   it('survives a round-trip through the recents strip', () => {
     const tabs = useTabsStore.getState()
     tabs.navigateToPage(PAGE, 'Old')
-    renamePage(PAGE, 'New')
+    renamePage(PAGE, 'New', SPACE)
     tabs.navigateToPage('OTHER_PAGE', 'Other')
 
     const chip = selectRecentPagesForSpace(useRecentPagesStore.getState(), SPACE).find(
@@ -88,7 +88,7 @@ describe('renamePage fan-out', () => {
     tabs.navigateToPage(PAGE, 'Old')
     tabs.openInNewTab('OTHER_PAGE', 'Other')
 
-    renamePage(PAGE, 'New')
+    renamePage(PAGE, 'New', SPACE)
 
     const state = useTabsStore.getState()
     expect(state.activeTabIndex).toBe(1)

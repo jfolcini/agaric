@@ -125,6 +125,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       const successKey = action === 'undo' ? 'pageHeader.undone' : 'pageHeader.redone'
       const errorKey = action === 'undo' ? 'pageHeader.undoFailed' : 'pageHeader.redoFailed'
       const undoStore = useUndoStore.getState()
+      // #4391 — capture the active space HERE, in the click's own tick,
+      // rather than letting `renamePage` read it after the undo IPC,
+      // `load()` and `getBlock` have all awaited. A space switch during that
+      // window would otherwise label this page's rename with the space the
+      // user just moved TO. See `@/stores/page-rename`.
+      const spaceId = useSpaceStore.getState().currentSpaceId
       undoStore[action](pageId)
         .then(async (result) => {
           if (result) {
@@ -135,7 +141,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               if (pageBlock?.content) {
                 // #3322 — one fan-out to every store that holds a title copy
                 // (tabs + recents + resolve); see `@/stores/page-rename`.
-                renamePage(pageId, pageBlock.content)
+                renamePage(pageId, pageBlock.content, spaceId)
               }
             } catch (err) {
               logger.warn(
@@ -378,13 +384,18 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         return
       }
       if (newTitle === title) return
+      // #4391 — capture the active space BEFORE the awaited write, so the
+      // event carries the space this rename was decided in even if the user
+      // switches spaces while `editBlock` is in flight. See
+      // `@/stores/page-rename`.
+      const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         // #2468 — thread the rename's op ref(s) so Ctrl+Z is ref-addressed.
         const resp = await editBlock(pageId, newTitle)
         useUndoStore.getState().onNewAction(pageId, resp.op_refs)
         // #3322 — one fan-out to every store that holds a title copy (tabs +
         // recents + resolve); see `@/stores/page-rename`.
-        renamePage(pageId, newTitle)
+        renamePage(pageId, newTitle, spaceId)
         announce(t('announce.pageRenamed'))
         notify.success(t('pageHeader.pageRenamed'))
       } catch (err) {

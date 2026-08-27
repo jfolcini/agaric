@@ -1202,8 +1202,17 @@ export function useBlockResolve(): UseBlockResolveReturn {
         if (change.kind !== 'invalidated') {
           const activeSpaceId = useSpaceStore.getState().currentSpaceId
           if (change.spaceId !== activeSpaceId) {
+            // Log the event's SHAPE, not the event: `change.name` is a
+            // user-authored page title or tag name, and this path fires
+            // without any user action (a background sync write is enough).
+            // Kind + id + space carry the whole diagnostic value — which
+            // event was dropped, for which row, and which way the space
+            // comparison went — with none of the content.
             logger.debug('useBlockResolve', 'dropped name-change event for inactive space', {
-              change,
+              kind: change.kind,
+              entity: change.entity,
+              id: change.id,
+              spaceId: change.spaceId,
               activeSpaceId,
             })
             return
