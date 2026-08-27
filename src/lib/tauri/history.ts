@@ -67,10 +67,10 @@ export interface UndoResult {
  * Undo the Nth most-recent undoable op on a page.
  *
  * No production call site: `undoDeleteOf` (`@/stores/undo`) now goes through
- * the ref-addressed `undoOp` exclusively. PR #4410 (which deleted 37 other
- * dead wrappers from this layer) considered and rejected deleting this one
- * too, for a reason specific to it and not to the other 36: three
- * `.not.toHaveBeenCalled()` assertions in `src/stores/__tests__/undo.test.ts`
+ * the ref-addressed `undoOp` exclusively. PR #4430 (which closed issue #4410
+ * by deleting 37 other dead wrappers from this layer) considered and rejected
+ * deleting this one too, for a reason specific to it and not to the other 36:
+ * three `.not.toHaveBeenCalled()` assertions in `src/stores/__tests__/undo.test.ts`
  * (lines 1789, 1807, 1878) are live #4328 regression guards against the
  * positional-undo bug, where `undoDeleteOf` reversed the op at the delete's
  * LIST index instead of its own (device_id, seq) ref once a prior undo had
