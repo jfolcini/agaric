@@ -216,6 +216,16 @@ export function carriedRenameDefinition(
  * vault past that cap can still slip a rarely-used key through — that
  * remainder is what the caller's compensating delete is for.
  *
+ * #4399 — since `create_property_def` grew an in-use probe of its own, this
+ * is no longer the only thing between a rename and a declaration over
+ * someone else's values. The backend probe runs inside the insert's
+ * `BEGIN IMMEDIATE`, so it closes both gaps this one has by construction:
+ * the TOCTOU between the read pool and the write pool, and the keys past the
+ * 1000-key cap. This check stays because it is strictly broader — it also
+ * declines builtin and already-declared keys, which the backend accepts by
+ * design — and because declining locally saves a round-trip whose only
+ * possible outcome is a rejection.
+ *
  * Throws whatever the two lookups throw; the caller treats a failed
  * pre-flight like a failed copy (best-effort, rename proceeds).
  */

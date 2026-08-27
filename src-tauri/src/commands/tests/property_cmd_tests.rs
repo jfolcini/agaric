@@ -7696,3 +7696,673 @@ async fn delete_property_inner_soft_deleted_block_yields_validation_in_tx() {
         other => panic!("expected Validation for a soft-deleted block, got {other:?}"),
     }
 }
+
+// ======================================================================
+// create_property_def — the in-use probe (#4399)
+//
+// `create_property_def` is the second door into #4382. #4395 closed the
+// bibliography-import door with a coarse "does this key have any values?"
+// probe inside the import's own transaction; the command a user invokes
+// directly had no guard at all, so Settings → Properties could type `year`,
+// pick `number`, and declare a global `number` type over the vault's
+// existing `year = "circa 1920"` rows.
+//
+// The pair below pins BOTH halves of the predicate, and neither half is
+// redundant: `..._refuses_...` fails if the guard is removed, and
+// `..._allows_...` / `..._declares_an_unused_key_...` fail if the guard is
+// "fixed" by refusing every in-use key (the import's coarse test) or by
+// never declaring anything.
+// ======================================================================
+
+/// The `property_definitions` row for `key`, or `None`.
+async fn def_type_of(pool: &SqlitePool, key: &str) -> Option<String> {
+    get_property_def_inner(pool, key)
+        .await
+        .unwrap()
+        .map(|d| d.value_type)
+}
+
+/// Seed one block holding `key` = `value_text` through the ordinary
+/// command path, with NO declaration — the permissive state #4382 traps.
+async fn block_with_text_property(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    content: &str,
+    key: &str,
+    text: &str,
+) -> String {
+    let block = create_block_inner(pool, DEV, mat, "content".into(), content.into(), None, None)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    set_property_inner(
+        pool,
+        DEV,
+        mat,
+        block.id.as_str().into(),
+        key.into(),
+        Some(text.into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("an undeclared key must accept text — this is the state the guard protects");
+    mat.flush_background().await.unwrap();
+    block.id.as_str().to_string()
+}
+
+/// #4399 — declaring `number` over a key whose stored values are text is
+/// refused, nothing is written, and the vault stays writable.
+///
+/// The four assertions are deliberately not interchangeable. Asserting only
+/// `is_err()` would also pass if `validate_property_def_shape` had rejected
+/// the payload, so the message is matched against wording only
+/// `conflicting_existing_values` produces. Asserting only "no definition
+/// row" would also pass if the fix were "never declare anything", which
+/// `create_property_def_declares_an_unused_key_4399` below forbids. And the
+/// surviving text write is the one that proves link 1 of the trap never
+/// armed — it is the exact error string #4382 predicted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_refuses_a_type_that_rejects_stored_values_4399() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let existing = block_with_text_property(&pool, &mat, "an old book", "year", "circa 1920").await;
+    assert_eq!(
+        def_type_of(&pool, "year").await,
+        None,
+        "seed precondition: `year` must be IN USE but UNDECLARED"
+    );
+
+    let result = create_property_def_inner(&pool, "year".into(), "number".into(), None).await;
+
+    // 1. Refused, by THIS guard — the message names the key, the requested
+    //    type, the count and the shape actually stored. Shape validation
+    //    cannot produce any of that.
+    match result {
+        Err(AppError::Validation {
+            message: ref msg, ..
+        }) => {
+            assert!(
+                msg.contains("cannot declare property 'year' as 'number'")
+                    && msg.contains("1 value(s) already stored")
+                    && msg.contains("1 stored as text"),
+                "the refusal must name the key, the type and the stored shape, got: {msg}"
+            );
+        }
+        other => panic!("declaring `number` over stored text must be refused, got {other:?}"),
+    }
+
+    // 2. Nothing was written.
+    assert_eq!(
+        def_type_of(&pool, "year").await,
+        None,
+        "a refused declaration must leave `property_definitions` untouched"
+    );
+
+    // 3. The user's value is untouched.
+    let props = get_properties_inner(&pool, existing.as_str().into())
+        .await
+        .unwrap();
+    assert_eq!(
+        props
+            .iter()
+            .find(|p| p.key == "year")
+            .and_then(|p| p.value_text.clone()),
+        Some("circa 1920".into()),
+        "the pre-existing value must survive a refused declaration: {props:?}"
+    );
+
+    // 4. Link 1 never armed: a text write to `year` on ANOTHER block still
+    //    succeeds. Under the bug this fails with
+    //    "Property 'year' expects type 'number', got 'text'."
+    let other = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "another old book".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        other.id.as_str().into(),
+        "year".into(),
+        Some("n.d.".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("a text write to `year` must still be accepted after the refusal");
+
+    mat.shutdown();
+}
+
+/// #4399 — the precision half. Values the requested type ALREADY satisfies
+/// are not a conflict: a key whose rows all live in `value_num` may be
+/// declared `number`, because none of #4382's three links can fire.
+///
+/// This is the assertion that fails if the guard is written as the import's
+/// coarse "does this key have any values?" test. Formalising the type of a
+/// key you have been using consistently is the main reason to open
+/// Settings → Properties; refusing it would trade one trap for another.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_allows_a_type_every_stored_value_satisfies_4399() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "a modern book".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "year".into(),
+        None,
+        Some(1994.0),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        def_type_of(&pool, "year").await,
+        None,
+        "seed precondition: `year` must be IN USE but UNDECLARED"
+    );
+
+    let def = create_property_def_inner(&pool, "year".into(), "number".into(), None)
+        .await
+        .expect("declaring a type every stored value already satisfies must be allowed");
+    assert_eq!(def.value_type, "number");
+    assert_eq!(
+        def_type_of(&pool, "year").await.as_deref(),
+        Some("number"),
+        "the declaration must actually land"
+    );
+
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    assert_eq!(
+        props
+            .iter()
+            .find(|p| p.key == "year")
+            .and_then(|p| p.value_num),
+        Some(1994.0),
+        "the compatible value must be untouched: {props:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #4399 — an UNUSED key is still declared, exactly as before. The
+/// anti-"fix it by never declaring" half.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_declares_an_unused_key_4399() {
+    let (pool, _dir) = test_pool().await;
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = 'year'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "seed precondition: `year` must be unused");
+
+    let def = create_property_def_inner(&pool, "year".into(), "number".into(), None)
+        .await
+        .expect("an unused key must still be declarable");
+    assert_eq!(def.key, "year");
+    assert_eq!(def.value_type, "number");
+    assert_eq!(def_type_of(&pool, "year").await.as_deref(), Some("number"));
+}
+
+/// #4399 — a value on a SOFT-DELETED block still makes a key in-use.
+///
+/// The probe deliberately omits a `blocks.deleted_at` filter, because
+/// `delete_property_def_inner`'s blocking `COUNT(*)` omits it too: a
+/// declaration created over a trashed block's values is exactly as
+/// permanently stuck as one over a live block's. Without this test the
+/// omission is asserted only by a comment, and the obvious "tidy-up" of
+/// joining `blocks` would reopen the trap silently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_treats_soft_deleted_values_as_in_use_4399() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let trashed = block_with_text_property(&pool, &mat, "a trashed note", "year", "n.d.").await;
+    delete_block_inner(&pool, DEV, &mat, trashed.as_str().into())
+        .await
+        .expect("soft-delete the only block holding a `year` value");
+    mat.flush_background().await.unwrap();
+
+    // The premise the probe rests on.
+    let surviving: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = 'year'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        surviving, 1,
+        "seed precondition: the soft-deleted block's `year` row must survive the delete"
+    );
+    let deleted_at: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(&trashed)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        deleted_at.is_some(),
+        "seed precondition: the block must actually be soft-deleted"
+    );
+
+    let result = create_property_def_inner(&pool, "year".into(), "number".into(), None).await;
+    assert!(
+        matches!(result, Err(AppError::Validation { message: ref msg, .. })
+            if msg.contains("cannot declare property 'year' as 'number'")),
+        "a trashed block's values must still block the declaration, got {result:?}"
+    );
+    assert_eq!(def_type_of(&pool, "year").await, None);
+
+    mat.shutdown();
+}
+
+/// #4399 — the probe runs only when something would actually be written.
+///
+/// `create_property_def` is INSERT OR IGNORE: an already-declared key is a
+/// no-op that returns the winning row. Re-asserting a declaration the user
+/// already made creates no new constraint, so it must not be refused —
+/// otherwise every `BlockPropertyEditor` rename onto an already-declared
+/// key (`renameMayDeclareKey` lets those through as a no-op) would start
+/// throwing, and `import_bibliography`'s pre-existing-declaration path with
+/// it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_is_still_a_no_op_for_a_declared_in_use_key_4399() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    create_property_def_inner(&pool, "year".into(), "text".into(), None)
+        .await
+        .unwrap();
+    block_with_text_property(&pool, &mat, "an old book", "year", "circa 1920").await;
+
+    // The requested type contradicts every stored value — but the key is
+    // already declared, so nothing is written and nothing is refused.
+    let def = create_property_def_inner(&pool, "year".into(), "number".into(), None)
+        .await
+        .expect("an already-declared key must stay an idempotent no-op");
+    assert_eq!(
+        def.value_type, "text",
+        "the user's existing declaration must win, unchanged"
+    );
+    assert_eq!(def_type_of(&pool, "year").await.as_deref(), Some("text"));
+
+    mat.shutdown();
+}
+
+/// #4399 — `select` is checked against step 5 (options membership) as well
+/// as step 4 (payload shape).
+///
+/// A stored `value_text` outside the declared options is admitted by shape
+/// and rejected by membership, and is exactly as un-writable afterwards as
+/// a wrong-shaped one — `"value 'shipped' is not in allowed options"`. A
+/// shape-only probe would wave this through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_refuses_select_options_that_exclude_stored_values_4399() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    block_with_text_property(&pool, &mat, "a shipped thing", "stage", "shipped").await;
+
+    let result = create_property_def_inner(
+        &pool,
+        "stage".into(),
+        "select".into(),
+        Some(r#"["todo","doing"]"#.into()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { message: ref msg, .. })
+            if msg.contains("cannot declare property 'stage' as 'select'")
+                && msg.contains("1 not in the declared options")),
+        "a stored value outside the options list must be refused, got {result:?}"
+    );
+    assert_eq!(def_type_of(&pool, "stage").await, None);
+
+    // The counterpart: options that DO cover the stored value are allowed.
+    // Without this the test above would also pass a probe that refused every
+    // `select` declaration over an in-use key.
+    let def = create_property_def_inner(
+        &pool,
+        "stage".into(),
+        "select".into(),
+        Some(r#"["todo","doing","shipped"]"#.into()),
+    )
+    .await
+    .expect("options covering every stored value must be allowed");
+    assert_eq!(def.value_type, "select");
+
+    mat.shutdown();
+}
+
+/// #4399 — the rename path (`BlockPropertyEditor.tsx`, the third UI entry
+/// point) carries the OLD key's definition onto a NEW key that may already
+/// have values of its own.
+///
+/// The frontend runs `renameMayDeclareKey` first, but that pre-flight reads
+/// the read pool while the declaration goes to the write pool, and it only
+/// sees the 1000 most-used keys — so the backend has to be the guarantee.
+/// This drives the rename's actual backend sequence (declare, then write
+/// the carried value) and pins the shape the frontend depends on: the
+/// declaration is refused, the value write still lands under the new key,
+/// and the OTHER block's pre-existing values under that key stay writable.
+/// A guard that refused the whole rename would strand the value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_refusal_still_lets_a_rename_carry_its_value_4399() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Another block already uses `deadline` as free text, undeclared.
+    let squatter =
+        block_with_text_property(&pool, &mat, "someday", "deadline", "when it's ready").await;
+
+    // The block being renamed: `due` declared `date`, holding a date.
+    create_property_def_inner(&pool, "due".into(), "date".into(), None)
+        .await
+        .unwrap();
+    let renaming = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "ship it".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        renaming.id.as_str().into(),
+        "due".into(),
+        None,
+        None,
+        Some("2026-01-31".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Step 1 of the rename: carry the definition. Refused — `deadline`'s
+    // existing text values would be rejected by `date`.
+    let carried = create_property_def_inner(&pool, "deadline".into(), "date".into(), None).await;
+    assert!(
+        matches!(carried, Err(AppError::Validation { message: ref msg, .. })
+            if msg.contains("cannot declare property 'deadline' as 'date'")),
+        "carrying a `date` definition onto a text-valued key must be refused, got {carried:?}"
+    );
+    assert_eq!(def_type_of(&pool, "deadline").await, None);
+
+    // Step 2 of the rename: the value write, which the frontend performs
+    // regardless (the definition carry is best-effort). It must still work —
+    // `deadline` is undeclared, so it stays permissive.
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        renaming.id.as_str().into(),
+        "deadline".into(),
+        None,
+        None,
+        Some("2026-01-31".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("the rename's value write must survive the refused definition carry");
+    mat.flush_background().await.unwrap();
+
+    // And the squatter's own value is still there and still writable.
+    let props = get_properties_inner(&pool, squatter.as_str().into())
+        .await
+        .unwrap();
+    assert_eq!(
+        props
+            .iter()
+            .find(|p| p.key == "deadline")
+            .and_then(|p| p.value_text.clone()),
+        Some("when it's ready".into()),
+        "{props:?}"
+    );
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        squatter.as_str().into(),
+        "deadline".into(),
+        Some("still someday".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("the other block's text values under `deadline` must stay writable");
+
+    mat.shutdown();
+}
+
+/// #4399 — `text` (and `select`) admit a stored `value_ref`, and the engine
+/// agrees.
+///
+/// [`declared_type_admits_shape`] is a hand-written mirror of
+/// `validate_property_value`'s step-4 `type_matches`, whose `"text" |
+/// "select"` arm is `value_text.is_some() || value_ref.is_some()`. Deleting
+/// the `|| shape == "ref"` half left the whole suite green: nothing seeded a
+/// `value_ref` row before declaring anything over it, so the arm was a
+/// mirror nobody was holding up. Losing it would not reopen #4382 — it fails
+/// the safe way — but it would make a key holding block references
+/// permanently undeclarable, which is the exact outcome the shape-aware
+/// probe exists to avoid.
+///
+/// The second half is what makes this a test of the MIRROR rather than of
+/// the probe alone: after the declaration lands, a `value_ref` write on
+/// another block must still be accepted by the engine. If step 4 and the
+/// probe ever disagree in this direction, the declaration is allowed and the
+/// writes it permits are rejected — a trap the probe was meant to catch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_admits_stored_refs_under_text_4399() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "the referenced page".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let holder = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "cites something".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Seed `source` as a REF value on an undeclared key — permissive, so
+    // this is the ordinary pre-declaration state.
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        holder.id.as_str().into(),
+        "source".into(),
+        None,
+        None,
+        None,
+        Some(target.id.clone().into_string()),
+        None,
+        None,
+    )
+    .await
+    .expect("an undeclared key must accept a ref");
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        def_type_of(&pool, "source").await,
+        None,
+        "seed precondition: `source` must be IN USE (as a ref) but UNDECLARED"
+    );
+
+    // `text` admits `value_ref`, so this must be allowed.
+    let def = create_property_def_inner(&pool, "source".into(), "text".into(), None)
+        .await
+        .expect("`text` admits a stored `value_ref` — step 4's `text | select` arm");
+    assert_eq!(def.value_type, "text");
+
+    // ...and the engine really does admit it: a ref write under the fresh
+    // `text` declaration still succeeds. This is the arm-for-arm agreement,
+    // asserted against the real validator rather than a transcription.
+    let other = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "cites it too".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        other.id.as_str().into(),
+        "source".into(),
+        None,
+        None,
+        None,
+        Some(target.id.clone().into_string()),
+        None,
+        None,
+    )
+    .await
+    .expect("step 4's `text | select` arm admits `value_ref`; the probe must agree");
+
+    mat.shutdown();
+}
+
+/// #4399 — the `ref` and `boolean` arms, which nothing else covers.
+///
+/// Rewriting BOTH to `shape == "…" || shape == "text"` — the fail-OPEN
+/// direction, which reinstates #4382 for those two types — left all 518
+/// property tests green. Every other declared type had a refusal test
+/// (`number` and `date` over stored text, `select` over out-of-options
+/// text); these two had none, so the guard could have been half-built and
+/// nothing would have said so.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_property_def_refuses_ref_and_boolean_over_stored_text_4399() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    block_with_text_property(&pool, &mat, "a note", "owner", "someone").await;
+    block_with_text_property(&pool, &mat, "another note", "urgent", "very").await;
+
+    for (key, value_type) in [("owner", "ref"), ("urgent", "boolean")] {
+        let result = create_property_def_inner(&pool, key.into(), value_type.into(), None).await;
+        assert!(
+            matches!(result, Err(AppError::Validation { message: ref msg, .. })
+                if msg.contains(&format!("cannot declare property '{key}' as '{value_type}'"))
+                    && msg.contains("1 stored as text")),
+            "declaring `{value_type}` over stored text must be refused, got {result:?}"
+        );
+        assert_eq!(
+            def_type_of(&pool, key).await,
+            None,
+            "a refused `{value_type}` declaration must write nothing"
+        );
+    }
+
+    // The engine's own verdict on the same pair, so this is a test of the
+    // MIRROR: with the keys still undeclared, declare each as the type its
+    // values DO satisfy, then confirm the shapes the refusal predicted are
+    // the shapes the engine rejects.
+    create_property_def_inner(&pool, "owner".into(), "text".into(), None)
+        .await
+        .unwrap();
+    let holder = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "a third note".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let rejected = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        holder.id.as_str().into(),
+        "owner".into(),
+        None,
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(rejected, Err(AppError::Validation { message: ref msg, .. })
+            if msg.contains("expects type 'text', got 'boolean'")),
+        "step 4 must reject a boolean under a `text` declaration, got {rejected:?}"
+    );
+
+    mat.shutdown();
+}

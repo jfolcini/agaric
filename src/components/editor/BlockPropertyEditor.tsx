@@ -706,6 +706,16 @@ export function BlockPropertyEditor({
               // not already declared, referenced by no block); see its doc
               // comment for the full argument and for what is given up when it
               // says no.
+              //
+              // #4399 — the backend now refuses `create_property_def` when
+              // the target key's existing values contradict the carried
+              // type, in the same transaction as the insert. That is the
+              // race-free backstop this pre-flight cannot be (two pools, no
+              // shared transaction, and `listPropertyKeys` is capped at 1000
+              // keys). Nothing here changes: the carry is already
+              // best-effort, so a refusal lands in the `catch` below, the
+              // key stays undeclared, and the VALUE carry proceeds — which
+              // is exactly the outcome the pre-flight aims for.
               let declaredKey: string | null = null
               try {
                 // Old key's declaration first: when there is nothing to carry

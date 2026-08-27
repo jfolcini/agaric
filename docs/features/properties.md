@@ -95,6 +95,7 @@ When a property value changes, downstream surfaces (DuePanel, DonePanel, LinkedR
 ## Pitfalls to know
 
 - **Type changes are destructive.** Switching a property from `text` to `number` can drop values that don't parse.
+- **A new definition can't contradict values you already have.** A definition is keyed by the property key alone, so it applies to every block in the vault — and it can't be removed again while any value under that key exists. Declaring `year` as `number` while some blocks hold `year = "circa 1920"` would therefore reject every later text edit of `year` anywhere, drop those values on the next sync, and leave you unable to withdraw the definition. So creating a definition is **refused** when values already stored under the key would not fit the type you picked; the message names the key, how many values are in the way, and what shape they are stored in. Declaring a type that every existing value already satisfies (all your `year` values are numbers) is allowed and does exactly what you'd expect. A bibliography import behaves differently on purpose: it leaves such a key undeclared and reports the skip in its warnings rather than refusing the whole import.
 - **Select options are part of the definition, not the value.** Renaming an option propagates to every existing value of that property.
 - **Repeat with no `due_date` or `scheduled_date` doesn't project.** A repeat rule needs at least one anchor date to know where to start.
 - **`repeat-seq` is mutated automatically** when a task is DONE. Hand-editing it can confuse the projection.

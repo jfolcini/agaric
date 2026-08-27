@@ -853,13 +853,31 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     })
   })
 
-  it('create_property_def rejection shows error message from backend', async () => {
+  // #4399 — the rejection this renders is now a real one: `create_property_def`
+  // refuses to declare a type over a key whose existing values contradict it,
+  // and the reason (which key, how many values, what shape) is the whole point.
+  //
+  // The mock used to `throw new Error(...)`, which no backend rejection ever
+  // looks like: `typedError` RETHROWS an `Error` and returns everything else as
+  // data, so `unwrap` throws the deserialized `AppError` OBJECT. The old
+  // `err instanceof Error ? err.message : undefined` was therefore false for
+  // every real rejection and the branch this test claimed to cover was dead —
+  // green on a shape the backend cannot produce. The mock now rejects with the
+  // wire shape.
+  it('create_property_def rejection shows the validation message from backend', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
-      if (cmd === 'create_property_def') throw new Error('Duplicate key "status"')
+      if (cmd === 'create_property_def')
+        throw {
+          kind: 'validation',
+          code: null,
+          message:
+            "cannot declare property 'status' as 'text': 2 value(s) already stored under this " +
+            'key would be rejected by that type (2 stored as number).',
+        }
       return null
     })
 
@@ -882,8 +900,50 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     await user.click(screen.getByRole('button', { name: /create definition/i }))
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Duplicate key "status"')
+      expect(mockedToastError).toHaveBeenCalledWith(
+        expect.stringContaining("cannot declare property 'status' as 'text'"),
+      )
     })
+    // ...and never the generic fallback, which is what the user got before.
+    expect(mockedToastError).not.toHaveBeenCalledWith(t('property.createDefFailed'))
+  })
+
+  // #4399 — the other half: a TRANSPORT failure (a real `Error`, which
+  // `typedError` rethrows) is not a message written for a user, so it keeps the
+  // localized toast. Without this, "show the reason" could be satisfied by
+  // showing every thrown message.
+  it('create_property_def transport Error shows the localized fallback', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'create_property_def') throw new Error('ipc channel closed')
+      return null
+    })
+
+    render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
+    })
+
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), 'status')
+
+    await waitFor(() => {
+      expect(screen.getByText(/Create "status"/)).toBeInTheDocument()
+    })
+    await user.click(screen.getByText(/Create "status"/))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /create definition/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('property.createDefFailed'))
+    })
+    expect(mockedToastError).not.toHaveBeenCalledWith('ipc channel closed')
   })
 
   it('create_property_def rejection without message shows fallback toast', async () => {
@@ -936,7 +996,11 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'create_property_def')
         return makeDef((a?.['key'] as string) ?? 'myprop', (a?.['valueType'] as string) ?? 'number')
-      if (cmd === 'set_property') throw new Error('set failed after create')
+      // #4399 — the wire shape a real `set_property` rejection has (an
+      // `AppError` OBJECT, which is what `unwrap` throws), not an `Error`,
+      // which `typedError` rethrows and no backend rejection ever produces.
+      if (cmd === 'set_property')
+        throw { kind: 'validation', code: null, message: 'set failed after create' }
       return null
     })
 

@@ -22,7 +22,7 @@ import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
-import { reportIpcError } from '@/lib/report-ipc-error'
+import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 // Properties designed for task blocks (content blocks with todo_state).
 // Filtered out of the "add property" popover for pages.
@@ -245,8 +245,20 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
           setProperties(updated)
         }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : undefined
-        notify.error(message ?? t('property.createDefFailed'))
+        // #4399 — this intended to surface the backend's own reason, and
+        // could not: `unwrap` throws the deserialized `AppError` OBJECT, so
+        // `err instanceof Error` is false for exactly the IPC rejections
+        // whose message matters and every one of them fell through to the
+        // generic toast. It matters more now that `create_property_def`
+        // refuses to declare a type over a key whose existing values
+        // contradict it — the refusal names the key, the count and the
+        // stored shapes. Shared helper so this and the Settings → Properties
+        // call site cannot drift; it also adds the structured log line this
+        // branch never had.
+        reportIpcErrorWithReason('PagePropertyTable', 'property.createDefFailed', err, t, {
+          pageId,
+          key,
+        })
       }
     },
     [pageId, t, addDraftRow],
