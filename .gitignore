@@ -41,6 +41,14 @@ src-tauri/binaries/
 # check-raw-tx.py); must never ride along on a `git add -A`.
 __pycache__/
 
+# check-hook-deps.mjs's CLI self-test fixture tree. It has to live inside the
+# repo's own scripts/ (Node resolves the `smol-toml` bare specifier by walking
+# the IMPORTING file's ancestors for node_modules), and its `finally` cleanup
+# does not survive a hard kill. The self-test also sweeps stale ones at
+# start-up; this rule covers the window in between, so a stranded tree can
+# never ride along on a `git add -A` — same reasoning as __pycache__ above.
+scripts/.hookdeps-cli-selftest-*/
+
 # SQLx dev database (offline cache .sqlx/ is tracked)
 src-tauri/dev.db
 src-tauri/dev.db-*

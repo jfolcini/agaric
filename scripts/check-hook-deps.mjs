@@ -42,7 +42,12 @@
  *          `stripLineComments(text, 'py')` output (blanks docstrings,
  *          drops `#`-comment-only lines), whose second argument resolves
  *          (via `SCRIPT_DIR /` or `REPO_ROOT /` path-joins) to a
- *          `scripts/**` file. `sys.path.insert`/`sys.path.append` and
+ *          `scripts/**` file. A path expression with NO literal string
+ *          component (`SCRIPT_DIR / name`), or whose pieces resolve
+ *          OUTSIDE `scripts/` (so the assumed base was probably wrong),
+ *          marks the hook UNVERIFIABLE too — the base is a guess, and a
+ *          guess that lands nowhere is not knowledge that there is no
+ *          dependency. `sys.path.insert`/`sys.path.append` and
  *          `exec(` are NOT resolved (a plain `import` after a `sys.path`
  *          splice, or code run from a string, cannot be statically
  *          resolved with any confidence) — their presence marks the whole
@@ -116,6 +121,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -133,6 +139,12 @@ const __dirname = import.meta.dirname
 const REPO_ROOT = resolve(__dirname, '..')
 const BASELINE_PATH = resolve(__dirname, 'hook-deps-baseline.json')
 const UNVERIFIABLE_BASELINE_PATH = resolve(__dirname, 'hook-deps-unverifiable-baseline.json')
+// Prefix of the in-repo CLI self-test fixture tree (see runCliSelfTest).
+// Dot-leading so it sorts out of the way; swept at start-up, AND listed in
+// .gitignore -- the two cover different failure modes, the sweep bounding a
+// stranded tree's lifetime and the ignore rule stopping one that exists
+// right now from riding along on a `git add -A`.
+const CLI_FIXTURE_PREFIX = '.hookdeps-cli-selftest-'
 
 // ─── prek.toml parsing ──────────────────────────────────────────────────
 
@@ -257,8 +269,24 @@ function extractJsDeps(rawText) {
   let m
   while ((m = JS_IMPORT_EXPORT_FROM_RE.exec(commentsStripped)) !== null) {
     const fromStart = m.indices[1][0]
-    if (isRealCode(m.index) && isRealCode(fromStart)) specs.push(m[3])
-    if (m.index === JS_IMPORT_EXPORT_FROM_RE.lastIndex) JS_IMPORT_EXPORT_FROM_RE.lastIndex++
+    if (isRealCode(m.index) && isRealCode(fromStart)) {
+      specs.push(m[3])
+      if (m.index === JS_IMPORT_EXPORT_FROM_RE.lastIndex) JS_IMPORT_EXPORT_FROM_RE.lastIndex++
+    } else {
+      // REJECTED match: rewind to just past its first character instead of
+      // leaving `lastIndex` at the match END. This form spans up to 400
+      // characters, so a rejected match can cover input that was never
+      // examined -- e.g. an `import` keyword inside a string literal whose
+      // nearest following `from` belongs to a GENUINE `import ... from`
+      // statement below it. Consuming that span would drop the genuine
+      // statement from the scan entirely and report the hook clean: the
+      // guard's own fail-open shape, one function over. Rewinding cannot
+      // loop forever -- `m.index + 1` is strictly greater than the
+      // `lastIndex` this iteration started from, so the scan always
+      // advances. `keyword-in-string.mjs` in the fixture is exactly this
+      // case and fails without this branch.
+      JS_IMPORT_EXPORT_FROM_RE.lastIndex = m.index + 1
+    }
   }
 
   for (const re of [JS_BARE_IMPORT_RE, JS_REQUIRE_RE, JS_DYNAMIC_IMPORT_RE]) {
@@ -329,21 +357,55 @@ function extractPyDeps(rawText) {
   return { specs, unresolved }
 }
 
+/**
+ * Resolve one `spec_from_file_location` argument list to a `scripts/**` path.
+ *
+ * Returns a DISCRIMINATED result, never a bare `null`: this scan's own
+ * "classify positively" rule (see the file header) says a path expression it
+ * cannot judge is an UNVERIFIABLE hook, not an absent dependency. There are
+ * two such shapes, and both used to return `null` and be filtered away
+ * silently -- a dropped edge is the exact defect #3997 is about:
+ *   - the path expression carries no literal string component at all
+ *     (`SCRIPT_DIR / name`), so there is nothing to resolve; and
+ *   - the pieces resolve OUTSIDE `scripts/`. The base is a GUESS
+ *     (`REPO_ROOT` if the text names it, otherwise the script's own
+ *     directory), so landing outside `scripts/` means either the guess was
+ *     wrong or the dependency genuinely lives somewhere this guard's
+ *     `scripts/**` model does not describe. Either way it is not knowledge
+ *     that the hook is fine.
+ * @returns {{kind: 'dep', rel: string} | {kind: 'unresolvable', reason: string}}
+ */
 function resolvePySpec(repoRoot, scriptRepoDir, argText) {
   // argText is `spec_from_file_location`'s full argument list: `"_name", <path
   // expr>`. The first quoted string is the MODULE NAME, not a path component
   // -- only string pieces AFTER the first top-level comma are path segments.
+  const oneLine = argText.replace(/\s+/g, ' ').trim()
   const commaIdx = argText.indexOf(',')
   const pathExpr = commaIdx === -1 ? '' : argText.slice(commaIdx + 1)
   const pieces = [...pathExpr.matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1])
-  if (pieces.length === 0) return null
+  if (pieces.length === 0) {
+    return {
+      kind: 'unresolvable',
+      reason:
+        'spec_from_file_location path expression has no literal string component ' +
+        `(cannot be resolved statically): ${oneLine}`,
+    }
+  }
   let base
   if (/\bREPO_ROOT\b/.test(argText)) base = repoRoot
   else base = resolve(repoRoot, scriptRepoDir) // SCRIPT_DIR or unrecognised -> script's own dir
   let abs = base
   for (const p of pieces) abs = resolve(abs, p)
   const rel = relative(repoRoot, abs)
-  return rel.startsWith('scripts/') ? rel : null
+  if (!rel.startsWith('scripts/')) {
+    return {
+      kind: 'unresolvable',
+      reason:
+        `spec_from_file_location path resolves outside scripts/ (to '${rel}'), so the base ` +
+        `this scan assumed may be wrong: ${oneLine}`,
+    }
+  }
+  return { kind: 'dep', rel }
 }
 
 const SH_FILENAME_RE = /([\w-]+\.sh)\b/g
@@ -388,8 +450,27 @@ function extractShDeps(rawText, repoRoot, scriptRepoDir) {
  * Resolve first-party dependencies of `scriptRel` (a `scripts/**` path,
  * relative to `repoRoot`), NON-recursively — one language-specific
  * extraction pass. Returns `{ deps: string[], unresolved: string[] }`.
+ *
+ * `cache` is an OPTIONAL `Map<scriptRel, result>` owned by one `analyze()`
+ * call. Shared modules (`lib/js-scanner.mjs`, `check-import-cycles.mjs`,
+ * `check-raw-tx.py`) sit in the closure of many hooks, and without it each
+ * of the ~160 hooks re-reads and re-tokenises every module in its own
+ * closure -- on every commit, since `hook-deps` is `always_run`. Scoping
+ * the memo to one `analyze()` rather than to the module keeps it correct by
+ * construction: no caller mutates the tree between two `analyze()` calls on
+ * the SAME `repoRoot` (the CLI self-test does rewrite its fixture, but each
+ * of its runs is a fresh subprocess), and each call gets a fresh map, so
+ * the key needs no `repoRoot` component.
  */
-function extractDirectDeps(repoRoot, scriptRel) {
+function extractDirectDeps(repoRoot, scriptRel, cache) {
+  const hit = cache?.get(scriptRel)
+  if (hit) return hit
+  const result = extractDirectDepsUncached(repoRoot, scriptRel)
+  cache?.set(scriptRel, result)
+  return result
+}
+
+function extractDirectDepsUncached(repoRoot, scriptRel) {
   const abs = resolve(repoRoot, scriptRel)
   const text = readFileSync(abs, 'utf8')
   const scriptRepoDir = dirname(scriptRel)
@@ -403,9 +484,14 @@ function extractDirectDeps(repoRoot, scriptRel) {
   }
   if (scriptRel.endsWith('.py')) {
     const { specs, unresolved } = extractPyDeps(text)
-    const deps = specs
-      .map((argText) => resolvePySpec(repoRoot, scriptRepoDir, argText))
-      .filter((d) => d && d !== scriptRel)
+    const deps = []
+    for (const argText of specs) {
+      const r = resolvePySpec(repoRoot, scriptRepoDir, argText)
+      // A path expression this scan cannot resolve is reported, never
+      // filtered away -- see resolvePySpec's doc comment.
+      if (r.kind === 'unresolvable') unresolved.push(r.reason)
+      else if (r.rel !== scriptRel) deps.push(r.rel)
+    }
     return { deps, unresolved }
   }
   if (scriptRel.endsWith('.sh')) {
@@ -423,16 +509,20 @@ function extractDirectDeps(repoRoot, scriptRel) {
  * chain unverifiable — the ORIGINAL script's `files:` is what a defanging
  * commit has to get past, no matter which link it targets).
  */
-function resolveDeps(repoRoot, scriptRel, seen = new Set()) {
+function resolveDeps(repoRoot, scriptRel, seen = new Set(), cache = new Map()) {
   if (!existsSync(resolve(repoRoot, scriptRel))) return { deps: new Set(), unresolved: [] }
-  const { deps: direct, unresolved: directUnresolved } = extractDirectDeps(repoRoot, scriptRel)
+  const { deps: direct, unresolved: directUnresolved } = extractDirectDeps(
+    repoRoot,
+    scriptRel,
+    cache,
+  )
 
   const all = new Set(direct)
   const unresolved = [...directUnresolved]
   for (const d of direct) {
     if (seen.has(d)) continue
     seen.add(d)
-    const sub = resolveDeps(repoRoot, d, seen)
+    const sub = resolveDeps(repoRoot, d, seen, cache)
     for (const t of sub.deps) all.add(t)
     unresolved.push(...sub.unresolved)
   }
@@ -482,11 +572,13 @@ function selfCoveredScripts(hooks, repoRoot) {
     const fires = hs.some((h) => {
       if (h.always_run) return true
       if (!h.files) return false
-      try {
-        return new RegExp(h.files).test(scriptRel)
-      } catch {
-        return false
-      }
+      // `hookFilesMatch`, not a bare `files:` test: a hook that matches the
+      // script and then removes it again in its own `exclude:` provably
+      // never fires on it, so it cannot be what covers it. Testing `files:`
+      // alone here while `hookFilesMatch` honours `exclude:` everywhere else
+      // was an asymmetry that granted the own-script exemption to a hook
+      // that does not fire (fixture: `self-excluded-js`).
+      return hookFilesMatch(h, scriptRel) === true
     })
     if (fires) covered.add(scriptRel)
   }
@@ -524,6 +616,9 @@ function analyze(prekTomlPath, repoRoot = dirname(prekTomlPath)) {
   const broken = []
   const unverifiable = []
   const selfCovered = selfCoveredScripts(hooks, repoRoot)
+  // One direct-dependency memo for this whole analyze() call -- see
+  // extractDirectDeps's doc comment.
+  const depCache = new Map()
 
   for (const h of hooks) {
     if (h.always_run) continue // bypasses files: entirely -- fine by construction
@@ -553,7 +648,7 @@ function analyze(prekTomlPath, repoRoot = dirname(prekTomlPath)) {
       continue
     }
 
-    const { deps, unresolved } = resolveDeps(repoRoot, cls.scriptRel)
+    const { deps, unresolved } = resolveDeps(repoRoot, cls.scriptRel, new Set(), depCache)
     if (unresolved.length > 0) {
       unverifiable.push({
         hookId: h.id,
@@ -588,9 +683,37 @@ function pairKey(p) {
   return `${p.hookId}::${p.dep}`
 }
 
+/**
+ * Read a baseline file as a JSON array. A malformed baseline is a legible
+ * FAILURE naming the file, not an unhandled `SyntaxError` stack trace out
+ * of a pre-commit hook -- `hook-deps` is `always_run`, so this is on the
+ * path of every commit, and "what even is this error" is the difference
+ * between a 10-second fix and a `--no-verify`.
+ */
 function readJsonArray(path) {
   if (!existsSync(path)) return []
-  return JSON.parse(readFileSync(path, 'utf8'))
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (err) {
+    console.error(`FATAL: baseline file is not valid JSON: ${path}`)
+    console.error(`  ${err.message}`)
+    console.error(
+      '\n  -> Fix it by hand, or regenerate it:\n' +
+        '       node scripts/check-hook-deps.mjs --update-baseline\n',
+    )
+    process.exit(1)
+  }
+  if (!Array.isArray(parsed)) {
+    console.error(`FATAL: baseline file must contain a JSON ARRAY: ${path}`)
+    console.error(`  got: ${typeof parsed}`)
+    console.error(
+      '\n  -> Fix it by hand, or regenerate it:\n' +
+        '       node scripts/check-hook-deps.mjs --update-baseline\n',
+    )
+    process.exit(1)
+  }
+  return parsed
 }
 
 function writeBrokenBaseline(pairs, baselinePath) {
@@ -696,6 +819,20 @@ function runGuard(
   return 1
 }
 
+/**
+ * Regenerate both baselines, refusing to GROW either one unless
+ * `allowGrowth`. Returns the process exit code (0 = wrote, 1 = refused) --
+ * the caller wires it to `process.exit`, the same shape `runGuard()` uses.
+ *
+ * Every parameter has a production default, so `runUpdateBaselineGrowthSelf
+ * Test` can point THIS function at a fixture tree instead of testing a
+ * second copy of the refusal logic. That is not a stylistic preference: an
+ * earlier revision had a `updateBaselineFor()` twin that the self-test
+ * drove while production kept its own `!allowGrowth` guard, and deleting
+ * the PRODUCTION guard left all three assertions green -- exactly the
+ * "the real exit path is untested" defect this file's `runCliSelfTest`
+ * exists to close for `runGuard()`, recurring one function over.
+ */
 function updateBaseline(
   repoRoot = REPO_ROOT,
   baselinePath = BASELINE_PATH,
@@ -722,8 +859,7 @@ function updateBaseline(
     for (const p of addedPairs) console.error(`  + ${p.hookId} :: ${p.dep} (${p.class})`)
     for (const id of addedUnverifiable) console.error(`  + ${id} (newly unverifiable)`)
     console.error('\n  -> If this is a deliberate deferral, re-run with --allow-growth.\n')
-    process.exitCode = 1
-    return
+    return 1
   }
 
   writeBrokenBaseline(broken, baselinePath)
@@ -737,6 +873,7 @@ function updateBaseline(
     `Wrote ${relative(repoRoot, baselinePath)} (${broken.length} pair(s)) and ` +
       `${relative(repoRoot, unverifiableBaselinePath)} (${unverifiableIds.length} id(s)).`,
   )
+  return 0
 }
 
 // ─── self-test ──────────────────────────────────────────────────────────
@@ -769,6 +906,24 @@ function buildInProcessFixture(tmp) {
   writeFileSync(
     join(scriptsDir, 'has-comment.mjs'),
     "// import { helper } from './lib/shared.mjs'\nexport const y = 1\n",
+  )
+  // A STRING LITERAL containing the word `import` but NO `from`, sitting
+  // ABOVE a genuine `import ... from` statement. The `import|export ... from`
+  // regex allows 400 characters of slack between the two keywords, so it
+  // matches starting at the FAKE keyword inside the string and running all
+  // the way through the REAL statement's `from '<spec>'`. That match is
+  // correctly REJECTED (its leading keyword is not real code) -- but a
+  // rejected match must not swallow the input it spanned: leaving
+  // `lastIndex` past the real statement means the real statement is never
+  // rescanned and the dependency is silently lost, which is the guard's own
+  // fail-open shape. `has-fixture.mjs` above does NOT cover this: its
+  // fixture string carries its own `from`, so the match ends inside the
+  // string and the slack never reaches past anything real.
+  writeFileSync(
+    join(scriptsDir, 'keyword-in-string.mjs'),
+    "const NOTE = 'the import keyword'\n" +
+      "import { helper } from './lib/shared.mjs'\n" +
+      'export const z = helper(NOTE)\n',
   )
   // A LEADING-WHITESPACE (indented) real top-level import, e.g. inside an
   // if-block -- must still be found (#3997-review gap 6).
@@ -822,6 +977,29 @@ function buildInProcessFixture(tmp) {
     join(scriptsDir, 'exec-loader.py'),
     'from pathlib import Path\n' + 'exec(Path("lib/shared_py.py").read_text())\n',
   )
+  // A spec_from_file_location whose path expression resolves OUTSIDE
+  // scripts/ (an unrecognised base -- here REPO_ROOT into a sibling tree).
+  // It is a real dependency edge this scan cannot judge, so it must be
+  // UNVERIFIABLE, not silently dropped (classify positively).
+  writeFileSync(
+    join(scriptsDir, 'py-outside-scripts.py'),
+    'import importlib.util\n' +
+      'from pathlib import Path\n' +
+      'REPO_ROOT = Path(__file__).resolve().parent.parent\n' +
+      '_spec = importlib.util.spec_from_file_location(\n' +
+      '    "_mod", REPO_ROOT / "other" / "mod.py"\n' +
+      ')\n',
+  )
+  // ...and one whose path expression carries NO literal string component at
+  // all (a variable): same rule, same outcome.
+  writeFileSync(
+    join(scriptsDir, 'py-dynamic-spec.py'),
+    'import importlib.util\n' +
+      'from pathlib import Path\n' +
+      'SCRIPT_DIR = Path(__file__).resolve().parent\n' +
+      'def load(name):\n' +
+      '    return importlib.util.spec_from_file_location("_m", SCRIPT_DIR / name)\n',
+  )
   // A docstring/comment MENTIONING spec_from_file_location -- must not be a
   // false positive now that the column-0 anchor is gone.
   writeFileSync(
@@ -832,6 +1010,13 @@ function buildInProcessFixture(tmp) {
       '"""\n' +
       'x = 1\n',
   )
+
+  // A script whose only hook matches it in `files:` and then removes it
+  // again in `exclude:` -- the own-script slot's mirror of `excluded-dep`
+  // below. `selfCoveredScripts` must apply the SAME files:-AND-NOT-exclude:
+  // test `hookFilesMatch` applies, or a hook that provably never fires on
+  // its own script still counts as covering it.
+  writeFileSync(join(scriptsDir, 'self-excluded.mjs'), 'export const q = 1\n')
 
   // A shared shell lib under lib/, one NOT under lib/ (sibling), sourced via
   // both `.` and `source` keywords -- #3997-review gaps 1 and 2.
@@ -886,6 +1071,11 @@ entry = "node scripts/has-comment.mjs"
 files = "^scripts/has-comment\\\\.mjs$"
 
 [[repos.hooks]]
+id = "keyword-in-string-js"
+entry = "node scripts/keyword-in-string.mjs"
+files = "^scripts/keyword-in-string\\\\.mjs$"
+
+[[repos.hooks]]
 id = "indented-import-js"
 entry = "node scripts/indented-import.mjs"
 files = "^scripts/indented-import\\\\.mjs$"
@@ -929,6 +1119,16 @@ files = "^scripts/sys-path\\\\.py$"
 id = "exec-loader-py"
 entry = "python3 scripts/exec-loader.py"
 files = "^scripts/exec-loader\\\\.py$"
+
+[[repos.hooks]]
+id = "py-outside-scripts"
+entry = "python3 scripts/py-outside-scripts.py"
+files = "^scripts/py-outside-scripts\\\\.py$"
+
+[[repos.hooks]]
+id = "py-dynamic-spec"
+entry = "python3 scripts/py-dynamic-spec.py"
+files = "^scripts/py-dynamic-spec\\\\.py$"
 
 [[repos.hooks]]
 id = "py-docstring-mention"
@@ -995,6 +1195,12 @@ id = "excluded-dep"
 entry = "node scripts/bad.mjs"
 files = "^scripts/(bad\\\\.mjs|lib/shared\\\\.mjs)$"
 exclude = "^scripts/lib/shared\\\\.mjs$"
+
+[[repos.hooks]]
+id = "self-excluded-js"
+entry = "node scripts/self-excluded.mjs"
+files = "^scripts/self-excluded\\\\.mjs$"
+exclude = "^scripts/self-excluded\\\\.mjs$"
 `
 }
 
@@ -1042,6 +1248,14 @@ function runSelfTest() {
       ok('a commented-out import is not read as a real dependency')
     } else {
       fail('commented import is not a false positive', JSON.stringify(broken))
+    }
+
+    if (brokenPairs.has('keyword-in-string-js::scripts/lib/shared.mjs')) {
+      ok(
+        'a real import AFTER an import-shaped string literal is still found (rejected match does not swallow it)',
+      )
+    } else {
+      fail('real import after a fake keyword in a string is found', JSON.stringify(broken))
     }
 
     if (brokenPairs.has('indented-import-js::scripts/lib/shared.mjs')) {
@@ -1093,6 +1307,18 @@ function runSelfTest() {
       ok('exec(...) is UNVERIFIABLE, not silently clean (review gap 9)')
     } else {
       fail('exec( is unverifiable', JSON.stringify(unverifiable))
+    }
+
+    if (unverifiableIds.has('py-outside-scripts')) {
+      ok('a spec_from_file_location resolving OUTSIDE scripts/ is UNVERIFIABLE, not dropped')
+    } else {
+      fail('out-of-scripts spec path is unverifiable', JSON.stringify({ broken, unverifiable }))
+    }
+
+    if (unverifiableIds.has('py-dynamic-spec')) {
+      ok('a spec_from_file_location path with no literal component is UNVERIFIABLE, not dropped')
+    } else {
+      fail('literal-free spec path is unverifiable', JSON.stringify({ broken, unverifiable }))
     }
 
     if (!brokenIds.has('py-docstring-mention') && !unverifiableIds.has('py-docstring-mention')) {
@@ -1175,6 +1401,20 @@ function runSelfTest() {
       ok('a dep unioned into files: but removed by exclude: is still flagged (review gap 11)')
     } else {
       fail('excluded dep is flagged', JSON.stringify(broken))
+    }
+
+    if (brokenPairs.has('self-excluded-js::scripts/self-excluded.mjs')) {
+      ok('a hook whose files: matches its own script and then EXCLUDES it does not self-cover')
+      if (classOf('self-excluded-js', 'scripts/self-excluded.mjs') === 'no-self-test') {
+        ok('that own-script gap is classed "no-self-test"')
+      } else {
+        fail(
+          'self-excluded own-script gap classed no-self-test',
+          String(classOf('self-excluded-js', 'scripts/self-excluded.mjs')),
+        )
+      }
+    } else {
+      fail('exclude:-negated self-coverage is not counted as coverage', JSON.stringify(broken))
     }
 
     if (!brokenIds.has('no-script-at-all') && !unverifiableIds.has('no-script-at-all')) {
@@ -1262,9 +1502,28 @@ function runSelfTest() {
  * specifier walks up the IMPORTING FILE's ancestor directories looking for
  * `node_modules`, and only nesting the fixture under the real repo puts
  * this repo's `node_modules` on that walk. Always removed in `finally`.
+ *
+ * `finally` does not survive a hard kill (SIGKILL, an OOM reaper, a pulled
+ * plug), which would strand an untracked `.hookdeps-cli-selftest-*` tree --
+ * holding a `prek.toml` and copies of three guard scripts -- inside the
+ * repo's own `scripts/`. So every run first SWEEPS whatever a previous one
+ * left, and says how many it removed: stale debris becomes a visible,
+ * self-healing event instead of an invisible one. The sweep assumes
+ * self-test runs are not concurrent (prek runs one instance of a hook); a
+ * concurrent manual run would lose its fixture and go RED, which is the
+ * safe direction to fail.
  */
 function runCliSelfTest(ok, fail) {
-  const fixtureRoot = mkdtempSync(resolve(REPO_ROOT, 'scripts', '.hookdeps-cli-selftest-'))
+  const scriptsDir = resolve(REPO_ROOT, 'scripts')
+  const stale = readdirSync(scriptsDir).filter((n) => n.startsWith(CLI_FIXTURE_PREFIX))
+  for (const name of stale) rmSync(resolve(scriptsDir, name), { recursive: true, force: true })
+  if (stale.length > 0) {
+    console.log(
+      `  (swept ${stale.length} stale CLI-fixture tree(s) from an interrupted run: ${stale.join(', ')})`,
+    )
+  }
+
+  const fixtureRoot = mkdtempSync(resolve(scriptsDir, CLI_FIXTURE_PREFIX))
   try {
     const fixtureScripts = resolve(fixtureRoot, 'scripts')
     mkdirSync(fixtureScripts, { recursive: true })
@@ -1331,15 +1590,38 @@ function runCliSelfTest(ok, fail) {
     }
     if (status === 0) ok('CLI exits 0 on a clean tree')
     else fail('CLI exits 0 on a clean tree', `status=${status}`)
+
+    // Malformed baseline: the guard must fail LEGIBLY, naming the file --
+    // not throw an unhandled SyntaxError out of an always_run pre-commit
+    // hook. Driven through the real CLI, not `readJsonArray` in process,
+    // because `process.exit(1)` is the behaviour under test.
+    writeFileSync(resolve(fixtureScripts, 'hook-deps-baseline.json'), '{ not json at all\n')
+    let stderr = ''
+    status = 0
+    try {
+      run()
+    } catch (err) {
+      status = err.status ?? 1
+      stderr = String(err.stderr ?? '')
+    }
+    if (status === 1 && /hook-deps-baseline\.json/.test(stderr) && /not valid JSON/.test(stderr)) {
+      ok('CLI fails legibly (exit 1, naming the file) on a malformed baseline')
+    } else {
+      fail('malformed baseline fails legibly', `status=${status} stderr=${stderr.slice(0, 300)}`)
+    }
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true })
   }
 }
 
 /**
- * Self-test the `--update-baseline` growth gate directly against the
- * exported functions (no subprocess needed here -- the property under test
- * is the refusal logic and the files it writes, not an exit-code path).
+ * Self-test the `--update-baseline` growth gate against the PRODUCTION
+ * `updateBaseline()` itself -- pointed at a fixture tree through its own
+ * parameters, never a test-local copy of the refusal logic (see
+ * `updateBaseline`'s doc comment for the defect that shape hid). Both the
+ * files written and the RETURNED EXIT CODE are asserted, because the exit
+ * code is what `process.exit(updateBaseline())` in `main` actually
+ * propagates to the shell.
  */
 function runUpdateBaselineGrowthSelfTest(ok, fail) {
   const tmp = mkdtempSync(join(os.tmpdir(), 'hook-deps-growth-selftest-'))
@@ -1351,8 +1633,9 @@ function runUpdateBaselineGrowthSelfTest(ok, fail) {
     const unverifiableBaselinePath = join(tmp, 'unverifiable-baseline.json')
 
     // No baseline on disk yet -> analyze() finds real broken pairs -> a
-    // bare update (no --allow-growth) must REFUSE to write anything.
-    updateBaselineFor(prekTomlPath, tmp, baselinePath, unverifiableBaselinePath, false)
+    // bare update (no --allow-growth) must REFUSE to write anything, and
+    // must say so with a NON-ZERO exit code.
+    const refusedCode = updateBaseline(tmp, baselinePath, unverifiableBaselinePath, false)
     if (!existsSync(baselinePath)) {
       ok('--update-baseline without --allow-growth refuses to write a GROWING baseline')
     } else {
@@ -1361,48 +1644,37 @@ function runUpdateBaselineGrowthSelfTest(ok, fail) {
         readFileSync(baselinePath, 'utf8'),
       )
     }
+    if (refusedCode === 1) {
+      ok('the refusal EXITS 1 (what `process.exit(updateBaseline())` propagates)')
+    } else {
+      fail('refusal exits 1', `code=${refusedCode}`)
+    }
 
-    // With --allow-growth, it writes.
-    updateBaselineFor(prekTomlPath, tmp, baselinePath, unverifiableBaselinePath, true)
+    // With --allow-growth, it writes, and exits 0.
+    const grewCode = updateBaseline(tmp, baselinePath, unverifiableBaselinePath, true)
     if (existsSync(baselinePath)) {
       ok('--update-baseline --allow-growth writes the baseline')
     } else {
       fail('--update-baseline --allow-growth writes the baseline', 'no file written')
     }
+    if (grewCode === 0) ok('an acknowledged growth exits 0')
+    else fail('acknowledged growth exits 0', `code=${grewCode}`)
 
     // Re-running with the SAME tree and no growth (nothing new) must
     // succeed without needing --allow-growth (shrink/no-op is always fine).
     const before = readFileSync(baselinePath, 'utf8')
-    updateBaselineFor(prekTomlPath, tmp, baselinePath, unverifiableBaselinePath, false)
+    const noopCode = updateBaseline(tmp, baselinePath, unverifiableBaselinePath, false)
     const after = existsSync(baselinePath) ? readFileSync(baselinePath, 'utf8') : null
     if (after === before) {
       ok('--update-baseline without growth (no-op) succeeds without --allow-growth')
     } else {
       fail('no-op update-baseline succeeds without --allow-growth', String(after))
     }
+    if (noopCode === 0) ok('a no-op update exits 0')
+    else fail('no-op update exits 0', `code=${noopCode}`)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
-}
-
-function updateBaselineFor(
-  prekTomlPath,
-  repoRoot,
-  baselinePath,
-  unverifiableBaselinePath,
-  allowGrowth,
-) {
-  const { broken, unverifiable } = analyze(prekTomlPath, repoRoot)
-  const unverifiableIds = [...new Set(unverifiable.map((u) => u.hookId))]
-  const existingBroken = readJsonArray(baselinePath)
-  const existingUnverifiable = readJsonArray(unverifiableBaselinePath)
-  const existingKeys = new Set(existingBroken.map(pairKey))
-  const existingUnverifiableSet = new Set(existingUnverifiable)
-  const addedPairs = broken.filter((p) => !existingKeys.has(pairKey(p)))
-  const addedUnverifiable = unverifiableIds.filter((id) => !existingUnverifiableSet.has(id))
-  if (!allowGrowth && (addedPairs.length > 0 || addedUnverifiable.length > 0)) return
-  writeBrokenBaseline(broken, baselinePath)
-  writeUnverifiableBaseline(unverifiableIds, unverifiableBaselinePath)
 }
 
 // ─── main ───────────────────────────────────────────────────────────────
@@ -1413,7 +1685,7 @@ if (isMainModule) {
   if (process.argv.includes('--self-test')) {
     runSelfTest()
   } else if (process.argv.includes('--update-baseline')) {
-    updateBaseline()
+    process.exit(updateBaseline())
   } else {
     process.exit(runGuard())
   }

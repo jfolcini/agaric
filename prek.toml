@@ -454,7 +454,20 @@ pass_filenames = false
 # no pattern can fix it — a mechanically self-locating trigger is not a
 # thing prek offers. So: if this guard is ever moved, move this path with
 # it, same as the hook's own `entry` line above.
-files = '\.(md|ts|tsx)$|^scripts/(doc-code-paths-baseline\.json|check-doc-code-paths\.mjs)$'
+#
+# #3997/#4434: `lib/js-scanner.mjs` is unioned in for the reason
+# `doc-vs-code-paths-selftest` below already gives for its own pattern —
+# this guard delegates isolating `.ts`/`.tsx` COMMENTS from code to that
+# shared tokenizer (#4126), so editing the tokenizer alone could silently
+# defang the comment scan while selecting this hook not at all. The two
+# OTHER shared modules in this guard's closure (`lib/guard-file-source.mjs`,
+# `lib/git-scratch-guard.mjs`) stay grandfathered in
+# scripts/hook-deps-baseline.json alongside the identical entries for
+# `architecture-citations`, `dead-symbol-citations` and
+# `remove-after-markers`: those are source-SELECTION plumbing (which copy of
+# a file to judge, index vs working tree), a different call than the
+# detector itself, and they are a four-hook family to be decided together.
+files = '\.(md|ts|tsx)$|^scripts/(doc-code-paths-baseline\.json|check-doc-code-paths\.mjs|lib/js-scanner\.mjs)$'
 stages = ["pre-commit"]
 # `verbose = true` is load-bearing, same as `commit-sentinel` below: prek
 # swallows a PASSING hook's output, and the line-bounds check (#4258) exits
@@ -746,7 +759,16 @@ name = "src/types/ exports are type-only (#4226)"
 entry = "node scripts/check-types-erasure.mjs"
 language = "system"
 pass_filenames = false
-files = "^src/types/.*\\.(ts|tsx)$"
+# #3997/#4434: `scripts/lib/js-scanner.mjs` is unioned in because
+# check-types-erasure.mjs delegates its whole export-shape scan to that
+# tokenizer — it is the guard's detection logic, not incidental plumbing —
+# so a commit editing only the tokenizer used to select this hook not at
+# all. `pass_filenames = false` already means the hook re-walks src/types/
+# whatever the changed path is, so the union costs one extra run of an
+# already whole-tree scan. (This pair was grandfathered into
+# scripts/hook-deps-baseline.json for one round; unioning it costs about
+# what baselining it did, so it is fixed rather than deferred.)
+files = "^src/types/.*\\.(ts|tsx)$|^scripts/lib/js-scanner\\.mjs$"
 stages = ["pre-commit"]
 
 # Self-test the types-erasure guard's own exit behavior (type-only exports
@@ -758,7 +780,11 @@ name = "src/types/ type-only guard self-test"
 entry = "node scripts/check-types-erasure.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-types-erasure\\.mjs$"
+# #3997/#4434: `lib/js-scanner.mjs` too — same reason as the primary hook
+# above, and the same spelling `no-raw-invoke-selftest` /
+# `wdio-driver-gate-selftest` / `persist-hooks-selftest` already use for
+# this exact dependency.
+files = "^scripts/(check-types-erasure|lib/js-scanner)\\.mjs$"
 stages = ["pre-commit"]
 
 # bulk-vs-fold equivalence inventory ratchet (#3346): every bulk command is
@@ -1851,6 +1877,24 @@ language = "system"
 # behavior change to a script other callers (`pr-merge-result-check.sh`)
 # also invoke, out of scope for a `files:` regex fix. Tracked, not silently
 # claimed closed.
+#
+# WHY THIS COMMENT AND NOT A MECHANICAL CHECK (#4434 review note 10, asked
+# and answered so the next reader does not re-derive the dead end): a guard
+# that could red-flag "selected but not effective" would have to observe
+# that the run scanned ZERO files. These scripts expose no such observable —
+# on a clean run `main()` prints nothing and returns 0, identical to a run
+# that scanned the whole crate and found nothing (see `check-raw-tx.py`'s
+# `main()`), so rc=0 cannot distinguish the two. Getting one would mean
+# adding a target-count/`--print-targets` output to five python guards —
+# i.e. the same CLI change to shared callers that the paragraph above
+# already rules out of scope, which is where the real fix lives anyway.
+# `pass_filenames = false` WOULD make the union effective (argv empty
+# re-enables the whole-tree fallback), but it turns every `.rs` pre-commit
+# into five full-tree scans; that is a cost decision needing a measurement,
+# not a comment. And a baseline listing the five pairs would be this comment
+# in JSON with nothing able to re-derive it — an entry that can only go
+# stale silently, which is the exact defect #3997 is about. So: prose,
+# deliberately, until the CLI rework lands.
 files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/lib/guard_file_source\.py$'
 stages = ["pre-commit", "pre-push"]
 
@@ -2106,7 +2150,9 @@ language = "system"
 # skips it too, regardless of content. This union makes the hook SELECTED,
 # which is strictly better than skipped, but does not by itself make it
 # EFFECTIVE against a defanged `exists()`/`read()`; only
-# `py-guard-file-source-selftest` demonstrably catches that today.
+# `py-guard-file-source-selftest` demonstrably catches that today. See
+# `check-raw-tx`'s copy of this note above for why the gap is carried as
+# prose rather than as a mechanical check (#4434 review note 10).
 files = '^src-tauri/src/commands/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
@@ -2161,10 +2207,23 @@ stages = ["pre-commit", "pre-push"]
 # `/* */` comment is never counted, a fragment INSIDE a SQL string literal
 # IS counted — the guard deliberately does NOT reuse check-raw-tx.py's
 # string-blanking `strip_rust_comments` for exactly this reason — and the
-# baseline line format round-trips) whenever the guard script itself
-# changes, so a regression that defangs it can't land. Added by #3997: this
-# hook had no self-test of any kind before, structurally identical to the
-# gap `wdio-driver-gate` had before #3996.
+# baseline line format round-trips). Added by #3997: this hook had no
+# self-test of any kind before, structurally identical to the gap
+# `wdio-driver-gate` had before #3996.
+#
+# `always_run`, NOT `files:`-scoped to the guard script — deliberately, and
+# unlike the two other self-tests #3997 adds (`store-layering-selftest`,
+# `hook-deps-selftest`), which are `files:`-scoped. The split follows the
+# repo's existing line rather than drawing a new one: EVERY
+# `python3 … --self-test` hook in this file is `always_run = true` with
+# `pass_filenames = false`, while the JS/shell self-tests are overwhelmingly
+# `files:`-scoped. Keeping this one with its own family also matters
+# mechanically — `scripts/check-hook-deps.mjs` exempts a guard's OWN-script
+# slot only when SOME hook fires on that script, and for the python guards
+# the always_run sibling is what supplies that. An earlier revision of this
+# comment said it re-runs "whenever the guard script itself changes":
+# JS boilerplate, and simply false of an `always_run` hook, which re-runs on
+# every commit.
 [[repos.hooks]]
 id = "check-space-filter-drift-selftest"
 name = "space-filter drift guard self-test (#3997)"

@@ -40,11 +40,6 @@
     "class": "missing-union"
   },
   {
-    "hookId": "doc-vs-code-paths",
-    "dep": "scripts/lib/js-scanner.mjs",
-    "class": "missing-union"
-  },
-  {
     "hookId": "migrations-strict-tables",
     "dep": "scripts/check-migrations-strict.mjs",
     "class": "no-self-test"
@@ -68,16 +63,6 @@
     "hookId": "tauri-mock-parity",
     "dep": "scripts/check-tauri-mock-parity.mjs",
     "class": "no-self-test"
-  },
-  {
-    "hookId": "types-erasure-selftest",
-    "dep": "scripts/lib/js-scanner.mjs",
-    "class": "missing-union"
-  },
-  {
-    "hookId": "types-erasure",
-    "dep": "scripts/lib/js-scanner.mjs",
-    "class": "missing-union"
   },
   {
     "hookId": "unsafe-allowlist",
