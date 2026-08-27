@@ -277,3 +277,92 @@ premise fails loudly if React ever changes it.
 Sites where neither fits — a ref written *and read* during the same render, e.g.
 a `useMemo` cache — keep their inline write and their finding. They are a
 different hazard and need restructuring, not a mirror change.
+
+### The hazard: a `react/refs` fix can switch the React Compiler on (#4469)
+
+**Satisfying `react/refs` is not automatically behaviour-preserving.** The
+rewrites above, and the sibling one that replaces `roving.containerRef` with a
+destructured `const { containerRef } = useRovingTabindex()`, do not merely
+relocate a read — they decide whether the React Compiler optimises the
+component at all.
+
+The mechanism is not subtlety about how a value is spelled. **`react/refs` is a
+port of the React Compiler's own validation, so a finding is usually the
+compiler refusing to optimise that function.** Compile the pre-fix form with
+`babel-plugin-react-compiler` (the plugin `vite.config.ts` wires in via
+`reactCompilerPreset`) with a `logger` attached and it emits `CompileError`s
+whose text is word for word what oxlint prints — *"Cannot access refs during
+render."* The compiler's response to a violation is to skip the whole function.
+So the edit that silences the lint is also the edit that removes the compiler's
+reason to bail, and the component comes out the other side memoised. This holds
+for **both** rewrites: the render-phase mirror above compiles to `_c(…)` once it
+moves into a layout effect, exactly as the destructuring does. Measured on
+`SelectionBubbleMenu`: member access → three `CompileError`s and no `_c`
+anywhere in the component; destructured → `const $ = _c(75)` and a cached
+`<BubbleMenu>` element. **The bailout was load-bearing, and nobody knew it was
+there.**
+
+Read the other way round, with the scope limits that matter before the next
+sweep. `vite.config.ts` runs babel over `.tsx`/`.jsx` **only**, so findings in
+plain `.ts` files — today most of them — are never seen by the compiler at all
+and carry no memoisation consequence. Within a `.tsx` file the finding usually
+*is* the bailout, and closing it is what switches memoisation on. Two things
+break the one-to-one, and both are worth checking before assuming a fix is
+inert or assuming it is dangerous:
+
+- **A function can already be bailing for an unrelated reason**, in which case
+  fixing its ref finding changes nothing — it stays uncompiled either way.
+  `DaySection` and `BlockContextMenu` are in this position (a destructuring
+  default in a parameter object pattern, and an `UpdateExpression` captured in
+  a lambda). The way to know is to compile the file with a `logger` attached
+  and read the bail reasons, not to reason from the lint output.
+- **Suppressing the rule does not un-bail the compiler.** `oxlint-disable`
+  silences the finding and leaves the function uncompiled, which makes a
+  suppression behaviour-preserving where a code fix is not.
+  `src/__tests__/mocks/ui-select.tsx` still bails behind its suppression.
+
+The converse also holds — the compiler reports ref bailouts in a few files
+oxlint reports nothing for — so treat the two as overlapping, not identical,
+and compile the file when the answer matters.
+
+**The danger sign is a mutation-behind-a-stable-reference value in the
+memoisation key set.** A TipTap `Editor` above all, but equally any store or
+service instance passed as a prop: a stable object identity whose state mutates
+*internally*. The compiler keys the cache on identity, so `$[n] !== editor` can
+never see an edit. That alone does not freeze a component — the rest of the
+guard usually carries state that does change — so the question to ask is
+narrower: **is there a scenario in which the mutating instance is the only
+thing that changed?** In `SelectionBubbleMenu` there is. Its guard also carries
+`isTouch`, `linkPopoverOpen`, `blockId` and a `useEditorState` snapshot, but
+typing plain text inside a code block moves none of them (the snapshot is
+compared by value and none of its eight mark-active flags flips), so the cached
+element is returned unchanged and React skips reconciling the subtree. It
+presented as a **timeout, not a wrong value** — typed source never reached the
+mermaid block, which sat on "Empty diagram — switch to source to add Mermaid
+code" until the mobile e2e gave up at 15s. `ImageResizeToolbar` and
+`EmojiPicker`'s `SkinToneSelector` took the identical edit and are fine: the
+former's key set is strings and callbacks only, and the latter's one object —
+the `tonable` `ReadonlySet` — is rebuilt by a `useMemo`, so its identity tracks
+its contents.
+
+Where a component is in that position, take the fix *and* opt it out explicitly
+with a `'use no memo'` directive and a comment saying why. Leaving the member
+access under an `oxlint-disable` would preserve behaviour just as well (see
+above), but it leaves an open finding for the next person to "fix" and states
+the constraint in the linter's vocabulary rather than the compiler's. The
+directive survives that tidying. It must be the first statement in
+the function body. Comments above it are fine and quote style does not matter,
+but putting any statement above it deactivates it **silently** — the compiler
+then reports a plain `CompileSuccess` for the component, with no diagnostic to
+notice. `SelectionBubbleMenu` carries one, and is a deliberate exception any
+future compiler-bail guard has to allow for.
+
+**The unit suite structurally cannot see this class of bug.** `vite.config.ts`
+disables the compiler under Vitest, so every unit test runs against unoptimised
+code and only the production build the e2e harness serves exercises the memoised
+path. This is the harness, not a coverage gap someone can close by adding a
+test. **`react(refs)` and `react(set-state-in-effect)` sweeps must therefore be
+validated by the mobile e2e (`e2e/mobile-editor.spec.ts`), not by vitest alone**,
+and the remaining findings cannot be treated as mechanical. See #4469 for the
+full bisect and the compiled-output diff, and #4398 for the pattern this
+qualifies.

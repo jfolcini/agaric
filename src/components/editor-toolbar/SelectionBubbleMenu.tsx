@@ -101,6 +101,38 @@ export function SelectionBubbleMenu({
   editor,
   blockId,
 }: SelectionBubbleMenuProps): React.ReactElement {
+  // #4469 — LOAD-BEARING: opt this component out of React Compiler
+  // memoisation. Until #4465 the `useRovingTabindex()` result was read via
+  // member access (`roving.containerRef`), which is a `react/refs` violation
+  // — and `react/refs` ports the React Compiler's own validation, so the
+  // compiler refused to compile this function at all (three `CompileError`s,
+  // text identical to oxlint's: "Cannot access refs during render").
+  // Destructuring the hook (below) is the documented usage and is what the
+  // rule asks for, and it also removes the compiler's reason to bail — so the
+  // component starts being memoised.
+  //
+  // With the directive deleted the compiler emits `const $ = _c(75)` and
+  // caches the returned `<BubbleMenu>` element behind a guard whose inputs
+  // reduce to `containerRef`, the two roving `useCallback`s, `editor`,
+  // `blockId`, the i18n `t`, `isTouch`, `linkPopoverOpen`, `savedSelection`,
+  // and the `useEditorState` snapshot (plus the link strings derived from
+  // it). `editor` is the trap: a TipTap `Editor` is a stable object reference
+  // whose state mutates INTERNALLY, so identity comparison can never see an
+  // edit. Typing plain text inside a code block moves nothing else in that
+  // set either — the snapshot is compared by value and none of its eight
+  // mark-active flags flips — so the cached element is returned unchanged,
+  // React skips reconciling the subtree, and the typed source never reaches a
+  // mermaid block, which sits on "Empty diagram" until the mobile e2e times
+  // out at 15s. The compiler bailing out was a protection nobody knew was
+  // there.
+  //
+  // Do not remove this directive without re-running
+  // `e2e/mobile-editor.spec.ts` — the compiler is disabled under Vitest
+  // (`vite.config.ts`), so the unit suite structurally cannot see this. CI
+  // shards the whole Playwright suite on every PR, so that spec is a real
+  // gate — this is enforced, not merely requested.
+  'use no memo'
+
   const { t } = useTranslation()
   // #925 f4 — on coarse-pointer (touch) devices the floating bubble fights the
   // OS's native text-selection UI (Android/iOS selection handles + context
@@ -275,14 +307,18 @@ export function SelectionBubbleMenu({
   // WAI-ARIA toolbar roving-tabindex model (#1724): one tab stop, Arrow/Home/End
   // move focus between the mark/link buttons. BubbleMenu forwards ref + DOM
   // handlers to its container div.
-  const roving = useRovingTabindex()
+  //
+  // Destructured per the hook's documented usage (#4398 / oxlint `react/refs`).
+  // Safe here ONLY because of the `'use no memo'` directive at the top of this
+  // component — see the note there and #4469.
+  const { containerRef, onKeyDown: rovingOnKeyDown, onFocus: rovingOnFocus } = useRovingTabindex()
 
   return (
     <BubbleMenu
       tabIndex={-1}
-      ref={roving.containerRef}
-      onKeyDown={roving.onKeyDown}
-      onFocus={roving.onFocus}
+      ref={containerRef}
+      onKeyDown={rovingOnKeyDown}
+      onFocus={rovingOnFocus}
       editor={editor}
       // #1958 — open the bubble BELOW the selection (end/last line) rather than
       // above it. The always-visible FormattingToolbar sits at the top edge of
