@@ -79,13 +79,29 @@ declare global {
  * empty string from a DOM with no stylesheet loaded) — the caller treats
  * `null` as "nothing to push", never as a reason to guess.
  *
+ * A FULLY TRANSPARENT colour is `null` too, not black. `rgba(0, 0, 0, 0)` is
+ * what `getComputedStyle` returns for the initial `transparent` value, which
+ * is what `background-color: var(--background)` computes to whenever
+ * `--background` is invalid -- an `oklch()` literal on a WebView too old to
+ * parse it, for instance. Dropping alpha there would paint the strip PURE
+ * BLACK under every theme including the white one: visibly worse than the
+ * `windowBackground` this replaces, and from the reader least able to know
+ * that it had failed.
+ *
  * Exported for direct unit testing, independent of `getComputedStyle` /
  * DOM availability.
  */
 export function parseComputedRgb(value: string): { r: number; g: number; b: number } | null {
-  const match = /rgba?\(\s*(-?[\d.]+)[,\s]+(-?[\d.]+)[,\s]+(-?[\d.]+)/i.exec(value)
+  const match =
+    /rgba?\(\s*(-?[\d.]+)[,\s]+(-?[\d.]+)[,\s]+(-?[\d.]+)(?:\s*[,/]\s*(-?[\d.]+%?))?/i.exec(value)
   if (!match) return null
-  const [, rStr, gStr, bStr] = match
+  const [, rStr, gStr, bStr, aStr] = match
+  // Alpha 0 means "there is no colour here", which is a different answer
+  // from "the colour is black" -- see the docblock.
+  if (aStr !== undefined) {
+    const alpha = aStr.endsWith('%') ? Number(aStr.slice(0, -1)) / 100 : Number(aStr)
+    if (Number.isFinite(alpha) && alpha === 0) return null
+  }
   const r = Number(rStr)
   const g = Number(gStr)
   const b = Number(bStr)
@@ -96,49 +112,56 @@ export function parseComputedRgb(value: string): { r: number; g: number; b: numb
 
 /**
  * Normalises ANY CSS colour string the engine understands to 0-255 channels,
- * by assigning it to a canvas `fillStyle` and reading back the value the
- * engine normalises it to (`#rrggbb` / `rgba(...)`).
+ * by painting one pixel with it and READING THAT PIXEL BACK.
  *
- * This exists because the computed value of an `oklch()` colour serialises as
- * `oklch(...)`, not `rgb(...)` -- see the module doc. Rather than implement
- * OKLCH->sRGB here (a conversion with a gamut-mapping step that would then
- * need its own tests and would drift from whatever the engine actually
- * paints), this asks the same engine that paints the page to do it.
+ * The obvious implementation -- assign to `fillStyle`, read the string its
+ * getter returns -- does not work for the case this function exists for.
+ * Blink returns `#rrggbb` from that getter only for an OPAQUE colour in a
+ * LEGACY colour space; anything else falls through to the CSS Color 4
+ * serialization, which for `oklch(...)` is the `oklch(...)` literal we could
+ * not read in the first place. Every theme in `index.css` writes
+ * `--background` in `oklch()`, so on the one platform this module exists for,
+ * a string-reading fallback resolves nothing at all.
+ *
+ * `getImageData` is independent of serialization: whatever the engine painted
+ * comes back as sRGB bytes. It also subsumes the "did the engine REJECT our
+ * value?" problem that a string reader has to solve with a sentinel -- a
+ * rejected `fillStyle` silently keeps the previous value, and starting from a
+ * cleared canvas makes that detectable as alpha 0, which is already the
+ * answer we want for a genuinely transparent colour.
  *
  * Returns `null` when there is no usable canvas (jsdom without a canvas
- * backend, a hardened WebView) or the engine rejects the string -- both are
- * "cannot answer", never "the colour is black".
+ * backend, a hardened WebView), when `getImageData` is missing or throws, or
+ * when the painted pixel is fully transparent. Every one of those is "cannot
+ * answer", never "the colour is black".
  */
 export function resolveViaCanvas(value: string): { r: number; g: number; b: number } | null {
   try {
-    const ctx = document.createElement('canvas').getContext('2d')
-    if (!ctx) return null
-    // A known-good sentinel first: if the engine REJECTS our value it silently
-    // keeps the previous fillStyle, so without this an unparseable colour
-    // would read back as whatever was there before and be pushed as real.
-    ctx.fillStyle = '#000000'
+    const canvas = document.createElement('canvas')
+    canvas.width = 1
+    canvas.height = 1
+    const ctx = canvas.getContext('2d')
+    if (!ctx || typeof ctx.getImageData !== 'function') return null
+    ctx.clearRect(0, 0, 1, 1)
+    // A TRANSPARENT sentinel, and it is load-bearing. `fillStyle` defaults to
+    // opaque black, and assigning a value the engine cannot parse is a silent
+    // no-op that leaves the previous value in place -- so without this,
+    // `fillRect` would paint opaque black for every unparseable colour and
+    // `getImageData` would report it as a real answer at alpha 255. Seeding a
+    // fully transparent colour instead makes a rejection indistinguishable
+    // from "nothing was painted", which is exactly what it is.
+    ctx.fillStyle = 'rgba(0, 0, 0, 0)'
     ctx.fillStyle = value
-    const normalised = ctx.fillStyle
-    if (typeof normalised !== 'string') return null
-    // Rejected: fillStyle never moved off the sentinel. Only treat that as a
-    // real answer when the caller actually asked for black.
-    if (
-      normalised === '#000000' &&
-      !/^(#000000|#000|black|rgba?\(\s*0\s*[,\s]\s*0\s*[,\s]\s*0)/i.test(value.trim())
-    ) {
-      return null
-    }
-    const hex = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(normalised)
-    if (hex) {
-      const [, rHex, gHex, bHex] = hex
-      if (rHex === undefined || gHex === undefined || bHex === undefined) return null
-      return {
-        r: Number.parseInt(rHex, 16),
-        g: Number.parseInt(gHex, 16),
-        b: Number.parseInt(bHex, 16),
-      }
-    }
-    return parseComputedRgb(normalised)
+    ctx.fillRect(0, 0, 1, 1)
+    const data = ctx.getImageData(0, 0, 1, 1).data
+    const r = data[0]
+    const g = data[1]
+    const b = data[2]
+    const a = data[3]
+    if (r === undefined || g === undefined || b === undefined || a === undefined) return null
+    // Rejected, or genuinely transparent. Same answer either way.
+    if (a === 0) return null
+    return { r, g, b }
   } catch {
     return null
   }

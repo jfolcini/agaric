@@ -120,29 +120,67 @@ describe('pushThemeBackgroundToNative', () => {
   })
 })
 
-describe('resolveViaCanvas — the oklch path this fix actually runs on (#4433)', () => {
+describe('transparent is not black (#4464 review, finding 1)', () => {
+  // The reachable path: on a WebView too old to parse `oklch()`, `--background`
+  // is invalid, so `background-color: var(--background)` computes to the
+  // initial value `transparent` and `getComputedStyle` returns this exact
+  // string. Dropping alpha painted the strip PURE BLACK under every theme,
+  // including the white one -- worse than the bug being fixed.
+  it('rgba(0, 0, 0, 0) is null, not black', () => {
+    expect(parseComputedRgb('rgba(0, 0, 0, 0)')).toBeNull()
+  })
+
+  it('the modern slash form is caught too', () => {
+    expect(parseComputedRgb('rgb(0 0 0 / 0)')).toBeNull()
+  })
+
+  it('a percentage alpha of 0% is caught', () => {
+    expect(parseComputedRgb('rgba(12, 34, 56, 0%)')).toBeNull()
+  })
+
+  it('but a merely TRANSLUCENT colour is still a real colour', () => {
+    expect(parseComputedRgb('rgba(12, 34, 56, 0.5)')).toEqual({ r: 12, g: 34, b: 56 })
+  })
+
+  it('and an opaque black is still black — the fix must not swallow it', () => {
+    expect(parseComputedRgb('rgba(0, 0, 0, 1)')).toEqual({ r: 0, g: 0, b: 0 })
+    expect(parseComputedRgb('rgb(0, 0, 0)')).toEqual({ r: 0, g: 0, b: 0 })
+  })
+})
+
+describe('resolveViaCanvas reads PIXELS, not the serialised string (#4464 review, finding 2)', () => {
   /**
-   * jsdom has no canvas backend, so `getContext('2d')` returns null. These
-   * tests install a fake whose `fillStyle` behaves the way a real engine's
-   * does — including the part that makes this dangerous: assigning an
-   * UNPARSEABLE value silently leaves the previous value in place.
+   * Blink's `fillStyle` getter returns `#rrggbb` only for an opaque colour in
+   * a legacy colour space; `oklch(...)` reads back as `oklch(...)`. So the
+   * fake below deliberately does NOT normalise the string -- it models the
+   * real engine, where only the painted pixel answers the question.
    */
-  const installFakeCanvas = (normalise: (input: string) => string | null) => {
+  const installCanvas = (paint: (input: string) => [number, number, number, number] | null) => {
     const real = document.createElement.bind(document)
     return vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
       if (tag !== 'canvas') return real(tag as 'div')
-      let current = ''
+      let px: [number, number, number, number] = [0, 0, 0, 0]
+      // Models the real default: opaque black. This is what makes the
+      // transparent sentinel in the implementation load-bearing.
+      let pending = '#000000'
       const ctx = {
-        get fillStyle() {
-          return current
+        clearRect: () => {
+          px = [0, 0, 0, 0]
         },
+        // A real engine IGNORES a value it cannot parse, keeping the old one.
         set fillStyle(v: string) {
-          const out = normalise(v)
-          // A real engine IGNORES a value it cannot parse, keeping the old one.
-          if (out !== null) current = out
+          if (paint(v) !== null) pending = v
         },
+        get fillStyle() {
+          return pending
+        },
+        fillRect: () => {
+          const out = paint(pending)
+          if (out) px = out
+        },
+        getImageData: () => ({ data: px }),
       }
-      return { getContext: () => ctx } as unknown as HTMLCanvasElement
+      return { getContext: () => ctx, width: 0, height: 0 } as unknown as HTMLCanvasElement
     })
   }
 
@@ -150,39 +188,59 @@ describe('resolveViaCanvas — the oklch path this fix actually runs on (#4433)'
     vi.restoreAllMocks()
   })
 
-  it('resolves an oklch() computed value the regex cannot read', () => {
-    installFakeCanvas((v) => (v.startsWith('oklch') ? '#1a2b3c' : v))
-    expect(resolveViaCanvas('oklch(0.129 0.042 264.695)')).toEqual({ r: 0x1a, g: 0x2b, b: 0x3c })
+  it('resolves an oklch() value even though its serialisation stays oklch()', () => {
+    installCanvas((v) =>
+      v === 'rgba(0, 0, 0, 0)' ? [0, 0, 0, 0] : v.startsWith('oklch') ? [26, 43, 60, 255] : null,
+    )
+    expect(resolveViaCanvas('oklch(0.129 0.042 264.695)')).toEqual({ r: 26, g: 43, b: 60 })
   })
 
-  it('resolveToRgb prefers the cheap regex and never reaches the canvas for rgb()', () => {
-    const spy = installFakeCanvas(() => '#ffffff')
+  it('a REJECTED colour leaves the cleared canvas, and reads as null', () => {
+    // This is what the sentinel dance used to guard by hand. Alpha subsumes it.
+    installCanvas((v) =>
+      v === 'rgba(0, 0, 0, 0)' ? [0, 0, 0, 0] : v === '#000000' ? [0, 0, 0, 255] : null,
+    )
+    expect(resolveViaCanvas('not-a-colour')).toBeNull()
+  })
+
+  it('a genuinely transparent colour is null, not black', () => {
+    installCanvas(() => [0, 0, 0, 0])
+    expect(resolveViaCanvas('transparent')).toBeNull()
+  })
+
+  it('an opaque black IS returned — alpha, not the channels, is the test', () => {
+    installCanvas((v) => (v === 'rgba(0, 0, 0, 0)' ? [0, 0, 0, 0] : [0, 0, 0, 255]))
+    expect(resolveViaCanvas('black')).toEqual({ r: 0, g: 0, b: 0 })
+  })
+
+  it('no canvas backend is null, never a guessed colour', () => {
+    vi.spyOn(document, 'createElement').mockReturnValue({
+      getContext: () => null,
+      width: 0,
+      height: 0,
+    } as unknown as HTMLCanvasElement)
+    expect(resolveViaCanvas('oklch(0.5 0.1 200)')).toBeNull()
+  })
+
+  it('a context without getImageData is null, not a crash', () => {
+    vi.spyOn(document, 'createElement').mockReturnValue({
+      getContext: () => ({ clearRect: () => {}, fillRect: () => {}, fillStyle: '' }),
+      width: 0,
+      height: 0,
+    } as unknown as HTMLCanvasElement)
+    expect(resolveViaCanvas('oklch(0.5 0.1 200)')).toBeNull()
+  })
+
+  it('resolveToRgb prefers the cheap regex and never builds a canvas for rgb()', () => {
+    const spy = installCanvas(() => [9, 9, 9, 255])
     expect(resolveToRgb('rgb(10, 20, 30)')).toEqual({ r: 10, g: 20, b: 30 })
     expect(spy).not.toHaveBeenCalled()
   })
 
   it('resolveToRgb falls through to the canvas for oklch()', () => {
-    installFakeCanvas((v) => (v.startsWith('oklch') ? '#010203' : v))
+    installCanvas((v) =>
+      v === 'rgba(0, 0, 0, 0)' ? [0, 0, 0, 0] : v.startsWith('oklch') ? [1, 2, 3, 255] : null,
+    )
     expect(resolveToRgb('oklch(0.5 0.1 200)')).toEqual({ r: 1, g: 2, b: 3 })
-  })
-
-  it('a REJECTED colour is null, not the sentinel black left behind by the engine', () => {
-    // The trap: `fillStyle = <garbage>` is a silent no-op, so the sentinel we
-    // wrote first is what reads back. Without the guard this returns pure
-    // black and the strip gets painted black on every unparseable theme.
-    installFakeCanvas((v) => (v === '#000000' ? '#000000' : null))
-    expect(resolveViaCanvas('not-a-colour')).toBeNull()
-  })
-
-  it('but a caller who genuinely asked for black still gets black', () => {
-    installFakeCanvas((v) => (v === '#000000' || v === 'black' ? '#000000' : null))
-    expect(resolveViaCanvas('black')).toEqual({ r: 0, g: 0, b: 0 })
-  })
-
-  it('no canvas backend at all is null — never a guessed colour', () => {
-    vi.spyOn(document, 'createElement').mockReturnValue({
-      getContext: () => null,
-    } as unknown as HTMLCanvasElement)
-    expect(resolveViaCanvas('oklch(0.5 0.1 200)')).toBeNull()
   })
 })
