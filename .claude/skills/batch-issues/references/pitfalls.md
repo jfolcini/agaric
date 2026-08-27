@@ -152,18 +152,23 @@ even untouched. Recipe: `gh pr merge <n> --squash --subject "<human commit subje
 leaving `--body` unset, on the theory that the default concatenation then still runs in
 the body.
 
-**That combination has not actually been observed.** Of 60 recently-merged Dependabot
-PRs (2026-07-29–08-26), 8 (13%) carried a non-Dependabot commit: 5 kept the untouched
+**That combination is now observed, and the recipe holds.** PR #4436 (two commits) was
+merged with `--squash --subject "…"` and `--body` unset; the resulting squash commit on
+`main` (`d8b2840`) carries the supplied subject as its headline and **both** commit
+messages, bulleted, in its body. So `--subject` sets the headline without displacing the
+default `COMMIT_MESSAGES` concatenation — passing it is safe, and the bump line survives.
+
+That was worth checking rather than assuming. Of 60 recently-merged Dependabot PRs
+(2026-07-29–08-26), 8 (13%) carried a non-Dependabot commit: 5 kept the untouched
 default, and the other 3 (#3780, #3779, #3771) had *both* subject and body overridden —
-the bump line gone from all three. No case used `--subject` alone, so "leaving `--body`
-unset preserves the concatenation" is inferred from the settings, not confirmed by
-observing that flag combination — it's equally consistent with gh replacing the body
-whenever any headline is supplied, which would make the recipe cause the exact loss it
-warns against. Verify the resulting squash body on the actual merge until someone has
-checked one; this count also can't see the case that matters most — a human commit
-force-pushed away before merge looks, after the fact, like a PR that never needed help,
-so "8 carried one, 1 known erasure (recovered), 0 confirmed silent losses" is what was
-observed, not "0 losses."
+the bump line gone from all three. No case in that sample used `--subject` alone, so
+until #4436 the recipe rested on inference from the settings, and was equally consistent
+with gh replacing the body whenever any headline was supplied — which would have made it
+cause the exact loss it warns against.
+
+The 8 also can't see the case that matters most: a human commit force-pushed away before
+merge looks, after the fact, like a PR that never needed help. So "8 carried one, 1 known
+erasure (recovered), 0 confirmed silent losses" is what was observed, not "0 losses."
 
 What to do:
 
