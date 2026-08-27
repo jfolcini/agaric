@@ -313,6 +313,21 @@ jobs:
           # PR's changed files (the `gh pr list --json files` API), not code
           # any PR author runs, so it needs no special handling as untrusted
           # input the way `artifact/diverged.txt` below does.
+          #
+          # `--limit 50` here, against `session-log-pr-collision`'s
+          # `PR_LIST_LIMIT + 1` (101) further down — two different numbers for
+          # "every open PR" in one file, deliberately, because the two jobs
+          # mean different things by it (#4431 review note 7). This one is
+          # INFORMATIONAL: it renders a table, it fails OPEN to `[]` three
+          # lines below, and under-reporting past 50 costs a row in a comment
+          # no merge depends on. That one GATES, so it may not under-report at
+          # all: it asks for one MORE than its own cap precisely so it can
+          # tell a full page from a truncated one, and REFUSES when the extra
+          # entry shows up. So 50 is the weaker number and knowingly so, not
+          # an oversight — raising it would buy a longer table and a larger
+          # API call and change nothing about what is gated. If the two are
+          # ever unified, the gating job's semantics (an explicit cap plus an
+          # overflow refusal) are the ones to keep, not this one's.
           if ! gh pr list --repo "$REPO" --state open --limit 50 \
               --json number,title,files > prs.json; then
             echo '[]' > prs.json
@@ -739,3 +754,532 @@ jobs:
             echo "::error::pr-merge-result-check: a ratchet guard fails on the merge result — see #3672"
             exit 1
           fi
+
+  # ---------------------------------------------------------------------------
+  # session-log-pr-collision (#3933) — two open, unmerged PRs can each add a
+  # DIFFERENT `docs/session-log/session-NNNN-*.md` filename claiming the SAME
+  # embedded number. `check-session-log-numbering.sh`'s check 1 cannot see
+  # this: it tests uniqueness against `HEAD ∪ origin/main ∪ same-commit
+  # siblings`, and a sibling's open PR branch is in none of those sets while
+  # both are open — origin/main has neither number yet, so both branches
+  # honestly compute the same "free" number and both pass, every time,
+  # locally and in their own CI. This is the mechanism behind the two real
+  # duplicate `session-1281` files that guard's own header describes, and it
+  # happened again live while preparing #3932 (session-1319, caught by hand,
+  # nothing in the toolchain would have caught it).
+  #
+  # What counts as a CLAIM here is a session-log path that is NOT already on
+  # the merge target — `gh pr list --json files` reports added, MODIFIED and
+  # deleted files identically, so without the base's own file listing (the
+  # `merged-paths.txt` step below) two PRs merely EDITING one of the fifteen
+  # merged `session-1000-*.md` files would be reported as colliding on a
+  # file neither of them created. The same listing lets this job catch the
+  # #3690 shape `check-session-log-numbering.sh` structurally cannot see
+  # after the fact: an open PR whose number was free when it was committed
+  # and has since been merged by a sibling — that guard only ever inspects
+  # STAGED additions, so it never looks again. See the guard's own header,
+  # "Which guard owns which case".
+  #
+  # It is also NOT the `compute`/`post` overlap above: that lane intersects
+  # CHANGED FILE PATHS, and two PRs colliding on session-1319 add two
+  # DIFFERENT filenames (`session-1319-foo.md`, `session-1319-bar.md`) — no
+  # path is shared, so a path intersection reports them as disjoint,
+  # correctly and uselessly. The identity that collides is the NUMBER
+  # embedded in the filename, which is why this is a dedicated job with its
+  # own script (`scripts/check-session-log-pr-collision.mjs`) rather than an
+  # extra field bolted onto `pr-file-overlap.mjs`'s path-based comparison.
+  #
+  # ─── Why CI, and not a prek / pre-commit hook ──────────────────────────────
+  #
+  # The only place that can see every open PR at once is the GitHub API's own
+  # view of the open-PR board — no single branch's git checkout ever contains
+  # a sibling PR's commits, open or merged. A pre-commit hook that must reach
+  # the network to do its job is a bad hook: it would break an offline
+  # commit, and turn one flaky API call into a block on EVERY commit rather
+  # than one CI run. So the actual check runs here, once per push to a PR;
+  # `scripts/check-session-log-pr-collision.mjs`'s own `--self-test` (a prek
+  # hook keyed on that script and this file) stays pure-function and
+  # network-free, exercising `analyze()` directly.
+  #
+  # ─── Why this job needs no fork-content checkout at all ───────────────────
+  #
+  # Unlike `compute` above, this job never needs to look at THIS PR's own
+  # commits — the collision it is checking for lives entirely in GitHub's own
+  # record of what OTHER open PRs changed (`gh pr list --json number,files`,
+  # read-only, no code from any PR is ever executed) plus the merge target's
+  # own tree (checked out below at `base.sha`, never at a PR head). So this
+  # job's checkout is pinned to `base.sha` from the start — the same pattern
+  # `post`'s trusted checkout uses, and for the same reason: the script and
+  # the merged-numbers computation both come from a commit already in this
+  # repo's own history, never from a fork. `permissions:` asks for
+  # `pull-requests: read` (to list open PRs) and `contents: read` (the
+  # checkout) — no write scope of any kind, so `check-pr-overlap-trust-
+  # boundary.mjs`'s "any write-scoped job needs a base-pinned checkout" rule
+  # does not even apply to it, and its checkout is base-pinned anyway.
+  #
+  # ─── Fail-closed (the whole point of #3933) — what happens when the API or
+  # the token is unavailable ──────────────────────────────────────────────────
+  #
+  # `gh pr list`'s own exit code is checked explicitly and treated as a HARD
+  # job failure, not as "no open PRs" — unlike `post`'s informational overlap
+  # step above, which deliberately falls back to `echo '[]'` on the same
+  # failure because that lane is allowed to under-report (it never gates).
+  # This job is not: an API failure here must read as "could not verify",
+  # never as "verified clean". `scripts/check-session-log-pr-collision.mjs`
+  # itself adds a second, independent layer on top of that: it verifies its
+  # OWN input positively (an array of `{number, files}` objects — not merely
+  # "parses as JSON", which `[]`/`{}`/`null` all satisfy) and checks that
+  # THIS PR is actually present in the fetched list before trusting the list
+  # at all — the cheapest self-consistency check available, and one that
+  # catches an empty/truncated/stale API response even when `gh pr list`
+  # itself reported success. See that script's own header for the full
+  # fail-open enumeration and its `--self-test` for each case asserted
+  # separately (a missing self-PR, a malformed entry, a PR that added no
+  # session-log file at all — each is a DISTINCT tested outcome, not a shared
+  # "green").
+  #
+  # ─── #4431 — a crash must never be reported as a finding ──────────────────
+  #
+  # Found by running this job on its own PR. The guard did not exist on that
+  # PR's base, node exited 1 with `MODULE_NOT_FOUND`, and this step announced
+  # `a session-log number is claimed by more than one open PR`. Nothing had
+  # run. Two independent changes close it, and the step below needs BOTH to
+  # believe a verdict:
+  #
+  #   1. The guard's "real collision" exit code is 20, not 1. Node reserves
+  #      1–14 and 128+N for its own failures and the shell adds 126/127, so
+  #      no crash, kill or missing file can synthesize 20. A bare 1 is now
+  #      "could not verify" — the truthful reading of every way node produces
+  #      it — never a finding.
+  #   2. The guard writes `SESSION_LOG_PR_COLLISION_VERDICT=<verdict>` as its
+  #      last line on every path it chooses. A crash chooses no path, so it
+  #      emits none. The step requires the exit code and the verdict line to
+  #      AGREE, and believes only (0, CLEAN) and (20, COLLISION); every other
+  #      combination is "could not verify". Positive classification, the same
+  #      rule the guard applies to its own input.
+  #
+  # ─── #4431 — and the guard being ABSENT is its own outcome ────────────────
+  #
+  # The checkout above is pinned to `base.sha` deliberately, and
+  # `check-pr-overlap-trust-boundary.mjs` enforces that it stays so; it must
+  # NOT be moved to the PR head to make the guard present. The consequence is
+  # that `[ ! -f "$GUARD_SCRIPT" ]` compares TWO REFS, not one: `GUARD_SCRIPT`
+  # is read from the workflow file, which on a `pull_request` event GitHub
+  # takes from the PR's MERGE ref, while the file it looks for comes from the
+  # `base.sha` checkout. Three cases, and they are not the same one (#4431
+  # review notes 6/7 — earlier versions of this comment got two of them
+  # wrong, in opposite directions):
+  #
+  #   * ADDS the guard. `base.sha` predates it, `GUARD_SCRIPT` names a path
+  #     that does not exist there → ABSENT. This branch runs.
+  #   * DELETES the guard. `base.sha` predates the deletion, so the checkout
+  #     still HAS it and `GUARD_SCRIPT` still names it → present. This branch
+  #     never runs on that PR; it runs the guard normally, same as any other
+  #     PR. (The fail-closed consequence lands on the NEXT PRs — see below.)
+  #   * MOVES the guard and updates `GUARD_SCRIPT` to match. `GUARD_SCRIPT`
+  #     is the PR's NEW path (merge ref) while the checkout is `base.sha`,
+  #     which only has the OLD one → ABSENT, and since GitHub reports a
+  #     rename as an entry at the new path, `self_adds` is `YES` and this
+  #     branch WARNS AND PASSES. Not the deletion case at all, despite
+  #     looking like one. That is the correct outcome — the guard genuinely
+  #     is not on the merge target at the path this workflow now names, so
+  #     there is nothing there to run — and it is safe, because the next
+  #     PR's `base.sha` carries the guard at its new path and the workflow
+  #     at its new `GUARD_SCRIPT`, so the guard runs normally from then on.
+  #     (A move that does NOT update `GUARD_SCRIPT` is the delete case: the
+  #     old path is still on `base.sha`, so the guard runs — from the base's
+  #     copy, which is the point of the pin.)
+  #
+  # Which of ADDS / MOVES this is does not need distinguishing: both are "the
+  # guard is not on the merge target at the path we were told to run, and
+  # this PR's own diff contains that path", which is one positively-identified
+  # state. Decided from THIS PR's own changed-file list in the payload
+  # already fetched above:
+  #
+  #   * this PR adds `scripts/check-session-log-pr-collision.mjs` → warn and
+  #     pass. Expected, and there is genuinely nothing to check: the guard is
+  #     not on the merge target. Failing here would make the PR introducing
+  #     the guard unmergeable by the guard it introduces.
+  #   * anything else → fail. The guard is missing from `base.sha` and this
+  #     PR did not add it — which is also exactly what happens to every PR
+  #     opened AFTER a DELETION has already merged to `main`: their own
+  #     `base.sha` inherits the absence, they didn't add the guard back
+  #     either, and this branch (correctly) fails them. So a deletion is
+  #     still fail-closed overall — #3933's actual concern — it just surfaces
+  #     on the NEXT PRs to open against the now-guard-less `main`, not on the
+  #     PR that did the deleting. A MOVE does not reach this branch at all
+  #     for anyone: the moving PR takes the warn-and-pass branch above, and
+  #     every PR after it finds the guard present at its new path.
+  #
+  # "Anything else" includes every state the discriminator cannot vouch for —
+  # this PR missing from the payload, its file list truncated by gh's 100-file
+  # cap, a malformed payload, `jq` absent or crashing, empty output. Only one
+  # positively-identified state passes.
+  #
+  # A fork PR's `GITHUB_TOKEN` under `pull_request` is read-only regardless
+  # of the `permissions:` block (GitHub's own default, documented in this
+  # file's own header above) — which is exactly the `pull-requests: read`
+  # this job asks for, so the check runs identically for a fork PR and a
+  # same-repo one. It needs no PAT and no elevated scope.
+  #
+  # ─── What this job does NOT do ─────────────────────────────────────────────
+  #
+  # It is not wired into branch protection and cannot be: `gh api
+  # repos/<owner>/<repo>/branches/main/protection` 404s (the legacy endpoint;
+  # `main` is actually protected by a ruleset, see `merge-result`'s own
+  # comment above) and configuring rulesets needs repo-admin rights this PR's
+  # author does not have. So a genuine collision shows as a red check on both
+  # PRs but, same as `merge-result`, can still be bypassed by `gh pr merge
+  # --admin` — the residual gap #3672 already names for that job applies
+  # here identically. Branch protection requiring branches to be up to date
+  # before merging (#3933's own option 1) would close this at the merge
+  # click itself, for every path-keyed guard, not just this one; it is the
+  # cheaper structural fix and is left to whoever holds that access.
+  session-log-pr-collision:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      # `gh pr list --limit N` truncates SILENTLY at N with no error and no
+      # flag distinguishing "that's every open PR" from "that's the first N
+      # of more" — the same fail-open shape as the 100-files-per-PR cap
+      # below, just at the list level instead of a single entry. The
+      # project's own open-PR pipeline cap is 10 (see the batch-issues
+      # workflow), so 100 is 10x headroom while staying a single cheap `gh`
+      # call; shared between the two steps below so the fetch limit and the
+      # truncation check the script runs against it can never drift apart.
+      # `check-session-log-pr-collision.mjs`'s `--pr-limit` flag is what
+      # makes exceeding this number a FAILURE (see its own header).
+      #
+      # Deliberately NOT the `--limit 50` the `post` job's overlap step uses
+      # (#4431 review note 7): that step is informational and fails open to
+      # `[]`, this one gates and refuses on overflow. The two numbers differ
+      # because the two guarantees do — see that step's own comment.
+      #
+      # This is the INTENDED cap, not the literal `gh pr list --limit`
+      # argument: the `gh pr list` step below actually asks for
+      # `PR_LIST_LIMIT + 1`, one more than this value, while the guard is
+      # still told `--pr-limit "$PR_LIST_LIMIT"`. Asking `gh` for the SAME
+      # number passed as `--pr-limit` (an earlier version did) made a page
+      # exactly that long indistinguishable from one `gh` truncated at that
+      # length, so the guard refused it — meaning at precisely 100 open PRs
+      # EVERY PR's run of this job refused, permanently, with no individual
+      # author able to clear it (#4431 review note 4). Fetching one extra
+      # entry lets a genuine page of exactly 100 arrive in full and pass; only
+      # the (101)th entry actually showing up is proof there really are more
+      # than 100 open PRs right now.
+      PR_LIST_LIMIT: "100"
+    steps:
+      - name: Checkout the merge target (trusted; never this PR's own commits)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Pinned to the BASE branch commit GitHub recorded for this PR — a
+          # commit in THIS repo's own history, never the fork's. Both the
+          # script this job runs and the merged-numbers listing below come
+          # from this checkout, so a fork PR can influence neither.
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Session-log files already on the target branch
+        run: |
+          set -euo pipefail
+          # PATHS, not just the numbers parsed out of them: a path already on
+          # the merge target is being MODIFIED by a PR that touches it, not
+          # claimed, and `gh pr list --json files` reports added, modified
+          # and deleted files identically — so this listing is the only
+          # thing that tells the two apart. Without it, two PRs editing one
+          # of the fifteen merged `session-1000-*.md` files read as a
+          # collision on a file neither created. `core.quotePath=false` so a
+          # non-ASCII path arrives as the same bytes GitHub reports; no
+          # `|| true`, because a failed listing must fail this job rather
+          # than degrade into an empty list that makes every touched file
+          # look new.
+          #
+          # `HEAD` here is `base.sha` — the checkout above — which is THIS
+          # PR's merge target and not necessarily `main` (#4431 review note
+          # 4). For a stacked PR (this repo's convention sets a child's base
+          # to its PARENT's branch until the parent merges) it is the parent
+          # branch's head, so a session number that has merged to `main` but
+          # is absent from that parent branch is not in this listing and is
+          # invisible to the guard's STALE-CLAIM half on that PR. Known and
+          # accepted, for two reasons. The COLLISION half is unaffected: it
+          # reads the open-PR board, not this file, and every open PR is in
+          # that board regardless of its base. And the stale claim resurfaces
+          # the moment the child is retargeted to `main` (`base.sha` becomes
+          # a `main` commit and the number reappears here), which the
+          # convention requires before it can merge — so the gap closes
+          # before the merge it would otherwise let through. Listing `main`
+          # instead would be WRONG in the other direction: for a stacked
+          # child, a file its parent adds is already on its merge target and
+          # would read as a fresh claim off `main`, reintroducing exactly the
+          # added-vs-modified false positive this listing exists to prevent.
+          git -c core.quotePath=false ls-tree -r --name-only HEAD -- docs/session-log \
+            > merged-paths.txt
+          echo "session-log files on $(git rev-parse HEAD): $(wc -l < merged-paths.txt)"
+
+      - name: List every open PR's changed files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # For the unconditional self-PR REST re-fetch below (#4431 review
+          # note 1) — an `env:` var, never interpolated into the `run:` body,
+          # same as every other value this job passes to a shell.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          # Explicit failure, NOT a `[]` fallback: unlike `post`'s
+          # informational overlap step above, this job gates a merge, so an
+          # API failure must read as "could not verify" and fail the job —
+          # never as "no open PRs", which `[]` would silently claim instead.
+          #
+          # `changedFiles` alongside `files`: `gh`'s `files` field is a
+          # GitHub API connection hard-capped at 100 entries per PR,
+          # SILENTLY — a PR with more than 100 changed files (a large
+          # batch-issue PR that also adds a session-log entry, say) has any
+          # file past the 100th invisible to `files`, with nothing in that
+          # field's shape to say so. `changedFiles` is the PR's true total
+          # count, requested for exactly this cross-check.
+          # `check-session-log-pr-collision.mjs` fails closed on it for THIS
+          # PR's own entry, and warns (naming the PR) for anyone else's:
+          # refusing outright on any entry would let a single 100+-file PR
+          # turn this job red on every open PR until it landed, which is the
+          # permanent unactionable red this file's own header argues
+          # against — and the oversized PR fails closed on its own run of
+          # this job, where its author can act on it. See that script's
+          # header.
+          #
+          # `--limit "$((PR_LIST_LIMIT + 1))"`, deliberately ONE MORE than
+          # `PR_LIST_LIMIT` — the guard below is still told `--pr-limit
+          # "$PR_LIST_LIMIT"`, the unmodified intended cap. Asking `gh` for
+          # exactly `PR_LIST_LIMIT` (an earlier version did) made a genuine
+          # page of that length indistinguishable from one `gh` truncated at
+          # it, so the guard refused every run at precisely 100 open PRs —
+          # permanently, for everyone, with no author able to clear it
+          # (#4431 review note 4). The extra slot means a real page of 100
+          # arrives whole and passes; only a 101st entry actually showing up
+          # is evidence there are more open PRs than the cap allows.
+          #
+          # Deliberately no `--base main`, even though this workflow's `on:`
+          # trigger only fires for a PR into `main` (#4431 review note 8):
+          # this repo's own stacked-PR convention (a child PR's `base` is set
+          # to its PARENT's branch, retargeted to `main` only after the
+          # parent merges — see the batch-issues skill) means a real,
+          # currently-relevant sibling can have `base != main` right now.
+          # Scoping this call to `--base main` would make this job blind to
+          # exactly the sibling-claim shape the "identical path collapses to
+          # one claim" fix (review note 2) exists to handle correctly rather
+          # than mis-attribute. Every open PR is a candidate collision
+          # regardless of its current base, because every open PR is a
+          # candidate to eventually land on `main`.
+          if ! gh pr list --repo "$REPO" --state open --limit "$((PR_LIST_LIMIT + 1))" \
+              --json number,files,changedFiles > prs.json; then
+            echo "::error::session-log-pr-collision: gh pr list failed — cannot verify session-log collisions (fail-closed, see #3933)"
+            exit 1
+          fi
+
+          # #4431 review round 4 notes 2/4: the 100-file cap above is on the
+          # GraphQL `files(first: 100)` connection `gh pr list --json files`
+          # reads — a connection with no pagination support via that flag,
+          # not a limit on the PR's actual diff. Left as-is, it makes the
+          # guard's OWN run an unclearable refusal for any PR past the cap
+          # (routine for this repo's large batch PRs — a real 411-file PR
+          # exists in its history) and a permanent warning for everyone
+          # else's run, even when the truncated PR touches no session-log
+          # file whatsoever. `gh api .../pulls/<n>/files` is GitHub's SAME
+          # computed file list over the REST endpoint instead, which
+          # paginates normally rather than hard-capping at 100 (verified
+          # empirically against a real >100-file PR while writing this: REST
+          # pagination returned all of them where the GraphQL `files` field
+          # returned only the first 100) — identical trust properties to the
+          # `gh pr list` call just above (GitHub's own computation, no
+          # PR-authored code executed, same $GH_TOKEN), so fetching it here
+          # crosses no new trust boundary.
+          #
+          # Best-effort and additive only: splice the full list in for any
+          # entry `gh pr list` truncated. If the re-fetch itself fails for
+          # any reason (rate limit, network hiccup, a PR beyond even the
+          # REST endpoint's own much higher ceiling), that entry is left
+          # exactly as `gh pr list` returned it — `changedFiles` still
+          # exceeds `files.length`, so the guard's existing truncation
+          # handling (refuse for the self PR, warn naming anyone else) is
+          # the unchanged fail-closed backstop. A bug here can only leave a
+          # PR AS TRUNCATED AS BEFORE, never falsely "complete": the splice
+          # only replaces `.files` when the re-fetch itself succeeded and
+          # produced a non-empty JSON array, and `changedFiles` (the true
+          # count `gh pr list` already reported) is never touched, so a
+          # short or malformed re-fetch still fails the same
+          # `changedFiles > files.length` truncation test the unmodified
+          # entry would have.
+          #
+          # `--jq '.[] | {...}'` (no enclosing `[...]`) plus `jq -s` to
+          # merge, NOT `--jq '[.[] | {...}]'`: `gh api --paginate` applies
+          # the `--jq` filter to EACH PAGE separately and concatenates the
+          # raw text, so a per-page `[...]` wrapper produces one JSON array
+          # PER PAGE concatenated back to back (`[...][...]`) — two adjacent
+          # top-level values, not one valid array. Confirmed the broken form
+          # first, then the fix, against the same real >100-file PR.
+          #
+          # THIS PR is re-fetched too, truncated or not (#4431 review note
+          # 1), for a second fact the GraphQL `files` field cannot express at
+          # any length: a RENAME. `gh pr list --json files` returns `path`,
+          # `additions` and `deletions` per entry and nothing else — no
+          # `status`, no previous name — and reports a rename as a single
+          # entry at the NEW path (verified against this repo's own PR #4416,
+          # which renames four files: 16 `changedFiles`, 16 entries, every
+          # one at its new path). So `session-1000-typo.md` →
+          # `session-1000-fixed.md` is indistinguishable from a new file
+          # claiming an already-merged number, and the guard reported it as a
+          # hard stale claim telling the author to "rebase and renumber" — a
+          # remedy for a problem they do not have. The REST list carries
+          # `previous_filename` for exactly that entry, so mapping it in as
+          # `previousPath` lets the guard exempt a rename that KEEPS its
+          # number (and only that: a renumber still claims the new number —
+          # see `isSameNumberRename` in the guard).
+          #
+          # Scoped to the self PR because that is the only PR this run can
+          # FAIL — the same self/other split the truncation handling uses.
+          # Another PR's rename is a board warning here and a hard finding on
+          # its OWN run, where its own re-fetch applies. Cost is one extra
+          # paginated REST call per run, and a failure of it is a no-op: the
+          # entry keeps its `gh pr list` shape, `previousPath` is absent, and
+          # the guard behaves exactly as it did before — a false stale claim,
+          # never a false pass.
+          truncated_numbers="$(jq -r '.[] | select(.changedFiles > (.files | length)) | .number' prs.json)"
+          refetch_numbers="$(printf '%s\n%s\n' "$truncated_numbers" "$PR_NUMBER" \
+            | grep -E '^[0-9]+$' | sort -n -u || true)"
+          if [ -n "$refetch_numbers" ]; then
+            while IFS= read -r n; do
+              [ -z "$n" ] && continue
+              if full="$(gh api "repos/$REPO/pulls/$n/files" --paginate \
+                  --jq '.[] | {path: .filename, additions, deletions, previousPath: .previous_filename}' 2>/dev/null | jq -s -c '.')" \
+                  && [ -n "$full" ] \
+                  && echo "$full" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
+                jq --argjson n "$n" --argjson files "$full" \
+                    '[.[] | if .number == $n then .files = $files else . end]' \
+                    prs.json > prs.json.tmp && mv prs.json.tmp prs.json
+              fi
+            done <<< "$refetch_numbers"
+          fi
+
+      - name: Check for a session-log number that would be duplicated in the merge result
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Every path this step touches is an env var rather than a literal,
+          # so `check-session-log-pr-collision.mjs --self-test` can extract
+          # the shell below VERBATIM (between the BEGIN/END markers) and run
+          # it against fixtures in a temp directory. Reading the YAML is what
+          # let the exit-code aliasing of #4431 survive review; executing the
+          # real bytes for every outcome is what catches the next one.
+          GUARD_SCRIPT: scripts/check-session-log-pr-collision.mjs
+          PRS_JSON: prs.json
+          MERGED_PATHS: merged-paths.txt
+        run: |
+          # --- BEGIN session-log-pr-collision step shell (extracted verbatim by --self-test) ---
+          set -uo pipefail
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          # ── #4431 defect 2: the guard may not exist in THIS checkout ──────
+          #
+          # This job checks out `base.sha` on purpose — a commit already in
+          # this repo's history, never a fork's — and that trust boundary is
+          # pinned mechanically by `check-pr-overlap-trust-boundary.mjs`. The
+          # price is that the guard we run is the BASE branch's copy while
+          # `GUARD_SCRIPT` comes from the workflow file, which a
+          # `pull_request` run takes from the PR's MERGE ref. So the guard
+          # reads as absent on the PR that INTRODUCES it, and on a PR that
+          # MOVES it and updates `GUARD_SCRIPT` (new path in the workflow,
+          # only the old path in the checkout) — but NOT on a PR that merely
+          # deletes it, whose `base.sha` still carries the file (#4431 review
+          # note 6; the job header above walks all three cases).
+          # `node <missing file>` exits 1 with MODULE_NOT_FOUND, which the
+          # previous version of this step reported as a confirmed collision.
+          # Detect absence HERE, before node is ever invoked.
+          #
+          # The two absent cases are not the same and must not share a
+          # verdict. `prs.json` (fetched above) contains THIS PR's own
+          # changed-file list, so we can ask which one this is — but only
+          # POSITIVELY: pass solely when the self PR is present exactly once,
+          # its file list is complete (`changedFiles == files|length`, the
+          # same 100-file cap the guard itself refuses to trust), and that
+          # list contains the guard's path. Every other answer — truncated,
+          # self PR absent, malformed, jq missing, jq crashed, empty output —
+          # falls through to the failing branch.
+          if [ ! -f "$GUARD_SCRIPT" ]; then
+            self_adds=UNKNOWN
+            if [ -f "$PRS_JSON" ]; then
+              self_adds="$(jq -r --argjson n "$PR_NUMBER" --arg g "$GUARD_SCRIPT" '
+                [ .[]? | select(type == "object" and .number == $n) ] as $self
+                | if ($self | length) != 1 then "UNKNOWN"
+                  elif ($self[0].files | type) != "array" then "UNKNOWN"
+                  elif ($self[0].changedFiles | type) != "number" then "UNKNOWN"
+                  elif $self[0].changedFiles != ($self[0].files | length) then "TRUNCATED"
+                  elif ([ $self[0].files[]? | .path? ] | index($g)) != null then "YES"
+                  else "NO"
+                  end' "$PRS_JSON" 2>/dev/null)" || self_adds=UNKNOWN
+            fi
+            if [ "$self_adds" = "YES" ]; then
+              # Expected and harmless: the guard does not exist on the merge
+              # target at the path `GUARD_SCRIPT` names, and this PR's own
+              # diff adds that path — it is the PR introducing the guard, or
+              # the PR moving it there (#4431 review note 6) — so there is
+              # nothing for it to have verified. Correctness of the guard itself is
+              # covered by its `--self-test` (a prek hook, and part of
+              # validate-all), not by this job. A warning, not a failure —
+              # failing would make the introducing PR unmergeable by the very
+              # guard it introduces.
+              echo "::warning::session-log-pr-collision: NOT RUN — $GUARD_SCRIPT does not exist on this PR's base branch, and PR #$PR_NUMBER is the PR that adds it there (introducing the guard, or moving it to this path). No collision check was performed. It takes effect for every PR whose base contains this merge."
+              {
+                echo "### session-log-pr-collision — not run"
+                echo
+                echo "\`$GUARD_SCRIPT\` is not on this PR's base branch and this PR is the one adding it there (introducing it, or moving it to this path), so there was nothing to run. The guard applies from the next PR onwards."
+              } >> "$summary"
+              exit 0
+            fi
+            echo "::error::session-log-pr-collision: could not verify — $GUARD_SCRIPT is missing from the base-branch checkout and this PR does not add it (self-PR file list: $self_adds). Most likely the guard was deleted or moved without this PR restoring it — but if you are re-running an OLDER workflow run (GitHub replays that run's original event payload, so its base.sha can predate this guard's own merge to main, or even predate this very PR), that is a transitional artifact of the re-run, not a deletion: re-run the WORKFLOW from the PR's current head instead, or push a new commit, rather than looking for a deletion that never happened. Either way, its own open-PR payload could not be trusted either, and every one of these is the fail-open #3933 exists to prevent, so this fails."
+            exit 1
+          fi
+
+          # `-e` (the default GitHub Actions shell) aborts the step the
+          # instant a pipeline with `pipefail` returns non-zero — capturing
+          # `${PIPESTATUS[0]}` AFTER a trailing `|| true` does not work,
+          # because `true` running as its own command overwrites
+          # PIPESTATUS with ITS OWN status before the next line ever reads
+          # it (measured while writing this: every branch below read
+          # rc=0, including the collision fixture). Wrapping the pipeline
+          # as an `if` CONDITION is what actually suppresses `-e` for it
+          # while leaving `${PIPESTATUS[0]}` holding the real exit code in
+          # the `else` branch.
+          if node "$GUARD_SCRIPT" \
+              --prs "$PRS_JSON" --self-pr "$PR_NUMBER" --merged-paths "$MERGED_PATHS" \
+              --pr-limit "$PR_LIST_LIMIT" \
+              2>&1 | tee collision.log; then
+            rc=0
+          else
+            rc="${PIPESTATUS[0]}"
+          fi
+          cat collision.log >> "$summary" || true
+
+          # ── #4431 defect 1: two channels, and they have to agree ──────────
+          #
+          # The guard writes `SESSION_LOG_PR_COLLISION_VERDICT=<verdict>` as
+          # its last line on every path it CHOOSES to take. A crash — syntax
+          # error, missing module, uncaught throw, OOM, a signal — takes no
+          # such path, so it produces no verdict line, and node's own exit
+          # code for all of them is 1. That is why "collision" is 20 here and
+          # not 1, and why the verdict is required as well: only the two
+          # anticipated (code, verdict) pairs are believed, and every other
+          # combination — including a bare 1 — is "could not verify". A
+          # crashed guard can no longer be reported as a finding.
+          verdict="$(sed -n 's/^SESSION_LOG_PR_COLLISION_VERDICT=\([A-Z]*\)$/\1/p' collision.log | tail -n 1)"
+          if [ "$rc" -eq 0 ] && [ "$verdict" = "CLEAN" ]; then
+            echo "session-log-pr-collision: verified — no open PR shares a session-log number with another, and none adds a number already on the merge target."
+          elif [ "$rc" -eq 20 ] && [ "$verdict" = "COLLISION" ]; then
+            echo "::error::session-log-pr-collision: a session-log number would be duplicated in the merge result — either two open PRs claim it, or one adds a number already on the base. See the log above for which, and for the next free number."
+            exit 1
+          else
+            echo "::error::session-log-pr-collision: could not verify (exit=$rc, verdict=${verdict:-<none>}) — the guard did not reach a verdict, so NO collision was observed and none is being reported. Likely causes: the guard is missing or unreadable in the base checkout, a syntax error or uncaught exception in it, node itself crashing or being killed, or the guard refusing to trust its own open-PR payload (its own message is above). Treated as a failure, never a pass (#3933)."
+            exit 1
+          fi
+          # --- END session-log-pr-collision step shell ---

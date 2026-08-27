@@ -3136,6 +3136,38 @@ pass_filenames = false
 files = '^(scripts/pr-merge-result-check\.sh|scripts/lib/git-scratch-guard\.sh|scripts/check-raw-tx\.py|scripts/check-dynamic-sql\.py|scripts/check-table-ownership\.py|scripts/check-unsafe-allowlist\.sh|scripts/check-migrations-immutable\.sh|scripts/check-tauri-import-baseline\.mjs|scripts/lib/js-scanner\.mjs|\.github/workflows/pr-overlap\.yml)$'
 stages = ["pre-commit"]
 
+# session-log-pr-collision-selftest (#3933): two open, unmerged PRs can each
+# add a DIFFERENT session-log filename claiming the SAME embedded number —
+# `check-session-log-numbering.sh` above cannot see this (its check 1 tests
+# uniqueness against HEAD ∪ origin/main ∪ same-commit siblings, and a
+# sibling's open PR branch is in none of those sets while both are open), and
+# `pr-file-overlap.mjs` above cannot either (it intersects CHANGED FILE
+# PATHS, and the two colliding filenames share no path). This is a pure
+# function of a `gh pr list --json number,files` payload — no filesystem, no
+# network — so the self-test drives it directly, deliberately NOT as a
+# pre-commit-gating invocation of the script's `main()`, which needs the
+# network (`gh pr list`) this hook must never depend on. The actual check
+# runs only in CI, as a dedicated job in `pr-overlap.yml`; see that job's own
+# header for the fail-closed contract (an unverifiable input — a malformed
+# payload, or this PR itself missing from the fetched list — must fail, not
+# silently pass as "no collision").
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "session-log-pr-collision-selftest"
+name = "session-log open-PR collision guard self-test (#3933)"
+entry = "node scripts/check-session-log-pr-collision.mjs --self-test"
+language = "system"
+pass_filenames = false
+# `check-session-log-numbering.sh` is in this list because the self-test now
+# asserts the two guards share a GAP_BOUND (#3929's window): this script's
+# "next free number" suggestion has to be a number that one would also
+# accept, and a change to the bound in either place that is not made in both
+# hands out numbers the other rejects. That parity is only checked if a
+# change to the bash guard re-runs this hook.
+files = '^(scripts/check-session-log-pr-collision\.mjs|scripts/check-session-log-numbering\.sh|\.github/workflows/pr-overlap\.yml)$'
+stages = ["pre-commit"]
+
 # git-scratch-guard-selftest (#3722): the SHARED scrubber that every script
 # building git fixtures must source before its first fixture command. A prek
 # self-test runs inside the pre-commit environment, where git exports
