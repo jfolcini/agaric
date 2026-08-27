@@ -26,7 +26,7 @@ vi.mock('sonner', () => ({
 import { toast } from 'sonner'
 
 import { logger } from '@/lib/logger'
-import { reportIpcError } from '@/lib/report-ipc-error'
+import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 const mockT = ((key: string) => `translated:${key}`) as unknown as TFunction
 
@@ -81,5 +81,68 @@ describe('reportIpcError', () => {
     reportIpcError('Mod', 'key', 'string-error', mockT)
     expect(logger.error).toHaveBeenCalledWith('Mod', 'key (IPC error)', undefined, 'string-error')
     expect(toast.error).toHaveBeenCalledWith('translated:key')
+  })
+})
+
+describe('reportIpcErrorWithReason (#4399)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("shows a validation AppError's own message instead of the localized key", () => {
+    // The shape `unwrap` throws: the deserialized AppError OBJECT, which is
+    // NOT an Error instance. This is the half `err instanceof Error ?
+    // err.message : undefined` could never reach.
+    const err = {
+      kind: 'validation',
+      message:
+        "cannot declare property 'year' as 'number': 1 value(s) already stored under this key " +
+        'would be rejected by that type (1 stored as text).',
+      code: null,
+    }
+    reportIpcErrorWithReason('Mod', 'property.errorCreate', err, mockT, { key: 'year' })
+
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('1 stored as text'))
+    // ...and never the generic fallback.
+    expect(toast.error).not.toHaveBeenCalledWith('translated:property.errorCreate')
+    // The structured log line is still emitted, with the context.
+    expect(logger.error).toHaveBeenCalledWith(
+      'Mod',
+      'property.errorCreate (IPC error)',
+      { key: 'year' },
+      err,
+    )
+  })
+
+  it('falls back to the localized key for a transport Error', () => {
+    // `typedError` rethrows real `Error`s, so this is a transport failure,
+    // not a backend refusal — its text was never written for a user. The
+    // `err instanceof Error ? err.message : …` spelling this replaces had it
+    // exactly backwards: it showed this one and hid the validation message.
+    reportIpcErrorWithReason('Mod', 'property.createDefFailed', new Error('boom'), mockT)
+    expect(toast.error).toHaveBeenCalledWith('translated:property.createDefFailed')
+    expect(toast.error).not.toHaveBeenCalledWith('boom')
+  })
+
+  it('falls back to the localized key for a non-validation AppError', () => {
+    // An `internal` message is a correlation id, not something to act on.
+    const err = { kind: 'internal', message: 'an internal error occurred (err: 7f3a)' }
+    reportIpcErrorWithReason('Mod', 'property.errorCreate', err, mockT)
+    expect(toast.error).toHaveBeenCalledWith('translated:property.errorCreate')
+  })
+
+  it('falls back to the localized key for a bare string and for an empty message', () => {
+    reportIpcErrorWithReason('Mod', 'property.errorCreate', 'string-error', mockT)
+    expect(toast.error).toHaveBeenCalledWith('translated:property.errorCreate')
+
+    vi.clearAllMocks()
+    reportIpcErrorWithReason(
+      'Mod',
+      'property.errorCreate',
+      { kind: 'validation', message: '   ', code: null },
+      mockT,
+    )
+    expect(toast.error).toHaveBeenCalledWith('translated:property.errorCreate')
   })
 })

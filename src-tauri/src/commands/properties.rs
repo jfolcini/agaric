@@ -1126,8 +1126,198 @@ fn validate_property_def_shape(
     Ok(())
 }
 
+/// Whether a declaration of `value_type` would still accept a
+/// `block_properties` row stored in the `shape` column (#4399).
+///
+/// This is `validate_property_value`'s step-4 `type_matches`
+/// (`agaric-engine/src/block_ops.rs`) read backwards: there it asks "does
+/// this payload fit the declaration?", here we ask "does every value
+/// already stored fit the declaration we are about to create?". The two
+/// must agree exactly — a shape this says is admitted but the engine
+/// rejects is a row the user can never rewrite. In particular `text` and
+/// `select` admit `value_ref` as well as `value_text`, and the catch-all
+/// mirrors step 4's `_ => true` (an unrecognised declared type constrains
+/// nothing, so nothing conflicts with it).
+fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
+    match value_type {
+        "text" | "select" => shape == "text" || shape == "ref",
+        "ref" => shape == "ref",
+        "number" => shape == "number",
+        "date" => shape == "date",
+        "boolean" => shape == "boolean",
+        _ => true,
+    }
+}
+
+/// Would declaring `key` as `value_type` orphan values the vault already
+/// holds under that key? Returns the rejection message when it would, and
+/// `None` when the declaration is safe (#4399).
+///
+/// # Why a declaration over existing values is a trap
+///
+/// `property_definitions` is keyed by `key` alone, so a declaration
+/// constrains **every block in the vault**. The dangerous case is a key
+/// with existing values and no declaration — the ordinary state, since
+/// `validate_property_value` skips its type check entirely when
+/// `declaration` is `None`, so an undeclared non-reserved key accepts any
+/// of the five typed slots. Declaring a contradicting type over those
+/// values costs the user three things at once (#4382):
+///
+///  1. every later write of the stored shape, on any block, is rejected —
+///     `"Property 'year' expects type 'number', got 'text'."`;
+///  2. on inbound sync a `Str` value is routed by `value_type`,
+///     `parse::<f64>()` fails, and there is a deliberate
+///     no-fallback-to-`value_text` rule, so the row is dropped row-absent
+///     and the user cannot even see which blocks are affected;
+///  3. the declaration cannot be withdrawn —
+///     [`delete_property_def_inner`] refuses while any `block_properties`
+///     row references the key, and the remedy its error names
+///     (`set_property(value = None)`) is itself rejected for a
+///     non-reserved key. The only exit discards the data.
+///
+/// # Why the probe is shape-aware rather than "any rows at all"
+///
+/// [`declare_bib_property_defs`](crate::commands::pages::bibliography)
+/// uses the coarse "does this key have any values?" test, and that is
+/// right for an import: it is not the user's typing decision, so the
+/// cheap conservative answer costs nothing. It is the wrong test for a
+/// command a user invokes deliberately. Declaring a type is most useful
+/// for a key that is already in use — that is the whole reason to open
+/// Settings → Properties — and the coarse test would make exactly that
+/// case permanently impossible, with no way back short of deleting every
+/// value. Declaring `number` over rows that already live in `value_num`
+/// traps nothing: none of the three links above can fire, because every
+/// stored value still satisfies the declaration.
+///
+/// So the predicate is the precise one: refuse only when a stored value
+/// would be rejected by the requested type. That is
+/// [`declared_type_admits_shape`] per shape, plus step 5's options
+/// membership for a `select` declaration that carries an options array —
+/// a stored `value_text` outside the list is just as un-writable as a
+/// wrong-shaped one.
+///
+/// # Deliberately no `blocks.deleted_at` filter
+///
+/// The COUNT(*) that blocks [`delete_property_def_inner`] does not filter
+/// soft-deleted blocks either, so a declaration created over a trashed
+/// block's values is just as permanently stuck. Narrowing the condition
+/// here would let link 3 back in through the trash.
+///
+/// Reserved / column-backed keys need no carve-out: migration 0088's
+/// `key_not_reserved` CHECK forbids `block_properties` rows for them
+/// outright, so the probe finds nothing and the declaration proceeds.
+async fn conflicting_existing_values(
+    conn: &mut sqlx::SqliteConnection,
+    key: &str,
+    value_type: &str,
+    options: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    // One aggregate pass over the key's rows. The `exactly_one_value` CHECK
+    // (migrations 0062 / 0088) guarantees exactly one non-NULL value column
+    // per row, so these five counts partition `total` and a row can never be
+    // counted under two shapes.
+    let counts = sqlx::query!(
+        r#"SELECT
+             COUNT(*)                                                            AS "total!: i64",
+             COALESCE(SUM(CASE WHEN value_text IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_text!: i64",
+             COALESCE(SUM(CASE WHEN value_num  IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_num!: i64",
+             COALESCE(SUM(CASE WHEN value_date IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_date!: i64",
+             COALESCE(SUM(CASE WHEN value_ref  IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_ref!: i64",
+             COALESCE(SUM(CASE WHEN value_bool IS NOT NULL THEN 1 ELSE 0 END), 0) AS "n_bool!: i64"
+           FROM block_properties
+           WHERE key = ?1"#,
+        key,
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+
+    if counts.total == 0 {
+        return Ok(None);
+    }
+
+    let mut offending: i64 = 0;
+    let mut parts: Vec<String> = Vec::new();
+    for (n, shape) in [
+        (counts.n_text, "text"),
+        (counts.n_num, "number"),
+        (counts.n_date, "date"),
+        (counts.n_ref, "ref"),
+        (counts.n_bool, "boolean"),
+    ] {
+        if n > 0 && !declared_type_admits_shape(value_type, shape) {
+            offending += n;
+            parts.push(format!("{n} stored as {shape}"));
+        }
+    }
+
+    // Step 5 (`validate_property_value`): a `select` declaration with a
+    // non-NULL options array also constrains `value_text` to the listed
+    // options. Disjoint from the shape counts above — these rows ARE
+    // `value_text`, which `select` admits by shape, and fail on membership.
+    if value_type == "select"
+        && let Some(opts) = options
+    {
+        let out_of_options: i64 = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) AS "n!: i64"
+               FROM block_properties
+               WHERE key = ?1
+                 AND value_text IS NOT NULL
+                 AND value_text NOT IN (SELECT value FROM json_each(?2))"#,
+            key,
+            opts,
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        if out_of_options > 0 {
+            offending += out_of_options;
+            parts.push(format!("{out_of_options} not in the declared options"));
+        }
+    }
+
+    if offending == 0 {
+        return Ok(None);
+    }
+
+    let detail = parts.join(", ");
+    Ok(Some(format!(
+        "cannot declare property '{key}' as '{value_type}': {offending} value(s) already stored \
+         under this key would be rejected by that type ({detail}). A property definition applies \
+         to every block in the vault, and it cannot be removed again while any value under the \
+         key exists. Clear or convert those values first, or declare '{key}' as the type they \
+         already use."
+    )))
+}
+
 /// Create a property definition. Uses INSERT OR IGNORE for idempotency —
-/// if the key already exists, this is a no-op.
+/// if the key already exists, this is a no-op and the existing row is
+/// returned unchanged.
+///
+/// # Refuses to declare a type over values that contradict it (#4399)
+///
+/// Before inserting, this probes `block_properties` for the key and
+/// rejects with [`AppError::Validation`] when any value already stored
+/// under it would be rejected by the requested `value_type` — see
+/// [`conflicting_existing_values`] for the trap that guards against, and
+/// for why the probe is shape-aware instead of the coarser "any values at
+/// all?" test the bibliography import uses.
+///
+/// The refusal is deliberate, and deliberately different from the
+/// import's warn-and-continue: this command is a single-key action a user
+/// took on purpose with a dialog open, so silently declining to declare
+/// what they asked for would leave them staring at a key that reports no
+/// type and no reason. All three UI call sites already render a rejection.
+///
+/// # Atomicity
+///
+/// The probe, the INSERT and the readback share one `BEGIN IMMEDIATE`.
+/// Split across statements this would be a genuine TOCTOU: a concurrent
+/// `set_property` can create the very `block_properties` rows the probe
+/// looked for and did not find, and the declaration that lands on top of
+/// them is exactly the un-exitable state the probe exists to prevent.
+/// That window is also why the frontend's own pre-flight
+/// (`renameMayDeclareKey`, `src/lib/property-save-utils.ts`) cannot be the
+/// guarantee — it reads the read pool while the write goes to the write
+/// pool, and it only sees the 1000 most-used keys.
 #[instrument(skip(pool, options), err)]
 pub async fn create_property_def_inner(
     pool: &SqlitePool,
@@ -1137,26 +1327,44 @@ pub async fn create_property_def_inner(
 ) -> Result<PropertyDefinition, AppError> {
     validate_property_def_shape(&key, &value_type, options.as_deref())?;
 
-    let now = agaric_core::time::now_rfc3339();
-    sqlx::query(
-        "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind(&key)
-    .bind(&value_type)
-    .bind(&options)
-    .bind(&now)
-    .execute(pool)
-    .await?;
+    // allow-raw-tx: writes property_definitions (schema metadata), no op_log (#110)
+    let mut tx = crate::db::begin_immediate_logged(pool, "create_property_def").await?;
 
-    // Fetch back (may differ from input if key already existed)
+    // Idempotency first, and before the probe. An existing row wins (the
+    // INSERT OR IGNORE contract ~20 call sites depend on), and nothing is
+    // written — so there is no new constraint to guard, and re-asserting a
+    // declaration the user already made must never be refused. This is also
+    // what keeps a rename onto an already-declared key a no-op.
+    let existing = sqlx::query_as!(
+        PropertyDefinition,
+        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        key
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(row) = existing {
+        return Ok(row);
+    }
+
+    if let Some(reason) =
+        conflicting_existing_values(&mut tx, &key, &value_type, options.as_deref()).await?
+    {
+        return Err(AppError::validation(reason));
+    }
+
+    create_property_def_in_tx(&mut tx, &key, &value_type, options.as_deref()).await?;
+
+    // Fetch back inside the same transaction — the row this call created,
+    // never one a racing writer slipped in afterwards.
     let row = sqlx::query_as!(
         PropertyDefinition,
         "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
         key
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
 
+    tx.commit().await?;
     Ok(row)
 }
 
@@ -1174,6 +1382,17 @@ pub async fn create_property_def_inner(
 /// concurrent write can create the very `block_properties` rows the
 /// pre-flight looked for and did not find. Inside one `BEGIN IMMEDIATE`
 /// there is no such window.
+///
+/// This is the raw writer and deliberately carries **no** in-use probe of
+/// its own (#4399); each caller decides what an in-use key means for it,
+/// and runs that decision in this same transaction. The two callers do
+/// differ: `declare_bib_property_defs` warns and continues, because
+/// refusing to import a bibliography over an unrelated key elsewhere in
+/// the vault is disproportionate, while [`create_property_def_inner`]
+/// refuses, because a user asked for this one key by name. Adding a probe
+/// here would not change the import's behaviour — its own test is the
+/// strictly coarser "any values at all?" — but it would put the decision
+/// in the wrong place.
 pub async fn create_property_def_in_tx(
     conn: &mut sqlx::SqliteConnection,
     key: &str,
@@ -1290,6 +1509,30 @@ pub async fn get_property_def_inner(
 /// the inconsistency rather than the user discovering it later via a
 /// failed write. Sync replay behaves identically on both ends, so
 /// this is not a corruption vector.
+///
+/// ## Why this warns where `create_property_def` refuses (#4399)
+///
+/// [`create_property_def_inner`] now **rejects** a declaration whose
+/// stored values would fail step 5's options membership — the same
+/// predicate this function only warns about. The asymmetry is
+/// deliberate, so read this before "fixing" either side to match the
+/// other. What made the create case worth a refusal was #4382's third
+/// link: the declaration cannot be withdrawn, because
+/// [`delete_property_def_inner`] refuses while any `block_properties`
+/// row references the key, and the remedy its error names
+/// (`set_property(value = None)`) is itself rejected for a non-reserved
+/// key. The only exit discards the data.
+///
+/// Narrowing an options array arms neither the second nor the third
+/// link. Inbound sync routes a `select` value through
+/// `reproject_block_properties_from_engine`'s `"select" | "text" | …`
+/// arm straight to `value_text` with no membership check, so the orphan
+/// rows are never dropped and stay visible; and the exit is one
+/// non-destructive call to this very function with the option added
+/// back. Only link 1 fires, and it un-fires on demand. A refusal here
+/// would also break the legitimate retire-an-option flow the paragraph
+/// above describes, which has no equivalent on the create path — there
+/// is no such thing as retiring a declaration you have not made yet.
 #[instrument(skip(pool, options), err)]
 pub async fn update_property_def_options_inner(
     pool: &SqlitePool,
@@ -1913,4 +2156,129 @@ pub async fn delete_property_def(
     delete_property_def_inner(&write_pool.0, key)
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// #4399 — the pin on [`declared_type_admits_shape`], which is a
+/// hand-written mirror of `validate_property_value`'s step-4 `type_matches`
+/// (`agaric-engine/src/block_ops.rs`) and is therefore only as good as
+/// whatever reddens when it drifts.
+///
+/// Adversarial falsification found three arms nothing was holding up: `ref`,
+/// `boolean`, and the `|| shape == "ref"` half of `text | select`. Rewriting
+/// `ref` and `boolean` to admit a stored `text` — the fail-OPEN direction,
+/// which reinstates #4382's trap for those two types — left all 518 property
+/// tests green. The matrix below is the missing pin; the arms are also
+/// exercised end-to-end through the command path in
+/// `commands::tests::property_cmd_tests`
+/// (`create_property_def_admits_stored_refs_under_text_4399`,
+/// `create_property_def_refuses_ref_and_boolean_over_stored_text_4399`),
+/// which is what proves the mirror agrees with the real engine rather than
+/// with a transcription of it.
+#[cfg(test)]
+mod declared_type_admits_shape_tests {
+    use super::{AppError, declared_type_admits_shape, validate_property_def_shape};
+
+    /// The shapes a `block_properties` row can have — one per value column,
+    /// and exactly one per row (`exactly_one_value`, migration 0062). The
+    /// probe's own `for` loop iterates this same list.
+    const SHAPES: [&str; 5] = ["text", "number", "date", "ref", "boolean"];
+
+    /// Every declarable `value_type` paired with the shapes it admits,
+    /// transcribed arm-for-arm from step 4's `type_matches`:
+    ///
+    /// ```text
+    /// "text" | "select" => payload.value_text.is_some() || payload.value_ref.is_some(),
+    /// "ref"             => payload.value_ref.is_some(),
+    /// "number"          => payload.value_num.is_some(),
+    /// "date"            => payload.value_date.is_some(),
+    /// "boolean"         => payload.value_bool.is_some(),
+    /// ```
+    ///
+    /// Anything not listed for a type must be REFUSED — that half is the
+    /// one that keeps #4382 shut, and the half falsification found open.
+    const MATRIX: [(&str, &[&str]); 6] = [
+        ("text", &["text", "ref"]),
+        ("select", &["text", "ref"]),
+        ("ref", &["ref"]),
+        ("number", &["number"]),
+        ("date", &["date"]),
+        ("boolean", &["boolean"]),
+    ];
+
+    #[test]
+    fn matches_step_4_type_matches_arm_for_arm_4399() {
+        for (value_type, admitted) in MATRIX {
+            for shape in SHAPES {
+                let expected = admitted.contains(&shape);
+                assert_eq!(
+                    declared_type_admits_shape(value_type, shape),
+                    expected,
+                    "declaring '{value_type}' over a stored '{shape}' value must be {}: \
+                     `declared_type_admits_shape` mirrors `validate_property_value`'s step-4 \
+                     `type_matches` (agaric-engine/src/block_ops.rs) arm for arm. Admitting a \
+                     shape the engine rejects reopens #4382 for that type; refusing one it \
+                     admits makes the key permanently undeclarable.",
+                    if expected { "admitted" } else { "refused" },
+                );
+            }
+        }
+    }
+
+    /// The `_ => true` catch-all is correct — it mirrors step 4's own
+    /// `_ => true`, so a declared type the engine does not constrain
+    /// conflicts with nothing — but it is fail-OPEN for any type the engine
+    /// DOES constrain. The only way a *declarable* type reaches it is a
+    /// seventh `value_type` added to [`validate_property_def_shape`] and not
+    /// to [`declared_type_admits_shape`].
+    ///
+    /// A named arm always refuses at least one shape; the catch-all refuses
+    /// none. So "refuses something" is exactly "has a named arm".
+    #[test]
+    fn every_declarable_type_has_a_named_arm_4399() {
+        for (value_type, _) in MATRIX {
+            let options = if value_type == "select" {
+                Some(r#"["a"]"#)
+            } else {
+                None
+            };
+            validate_property_def_shape("k", value_type, options).unwrap_or_else(|e| {
+                panic!("'{value_type}' must be declarable for this matrix to mean anything: {e:?}")
+            });
+            assert!(
+                SHAPES
+                    .iter()
+                    .any(|s| !declared_type_admits_shape(value_type, s)),
+                "'{value_type}' is declarable but admits EVERY stored shape, so it fell through \
+                 to the `_ => true` catch-all. That is fail-open: a declaration of it can be \
+                 created over values the engine will then refuse to rewrite (#4382). Give it a \
+                 named arm mirroring `validate_property_value`'s step 4."
+            );
+        }
+    }
+
+    /// The other direction of staleness: a seventh declarable `value_type`
+    /// that never reaches [`MATRIX`], and so is never asked the question
+    /// above.
+    ///
+    /// [`validate_property_def_shape`] cannot be enumerated from outside, but
+    /// its rejection message spells the accepted set out for the user, right
+    /// beside the `matches!` that defines it. Pinning the message pins the
+    /// set: adding a type without touching this file reddens here, and the
+    /// failure names the two places that then need an arm.
+    #[test]
+    fn matrix_covers_every_type_validate_property_def_shape_accepts_4399() {
+        let err = validate_property_def_shape("k", "septenary", None)
+            .expect_err("an unknown value_type must be rejected");
+        let AppError::Validation { message, .. } = err else {
+            panic!("expected a Validation rejection");
+        };
+        assert_eq!(
+            message,
+            "invalid value_type 'septenary': must be text, number, date, select, ref, or boolean",
+            "the declarable-type set changed. Every type `validate_property_def_shape` accepts \
+             needs a row in this module's MATRIX and a named arm in \
+             `declared_type_admits_shape` — otherwise it falls through to the `_ => true` \
+             catch-all and its declarations are never probed (#4399/#4382)."
+        );
+    }
 }

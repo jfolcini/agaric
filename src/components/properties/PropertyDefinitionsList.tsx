@@ -37,7 +37,7 @@ import { notify } from '@/lib/notify'
 import { setPriorityLevels } from '@/lib/priority-levels'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
-import { reportIpcError } from '@/lib/report-ipc-error'
+import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref'] as const
 
@@ -109,8 +109,16 @@ export function PropertyDefinitionsList(): React.ReactElement {
       setNewType('text')
       notify.success(t('propertiesView.created'))
     } catch (error) {
-      // See loadDefinitions above — unified error reporting.
-      reportIpcError('PropertyDefinitionsList', 'property.errorCreate', error, t)
+      // See loadDefinitions above — unified error reporting, but this one
+      // keeps the backend's REASON (#4399). `create_property_def` refuses to
+      // declare a type over a key whose existing values contradict it, and
+      // the refusal names the key, how many values are in the way and what
+      // shape they hold. This is the entry point the issue calls "the direct
+      // one" — type `year`, pick `number`, done — and the offending values
+      // are vault-wide, so they are usually nowhere near this screen. A bare
+      // "Failed to create property definition" gives the user nothing to act
+      // on. Non-validation kinds still fall back to the localized message.
+      reportIpcErrorWithReason('PropertyDefinitionsList', 'property.errorCreate', error, t, { key })
     }
     setIsCreating(false)
   }, [newKey, newType, t])

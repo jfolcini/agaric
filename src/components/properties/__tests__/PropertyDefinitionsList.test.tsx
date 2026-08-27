@@ -259,6 +259,46 @@ describe('PropertyDefinitionsList', () => {
     expect(screen.queryByText('My Prop')).not.toBeInTheDocument()
   })
 
+  // #4399 — Settings -> Properties is the entry point the issue calls "the
+  // direct one": type `year`, pick `number`, done. The backend now refuses
+  // when the vault already holds `year` values that `number` would reject,
+  // and the reason has to reach the user — the offending blocks are anywhere
+  // in the vault, so "Failed to create property definition" leaves nothing to
+  // act on. Note the rejection is the AppError OBJECT (what `unwrap` throws),
+  // not an `Error`; the test above pins that a transport `Error` still gets
+  // the generic toast, so this cannot pass by showing every thrown message.
+  it("shows the backend's reason when a definition would trap existing values", async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce(pageOf([])) // initial load
+
+    render(<PropertyDefinitionsList />)
+
+    await waitFor(() => {
+      expect(screen.getByText('No property definitions yet')).toBeInTheDocument()
+    })
+
+    mockedInvoke.mockRejectedValueOnce({
+      kind: 'validation',
+      code: null,
+      message:
+        "cannot declare property 'year' as 'number': 1 value(s) already stored under this key " +
+        'would be rejected by that type (1 stored as text).',
+    })
+
+    await user.type(screen.getByPlaceholderText('Property key'), 'year')
+    await user.click(screen.getByRole('button', { name: /Create/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining("cannot declare property 'year' as 'number'"),
+      )
+    })
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith(
+      expect.stringContaining('Failed to create property definition'),
+    )
+    expect(screen.queryByText('Year')).not.toBeInTheDocument()
+  })
+
   it('shows toast error when deleting a definition fails and keeps item', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce(pageOf([makePropDef('to-delete', 'text')])) // initial load
