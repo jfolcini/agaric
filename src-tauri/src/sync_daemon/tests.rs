@@ -106,6 +106,7 @@ fn head_exchange(heads: Vec<DeviceHead>, pairing_proof: Option<String>) -> SyncM
         op_log_batch_chunked: false,
         pairing_proof,
         device_name: None,
+        sender_device_id: None,
     }
 }
 
@@ -5083,6 +5084,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         },
     )
     .await
@@ -7588,6 +7590,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .expect("responder handle_message")
@@ -7644,6 +7647,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .expect("responder handle_message")
@@ -11101,9 +11105,21 @@ struct PairingClaimRun4230 {
 /// Drive one responder session against a host that already holds a **bound**
 /// victim peer, and report what the host wrote.
 ///
-/// * `joiner_head_device` — the device id the joiner's one seeded op is authored
-///   by, i.e. the id its `HeadExchange` advertises and the responder's
-///   `claimed_id` therefore resolves to.
+/// * `joiner_identity` — **who the joiner presents itself as**: the device id
+///   its one seeded op is authored by (so its `HeadExchange` advertises that
+///   head) *and* the id it runs its own initiator session under (so #4380's
+///   `sender_device_id` states it).
+///
+///   The two were separable before #4380 and are not any more, which is the
+///   point. Back then the responder's `claimed_id` came only from the advertised
+///   head, so seeding an op authored by the victim was enough to make the
+///   session claim the victim's id. #4380 gives the joiner a way to state which
+///   device it is, and the production initiator states its OWN `device_id` — so
+///   a fixture that seeds a victim-authored op while running as `JOIN4230` no
+///   longer claims anything: it is an honest three-device joiner, which is
+///   #4380's scenario, not #4230's. Driving BOTH from one parameter is what
+///   keeps these tests testing an impostor. It is also the more faithful
+///   fixture: a device impersonating the victim runs as the victim.
 /// * `prebind_joiner_as` — `Some(id)` binds the joiner's key to that peer row on
 ///   the host *before* the session, which puts the responder on the BOUND branch
 ///   (and leaves the host's pairing window closed, since nothing needs it).
@@ -11111,7 +11127,7 @@ struct PairingClaimRun4230 {
 /// * `expected_peer` — the id whose row the run is expected to key bookkeeping
 ///   on; its post-run row and frontier are returned for the caller to judge.
 async fn drive_pairing_claim_4230(
-    joiner_head_device: &str,
+    joiner_identity: &str,
     prebind_joiner_as: Option<&str>,
     expected_peer: &str,
 ) -> PairingClaimRun4230 {
@@ -11174,7 +11190,7 @@ async fn drive_pairing_claim_4230(
         &joiner_pool,
         &joiner_mat,
         &joiner_state,
-        joiner_head_device,
+        joiner_identity,
         &space,
         JOINER_BLOCK_4230,
         "seeded on the joiner (#4230)",
@@ -11263,7 +11279,9 @@ async fn drive_pairing_claim_4230(
     let joiner_cancel = AtomicBool::new(false);
     let ctx = SyncSessionContext {
         pool: &joiner_pool,
-        device_id: JOINER_DEV_4230,
+        // #4380: the initiator states this id as its own on the wire, so it is
+        // what the responder's session is keyed on — see `joiner_identity`.
+        device_id: joiner_identity,
         materializer: &joiner_apply,
         scheduler: &joiner_sched,
         event_sink: &joiner_sink_dyn,
@@ -11619,6 +11637,7 @@ async fn handle_incoming_sync_records_the_peer_supplied_device_name_4298() {
             pairing_proof: None,
             // Deliberately over-long: a peer can put anything in this field.
             device_name: Some("p".repeat(200)),
+            sender_device_id: None,
         },
     )
     .await
@@ -11655,4 +11674,511 @@ async fn handle_incoming_sync_records_the_peer_supplied_device_name_4298() {
     );
 
     materializer.shutdown();
+}
+
+// ── #4380: the responder binds the joiner's key to the JOINER ───────
+//
+// `get_local_heads` is `ORDER BY d.device_id` and, since #2481, a peer
+// advertises the frontier of every device it holds — so the responder's
+// pre-#4380 `claimed_id` ("the first non-self advertised head") was *the
+// lowest-sorting device id in the joiner's op log*. Device ids are v4 UUIDs, so
+// in a three-device vault that is the joiner's own id roughly half the time, and
+// the TOFU bind at the end of `handle_incoming_sync` made the coin flip
+// permanent: `bind_endpoint_id` writes only its own column, then refuses to
+// re-point the key, and the user sees one device-list entry where two devices
+// are involved with no way to tell it is wrong.
+//
+// The fixtures below drive the REAL pairing path — production
+// `handle_incoming_sync` against production `try_sync_with_peer` over two live
+// QUIC endpoints, with the joiner's op log seeded through the real local-edit
+// pipeline so its `HeadExchange` is computed by `get_local_heads` rather than
+// hand-built. That is what makes "the foreign head sorts first" a property of
+// the fixture's data instead of an assertion the test wrote itself.
+
+const HOST_DEV_4380: &str = "HOST4380";
+/// The joiner. Chosen to sort BETWEEN the two foreign ids below, so the same
+/// joiner can be run against a foreign device on either side of it.
+const JOINER_DEV_4380: &str = "MJOIN4380";
+/// A third device whose ops the joiner already holds, sorting BELOW it — the
+/// broken case: this is the id the responder used to bind.
+const LOW_FOREIGN_4380: &str = "AFOREIGN4380";
+/// The same, sorting ABOVE the joiner — the case that was already correct, and
+/// the reason the low case alone would prove nothing.
+const HIGH_FOREIGN_4380: &str = "ZFOREIGN4380";
+const HOST_BLOCK_4380: &str = "01HZ4380HBLKXXXXXXXXXXXXXX";
+const JOINER_BLOCK_4380: &str = "01HZ4380JBLKXXXXXXXXXXXXXX";
+const FOREIGN_BLOCK_4380: &str = "01HZ4380FBLKXXXXXXXXXXXXXX";
+const SPACE_4380: &str = "01HZ4380SPACEXXXXXXXXXXXXX";
+const HOST_CONTENT_4380: &str = "seeded on the host (#4380)";
+const PASSPHRASE_4380: &str = "the pairing passphrase 4380";
+
+/// Land one op authored by `device_id` in `pool` as a **replicated audit row**
+/// (`is_replicated = 1`), through the production ingest path.
+///
+/// This is what a joiner that has already paired with a third device actually
+/// holds (#2481 phase 1): foreign ops arrive as append-only, hash-verified
+/// audit metadata and are never applied to state. `get_local_heads` places no
+/// `is_replicated` condition on its scan, so the row contributes a frontier to
+/// the joiner's `HeadExchange` exactly as a locally-authored one would — which
+/// is the whole premise of #4380.
+///
+/// **Not `make_local_edit_602` with a foreign `device_id`.** That is how the
+/// #4230 fixtures seed a foreign head, and it is fine there because their
+/// joiner's op log holds exactly one op. Here the joiner must hold two, and a
+/// locally-authored op_log spanning two devices trips `apply_op_projected`'s
+/// #412 single-global-cursor `debug_assert!` on the joiner's materializer — a
+/// real invariant about *locally authored* rows, correctly stated, which a
+/// replicated row is explicitly exempt from. The exemption is not a way around
+/// the assert; it is the accurate provenance.
+async fn seed_replicated_op_4380(
+    pool: &SqlitePool,
+    device_id: &str,
+    block_id: &str,
+    content: &str,
+    ts: i64,
+) {
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: agaric_core::ulid::BlockId::from_trusted(block_id),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(1),
+        index: None,
+        content: content.into(),
+    });
+    let op_type = payload.op_type_str().to_owned();
+    let payload_json = agaric_store::op_log::serialize_inner_payload(&payload).unwrap();
+    let hash = agaric_core::hash::compute_op_hash(device_id, 1, None, &op_type, &payload_json);
+    agaric_sync::sync_protocol::insert_replicated_op(
+        pool,
+        &agaric_sync::sync_protocol::types::OpTransfer {
+            device_id: device_id.to_owned(),
+            seq: 1,
+            parent_seqs: None,
+            hash,
+            op_type,
+            payload: payload_json,
+            created_at: ts,
+            origin: "user".to_owned(),
+        },
+    )
+    .await
+    .expect("the foreign audit op must ingest");
+}
+
+/// What one three-device pairing left on the host.
+struct BindRun4380 {
+    /// The device ids the joiner actually advertised, in wire order — computed
+    /// by `get_local_heads`, not by the test. The control for every assertion
+    /// below: without it, "the joiner was bound correctly" could mean the fixture
+    /// never produced the ambiguity in the first place.
+    advertised: Vec<String>,
+    /// The host's row for the joiner's own id, after the session.
+    joiner_row: Option<PeerRef>,
+    /// The host's row for the foreign id the joiner also advertised.
+    foreign_row: Option<PeerRef>,
+    /// The key the joiner's QUIC handshake authenticated.
+    joiner_key: String,
+    host_events: Vec<SyncEvent>,
+    joiner_events: Vec<SyncEvent>,
+    /// The host's seeded block as projected into the joiner's `blocks` table —
+    /// so "the session completed" is read off settled state, not a counter.
+    host_block_on_joiner: Option<String>,
+    host_still_pending: bool,
+}
+
+/// Drive one three-device pairing: a joiner whose op log holds `foreign_device`'s
+/// ops as well as its own, dialling a host that has never seen either.
+async fn drive_pairing_bind_4380(foreign_device: &str) -> BindRun4380 {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_4380);
+
+    // ── The host: a fresh device with an open pairing window ────────────
+    let (host_pool, _host_dir) = test_pool().await;
+    let host_mat = Materializer::new(host_pool.clone());
+    let host_state = std::sync::Arc::clone(host_mat.loro_state());
+    let host_sched = Arc::new(SyncScheduler::new());
+    let host_sink = Arc::new(RecordingEventSink::new());
+
+    make_local_edit_602(
+        &host_pool,
+        &host_mat,
+        &host_state,
+        HOST_DEV_4380,
+        &space,
+        HOST_BLOCK_4380,
+        HOST_CONTENT_4380,
+        1_736_942_400_000,
+    )
+    .await;
+
+    // ── The joiner: a device that has ALREADY paired with a third one ───
+    //
+    // Both ops go through the real local-edit pipeline, differing only in the
+    // authoring device id — which is exactly the #2481 shape: a peer holds
+    // another device's ops as replicated audit metadata, and `get_local_heads`
+    // therefore advertises that device's frontier alongside its own.
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_mat = Materializer::new(joiner_pool.clone());
+    let joiner_state = std::sync::Arc::clone(joiner_mat.loro_state());
+    let joiner_sched = Arc::new(SyncScheduler::new());
+    let joiner_sink = Arc::new(RecordingEventSink::new());
+
+    seed_replicated_op_4380(
+        &joiner_pool,
+        foreign_device,
+        FOREIGN_BLOCK_4380,
+        "authored on the third device (#4380)",
+        1_736_942_400_050,
+    )
+    .await;
+    make_local_edit_602(
+        &joiner_pool,
+        &joiner_mat,
+        &joiner_state,
+        JOINER_DEV_4380,
+        &space,
+        JOINER_BLOCK_4380,
+        "authored on the joiner (#4380)",
+        1_736_942_400_100,
+    )
+    .await;
+
+    let advertised: Vec<String> = agaric_sync::sync_protocol::get_local_heads(&joiner_pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|h| h.device_id)
+        .collect();
+
+    let proof = agaric_sync::pairing::pairing_proof(PASSPHRASE_4380);
+    peer_refs::set_pending_pairing(&joiner_pool, &proof)
+        .await
+        .unwrap();
+    peer_refs::set_pending_pairing(&host_pool, &proof)
+        .await
+        .unwrap();
+
+    // ── Two real endpoints: the host serves, the joiner dials ───────────
+    let harness = ServiceHarness::new().await;
+    let joiner_key = client_key(&harness);
+    assert!(
+        peer_refs::get_peer_ref_by_endpoint_id(&host_pool, &joiner_key)
+            .await
+            .unwrap()
+            .is_none(),
+        "precondition: this is the pairing branch, where NO row names the dialling key"
+    );
+
+    let host_sink_dyn: Arc<dyn SyncEventSink> = host_sink.clone();
+    let host_task = spawn_responder(
+        &harness,
+        host_pool.clone(),
+        HOST_DEV_4380,
+        host_mat.clone(),
+        host_sched.clone(),
+        host_sink_dyn,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let joiner_sink_dyn: Arc<dyn SyncEventSink> = joiner_sink.clone();
+    let joiner_apply: Arc<dyn agaric_sync::apply_host::ApplyHost> =
+        std::sync::Arc::new(joiner_mat.clone());
+    let joiner_cancel = AtomicBool::new(false);
+    let ctx = SyncSessionContext {
+        pool: &joiner_pool,
+        device_id: JOINER_DEV_4380,
+        materializer: &joiner_apply,
+        scheduler: &joiner_sched,
+        event_sink: &joiner_sink_dyn,
+        cancel: &joiner_cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+    };
+    let peer = discovered_service_peer(HOST_DEV_4380, &harness);
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &[], None),
+    )
+    .await
+    .expect("try_sync_with_peer must finish inside its own connect budget");
+    assert!(!was_cancelled, "no cancel is issued in this test");
+
+    let host_result = tokio::time::timeout(std::time::Duration::from_secs(40), host_task)
+        .await
+        .expect("the responder must resolve once the initiator's session ends")
+        .expect("the responder task must not panic");
+    assert!(
+        host_result.is_ok(),
+        "handle_incoming_sync must return Ok, got {host_result:?}"
+    );
+
+    let out = BindRun4380 {
+        advertised,
+        joiner_row: peer_refs::get_peer_ref(&host_pool, JOINER_DEV_4380)
+            .await
+            .unwrap(),
+        foreign_row: peer_refs::get_peer_ref(&host_pool, foreign_device)
+            .await
+            .unwrap(),
+        joiner_key,
+        host_events: host_sink.events(),
+        joiner_events: joiner_sink.events(),
+        host_block_on_joiner: sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(HOST_BLOCK_4380)
+            .fetch_optional(&joiner_pool)
+            .await
+            .unwrap(),
+        host_still_pending: peer_refs::is_pending_pairing(&host_pool).await.unwrap(),
+    };
+
+    host_mat.shutdown();
+    joiner_mat.shutdown();
+    out
+}
+
+/// The shared judgement: the joiner's key ended up on the JOINER's row, and on
+/// nobody else's — after a session that really moved data.
+///
+/// Every clause is here because of a specific way this could pass while broken:
+///
+/// * the completion clauses, because "nothing wrong was written" is trivially
+///   true of a session that failed to start, and a fix that refused legitimate
+///   multi-device joiners would be worse than the bug;
+/// * the `foreign_row` clause, because binding the joiner correctly *and also*
+///   manufacturing a row for the third device would still leave the host holding
+///   a fiction about a device it has never met;
+/// * the explicit key comparison, because a row merely EXISTING for the joiner
+///   proves nothing — the pre-#4380 code created one too (bookkeeping
+///   upserts it), just with `endpoint_id` on the wrong row.
+fn assert_bound_to_the_joiner_4380(out: &BindRun4380, foreign_device: &str) {
+    assert!(
+        saw_complete_3507(&out.host_events),
+        "the host must complete the session: this is a LEGITIMATE joiner doing the \
+         #2481-sanctioned thing (advertising a frontier it holds), so the fix may not \
+         be a refusal to talk to it. Got {:?}",
+        out.host_events
+    );
+    assert!(
+        saw_complete_3507(&out.joiner_events),
+        "…and so must the joiner, got {:?}",
+        out.joiner_events
+    );
+    assert_eq!(
+        out.host_block_on_joiner.as_deref(),
+        Some(HOST_CONTENT_4380),
+        "the host's block must have reached the joiner — the session moved state, so \
+         the bind site really was reached rather than skipped by an early exit"
+    );
+
+    // The failure message names where the key actually went, because "no row for
+    // the joiner" on its own does not distinguish "bound nothing" from "bound the
+    // wrong device" — and those are very different bugs.
+    let row = out.joiner_row.as_ref().unwrap_or_else(|| {
+        panic!(
+            "the host must end with a peer_refs row for the JOINER ({JOINER_DEV_4380}); \
+             advertised heads were {:?}, and the host's row for {foreign_device} carries \
+             endpoint_id {:?} (the joiner's key is {:?})",
+            out.advertised,
+            out.foreign_row.as_ref().and_then(|r| r.endpoint_id.clone()),
+            out.joiner_key,
+        )
+    });
+    assert_eq!(
+        row.endpoint_id.as_deref(),
+        Some(out.joiner_key.as_str()),
+        "#4380: the joiner's key must be bound to the JOINER's row. Advertised heads \
+         were {:?}; the foreign device in this run is {foreign_device}",
+        out.advertised
+    );
+
+    assert_ne!(
+        out.foreign_row
+            .as_ref()
+            .and_then(|r| r.endpoint_id.clone())
+            .as_deref(),
+        Some(out.joiner_key.as_str()),
+        "…and must NOT be bound to {foreign_device}, a device this host has never met \
+         and whose ops the joiner merely replicated. That bind is permanent: \
+         `bind_endpoint_id` refuses to re-point a key afterwards"
+    );
+
+    assert!(
+        !out.host_still_pending,
+        "#1519: a completed pair closes the window behind it — which also proves the \
+         bind returned Ok rather than being skipped"
+    );
+}
+
+/// **The acceptance test.** The joiner's op log holds a LOWER-sorting foreign
+/// device, so the pre-#4380 responder bound its key under that device's id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_three_device_joiner_binds_under_its_own_id_when_a_foreign_head_sorts_lower_4380() {
+    let out = drive_pairing_bind_4380(LOW_FOREIGN_4380).await;
+
+    // The fixture control, asserted before anything else: this run is only the
+    // broken case if the foreign device really does come first on the wire.
+    // `get_local_heads` produced this ordering; the test did not choose it.
+    assert_eq!(
+        out.advertised,
+        vec![LOW_FOREIGN_4380.to_string(), JOINER_DEV_4380.to_string()],
+        "fixture control: `get_local_heads` must advertise the FOREIGN device first, \
+         or the pre-#4380 `first non-self head` would have happened to pick the joiner \
+         and this test would pass without exercising the defect at all"
+    );
+
+    assert_bound_to_the_joiner_4380(&out, LOW_FOREIGN_4380);
+}
+
+/// The other ordering. The pre-#4380 code is *already* correct here — which is
+/// exactly why the test above is not enough on its own: run only against a
+/// favourable ordering, a bind test passes for the wrong reason, and the error
+/// rate the issue describes is `(N-1)/N`, not 1.
+///
+/// This arm's job is therefore not to catch the old bug (it cannot) but to catch
+/// an over-correction: a fix that started binding the *highest*-sorting head, or
+/// the last one, or that refused every multi-head joiner, would break here and
+/// pass above.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_three_device_joiner_binds_under_its_own_id_when_a_foreign_head_sorts_higher_4380() {
+    let out = drive_pairing_bind_4380(HIGH_FOREIGN_4380).await;
+
+    assert_eq!(
+        out.advertised,
+        vec![JOINER_DEV_4380.to_string(), HIGH_FOREIGN_4380.to_string()],
+        "fixture control: this is the mirror ordering — the joiner sorts first here, \
+         which is what made the pre-#4380 behaviour correct by luck"
+    );
+
+    assert_bound_to_the_joiner_4380(&out, HIGH_FOREIGN_4380);
+}
+
+// ── #4380: peers too old to state an id ─────────────────────────────
+
+/// What one hand-built (pre-#4380) `HeadExchange` left on the host.
+struct LegacyBindRun4380 {
+    /// Every row the host holds afterwards. Collected wholesale rather than
+    /// looked up by id, because the interesting failure is a row appearing for
+    /// an id the test did not name.
+    rows: Vec<PeerRef>,
+    joiner_key: String,
+    host_still_pending: bool,
+}
+
+/// Drive one responder session from a peer that omits `sender_device_id`,
+/// advertising exactly `heads`.
+///
+/// The frame is hand-built here — unlike the fixtures above, which drive the
+/// production initiator — precisely BECAUSE the production initiator now always
+/// states its id. A pre-#4380 peer cannot be produced from this tree's own code,
+/// so the only honest way to test the compatibility path is to send the frame
+/// that build would have sent.
+async fn drive_legacy_pairing_bind_4380(heads: Vec<DeviceHead>) -> LegacyBindRun4380 {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let proof = agaric_sync::pairing::pairing_proof(PASSPHRASE_4380);
+    peer_refs::set_pending_pairing(&pool, &proof).await.unwrap();
+
+    let harness = ServiceHarness::new().await;
+    let joiner_key = client_key(&harness);
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        HOST_DEV_4380,
+        materializer.clone(),
+        scheduler,
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let mut client = harness.dial().await;
+    // `head_exchange` is the shared helper, and it leaves `sender_device_id`
+    // at `None` — which is what a peer predating #4380 puts on the wire.
+    send_sync_message(&mut client.send, &head_exchange(heads, Some(proof)))
+        .await
+        .unwrap();
+
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert!(
+        matches!(response, SyncMessage::SyncComplete { .. }),
+        "an empty-registry session short-circuits to SyncComplete, got {response:?}"
+    );
+    close_and_join_ok(client, handle).await;
+
+    let out = LegacyBindRun4380 {
+        rows: peer_refs::list_peer_refs(&pool).await.unwrap(),
+        joiner_key,
+        host_still_pending: peer_refs::is_pending_pairing(&pool).await.unwrap(),
+    };
+    materializer.shutdown();
+    out
+}
+
+/// A pre-#4380 peer advertising TWO foreign frontiers is not bound at all.
+///
+/// The heads name two candidates and nothing in the frame says which is the
+/// joiner, so any bind here is a bind by sort order — the defect, restated for a
+/// peer that cannot state its id. Refusing leaves no wrong state: the session
+/// still ran, the pairing window is deliberately left open (only a bind consumes
+/// it), and the pair completes through the host's own initiator pass, which binds
+/// against the id the peer ANNOUNCED over mDNS.
+///
+/// A wrong bind, by contrast, is permanent and invisible.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_legacy_joiner_with_two_foreign_heads_is_not_bound_at_all_4380() {
+    let out = drive_legacy_pairing_bind_4380(vec![
+        fake_head(LOW_FOREIGN_4380),
+        fake_head(JOINER_DEV_4380),
+    ])
+    .await;
+
+    let bound: Vec<&str> = out
+        .rows
+        .iter()
+        .filter(|r| r.endpoint_id.as_deref() == Some(out.joiner_key.as_str()))
+        .map(|r| r.peer_id.as_str())
+        .collect();
+    assert!(
+        bound.is_empty(),
+        "#4380: with two candidate heads and no stated id, the responder must bind \
+         NOTHING rather than whichever sorted lowest. It bound {bound:?}"
+    );
+    assert!(
+        out.host_still_pending,
+        "…and the window must stay open, or the host cannot reach the real device \
+         through its own initiator pass — which is what makes the refusal recoverable \
+         instead of a dead end"
+    );
+}
+
+/// The symmetric arm, and the one a blanket refusal would fail: a pre-#4380 peer
+/// advertising exactly ONE head still binds, under that head.
+///
+/// This is the ordinary two-device first pair on an older build, and it is
+/// unambiguous — the single non-self head is the joiner. Refusing it would change
+/// the most common, most user-visible flow in the app to close a corner of it, so
+/// the guard is deliberately scoped to *provable* ambiguity and this test is what
+/// pins that scope.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_legacy_joiner_with_one_head_still_binds_under_it_4380() {
+    let out = drive_legacy_pairing_bind_4380(vec![fake_head(JOINER_DEV_4380)]).await;
+
+    let bound: Vec<&str> = out
+        .rows
+        .iter()
+        .filter(|r| r.endpoint_id.as_deref() == Some(out.joiner_key.as_str()))
+        .map(|r| r.peer_id.as_str())
+        .collect();
+    assert_eq!(
+        bound,
+        vec![JOINER_DEV_4380],
+        "a single advertised head is unambiguous, so the pre-#4380 behaviour stands: \
+         an older device must still be able to complete a first pair"
+    );
+    assert!(
+        !out.host_still_pending,
+        "…and that bind closes the window, exactly as it did before (#1519)"
+    );
 }

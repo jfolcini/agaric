@@ -529,6 +529,20 @@ impl SyncOrchestrator {
             pairing_proof,
             // #4298: this device's own name, so the peer can render it.
             device_name,
+            // #4380: state which device we are, instead of leaving the
+            // responder to infer it from the sort order of `heads`. `heads`
+            // carries every frontier this device holds (#2481), so the lowest
+            // -sorting one is our own id only by luck. This is the only place
+            // this device's real id is known for certain, and it costs one
+            // string on the wire.
+            //
+            // Not normalised on the way out: it comes from
+            // `device::get_or_create_device_id`, which parsed it as a UUID
+            // before returning it, and a send-side transform that could alter
+            // this device's own identity would be a bug generator with nothing
+            // to catch. The receiving side re-checks it, because the sender is
+            // untrusted there.
+            sender_device_id: Some(self.device_id.clone()).filter(|id| !id.is_empty()),
         })
     }
 
@@ -690,6 +704,9 @@ impl SyncOrchestrator {
                 // first place the authoritative peer id is known. This core has
                 // no peer row to write it to and nothing to do with it.
                 device_name: _,
+                // #4380: the id the peer states for ITSELF, which is what the
+                // heads-derived fallback below is a bad guess at.
+                sender_device_id,
             } => {
                 // Gate raw-byte Loro merges by engine format before doing any
                 // import work (#2130). An incompatible peer is rejected up
@@ -727,18 +744,50 @@ impl SyncOrchestrator {
                 // advertisement would mis-attribute the session and, against
                 // the daemon-supplied cert CN, false-fail as a "device_id
                 // mismatch". When the daemon set an `expected_remote_id` from
-                // the verified TLS cert CN (#778, authoritative), use it. Only
-                // for a cert-less (in-memory test) session do we fall back to
-                // the first-non-self head — where a peer that has never
-                // originated its own ops legitimately yields an empty id, so an
-                // empty `remote_id` here is not malformed.
+                // the authenticated peer row (#778, authoritative), use it.
+                //
+                // #4380: otherwise take the id the peer STATED for itself, and
+                // only fall back to the first-non-self head for a peer too old
+                // to state one. The three sources are ordered by how much they
+                // are worth, not by convenience:
+                //
+                // 1. `expected_remote_id` — resolved from the handshake-
+                //    authenticated key against our own store. Not a claim.
+                // 2. `sender_device_id` — a claim, but the peer's claim about
+                //    ITSELF, which is the thing being asked. This is the whole
+                //    of #4380: the responder's pairing branch has no (1), and
+                //    (3) answers a different question.
+                // 3. the first non-self head — the lowest-sorting device id in
+                //    the peer's op log. Answers "which device's ops does this
+                //    peer hold first, alphabetically", which is only the peer's
+                //    own id by coincidence. Kept solely so a pre-#4380 peer
+                //    still names its session; the daemon refuses to *bind* on it
+                //    when the heads are provably ambiguous (`server.rs`).
+                //
+                // A peer that has never originated its own ops legitimately
+                // yields an empty id at (3), so an empty `remote_id` here is not
+                // malformed — it means "declined to identify itself", and the
+                // daemon leaves such a session unbound.
+                //
+                // The `!= self.device_id` filter is unreachable through the
+                // daemon — `server.rs` rejects a peer that names US as
+                // `Rejection::Self_` before this core ever sees the frame — and
+                // is here for the cert-less in-process sessions that have no
+                // daemon in front of them, where taking the claim verbatim would
+                // key the session's bookkeeping on our own row.
                 let remote_id = match &self.expected_remote_id {
                     Some(expected) => expected.clone(),
-                    None => heads
-                        .iter()
-                        .find(|h| h.device_id != self.device_id)
-                        .map(|h| h.device_id.clone())
-                        .unwrap_or_default(),
+                    None => sender_device_id
+                        .as_deref()
+                        .and_then(crate::sync_protocol::accept_stated_device_id)
+                        .filter(|id| *id != self.device_id)
+                        .unwrap_or_else(|| {
+                            heads
+                                .iter()
+                                .find(|h| h.device_id != self.device_id)
+                                .map(|h| h.device_id.clone())
+                                .unwrap_or_default()
+                        }),
                 };
 
                 self.remote_device_id = Some(remote_id.clone());
