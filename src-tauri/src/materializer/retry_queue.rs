@@ -1414,6 +1414,37 @@ fn payload_string_field(payload: &str, field: &str) -> Option<String> {
 /// [`ApplyOpSweepDisposition`] values (permanent — the caller retires the
 /// row); transient failures (enqueue / probe errors) propagate as `Err` so
 /// the row survives for the next sweep.
+///
+/// # The "later than" order, stated once (#4402)
+///
+/// Every gate below asks the same question — *is there an op strictly later
+/// than the swept one?* — so they must all ask it in the SAME total order.
+/// That order is the canonical `(created_at, seq, device_id)` one documented
+/// on [`agaric_store::op_log::BlockEditScan`], and used by
+/// `commands::history`, `agaric_store::pagination::history` and every
+/// `reverse::*` prior-value scan. It is a TOTAL order: `(device_id, seq)` is
+/// the `op_log` PRIMARY KEY and `device_id` is a plain TEXT column (BINARY
+/// collation, migration 0079), so two distinct rows can never tie on all
+/// three, and the strict `>` excludes an op from superseding itself.
+///
+/// Until #4402 these gates instead compared `(created_at, device_id, seq)`.
+/// Both are total orders, but they rank a cross-device `created_at` collision
+/// in OPPOSITE directions — for two ops sharing a `created_at`, one from
+/// device `aaa` at `seq 100` and one from device `zzz` at `seq 5`, the
+/// canonical order ranks `aaa` newer (100 > 5) while the `device_id`-first
+/// one ranked `zzz` newer. The sweep could therefore retire exactly the op
+/// the history and reverse layers regard as the winning write (a silently
+/// dropped write), or miss a supersession and re-apply a stale value over
+/// the winner (the very regression #850/#3294 added these gates to stop).
+/// `created_at` is wall-clock epoch-MILLISECONDS (`db::now_ms`, migration
+/// 0079), so a cross-device collision needs only two ops in the same
+/// millisecond, not a same-second clock coincidence.
+///
+/// The rewrite is plan-neutral: no `op_log` index leads with `device_id`
+/// after `created_at`, and `idx_op_log_block_key_created` (migration 0098)
+/// carries `(…, created_at, seq, device_id)` — the canonical order — so
+/// `EXPLAIN QUERY PLAN` is byte-identical for both forms on all four gates.
+/// Pinned by the `*_4402` tests below.
 async fn try_reenqueue_apply_op(
     read_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
@@ -1435,8 +1466,8 @@ async fn try_reenqueue_apply_op(
 
     // #621: out-of-order-sweep guard. The sweep re-applies minutes-to-hours
     // after the original failure, after later ops already applied. If a
-    // LATER `purge_block` (materializer LWW order: `created_at, device_id,
-    // seq`) targets the same block, re-applying this op would re-insert the
+    // LATER `purge_block` (#4402: the canonical LWW order `created_at, seq,
+    // device_id`) targets the same block, re-applying this op would re-insert the
     // purged block in SQL (`INSERT OR IGNORE`, no purge check) and recreate
     // the node in the engine. The op the user observed winning is the purge
     // — drop this one. (`purge_block` is excluded from gating itself only by
@@ -1453,14 +1484,14 @@ async fn try_reenqueue_apply_op(
                    AND p.block_id = ?1 \
                    AND (p.created_at > ?2 \
                         OR (p.created_at = ?2 \
-                            AND (p.device_id > ?3 \
-                                 OR (p.device_id = ?3 AND p.seq > ?4)))) \
+                            AND (p.seq > ?3 \
+                                 OR (p.seq = ?3 AND p.device_id > ?4)))) \
              )",
         )
         .bind(block_id)
         .bind(record.created_at)
-        .bind(&record.device_id)
         .bind(record.seq)
+        .bind(&record.device_id)
         .fetch_one(read_pool)
         .await?;
         if superseded != 0 {
@@ -1489,7 +1520,7 @@ async fn try_reenqueue_apply_op(
         // (its create parent was purged but the block lives elsewhere and the
         // op SHOULD re-apply). Per hop the effective parent is therefore:
         // the `new_parent_id` of the LATEST `move_block` op for that block
-        // (strict LWW order `created_at, device_id, seq` — same total order as
+        // (strict LWW order `created_at, seq, device_id` — same total order as
         // the purge predicate below), else the create op's `parent_id`. The
         // CASE/EXISTS split (not COALESCE) is load-bearing: a move to ROOT
         // carries `new_parent_id = null`, which must TERMINATE the chain, not
@@ -1518,7 +1549,7 @@ async fn try_reenqueue_apply_op(
                         THEN (SELECT json_extract(m.payload, '$.new_parent_id') \
                                 FROM op_log m \
                                WHERE m.op_type = 'move_block' AND m.block_id = ?1 \
-                               ORDER BY m.created_at DESC, m.device_id DESC, m.seq DESC \
+                               ORDER BY m.created_at DESC, m.seq DESC, m.device_id DESC \
                                LIMIT 1) \
                         ELSE (SELECT json_extract(c.payload, '$.parent_id') \
                                 FROM op_log c \
@@ -1532,7 +1563,7 @@ async fn try_reenqueue_apply_op(
                         THEN (SELECT json_extract(m.payload, '$.new_parent_id') \
                                 FROM op_log m \
                                WHERE m.op_type = 'move_block' AND m.block_id = a.id \
-                               ORDER BY m.created_at DESC, m.device_id DESC, m.seq DESC \
+                               ORDER BY m.created_at DESC, m.seq DESC, m.device_id DESC \
                                LIMIT 1) \
                         ELSE (SELECT json_extract(c.payload, '$.parent_id') \
                                 FROM op_log c \
@@ -1548,14 +1579,14 @@ async fn try_reenqueue_apply_op(
                  WHERE p.op_type = 'purge_block' \
                    AND (p.created_at > ?2 \
                         OR (p.created_at = ?2 \
-                            AND (p.device_id > ?3 \
-                                 OR (p.device_id = ?3 AND p.seq > ?4)))) \
+                            AND (p.seq > ?3 \
+                                 OR (p.seq = ?3 AND p.device_id > ?4)))) \
              )",
         )
         .bind(block_id)
         .bind(record.created_at)
-        .bind(&record.device_id)
         .bind(record.seq)
+        .bind(&record.device_id)
         .fetch_one(read_pool)
         .await?;
         if superseded_by_ancestor_purge != 0 {
@@ -1565,7 +1596,7 @@ async fn try_reenqueue_apply_op(
         // #850: the second half of #621's own fix suggestion (the purge half
         // shipped first). When the op being swept is itself an `edit_block`,
         // a LATER `edit_block` on the same block (same strict LWW order:
-        // `created_at, device_id, seq`) already won — its content is what the
+        // `created_at, seq, device_id`) already won — its content is what the
         // user observed. `apply_edit_block_via_loro` splices `to_text` and
         // projects the snapshot, so re-applying this stale edit now would
         // regress the newer content in both engine and SQL. Drop it. The
@@ -1585,14 +1616,14 @@ async fn try_reenqueue_apply_op(
                        AND e.block_id = ?1 \
                        AND (e.created_at > ?2 \
                             OR (e.created_at = ?2 \
-                                AND (e.device_id > ?3 \
-                                     OR (e.device_id = ?3 AND e.seq > ?4)))) \
+                                AND (e.seq > ?3 \
+                                     OR (e.seq = ?3 AND e.device_id > ?4)))) \
                  )",
             )
             .bind(block_id)
             .bind(record.created_at)
-            .bind(&record.device_id)
             .bind(record.seq)
+            .bind(&record.device_id)
             .fetch_one(read_pool)
             .await?;
             if superseded_by_edit != 0 {
@@ -1613,7 +1644,7 @@ async fn try_reenqueue_apply_op(
         // from give-up retirement, so it retries until it lands).
         //
         // The predicate is the SAME strict total order as the purge/edit gates
-        // (`created_at, device_id, seq`). It IS total: `(device_id, seq)` is
+        // (`created_at, seq, device_id`). It IS total: `(device_id, seq)` is
         // the `op_log` PRIMARY KEY and `device_id` is a plain TEXT column
         // (BINARY collation, migration 0079), so two distinct rows can never
         // tie on all three and the strict `>` excludes the op from superseding
@@ -1652,16 +1683,16 @@ async fn try_reenqueue_apply_op(
                                AND json_extract(payload, '$.key') = ?
                                AND (created_at > ?
                                     OR (created_at = ?
-                                        AND (device_id > ?
-                                             OR (device_id = ? AND seq > ?))))
+                                        AND (seq > ?
+                                             OR (seq = ? AND device_id > ?))))
                            ) AS "e!: i64""#,
                         block_id,
                         key,
                         created_at,
                         created_at,
-                        dev,
-                        dev,
                         seq,
+                        seq,
+                        dev,
                     )
                     .fetch_one(read_pool)
                     .await?
@@ -1676,16 +1707,16 @@ async fn try_reenqueue_apply_op(
                                AND json_extract(payload, '$.tag_id') = ?
                                AND (created_at > ?
                                     OR (created_at = ?
-                                        AND (device_id > ?
-                                             OR (device_id = ? AND seq > ?))))
+                                        AND (seq > ?
+                                             OR (seq = ? AND device_id > ?))))
                            ) AS "e!: i64""#,
                         block_id,
                         tag_id,
                         created_at,
                         created_at,
-                        dev,
-                        dev,
                         seq,
+                        seq,
+                        dev,
                     )
                     .fetch_one(read_pool)
                     .await?
@@ -1698,15 +1729,15 @@ async fn try_reenqueue_apply_op(
                            AND block_id = ?
                            AND (created_at > ?
                                 OR (created_at = ?
-                                    AND (device_id > ?
-                                         OR (device_id = ? AND seq > ?))))
+                                    AND (seq > ?
+                                         OR (seq = ? AND device_id > ?))))
                        ) AS "e!: i64""#,
                         block_id,
                         created_at,
                         created_at,
-                        dev,
-                        dev,
                         seq,
+                        seq,
+                        dev,
                     )
                     .fetch_one(read_pool)
                     .await?
@@ -4614,6 +4645,471 @@ mod tests {
             "a record whose block was moved to ROOT must re-enqueue — a null \
              new_parent_id terminates the chain, it does not fall back to the \
              stale create parent (#2212 move-aware lineage)"
+        );
+        mat.shutdown();
+    }
+
+    // ---------------------------------------------------------------
+    // #4402 — the sweep gates must use the CANONICAL
+    // `(created_at, seq, device_id)` total order, not `(created_at,
+    // device_id, seq)`.
+    //
+    // Both are total orders (`(device_id, seq)` is the `op_log` PK, so
+    // neither can tie), but they rank a cross-device `created_at`
+    // collision DIFFERENTLY. Every fixture below seeds exactly that
+    // collision: two ops sharing a `created_at`, where the device with
+    // the lexicographically SMALLER id carries the HIGHER `seq`.
+    //
+    //   | op | device_id  | seq |
+    //   |----|------------|-----|
+    //   | A  | `aaa-…`    | 100 |
+    //   | B  | `zzz-…`    |   5 |
+    //
+    // `(created_at, seq, device_id)` ranks A newer (100 > 5); the old
+    // `(created_at, device_id, seq)` ranked B newer (`zzz` > `aaa`).
+    // Ids and seqs are pinned explicitly (not derived from a loop
+    // counter) so a test can never pass because the fixture happened to
+    // sort the same under both comparators.
+    //
+    // The discriminators are the existing pair (sweep return count,
+    // remaining retry rows): RETIRED is (0, 0), RE-ENQUEUED is (1, _).
+    //
+    // NOTE the fixtures leave `is_replicated = 0` on both devices' rows,
+    // matching the gates as written — the gate predicates do not filter
+    // on `is_replicated` (unlike the `reverse::*` prior-value scans,
+    // #2549). These tests pin the ORDER only.
+    // ---------------------------------------------------------------
+
+    /// #4402 (slot gate, dropped-write direction): the swept op is the
+    /// CANONICAL winner of the collision, so it must be re-applied.
+    ///
+    /// Under the old `(created_at, device_id, seq)` gate the `zzz` op won
+    /// on device id and the sweep RETIRED the swept op — a write the rest
+    /// of the system (`commands/history.rs`, `reverse/property_ops.rs`)
+    /// regards as authoritative, silently dropped with no error.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_slot_op_that_wins_canonical_order_on_seq_4402() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // ONE `created_at` for both ops — the collision is the whole point.
+        let t = crate::db::now_ms() - 60_000;
+
+        // The swept op: smaller device id, HIGHER seq → canonical WINNER.
+        insert_sweep_op(
+            &pool,
+            "aaa-4402slotwin",
+            100,
+            "set_property",
+            r#"{"block_id":"BLK4402SLOTWIN","key":"todo_state","value_text":"DONE","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK4402SLOTWIN",
+            t,
+        )
+        .await;
+        // The competitor: larger device id, LOWER seq → canonical LOSER.
+        insert_sweep_op(
+            &pool,
+            "zzz-4402slotwin",
+            5,
+            "set_property",
+            r#"{"block_id":"BLK4402SLOTWIN","key":"todo_state","value_text":"TODO","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK4402SLOTWIN",
+            t,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "aaa-4402slotwin", 100).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "#4402: the swept op wins the canonical (created_at, seq, device_id) \
+             order (seq 100 > 5), so nothing supersedes it and it must be \
+             re-enqueued. A (created_at, device_id, seq) gate ranks `zzz` above \
+             `aaa` and silently DROPS this write"
+        );
+        mat.shutdown();
+    }
+
+    /// #4402 (slot gate, value-regression direction): the swept op is the
+    /// CANONICAL loser of the collision, so it must be retired.
+    ///
+    /// The mirror of the test above, and the worse half: under the old
+    /// `(created_at, device_id, seq)` gate the swept op was NOT seen as
+    /// superseded, so the sweep re-applied it — writing its stale value
+    /// over the canonical winner's in both the Loro doc and SQL, and
+    /// exporting the regression over sync. That is precisely the
+    /// out-of-order value regression #3294 added the slot gate to stop.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_slot_op_that_loses_canonical_order_on_seq_4402() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, todo_state) \
+             VALUES ('BLK4402SLOTLOSE', 'content', 'task', 'DONE')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let t = crate::db::now_ms() - 60_000;
+
+        // The competitor: smaller device id, HIGHER seq → canonical WINNER.
+        // Its value ('DONE') is what the block already carries.
+        insert_sweep_op(
+            &pool,
+            "aaa-4402slotlose",
+            100,
+            "set_property",
+            r#"{"block_id":"BLK4402SLOTLOSE","key":"todo_state","value_text":"DONE","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK4402SLOTLOSE",
+            t,
+        )
+        .await;
+        // The swept op: larger device id, LOWER seq → canonical LOSER.
+        insert_sweep_op(
+            &pool,
+            "zzz-4402slotlose",
+            5,
+            "set_property",
+            r#"{"block_id":"BLK4402SLOTLOSE","key":"todo_state","value_text":"TODO","value_num":null,"value_date":null,"value_ref":null,"value_bool":null}"#,
+            "BLK4402SLOTLOSE",
+            t,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "zzz-4402slotlose", 5).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "#4402: the swept op LOSES the canonical (created_at, seq, device_id) \
+             order (seq 5 < 100), so it is slot-superseded and must NOT be \
+             re-enqueued. A (created_at, device_id, seq) gate ranks `zzz` above \
+             `aaa`, misses the supersession, and re-applies the stale value"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "#4402: the canonically-superseded row must be RETIRED, not left pending"
+        );
+        let todo_state: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = 'BLK4402SLOTLOSE'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            todo_state.as_deref(),
+            Some("DONE"),
+            "#4402: the canonical winner's value must survive the sweep"
+        );
+        mat.shutdown();
+    }
+
+    /// #4402 (#621 purge gate): a `purge_block` that wins the canonical
+    /// order on `seq` supersedes the swept op even though its device id
+    /// sorts BELOW the swept op's.
+    ///
+    /// Under the old order the purge was not "later", the gate did not
+    /// fire, and the sweep re-applied a create/edit into a block the user
+    /// destroyed — #621's out-of-order resurrection, reintroduced by the
+    /// tie-break alone.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_op_purged_by_canonical_later_purge_4402() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t = crate::db::now_ms() - 60_000;
+
+        // The swept op: larger device id, LOWER seq → canonical LOSER.
+        insert_sweep_op(
+            &pool,
+            "zzz-4402purge",
+            5,
+            "edit_block",
+            r#"{"block_id":"BLK4402PURGE","to_text":"stale edit"}"#,
+            "BLK4402PURGE",
+            t,
+        )
+        .await;
+        // The purge: smaller device id, HIGHER seq → canonical WINNER.
+        insert_sweep_op(
+            &pool,
+            "aaa-4402purge",
+            100,
+            "purge_block",
+            r#"{"block_id":"BLK4402PURGE"}"#,
+            "BLK4402PURGE",
+            t,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "zzz-4402purge", 5).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "#4402: the purge wins the canonical (created_at, seq, device_id) \
+             order (seq 100 > 5), so the swept op is purge-superseded and must \
+             NOT be re-enqueued (#621)"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "#4402: the purge-superseded row must be RETIRED, not left pending"
+        );
+        mat.shutdown();
+    }
+
+    /// #4402 (#2212 ancestor-purge gate): the ancestor purge and the swept
+    /// op collide on `created_at`, and the purge wins the canonical order on
+    /// `seq` despite its device id sorting BELOW the swept op's.
+    ///
+    /// The same-block purge gate cannot see this — the purge targets the
+    /// ROOT, and a purge cascade leaves no op_log row on the child — so this
+    /// pins the ancestor gate's own copy of the predicate, which the
+    /// `..._reaches_purged_root_4402` test (whose purge is unambiguously
+    /// later on `created_at`) deliberately does not exercise.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_op_whose_ancestor_purge_wins_canonical_order_4402() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+        insert_sweep_op(
+            &pool,
+            "dev-4402anc",
+            1,
+            "create_block",
+            r#"{"block_id":"ROOT4402ANC","block_type":"content","content":"r","parent_id":null,"position":1}"#,
+            "ROOT4402ANC",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-4402anc",
+            2,
+            "create_block",
+            r#"{"block_id":"CHILD4402ANC","block_type":"content","content":"c","parent_id":"ROOT4402ANC","position":1}"#,
+            "CHILD4402ANC",
+            t0,
+        )
+        .await;
+
+        // ONE `created_at` shared by the swept op and the ancestor purge.
+        let t = t0 + 1000;
+        // The swept op: larger device id, LOWER seq → canonical LOSER.
+        insert_sweep_op(
+            &pool,
+            "zzz-4402anc",
+            5,
+            "edit_block",
+            r#"{"block_id":"CHILD4402ANC","to_text":"stale child edit"}"#,
+            "CHILD4402ANC",
+            t,
+        )
+        .await;
+        // The ANCESTOR purge: smaller device id, HIGHER seq → canonical WINNER.
+        insert_sweep_op(
+            &pool,
+            "aaa-4402anc",
+            100,
+            "purge_block",
+            r#"{"block_id":"ROOT4402ANC"}"#,
+            "ROOT4402ANC",
+            t,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "zzz-4402anc", 5).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "#4402: the ancestor purge wins the canonical (created_at, seq, \
+             device_id) order (seq 100 > 5), so the swept child edit must NOT be \
+             re-enqueued — re-applying it would resurrect an orphan under a \
+             user-destroyed subtree (#2212)"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "#4402: the ancestor-purge-superseded row must be RETIRED, not left pending"
+        );
+        mat.shutdown();
+    }
+
+    /// #4402 (#850 edit gate): the swept `edit_block` wins the canonical
+    /// order on `seq`, so the competing same-`created_at` edit from the
+    /// lexicographically LARGER device does not supersede it.
+    ///
+    /// Under the old order the `zzz` edit won on device id and the sweep
+    /// retired the swept edit — dropping the content the canonical order
+    /// says is current.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_reenqueues_edit_that_wins_canonical_order_on_seq_4402() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t = crate::db::now_ms() - 60_000;
+
+        // The swept edit: smaller device id, HIGHER seq → canonical WINNER.
+        insert_sweep_op(
+            &pool,
+            "aaa-4402edit",
+            100,
+            "edit_block",
+            r#"{"block_id":"BLK4402EDIT","to_text":"canonical winner"}"#,
+            "BLK4402EDIT",
+            t,
+        )
+        .await;
+        // The competitor edit: larger device id, LOWER seq → canonical LOSER.
+        insert_sweep_op(
+            &pool,
+            "zzz-4402edit",
+            5,
+            "edit_block",
+            r#"{"block_id":"BLK4402EDIT","to_text":"canonical loser"}"#,
+            "BLK4402EDIT",
+            t,
+        )
+        .await;
+        seed_apply_op_retry_row(&pool, "aaa-4402edit", 100).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "#4402: the swept edit wins the canonical (created_at, seq, device_id) \
+             order (seq 100 > 5), so no later edit supersedes it and it must be \
+             re-enqueued (#850 is strict, and its order must be the canonical one)"
+        );
+        mat.shutdown();
+    }
+
+    /// #4402 (#2212 ancestry CTE): the "effective parent" hop picks the
+    /// LATEST `move_block` for a block, and "latest" must be canonical.
+    ///
+    /// `CHILD4402MOVE` has two `move_block` ops sharing a `created_at`:
+    /// `aaa-…`/seq 100 reparents it under the later-purged root, and
+    /// `zzz-…`/seq 5 reparents it under the surviving root. Canonically
+    /// the `aaa` move is the latest, so the effective ancestry reaches the
+    /// purged root and the record must be retired. Under the old
+    /// `created_at DESC, device_id DESC, seq DESC` the `zzz` move was
+    /// picked, the walk reached the SURVIVING root, and the sweep
+    /// resurrected an orphan under a user-destroyed subtree.
+    ///
+    /// This is the one gate where the disagreement changes the SET the
+    /// predicate is evaluated over, not just the comparison — so it is
+    /// pinned separately from the three EXISTS gates above.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_retires_op_whose_canonical_latest_move_reaches_purged_root_4402() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let t0 = crate::db::now_ms() - 60_000;
+
+        // Two roots, both at the top of the tree.
+        insert_sweep_op(
+            &pool,
+            "dev-4402move",
+            1,
+            "create_block",
+            r#"{"block_id":"KEEPROOT4402","block_type":"content","content":"k","parent_id":null,"position":1}"#,
+            "KEEPROOT4402",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-4402move",
+            2,
+            "create_block",
+            r#"{"block_id":"PURGEROOT4402","block_type":"content","content":"p","parent_id":null,"position":2}"#,
+            "PURGEROOT4402",
+            t0,
+        )
+        .await;
+        insert_sweep_op(
+            &pool,
+            "dev-4402move",
+            3,
+            "create_block",
+            r#"{"block_id":"CHILD4402MOVE","block_type":"content","content":"c","parent_id":"KEEPROOT4402","position":1}"#,
+            "CHILD4402MOVE",
+            t0,
+        )
+        .await;
+        // seq 4: the failed-then-persisted edit of the child — the swept op.
+        insert_sweep_op(
+            &pool,
+            "dev-4402move",
+            4,
+            "edit_block",
+            r#"{"block_id":"CHILD4402MOVE","to_text":"edited child"}"#,
+            "CHILD4402MOVE",
+            t0,
+        )
+        .await;
+
+        // The colliding pair of moves — ONE `created_at`, both later than
+        // the swept op so only the tie-break between THEM is in question.
+        let t_move = t0 + 1000;
+        // Smaller device id, HIGHER seq → canonical latest move.
+        insert_sweep_op(
+            &pool,
+            "aaa-4402move",
+            100,
+            "move_block",
+            r#"{"block_id":"CHILD4402MOVE","new_parent_id":"PURGEROOT4402","new_position":1}"#,
+            "CHILD4402MOVE",
+            t_move,
+        )
+        .await;
+        // Larger device id, LOWER seq → canonical loser.
+        insert_sweep_op(
+            &pool,
+            "zzz-4402move",
+            5,
+            "move_block",
+            r#"{"block_id":"CHILD4402MOVE","new_parent_id":"KEEPROOT4402","new_position":1}"#,
+            "CHILD4402MOVE",
+            t_move,
+        )
+        .await;
+
+        // The purge of PURGEROOT — unambiguously later on `created_at`, so
+        // the purge predicate's own tie-break plays no part here.
+        insert_sweep_op(
+            &pool,
+            "dev-4402move",
+            5,
+            "purge_block",
+            r#"{"block_id":"PURGEROOT4402"}"#,
+            "PURGEROOT4402",
+            t0 + 3000,
+        )
+        .await;
+
+        seed_apply_op_retry_row(&pool, "dev-4402move", 4).await;
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "#4402: the canonically-latest move (seq 100 > 5) reparents the child \
+             under PURGEROOT4402, which was later purged — the record must NOT be \
+             re-enqueued. A `device_id DESC, seq DESC` ORDER BY picks the `zzz` \
+             move instead, walks to the SURVIVING root, and resurrects an orphan \
+             under a purged subtree (#2212)"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "#4402: the ancestor-purge-superseded row must be RETIRED, not left pending"
         );
         mat.shutdown();
     }
