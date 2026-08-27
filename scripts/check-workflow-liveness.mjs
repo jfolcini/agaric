@@ -244,22 +244,36 @@ export function runStartedAt(run, workflow) {
  * status table, so the detail (age, conclusion) travels with the signal while
  * dedup still keys on the workflow name alone.
  */
-export function classifyWorkflow({ runs, nowMs, workflow, maxAgeHours, excludeRunId }) {
-  if (!Array.isArray(runs)) {
-    throw new Error(
-      `${workflow}: the run list is not a JSON array — refusing to assume it is healthy`,
-    )
-  }
-  const considered = runs
+/**
+ * Filters, times and sorts one workflow's `schedule`-event runs newest-first —
+ * the exact selection `classifyWorkflow` and `newestCompletedRunId` (#4400)
+ * must never disagree about, since the latter names the run the former's
+ * `result` string describes. Kept as one function for that reason: two
+ * independent copies of "which run is newest" are two copies that can drift,
+ * which is the same class of scanner-desync `stripComments`'s docstring
+ * warns about, just between functions instead of within one.
+ */
+function orderedRuns({ runs, workflow, excludeRunId }) {
+  return runs
     .filter(
       (r) => excludeRunId === undefined || String(r?.databaseId ?? '') !== String(excludeRunId),
     )
     .map((r) => ({
       status: r?.status,
       conclusion: r?.conclusion,
+      databaseId: r?.databaseId,
       startedAtMs: runStartedAt(r, workflow),
     }))
     .toSorted((a, b) => b.startedAtMs - a.startedAtMs)
+}
+
+export function classifyWorkflow({ runs, nowMs, workflow, maxAgeHours, excludeRunId }) {
+  if (!Array.isArray(runs)) {
+    throw new Error(
+      `${workflow}: the run list is not a JSON array — refusing to assume it is healthy`,
+    )
+  }
+  const considered = orderedRuns({ runs, workflow, excludeRunId })
 
   if (considered.length === 0) {
     return `never-ran (no \`schedule\` run of ${workflow} found at all)`
@@ -278,6 +292,30 @@ export function classifyWorkflow({ runs, nowMs, workflow, maxAgeHours, excludeRu
   return `failure (newest completed scheduled run concluded \`${completed.conclusion ?? 'unknown'}\`)`
 }
 
+/**
+ * #4400 — the numeric id of the newest COMPLETED scheduled run, or `null`
+ * when there isn't one (never-ran / stale-with-nothing-completed / every
+ * candidate still in-progress — the same cases `classifyWorkflow` reports as
+ * `never-ran`/`no-completed-run`, or as `stale` over a run that never
+ * completed).
+ *
+ * This is the identity `file-scheduled-failures.mjs`'s consecutive-failure
+ * counter keys on (see its `advanceStreaks`): the watchdog polls DAILY but
+ * most of the workflows it watches run WEEKLY, so "the same completed run
+ * observed again" and "a genuinely new completed run" must be distinguishable
+ * from something sturdier than "the poll happened" — a null here is the
+ * explicit "no run to point at", which that counter must hold on rather than
+ * either advance or reset from, exactly like `--skipped-ok`'s `carriedOverJobs`
+ * treats "it did not run" as neither a failure nor a recovery.
+ */
+export function newestCompletedRunId({ runs, workflow, excludeRunId }) {
+  if (!Array.isArray(runs)) return null
+  const completed = orderedRuns({ runs, workflow, excludeRunId }).find(
+    (r) => r.status === 'completed',
+  )
+  return completed?.databaseId ?? null
+}
+
 /** Classifies every watched workflow into the `${{ toJSON(needs) }}` shape. */
 export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WATCHED }) {
   const out = {}
@@ -286,14 +324,22 @@ export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WA
     if (runs === undefined) {
       throw new Error(`${entry.workflow}: no run list was fetched — health is UNKNOWN, not green`)
     }
+    const excl = entry.selfExcluded ? excludeRunId : undefined
     out[entry.workflow] = {
       result: classifyWorkflow({
         runs,
         nowMs,
         workflow: entry.workflow,
         maxAgeHours: entry.maxAgeHours,
-        excludeRunId: entry.selfExcluded ? excludeRunId : undefined,
+        excludeRunId: excl,
       }),
+      // #4400 — carried through so `file-scheduled-failures.mjs` can key its
+      // consecutive-failure counter on the actual watched run's identity
+      // (`runId`) and pick the right escalation threshold for its cadence
+      // (`periodHours`), rather than on how often THIS script happens to be
+      // invoked.
+      runId: newestCompletedRunId({ runs, workflow: entry.workflow, excludeRunId: excl }),
+      periodHours: entry.periodHours,
     }
   }
   return out

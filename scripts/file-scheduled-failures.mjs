@@ -18,9 +18,15 @@
 // marked block in the issue body), and:
 //
 //   * files/reopens + comments only when a lane is NEWLY failing,
-//   * silently syncs the body when a lane recovers but others are still red,
+//   * files/reopens + comments again — without adding a new lane — when an
+//     ALREADY-tracked lane crosses its Nth-consecutive-OBSERVED-failure
+//     threshold (#4400: a weekly lane's Nth distinct red run is real news
+//     that "no new lane" would otherwise discard forever),
+//   * silently syncs the body when a lane recovers, or a still-failing lane
+//     advances toward that threshold without crossing it,
 //   * CLOSES the issue when every lane is green again,
-//   * does nothing at all when nothing changed.
+//   * does nothing at all when nothing changed — including a poll that
+//     observed no NEW run of an already-tracked failing lane.
 //
 // Rolling issue, not one per lane (#3359 left this open):
 //   - The unit a maintainer acts on is "this week's deep checks are red", and
@@ -221,10 +227,26 @@ export function parseNeeds(text) {
     )
   }
   return jobs.map((job) => {
-    const result = parsed[job]?.result
+    const entry = parsed[job]
+    const result = entry?.result
     // An unknown/absent `result` is reported as such rather than assumed
     // green: same reason as the empty-payload throw above, one job down.
-    return { job, result: typeof result === 'string' && result ? result : 'unknown' }
+    const out = { job, result: typeof result === 'string' && result ? result : 'unknown' }
+    // #4400 — optional, caller-supplied extras for the consecutive-failure
+    // counter. Left OFF `out` entirely when the caller's payload doesn't have
+    // the key (the deep-checks reporter's `toJSON(needs)` never does — GitHub
+    // jobs in one `needs` map share a single run, so there is nothing to
+    // name), which `advanceStreaks` reads as "fall back to this invocation's
+    // own run identity". A `runId` the caller DOES supply, including an
+    // explicit `null` (check-workflow-liveness.mjs's way of saying "no
+    // completed run exists to point at"), is kept as-is — collapsing that to
+    // the same fallback would make an unrun weekly workflow advance once per
+    // DAILY watchdog poll, which is the exact bug #4400 exists to fix.
+    if (entry && typeof entry === 'object' && 'runId' in entry) out.runId = entry.runId
+    if (entry && typeof entry === 'object' && typeof entry.periodHours === 'number') {
+      out.periodHours = entry.periodHours
+    }
+    return out
   })
 }
 
@@ -282,19 +304,75 @@ export function carriedOverJobs(lanes, { skippedOk = false } = {}) {
 // Diffing against the tracking issue's known state
 // ---------------------------------------------------------------------------
 
-/** Extracts the tracked job ids from a tracking-issue body (or `''`/undefined). */
-export function parseKnownLanes(body) {
-  if (!body) return new Set()
+/**
+ * The raw, trimmed, non-fence lines of the marker block — the one place both
+ * `parseKnownLanes` and `parseKnownStreaks` (#4400) read from, so the two can
+ * never disagree about which lines in the body carry state.
+ */
+function markerBlockLines(body) {
+  if (!body) return []
   const start = body.indexOf(MARKER_START)
   const end = body.indexOf(MARKER_END)
-  if (start === -1 || end === -1 || end < start) return new Set()
+  if (start === -1 || end === -1 || end < start) return []
   const block = body.slice(start + MARKER_START.length, end)
-  return new Set(
-    block
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && l !== '```'),
-  )
+  return block
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && l !== '```')
+}
+
+/**
+ * Extracts the tracked job ids from a tracking-issue body (or `''`/undefined).
+ *
+ * #4400 widened each line from a bare job id to `job|count|runId` so the
+ * consecutive-failure counter survives a re-read, but every OTHER consumer of
+ * this function — `diffLanes`, `carriedOverJobs`'s caller, the close path,
+ * and a couple dozen pre-#4400 self-tests — wants exactly the job id and
+ * nothing else. Splitting on `|` and taking the first field reads both the
+ * new format and a pre-#4400 bare line identically (a bare line has no `|`,
+ * so splitting on it is a no-op), which is what keeps this function's
+ * contract — and everything built on top of it — unchanged by the format
+ * change.
+ */
+export function parseKnownLanes(body) {
+  return new Set(markerBlockLines(body).map((l) => l.split('|')[0]))
+}
+
+/**
+ * #4400 — the per-lane consecutive-observed-failure state: `count` (how many
+ * DISTINCT observed runs this lane has failed back to back) and `runId` (the
+ * last one counted), keyed by job id. This is the only durable state this
+ * script has — there is no database — so it has to live in the same marker
+ * block `parseKnownLanes` reads, which is why the two share `markerBlockLines`
+ * rather than parsing the block twice with two chances to disagree.
+ *
+ * A pre-#4400 bare line (no `|`) is a lane that WAS tracked under the old
+ * format, with no recorded count or run identity. It is read as `{ count: 1,
+ * runId: null }` — "failing at least once, identity unknown" — rather than
+ * dropped: dropping it would re-report an already-known lane as brand new on
+ * the first run after this ships, which is exactly the false alarm the
+ * `parseKnownLanes` migration note (see the file header, "Why this was not
+ * bundled into #4393") warned a naive migration would cause. `runId: null`
+ * then does its normal job in `advanceStreaks`: the very next DISTINCT run
+ * this lane fails advances it to `count: 2`, rather than assuming it was
+ * already at 2 or 3 (data this format change cannot recover) or resetting it
+ * to "first failure" (data the pre-existing tracked set already refutes).
+ */
+export function parseKnownStreaks(body) {
+  const map = new Map()
+  for (const line of markerBlockLines(body)) {
+    const [job, countStr, runIdRaw] = line.split('|')
+    if (countStr === undefined) {
+      map.set(job, { count: 1, runId: null })
+      continue
+    }
+    const count = Number.parseInt(countStr, 10)
+    map.set(job, {
+      count: Number.isFinite(count) && count > 0 ? count : 1,
+      runId: runIdRaw === undefined || runIdRaw === '' ? null : runIdRaw,
+    })
+  }
+  return map
 }
 
 /**
@@ -320,32 +398,162 @@ export function diffLanes(current, known, { carryOver = [] } = {}) {
 }
 
 /**
+ * #4400 — how many DISTINCT observed failures in a row a lane must rack up
+ * before it gets a second comment. Derived from the lane's own polling
+ * cadence (`periodHours`, threaded through from `WATCHED` in
+ * `check-workflow-liveness.mjs`) rather than a flat constant or a per-profile
+ * one, because a single profile (`workflow-watchdog`) watches lanes of BOTH
+ * cadences at once — `branch-protection-assert.yml` daily alongside
+ * `e2e-tauri-weekly.yml` weekly — and a profile-wide threshold would either
+ * escalate the daily lane late or the weekly one early.
+ *
+ * N = 1 (undecorated lanes, and anything with a sub-weekly period): identical
+ * to pre-#4400 behaviour — notify once, on the very first failure, then hold
+ * silent until recovery. A lane observed at its own true cadence (the
+ * deep-checks reporter runs FROM WITHIN the workflow it watches, so one
+ * script invocation already IS one real occurrence) has nothing to fix: the
+ * mismatch this ticket is about — many polls per real event — cannot arise.
+ *
+ * N = 3 for periodHours >= 168 (weekly or slower): three CONSECUTIVE
+ * DISTINCT observed runs is three real weeks of an unfixed lane — the exact
+ * #3388 case (2026-08-10 / 08-17 / 08-24). N = 2 would escalate after a
+ * single skipped week, and two failures a week apart can still plausibly be
+ * one incident resurfacing before a fix lands rather than a pattern; three,
+ * a week apart each, cannot be read that way. The cost of picking 3 over 2 is
+ * one more week of silence on a genuine repeat offender — against a weekly
+ * cadence, that is a much cheaper mistake than escalating (and thereby
+ * training readers to expect noise) on what might still be a single stuck
+ * incident.
+ */
+export function escalationThreshold(periodHours) {
+  if (typeof periodHours === 'number' && periodHours >= 168) return 3
+  return 1
+}
+
+/**
+ * #4400 — advances each currently-failing, already-tracked lane's
+ * consecutive-observed-failure counter, and reports which lanes just crossed
+ * their escalation threshold.
+ *
+ * The advance is keyed on RUN IDENTITY, never on invocation count:
+ * `workflow-watchdog` polls daily against workflows that run weekly, so most
+ * polls see the exact same newest-completed run. Counting invocations would
+ * hit N=3 in three DAYS against a WEEKLY lane and reintroduce the very spam
+ * this ticket exists to remove — the "an absent check is not a passing check"
+ * trap, inverted: here a REPEATED observation must not be misread as a NEW
+ * one.
+ *
+ * Per lane, `runId` (from the needs payload — see `parseNeeds`) means:
+ *   - `undefined` (the caller's payload never had the key — the deep-checks
+ *     reporter's `toJSON(needs)` never does): falls back to `fallbackRunId`,
+ *     this script INVOCATION's own identity. Correct there specifically
+ *     because that reporter runs from inside the very workflow it watches —
+ *     one invocation of this script already IS one real occurrence, so
+ *     "new invocation" and "new run" already coincide and nothing is lost by
+ *     treating them as the same signal.
+ *   - `null` (the key IS present but the caller could not name a run — e.g.
+ *     `newestCompletedRunId` reporting `never-ran`/`stale`/no completed run
+ *     at all): the identity is unknowable, so the counter HOLDS — it neither
+ *     advances nor resets. Falling back to the invocation id here would
+ *     advance once per DAILY tick against a workflow that has simply never
+ *     run, which is the bug relocated rather than fixed.
+ *   - anything else: a real, comparable identity (a run's numeric database
+ *     id from `check-workflow-liveness.mjs`, or this script's own run URL).
+ *
+ * A lane whose count has already reached its threshold is left ALONE —
+ * skipped before any of the above is even evaluated — rather than advanced
+ * past it. That is what makes escalation a single, bounded event rather than
+ * a recurring alarm: once said, the lane goes back to being silently tracked
+ * exactly like a pre-#4400 still-failing lane, until it recovers (which
+ * drops it from the tracked set entirely — see `diffLanes` — so a later
+ * relapse starts this counter over at 1, not wherever it left off). It is
+ * also what keeps two runs that observe the SAME crossing run from
+ * double-escalating: the first run's advance already pushed `count` to the
+ * threshold and persisted the new `runId`, so the second run's `prior.count
+ * >= threshold` check fires before its `runId` is even compared.
+ *
+ * A brand-new lane (no PRIOR entry at all) always starts at `count: 1` and is
+ * never added to `escalated`, even when its threshold is 1 — that case is
+ * already the existing `newOnes`/`'notify'` verdict in `decideAction`, and
+ * duplicating it here would either double-comment or need the two paths
+ * reconciled for no benefit.
+ */
+export function advanceStreaks({ currentFailing, laneById, known, fallbackRunId }) {
+  const streaks = new Map(known)
+  const advanced = []
+  const escalated = []
+  for (const job of currentFailing) {
+    const lane = laneById.get(job)
+    const threshold = escalationThreshold(lane?.periodHours)
+    const prior = known.get(job)
+
+    if (!prior) {
+      const runId = lane?.runId === undefined ? fallbackRunId : lane.runId
+      streaks.set(job, { count: 1, runId })
+      continue
+    }
+
+    if (prior.count >= threshold) continue
+
+    const runId = lane?.runId === undefined ? fallbackRunId : lane.runId
+    if (runId === null || runId === prior.runId) continue // unknowable, or the same run again — hold.
+
+    const count = prior.count + 1
+    streaks.set(job, { count, runId })
+    advanced.push(job)
+    if (count >= threshold) escalated.push(job)
+  }
+  return { streaks, advanced, escalated }
+}
+
+/**
  * The rolling issue's open/close state machine. Split out as a pure function
  * precisely because it is the part with real branches worth pinning:
  *
- *   'create' — first failure ever; no issue exists yet.
- *   'notify' — a lane is NEWLY failing: reopen if closed, rewrite body, and
- *              COMMENT (the comment is the notification channel; body edits
- *              are state and notify nobody).
- *   'sync'   — some lane recovered, others are still red: rewrite the body so
- *              it stops naming a lane that is green, but do not comment. A
- *              partial recovery is not news.
- *   'close'  — everything is green again and the issue tracked something.
- *              A permanently-open "the workflow is red" issue is a lie that
- *              trains people to ignore it, which is the whole failure mode
- *              #3359 is about.
- *   'noop'   — nothing changed (the same lanes are still red), or everything
- *              is green and there is nothing open. A weekly job that re-fires
- *              on an unchanged failure must not spam.
+ *   'create'   — first failure ever; no issue exists yet.
+ *   'notify'   — a lane is NEWLY failing: reopen if closed, rewrite body, and
+ *                COMMENT (the comment is the notification channel; body
+ *                edits are state and notify nobody).
+ *   'escalate' — no lane is newly failing, but an already-tracked lane's
+ *                consecutive-observed-failure count just crossed its
+ *                threshold (#4400 — see `advanceStreaks`): reopen if closed,
+ *                rewrite body, and COMMENT, same as 'notify' — this IS a new
+ *                data point, just not a new lane. Checked after 'notify' so
+ *                the two never fire for the same run; a genuinely new lane
+ *                is already the loudest thing that happened this run.
+ *   'sync'     — either some lane recovered, or a still-failing lane
+ *                observed a new distinct run without crossing its threshold:
+ *                rewrite the body (so a recovered lane stops being named, or
+ *                so the crossed-but-not-yet-there counter is actually
+ *                persisted for next time — see `advanceStreaks`), but do not
+ *                comment. Neither a partial recovery nor an unescalated
+ *                repeat is news.
+ *   'close'    — everything is green again and the issue tracked something.
+ *                A permanently-open "the workflow is red" issue is a lie that
+ *                trains people to ignore it, which is the whole failure mode
+ *                #3359 is about.
+ *   'noop'     — nothing changed at all: the same lanes are still red AND (if
+ *                any) still on the same observed run, or everything is green
+ *                and there is nothing open. A weekly job that re-fires on an
+ *                unchanged failure must not spam, and two runs that observe
+ *                the identical underlying run must not double-count it.
  */
-export function decideAction({ newOnes, resolvedOnes, all, existingIssue }) {
+export function decideAction({
+  newOnes,
+  resolvedOnes,
+  all,
+  existingIssue,
+  escalatedOnes = [],
+  advancedOnes = [],
+}) {
   if (all.length === 0) {
     if (existingIssue && existingIssue.state === 'OPEN' && resolvedOnes.length > 0) return 'close'
     return 'noop'
   }
   if (!existingIssue) return 'create'
   if (newOnes.length > 0) return 'notify'
-  if (resolvedOnes.length > 0) return 'sync'
+  if (escalatedOnes.length > 0) return 'escalate'
+  if (resolvedOnes.length > 0 || advancedOnes.length > 0) return 'sync'
   return 'noop'
 }
 
@@ -382,10 +590,25 @@ export function buildIssueBody({
   lanes,
   runUrl,
   profile = PROFILES[DEFAULT_PROFILE],
+  // #4400 — per-lane { count, runId }. Defaults to an empty map, which
+  // renders every line in the OLD bare-job-id format: every pre-#4400 caller
+  // of this function (and there are dozens, across this file's own
+  // self-tests) that never heard of streaks keeps producing byte-identical
+  // marker blocks. Only `main()` passes the real thing.
+  streaks = new Map(),
 }) {
   const carried = all.filter((j) => carriedOver.includes(j))
   const observedFailing = all.filter((j) => !carriedOver.includes(j))
   const list = (jobs) => jobs.map((j) => `\`${j}\``).join(', ')
+  // Lanes with more than one consecutive OBSERVED failure recorded — worth a
+  // line even below the escalation threshold, since "how far along" is
+  // exactly the fact #3388 had no way to show a reader (its body never
+  // changed after the first comment, so every subsequent week looked
+  // identical to the first). Filtered on `all` rather than `streaks.keys()`
+  // directly so a stale streaks entry for a since-recovered lane (there
+  // should not be one, but see `main()`'s own defensiveness elsewhere in this
+  // file) can never leak into the rendered body.
+  const streaking = all.filter((j) => (streaks.get(j)?.count ?? 1) > 1)
   const out = []
   out.push(
     `${profile.what} It is filed, updated and closed automatically by \`scripts/file-scheduled-failures.mjs\` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.`,
@@ -410,13 +633,26 @@ export function buildIssueBody({
       `Carried over — did NOT run this run (${list(carried)}), so neither failing nor recovered. A ${profile.unit} that never executed stays tracked until a run can actually observe it; the status table below shows what it really did.`,
     )
   }
+  if (streaking.length > 0) {
+    out.push('')
+    out.push(
+      `${streaking.length} ${streaking.length === 1 ? profile.unit : profile.units} failing across multiple consecutive OBSERVED runs (#4400 — a run that did not happen does not count): ${streaking
+        .map((j) => `\`${j}\` (${streaks.get(j).count} in a row)`)
+        .join(', ')}.`,
+    )
+  }
   out.push('')
   out.push(
     `_Machine-readable — do not hand-edit the marker lines below. Removing a ${profile.unit} here just means the next run will report it as new again._`,
   )
   out.push(MARKER_START)
   out.push('```')
-  out.push(...all)
+  out.push(
+    ...all.map((j) => {
+      const s = streaks.get(j)
+      return s ? `${j}|${s.count}|${s.runId ?? ''}` : j
+    }),
+  )
   out.push('```')
   out.push(MARKER_END)
   if (lanes.length > 0) {
@@ -461,6 +697,39 @@ export function buildFailureComment({
   const lines = []
   lines.push(
     `**${newOnes.length} ${profile.headline}${newOnes.length === 1 ? '' : 's'} newly failing this run:** ${newOnes.map((j) => `\`${j}\``).join(', ')}`,
+  )
+  lines.push('')
+  if (lanes.length > 0) {
+    lines.push(...buildStatusTable(lanes, profile))
+    lines.push('')
+  }
+  if (runUrl) lines.push(`Run: ${runUrl}`)
+  return lines.join('\n')
+}
+
+/**
+ * #4400 — the ONE extra comment a still-red lane earns when its consecutive
+ * observed-failure count crosses its threshold. Deliberately NOT worded like
+ * `buildFailureComment` ("newly failing this run") — it is not newly failing,
+ * that is the whole point being fixed: it has been failing for
+ * `escalationThreshold` distinct runs running, and this is the run that made
+ * that fact visible instead of silent.
+ */
+export function buildEscalationComment({
+  escalatedOnes,
+  streaks,
+  lanes,
+  runUrl,
+  profile = PROFILES[DEFAULT_PROFILE],
+}) {
+  const lines = []
+  const named = escalatedOnes
+    .map((j) => `\`${j}\` (${streaks.get(j)?.count ?? '?'} consecutive observed failures)`)
+    .join(', ')
+  lines.push(
+    `**Still red, not new — escalating:** ${named}. This ${profile.unit}${
+      escalatedOnes.length === 1 ? ' has' : 's have'
+    } now failed that many DISTINCT observed runs in a row without this thread saying so again (#4400) — this is the one follow-up comment that changes, not a new lane appearing.`,
   )
   lines.push('')
   if (lanes.length > 0) {
@@ -982,6 +1251,51 @@ function findTrackingIssue(repo, title) {
   return exact.toSorted((a, b) => b.number - a.number)[0]
 }
 
+/**
+ * The comment body for whichever action turns out to need one ('close',
+ * 'notify', 'escalate' — 'create'/'sync'/'noop' never reach here). Pulled out
+ * of `main()` as its own three-way switch rather than a nested ternary there,
+ * to keep `main()` itself under the repo's cyclomatic-complexity lint budget.
+ */
+function buildCommentFor(
+  action,
+  { resolvedOnes, newOnes, escalated, streaks, lanes, runUrl, profile },
+) {
+  switch (action) {
+    case 'close': {
+      return buildRecoveryComment({ resolvedOnes, runUrl, profile })
+    }
+    case 'escalate': {
+      return buildEscalationComment({ escalatedOnes: escalated, streaks, lanes, runUrl, profile })
+    }
+    default: {
+      return buildFailureComment({ newOnes, lanes, runUrl, profile })
+    }
+  }
+}
+
+/**
+ * Two independent, optional run-log lines: which lanes only SKIPPED this run
+ * (#3960) and which lanes just crossed their escalation threshold (#4400).
+ * Neither depends on the other, and folding them into one function (instead
+ * of two `if` blocks inline in `main()`) is purely to keep `main()` itself
+ * under the repo's cyclomatic-complexity lint budget.
+ */
+function logCarriedOverAndEscalated({ carriedOver, escalated, streaks, profile }) {
+  if (carriedOver.length > 0) {
+    console.log(
+      `carried over (${profile.unit}s that only SKIPPED — neither failing nor recovered, so they stay tracked): ${carriedOver.join(', ')}`,
+    )
+  }
+  if (escalated.length > 0) {
+    console.log(
+      `escalating (#4400 — Nth consecutive OBSERVED failure): ${escalated
+        .map((j) => `${j} (${streaks.get(j)?.count})`)
+        .join(', ')}`,
+    )
+  }
+}
+
 function withTempFile(content, fn) {
   const dir = mkdtempSync(join(tmpdir(), 'scheduled-failures-'))
   const file = join(dir, 'body.md')
@@ -1089,7 +1403,29 @@ export function main(argv = process.argv.slice(2)) {
 
   const known = parseKnownLanes(existingIssue?.body)
   const { newOnes, resolvedOnes, all, carriedOver } = diffLanes(current, known, { carryOver })
-  const action = decideAction({ newOnes, resolvedOnes, all, existingIssue })
+  // #4400 — the consecutive-observed-failure counter. Fed `current`, not
+  // `all`: a carried-over (skipped) lane must not advance, and it is already
+  // excluded from `current` by `failingJobs`/`isFailing`, so it is left
+  // exactly as `known` had it (see `advanceStreaks`'s `streaks = new
+  // Map(known)` seed). `fallbackRunId` only matters for a caller that never
+  // supplies its own `runId` per lane (deep-checks) — see the function's own
+  // doc comment for why that is safe.
+  const laneById = new Map(lanes.map((l) => [l.job, l]))
+  const knownStreaks = parseKnownStreaks(existingIssue?.body)
+  const { streaks, advanced, escalated } = advanceStreaks({
+    currentFailing: current,
+    laneById,
+    known: knownStreaks,
+    fallbackRunId: runUrl ?? '(unknown run — no $GITHUB_RUN_ID or --run-url)',
+  })
+  const action = decideAction({
+    newOnes,
+    resolvedOnes,
+    all,
+    existingIssue,
+    escalatedOnes: escalated,
+    advancedOnes: advanced,
+  })
   // #3987 — `all` is the TRACKED set, which includes lanes that only
   // SKIPPED and were carried over (see `buildIssueBody`/`buildNoopSummary`
   // above, #3960). A sentence that calls `all.length` "still failing"
@@ -1099,22 +1435,23 @@ export function main(argv = process.argv.slice(2)) {
   // the same reason.
   const observedFailing = all.filter((j) => !carriedOver.includes(j))
 
-  if (carriedOver.length > 0) {
-    console.log(
-      `carried over (${profile.unit}s that only SKIPPED — neither failing nor recovered, so they stay tracked): ${carriedOver.join(', ')}`,
-    )
-  }
+  logCarriedOverAndEscalated({ carriedOver, escalated, streaks, profile })
 
   if (action === 'noop') {
     console.log(buildNoopSummary({ all, carriedOver, profile }))
     return
   }
 
-  const body = buildIssueBody({ all, carriedOver, lanes, runUrl, profile })
-  const comment =
-    action === 'close'
-      ? buildRecoveryComment({ resolvedOnes, runUrl, profile })
-      : buildFailureComment({ newOnes, lanes, runUrl, profile })
+  const body = buildIssueBody({ all, carriedOver, lanes, runUrl, profile, streaks })
+  const comment = buildCommentFor(action, {
+    resolvedOnes,
+    newOnes,
+    escalated,
+    streaks,
+    lanes,
+    runUrl,
+    profile,
+  })
 
   if (args.dryRun) {
     // Compare against null explicitly — the `--known-body-file` stub uses
@@ -1178,28 +1515,82 @@ export function main(argv = process.argv.slice(2)) {
     return
   }
 
-  // Reopening is a notification-class action, so only a genuinely NEW failure
-  // does it. A 'sync' (partial recovery) against an issue a maintainer chose
-  // to close while lanes were still red just updates the body — consistent
-  // with the 'noop' branch above, which also leaves such an issue closed.
-  if (action === 'notify' && existingIssue.state === 'CLOSED') {
+  // 'notify' (a genuinely new failure) and 'escalate' (#4400 — an
+  // already-tracked lane's Nth consecutive OBSERVED failure) are otherwise
+  // identical from here: both reopen a closed issue and both comment. Only
+  // 'sync' (a partial recovery, or a still-below-threshold repeat) differs —
+  // body only, no comment. Split out so `main()` itself stays under the
+  // complexity budget; see `writeNotifyOrSync`'s own doc comment for why the
+  // two are handled together rather than as three separate branches here.
+  writeNotifyOrSync({
+    action,
+    number,
+    repo,
+    body,
+    comment,
+    existingIssue,
+    newOnes,
+    resolvedOnes,
+    observedFailing,
+    escalated,
+    profile,
+  })
+}
+
+/**
+ * #4400 — the shared tail of 'notify' and 'escalate': both reopen a closed
+ * issue and both comment, and only the log line and which lanes get named in
+ * it differ. Written as one function with an internal branch, rather than
+ * inlined twice in `main()`, specifically to keep `main()`'s own cyclomatic
+ * complexity under the repo's lint budget — the two actions are semantically
+ * "the notification channel fired", and separating the two identical
+ * `gh issue edit`/reopen/comment sequences into copy-pasted call sites would
+ * be the kind of duplication `main()`'s own history already avoids elsewhere
+ * (see the shared `withTempFile` helper).
+ */
+function writeNotifyOrSync({
+  action,
+  number,
+  repo,
+  body,
+  comment,
+  existingIssue,
+  newOnes,
+  resolvedOnes,
+  observedFailing,
+  escalated,
+  profile,
+}) {
+  const isNotifyClass = action === 'notify' || action === 'escalate'
+  // Reopening is a notification-class action, so only a genuinely NEW
+  // failure or an escalation does it (#4400: an escalating lane cannot
+  // realistically find the issue closed — it has been red the whole time —
+  // but the same guard costs nothing and keeps the two branches symmetric
+  // rather than one of them silently relying on an invariant the other
+  // enforces). A 'sync' (partial recovery, or an unescalated repeat) against
+  // an issue a maintainer chose to close while lanes were still red just
+  // updates the body — consistent with the 'noop' branch in `main()`, which
+  // also leaves such an issue closed.
+  if (isNotifyClass && existingIssue.state === 'CLOSED') {
     gh(['issue', 'reopen', number, '--repo', repo])
   }
   withTempFile(body, (f) => {
     gh(['issue', 'edit', number, '--repo', repo, '--body-file', f])
   })
-  if (action === 'notify') {
-    withTempFile(comment, (f) => {
-      gh(['issue', 'comment', number, '--repo', repo, '--body-file', f])
-    })
+  if (!isNotifyClass) {
     console.log(
-      `updated tracking issue #${number} (${newOnes.length} newly-failing ${profile.unit}(s))`,
+      `synced tracking issue #${number} body (${resolvedOnes.length} recovered, ${observedFailing.length} still failing; no comment — a partial recovery or an unescalated repeat is not news)`,
     )
-  } else {
-    console.log(
-      `synced tracking issue #${number} body (${resolvedOnes.length} recovered, ${observedFailing.length} still failing; no comment — a partial recovery is not news)`,
-    )
+    return
   }
+  withTempFile(comment, (f) => {
+    gh(['issue', 'comment', number, '--repo', repo, '--body-file', f])
+  })
+  console.log(
+    action === 'notify'
+      ? `updated tracking issue #${number} (${newOnes.length} newly-failing ${profile.unit}(s))`
+      : `updated tracking issue #${number} (escalated ${escalated.length} still-failing ${profile.unit}(s) past their Nth-consecutive-observed-failure threshold — #4400)`,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -2121,6 +2512,252 @@ function selfTestReporterAuthority({ check, fail }) {
   )
 }
 
+/**
+ * #4400 — end to end, chained across simulated weeks, against a stub `gh` on
+ * `$PATH` (same technique as `selfTestGhCallSequence`, in its own function
+ * for the same cyclomatic-complexity reason). Each `drive()` call feeds the
+ * PREVIOUS call's written body back in as `--known-body-file`, exactly as
+ * production does via `gh issue list` — so this is the only place any of
+ * these assertions could pass because `advanceStreaks` escalates on every
+ * run, or because the marker block silently fails to round-trip the counter:
+ * either bug would surface here as the wrong `gh` call sequence or the wrong
+ * stored count, not as a hand-computed number matching itself.
+ */
+function selfTestEscalation({ check }) {
+  const dir = mkdtempSync(join(tmpdir(), 'scheduled-failures-escalate-'))
+  const log = join(dir, 'gh.log')
+  const stub = join(dir, 'gh')
+  writeFileSync(
+    stub,
+    [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs')",
+      'const a = process.argv.slice(2)',
+      "const i = a.indexOf('--body-file')",
+      `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({`,
+      '  sub: a[1],',
+      "  body: i === -1 ? '' : fs.readFileSync(a[i + 1], 'utf8'),",
+      "}) + '\\n')",
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  chmodSync(stub, 0o755)
+
+  const needsFile = join(dir, 'needs.json')
+  const bodyFile = join(dir, 'known-body.md')
+  const lane = 'e2e-tauri-weekly.yml'
+  // Weekly cadence (periodHours: 168) → escalationThreshold === 3.
+  const failing = (runId) => ({ [lane]: { result: 'failure (x)', runId, periodHours: 168 } })
+
+  const drive = (needs, knownBody, knownState) => {
+    writeFileSync(needsFile, JSON.stringify(needs), 'utf8')
+    writeFileSync(bodyFile, knownBody ?? '', 'utf8')
+    writeFileSync(log, '', 'utf8')
+    const prevPath = process.env.PATH
+    process.env.PATH = `${dir}:${prevPath}`
+    let threw = null
+    try {
+      main([
+        '--needs-json-file',
+        needsFile,
+        '--known-body-file',
+        bodyFile,
+        '--known-state',
+        knownState,
+        '--repo',
+        'owner/repo',
+        '--run-url',
+        'https://example/watchdog-run',
+        '--profile',
+        'workflow-watchdog',
+      ])
+    } catch (err) {
+      threw = err
+    } finally {
+      process.env.PATH = prevPath
+    }
+    const calls = readFileSync(log, 'utf8')
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l))
+    if (threw) calls.push({ sub: `THREW(${threw.message})`, body: '' })
+    return calls
+  }
+  const seqOf = (calls) => calls.map((c) => c.sub).join(',')
+  const writtenBody = (calls, fallback) =>
+    calls.find((c) => c.sub === 'edit' || c.sub === 'create')?.body ?? fallback
+
+  // Week 1 — the FIRST failure. Files the issue; not an escalation.
+  let calls = drive(failing('run1'), '', 'OPEN')
+  check(seqOf(calls) === 'create', 'week 1 (first failure): files the tracking issue', seqOf(calls))
+  let body = writtenBody(calls, '')
+  const allText = (cs) => cs.map((c) => c.body).join('\n')
+  check(
+    !/escalat/i.test(allText(calls)),
+    'negative control: the FIRST failure never mentions escalation',
+    allText(calls),
+  )
+  check(
+    parseKnownStreaks(body).get(lane)?.count === 1,
+    'week 1: the persisted streak count is 1',
+    JSON.stringify([...parseKnownStreaks(body)]),
+  )
+
+  // A poll that observes NO NEW run (the weekly workflow has not run again —
+  // `newestCompletedRunId` still reports `run1`) must not silently advance
+  // the counter. This is requirement #1: an absent/unchanged observation is
+  // neither a new failure nor a recovery.
+  calls = drive(failing('run1'), body, 'OPEN')
+  check(
+    calls.length === 0 && parseKnownStreaks(body).get(lane)?.count === 1,
+    'a poll that observes no NEW run (same underlying run) neither increments nor resets the counter',
+    JSON.stringify(calls),
+  )
+
+  // Week 2 — SECOND consecutive observed failure (a genuinely new completed
+  // run, `run2`). Below the N=3 threshold: silently persists the counter
+  // (`edit`) but must not comment.
+  calls = drive(failing('run2'), body, 'OPEN')
+  check(
+    seqOf(calls) === 'edit',
+    'week 2 (second consecutive failure): silently syncs the counter, no comment',
+    seqOf(calls),
+  )
+  body = writtenBody(calls, body)
+  check(
+    parseKnownStreaks(body).get(lane)?.count === 2,
+    'week 2: the persisted streak count advances to 2',
+    JSON.stringify([...parseKnownStreaks(body)]),
+  )
+  check(
+    !/escalat/i.test(allText(calls)),
+    'negative control: the SECOND consecutive failure does not escalate either',
+    allText(calls),
+  )
+
+  // Week 3 — THIRD consecutive observed failure (`run3`). This is the one
+  // that must produce the one extra comment.
+  calls = drive(failing('run3'), body, 'OPEN')
+  check(
+    seqOf(calls) === 'edit,comment',
+    'week 3 (Nth=3rd consecutive failure): escalates — edit AND comment',
+    seqOf(calls),
+  )
+  const escalationComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
+  check(
+    /escalat/i.test(escalationComment) && /3 consecutive observed failures/.test(escalationComment),
+    'the escalation comment says how many consecutive observed failures',
+    escalationComment,
+  )
+  body = writtenBody(calls, body)
+  check(
+    parseKnownStreaks(body).get(lane)?.count === 3,
+    'week 3: the persisted streak count reaches 3',
+    JSON.stringify([...parseKnownStreaks(body)]),
+  )
+
+  // A re-run that observes the SAME run that just triggered the escalation
+  // (`run3` again) must not double-escalate.
+  calls = drive(failing('run3'), body, 'OPEN')
+  check(
+    calls.length === 0,
+    'a re-run observing the SAME run right after escalation issues no `gh` write at all (no double-escalate)',
+    JSON.stringify(calls),
+  )
+
+  // Week 4 — a FOURTH genuinely new run (`run4`). Escalation is a single
+  // bounded event, not a recurring alarm: once said, this lane goes back to
+  // being silently tracked, exactly like a still-failing lane pre-#4400.
+  calls = drive(failing('run4'), body, 'OPEN')
+  check(
+    calls.length === 0,
+    'week 4: a lane past its threshold stays silent on a further new run (no re-escalation)',
+    JSON.stringify(calls),
+  )
+
+  // The watched workflow having NO completed run to point at at all
+  // (`runId: null` — `never-ran`/`stale`/`no-completed-run`) must behave
+  // exactly like the "no new run" case above, including across repeats —
+  // the other half of requirement #1, and the specific case
+  // `newestCompletedRunId` was built to report honestly rather than fall
+  // back to "assume it is the same as last time" or "assume it is new".
+  {
+    const neverRan = { [lane]: { result: 'never-ran (…)', runId: null, periodHours: 168 } }
+    const created = drive(neverRan, '', 'OPEN')
+    const b = writtenBody(created, '')
+    check(
+      parseKnownStreaks(b).get(lane)?.count === 1,
+      'a lane with no completed run to point at (`runId: null`) still notifies once, at count 1',
+      JSON.stringify([...parseKnownStreaks(b)]),
+    )
+    const repeat = drive(neverRan, b, 'OPEN')
+    check(
+      repeat.length === 0 && parseKnownStreaks(b).get(lane)?.count === 1,
+      'repeated `runId: null` observations never advance the counter, even though the poll keeps happening',
+      JSON.stringify(repeat),
+    )
+  }
+
+  // A full recovery clears the tracked streak state, not just the tracked
+  // lane set — and a LATER relapse starts the counter over at 1, never
+  // continuing from wherever it left off before recovering.
+  {
+    const closeCalls = drive({ [lane]: { result: 'success' } }, body, 'OPEN')
+    check(
+      seqOf(closeCalls) === 'edit,comment,close',
+      'a full recovery closes the issue (edit, comment, close)',
+      seqOf(closeCalls),
+    )
+    const closedBody = writtenBody(closeCalls, body)
+    check(
+      parseKnownStreaks(closedBody).size === 0,
+      'a full recovery clears the persisted streak state entirely',
+      JSON.stringify([...parseKnownStreaks(closedBody)]),
+    )
+    const relapseCalls = drive(failing('run-new'), closedBody, 'CLOSED')
+    check(
+      seqOf(relapseCalls) === 'reopen,edit,comment',
+      'a relapse after full recovery reopens, updates and comments like any first failure',
+      seqOf(relapseCalls),
+    )
+    const relapseBody = writtenBody(relapseCalls, closedBody)
+    check(
+      parseKnownStreaks(relapseBody).get(lane)?.count === 1,
+      'a relapse after full recovery restarts the counter at 1, not at 4',
+      JSON.stringify([...parseKnownStreaks(relapseBody)]),
+    )
+  }
+
+  // A daily-cadence lane (no `periodHours`, e.g. `branch-protection-assert`,
+  // or any deep-checks lane) keeps EXACTLY pre-#4400 behaviour: threshold is
+  // 1, so it notifies once on the very first failure and then holds silent
+  // on every subsequent still-failing run — this is the "1 keeps today's
+  // behaviour for daily ones" half of `escalationThreshold`.
+  {
+    const dailyLane = 'branch-protection-assert.yml'
+    const dailyFailing = (runId) => ({ [dailyLane]: { result: 'failure (x)', runId } })
+    const created = drive(dailyFailing('d1'), '', 'OPEN')
+    check(
+      seqOf(created) === 'create',
+      'a daily lane’s first failure files the issue',
+      seqOf(created),
+    )
+    const b1 = writtenBody(created, '')
+    check(
+      parseKnownStreaks(b1).get(dailyLane)?.count === 1,
+      'a daily lane reaches its threshold (1) on the very first failure',
+      JSON.stringify([...parseKnownStreaks(b1)]),
+    )
+    const nextDay = drive(dailyFailing('d2'), b1, 'OPEN')
+    check(
+      nextDay.length === 0,
+      'a daily lane observing a genuinely NEW run the next day still issues no further `gh` write — it already hit its N=1 threshold',
+      JSON.stringify(nextDay),
+    )
+  }
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok  - ${name}`)
@@ -2492,6 +3129,13 @@ function runSelfTest() {
   //     quiet. This is the same class of stale justification that produced
   //     the `--skipped-ok` bug, so it gets a guard rather than a comment.
   selfTestLastResortNoticeCondition({ check, fail })
+
+  // 14. #4400 — a weekly lane that stays red must escalate on the Nth
+  //     consecutive OBSERVED failure, exactly once, without the watchdog's
+  //     daily poll cadence ever being mistaken for the watched workflow's
+  //     own (weekly) one. See `selfTestEscalation` for the full chained
+  //     end-to-end sequence.
+  selfTestEscalation({ check })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
