@@ -258,6 +258,36 @@ describe('useBlockNavigation', () => {
       expect(a.onClick).not.toBe(b.onClick)
     })
 
+    // #4442 review — the cached closures capture the whole `block` while the
+    // cache used to be keyed on `block.id` alone, so a row whose `page_id`
+    // had changed kept navigating to the OLD page. The window is real: in
+    // AgendaResults the `pageTitles` map (whose identity is what otherwise
+    // resets the cache) is only replaced by an async effect that runs AFTER
+    // the render showing the moved row.
+    it('does not reuse a stale bundle when the same block id moves to another page', () => {
+      const onNavigateToPage = vi.fn()
+      // Both pages already resolved, so a real caller's pageTitles map would
+      // not be rebuilt by the title-resolution effect.
+      const pageTitles = new Map([
+        ['PAGE_1', 'Old Page'],
+        ['PAGE_2', 'New Page'],
+      ])
+
+      const { result } = renderHook(() => useBlockNavigation({ onNavigateToPage, pageTitles }))
+
+      const before = makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_1', page_id: 'PAGE_1' })
+      const after = makeBlock({ id: 'BLOCK_1', parent_id: 'PAGE_2', page_id: 'PAGE_2' })
+
+      const first = result.current.getRowHandlers(before)
+      first.onClick()
+      expect(onNavigateToPage).toHaveBeenLastCalledWith('PAGE_1', 'Old Page', 'BLOCK_1')
+
+      const second = result.current.getRowHandlers(after)
+      expect(second).not.toBe(first)
+      second.onClick()
+      expect(onNavigateToPage).toHaveBeenLastCalledWith('PAGE_2', 'New Page', 'BLOCK_1')
+    })
+
     it('row onClick navigates to the block s parent page', () => {
       const onNavigateToPage = vi.fn()
       const pageTitles = new Map([['PAGE_1', 'My Page']])

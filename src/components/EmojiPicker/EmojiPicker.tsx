@@ -213,7 +213,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
     return out
   }, [rows, isSearching])
 
-  // oxlint-disable-next-line react/incompatible-library -- @tanstack/react-virtual returns imperative functions (measureElement, scrollToIndex, getVirtualItems) whose identity the Compiler cannot prove memoization-safe across renders; a third-party API shape it can't analyze, not a bug here (#4409)
+  // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. There is none here: `getVirtualItems()`/`getTotalSize()` are read in this render body and `measureElement` goes straight onto a plain `<div ref>`. react-virtual 3.14.10 builds the Virtualizer once (`useState(() => new Virtualizer(...))`) and virtual-core 3.17.8 assigns `measureElement` in the constructor, so the function identities the rule names never change; what does change per render is `getVirtualItems()`/`getTotalSize()`, read fresh on every render. (#4409)
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,

@@ -438,7 +438,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     [groupedRows, density],
   )
 
-  // oxlint-disable-next-line react/incompatible-library -- @tanstack/react-virtual returns imperative functions (measureElement, scrollToIndex, getVirtualItems) whose identity the Compiler cannot prove memoization-safe across renders; a third-party API shape it can't analyze, not a bug here (#4409)
+  // oxlint-disable-next-line react/incompatible-library -- The Compiler skips memoizing a component that calls this API, so nothing virtualizer-derived is cached inside this component; the residual hazard the diagnostic names is such a value reaching a MEMOIZED consumer. The only virtualizer values leaving this render body are the live `VirtualItem` (`virtualRow`) and `measureElement`, both handed to `PageBrowserRowRenderer` — a plain function component, NOT `React.memo`, so there is no shallow-compare that could hold a stale window. react-virtual 3.14.10 builds the Virtualizer once (`useState(() => new Virtualizer(...))`) and virtual-core 3.17.8 assigns `measureElement` in the constructor, so the function identities the rule names never change; what does change per render is `getVirtualItems()`/`getTotalSize()`. (#4409)
   const virtualizer = useVirtualizer({
     count: virtualItemCount,
     getScrollElement: () => listRef.current,
