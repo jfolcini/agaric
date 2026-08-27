@@ -553,6 +553,7 @@ describe('App', () => {
           entity: 'page',
           id: 'NEW_PAGE_ID_00000000000000',
           name: 'Untitled',
+          spaceId: 'SPACE_PERSONAL',
         }),
       )
     } finally {

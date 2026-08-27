@@ -141,7 +141,7 @@ export function TemplatesView(): React.ReactElement {
       // `list_all_pages_in_space` (which has no template filter): if the
       // `setProperty` below fails, the page still exists as an ordinary page
       // and a warm picker cache should still know about it.
-      notifyPageAdded(newId, name)
+      notifyPageAdded(newId, name, activeSpaceId)
       await setProperty({ blockId: newId, key: 'template', valueText: 'true' })
       setTemplates((prev) => [
         { id: newId, content: name, preview: null, isJournalTemplate: false },

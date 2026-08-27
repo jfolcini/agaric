@@ -262,6 +262,14 @@ export function PageBrowserBatchToolbar({
   const handleTrash = useCallback(async () => {
     if (selectedIds.length === 0 || busy) return
     const ids = [...selectedIds]
+    // #4391 — the space this batch belongs to is `currentSpaceId`, the PROP,
+    // read below after the awaited delete. What pins it to the value the user
+    // acted on is not a local copy (a `const spaceId = currentSpaceId` here
+    // would be a no-op: the prop is already closed over from the moment this
+    // callback is created, and cannot change under it) but the
+    // `currentSpaceId` entry in this `useCallback`'s dep array — that is what
+    // makes React hand the click a callback whose closed-over prop is the one
+    // rendered at click time, and freezes it for the duration of the await.
     setBusy(true)
     try {
       const count = await deleteBlocksByIds(ids)
@@ -270,10 +278,16 @@ export function PageBrowserBatchToolbar({
       // #4008 review note 3 — one event per id is O(ids x listeners x pages)
       // synchronous work; above the measured threshold collapse it into a
       // single invalidation (see `NAME_CACHE_FANOUT_MAX_IDS`).
-      if (ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
+      //
+      // #4391 — no active space (`currentSpaceId == null`) also falls back to
+      // a full invalidation: there is no space to scope a per-id event to.
+      // Skipping would be equally correct — see the "When the caller has NO
+      // active space" section of `src/lib/name-change-bus.ts`, which settles
+      // that once instead of leaving each publisher its own precedent.
+      if (currentSpaceId == null || ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
         invalidateNameCaches()
       } else {
-        for (const id of ids) notifyPageRemoved(id)
+        for (const id of ids) notifyPageRemoved(id, currentSpaceId)
       }
       onClearSelection()
       onMutated()
@@ -302,7 +316,7 @@ export function PageBrowserBatchToolbar({
     } finally {
       setBusy(false)
     }
-  }, [selectedIds, busy, onClearSelection, onMutated, handleUndoTrash, t])
+  }, [selectedIds, busy, currentSpaceId, onClearSelection, onMutated, handleUndoTrash, t])
 
   const handleAddTag = useCallback(async () => {
     if (selectedIds.length === 0 || selectedTagId === '' || busy) return

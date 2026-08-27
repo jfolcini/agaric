@@ -111,6 +111,7 @@ vi.mock('@/lib/announcer', () => ({
 import { toast } from 'sonner'
 
 import { announce } from '@/lib/announcer'
+import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
@@ -791,6 +792,65 @@ describe('refresh after undo/redo', () => {
       expect(mockRenamePage).toHaveBeenCalledWith('PAGE_1', 'Reverted Title')
     })
 
+    unmount()
+  })
+
+  // #4391 — the straddle case. `renamePage`'s fan-out runs THREE awaits after
+  // the keystroke (the undo IPC, `load()`, `getBlock`), which is ample room
+  // for the user to switch spaces. The name-change event must be labelled
+  // with the space the undo was invoked in, NOT the space that happens to be
+  // live when the emit finally runs: a fresh emit-time read would label this
+  // page's rename `SPACE_B`, and the `use-block-resolve` subscriber would let
+  // it through — bumping `nameChangeGenerationRef` and aborting an in-flight
+  // SPACE_B fill for a page that is not even in SPACE_B.
+  it('labels the rename with the space the undo was invoked in, not the one live at emit', async () => {
+    const events: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => events.push(change))
+
+    // Hold the undo IPC open so the space switch lands strictly between the
+    // keystroke and the fan-out.
+    let settleUndo: (result: unknown) => void = () => {}
+    mockUndo.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settleUndo = resolve
+        }),
+    )
+    mockGetBlock.mockResolvedValueOnce({ id: 'PAGE_1', content: 'Reverted Title' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    // The user switches spaces while the undo is still in flight.
+    act(() => {
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_B',
+        availableSpaces: [
+          { id: 'SPACE_TEST', name: 'Test', accent_color: null },
+          { id: 'SPACE_B', name: 'B', accent_color: null },
+        ],
+        isReady: true,
+      })
+    })
+
+    await act(async () => {
+      settleUndo({ type: 'undo' })
+      await Promise.resolve()
+    })
+
+    await vi.waitFor(() => {
+      expect(events).toHaveLength(1)
+    })
+    expect(events[0]).toEqual({
+      kind: 'renamed',
+      entity: 'page',
+      id: 'PAGE_1',
+      name: 'Reverted Title',
+      spaceId: 'SPACE_TEST',
+    })
+
+    unsubscribe()
     unmount()
   })
 

@@ -91,6 +91,7 @@ describe('buildImportRefInternalizers — success paths (behavior pin)', () => {
         entity: 'page',
         id: '01HZ0CREATEDPAGE0000000000',
         name: 'Fresh Page',
+        spaceId: SPACE,
       },
     ])
   })
@@ -106,7 +107,13 @@ describe('buildImportRefInternalizers — success paths (behavior pin)', () => {
     }
 
     expect(changes).toEqual([
-      { kind: 'added', entity: 'tag', id: '01HZ0CREATEDTAG00000000000', name: 'freshtag' },
+      {
+        kind: 'added',
+        entity: 'tag',
+        id: '01HZ0CREATEDTAG00000000000',
+        name: 'freshtag',
+        spaceId: SPACE,
+      },
     ])
   })
 

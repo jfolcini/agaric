@@ -95,7 +95,7 @@ async function ensureSamplePage(
     // already has it. Usually there is no warm cache here at all (first
     // boot), but Settings → "Show the welcome tour again" re-runs this flow
     // mid-session with `BlockTree`s mounted behind the modal.
-    notifyPageAdded(pageId, title)
+    notifyPageAdded(pageId, title, spaceId)
   }
 
   // A brand-new page has no children; a reused one may already carry some

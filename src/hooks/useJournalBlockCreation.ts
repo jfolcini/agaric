@@ -106,7 +106,7 @@ export function useJournalBlockCreation({
           // branch on purpose: this is a cache notification, not a render
           // notification, so it does not re-render `JournalPage` and cannot
           // race `autoCreateFirstBlock` the way the deferred group below can.
-          notifyPageAdded(newId, dateStr)
+          notifyPageAdded(newId, dateStr, currentSpaceId)
           pageId = newId
           // Page-render notification (`setCreatedPages` /
           // `onPageCreated` / `useResolveStore.set`) is deferred to the

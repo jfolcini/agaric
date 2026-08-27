@@ -182,7 +182,17 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // #4007 — the `[[` picker's page-name cache is filled once per space
         // and has no other delete signal; without this it keeps offering the
         // deleted page for the rest of the session.
-        notifyPageRemoved(id)
+        //
+        // #4391 — `target.originSpaceId` (captured at `requestDelete` time,
+        // same field `setResolveDeletedStatus` above already gates on) is the
+        // space this delete belongs to, not whatever is active once the IPC
+        // settles. `null` (space unhydrated when the dialog opened) falls back
+        // to a full invalidation rather than silently dropping the removal.
+        // Skipping would be equally correct; the "When the caller has NO active
+        // space" section of `src/lib/name-change-bus.ts` is where that is
+        // settled once for all the publishers.
+        if (target.originSpaceId != null) notifyPageRemoved(id, target.originSpaceId)
+        else invalidateNameCaches()
         // #3626 — a deleted page must stop lighting up the calendar. The
         // journal's own DaySection routes its delete through here too, so this
         // one call covers every surface that can remove a journal page.

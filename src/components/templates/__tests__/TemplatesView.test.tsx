@@ -896,7 +896,13 @@ describe('TemplatesView', () => {
 
         await waitFor(() =>
           expect(changes).toEqual([
-            { kind: 'added', entity: 'page', id: 'T_NEW', name: 'My Template' },
+            {
+              kind: 'added',
+              entity: 'page',
+              id: 'T_NEW',
+              name: 'My Template',
+              spaceId: 'SPACE_TEST',
+            },
           ]),
         )
       } finally {
@@ -931,7 +937,13 @@ describe('TemplatesView', () => {
           expect(mockedToastError).toHaveBeenCalledWith('Failed to create template')
         })
         expect(changes).toEqual([
-          { kind: 'added', entity: 'page', id: 'T_NEW', name: 'My Template' },
+          {
+            kind: 'added',
+            entity: 'page',
+            id: 'T_NEW',
+            name: 'My Template',
+            spaceId: 'SPACE_TEST',
+          },
         ])
       } finally {
         unsubscribe()

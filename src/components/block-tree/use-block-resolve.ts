@@ -957,6 +957,15 @@ function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
  *    here, not by refusing the event. The subscriber's unconditional
  *    generation bump has already fired by this point, so the skipped row is
  *    not lost — the next picker read re-fetches and sees it.
+ *
+ *    #4391 note: this guard is about cache FRESHNESS ("have we ever fetched
+ *    for this space") and is orthogonal to the space-id check the subscriber
+ *    runs before calling in here at all ("is this event even ABOUT the space
+ *    we're showing"). Scoping the event does not make this one redundant —
+ *    even a same-space 'added' event can still land on a cache that has
+ *    never been fetched, and must still be skipped for exactly this reason.
+ *    They compose: the space check answers "is this event relevant", this
+ *    one answers "is our cache warm enough to accept a single-row patch".
  *  - `'skip'` when the row is ALREADY present. Reachable without any double
  *    emit: a fill dispatched before the create can resolve AFTER the backend
  *    commit and BEFORE the emit (the create's `await` and the emit are the
@@ -1175,13 +1184,73 @@ export function useBlockResolve(): UseBlockResolveReturn {
   useEffect(
     () =>
       subscribeToNameChanges((change) => {
-        // #4055 — bump on every event, unconditionally, BEFORE applying it.
+        // #4055 — bump on every event, unconditionally, BEFORE applying it
+        // AND BEFORE the #4391 space drop below.
         // An in-flight fill's `requestGeneration` capture and this bump can
         // never interleave any other way: JS is single-threaded and nothing
         // awaits between them, so a fill either captured the generation
         // before this listener runs (and must now lose the race) or after
         // (and reads the bumped value already).
+        //
+        // #4391 review — the bump must come FIRST, ahead of the space check,
+        // and the check may only suppress the CACHE MUTATION below. The two
+        // guards measure different spaces: this listener compares the event
+        // against the space that is LIVE right now, while an in-flight fill
+        // is pinned to the space it CAPTURED at dispatch
+        // (`searchPagesViaCache`, `src/components/block-tree/use-block-resolve.ts:290`).
+        // Those diverge across an A→B→A round trip. Dropping the bump on a
+        // mismatch reopens #4007 exactly: a fill issued for A captures
+        // generation G; the user switches to B (both caches clear); a genuine
+        // A-side rename captured in A emits with `spaceId: 'A'` while B is
+        // live, mismatches, and is dropped; the user switches back to A; the
+        // fill resolves with the PRE-rename snapshot and every guard passes
+        // (space is A again, generation never moved, no newer fill issued),
+        // so the stale title is persisted and the `[[` picker serves it for
+        // the rest of the session. The invariant the fill guards are written
+        // against — stated in the note above 'a fetch survives a space switch
+        // that returns to the original space' in
+        // `src/components/block-tree/__tests__/use-block-resolve.test.ts`, and
+        // pinned by 'a rename landing while parked on another space still
+        // rejects the survivor fetch' right below it — is that ANY genuine
+        // mutation bumps the generation regardless of which space was active
+        // when it fired. The bump is a correctness
+        // mechanism about STALENESS, not about relevance; only the apply is
+        // about relevance. Cost of bumping on a foreign event is one refetch,
+        // which is precisely the pre-#4391 behaviour.
         nameChangeGenerationRef.current += 1
+        // #4391 — every kind but 'invalidated' carries the space the
+        // publisher had in hand when it decided to act. Drop the event
+        // OUTRIGHT when that does not match the space we are live-showing —
+        // before the #4008 latch guard (which is about cache freshness, not
+        // relevance) — so no foreign-space row is ever appended and no
+        // foreign-space 'removed' deletes one. A create whose captured-space
+        // read and emit straddled a space switch is exactly the case this
+        // closes: without this check the event would reach an already-
+        // re-warmed cache for the NEW space and append a foreign-space row
+        // (the #4391 report).
+        //
+        // 'invalidated' carries no `spaceId` and is intentionally exempt —
+        // see the name-change-bus module docblock for why a full clear does
+        // not need a space to compare against.
+        if (change.kind !== 'invalidated') {
+          const activeSpaceId = useSpaceStore.getState().currentSpaceId
+          if (change.spaceId !== activeSpaceId) {
+            // Log the event's SHAPE, not the event: `change.name` is a
+            // user-authored page title or tag name, and this path fires
+            // without any user action (a background sync write is enough).
+            // Kind + id + space carry the whole diagnostic value — which
+            // event was dropped, for which row, and which way the space
+            // comparison went — with none of the content.
+            logger.debug('useBlockResolve', 'dropped name-change event for inactive space', {
+              kind: change.kind,
+              entity: change.entity,
+              id: change.id,
+              spaceId: change.spaceId,
+              activeSpaceId,
+            })
+            return
+          }
+        }
         if (change.kind === 'invalidated' || change.entity === 'page') {
           pagesListRef.current = applyPageNameChange(pagesListRef.current, change)
         }

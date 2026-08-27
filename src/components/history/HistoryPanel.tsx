@@ -40,6 +40,7 @@ import type { HistoryEntry, OpRef, PageResponse } from '@/lib/tauri'
 import { editBlock, getBlock, getBlockHistory } from '@/lib/tauri'
 import { forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
 import { renamePage } from '@/stores/page-rename'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 interface HistoryPanelProps {
@@ -247,10 +248,16 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // IPC of its own, so this call does not double-write the block.
   const handleUndoRestore = useCallback(
     async (targetBlockId: string, previousContent: string, isPage: boolean) => {
+      // #4391 — the toast's Undo click is its own decision: capture the space
+      // live at the click, before `editBlock` awaits, rather than reusing the
+      // one the restore captured (the user may have switched since) or
+      // letting `renamePage` re-read it afterwards. See
+      // `@/stores/page-rename`.
+      const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         const resp = await editBlock(targetBlockId, previousContent)
         applyRestoredContentToStore(targetBlockId, previousContent, resp.op_refs)
-        if (isPage) renamePage(targetBlockId, previousContent)
+        if (isPage) renamePage(targetBlockId, previousContent, spaceId)
         notify.success(t('history.restoreUndone'))
       } catch (err) {
         logger.error('HistoryPanel', 'Failed to undo restore', { blockId: targetBlockId }, err)
@@ -278,6 +285,10 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         notify.error(t('history.notRestorable'))
         return
       }
+      // #4391 — capture the active space in the restore click's own tick,
+      // ahead of the `getBlock` snapshot and the `editBlock` write below.
+      // See `@/stores/page-rename`.
+      const spaceId = useSpaceStore.getState().currentSpaceId
       try {
         // Snapshot the current block content for the toast's Undo action, and
         // its `block_type` alongside it (#4056): the same `getBlock` read
@@ -315,7 +326,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         // `editBlock` just wrote. Ordinary (non-page) blocks restored from
         // this same panel must NOT take this branch — hence gating on the
         // block's own `block_type`, not on the panel.
-        if (isPage) renamePage(blockId, toText)
+        if (isPage) renamePage(blockId, toText, spaceId)
 
         if (previousContent != null) {
           const captured = previousContent

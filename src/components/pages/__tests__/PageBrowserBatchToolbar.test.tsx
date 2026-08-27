@@ -567,7 +567,10 @@ describe('batch trash — name-cache fan-out (#4008 review note 3)', () => {
         expect(changes).toHaveLength(ids.length)
       })
       expect(changes).toEqual(
-        ids.map((id) => ({ kind: 'removed', entity: 'page', id }) satisfies NameChange),
+        ids.map(
+          (id) =>
+            ({ kind: 'removed', entity: 'page', id, spaceId: 'SPACE_TEST' }) satisfies NameChange,
+        ),
       )
     } finally {
       unsubscribe()

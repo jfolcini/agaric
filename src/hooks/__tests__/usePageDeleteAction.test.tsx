@@ -258,7 +258,9 @@ describe('usePageDeleteAction', () => {
       await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
       await waitFor(() => expect(toast.success).toHaveBeenCalled())
 
-      expect(changes).toEqual([{ kind: 'removed', entity: 'page', id: 'PAGE_1' }])
+      expect(changes).toEqual([
+        { kind: 'removed', entity: 'page', id: 'PAGE_1', spaceId: 'SPACE_A' },
+      ])
 
       act(() => {
         lastUndoAction()()

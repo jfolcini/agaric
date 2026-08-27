@@ -35,10 +35,42 @@ import { useTabsStore } from '@/stores/tabs'
  * only be reached through `@/lib/name-change-bus`.
  *
  * Call this AFTER the backend write commits — it does no IPC of its own.
+ *
+ * #4391 — `spaceId` is the space the CALLER had in hand when it decided to
+ * rename, threaded in rather than read here. It is required (not defaulted,
+ * not optional) so a new call site fails to compile instead of silently
+ * emitting a mislabelled event, and it is `string | null` because "no active
+ * space" is a real state the callers can be in.
+ *
+ * This function cannot capture the value itself. It is synchronous, so
+ * "capture at entry" and "read at emit" are the same tick and the same
+ * value — capturing here would be a no-op. The `await` that matters is in
+ * every one of the five callers, BETWEEN the user's decision and this call:
+ * `PageHeader.persistTitle` (after `editBlock`), `PageHeader`'s undo/redo
+ * title refresh (after the undo IPC, `load()` and `getBlock`),
+ * `HistoryPanel`'s restore and undo-restore (after `getBlock` / `editBlock`),
+ * and `useUndoShortcuts.refreshAfterUndoRedo` (after the undo/redo IPC and
+ * `load()`). A read taken here would therefore be a FRESH read at emit time,
+ * which the name-change-bus docblock explains is worse than no scoping: a
+ * rename started in space A while the user switches to B would be labelled
+ * `B` and let into B's warm cache, aborting an in-flight B fill (the
+ * one-keystroke empty picker at `src/components/block-tree/use-block-resolve.ts:1132-1142`).
+ *
+ * `null` skips the bus notification — there is no space to scope a
+ * picker-cache patch to — but the tabs/recents/resolve fan-out above still
+ * runs unconditionally; none of those three are space-scoped. That second
+ * half is the load-bearing part: a rename must reach the tab labels, the
+ * recents MRU and the resolve store whether or not there is an active space.
+ *
+ * Sibling publishers answer the null case the other way, falling back to
+ * `invalidateNameCaches()`. Both are correct and the reason they are
+ * interchangeable is written down ONCE, for all of them, in the "When the
+ * caller has NO active space" section of `src/lib/name-change-bus.ts`. Read
+ * that rather than copying whichever precedent you happen to open first.
  */
-export function renamePage(pageId: string, title: string): void {
+export function renamePage(pageId: string, title: string, spaceId: string | null): void {
   useTabsStore.getState().renamePage(pageId, title)
   useRecentPagesStore.getState().renamePage(pageId, title)
   useResolveStore.getState().set(pageId, title, false)
-  notifyPageRenamed(pageId, title)
+  if (spaceId != null) notifyPageRenamed(pageId, title, spaceId)
 }
