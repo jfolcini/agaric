@@ -1691,9 +1691,12 @@ jobs:
   # and every other check passes — the report is a valid envelope, exit 0
   # agrees with a warnings-only body, and the canary fires on its own flag.
   # So the guard also compares the main run's `number_of_rules` against a
-  # plain baseline it measures at run time: a type-aware run registers
-  # strictly more rules than a plain one of the same config. If you edit the
-  # oxlint line below, that check is what will catch you dropping the flag.
+  # plain baseline it measures at run time over THE SAME TARGET: a type-aware
+  # run registers strictly more rules than a plain one of the same config. If
+  # you edit the oxlint line below, that check is what will catch you dropping
+  # the flag — and if you narrow its target, the guard's own file-count parity
+  # check reports that the two runs are no longer comparable rather than
+  # comparing them anyway.
   #
   # No count is hardcoded here or in the guard — not 397, not a threshold.
   # Every figure in the step summary is computed from the report just

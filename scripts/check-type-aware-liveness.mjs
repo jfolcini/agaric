@@ -71,8 +71,10 @@
 // `checkTypeAwareWasUsed` closes that: the main run's own report carries
 // `number_of_rules`, and a type-aware run registers strictly more rules than
 // a plain one of the same config. Comparing it against a plain baseline
-// measured at run time decides the question with no literal on either side.
-// See that function for the full argument, including the one honest false-red.
+// measured at run time OVER THE SAME TARGET decides the question with no
+// literal on either side, and `assertSameTarget` verifies the same-target
+// premise rather than assuming it. See those two functions for the full
+// argument, including the false-reds each can produce.
 //
 // NOTE the canary must run with the repo root as CWD. oxlint resolves the
 // tsgolint binary from the working directory's `node_modules`, not from its
@@ -140,6 +142,9 @@ export const ALLOWED_EXIT_CODES = [0, 1]
 /** The canary's rule. Type-aware by construction: no syntax-only pass can
  *  decide it, because it needs the type of the callee's return value. */
 export const CANARY_RULE = 'typescript(no-floating-promises)'
+
+/** The package whose presence in `node_modules` means the backend is installed. */
+export const TSGOLINT_PACKAGE = 'oxlint-tsgolint'
 
 export const CANARY_SOURCE = [
   'async function work(): Promise<void> {}',
@@ -286,16 +291,36 @@ export function checkExitCodeAgrees(exitCode, report) {
  *   canary   — `--type-aware` over a floating-promise fixture, with the
  *              fixture's own single-rule config. Proves the TOOLCHAIN can do
  *              type-aware analysis at all.
- *   baseline — a PLAIN run (no `--type-aware`) over the same fixture, using
- *              THIS REPO's config resolution rather than the fixture's. Its
- *              only output of interest is `number_of_rules`, the rule count
- *              the repo config registers without type-aware. Proves what the
- *              main run should be compared against.
+ *   baseline — a PLAIN run (no `--type-aware`) over THE SAME TARGET as the
+ *              main run, resolving THIS REPO's config. Its only output of
+ *              interest is `number_of_rules`, the rule count the repo config
+ *              registers without type-aware — what the main run is compared
+ *              against.
  *
- * The baseline lints exactly one file because `number_of_rules` is a function
- * of (config, mode) ALONE — measured identical at 1850 files and at 1, and
- * stable across repeated runs — so there is no reason to pay for a second
- * whole-tree pass. It costs ~0.6s next to the main run's ~4s.
+ * ─── Why the baseline lints the whole tree, not one file ────────────────────
+ *
+ * An earlier version linted a single generated file, because
+ * `number_of_rules` measures as a pure function of the resolved config: at
+ * 1852 files and at 1 it is identical, and an `overrides` block that ENABLES
+ * rules outside the base set (or adds plugins) raises it equally for both —
+ * measured across three override shapes, so the whole-repo-vs-one-file
+ * asymmetry that would break the comparison is not constructible against
+ * oxlint 1.79.
+ *
+ * That is a measurement of today's oxlint, though, not a contract oxc
+ * publishes, and this is the check whose entire job is closing a fail-open.
+ * If a future release ever made the count file-set-dependent, a one-file
+ * baseline would silently start comparing unlike things — and the failure
+ * would be a PASS. The same-target baseline needs no such premise.
+ *
+ * It costs almost nothing to stop relying on it: a whole-tree plain run
+ * measures 0.76-0.89s against the one-file run's 0.64s, roughly 0.2s, next to
+ * the main run's ~4s and a 20-minute step budget. The cheap version was
+ * saving nothing worth a premise.
+ *
+ * `assertSameTarget` below then VERIFIES the "same target" claim rather than
+ * assuming it, so narrowing the main run's target later cannot silently
+ * decouple the two.
  */
 export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {}) {
   const binary = join(repoRoot, 'node_modules', '.bin', 'oxlint')
@@ -305,6 +330,19 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
         'whether the type-aware backend works',
     )
   }
+  // POSITIVE check for the one state a puller lands in after this PR merges:
+  // oxlint predates it and is already in `node_modules`, `oxlint-tsgolint`
+  // does not and will not be there until `npm install` runs. Detected by the
+  // presence of the package that SHOULD be there, not by matching oxlint's
+  // error text — a deny-list of error strings fails open on the next wording
+  // change.
+  if (!existsSync(join(repoRoot, 'node_modules', TSGOLINT_PACKAGE, 'package.json'))) {
+    throw new UnverifiableError(
+      `${TSGOLINT_PACKAGE} is not in node_modules — this is a stale install, not a broken ` +
+        'backend. Run `npm install` (it is a devDependency in package.json; see #4408) and ' +
+        're-run. Nothing is being judged until it is there',
+    )
+  }
   // Inside the repo tree on purpose: oxlint resolves tsgolint from the CWD's
   // node_modules, so a fixture in the system temp dir cannot find it.
   const parent = join(repoRoot, 'reports', 'type-aware')
@@ -312,13 +350,21 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
   try {
     mkdirSync(parent, { recursive: true })
     dir = mkdtempSync(join(parent, 'canary-'))
-    writeFileSync(join(dir, 'canary.ts'), CANARY_SOURCE, 'utf8')
-    writeFileSync(join(dir, 'oxlintrc.json'), CANARY_CONFIG, 'utf8')
   } catch (err) {
     throw new UnverifiableError(`could not create the canary fixture: ${err.message}`)
   }
+  // Note 3: the fixture WRITE lives inside the same try/finally as the runs.
+  // It used to sit in the block above, so a write that threw (ENOSPC, EACCES)
+  // left the just-created `canary-*` directory behind for the artifact upload
+  // to collect. `dir` exists from here on, so `finally` can always remove it.
   const fixture = join(dir, 'canary.ts')
   try {
+    try {
+      writeFileSync(fixture, CANARY_SOURCE, 'utf8')
+      writeFileSync(join(dir, 'oxlintrc.json'), CANARY_CONFIG, 'utf8')
+    } catch (err) {
+      throw new UnverifiableError(`could not create the canary fixture: ${err.message}`)
+    }
     const canary = parseReport(
       run({
         binary,
@@ -334,12 +380,11 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
         ],
       }),
     )
-    // No `-c`: this one must resolve the REPO's `.oxlintrc.json`, because the
-    // number it yields is only meaningful as a comparison against the main
-    // run, which used that same config.
-    const baseline = parseReport(
-      run({ binary, cwd: repoRoot, args: ['--no-ignore', '-f', 'json', fixture] }),
-    )
+    // No `-c` and NO PATH: this must mirror the main run exactly — the repo's
+    // own `.oxlintrc.json`, and the whole tree, because the main run passes no
+    // path either. The number it yields is only meaningful as a like-for-like
+    // comparison.
+    const baseline = parseReport(run({ binary, cwd: repoRoot, args: ['-f', 'json'] }))
     if (!baseline.report || typeof baseline.report.number_of_rules !== 'number') {
       throw new UnverifiableError(
         `the plain baseline run produced no usable rule count — ${baseline.reason ?? 'no number_of_rules'}. ` +
@@ -367,7 +412,8 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
  * What closes it is that the main report carries its OWN rule count. A
  * type-aware run registers strictly more rules than a plain one of the same
  * config, so comparing the main run's count against a plain baseline measured
- * at run time decides it — with no literal on either side of the comparison.
+ * at run time over the same target decides it — with no literal on either
+ * side of the comparison.
  * Both numbers are measured; neither 229 nor 212 nor their difference appears
  * anywhere in this file.
  *
@@ -386,13 +432,44 @@ export function checkTypeAwareWasUsed(report, baseline) {
   const plainRules = baseline?.number_of_rules
   if (mainRules > plainRules) return []
   return [
-    `the main run registered ${mainRules} rule(s), but a PLAIN run of this same config registers ` +
-      `${plainRules} — a type-aware run must register strictly more. The report parses and the canary ` +
-      'passes, so the toolchain is fine; what this says is that THIS run did not enable ' +
-      'type-aware analysis. Check that `--type-aware` is still on the oxlint invocation in ' +
-      '`.github/workflows/scheduled-deep-checks.yml`. (If `.oxlintrc.json` has since enabled ' +
-      '`options.typeAware`, the baseline is type-aware too and this comparison no longer ' +
-      'discriminates — that needs a different check, not a relaxed one.)',
+    `the main run registered ${mainRules} rule(s), but a PLAIN run over the same target with the ` +
+      `same config registers ${plainRules} — a type-aware run must register strictly more. The ` +
+      'report parses and the canary passes, so the toolchain is fine; what this says is that ' +
+      'THIS run did not enable type-aware analysis. Three things put you here, and the first is ' +
+      'much the most likely:\n' +
+      '      1. `--type-aware` is no longer on the oxlint invocation in ' +
+      '`.github/workflows/scheduled-deep-checks.yml`. Check there first.\n' +
+      '      2. `.oxlintrc.json` has the type-aware rules turned `"off"` — a triage step that is ' +
+      'easy to leave behind. The counts equalise, and the cause is in the CONFIG, not the ' +
+      'workflow.\n' +
+      '      3. `.oxlintrc.json` has enabled `options.typeAware`, so the baseline is type-aware ' +
+      'too. The flag no longer decides the mode and this comparison no longer discriminates — ' +
+      'that needs a different check, not a relaxed one.',
+  ]
+}
+
+/**
+ * The premise `checkTypeAwareWasUsed` rests on: that the two runs looked at
+ * the same code. `runProbes` passes no path so it mirrors the main run's own
+ * pathless invocation — but "mirrors" is an assumption about a command line
+ * in another file, and assumptions in this guard have a track record. Both
+ * reports carry `number_of_files`, so the claim is cheap to VERIFY: if the
+ * main run's target is ever narrowed and the baseline's is not, the counts
+ * diverge and this says so instead of quietly comparing unlike things.
+ *
+ * Unverifiable rather than broken: a mismatch means the guard cannot answer
+ * the question, which is a different thing from having answered it "no".
+ */
+export function assertSameTarget(report, baseline) {
+  const mainFiles = report?.number_of_files
+  const plainFiles = baseline?.number_of_files
+  if (mainFiles === plainFiles) return []
+  return [
+    `the baseline linted ${plainFiles} file(s) but the main run linted ${mainFiles} — the two ` +
+      'did not look at the same target, so their rule counts are not comparable and whether ' +
+      '`--type-aware` was in effect cannot be decided. The baseline mirrors the main run by ' +
+      'passing no path; if the invocation in `.github/workflows/scheduled-deep-checks.yml` now ' +
+      'names one, `runProbes` has to name the same one',
   ]
 }
 
@@ -481,7 +558,12 @@ export function collectProblems({ exitCode, reportText, probe }) {
     return problems
   }
   for (const p of checkCanary(probes.canary)) problems.push(broken(p))
-  for (const p of checkTypeAwareWasUsed(report, probes.baseline)) problems.push(broken(p))
+  const targetMismatch = assertSameTarget(report, probes.baseline)
+  for (const p of targetMismatch) problems.push(unverifiable(p))
+  // Only compare rule counts once the two runs are known to be comparable.
+  if (targetMismatch.length === 0) {
+    for (const p of checkTypeAwareWasUsed(report, probes.baseline)) problems.push(broken(p))
+  }
   // Stashed as a non-index property: existing callers that treat this as a
   // plain problems array (`.length`, `.some`, spreads, `JSON.stringify`) are
   // unaffected — JSON.stringify on an array ignores non-index own
@@ -648,8 +730,14 @@ export function main(argv) {
     )
     return code
   }
+  // The two tiers make DIFFERENT claims, so they must not share a sentence.
+  // Tier 2 asserts the lane did not run; tier 3 asserts only that the guard
+  // could not find out — printing the former for the latter is the same
+  // conflation the exit codes exist to keep apart.
   console.error(
-    `${code === EXIT_BROKEN ? 'FAIL' : 'UNVERIFIABLE'}  the type-aware lane did not run (#4408):`,
+    code === EXIT_BROKEN
+      ? 'FAIL  the type-aware lane did not run (#4408):'
+      : 'UNVERIFIABLE  the type-aware lane could not be checked — this is not a verdict on it (#4408):',
   )
   for (const p of problems) console.error(`  - [${p.severity}] ${p.message}`)
   return code
@@ -671,12 +759,13 @@ const MISSING_TSGOLINT_STDOUT =
 // which `selfTestTypeAwareWasUsed` proves at values nothing like these.
 const PLAIN_RULES = 212
 const TYPE_AWARE_RULES = 229
+const FIXTURE_FILES = 3
 
 /** A well-formed envelope from a run that DID use `--type-aware`. */
 const goodReport = (diagnostics = []) =>
   JSON.stringify({
     diagnostics,
-    number_of_files: 3,
+    number_of_files: FIXTURE_FILES,
     number_of_rules: TYPE_AWARE_RULES,
     threads_count: 16,
     start_time: 0.1,
@@ -689,11 +778,13 @@ const liveCanary = () => parseReport(goodReport([errorDiag(CANARY_RULE)]))
 const deadCanary = () => parseReport(goodReport([warnDiag('react(refs)')]))
 
 /** A probe pair: a canary result plus a plain baseline rule count. */
+// `number_of_files` mirrors `goodReport`'s, because the real baseline lints
+// the SAME target as the main run and `assertSameTarget` now checks that.
 const probeOf =
-  (canary, plainRules = PLAIN_RULES) =>
+  (canary, plainRules = PLAIN_RULES, plainFiles = FIXTURE_FILES) =>
   () => ({
     canary: canary(),
-    baseline: { diagnostics: [], number_of_files: 1, number_of_rules: plainRules },
+    baseline: { diagnostics: [], number_of_files: plainFiles, number_of_rules: plainRules },
   })
 
 function selfTestParsing({ check }) {
@@ -857,6 +948,67 @@ function selfTestTypeAwareWasUsed({ check }) {
   )
 }
 
+function selfTestSameTarget({ check }) {
+  const at = (files) => ({ number_of_files: files, number_of_rules: 1 })
+  check(assertSameTarget(at(1852), at(1852)).length === 0, 'equal targets compare fine', '')
+  const mismatch = assertSameTarget(at(1852), at(1))
+  check(
+    mismatch.length === 1 && mismatch[0].includes('1852') && mismatch[0].includes('did not look'),
+    'a baseline that linted a DIFFERENT target is caught, and both counts are named',
+    JSON.stringify(mismatch),
+  )
+  // Values nothing like the real ones: the check is a comparison, not a
+  // literal, in both directions.
+  check(
+    assertSameTarget(at(7), at(7)).length === 0 && assertSameTarget(at(7), at(8)).length === 1,
+    'the target check hardcodes no file count either',
+    '',
+  )
+  // A target mismatch is UNVERIFIABLE (3), not broken (2): the guard cannot
+  // answer the question, which is not the same as answering it "no". And the
+  // rule-count comparison must not run on incomparable inputs.
+  const problems = collectProblems({
+    exitCode: 1,
+    reportText: goodReport([errorDiag('typescript(a)')]),
+    probe: probeOf(liveCanary, PLAIN_RULES, FIXTURE_FILES + 1),
+  })
+  check(
+    problems.length === 1 && problems[0].severity === 'unverifiable',
+    'a target mismatch is unverifiable, and suppresses the rule-count comparison',
+    JSON.stringify(problems),
+  )
+}
+
+function selfTestStaleInstallSkips({ check }) {
+  // Note 4: the state a puller lands in after this merges — oxlint already in
+  // node_modules (it predates the PR), oxlint-tsgolint not yet. Classified
+  // POSITIVELY, by the absence of the package that should be there, never by
+  // matching oxlint's error text.
+  const dir = mkdtempSync(join(tmpdir(), 'stale-install-'))
+  try {
+    mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', '.bin', 'oxlint'), '#!/bin/sh\nexit 0\n', 'utf8')
+    let threw = null
+    try {
+      runProbes({ repoRoot: dir })
+    } catch (err) {
+      threw = err
+    }
+    check(
+      threw instanceof UnverifiableError && threw.message.includes('npm install'),
+      'oxlint present but oxlint-tsgolint absent is UNVERIFIABLE and names `npm install`',
+      String(threw?.message),
+    )
+    check(
+      threw instanceof UnverifiableError && threw.message.includes(TSGOLINT_PACKAGE),
+      'the stale-install message names the missing package, not a backend failure',
+      String(threw?.message),
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 function selfTestArgValues({ check }) {
   // Note 3, and a sweep of every option that takes a value.
   check(takeValue(['--report'], 1) === null, 'a missing final value is null, not undefined', '')
@@ -937,7 +1089,7 @@ function selfTestPositiveClassification({ check }) {
       exitCode: 0,
       reportText: JSON.stringify({
         diagnostics: [warnDiag('react(refs)')],
-        number_of_files: 1850,
+        number_of_files: FIXTURE_FILES,
         number_of_rules: PLAIN_RULES,
       }),
       probe: probeOf(liveCanary),
@@ -1177,6 +1329,8 @@ function runSelfTest() {
   selfTestRunGuard({ check })
   selfTestExitCodes({ check })
   selfTestArgValues({ check })
+  selfTestSameTarget({ check })
+  selfTestStaleInstallSkips({ check })
   selfTestRealProbes({ check, fail })
 
   if (failures.length > 0) {
