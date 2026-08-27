@@ -848,18 +848,30 @@ jobs:
   # The checkout above is pinned to `base.sha` deliberately, and
   # `check-pr-overlap-trust-boundary.mjs` enforces that it stays so; it must
   # NOT be moved to the PR head to make the guard present. The consequence is
-  # that the guard is absent on the PR introducing it — and on any PR that
-  # deletes or moves it. Those are opposite situations and get opposite
-  # answers, decided from THIS PR's own changed-file list in the payload
-  # already fetched above:
+  # that the guard is absent from THIS CHECKOUT only when `base.sha` — the
+  # merge target as it stood before this PR — does not have it yet. That is
+  # true for the PR introducing the guard, and it is NOT true for a PR that
+  # deletes or moves it: that PR's `base.sha` predates its own deletion
+  # commit, so the checkout still contains the guard, `[ ! -f "$GUARD_SCRIPT"
+  # ]` is false, and this branch never runs on that PR at all — it runs the
+  # guard normally, same as any other PR (#4431 review note 7; an earlier
+  # version of this comment claimed a deleting/moving PR lands here too,
+  # which is wrong about WHICH PR sees the absence, though not about the
+  # eventual outcome — see below). Decided from THIS PR's own changed-file
+  # list in the payload already fetched above:
   #
   #   * this PR adds `scripts/check-session-log-pr-collision.mjs` → warn and
   #     pass. Expected, and there is genuinely nothing to check: the guard is
   #     not on the merge target. Failing here would make the PR introducing
   #     the guard unmergeable by the guard it introduces.
-  #   * anything else → fail. The guard was deleted or moved and nobody
-  #     restored it, which is precisely the silent fail-open #3933 is about,
-  #     and it would otherwise present as a permanently green check.
+  #   * anything else → fail. The guard is missing from `base.sha` and this
+  #     PR did not add it — which is also exactly what happens to every PR
+  #     opened AFTER a deletion/move has already merged to `main`: their own
+  #     `base.sha` inherits the absence, they didn't add the guard back
+  #     either, and this branch (correctly) fails them. So a delete/move is
+  #     still fail-closed overall — #3933's actual concern — it just surfaces
+  #     on the NEXT PRs to open against the now-guard-less `main`, not on the
+  #     PR that did the deleting.
   #
   # "Anything else" includes every state the discriminator cannot vouch for —
   # this PR missing from the payload, its file list truncated by gh's 100-file
@@ -901,9 +913,20 @@ jobs:
       # call; shared between the two steps below so the fetch limit and the
       # truncation check the script runs against it can never drift apart.
       # `check-session-log-pr-collision.mjs`'s `--pr-limit` flag is what
-      # makes hitting this number itself a FAILURE (see its own header) —
-      # a page exactly this long fails closed instead of being trusted as
-      # "that's just how many PRs are open".
+      # makes exceeding this number a FAILURE (see its own header).
+      #
+      # This is the INTENDED cap, not the literal `gh pr list --limit`
+      # argument: the `gh pr list` step below actually asks for
+      # `PR_LIST_LIMIT + 1`, one more than this value, while the guard is
+      # still told `--pr-limit "$PR_LIST_LIMIT"`. Asking `gh` for the SAME
+      # number passed as `--pr-limit` (an earlier version did) made a page
+      # exactly that long indistinguishable from one `gh` truncated at that
+      # length, so the guard refused it — meaning at precisely 100 open PRs
+      # EVERY PR's run of this job refused, permanently, with no individual
+      # author able to clear it (#4431 review note 4). Fetching one extra
+      # entry lets a genuine page of exactly 100 arrive in full and pass; only
+      # the (101)th entry actually showing up is proof there really are more
+      # than 100 open PRs right now.
       PR_LIST_LIMIT: "100"
     steps:
       - name: Checkout the merge target (trusted; never this PR's own commits)
@@ -960,7 +983,31 @@ jobs:
           # against — and the oversized PR fails closed on its own run of
           # this job, where its author can act on it. See that script's
           # header.
-          if ! gh pr list --repo "$REPO" --state open --limit "$PR_LIST_LIMIT" \
+          #
+          # `--limit "$((PR_LIST_LIMIT + 1))"`, deliberately ONE MORE than
+          # `PR_LIST_LIMIT` — the guard below is still told `--pr-limit
+          # "$PR_LIST_LIMIT"`, the unmodified intended cap. Asking `gh` for
+          # exactly `PR_LIST_LIMIT` (an earlier version did) made a genuine
+          # page of that length indistinguishable from one `gh` truncated at
+          # it, so the guard refused every run at precisely 100 open PRs —
+          # permanently, for everyone, with no author able to clear it
+          # (#4431 review note 4). The extra slot means a real page of 100
+          # arrives whole and passes; only a 101st entry actually showing up
+          # is evidence there are more open PRs than the cap allows.
+          #
+          # Deliberately no `--base main`, even though this workflow's `on:`
+          # trigger only fires for a PR into `main` (#4431 review note 8):
+          # this repo's own stacked-PR convention (a child PR's `base` is set
+          # to its PARENT's branch, retargeted to `main` only after the
+          # parent merges — see the batch-issues skill) means a real,
+          # currently-relevant sibling can have `base != main` right now.
+          # Scoping this call to `--base main` would make this job blind to
+          # exactly the sibling-claim shape the "identical path collapses to
+          # one claim" fix (review note 2) exists to handle correctly rather
+          # than mis-attribute. Every open PR is a candidate collision
+          # regardless of its current base, because every open PR is a
+          # candidate to eventually land on `main`.
+          if ! gh pr list --repo "$REPO" --state open --limit "$((PR_LIST_LIMIT + 1))" \
               --json number,files,changedFiles > prs.json; then
             echo "::error::session-log-pr-collision: gh pr list failed — cannot verify session-log collisions (fail-closed, see #3933)"
             exit 1

@@ -110,11 +110,18 @@
 //      an integer `changedFiles` count, and a `files` array (`shapeProblem`
 //      below) — not "parses as JSON", which `[]`, `{}`, and `null` all
 //      satisfy trivially; and
-//   2. the fetched list itself isn't truncated at the CALLER'S OWN
-//      `gh pr list --limit N` — a page exactly N entries long is
-//      indistinguishable from a page cut off at N, so `--pr-limit N` (when
-//      given) makes a list of length >= N unverified rather than read as
-//      "that's just how many PRs happen to be open"; and
+//   2. the fetched list doesn't EXCEED the caller's own `--pr-limit N` — the
+//      intended cap on how many open PRs this check is willing to trust in
+//      one run. An earlier version compared against the SAME number `gh pr
+//      list --limit N` itself was called with, so a page exactly N long was
+//      indistinguishable from one `gh` truncated at N and was refused
+//      outright — which put the refusal exactly ON the cliff: at precisely N
+//      open PRs, EVERY PR's run of this job refused, with no individual
+//      author able to clear it (#4431 review note 4). The caller now asks
+//      `gh` for `N+1` while still passing `--pr-limit N` here, so a genuine
+//      page of N is fetched in full with no ambiguity, and only a list that
+//      actually reaches N+1 — proof an (N+1)th PR exists beyond the intended
+//      cap — is refused; and
 //   3. (when `--self-pr` is given, which the real CI invocation always
 //      does) the PR running this check is ITSELF present in the fetched
 //      list — the cheapest self-consistency check available: if `gh pr
@@ -165,11 +172,13 @@
 // `gh pr list --state open --json number,files,changedFiles` — every open
 // PR, this one included (that is what `--self-pr` verifies).
 //
-// `--pr-limit` takes the SAME number passed to that `gh pr list --limit`
-// invocation, so this script can tell a full page from a truncated one (see
-// point 2 above). Omitted entirely, that specific check is skipped — the
-// CI caller always passes it; it's optional here only so ad-hoc/self-test
-// invocations aren't forced to fabricate a limit that means nothing to them.
+// `--pr-limit` takes the INTENDED cap on open PRs (100) — ONE LESS than the
+// `gh pr list --limit` the caller actually requests (#4431 review note 4:
+// requesting the same number for both put every PR's run into permanent
+// refusal at exactly 100 open PRs, with nobody able to clear it). Omitted
+// entirely, that specific check is skipped — the CI caller always passes it;
+// it's optional here only so ad-hoc/self-test invocations aren't forced to
+// fabricate a limit that means nothing to them.
 //
 // `--merged-paths` takes the newline-separated file list of the merge
 // target's `docs/session-log/` (`git ls-tree -r --name-only <base-sha> --
@@ -307,6 +316,20 @@ function finish(verdict, code) {
  * at all, contributes nothing here — that is a legitimate, unremarkable
  * outcome, not a problem).
  *
+ * `Number(m[1])` is a DELIBERATE identity choice, not an incidental one
+ * (#4431 review note 6): it normalises zero-padding, so
+ * `session-044-mobile-a11y-216.md` and a hypothetical `session-44-*.md`
+ * parse to the same number and would be treated as one identity — a
+ * collision, or one file "claiming" what the other already holds — rather
+ * than as two distinct numbers that merely look similar. Harmless under
+ * today's numbering (every filename in this repo's history is unpadded), and
+ * intentionally left this way rather than keyed on the raw capture string:
+ * `check-session-log-numbering.sh`'s own `taken` set is built with
+ * `sort -n -u`, whose `-n` makes `-u`'s dedup NUMERIC too, so that guard
+ * already treats "044" and "44" as one identity. Keying this script on the
+ * unnormalised string instead would make the two guards disagree about what
+ * a duplicate even is — worse than the harmless-today equivalence.
+ *
  * @param {string} path
  */
 export function sessionNumberOf(path) {
@@ -314,9 +337,26 @@ export function sessionNumberOf(path) {
   return m ? Number(m[1]) : null
 }
 
+/**
+ * The one shape a `gh pr list --json files` entry is allowed to take: a bare
+ * string, or an object carrying a string `path`. `pathsOf()` and
+ * `shapeProblem()` both call this — a SINGLE predicate, not two, because two
+ * independent notions of "a usable file entry" is exactly how #4431 review
+ * note 1 happened: `pathsOf()`'s `.filter(Boolean)` quietly dropped a `path`-
+ * less entry while `shapeProblem()` never looked inside `files` at all, so
+ * `{additions: 3, deletions: 0}` passed validation and contributed zero paths
+ * — a session-log claim made invisible rather than refused.
+ *
+ * @param {unknown} f
+ */
+function isUsableFileEntry(f) {
+  if (typeof f === 'string') return true
+  return f !== null && typeof f === 'object' && typeof f.path === 'string'
+}
+
 /** The changed paths of one `gh pr list --json number,files` entry. */
 function pathsOf(pr) {
-  return (pr?.files ?? []).map((f) => (typeof f === 'string' ? f : f?.path)).filter(Boolean)
+  return (pr?.files ?? []).map((f) => (typeof f === 'string' ? f : f?.path))
 }
 
 /**
@@ -335,6 +375,19 @@ function shapeProblem(prs) {
     if (!Array.isArray(pr.files)) return `entry ${i} (#${pr.number}) has no "files" array`
     if (!Number.isInteger(pr.changedFiles)) {
       return `entry ${i} (#${pr.number}) has no integer "changedFiles" field`
+    }
+    // #4431 review note 1: an entry that IS an array can still hold a file
+    // object with no usable path (e.g. `{additions, deletions}` with the
+    // `path` field itself missing or non-string). `pathsOf()` reads exactly
+    // the same predicate, so a shape it cannot turn into a path is refused
+    // here rather than silently contributing nothing to the analysis.
+    for (const [j, f] of pr.files.entries()) {
+      if (!isUsableFileEntry(f)) {
+        return (
+          `entry ${i} (#${pr.number}) file ${j} has no usable "path" ` +
+          `(got ${JSON.stringify(f)})`
+        )
+      }
     }
   }
   return null
@@ -401,20 +454,46 @@ function indexMergedPaths(mergedPaths) {
  * from an edit (see this file's header — without it, two PRs editing one of
  * the fifteen merged `session-1000-*.md` files read as a collision).
  *
+ * Claims that name the EXACT SAME PATH collapse into one (#4431 review note
+ * 2), regardless of how many PRs' `files` lists carry it. A PR stacked on
+ * another open PR's branch (base = the sibling's branch, not yet retargeted
+ * to `main`) contains the sibling's commits, so `gh pr list --json files`
+ * reports the sibling's own new `session-NNNN-*.md` under BOTH PRs — not two
+ * PRs independently choosing the same number, but one file seen twice
+ * because one branch contains the other's history. Grouping by number alone
+ * read that as a cross-PR collision and told the stacked author to
+ * "renumber", which fixes nothing: the file is not duplicated, the
+ * *ancestry* is. Two DIFFERENT paths sharing a number (the actual #3933
+ * shape) still collide — only an identical path is folded away. The
+ * representative `pr` recorded for a folded claim is the LOWEST PR number
+ * that carries it, which is stable regardless of `gh pr list`'s own
+ * ordering and — for the stacked case — is normally the sibling PR the file
+ * actually belongs to.
+ *
  * @param {{number:number, files:unknown[]}[]} prs
  * @param {Set<string>} mergedPathSet
  */
 function claimsByNumber(prs, mergedPathSet) {
-  /** @type {Map<number, {pr:number, file:string}[]>} */
-  const claims = new Map()
+  /** @type {Map<number, Map<string, number[]>>} */
+  const byNumberThenFile = new Map()
   for (const pr of prs) {
     for (const file of pathsOf(pr)) {
       const n = sessionNumberOf(file)
       if (n === null) continue
       if (mergedPathSet.has(file)) continue
-      if (!claims.has(n)) claims.set(n, [])
-      claims.get(n).push({ pr: Number(pr.number), file })
+      if (!byNumberThenFile.has(n)) byNumberThenFile.set(n, new Map())
+      const byFile = byNumberThenFile.get(n)
+      if (!byFile.has(file)) byFile.set(file, [])
+      byFile.get(file).push(Number(pr.number))
     }
+  }
+  /** @type {Map<number, {pr:number, file:string}[]>} */
+  const claims = new Map()
+  for (const [n, byFile] of byNumberThenFile) {
+    claims.set(
+      n,
+      [...byFile.entries()].map(([file, prNumbers]) => ({ pr: Math.min(...prNumbers), file })),
+    )
   }
   return claims
 }
@@ -449,12 +528,19 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
   const problem = shapeProblem(prs)
   if (problem) return cannotVerify(`malformed open-PR payload: ${problem}`)
 
-  if (prLimit !== null && prs.length >= prLimit) {
+  // `prLimit` is the INTENDED cap, and the caller fetches `prLimit + 1` (see
+  // this file's header, point 2, #4431 review note 4) precisely so a genuine
+  // page of exactly `prLimit` open PRs is fetched IN FULL and passes here —
+  // the strict `>` is what keeps that page off the refusal, unlike the old
+  // `>=` which fired on it every time. Only the (prLimit+1)th entry actually
+  // arriving is proof there are more open PRs than this run is willing to
+  // trust.
+  if (prLimit !== null && prs.length > prLimit) {
     return cannotVerify(
       `the fetched open-PR list has ${prs.length} entr${prs.length === 1 ? 'y' : 'ies'}, which ` +
-        `meets or exceeds the requested --pr-limit of ${prLimit}. A page exactly that long is ` +
-        'indistinguishable from one GitHub cut off at that length — raise the limit and re-run ' +
-        'rather than trust a full page as "that is just how many PRs are open".',
+        `exceeds the intended --pr-limit of ${prLimit}. That means there are MORE than ` +
+        `${prLimit} open PRs right now — raise the limit and re-run rather than trust a ` +
+        'partial read as "that is just how many PRs are open".',
     )
   }
 
@@ -481,8 +567,21 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
       `this PR's own changed-file list (#${self.number}: ${self.files.length}/${self.changedFiles} ` +
         "files) is truncated by gh's 100-file cap — a session-log claim of its own past that " +
         'cutoff would be invisible to this check, so this PR cannot be read as "contributes ' +
-        'nothing". Split the PR, or confirm its session-log number by hand against ' +
-        `\`${NUMBERING_GUARD}\`.`,
+        'nothing". This repo\'s large batch PRs make that cap routine, not exceptional, so ' +
+        // #4431 review note 3: "split the PR" is not an offerable remedy here
+        // — it is unactionable for the repo's dominant PR shape and was
+        // never the point; the cap is on `gh pr list --json files`'s
+        // `files(first: 100)` GraphQL connection specifically, not on the
+        // PR's own diff. `gh api .../pulls/<n>/files --paginate` walks that
+        // same data over REST pages instead and is not subject to the same
+        // fixed cutoff, so it is the confirmation this message asks for
+        // rather than a rewrite of this PR.
+        'splitting it is not the fix. Confirm by hand instead: ' +
+        `\`gh api repos/<owner>/<repo>/pulls/${self.number}/files --paginate --jq '.[].filename'\` ` +
+        "walks gh's REST pagination rather than the capped GraphQL `files` field this check " +
+        'reads, so it lists every changed path regardless of count; grep it for ' +
+        `\`docs/session-log/\`, then re-run \`${NUMBERING_GUARD}\` locally to confirm the number ` +
+        'is still free against the freshest origin/main.',
     )
   }
   const warnings = truncated.map(
@@ -672,6 +771,25 @@ function nextFreeSentence(suggestion) {
 }
 
 /**
+ * The count of DISTINCT session-log numbers implicated by `result` — a
+ * number that is both a cross-PR collision AND a stale claim (case 13:
+ * two open PRs both add a file numbered session-1000, which is also already
+ * on the merge target) is exactly ONE number, reported twice for two
+ * different reasons, not two numbers. `result.collisions.length +
+ * result.staleClaims.length` (#4431 review note 5) double-counts it — case
+ * 13's own fixture printed "2 session-log number(s)" for the single number
+ * 1000.
+ *
+ * @param {ReturnType<typeof analyze>} result
+ */
+export function duplicatedNumberCount(result) {
+  return new Set([
+    ...result.collisions.map((c) => c.number),
+    ...result.staleClaims.map((s) => s.number),
+  ]).size
+}
+
+/**
  * Print both finding kinds, each with the evidence for THAT kind — a
  * cross-PR collision names the other PR, a stale claim names the file
  * already on the merge target. Split out of `main()` so the two stay
@@ -681,7 +799,7 @@ function nextFreeSentence(suggestion) {
  * @param {ReturnType<typeof analyze>} result
  */
 function reportFindings(result) {
-  const total = result.collisions.length + result.staleClaims.length
+  const total = duplicatedNumberCount(result)
   console.error(
     `::error::check-session-log-pr-collision: ${total} session-log number(s) would be duplicated in the merge result`,
   )
@@ -1030,6 +1148,71 @@ function runClaimSemanticsCases(ok, fail) {
     }),
     (r) => r.verified && r.collisions.length === 0 && r.staleClaims.length === 0,
   )
+
+  // Case 19 (#4431 review note 2): a PR stacked on another open PR's branch
+  // — base = the sibling's branch, not yet retargeted to `main` — contains
+  // the sibling's commits, so `gh pr list --json files` reports the
+  // sibling's OWN new session-log path under BOTH PRs. That is one file seen
+  // twice via ancestry, not two PRs independently choosing the same number,
+  // and "one of these PRs must renumber" is simply wrong advice for it —
+  // renumbering the file changes nothing about which branch contains which
+  // commits. Falsify by reverting `claimsByNumber` to push one `{pr, file}`
+  // entry per (pr, file) pair without collapsing by path: this goes from
+  // `collisions.length === 0` to a reported collision between #101 and #102.
+  check(
+    'a PR stacked on a sibling’s branch reporting the SAME new path is not a collision',
+    analyze({
+      prs: [
+        // #102 is the sibling that actually adds the file.
+        pr(102, [`${LOG_DIR}/session-1405-feature.md`]),
+        // #101 is stacked on #102's branch (contains its commits), so its
+        // own `gh`-reported file list carries the identical path.
+        pr(101, [`${LOG_DIR}/session-1405-feature.md`, 'src/lib/search.ts']),
+      ],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.collisions.length === 0 && r.staleClaims.length === 0,
+  )
+
+  // Case 20 (#4431 review note 2, complement): the collapse is keyed on the
+  // PATH, not the number — two stacked-looking PRs that in fact add
+  // DIFFERENT filenames for the same number are still a real collision, so
+  // the fix above must not have overcorrected into "one open claim per
+  // number, ever".
+  check(
+    'two PRs adding DIFFERENT paths for the same number still collide despite the path-collapse fix',
+    analyze({
+      prs: [
+        pr(101, [`${LOG_DIR}/session-1405-mine.md`]),
+        pr(102, [`${LOG_DIR}/session-1405-theirs.md`]),
+      ],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.collisions.length === 1 && r.collisions[0].number === 1405,
+  )
+
+  // Case 21 (#4431 review note 5): the number from case 13 is BOTH a
+  // cross-PR collision and a stale claim — one number, reported for two
+  // reasons. `duplicatedNumberCount` (what `reportFindings` prints the total
+  // from) must count it once. Falsify by reverting `duplicatedNumberCount`
+  // to `result.collisions.length + result.staleClaims.length`: this goes
+  // from `1` to `2` for this exact input — case 13's own fixture, which is
+  // what made the review's "self-test case 13 prints 2 ... for the single
+  // number 1000" claim true before the fix.
+  check(
+    'a number that is both a collision and a stale claim counts as ONE duplicated number, not two',
+    analyze({
+      prs: [
+        pr(101, [`${LOG_DIR}/session-1000-mine.md`]),
+        pr(102, [`${LOG_DIR}/session-1000-theirs.md`]),
+      ],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && duplicatedNumberCount(r) === 1,
+  )
 }
 
 /**
@@ -1107,6 +1290,19 @@ function runMalformedPayloadCases(ok, fail) {
     ['entry with non-array files', [{ number: 1, files: 'not-an-array', changedFiles: 0 }]],
     ['entry missing changedFiles', [{ number: 1, files: [] }]],
     ['entry with non-integer changedFiles', [{ number: 1, files: [], changedFiles: '3' }]],
+    // #4431 review note 1's own example: a `files` entry with no usable
+    // `path` at all. Before the fix, `shapeProblem()` never looked inside
+    // `files`, so this passed shape validation, passed the
+    // `changedFiles === files.length` truncation cross-check, and
+    // `pathsOf()`'s `.filter(Boolean)` silently dropped it — a session-log
+    // claim made invisible rather than a refusal. Falsify by reverting
+    // `isUsableFileEntry`'s use in `shapeProblem()` (put back a version of
+    // `shapeProblem` that only checks `Array.isArray(pr.files)`): this case
+    // goes from failing verification to `r.verified === true`.
+    [
+      'file entry with no usable "path"',
+      [{ number: 7, changedFiles: 1, files: [{ additions: 3, deletions: 0 }] }],
+    ],
   ]
   for (const [name, bad] of shapes) {
     const r = analyze({ prs: bad, selfPr: null, mergedPaths: [] })
@@ -1238,10 +1434,17 @@ function runTruncationCases(ok, fail) {
 }
 
 /**
- * The top-level `gh pr list --limit N` truncation guard: a page exactly N
- * entries long is indistinguishable from one GitHub cut off at N, so
- * `--pr-limit N` makes hitting (or exceeding) that count unverified rather
- * than a silent "that's just how many PRs are open".
+ * The top-level "more open PRs than this run is willing to trust" guard.
+ * `prLimit` is the INTENDED cap; the CI caller fetches `prLimit + 1` from
+ * `gh pr list` precisely so a genuine page of exactly `prLimit` PRs is
+ * fetched IN FULL rather than looking identical to a page `gh` truncated at
+ * that length (see this file's header, point 2). An earlier version
+ * compared `prs.length` against the SAME number `gh` was asked for, so a
+ * page exactly that long always refused — at precisely `prLimit` open PRs,
+ * EVERY PR's run of this job refused with no individual author able to
+ * clear it (#4431 review note 4). These cases pin the corrected boundary:
+ * `prLimit` itself passes, `prLimit + 1` (the extra entry the caller's `+1`
+ * fetch exists to surface) refuses.
  *
  * @param {(name: string) => void} ok
  * @param {(name: string, detail: string) => void} fail
@@ -1252,26 +1455,30 @@ function runPrLimitCases(ok, fail) {
     else fail(name, JSON.stringify(r))
   }
 
-  const twoPrs = [
-    pr(1, ['docs/session-log/session-1-a.md']),
-    pr(2, ['docs/session-log/session-2-a.md']),
-  ]
+  const nPrs = (n) =>
+    Array.from({ length: n }, (_, i) => pr(i + 1, [`docs/session-log/session-${i + 1}-a.md`]))
 
   check(
-    'a fetched list exactly as long as --pr-limit is unverified, not read as "that many PRs exist"',
-    analyze({ prs: twoPrs, selfPr: 1, mergedPaths: [], prLimit: 2 }),
-    (r) => !r.verified && /meets or exceeds the requested --pr-limit/.test(r.reason),
+    'a fetched list exactly as long as --pr-limit passes — no cliff at the intended cap',
+    analyze({ prs: nPrs(2), selfPr: 1, mergedPaths: [], prLimit: 2 }),
+    (r) => r.verified && r.collisions.length === 0,
+  )
+
+  check(
+    'a fetched list ONE PAST --pr-limit is unverified — the extra entry the +1 fetch exists to catch',
+    analyze({ prs: nPrs(3), selfPr: 1, mergedPaths: [], prLimit: 2 }),
+    (r) => !r.verified && /exceeds the intended --pr-limit/.test(r.reason),
   )
 
   check(
     'a fetched list SHORTER than --pr-limit passes normally',
-    analyze({ prs: twoPrs, selfPr: 1, mergedPaths: [], prLimit: 50 }),
+    analyze({ prs: nPrs(2), selfPr: 1, mergedPaths: [], prLimit: 50 }),
     (r) => r.verified && r.collisions.length === 0,
   )
 
   check(
     'no --pr-limit given (prLimit: null) skips the check entirely, whatever the list length',
-    analyze({ prs: twoPrs, selfPr: 1, mergedPaths: [], prLimit: null }),
+    analyze({ prs: nPrs(2), selfPr: 1, mergedPaths: [], prLimit: null }),
     (r) => r.verified,
   )
 }
