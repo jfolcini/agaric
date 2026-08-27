@@ -146,6 +146,13 @@ export const PROFILES = Object.freeze({
     why: 'Every lane in that workflow is non-blocking triage signal, so a red lane is visible only to whoever opens the Actions tab — the #3163 fuzz compile break survived five days that way. This issue is the push notification that closes that gap.',
     headline: 'scheduled-deep-checks lane',
     recovery: 'All scheduled-deep-checks lanes are green again',
+    // #4456 review of #4440 — FALSE. This profile's `toJSON(needs)` payload
+    // never carries `periodHours` (its lanes are JOBS inside one weekly run,
+    // not workflows with their own polling cadence — see `parseNeeds`), so
+    // `escalationThreshold` is 1 for every lane this profile ever renders,
+    // no matter how weekly the containing workflow is. The standing prose in
+    // `buildIssueBody` must not promise an N=3 this profile can never reach.
+    weeklyEscalation: false,
   }),
   'workflow-watchdog': Object.freeze({
     title:
@@ -157,6 +164,14 @@ export const PROFILES = Object.freeze({
     why: 'Every other notification path in this repo lives inside the workflow it reports on, so a workflow that never starts — invalid file, runner-pool outage, cancelled before its reporter is scheduled, schedules disabled for inactivity — reports nothing. And four scheduled workflows (`e2e-tauri-weekly`, `codeql`, `scorecard`, `branch-protection-assert`) had no failure notification at all. This issue is that notification.',
     headline: 'scheduled workflow',
     recovery: 'Every scheduled workflow is running on time and green again',
+    // #4456 — TRUE, and reachable by every one of this profile's weekly
+    // lanes now, not just the ones that fail outright: `check-workflow-
+    // liveness.mjs`'s `WATCHED` decorates every lane with `periodHours`, and
+    // a `stale` lane (the dead-cron case — see `buildResults` there) now
+    // advances its streak on consecutive watchdog POLLS instead of holding
+    // forever on a frozen run id, so it really can reach the threshold 3
+    // `escalationThreshold(168)` sets.
+    weeklyEscalation: true,
   }),
 })
 
@@ -805,8 +820,22 @@ export function buildIssueBody({
     `A ${profile.unit} that stays red is NOT re-commented run after run: a comment is sent when a ${profile.unit} newly fails, and the runs in between only update this issue's body — silently, with no notification.`,
   )
   out.push('')
+  // #4456 review of #4440 — this paragraph used to say "N is three for a
+  // weekly ${unit}" unconditionally, which reads as a promise on EVERY
+  // profile rendering it, but `escalationThreshold` only ever returns 3 for
+  // a lane whose `periodHours` is >= 168, and the deep-checks profile's lanes
+  // (jobs inside one scheduled run) never carry `periodHours` at all — see
+  // `PROFILES['deep-checks'].weeklyEscalation`'s doc. So the deep-checks body
+  // was stating a guarantee none of its own lanes could ever satisfy: the
+  // exact "the rendered body says something untrue" defect #4440 fixed twice
+  // already (see the comment above `advanceStreaks`'s identity-less-prior
+  // handling), surviving in a third place. Conditioned on the PROFILE, not on
+  // the lanes actually failing this run, because the promise is about what
+  // this profile's escalation contract CAN ever do, not about today's set.
   out.push(
-    `The one exception (#4400) is escalation: a ${profile.unit} still failing on its **Nth consecutive OBSERVED run** earns exactly one further comment. N is three for a weekly ${profile.unit} — one this reporter polls far more often than it actually runs, so three observations really are three weeks unfixed — and one for everything else, which is another way of saying those get only their first-failure comment. Escalation fires once; afterwards the ${profile.unit} goes back to being tracked in silence until it recovers, so a persistent failure still cannot spam this thread.`,
+    profile.weeklyEscalation
+      ? `The one exception (#4400) is escalation: a ${profile.unit} still failing on its **Nth consecutive OBSERVED run** earns exactly one further comment. N is three for a weekly ${profile.unit} — one this reporter polls far more often than it actually runs, so three observations really are three weeks unfixed — and one for everything else, which is another way of saying those get only their first-failure comment. Escalation fires once; afterwards the ${profile.unit} goes back to being tracked in silence until it recovers, so a persistent failure still cannot spam this thread.`
+      : `The one exception (#4400) is escalation: a ${profile.unit} still failing on its **Nth consecutive OBSERVED run** earns exactly one further comment. N is one for every ${profile.unit} this profile tracks — its ${profile.units} are jobs inside a single scheduled run, not workflows with their own polling cadence, so there is nothing to count past the first observed failure and escalation here is just that first-failure comment, never a repeat. Escalation fires once; afterwards the ${profile.unit} goes back to being tracked in silence until it recovers, so a persistent failure still cannot spam this thread.`,
   )
   out.push('')
   out.push(`### Tracked failing ${profile.units} (${all.length})`)
@@ -823,7 +852,17 @@ export function buildIssueBody({
   if (streaking.length > 0) {
     out.push('')
     out.push(
-      `${streaking.length} ${streaking.length === 1 ? profile.unit : profile.units} failing across multiple consecutive OBSERVED runs (#4400 — a run that did not happen does not count): ${streaking
+      // #4456 review — "a run that did not happen does not count" was true
+      // while every counted observation WAS a completed run of the watched
+      // thing. It stopped being true the moment a `stale` lane started
+      // counting watchdog POLLS: for a dead cron the count is made entirely
+      // of runs that did not happen, which is the point. Reworded to the
+      // statement that holds for all three shipped identities (a completed
+      // run's id, this reporter's own run, a poll observing a dead cron)
+      // rather than left as reader-facing prose this change made false —
+      // that being the defect #4456 note 3 filed, and the one it would be
+      // absurd to fix in one paragraph and introduce in another.
+      `${streaking.length} ${streaking.length === 1 ? profile.unit : profile.units} failing across multiple consecutive DISTINCT observations (#4400 — never once per invocation of this reporter: a distinct completed run wherever there is one to name, and otherwise a distinct run of this reporter observing the same thing again): ${streaking
         .map((j) => `\`${j}\` (${streaks.get(j).count} in a row)`)
         .join(', ')}.`,
     )
@@ -942,13 +981,20 @@ export function buildEscalationComment({
   profile = PROFILES[DEFAULT_PROFILE],
 }) {
   const lines = []
+  // #4456 review — "failed that many DISTINCT observed runs" is exactly the
+  // wrong sentence for the lane this ticket taught the counter to escalate:
+  // a `stale` workflow has not failed N runs, it has failed to RUN, and its
+  // count is N watchdog polls that each saw it still not running. Saying
+  // "observations" instead is true of every shipped identity at once, and
+  // keeps this comment from being the fourth place the body promises the
+  // reader something the code does not do.
   const named = escalatedOnes
-    .map((j) => `\`${j}\` (${streaks.get(j)?.count ?? '?'} consecutive observed failures)`)
+    .map((j) => `\`${j}\` (${streaks.get(j)?.count ?? '?'} consecutive observations)`)
     .join(', ')
   lines.push(
     `**Still red, not new — escalating:** ${named}. This ${profile.unit}${
       escalatedOnes.length === 1 ? ' has' : 's have'
-    } now failed that many DISTINCT observed runs in a row without this thread saying so again (#4400) — this is the one follow-up comment that changes, not a new lane appearing.`,
+    } been in that state across that many DISTINCT consecutive observations without this thread saying so again (#4400) — a distinct completed run each time where there was one to name, and otherwise a distinct run of this reporter finding it unchanged. This is the one follow-up comment that changes, not a new lane appearing.`,
   )
   lines.push('')
   if (lanes.length > 0) {
@@ -2825,7 +2871,7 @@ function selfTestEscalation({ check }) {
   // Weekly cadence (periodHours: 168) → escalationThreshold === 3.
   const failing = (runId) => ({ [lane]: { result: 'failure (x)', runId, periodHours: 168 } })
 
-  const drive = (needs, knownBody, knownState) => {
+  const drive = (needs, knownBody, knownState, runUrl = 'https://example/watchdog-run') => {
     writeFileSync(needsFile, JSON.stringify(needs), 'utf8')
     writeFileSync(bodyFile, knownBody ?? '', 'utf8')
     writeFileSync(log, '', 'utf8')
@@ -2843,7 +2889,11 @@ function selfTestEscalation({ check }) {
         '--repo',
         'owner/repo',
         '--run-url',
-        'https://example/watchdog-run',
+        // #4456 — overridable per call so the dead-cron test below can drive
+        // this exactly like DISTINCT daily watchdog runs (each with its own
+        // `$GITHUB_RUN_ID`), which is the identity a `stale` lane now
+        // escalates on instead of a run id that never changes.
+        runUrl,
         '--profile',
         'workflow-watchdog',
       ])
@@ -2877,7 +2927,7 @@ function selfTestEscalation({ check }) {
   // the parenthesised per-lane count that only it renders (the body's
   // streaking line says "(N in a row)" instead).
   const announcesEscalation = (t) =>
-    /Still red, not new/.test(t) || /consecutive observed failures\)/.test(t)
+    /Still red, not new/.test(t) || /consecutive observations\)/.test(t)
   check(
     !announcesEscalation(allText(calls)),
     'negative control: the FIRST failure never announces an escalation',
@@ -2931,8 +2981,8 @@ function selfTestEscalation({ check }) {
   )
   const escalationComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
   check(
-    /escalat/i.test(escalationComment) && /3 consecutive observed failures/.test(escalationComment),
-    'the escalation comment says how many consecutive observed failures',
+    /escalat/i.test(escalationComment) && /3 consecutive observations/.test(escalationComment),
+    'the escalation comment says how many consecutive observations',
     escalationComment,
   )
   body = writtenBody(calls, body)
@@ -2962,11 +3012,14 @@ function selfTestEscalation({ check }) {
   )
 
   // The watched workflow having NO completed run to point at at all
-  // (`runId: null` — `never-ran`/`stale`/`no-completed-run`) must behave
-  // exactly like the "no new run" case above, including across repeats —
-  // the other half of requirement #1, and the specific case
-  // `newestCompletedRunId` was built to report honestly rather than fall
-  // back to "assume it is the same as last time" or "assume it is new".
+  // (`runId: null` — `never-ran`/`no-completed-run`) must behave exactly like
+  // the "no new run" case above, including across repeats — the other half
+  // of requirement #1, and the specific case `newestCompletedRunId` was built
+  // to report honestly rather than fall back to "assume it is the same as
+  // last time" or "assume it is new". `stale` is deliberately NOT one of
+  // these two any more (#4456 — see `selfTestDeadCronStaleEscalates` below):
+  // it now carries no `runId` at all rather than an explicit `null`, and
+  // escalates on POLLS rather than holding forever.
   //
   // Split out (same cyclomatic-complexity reason as `selfTestMigration`) so
   // it can carry the whole life of such a lane — including what its FIRST
@@ -2982,6 +3035,15 @@ function selfTestEscalation({ check }) {
     lane,
     failing,
   })
+
+  // #4456 — the dead-cron case note 1 of the #4440 review names directly: a
+  // workflow whose SCHEDULE has stopped firing classifies `stale` on every
+  // poll, and (pre-fix) its newest COMPLETED run never changed either, so
+  // counting by RUN identity held this lane at count 1 forever — the single
+  // worst failure mode this watchdog exists to catch was structurally exempt
+  // from ever escalating. Split out for the same cyclomatic-complexity reason
+  // as the two calls above.
+  selfTestDeadCronStaleEscalates({ check, drive, seqOf, writtenBody, allText, announcesEscalation })
 
   // MIGRATION — the one path production takes exactly once, on the first poll
   // after this ships. Split out for the same cyclomatic-complexity reason as
@@ -3113,7 +3175,7 @@ function selfTestEscalation({ check }) {
     check(
       /escalat/i.test(deferredComment) &&
         deferredComment.includes(lane) &&
-        /3 consecutive observed failures/.test(deferredComment),
+        /3 consecutive observations/.test(deferredComment),
       'the deferred escalation names the right lane at the right count',
       deferredComment,
     )
@@ -3204,7 +3266,7 @@ function selfTestMigration({
   const third = drive(failing(41000003), migrated, 'OPEN')
   const thirdComment = third.find((c) => c.sub === 'comment')?.body ?? ''
   check(
-    seqOf(third) === 'edit,comment' && /3 consecutive observed failures/.test(thirdComment),
+    seqOf(third) === 'edit,comment' && /3 consecutive observations/.test(thirdComment),
     'a migrated lane escalates on its third DISTINCT observed run — no earlier',
     `${seqOf(third)} :: ${thirdComment}`,
   )
@@ -3356,9 +3418,162 @@ function selfTestNeverRanFirstTracking({
   const thirdReal = drive(failing(42000003), afterSecond, 'OPEN')
   const thirdComment = thirdReal.find((c) => c.sub === 'comment')?.body ?? ''
   check(
-    seqOf(thirdReal) === 'edit,comment' && /3 consecutive observed failures/.test(thirdComment),
+    seqOf(thirdReal) === 'edit,comment' && /3 consecutive observations/.test(thirdComment),
     'a never-ran-when-first-tracked lane escalates on its THIRD real run — the N the body promises',
     `${seqOf(thirdReal)} :: ${thirdComment}`,
+  )
+}
+
+/**
+ * #4456 — the dead-cron case, end to end. Before this fix, `stale` carried
+ * `newestCompletedRunId`'s answer just like a genuine failure: a real,
+ * NON-NULL id that never changes once the watched schedule has died. Every
+ * poll therefore compared "equal to last time" and `advanceStreaks` held the
+ * lane at count 1 forever — the single worst failure mode this watchdog
+ * exists to catch (a scheduled workflow that has simply stopped running) was
+ * structurally exempt from ever escalating.
+ *
+ * The fixture below is written the way `check-workflow-liveness.mjs`'s
+ * `buildResults` actually emits a `stale` verdict now: NO `runId` key at all
+ * (see its own comment) — never `runId: null`. That absence is what makes
+ * `advanceStreaks` fall back to `fallbackRunId`, i.e. THIS watchdog RUN's own
+ * `--run-url`, so each `drive()` call below is given a DIFFERENT url — one
+ * per simulated daily poll, exactly like `$GITHUB_RUN_ID` differs between
+ * real workflow runs.
+ *
+ * The discriminator that proves this is the actual mechanism, not an
+ * accident of "stale always escalates after N polls": three calls that keep
+ * reusing the SAME run url must NOT escalate — that is indistinguishable from
+ * one long poll observing itself, exactly like a real failing run's "same run
+ * id observed again" case two tests above. Only when the url actually changes
+ * does the lane advance. A mutant that made `stale` escalate unconditionally
+ * (ignoring identity) would pass the positive assertions below and fail only
+ * this negative control — which is why both are asserted, not just the one
+ * that lights up green.
+ */
+function selfTestDeadCronStaleEscalates({
+  check,
+  drive,
+  seqOf,
+  writtenBody,
+  allText,
+  announcesEscalation,
+}) {
+  const lane = 'scorecard.yml'
+  // Exactly the shape `buildResults` writes for a `stale` verdict: `result`
+  // and `periodHours`, no `runId` key whatsoever.
+  const stale = {
+    [lane]: { result: 'stale (newest scheduled run started 9.2d ago)', periodHours: 168 },
+  }
+
+  // Poll 1 (day 1) — the first observation. Files the issue; not itself an
+  // escalation.
+  let calls = drive(stale, '', 'OPEN', 'https://example/watchdog-run-day1')
+  check(
+    seqOf(calls) === 'create',
+    'day 1 (first stale poll): files the tracking issue',
+    seqOf(calls),
+  )
+  let body = writtenBody(calls, '')
+  check(
+    parseKnownStreaks(body).get(lane)?.count === 1 &&
+      parseKnownStreaks(body).get(lane)?.runId === 'https://example/watchdog-run-day1',
+    'day 1: the persisted streak count is 1, identified by THIS poll’s own run url (not a frozen completed-run id)',
+    JSON.stringify([...parseKnownStreaks(body)]),
+  )
+  check(
+    !announcesEscalation(allText(calls)),
+    'negative control: the FIRST stale poll never announces an escalation',
+    allText(calls),
+  )
+
+  // A re-poll on the SAME day (the watchdog re-run against the SAME
+  // `--run-url`, or simply the identical identity observed twice) must not
+  // advance the counter — same rule as a real failing run observed again.
+  calls = drive(stale, body, 'OPEN', 'https://example/watchdog-run-day1')
+  check(
+    calls.length === 0 && parseKnownStreaks(body).get(lane)?.count === 1,
+    'a repeat poll with the SAME identity neither increments nor resets the counter',
+    JSON.stringify(calls),
+  )
+
+  // Poll 2 (day 2) — a genuinely NEW watchdog run, still observing `stale`.
+  // Below the N=3 threshold: silently persists the counter, no comment.
+  calls = drive(stale, body, 'OPEN', 'https://example/watchdog-run-day2')
+  check(
+    seqOf(calls) === 'edit',
+    'day 2 (second consecutive stale poll): silently syncs the counter, no comment',
+    seqOf(calls),
+  )
+  body = writtenBody(calls, body)
+  check(
+    parseKnownStreaks(body).get(lane)?.count === 2,
+    'day 2: the persisted streak count advances to 2',
+    JSON.stringify([...parseKnownStreaks(body)]),
+  )
+  check(
+    !announcesEscalation(allText(calls)),
+    'negative control: the SECOND consecutive stale poll does not escalate either',
+    allText(calls),
+  )
+
+  // Poll 3 (day 3) — the THIRD distinct poll. This is the one that must
+  // finally escalate: the dead cron this ticket is about now CAN reach N=3.
+  calls = drive(stale, body, 'OPEN', 'https://example/watchdog-run-day3')
+  check(
+    seqOf(calls) === 'edit,comment',
+    'day 3 (third consecutive stale poll): escalates — a dead cron can now reach its threshold (#4456)',
+    seqOf(calls),
+  )
+  const escalationComment = calls.find((c) => c.sub === 'comment')?.body ?? ''
+  check(
+    /escalat/i.test(escalationComment) &&
+      /3 consecutive observations/.test(escalationComment) &&
+      // #4456 review — the COUNT is pinned above; this pins that the sentence
+      // carrying it is not the pre-fix one, which said this lane had "failed
+      // that many DISTINCT observed runs". A `stale` lane has failed to RUN,
+      // so that wording is false precisely for the lane this test exists for,
+      // and a regex that only looked for the number would wave it back in.
+      !/failed that many DISTINCT observed runs/.test(escalationComment),
+    'the escalation comment counts OBSERVATIONS (3) and does not claim a dead cron "failed" that many runs',
+    escalationComment,
+  )
+  body = writtenBody(calls, body)
+  check(
+    parseKnownStreaks(body).get(lane)?.count === 3,
+    'day 3: the persisted streak count reaches 3',
+    JSON.stringify([...parseKnownStreaks(body)]),
+  )
+
+  // THE DISCRIMINATOR: repeat the exact same three-poll sequence, but with
+  // every poll sharing ONE run url. If escalation fired merely because the
+  // lane was `stale` three times — rather than because three DISTINCT polls
+  // were observed — this would escalate too. It must not.
+  const sameLane = 'e2e-tauri-weekly.yml'
+  const staleSame = {
+    [sameLane]: { result: 'stale (newest scheduled run started 9.2d ago)', periodHours: 168 },
+  }
+  const fixedUrl = 'https://example/watchdog-run-fixed'
+  // `const`, and deliberately NOT re-read from each repeat's output: a repeat
+  // under the same identity writes nothing, so there is no new body to carry
+  // forward, and threading one would only disguise that. Each iteration is the
+  // same input on purpose — the claim being pinned is that N identical polls
+  // never accumulate into N observations, which is only a claim about repeats
+  // of the identical state. (`let` here was an oxlint `prefer-const` ERROR,
+  // i.e. this file did not pass the repo's own `oxlint` hook — #4456 review.)
+  const sameBody = writtenBody(drive(staleSame, '', 'OPEN', fixedUrl), '')
+  for (let i = 0; i < 3; i++) {
+    calls = drive(staleSame, sameBody, 'OPEN', fixedUrl)
+    check(
+      calls.length === 0,
+      `negative control: repeat #${i + 2} with the IDENTICAL run url issues no \`gh\` write (it is one identity, not three)`,
+      JSON.stringify(calls),
+    )
+  }
+  check(
+    parseKnownStreaks(sameBody).get(sameLane)?.count === 1,
+    'negative control: a `stale` lane polled repeatedly under the SAME identity holds at 1 — it is DISTINCT polls that advance the counter, not the `stale` verdict by itself',
+    JSON.stringify([...parseKnownStreaks(sameBody)]),
   )
 }
 
@@ -3461,8 +3676,24 @@ function selfTestBodySize({ check, lanesOf }) {
   //    one that runs reports a property of the wrong thing, which is the
   //    defect class this file's review history is made of.
   //
+  //    #4456 REVERSES the "no profile produces both at once" claim below, and
+  //    it is left standing as written so the correction is legible: a `stale`
+  //    watchdog lane now carries NO `runId`, so `advanceStreaks` writes this
+  //    reporter's own run URL onto its marker line — the long identity — while
+  //    its `periodHours: 168` lets the count reach 3 and put it in the
+  //    `streaking` enumeration too. Both growths, one profile, one lane. The
+  //    third check below is that shape, and the reason the cap is not moving
+  //    is that the combined shape is only reachable on the watchdog profile,
+  //    whose lane count is exactly `WATCHED.length` (6). Measured: the real
+  //    all-6-stale body is 3473 chars, 20 such lanes are 5844, and 40 — the
+  //    count the two fixtures below use, which no profile is anywhere near —
+  //    are 9464, i.e. over. So the fixture is sized to 20 (>3x the real 6,
+  //    the same headroom framing as the 40 below) rather than the cap being
+  //    raised to accommodate a lane count that cannot occur.
+  //
   //    The two growths are pinned as the two shapes that actually ship, not
-  //    summed into one fixture, because no profile produces both at once:
+  //    summed into one fixture, because (pre-#4456) no profile produced both
+  //    at once:
   //      - deep-checks supplies no per-lane `runId`, so every line carries
   //        `fallbackRunId` (a full run URL — the longest identity rendered
   //        here), while its lanes carry no `periodHours`, so
@@ -3517,6 +3748,67 @@ function selfTestBodySize({ check, lanesOf }) {
       streakBody.includes('(3 in a row)'),
     'an all-lanes-red body in the watchdog shipped format (counts plus the streaking enumeration) stays under the issue-body limit',
     `len=${streakBody.length} cap=${MAX_BODY_CHARS} hasMarker=${streakBody.includes('|3|17654321012')} hasStreaking=${streakBody.includes('(3 in a row)')}`,
+  )
+  // #4456 — the shape the two above were written on the assumption nobody
+  // could produce: a watchdog `stale` lane carries the long run-URL identity
+  // AND a count above 1, so it lands in the marker block and the `streaking`
+  // enumeration at once. Sized to 20 lanes for the reason recorded above (the
+  // combined shape is watchdog-only, and that profile watches 6 workflows).
+  const bothLanes = Array.from({ length: 20 }, (_, i) => ({
+    job: `some-rather-long-lane-name-${i}`,
+    result: 'stale (newest scheduled run started 9.2d ago; window is 40h)',
+    periodHours: 168,
+  }))
+  const bothAll = failingJobs(bothLanes)
+  const bothBody = buildIssueBody({
+    all: bothAll,
+    lanes: bothLanes,
+    runUrl: 'https://example/run',
+    streaks: new Map(bothAll.map((j) => [j, { count: 3, runId: runUrl }])),
+    profile: PROFILES['workflow-watchdog'],
+  })
+  check(
+    bothBody.length <= MAX_BODY_CHARS &&
+      bothBody.includes(`|3|${runUrl}`) &&
+      bothBody.includes('(3 in a row)'),
+    'a watchdog body of all-`stale` lanes — the #4456 shape that grows BOTH ways at once (run-URL identities and the streaking enumeration) — stays under the issue-body limit',
+    `len=${bothBody.length} cap=${MAX_BODY_CHARS} hasUrlLine=${bothBody.includes(`|3|${runUrl}`)} hasStreaking=${bothBody.includes('(3 in a row)')}`,
+  )
+}
+
+/**
+ * #4456 review of #4440 — assertion 7c, extracted (see the call site for why).
+ *
+ * 7b only pinned that the escalation paragraph is PRESENT. This pins that it
+ * is TRUE for the profile rendering it, by checking the rendered claim against
+ * `escalationThreshold` — the same function `advanceStreaks` calls — rather
+ * than against a second hard-coded copy of "3" that could drift from it.
+ */
+function selfTestEscalationPromiseMatchesProfile({ check, lanesOf }) {
+  const deepChecksBody = buildIssueBody({
+    all: ['mutants'],
+    lanes: lanesOf({ mutants: 'failure' }),
+    runUrl: undefined,
+  })
+  check(
+    escalationThreshold(undefined) === 1 &&
+      !/N is three/.test(deepChecksBody) &&
+      /N is one for every/.test(deepChecksBody),
+    'the deep-checks body (no lane ever carries `periodHours`) does not promise an N=3 escalation none of its lanes can ever reach',
+    deepChecksBody.slice(0, 900),
+  )
+
+  const watchdogLanes = [{ job: 'codeql.yml', result: 'failure (x)', periodHours: 168 }]
+  const watchdogBody = buildIssueBody({
+    all: ['codeql.yml'],
+    lanes: watchdogLanes,
+    runUrl: undefined,
+    profile: PROFILES['workflow-watchdog'],
+  })
+  check(
+    escalationThreshold(168) === 3 && /N is three for a weekly/.test(watchdogBody),
+    'the workflow-watchdog body promises N=3 only because a periodHours:168 lane can really reach that threshold',
+    watchdogBody.slice(0, 900),
   )
 }
 
@@ -3720,6 +4012,24 @@ function runSelfTest() {
     )
   }
 
+  // 7c. #4456 review of #4440 — 7b only pinned that escalation prose is
+  //     PRESENT, not that it is TRUE for the profile rendering it. This
+  //     checks the rendered claim against `escalationThreshold` itself, not
+  //     merely a grep: the default profile here is `deep-checks`, whose lanes
+  //     never carry `periodHours` (see `PROFILES['deep-checks']
+  //     .weeklyEscalation`'s doc), so `escalationThreshold(undefined)` really
+  //     is 1 and the body must say so rather than promise an N=3 escalation
+  //     none of its lanes can ever reach. `workflow-watchdog`'s lanes DO carry
+  //     `periodHours` from `WATCHED`, so its N=3 claim must hold too —
+  //     asserted against `escalationThreshold(168)` actually being 3, the
+  //     same function `advanceStreaks` calls, not a second copy of "3".
+  //
+  //     Split into its own function for the same cyclomatic-complexity reason
+  //     as `selfTestMigration` and friends: inline, it took `runSelfTest` to
+  //     26 against oxlint's maximum of 25 (#4456 review — the warning is new
+  //     with this block; `HEAD` lints clean).
+  selfTestEscalationPromiseMatchesProfile({ check, lanesOf })
+
   // 8. The comment names the newly-failing lanes (it is the notification).
   {
     const lanes = lanesOf({ mutants: 'failure', fuzz: 'success' })
@@ -3829,6 +4139,22 @@ function runSelfTest() {
       ),
       'every profile fills in every rendered field (no `undefined` in an issue body)',
       JSON.stringify(Object.keys(PROFILES)),
+    )
+    // #4456 review — `weeklyEscalation` steers a rendered PARAGRAPH but is a
+    // boolean, so the truthiness sweep above cannot police it: a new profile
+    // that simply forgets the key reads `undefined`, renders the "N is one"
+    // branch, and is wrong for free if its lanes are in fact weekly. Required
+    // as a real boolean so forgetting it is a failing self-test rather than a
+    // quietly incorrect promise — the same defect #4456 note 3 filed, one
+    // profile earlier.
+    check(
+      Object.values(PROFILES).every((p) => typeof p.weeklyEscalation === 'boolean'),
+      'every profile DECLARES `weeklyEscalation` (a missing key would silently render the wrong escalation promise)',
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(PROFILES).map(([k, p]) => [k, typeof p.weeklyEscalation]),
+        ),
+      ),
     )
     let threw = null
     try {

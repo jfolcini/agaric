@@ -1522,6 +1522,16 @@ jobs:
     # `prepare-apt` removes the lock stall but cannot speed a genuinely slow
     # download; 30 min absorbs a pathological setup + a full shard. (The deb
     # re-download cost itself is tracked separately as an apt-cache optimization.)
+    #
+    # #4185: this JOB cap alone cannot tell "setup ran long, then the shard
+    # ran long too" apart from "setup hung and burned the whole budget before
+    # a single test ran" — both end the same way, a bare "exceeded the
+    # maximum execution time". The `Install Playwright system deps (always)`
+    # step below now carries its own `timeout-minutes: 25`, derived from this
+    # job's own measured worst-case setup total, so a hang there fails at
+    # THAT step specifically, with the shard never even starting, instead of
+    # racing this 30-minute cap into a mid-run cancellation that reads like a
+    # slow test suite.
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1574,6 +1584,72 @@ jobs:
           restore-keys: apt-playwright-${{ runner.os }}-
 
       - name: Install Playwright system deps (always)
+        # #4185 — a STEP-level bound, distinct from the loop's own internal
+        # bounds below. Attempt 2 is deliberately left unbounded INSIDE the
+        # script (see the #4170 note further down: it is "the decider", and
+        # capping it risks misreading a legitimately slow-but-succeeding
+        # mirror as a failure). But unbounded means a genuinely HUNG attempt 2
+        # — not slow, just never returning — burns the rest of the 30-minute
+        # JOB cap in silence, and GitHub then reports an undifferentiated
+        # "the job has exceeded the maximum execution time": indistinguishable
+        # from a slow test suite. That is #4185 note 1, and a step-level bound
+        # is one of the two remedies that note names.
+        #
+        # It is NOT a fix for #4185 note 2, and this comment previously read as
+        # though it were. Note 2 is the SUCCEEDING slow mirror: a legitimate
+        # ~21-minute setup that completes, leaving a ~9-minute shard racing
+        # what is left of the 30-minute JOB cap and getting cancelled mid-run
+        # (a red diff, not a red setup). A 25-minute step bound does nothing
+        # about that — 25 + 9 is over the job cap either way, and any bound low
+        # enough to protect the shard (~18 min) would sit BELOW the 21m10s
+        # legitimate worst case below and start failing healthy runs, which is
+        # the #4170 mistake. Note 2 is a genuine budget question and is left
+        # open here deliberately rather than papered over; what this step now
+        # fixes is only the attribution of a HANG.
+        #
+        # 25 minutes, derived from the worst-case LEGITIMATE total this same
+        # step's own comments already measure, summed:
+        #   300s  attempt-1 fast-fail bound (cache-hit path, below)
+        #   + 30s  `timeout -k 30` SIGKILL grace on that bound
+        #   + 180s stray-lock poll between attempts (60 iterations x 3s)
+        #   + 760s attempt-2, the observed cold-mirror runtime (run
+        #          27718957382) the 20->30 min job bump was paid to absorb
+        #   = 1270s = 21m10s
+        # 25 minutes leaves ~3m50s (~18%) of headroom over that measured
+        # worst-known-legitimate total — enough that a real slow-but-healthy
+        # mirror (the case #4170 protects) is never mistaken for a hang. This
+        # is a composite of this step's own already-measured constants, not a
+        # new observation: if a future real run shows setup legitimately
+        # exceeding this, that is new evidence to fold in, not a reason to have
+        # guessed higher up front.
+        #
+        # Two limits of that sum, stated rather than left implied (#4456 review
+        # of this change):
+        #
+        #  - It is the worst case of the .deb-cache-HIT path only. On a MISS
+        #    `bound` is empty and BOTH attempts are unbounded, so a legitimate
+        #    worst case there is 760 + 180 + 760 = 1700s (28m20s), ABOVE this
+        #    cap. That run was already doomed — 28m20s of setup plus a ~9-min
+        #    shard blows the 30-minute job cap regardless — so this bound
+        #    changes its REPORT (an attributed step failure) and not its
+        #    outcome. It does mean the miss path is now bounded at 25 min where
+        #    the #4170 note below still says it keeps "its 30-min budget"; see
+        #    the correction appended to that note.
+        #
+        #  - "Inside the 30-minute job cap" is 5 minutes MINUS everything this
+        #    job does before this step, which the original derivation did not
+        #    account for. Measured over the 26 most recent `validate /
+        #    playwright (N)` jobs (2026-08-27), job start to this step's start
+        #    is 25-43s, so the real margin is ~4m17s at the worst observed
+        #    preamble. The preamble is not fixed — `prepare-apt` above waits up
+        #    to 180s for the dpkg lock, and it does so precisely when apt is
+        #    already sick, i.e. the same runs this bound is for — but 43 + 180
+        #    = 223s still clears the 300s of slack, so the step cap remains the
+        #    binding constraint in the correlated case too. If the preamble
+        #    ever grows past ~5 minutes this bound stops firing first and the
+        #    undifferentiated job-cap timeout comes back silently; that is the
+        #    thing to re-measure before adding work above this step.
+        timeout-minutes: 25
         # `install-deps` apt-installs ~33 MB of system libs/fonts each run (not
         # on the base image; the .debs are cached by the step above, #1464).
         # The earlier flake source was the
@@ -1606,6 +1682,14 @@ jobs:
         # derived from. On a miss -- or a restore-keys PARTIAL hit, where
         # `cache-hit` is false -- behaviour is exactly as before this change:
         # unbounded, and the 760s observation still has its 30-min budget.
+        #
+        # #4185 CORRECTION to the sentence above: the loop is still unbounded
+        # on a miss, but the STEP is not. `timeout-minutes: 25` (see the note
+        # at the top of this step) now caps the miss path at 25 minutes rather
+        # than the 30-minute job budget this note promised it. The 760s
+        # observation still fits with room to spare; what no longer fits is a
+        # miss-path run where BOTH unbounded attempts run long (760 + 180 +
+        # 760 = 28m20s), which the job cap would have killed anyway.
         #
         # `Acquire::*::Timeout` (set globally by prepare-apt, so it does reach
         # the `apt-get` that install-deps shells out to) is not a substitute: it
