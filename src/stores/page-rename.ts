@@ -58,18 +58,15 @@ import { useTabsStore } from '@/stores/tabs'
  *
  * `null` skips the bus notification — there is no space to scope a
  * picker-cache patch to — but the tabs/recents/resolve fan-out above still
- * runs unconditionally; none of those three are space-scoped.
+ * runs unconditionally; none of those three are space-scoped. That second
+ * half is the load-bearing part: a rename must reach the tab labels, the
+ * recents MRU and the resolve store whether or not there is an active space.
  *
- * The three sibling publishers that fall back to `invalidateNameCaches()` on
- * a null space (`src/components/TagList.tsx:189`/`:227`, `src/hooks/usePageDeleteAction.tsx:191`,
- * `src/components/pages/PageBrowserBatchToolbar.tsx:280`) are being deliberately conservative
- * about a case that cannot arise: `use-block-resolve.ts`'s space-switch
- * subscriber clears BOTH name caches on any `currentSpaceId` transition,
- * including a transition to `null`, and both lazy fills short-circuit to `[]`
- * while the space is `null` (`searchPagesViaCache`, and `searchTags`'s inline
- * fill). So with no active space both caches are provably empty and there is
- * nothing for an invalidation to drop. Dropping the notification is the
- * cheaper equivalent, not a weaker one.
+ * Sibling publishers answer the null case the other way, falling back to
+ * `invalidateNameCaches()`. Both are correct and the reason they are
+ * interchangeable is written down ONCE, for all of them, in the "When the
+ * caller has NO active space" section of `src/lib/name-change-bus.ts`. Read
+ * that rather than copying whichever precedent you happen to open first.
  */
 export function renamePage(pageId: string, title: string, spaceId: string | null): void {
   useTabsStore.getState().renamePage(pageId, title)

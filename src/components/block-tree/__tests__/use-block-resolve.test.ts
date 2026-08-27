@@ -4441,7 +4441,16 @@ describe('picker name caches — rename & delete invalidation (#4007)', () => {
 // paste) can still land, post-switch, on an already-re-warmed cache for the
 // NEW space. `NameChange` now carries `spaceId`, and the subscriber drops
 // any event whose `spaceId` does not match the space it is live-showing,
-// before the #4008 latch guard and before the #4055 generation bump.
+// before the #4008 latch guard.
+//
+// The drop is scoped to the CACHE MUTATION. The #4055 generation bump runs
+// first and runs for every event, foreign space or not — see the second test
+// below, and the long comment above the bump in
+// `src/components/block-tree/use-block-resolve.ts`. Relevance ("should this
+// row be shown here") and staleness ("is a snapshot taken before this event
+// still trustworthy") are different questions, and an in-flight fill is
+// pinned to its CAPTURED space rather than the live one, so they have
+// different answers across an A→B→A round trip.
 //
 // The positive control — a MATCHING space id still applies into a warm
 // cache — is not duplicated here: it is every test in the '#4338' bus-added
@@ -4508,12 +4517,21 @@ describe('picker name caches — space-scoped drop (#4391)', () => {
     expect(items.filter((i) => !i.isCreate).map((i) => i.id)).not.toContain('P_FOREIGN')
   })
 
-  // The generation half of the same guard: a mismatch must cost this hook
-  // NOTHING, not even a forced re-fetch for a row that was never going to be
-  // shown here. Mirrors the #4338 "bumps the generation" test's in-flight-fill
-  // technique exactly, but asserts the OPPOSITE outcome — the pre-event
-  // snapshot must WIN, because nothing bumped the generation to reject it.
-  it("does NOT bump the generation for an 'added' event whose captured space differs from the live active space", async () => {
+  // The generation half of the same guard, and the LIMIT of the drop: the
+  // space check suppresses the CACHE MUTATION only. The #4055 generation bump
+  // still runs for a foreign-space event, because the two guards measure
+  // different spaces — the check compares the event against the space that is
+  // LIVE now, while an in-flight fill is pinned to the space it CAPTURED at
+  // dispatch, and an A→B→A round trip makes those diverge (see 'a rename
+  // landing while parked on another space still rejects the survivor fetch'
+  // in the #4055 block below, which is the same hole from the fill's side).
+  //
+  // This test asserted the OPPOSITE before the #4391 review — that a mismatch
+  // costs this hook NOTHING, not even a forced re-fetch. That property is not
+  // available: buying it means letting a pre-mutation snapshot persist, which
+  // is #4007. One wasted refetch is the price, and it is exactly the pre-#4391
+  // behaviour.
+  it("still bumps the generation for an 'added' event whose captured space differs from the live active space", async () => {
     let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
     mockedListAllPagesInSpace.mockImplementationOnce(
       () =>
@@ -4546,14 +4564,29 @@ describe('picker name caches — space-scoped drop (#4391)', () => {
       items = (await inFlight) as typeof items
     })
 
-    // A real (matching-space) create would have rejected this write (see the
-    // #4338 test of the same shape). A dropped, foreign-space one must not:
-    // the pre-event snapshot is exactly what a fresh fill would return, so it
-    // both persists AND is returned to this caller.
+    // The write is REJECTED, same as for a matching-space create (see the
+    // #4338 test of the same shape): the generation moved under the fill.
+    // The cache is left empty — "not fetched for this space yet" — so the
+    // next picker read re-fetches rather than latching a snapshot whose
+    // freshness nothing vouched for.
+    expect(result.current.pagesListRef.current).toEqual([])
+
+    // But the DROP still did its job: the foreign row was never appended, in
+    // the rejected snapshot or anywhere else. That is the #4391 fix, intact.
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).not.toContain('P_FOREIGN')
+
+    // Self-heals on the very next read.
+    mockedListAllPagesInSpace.mockResolvedValueOnce([
+      pageRow('P_PRE_EXISTING', 'Pre-existing Page'),
+    ])
+    await act(async () => {
+      items = await result.current.searchPages('')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledTimes(2)
+    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_PRE_EXISTING'])
     expect(result.current.pagesListRef.current).toEqual([
       { id: 'P_PRE_EXISTING', title: 'Pre-existing Page' },
     ])
-    expect(items.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(['P_PRE_EXISTING'])
   })
 
   // Generalizes the guard past 'added': the issue that motivated it treats
@@ -4866,6 +4899,16 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
   // still covered: the bus is global (not space-scoped), so the generation
   // bump happens regardless of which space is active, and the returning
   // fetch must still be rejected.
+  //
+  // #4391 kept that true on purpose. The space-scoped drop added there
+  // suppresses the CACHE MUTATION for a foreign-space event; it deliberately
+  // does NOT suppress the generation bump, which runs first. This test is the
+  // guard on that ordering — with the drop moved ahead of the bump it goes
+  // red, because nothing rejects the survivor fetch: its snapshot predates
+  // the rename, every remaining guard passes once the user is back on
+  // SPACE_TEST, and it latches into the cache. In production that snapshot
+  // carries the renamed page's OLD title, and the `[[` picker keeps offering
+  // it for the rest of the session (#4007, reopened).
   it('pagesListRef: a rename landing while parked on another space still rejects the survivor fetch', async () => {
     let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
     mockedListAllPagesInSpace.mockImplementationOnce(
@@ -4885,9 +4928,23 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     act(() => {
       useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
     })
-    // A rename fires while SPACE_B is active — the listener doesn't care.
+    // A GENUINE SPACE_TEST-side rename fires while SPACE_B is active. This is
+    // the whole point of the case, so the space argument must be the ORIGIN
+    // space (`'SPACE_TEST'`), NOT the one that is live at emit: a real
+    // publisher captures its space at the user's decision and only emits
+    // after an await (`performPageUndo` awaits the undo IPC, `load()` and
+    // `getBlock`), so the user can be parked on SPACE_B by the time the event
+    // lands. Passing `'SPACE_B'` here would make the event MATCH the live
+    // space, which is a different scenario entirely — it would pass with or
+    // without the #4055 generation bump and pin nothing.
+    //
+    // #4391 review — this is exactly where the space check and the generation
+    // bump must part company: the event is IRRELEVANT to SPACE_B's (empty)
+    // cache, so the mutation is dropped, but it is precisely what makes the
+    // in-flight SPACE_TEST fill STALE, so the generation must still be
+    // bumped. Ordering the drop before the bump reopens #4007.
     act(() => {
-      renamePage('P_ELSEWHERE', 'Renamed While Away', 'SPACE_B')
+      renamePage('P_ELSEWHERE', 'Renamed While Away', 'SPACE_TEST')
     })
     act(() => {
       useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })

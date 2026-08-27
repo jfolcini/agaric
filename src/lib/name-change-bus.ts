@@ -49,10 +49,56 @@
  * below for why that distinction matters). `subscribeToNameChanges`'s one
  * subscriber (`useBlockResolve`) drops any event whose `spaceId` does not
  * equal the space that is LIVE when the event arrives, before the #4008 latch
- * guard and before the generation bump. Every publisher already had this
+ * guard. Every publisher already had this
  * value in hand (it is what they passed to `createPageInSpace` /
  * `createBlock` / `editBlock`); the field just gives the subscriber a way to
  * check it.
+ *
+ * The drop suppresses the CACHE MUTATION only. The subscriber's generation
+ * bump (#4055) still runs for EVERY event, matching space or not, and stays
+ * ahead of the space check — see the long comment above the bump in
+ * `src/components/block-tree/use-block-resolve.ts`. The two answer different
+ * questions: the space check asks "is this row RELEVANT to the space we are
+ * showing", the generation asks "is a snapshot taken before this event still
+ * free of staleness". A fill in flight is pinned to the space it CAPTURED at
+ * dispatch, not to the live one, so an A→B→A round trip makes those two
+ * diverge: a genuine A-side rename emitted while B is live is irrelevant to
+ * B's cache but is exactly what makes A's in-flight snapshot stale. Skipping
+ * the bump there reopens #4007 — the pre-rename snapshot persists once the
+ * user returns to A, and the `[[` picker serves the old title for the rest of
+ * the session.
+ *
+ * ── When the caller has NO active space ──────────────────────────────────
+ *
+ * The publishers take `spaceId: string` (required); the two shared fan-outs
+ * that sit in front of them (`src/stores/page-rename.ts`'s `renamePage`) take
+ * `string | null`, because "no active space" is a real state a caller can be
+ * in. Both of the responses in the tree are CORRECT and interchangeable, and
+ * this is the one place that says so, so a new call site does not have to
+ * infer a policy from whichever precedent it happens to read first:
+ *
+ *  - SKIP the notification. Cheapest, and what
+ *    `src/stores/page-rename.ts:75` and `src/components/TagList.tsx:156` do.
+ *  - Fall back to {@link invalidateNameCaches}. Conservative, and what
+ *    `src/components/TagList.tsx:196`, `src/components/TagList.tsx:235`,
+ *    `src/hooks/usePageDeleteAction.tsx:193` and
+ *    `src/components/pages/PageBrowserBatchToolbar.tsx:287` do.
+ *
+ * They are equivalent because with no active space both name caches are
+ * provably EMPTY: `useBlockResolve`'s space-switch subscriber clears both on
+ * any `currentSpaceId` transition INCLUDING a transition to `null`, and both
+ * lazy fills short-circuit to `[]` while the space is `null`
+ * (`searchPagesViaCache`, and `searchTags`'s inline fill). So the
+ * invalidation has nothing to drop and the skip loses nothing. Prefer the
+ * skip in new code — it is the same outcome without the wasted fan-out — but
+ * do not "fix" an existing invalidate to match; the divergence is cosmetic,
+ * not a bug, and churning it would only make the next reader wonder which
+ * one changed behaviour.
+ *
+ * NOTE this reasoning is about the picker's NAME caches only. A null-space
+ * caller must still run its non-space-scoped fan-out (tabs, recents, the
+ * resolve store) unconditionally — that is the half that would silently break
+ * if a call site read "skip the notify" as "skip everything".
  *
  * Why "captured at the decision" and not "current at emit": a publisher that
  * instead read the space fresh, right before calling `notifyPageAdded`,

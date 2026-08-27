@@ -1184,17 +1184,50 @@ export function useBlockResolve(): UseBlockResolveReturn {
   useEffect(
     () =>
       subscribeToNameChanges((change) => {
+        // #4055 — bump on every event, unconditionally, BEFORE applying it
+        // AND BEFORE the #4391 space drop below.
+        // An in-flight fill's `requestGeneration` capture and this bump can
+        // never interleave any other way: JS is single-threaded and nothing
+        // awaits between them, so a fill either captured the generation
+        // before this listener runs (and must now lose the race) or after
+        // (and reads the bumped value already).
+        //
+        // #4391 review — the bump must come FIRST, ahead of the space check,
+        // and the check may only suppress the CACHE MUTATION below. The two
+        // guards measure different spaces: this listener compares the event
+        // against the space that is LIVE right now, while an in-flight fill
+        // is pinned to the space it CAPTURED at dispatch
+        // (`searchPagesViaCache`, `src/components/block-tree/use-block-resolve.ts:290`).
+        // Those diverge across an A→B→A round trip. Dropping the bump on a
+        // mismatch reopens #4007 exactly: a fill issued for A captures
+        // generation G; the user switches to B (both caches clear); a genuine
+        // A-side rename captured in A emits with `spaceId: 'A'` while B is
+        // live, mismatches, and is dropped; the user switches back to A; the
+        // fill resolves with the PRE-rename snapshot and every guard passes
+        // (space is A again, generation never moved, no newer fill issued),
+        // so the stale title is persisted and the `[[` picker serves it for
+        // the rest of the session. The invariant the fill guards are written
+        // against — stated in the note above 'a fetch survives a space switch
+        // that returns to the original space' in
+        // `src/components/block-tree/__tests__/use-block-resolve.test.ts`, and
+        // pinned by 'a rename landing while parked on another space still
+        // rejects the survivor fetch' right below it — is that ANY genuine
+        // mutation bumps the generation regardless of which space was active
+        // when it fired. The bump is a correctness
+        // mechanism about STALENESS, not about relevance; only the apply is
+        // about relevance. Cost of bumping on a foreign event is one refetch,
+        // which is precisely the pre-#4391 behaviour.
+        nameChangeGenerationRef.current += 1
         // #4391 — every kind but 'invalidated' carries the space the
         // publisher had in hand when it decided to act. Drop the event
-        // OUTRIGHT when that does not match the space we are live-showing:
+        // OUTRIGHT when that does not match the space we are live-showing —
         // before the #4008 latch guard (which is about cache freshness, not
-        // relevance) and before the #4055 generation bump (a mismatch must
-        // cost this hook NOTHING — not an append, and not a forced refetch
-        // for a row that was never going to be shown here). A create whose
-        // captured-space read and emit straddled a space switch is exactly
-        // the case this closes: without this check the event would reach an
-        // already-re-warmed cache for the NEW space and append a
-        // foreign-space row (the #4391 report).
+        // relevance) — so no foreign-space row is ever appended and no
+        // foreign-space 'removed' deletes one. A create whose captured-space
+        // read and emit straddled a space switch is exactly the case this
+        // closes: without this check the event would reach an already-
+        // re-warmed cache for the NEW space and append a foreign-space row
+        // (the #4391 report).
         //
         // 'invalidated' carries no `spaceId` and is intentionally exempt —
         // see the name-change-bus module docblock for why a full clear does
@@ -1218,13 +1251,6 @@ export function useBlockResolve(): UseBlockResolveReturn {
             return
           }
         }
-        // #4055 — bump on every event, unconditionally, BEFORE applying it.
-        // An in-flight fill's `requestGeneration` capture and this bump can
-        // never interleave any other way: JS is single-threaded and nothing
-        // awaits between them, so a fill either captured the generation
-        // before this listener runs (and must now lose the race) or after
-        // (and reads the bumped value already).
-        nameChangeGenerationRef.current += 1
         if (change.kind === 'invalidated' || change.entity === 'page') {
           pagesListRef.current = applyPageNameChange(pagesListRef.current, change)
         }

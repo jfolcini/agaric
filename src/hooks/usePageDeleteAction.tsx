@@ -188,6 +188,9 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // space this delete belongs to, not whatever is active once the IPC
         // settles. `null` (space unhydrated when the dialog opened) falls back
         // to a full invalidation rather than silently dropping the removal.
+        // Skipping would be equally correct; the "When the caller has NO active
+        // space" section of `src/lib/name-change-bus.ts` is where that is
+        // settled once for all the publishers.
         if (target.originSpaceId != null) notifyPageRemoved(id, target.originSpaceId)
         else invalidateNameCaches()
         // #3626 — a deleted page must stop lighting up the calendar. The

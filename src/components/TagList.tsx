@@ -148,6 +148,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       // #4391 — no active space (the same `spaceId == null` branch the
       // `createBlock` call above already handles) means an UNSCOPED tag: no
       // space's picker cache should show it, so there is nothing to notify.
+      // Skipping and falling back to `invalidateNameCaches()` (what the two
+      // handlers below do) are equivalent with no active space, and the
+      // reason is written down once, in the "When the caller has NO active
+      // space" section of `src/lib/name-change-bus.ts` — read that before
+      // picking either for a new call site.
       if (spaceId != null) notifyTagAdded(resp.id, newTag.name, spaceId)
     } catch (error) {
       logger.error('TagList', 'failed to create tag', { name }, error)
@@ -184,7 +189,10 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         //
         // #4391 — no active space means no picker cache is showing this tag
         // right now; fall back to a full invalidation rather than silently
-        // dropping the removal.
+        // dropping the removal. (Skipping would be equally correct — see the
+        // "When the caller has NO active space" section of
+        // `src/lib/name-change-bus.ts`, which is where that call is settled
+        // for every publisher rather than per file.)
         if (spaceId != null) notifyTagRemoved(tagId, spaceId)
         else invalidateNameCaches()
       } catch (error) {
@@ -222,7 +230,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
         useResolveStore.getState().set(renameTarget.id, trimmed, false)
         // #4007 — mirror the page-rename fan-out for the `#` picker's cache.
         // #4391 — no active space: fall back to a full invalidation, same as
-        // `handleDeleteTag`.
+        // `handleDeleteTag`. See the "When the caller has NO active space"
+        // section of `src/lib/name-change-bus.ts`.
         if (spaceId != null) notifyTagRenamed(renameTarget.id, trimmed, spaceId)
         else invalidateNameCaches()
         notify.success(t('tags.renameSuccess'))

@@ -262,10 +262,14 @@ export function PageBrowserBatchToolbar({
   const handleTrash = useCallback(async () => {
     if (selectedIds.length === 0 || busy) return
     const ids = [...selectedIds]
-    // #4391 — captured before the awaited delete, same as every other
-    // publisher: the space this batch belongs to, not whatever is active
-    // once the IPC settles.
-    const spaceId = currentSpaceId
+    // #4391 — the space this batch belongs to is `currentSpaceId`, the PROP,
+    // read below after the awaited delete. What pins it to the value the user
+    // acted on is not a local copy (a `const spaceId = currentSpaceId` here
+    // would be a no-op: the prop is already closed over from the moment this
+    // callback is created, and cannot change under it) but the
+    // `currentSpaceId` entry in this `useCallback`'s dep array — that is what
+    // makes React hand the click a callback whose closed-over prop is the one
+    // rendered at click time, and freezes it for the duration of the await.
     setBusy(true)
     try {
       const count = await deleteBlocksByIds(ids)
@@ -275,12 +279,15 @@ export function PageBrowserBatchToolbar({
       // synchronous work; above the measured threshold collapse it into a
       // single invalidation (see `NAME_CACHE_FANOUT_MAX_IDS`).
       //
-      // #4391 — no active space (`spaceId == null`) also falls back to a
-      // full invalidation: there is no space to scope a per-id event to.
-      if (spaceId == null || ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
+      // #4391 — no active space (`currentSpaceId == null`) also falls back to
+      // a full invalidation: there is no space to scope a per-id event to.
+      // Skipping would be equally correct — see the "When the caller has NO
+      // active space" section of `src/lib/name-change-bus.ts`, which settles
+      // that once instead of leaving each publisher its own precedent.
+      if (currentSpaceId == null || ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
         invalidateNameCaches()
       } else {
-        for (const id of ids) notifyPageRemoved(id, spaceId)
+        for (const id of ids) notifyPageRemoved(id, currentSpaceId)
       }
       onClearSelection()
       onMutated()
