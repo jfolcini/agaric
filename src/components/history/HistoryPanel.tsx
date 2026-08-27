@@ -246,14 +246,23 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // `[[`/`#` picker's name-change bus) is a SEPARATE step every other rename
   // surface performs via `renamePage` (`@/stores/page-rename`) — it does no
   // IPC of its own, so this call does not double-write the block.
+  // #4458 — `spaceId` is a PARAMETER, not read here. The row this undo acts
+  // on is `targetBlockId`, restored earlier by `handleRestore`, which
+  // captured the space it was restoring INTO at that click (see the comment
+  // there). Reading `useSpaceStore.getState().currentSpaceId` in THIS
+  // callback instead reads the space live at the *Undo* click, which can
+  // differ from the row's own space: restore in space A, switch to space B,
+  // then click the toast's Undo — the live read is B, but the block (and the
+  // rename event it needs to reach) belongs to A. Threading the caller's
+  // captured value keeps this on the same side of the "space acted in" vs.
+  // "space the row is in" distinction as every other capture in this module.
   const handleUndoRestore = useCallback(
-    async (targetBlockId: string, previousContent: string, isPage: boolean) => {
-      // #4391 — the toast's Undo click is its own decision: capture the space
-      // live at the click, before `editBlock` awaits, rather than reusing the
-      // one the restore captured (the user may have switched since) or
-      // letting `renamePage` re-read it afterwards. See
-      // `@/stores/page-rename`.
-      const spaceId = useSpaceStore.getState().currentSpaceId
+    async (
+      targetBlockId: string,
+      previousContent: string,
+      isPage: boolean,
+      spaceId: string | null,
+    ) => {
       try {
         const resp = await editBlock(targetBlockId, previousContent)
         applyRestoredContentToStore(targetBlockId, previousContent, resp.op_refs)
@@ -334,7 +343,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
             action: {
               label: t('action.undo'),
               onClick: () => {
-                handleUndoRestore(blockId, captured, isPage)
+                handleUndoRestore(blockId, captured, isPage, spaceId)
               },
             },
           })

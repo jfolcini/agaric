@@ -14,13 +14,22 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
+import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import {
   NAME_CACHE_FANOUT_MAX_IDS,
   PageBrowserBatchToolbar,
@@ -589,5 +598,149 @@ describe('batch trash — name-cache fan-out (#4008 review note 3)', () => {
     } finally {
       unsubscribe()
     }
+  })
+})
+
+// #4450 — `handleMoveToSpace` published nothing at all: no `notifyPageRemoved`,
+// no `invalidateNameCaches()`. `list_all_pages_in_space` is what fills the
+// `[[` picker's `pagesListRef`, so the ORIGIN space's warm cache kept
+// offering the moved-out pages for the rest of the session, until an
+// unrelated space switch happened to clear it. The sibling `handleTrash`
+// (tested above) already publishes for the identical cache consequence.
+//
+// The fix must scope the event to the ORIGIN space (`currentSpaceId`, the
+// toolbar's active space), not the destination (`selectedSpaceId`) — the
+// exact "worse than no scoping" mislabelling #4391's docblock warns about,
+// which would leave the origin cache untouched while never being asked to
+// touch the destination either.
+describe('batch move-to-space — name-cache fan-out (#4450)', () => {
+  /** Subscribe to the real bus for the duration of one test. */
+  function recordChanges(): { changes: NameChange[]; unsubscribe: () => void } {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    return { changes, unsubscribe }
+  }
+
+  async function confirmMove(ids: string[], destSpaceId: string): Promise<void> {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'move_blocks_to_space') return Promise.resolve(ids.length)
+      return strictInvokeFallback(cmd)
+    })
+    renderToolbar({ selectedIds: ids })
+    await user.click(screen.getByTestId('page-batch-move-btn'))
+    const select = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.spacePlaceholder'),
+    })
+    await user.selectOptions(select, destSpaceId)
+    await user.click(screen.getByTestId('page-batch-space-confirm'))
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_to_space', {
+        blockIds: ids,
+        spaceId: destSpaceId,
+      })
+    })
+  }
+
+  it('fires one removal event per id, scoped to the ORIGIN space (not the destination)', async () => {
+    const ids = ['P1', 'P2', 'P3']
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await confirmMove(ids, 'SPACE_OTHER')
+      await waitFor(() => {
+        expect(changes).toHaveLength(ids.length)
+      })
+      // `spaceId: 'SPACE_TEST'` (the origin) on every event — a publish
+      // labelled `'SPACE_OTHER'` (the destination) would pass a test that
+      // only checked "something was published", which is the mistake this
+      // pins against.
+      expect(changes).toEqual(
+        ids.map(
+          (id) =>
+            ({ kind: 'removed', entity: 'page', id, spaceId: 'SPACE_TEST' }) satisfies NameChange,
+        ),
+      )
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it(`fires exactly one invalidation at ${NAME_CACHE_FANOUT_MAX_IDS + 1} ids`, async () => {
+    const ids = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS + 1 }, (_, i) => `BIGMOVE_${i}`)
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await confirmMove(ids, 'SPACE_OTHER')
+      await waitFor(() => {
+        expect(changes).toHaveLength(1)
+      })
+      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // End-to-end: prove the picker cache itself, not just the bus event.
+  //
+  // `P_STAYS` is asserted PRESENT alongside `P_MOVED` asserted ABSENT. Be
+  // precise about what that pair does and does not establish: it rules out
+  // "the cache was never populated, so of course the moved id is missing",
+  // which is the alternative explanation that would make the ABSENT arm
+  // vacuous. It does NOT prove the fix avoids over-eviction. A full-cache
+  // wipe self-heals here — the list refetches synchronously from the static
+  // `list_all_pages_in_space` mock and brings BOTH ids back — so an
+  // over-evicting implementation fails on the `P_MOVED` arm first and
+  // `P_STAYS` never gets the chance to fail on its own.
+  //
+  // Over-eviction is pinned by the sibling test above, which counts one
+  // removal event per moved id rather than inspecting the resulting cache.
+  // Keep both: this one proves the cache observably changes, that one proves
+  // the change is narrow.
+  it('a moved page stops being offered by the origin [[ cache, with no space switch required', async () => {
+    const user = userEvent.setup()
+    function pageRow(id: string, content: string) {
+      return {
+        id,
+        content,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      }
+    }
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return Promise.resolve([pageRow('P_MOVED', 'Moved Page'), pageRow('P_STAYS', 'Stays Page')])
+      }
+      if (cmd === 'move_blocks_to_space') return Promise.resolve(1)
+      return strictInvokeFallback(cmd)
+    })
+
+    const { result: resolveResult } = renderHook(() => useBlockResolve())
+    const before = await resolveResult.current.searchPages('')
+    expect(before.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(
+      expect.arrayContaining(['P_MOVED', 'P_STAYS']),
+    )
+
+    renderToolbar({ selectedIds: ['P_MOVED'] })
+    await user.click(screen.getByTestId('page-batch-move-btn'))
+    const select = await screen.findByRole('combobox', {
+      name: t('pageBrowser.batch.spacePlaceholder'),
+    })
+    await user.selectOptions(select, 'SPACE_OTHER')
+    await user.click(screen.getByTestId('page-batch-space-confirm'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('move_blocks_to_space', {
+        blockIds: ['P_MOVED'],
+        spaceId: 'SPACE_OTHER',
+      })
+    })
+
+    // Still viewing SPACE_TEST throughout — no space switch. The moved page
+    // must be gone; the untouched page must still be offered.
+    const after = await resolveResult.current.searchPages('')
+    const idsAfter = after.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(idsAfter).not.toContain('P_MOVED')
+    expect(idsAfter).toContain('P_STAYS')
   })
 })

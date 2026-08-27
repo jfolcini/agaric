@@ -342,25 +342,48 @@ export function PageBrowserBatchToolbar({
 
   const handleMoveToSpace = useCallback(async () => {
     if (selectedIds.length === 0 || selectedSpaceId === '' || busy) return
+    const ids = [...selectedIds]
     setBusy(true)
     try {
-      const count = await moveBlocksToSpace(selectedIds, selectedSpaceId)
+      const count = await moveBlocksToSpace(ids, selectedSpaceId)
+      // #4450 — the moved pages must stop being offered by the ORIGIN
+      // space's `[[` picker cache; `list_all_pages_in_space` is what fills
+      // it, and a move publishes nothing to invalidate it otherwise, so a
+      // warm cache kept the moved-out pages for the rest of the session.
+      // Mirrors `handleTrash` above, which already publishes for the same
+      // cache consequence.
+      //
+      // `currentSpaceId` — the ORIGIN, the space these pages are LEAVING —
+      // is the id to scope the event to, not `selectedSpaceId` (the
+      // destination): labelling the event with the destination is exactly
+      // the "worse than no scoping" mislabelling #4391's docblock warns
+      // about, since it would let the origin's still-warm cache go on
+      // offering pages it no longer has while never touching it.
+      if (currentSpaceId == null || ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
+        invalidateNameCaches()
+      } else {
+        for (const id of ids) notifyPageRemoved(id, currentSpaceId)
+      }
       closePickers()
       onClearSelection()
       onMutated()
       notify.success(t('pageBrowser.batch.moved', { count }))
     } catch (err) {
-      logger.error(
-        'PageBrowserBatchToolbar',
-        'bulk move failed',
-        { count: selectedIds.length },
-        err,
-      )
+      logger.error('PageBrowserBatchToolbar', 'bulk move failed', { count: ids.length }, err)
       notify.error(t('pageBrowser.batch.moveFailed'))
     } finally {
       setBusy(false)
     }
-  }, [selectedIds, selectedSpaceId, busy, closePickers, onClearSelection, onMutated, t])
+  }, [
+    selectedIds,
+    selectedSpaceId,
+    busy,
+    currentSpaceId,
+    closePickers,
+    onClearSelection,
+    onMutated,
+    t,
+  ])
 
   // Whether the current property/value selection is confirmable. Date keys
   // are always confirmable (an empty date clears); reserved-value keys need
