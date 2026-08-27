@@ -1,15 +1,19 @@
 package com.agaric.app
 
+import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.ViewGroup
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 
 /**
- * Keeps the webview out of the status and navigation bars.
+ * Keeps the webview out of the status and navigation bars, and keeps the
+ * strip behind them painted in the app's OWN theme colour.
  *
  * WHY THIS EXISTS
  * ---------------
@@ -26,35 +30,43 @@ import androidx.core.view.WindowInsetsCompat
  * ----------
  * Pad the webview's parent (the activity's content frame) by the system-bar
  * insets, which shrinks the MATCH_PARENT webview inside it. The webview then
- * never overlaps a system bar, in either pixels or touch region, and the strip
- * behind each bar falls back to the theme's DayNight `windowBackground` — which
- * is what `enableEdgeToEdge()` already tints the bar icons against.
+ * never overlaps a system bar, in either pixels or touch region.
  *
- * The web layer needs no cooperation for this: `index.css` keeps reading
- * `env(safe-area-inset-*)`, which stays 0 here because the webview no longer
- * intersects a system bar or the display cutout. iOS and desktop are untouched.
+ * The web layer needs no cooperation for the inset itself: `index.css` keeps
+ * reading `env(safe-area-inset-*)`, which stays 0 here because the webview no
+ * longer intersects a system bar or the display cutout. iOS and desktop are
+ * untouched.
  *
- * WHAT THIS COSTS: THE BAR STRIP NO LONGER FOLLOWS THE IN-APP THEME
- * ----------------------------------------------------------------
- * Accepted knowingly. Before this change the webview painted the full display,
- * so the app's own background filled the strip behind the status bar. Now that
- * strip is the Android theme's DayNight `windowBackground`, resolved once when
- * the activity is created. It does NOT track OS light/dark switches live: the
- * `<activity>` declares `android:configChanges="…|uiMode"`, so a uiMode change
- * is delivered to the running activity instead of recreating it, and nothing
- * here re-resolves or re-applies `windowBackground` in response — the band
- * keeps whatever colour it had at last activity creation until the activity is
- * actually recreated (e.g. the app is restarted). The app's theme is a
- * web-layer preference the native side never sees either way —
+ * KEEPING THE STRIP ON-THEME: THE `ThemeBridge` (#4433)
+ * -------------------------------------------------------
+ * Padding (rather than resizing) `host` means anything painted on `host`
+ * itself — not just the webview — shows through the padding, i.e. behind the
+ * system bars. Left unpainted, that strip falls back to the Android theme's
+ * DayNight `windowBackground`, resolved once at activity creation and never
+ * revisited: the `<activity>` declares `android:configChanges="…|uiMode"`, so
+ * a uiMode change is delivered to the running activity instead of recreating
+ * it, and nothing re-resolves `windowBackground` in response. Worse, the
+ * app's theme is a WEB-layer preference the native side never sees at all —
  * `src/hooks/useTheme.ts` offers seven (light, dark, auto, solarized-light,
  * solarized-dark, dracula, one-dark-pro), settable independently of the OS —
- * so a user running a dark in-app theme can get a pale band above a dark app,
- * and that mismatch can outlive an OS theme switch that happens mid-session.
+ * so `windowBackground` can neither match a custom theme nor track a live OS
+ * switch.
  *
- * Closing that gap means pushing the resolved theme colour from the web layer
- * down to native, i.e. re-introducing exactly the native<->web channel whose
- * failure mode is documented below. A mismatched band is cosmetic; the thing
- * it replaced was a control the user could not tap. This is the better trade.
+ * [ThemeBridge] closes this by letting the web layer paint `host` itself.
+ * `useTheme.ts` calls `AgaricThemeBridge.applyBackground(r, g, b, isDark)`
+ * (via `src/lib/platform/android-theme-bridge.ts`) every time the resolved
+ * theme changes — including a live OS switch while the preference is
+ * `'auto'` — and the bridge repaints [contentHost] and re-tints the system
+ * bar icons (`isAppearanceLightStatusBars`/`NavigationBars`, so the icons
+ * stay legible against whichever colour just landed) on every call, not only
+ * once at activity creation.
+ *
+ * This is a WEB -> NATIVE call, the opposite direction from the mechanism
+ * that failed in #4301 (see below), and does not share its failure mode:
+ * `addJavascriptInterface` binds an object to the WEBVIEW INSTANCE, not to
+ * any one document, and Tauri's own IPC on Android already uses the exact
+ * same primitive for every `invoke()` call — so there is no "pushed before
+ * the real document loaded" race to have.
  *
  * WHY NOT PUSH THE INSETS INTO CSS
  * --------------------------------
@@ -65,7 +77,8 @@ import androidx.core.view.WindowInsetsCompat
  * own document — while the "did anything change?" cache it kept to avoid
  * redundant pushes then suppressed every later re-application, because the
  * insets themselves never changed. A native layout inset has no document to
- * outlive.
+ * outlive. (This is about the INSETS specifically; [ThemeBridge] above pushes
+ * a COLOUR, in the other direction, through a different mechanism.)
  */
 class MainActivity : TauriActivity() {
   companion object {
@@ -73,12 +86,34 @@ class MainActivity : TauriActivity() {
     private const val TAG = "AgaricInsets"
   }
 
+  /**
+   * The activity's content frame — resolved by [onWebViewCreate]'s inset
+   * listener the first time insets are dispatched — and the paint target for
+   * [ThemeBridge.applyBackground]. Null until the webview is attached; a
+   * background push that arrives first is cached in [pendingBackgroundColor]
+   * and applied as soon as this is set.
+   */
+  private var contentHost: ViewGroup? = null
+
+  /**
+   * The last colour [ThemeBridge.applyBackground] received, re-applied to
+   * [contentHost] if it is (re)assigned afterwards — guards the startup race
+   * where the web layer's first push could in principle arrive before the
+   * webview's first inset dispatch has resolved [contentHost].
+   */
+  private var pendingBackgroundColor: Int? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
   }
 
   override fun onWebViewCreate(webView: WebView) {
+    // Registered once per webview creation. `addJavascriptInterface` binds
+    // `ThemeBridge` to THIS webview instance, so it survives every later
+    // navigation — see the class doc's "WEB -> NATIVE call" note.
+    webView.addJavascriptInterface(ThemeBridge(), "AgaricThemeBridge")
+
     // The listener is attached to the webview rather than to its parent
     // because `setContentView` has not run yet — at this point the webview has
     // no parent. Insets are only ever dispatched to an ATTACHED view, so by the
@@ -112,6 +147,10 @@ class MainActivity : TauriActivity() {
         )
         return@setOnApplyWindowInsetsListener insets
       }
+      contentHost = host
+      // A background push that raced ahead of this listener's first run is
+      // applied now rather than lost — see [pendingBackgroundColor]'s doc.
+      pendingBackgroundColor?.let { host.setBackgroundColor(it) }
       // `host` is the activity's content frame, and it is SHARED: anything else
       // added to it is inset by the same padding. That includes a
       // `WebChromeClient` fullscreen video surface — QR pairing has no native
@@ -137,6 +176,39 @@ class MainActivity : TauriActivity() {
       // Returned unconsumed: nothing else in this activity reads insets today,
       // and consuming them would silently break anything that later does.
       insets
+    }
+  }
+
+  /**
+   * JS-callable bridge letting the web layer push its resolved theme
+   * background colour to native (#4433) — see the class doc's "KEEPING THE
+   * STRIP ON-THEME" section. Bound to the webview in [onWebViewCreate].
+   */
+  private inner class ThemeBridge {
+    /**
+     * `r`/`g`/`b` are 0-255 channels of the app's currently-resolved
+     * `--background` colour (see `src/lib/platform/android-theme-bridge.ts`
+     * for how the web layer derives them); `isDark` mirrors `useTheme.ts`'s
+     * `isDark`.
+     *
+     * `@JavascriptInterface` methods run on a WebView background thread —
+     * NEVER the UI thread — so every touch of a `View` or the `Window` below
+     * is marshalled via [runOnUiThread].
+     */
+    @JavascriptInterface
+    fun applyBackground(r: Int, g: Int, b: Int, isDark: Boolean) {
+      val color = Color.rgb(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
+      runOnUiThread {
+        pendingBackgroundColor = color
+        contentHost?.setBackgroundColor(color)
+        // Mirrors the colour into bar-icon contrast: `enableEdgeToEdge()`
+        // tints icons from the OS `uiMode` alone, which is exactly wrong once
+        // the strip itself stops following the OS — a dark strip must not
+        // get dark icons just because the OS happens to be in light mode.
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = !isDark
+        controller.isAppearanceLightNavigationBars = !isDark
+      }
     }
   }
 }
