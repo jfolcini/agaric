@@ -84,7 +84,9 @@
 //       misaligned".
 //
 // In `--self-test` mode the codes describe the guard instead of an artifact:
-// 0 = every assertion passed, 2 = an assertion failed.
+// 0 = every assertion passed, 2 = an assertion failed — or, when `$CI` is set,
+// an assertion group was SKIPPED for want of a readelf. Skipping is a local
+// developer affordance; on CI it means the run verified almost nothing.
 //
 // Usage:
 //   node scripts/check-android-so-alignment.mjs [--stage=pre-zipalign|post-zipalign] <path>...
@@ -133,13 +135,25 @@ export class Unverifiable extends Error {}
  * `readelf` (binutils) is present on the GitHub `ubuntu-*` images; `llvm-readelf`
  * is the NDK's equivalent and is accepted so the guard also runs on a machine
  * that only has the Android toolchain. `READELF` overrides both.
+ *
+ * The `$NDK_HOME` fallback tries every host-tag prebuilt directory an NDK
+ * ships, not just Linux's: a macOS contributor's NDK puts the same
+ * `llvm-readelf` under `darwin-x86_64`/`darwin-arm64`, and looking only under
+ * `linux-x86_64` would send them down the "no usable readelf" path while a
+ * perfectly good one sat on their disk.
  */
+const NDK_HOST_TAGS = ['linux-x86_64', 'darwin-x86_64', 'darwin-arm64']
+
 export function findReadelf(env = process.env) {
   const candidates = [
     env.READELF,
     'readelf',
     'llvm-readelf',
-    env.NDK_HOME && join(env.NDK_HOME, 'toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf'),
+    ...(env.NDK_HOME
+      ? NDK_HOST_TAGS.map((host) =>
+          join(env.NDK_HOME, `toolchains/llvm/prebuilt/${host}/bin/llvm-readelf`),
+        )
+      : []),
   ].filter(Boolean)
   for (const bin of candidates) {
     const probe = spawnSync(bin, ['--version'], { encoding: 'utf8' })
@@ -204,9 +218,12 @@ export function parseLoadAlignments(out, label) {
  *   {@link OUR_SO_BASENAME}, i.e. the library `src-tauri/build.rs`'s linker
  *   flag actually reaches — carried through so the caller can attribute an
  *   ELF finding correctly instead of always blaming our own build script.
+ *   Defaults to `false`: a call site that forgets the flag then UNDER-claims
+ *   ("we cannot say which build step owns this") rather than misdirecting the
+ *   reader to a build script that never linked the library.
  * @returns {{label: string, aligns: number[], bad: {index: number, align: number}[], own: boolean}}
  */
-export function checkElfFile(path, label, readelfBin, { own = true } = {}) {
+export function checkElfFile(path, label, readelfBin, { own = false } = {}) {
   if (!existsSync(path)) {
     throw new Unverifiable(`${label}: no such file: ${path}. Verified nothing.`)
   }
@@ -426,8 +443,9 @@ export function main(argv) {
   }
   if (paths.length === 0) {
     throw new Unverifiable(
-      'no paths given. Usage: check-android-so-alignment.mjs <app.apk|lib.so>... — a run with ' +
-        'nothing to examine verifies nothing and is never a pass.',
+      'no paths given. Usage: check-android-so-alignment.mjs ' +
+        '[--stage=pre-zipalign|post-zipalign] <app.apk|lib.so>... — a run with nothing to ' +
+        'examine verifies nothing and is never a pass.',
     )
   }
 
@@ -955,7 +973,10 @@ function runSelfTest() {
         apkR.status === EXIT_FINDING &&
           /libsomevendor\.so/.test(apkR.stderr) &&
           /Gradle dependency or AAR/.test(apkR.stderr) &&
-          !/build.rs's linker flag has no influence over it/.test(apkR.stderr),
+          // The phrase the guard actually emits for a non-own library. Pinned
+          // positively: the earlier negative form matched a string this file
+          // never prints, so it passed no matter what the guard said.
+          /src-tauri\/build\.rs's linker flag has no effect on it/.test(apkR.stderr),
         'a misaligned non-own .so is attributed to its own build step, not src-tauri/build.rs',
         apkR.stderr,
       )
@@ -1009,6 +1030,23 @@ function runSelfTest() {
 
     // ── the CI wiring actually calls this guard ──────────────────────────────
     const repoRoot = join(import.meta.dirname, '..')
+
+    // OUR_SO_BASENAME is a literal, and every attribution decision in this
+    // file turns on it. Rename the crate's [lib] and a genuine regression in
+    // OUR library gets reported as "most likely arrived through a Gradle
+    // dependency or AAR" — the exact misattribution this guard exists to
+    // prevent, arriving through the other door. Tie the literal to its source.
+    const cargoPath = join(repoRoot, 'src-tauri/Cargo.toml')
+    const cargoSrc = existsSync(cargoPath) ? readFileSync(cargoPath, 'utf8') : ''
+    const libSection = cargoSrc.split(/^\[/m).find((sec) => sec.startsWith('lib]'))
+    const libName = libSection ? /^\s*name\s*=\s*"([^"]+)"/m.exec(libSection)?.[1] : undefined
+    check(
+      libName !== undefined && `lib${libName}.so` === OUR_SO_BASENAME,
+      "OUR_SO_BASENAME still matches src-tauri/Cargo.toml's [lib] name",
+      `[lib] name = ${libName ?? '<not found>'} in ${cargoPath} → ` +
+        `lib${libName}.so, but OUR_SO_BASENAME = ${OUR_SO_BASENAME}`,
+    )
+
     for (const wf of ['ci.yml', 'release.yml']) {
       const p = join(repoRoot, '.github/workflows', wf)
       const src = existsSync(p) ? readFileSync(p, 'utf8') : ''
@@ -1034,6 +1072,20 @@ function runSelfTest() {
         'The guard\'s own no-readelf behaviour is still covered above regardless (see "no ' +
         'readelf on PATH is exit 3").',
     )
+    // Skipping is a local-developer affordance (macOS ships no readelf), and
+    // it stays one. On CI the fixture assertions are the point of running the
+    // self-test at all, and "they were skipped" is not a result to report as
+    // a pass: that a hosted image happens to ship binutils is a property of
+    // the image, not of this repo, so it cannot be what keeps the hook honest.
+    if (process.env.CI) {
+      console.error(
+        '\nself-test: CI is set, so a skipped assertion group is a FAILURE, not an ' +
+          'affordance — the runner must provide a readelf (binutils, or READELF pointed at an ' +
+          'llvm-readelf). A CI self-test that skipped its fixture assertions verified almost ' +
+          'nothing and is never a pass.',
+      )
+      return 2
+    }
   }
   console.log('self-test: all assertions passed')
   return 0
