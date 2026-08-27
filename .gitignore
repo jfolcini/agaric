@@ -91,6 +91,12 @@ agaric-release.apk.idsig
 # Claude Code runtime state (per-machine; settings.json + hooks/ are tracked)
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+# WDIO rescues the app's own logs here so a red run keeps the backend's account
+# of itself (#4428). The rotated name `agaric.log.<date>` does NOT match the
+# `*.log` rule above, so without this an ordinary local run leaves an untracked
+# file a bare `git add -A` would sweep into a commit (#3731).
+e2e-tauri/artifacts/
+
 # Ephemeral review/workflow scratch artifacts (per-machine, never committed)
 .claude/confirmed.json
 .claude/create-review-issues.py

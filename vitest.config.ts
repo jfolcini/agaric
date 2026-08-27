@@ -74,7 +74,17 @@ export default defineConfig({
         statements: 89,
       },
     },
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // `e2e-tauri/**/*.test.ts` is NOT the WebdriverIO suite — `wdio.conf.ts`
+    // runs `./e2e-tauri/**/*.e2e.ts` and never sees a `.test.ts`. It is the
+    // unit tests for the pure helpers `wdio.conf.ts` exports (#4428), which
+    // have to live outside `src/**`: `wdio.conf.ts` type-checks only under
+    // `tsconfig.wdio.json` (it needs `@wdio/globals/types`), so importing it
+    // from `src/**` would drag it into `tsconfig.app.json` where those
+    // ambient types do not exist. Without this entry those tests would be a
+    // file nothing runs, which is the same as no test at all. `coverage.include`
+    // above stays `src/**` on purpose: this code is CI-harness code and must
+    // not move the app's coverage gates in either direction.
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'e2e-tauri/**/*.test.ts'],
   },
   resolve: {
     alias: {

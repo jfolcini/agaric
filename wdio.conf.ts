@@ -22,7 +22,15 @@
 // ---------------------------------------------------------------------------
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -65,10 +73,505 @@ const ARTIFACTS_DIR = path.resolve(rootDir, 'e2e-tauri', 'artifacts')
 // spec reporter; the screenshot + uploaded artifacts carry the full picture.
 const DIAG_EXCERPT_CAP = 3000
 
-/** Make a string safe as a single path segment for a screenshot filename. */
+/**
+ * Make a string safe as a single path segment.
+ *
+ * `.` survives the character filter (a spec title may legitimately contain
+ * one), so the all-dots cases are rejected explicitly: this value is used as a
+ * DIRECTORY name by `rescueAppLogs`, not only as a filename, and a segment of
+ * `.` or `..` traverses instead of naming. Not reachable from this repo's own
+ * spec titles today — which is exactly why it is worth pinning before some
+ * future title makes it reachable.
+ */
 function sanitizeForFilename(value: string): string {
   const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
-  return (cleaned || 'failure').slice(0, 120)
+  if (cleaned === '' || /^\.+$/.test(cleaned)) return 'failure'
+  return cleaned.slice(0, 120)
+}
+
+// ---------------------------------------------------------------------------
+// "Why was it not displayed?" (#4428).
+//
+// `waitForDisplayed` fails with one sentence — `element ("<selector>") still
+// not displayed after 60000ms` — and that sentence cannot tell the two failures
+// it covers apart:
+//
+//   * the asserted state NEVER EXISTED (the backend lost the write, the view
+//     did not re-query) — the failure the spec was written to catch; or
+//   * the state exists and something is HIDING it (a stuck fade, a modal, a
+//     collapsed container) — a rendering bug in code the spec is not about.
+//
+// The lane paid for that ambiguity: runs 31355052132 / 32687143146 failed on
+// `tag-roundtrip.e2e.ts`, the #3081 regression guard, and read as a tag
+// regression for three weeks. The tag was in the DOM the whole time; the
+// App-level view-transition wrapper was stuck at `opacity-0` (#3388/#4393), so
+// `checkVisibility` — which honours ancestor opacity — returned false for the
+// full 60s. The evidence was already in the artifacts (the screenshot shows a
+// blank pane under a correct sidebar; the testid dump lists the tag) and was
+// still misread, because nothing in the output NAMED the ancestor.
+//
+// So on a failure we now ask the page directly, and name it.
+// ---------------------------------------------------------------------------
+
+/**
+ * What a failing WDIO wait was watching, recovered from its own message.
+ *
+ * Two things travel together here because separating them is what makes the
+ * verdict wrong. WDIO puts only `this.selector` in the message, which for a
+ * CHAINED lookup (`row.$('[data-testid="task-marker"]')`) is the CHILD half
+ * alone — the parent scope is NOT recoverable from the text. And the message
+ * names the state that was awaited, which is not always `displayed`.
+ */
+export interface WaitFailure {
+  /** Verbatim from the message; possibly only the child half of a chain. */
+  selector: string
+  /**
+   * The state WDIO was waiting for, verbatim: `displayed`,
+   * `displayed within viewport`, `clickable`, `enabled` or `existing`. Carried
+   * into the verdict so a `clickable` failure can never be answered with a
+   * `displayed` verdict — the whole point of this diagnostic is to name which
+   * half failed, and naming the wrong half is worse than staying silent.
+   */
+  waitedFor: string
+}
+
+/**
+ * Recover the selector AND the awaited state from a failing WDIO wait message.
+ *
+ * WDIO renders these as `element ("<selector>") still not <state> after Nms`
+ * (the five templates live in webdriverio/build/node.js). THIS IS AN INPUT
+ * CONTRACT WITH A DEPENDENCY, not a fact about our code, and every test below
+ * feeds a hand-written message — so the pin is here rather than in an
+ * assertion that could only agree with itself. Read verbatim out of the
+ * INSTALLED `webdriverio` 9.31.1 bundle (`node_modules/webdriverio/build/
+ * node.js`, the `waitForClickable`/`waitForDisplayed`/`waitForEnabled`/
+ * `waitForExist` command bodies), against `"@wdio/cli": "^9.31.1"` in
+ * package.json:
+ *
+ *     `element ("${this.selector}") still ${reverse ? '' : 'not '}` +
+ *       `displayed${withinViewport ? ' within viewport' : ''} after ${timeout}ms`
+ *
+ * If a `@wdio/*` bump rewords that template this parser stops matching and the
+ * lane degrades to "failure is not an element wait — no visibility probe":
+ * safe, silent, and it re-opens the ambiguity #4428 exists to close. A red
+ * weekly run whose log says that for an obvious `waitForDisplayed` timeout is
+ * the symptom; re-read the template at the path above before touching the
+ * regex. The selector
+ * routinely contains `"` (every `[data-testid="…"]`), so the capture is GREEDY
+ * and pinned between ` still not ` and the ` after <n>ms` tail — neither of
+ * which a selector can contain. Returns `undefined` for any other failure (a
+ * plain `expect`, a `waitUntil` with a custom `timeoutMsg`, a `waitForStable`,
+ * whose stability this probe cannot speak to at all), which is the signal to
+ * skip the probe rather than guess.
+ *
+ * `displayed within viewport` is matched FIRST and kept WHOLE: WDIO appends it
+ * inside the same template (`displayed${withinViewport ? ' within viewport' : ''}`),
+ * and it is a strictly stronger assertion than `displayed`. Collapsing the two
+ * would let the verdict answer a question that was never asked.
+ *
+ * Reverse waits render as `still <state>` with no `not`; that is deliberately
+ * unmatched, because every verdict below would come out inverted.
+ */
+export function parseWaitFailure(message: string): WaitFailure | undefined {
+  const match =
+    /element \("(.+)"\) still not (displayed within viewport|displayed|clickable|enabled|existing) after \d+ms/.exec(
+      message,
+    )
+  const selector = match?.[1]
+  const waitedFor = match?.[2]
+  if (selector === undefined || waitedFor === undefined) return undefined
+  return { selector, waitedFor }
+}
+
+/** Flat by design: a discriminated union buys nothing across the wire. */
+export interface VisibilityProbe {
+  status: 'absent' | 'present' | 'unsupported-selector'
+  /**
+   * How many nodes in the WHOLE document match. The probe can only resolve
+   * document-wide — WDIO's message does not carry the parent of a chained
+   * lookup — so this is the only honest measure of how far the resolution
+   * could have missed by. `> 1` means it read the FIRST of several.
+   */
+  matchCount: number
+  width: number
+  height: number
+  /** Human-readable: every node on the ancestor chain that hides the element. */
+  hiddenBy: string[]
+  /**
+   * `element.checkVisibility({ opacityProperty: true, visibilityProperty: true })`
+   * VERBATIM — the engine's own answer, reported ALONGSIDE `hiddenBy` and never
+   * folded into it. `hiddenBy` is a four-property reimplementation of a
+   * question the engine already answers; where the two disagree, the
+   * disagreement is the single most useful thing this probe can print, because
+   * it means "hidden by something the walk does not model". `null` when the
+   * engine does not implement `checkVisibility`.
+   */
+  checkVisibility: boolean | null
+  /**
+   * Whether the element's box INTERSECTS the viewport at all. `null` when the
+   * box is zero-size, where the question is meaningless.
+   */
+  inViewport: boolean | null
+  /**
+   * Facts bearing on `clickable`/`enabled` that visibility does not cover:
+   * `pointer-events:none` on the chain, `[disabled]`/`aria-disabled`, and what
+   * the hit test at the element's centre actually lands on. Facts only — the
+   * verdict that uses them lives in `explainVisibilityProbe`, and only for the
+   * verbs they apply to.
+   */
+  blockedBy: string[]
+}
+
+/**
+ * Runs IN THE PAGE. Walks from the element to the document root and reports
+ * every node whose computed style takes the element off screen, plus the
+ * engine's own `checkVisibility()` answer to compare it against.
+ *
+ * Ancestors matter as much as the element: `opacity`, `display` and
+ * `visibility` are all inherited-in-effect for hit/visibility testing, and it
+ * is precisely an ANCESTOR that hid the tag. Reporting only the element's own
+ * style would have reproduced the original misdiagnosis.
+ *
+ * WDIO selectors are not all CSS (`button*=Add Tag`, `.//button[…]`), so an
+ * invalid `querySelector` argument is reported as such rather than thrown —
+ * this is diagnostics, and diagnostics may never become the failure. Every
+ * optional capability below is behind a `try`/feature check for the same
+ * reason.
+ */
+export function probeVisibilityInPage(selector: string): VisibilityProbe {
+  // Every helper below is NESTED on purpose: `browser.execute` ships this
+  // function to the page as source text, so a reference to anything at module
+  // scope would be `undefined` there.
+  const nothing = (status: 'absent' | 'unsupported-selector'): VisibilityProbe => ({
+    status,
+    matchCount: 0,
+    width: 0,
+    height: 0,
+    hiddenBy: [],
+    checkVisibility: null,
+    inViewport: null,
+    blockedBy: [],
+  })
+
+  let matches: ArrayLike<Element>
+  try {
+    matches = document.querySelectorAll(selector)
+  } catch {
+    return nothing('unsupported-selector')
+  }
+  const element: Element | undefined = matches[0]
+  if (element === undefined) return nothing('absent')
+
+  const describe = (node: Element): string => {
+    const testid = node.getAttribute('data-testid')
+    const cls = node.getAttribute('class') ?? ''
+    const shortCls = cls.length > 100 ? `${cls.slice(0, 100)}…` : cls
+    const testidPart = testid === null ? '' : ` data-testid="${testid}"`
+    const classPart = shortCls === '' ? '' : ` class="${shortCls}"`
+    return `<${node.tagName.toLowerCase()}${testidPart}${classPart}>`
+  }
+
+  const hiddenBy: string[] = []
+  const blockedBy: string[] = []
+  let node: Element | null = element
+  let depth = 0
+  while (node) {
+    const where = depth === 0 ? 'the element itself' : `ancestor ${depth} level(s) up`
+    const style = window.getComputedStyle(node)
+    const reasons: string[] = []
+    if (style.display === 'none') reasons.push('display:none')
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') {
+      reasons.push(`visibility:${style.visibility}`)
+    }
+    // `parseFloat`, not `Number`: a computed style that reports opacity as ''
+    // (an engine that has not resolved it) coerces to 0 under `Number` and
+    // would make EVERY node "hidden by opacity:0", which is the loudest
+    // possible way for a diagnostic to be wrong. Unresolved is not zero.
+    const opacity = Number.parseFloat(style.opacity)
+    if (Number.isFinite(opacity) && opacity === 0) reasons.push('opacity:0')
+    if (style.contentVisibility === 'hidden') reasons.push('content-visibility:hidden')
+    if (reasons.length > 0) {
+      hiddenBy.push(`${where} ${describe(node)} — ${reasons.join(', ')}`)
+    }
+    // Not a hiding reason: a `pointer-events:none` element is fully VISIBLE
+    // and merely un-hittable, so it belongs to the interaction verbs only.
+    if (style.pointerEvents === 'none') {
+      blockedBy.push(`${where} ${describe(node)} — pointer-events:none`)
+    }
+    node = node.parentElement
+    depth += 1
+  }
+
+  if (element.hasAttribute('disabled')) {
+    blockedBy.push('the element itself carries the [disabled] attribute')
+  }
+  if (element.getAttribute('aria-disabled') === 'true') {
+    blockedBy.push('the element itself carries aria-disabled="true"')
+  }
+
+  /** What the hit test at the element's centre lands on, if not the element. */
+  const centrePointFact = (rect: DOMRect): string | undefined => {
+    const centreX = Math.round(rect.left + rect.width / 2)
+    const centreY = Math.round(rect.top + rect.height / 2)
+    if (centreX < 0 || centreY < 0) return undefined
+    if (centreX >= window.innerWidth || centreY >= window.innerHeight) return undefined
+    try {
+      const hit = document.elementFromPoint(centreX, centreY)
+      if (hit === null || hit === element || element.contains(hit)) return undefined
+      return (
+        `the hit test at its centre point (${centreX},${centreY}) lands on ${describe(hit)}, ` +
+        'which is neither the element nor a descendant of it'
+      )
+    } catch {
+      // An engine without `elementFromPoint` simply contributes no fact.
+      return undefined
+    }
+  }
+
+  /** The engine's own verdict, reported verbatim — `null` if it has none. */
+  const askEngine = (): boolean | null => {
+    try {
+      const engineCheck = (
+        element as Element & {
+          checkVisibility?: (options?: {
+            opacityProperty?: boolean
+            visibilityProperty?: boolean
+          }) => boolean
+        }
+      ).checkVisibility
+      if (typeof engineCheck !== 'function') return null
+      return engineCheck.call(element, { opacityProperty: true, visibilityProperty: true })
+    } catch {
+      return null
+    }
+  }
+
+  const rect = element.getBoundingClientRect()
+  const width = Math.round(rect.width)
+  const height = Math.round(rect.height)
+
+  // A zero-size box has no meaningful centre and no meaningful intersection,
+  // so the geometry questions are simply not asked rather than guessed at.
+  let inViewport: boolean | null = null
+  if (width > 0 && height > 0) {
+    inViewport =
+      rect.right > 0 &&
+      rect.bottom > 0 &&
+      rect.left < window.innerWidth &&
+      rect.top < window.innerHeight
+    const covered = centrePointFact(rect)
+    if (covered !== undefined) blockedBy.push(covered)
+  }
+
+  return {
+    status: 'present',
+    matchCount: matches.length,
+    width,
+    height,
+    hiddenBy,
+    checkVisibility: askEngine(),
+    inViewport,
+    blockedBy,
+  }
+}
+
+/**
+ * Turn a probe into the few sentences a reader of a red run needs, which are
+ * always an answer to "is the asserted state missing, or merely invisible?" —
+ * for the state that was ACTUALLY awaited.
+ *
+ * Four rules govern every branch, all of them learned the expensive way:
+ *
+ *   1. The verdict answers `wait.waitedFor`, never a state the probe finds
+ *      easier to measure. A `clickable` wait gets no `displayed` verdict.
+ *   2. Where the probe cannot decide, it SAYS SO. "No verdict" costs a reader
+ *      nothing; a confident wrong verdict costs them the three weeks that
+ *      #4428 cost, only pointed the other way.
+ *   3. Anything resting on a document-wide `querySelector` of a possibly-child
+ *      selector carries the scope caveat. `absent` is the one exception, and
+ *      only because a scoped lookup can match nothing a document-wide one
+ *      misses.
+ *   4. ONE message carries exactly ONE verdict. The probe's facts co-occur
+ *      freely — a `[disabled]` button inside a `display:none` container is
+ *      both hidden and blocked — so where several could each be called a
+ *      cause, VISIBILITY WINS and the rest are printed as additional facts
+ *      under it. Two verdicts in one message ("RENDERING failure" followed by
+ *      "INTERACTION failure rather than a rendering one") is rule 2's failure
+ *      wearing a disguise: it reads as confidence and leaves the reader with
+ *      exactly the ambiguity this function exists to remove.
+ */
+export function explainVisibilityProbe(wait: WaitFailure, probe: VisibilityProbe): string {
+  const head = `[afterTest] why "${wait.selector}" never became ${wait.waitedFor}:`
+
+  if (probe.status === 'unsupported-selector') {
+    return `${head} not a CSS selector, so the DOM probe could not resolve it (no verdict).`
+  }
+  if (probe.status === 'absent') {
+    return (
+      `${head} NO element in the document matches it. A scoped lookup can only match a SUBSET of a ` +
+      'document-wide one, so this verdict is immune to the chained-selector problem: the asserted ' +
+      'state is genuinely MISSING — the failure the spec exists to catch, not a rendering artefact.'
+    )
+  }
+
+  const engineSays =
+    probe.checkVisibility === null ? 'unavailable' : `${String(probe.checkVisibility)}`
+  const parts: string[] = [
+    `${head} an element matching it IS in the DOM — ${probe.width}x${probe.height}px, ` +
+      `${probe.matchCount} document-wide match(es), engine checkVisibility()=${engineSays}.`,
+  ]
+
+  // `existing` is not a visibility question at all: a hidden element still
+  // exists, so the hiding walk cannot explain this failure and must not try.
+  if (wait.waitedFor === 'existing') {
+    parts.push(
+      'This wait was for `existing`, which hiding does not affect — a hidden element still exists. ' +
+        'So there are exactly two readings, and the probe cannot choose between them: the node was ' +
+        'attached AFTER the wait expired (a TIMING failure), or the probe resolved a DIFFERENT node ' +
+        'than the assertion did (see the caveat).',
+    )
+    if (probe.hiddenBy.length > 0) {
+      parts.push(`For reference only, it is currently hidden by ${probe.hiddenBy.join('; ')}.`)
+    }
+    parts.push(scopeCaveat(probe))
+    return parts.join(' ')
+  }
+
+  const interactionWait = wait.waitedFor === 'clickable' || wait.waitedFor === 'enabled'
+
+  if (probe.hiddenBy.length > 0) {
+    parts.push(
+      `HIDDEN BY ${probe.hiddenBy.join('; ')}. The asserted state EXISTS — this is a RENDERING ` +
+        'failure in whatever owns that node, NOT a failure of the feature under test.',
+    )
+    if (probe.checkVisibility === true) {
+      parts.push(
+        'DISAGREEMENT: the engine reports checkVisibility()=true while this walk found a hiding ' +
+          'node. The engine is the authority WDIO itself consults — treat the walk entry as a lead, ' +
+          'not as the verdict.',
+      )
+    }
+  } else if (probe.checkVisibility === false) {
+    parts.push(
+      'DISAGREEMENT — and this is the useful part: nothing this walk models (display, visibility, ' +
+        "opacity, content-visibility) hides it, yet the engine's own checkVisibility() says NOT " +
+        'visible. Something the walk does NOT model is hiding it — a zero-size or clipping ' +
+        '`overflow:hidden` ancestor, an off-screen transform, a sub-threshold opacity. Still a ' +
+        'RENDERING failure; the walk simply cannot name the node.',
+    )
+  } else if (probe.width === 0 || probe.height === 0) {
+    parts.push(
+      `Nothing hides it, but its box is ${probe.width}x${probe.height}px — it is laid out to zero size.`,
+    )
+  } else if (wait.waitedFor === 'displayed within viewport' && probe.inViewport === false) {
+    parts.push(
+      'Nothing hides it and the engine agrees it is visible, but its box does not intersect the ' +
+        'viewport — the `within viewport` half of the assertion is what failed, not visibility.',
+    )
+  } else if (interactionWait) {
+    parts.push(
+      `Nothing hides it and the engine agrees it is visible — but this wait was for ` +
+        `\`${wait.waitedFor}\`, which visibility does not decide.`,
+    )
+  } else {
+    parts.push(
+      `Nothing hides it, the engine agrees it is visible, and it is ${probe.width}x${probe.height}px ` +
+        'RIGHT NOW — it reached the asserted state after the wait expired. A TIMING failure, not a ' +
+        'state failure.',
+    )
+  }
+
+  if (interactionWait) {
+    // An element that is not visible is not clickable and not enabled either,
+    // so where the visibility branches above already found a cause, that cause
+    // IS the answer — printing "no verdict" underneath it would read as a
+    // contradiction of the sentence directly before it.
+    const visibilityAlreadyExplains =
+      probe.hiddenBy.length > 0 ||
+      probe.checkVisibility === false ||
+      probe.width === 0 ||
+      probe.height === 0
+    // This test comes FIRST, ahead of `blockedBy`, and that order is the whole
+    // point of the branch (rule 2). The two are not mutually exclusive — a
+    // `[disabled]` button inside a `display:none` container has both a hiding
+    // ancestor and an interaction fact — and the block above has, by then,
+    // already printed "this is a RENDERING failure ... NOT a failure of the
+    // feature under test". Reaching the `blockedBy` arm from that state
+    // appended "this reads as an INTERACTION failure rather than a rendering
+    // one" directly underneath it: one message, two verdicts, pointing
+    // opposite ways, which is precisely the ambiguity this diagnostic exists to
+    // remove. The interaction facts are still worth printing in that state —
+    // but as ADDITIONAL facts under the rendering verdict, never as a rival to
+    // it.
+    if (visibilityAlreadyExplains) {
+      parts.push(
+        `That is on its own enough to fail a \`${wait.waitedFor}\` wait — an element that is not ` +
+          'visible is neither clickable nor enabled — so no separate interaction cause is needed.',
+      )
+      // The facts the two arms below would have printed are not discarded with
+      // the verdict they carried: only the VERDICT is suppressed here.
+      const alsoBearing = [...probe.blockedBy]
+      if (probe.inViewport === false) {
+        alsoBearing.push('its box does not intersect the viewport')
+      }
+      if (alsoBearing.length > 0) {
+        parts.push(
+          `ADDITIONALLY, bearing on \`${wait.waitedFor}\`: ${alsoBearing.join('; ')}. Reported as ` +
+            'extra facts, NOT as a competing verdict: each of these can fail the wait on its own, but ' +
+            'the rendering cause named above is already sufficient, so fix that first and re-run ' +
+            'before reading anything into these.',
+        )
+      }
+    } else if (probe.blockedBy.length > 0) {
+      parts.push(
+        `BEARING ON \`${wait.waitedFor}\`: ${probe.blockedBy.join('; ')}. Each of these can fail the ` +
+          'wait on an element that is fully visible, so this reads as an INTERACTION failure rather ' +
+          'than a rendering one.',
+      )
+    } else if (probe.inViewport === false) {
+      parts.push(
+        `BEARING ON \`${wait.waitedFor}\`: its box does not intersect the viewport, so nothing can ` +
+          'be clicked there without scrolling first.',
+      )
+    } else {
+      parts.push(
+        `NO VERDICT on \`${wait.waitedFor}\`: the probe checked pointer-events, [disabled], ` +
+          'aria-disabled, the viewport and the hit test at the centre point, and found none of them ' +
+          `blocking. That rules those five out and NOTHING more — it does not model every input of ` +
+          `\`${wait.waitedFor}\`.`,
+      )
+    }
+  }
+
+  parts.push(scopeCaveat(probe))
+  return parts.join(' ')
+}
+
+/**
+ * The qualification every `present` verdict has to carry.
+ *
+ * WDIO's timeout message contains `this.selector` and nothing else, so for
+ * `row.$('[data-testid="task-marker"]')` (reserved-property-roundtrip.e2e.ts)
+ * the probe sees only the child half and resolves it across the WHOLE
+ * document. If that row's marker never rendered while any other block on the
+ * page has one, the probe reads a real element that the assertion was never
+ * about. The parent scope is not recoverable from the text, so the honest move
+ * is to state the exposure rather than invent a scope.
+ */
+function scopeCaveat(probe: VisibilityProbe): string {
+  if (probe.matchCount > 1) {
+    return (
+      `CAVEAT: ${probe.matchCount} nodes in the document match this selector and the probe read the ` +
+      'FIRST. WDIO reports only `this.selector`, which for a chained lookup (`row.$(…)`) is the child ' +
+      'half alone, so the parent scope is unrecoverable — this may well not be the node the assertion ' +
+      'targeted, and the verdict above is only as good as that guess.'
+    )
+  }
+  return (
+    'CAVEAT: the probe resolved this selector document-wide, and WDIO reports only `this.selector`, ' +
+    'which for a chained lookup (`row.$(…)`) is the child half alone. This is *a* matching node, not ' +
+    'provably the one the assertion targeted.'
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +694,58 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
     XDG_STATE_HOME: xdg('xdg-state'),
     XDG_CACHE_HOME: xdg('xdg-cache'),
   }
+}
+
+/** Labels already copied by `rescueAppLogs` in this process. See below. */
+const rescuedLogLabels = new Set<string>()
+
+/** Directory name for the session-level rescue; never a spec title. */
+const SESSION_LOG_LABEL = 'session'
+
+/**
+ * Copy the APP's own log out of the sandbox before teardown destroys it
+ * (#4428).
+ *
+ * The Rust side writes to `<AGARIC_DATA_DIR>/logs/agaric.log*`
+ * (`log_dir_for_app_data`, src-tauri/src/lib.rs), and `AGARIC_DATA_DIR` is the
+ * per-session `mkdtemp` sandbox — which `afterSession` deletes unconditionally,
+ * including after a failure. So the one artefact that carries the BACKEND's
+ * account of a red run was being removed exactly when it was needed, and the
+ * workflow's "Upload WebdriverIO logs" step, globbing `**\/*.log` from the repo
+ * root, shipped three unrelated `node_modules/spdx-*` files instead — 1114
+ * bytes of noise, byte-identical across all three failing runs, which is how a
+ * step can look like evidence for weeks while collecting none.
+ *
+ * Copied into `ARTIFACTS_DIR`, which the weekly workflow already uploads.
+ * Best-effort: a diagnostics failure must never mask the real test failure.
+ *
+ * Called from BOTH `afterTest` (per failing test) and `afterSession` (once per
+ * session, under `SESSION_LOG_LABEL`), which is the only call that can fire for
+ * the failures this exists for: `afterTest` never runs when the failure is in
+ * `beforeSession`/`before` or when the app never boots at all. IDEMPOTENT per
+ * label — a label already copied in this process is reported and skipped, so
+ * the extra call site can neither duplicate work nor half-overwrite a copy that
+ * is already sitting in the artifact directory.
+ */
+function rescueAppLogs(label: string): string {
+  if (rescuedLogLabels.has(label)) {
+    return `already rescued under "${label}" earlier in this session — not copying again.`
+  }
+  const vault = sandboxVaultDir
+  if (!vault) return 'no sandbox vault was recorded — nothing to rescue.'
+  const logDir = path.join(vault, 'logs')
+  if (!existsSync(logDir)) {
+    return `the app never created ${logDir} — it produced NO log at all this session.`
+  }
+  const names = readdirSync(logDir).filter((name) => name.startsWith('agaric.log'))
+  if (names.length === 0) return `${logDir} exists but holds no agaric.log* file.`
+  const destination = path.join(ARTIFACTS_DIR, 'app-logs', label)
+  mkdirSync(destination, { recursive: true })
+  for (const name of names) {
+    copyFileSync(path.join(logDir, name), path.join(destination, name))
+  }
+  rescuedLogLabels.add(label)
+  return `rescued ${String(names.length)} app log file(s) into ${destination}`
 }
 
 /** Remove this run's sandbox. `WDIO_KEEP_VAULT=1` keeps it for post-mortems. */
@@ -366,9 +921,39 @@ export const config: WebdriverIO.Config = {
     console.warn(`[sandbox] verified: the app is using the throwaway vault ${vault}`)
   },
 
+  // -------------------------------------------------------------------------
+  // The SESSION-level log rescue (#4428) — the one that covers the failures
+  // `afterTest` structurally cannot.
+  //
+  // `afterTest` runs per test, so a session that never reaches a test never
+  // calls it: a panic during boot (the 08-17 run — `SetLoggerError`, all 6
+  // workers dead, not one test completed), or the 120s `notes.db` timeout in
+  // the `before` hook above. Those are exactly the runs where the backend's own
+  // log is the ONLY evidence that exists — the screenshot, the page source and
+  // the visibility probe all need a live session, and there is none. Until this
+  // call the sandbox holding that log was deleted here, unconditionally,
+  // seconds after it was written.
+  //
+  // Two properties this must keep, in order:
+  //
+  //   * `removeSandbox()` runs from `finally`, so a rescue that throws can
+  //     never leak the throwaway vault. Diagnostics that leak sandbox
+  //     directories are a worse trade than no diagnostics — the leak is
+  //     permanent litter in `$TMPDIR`, the missing log costs one re-run.
+  //   * `rescueAppLogs` is idempotent per label, so this call and every
+  //     `afterTest` call coexist without duplicating or half-overwriting a
+  //     copy. This one uses its own label rather than a spec title, so it is
+  //     never the same directory as a per-test rescue.
+  // -------------------------------------------------------------------------
   afterSession: () => {
     killTauriDriver()
-    removeSandbox()
+    try {
+      console.warn(`[afterSession] app logs: ${rescueAppLogs(SESSION_LOG_LABEL)}`)
+    } catch (error) {
+      console.warn(`[afterSession] app log rescue failed: ${String(error)}`)
+    } finally {
+      removeSandbox()
+    }
   },
 
   // No sandbox cleanup here on purpose. Each session's directory is removed by
@@ -381,11 +966,17 @@ export const config: WebdriverIO.Config = {
   //
   // The weekly lane runs once, headless, on CI with no local WebKit driver to
   // reproduce a failure — so a red run must carry its own evidence. On any
-  // failing test this captures: (a) a screenshot, (b) a DISTILLED page-source
-  // excerpt (the set of `data-testid`s present + text fragments around every
-  // "wdio" marker — NOT the full HTML), and (c) the current URL and the
-  // sidebar's innerHTML. Each capture is independently try/caught: a
-  // diagnostics failure must never mask the real test failure or abort teardown.
+  // failing test this captures: (a) a screenshot, (a2) the VISIBILITY VERDICT
+  // for the element the wait was watching — "missing" vs "merely invisible",
+  // #4428 — (a3) the app's own `agaric.log*` copied out of the sandbox before
+  // `afterSession` deletes it, (b) a DISTILLED page-source excerpt (the set of
+  // `data-testid`s present + text fragments around every "wdio" marker — NOT
+  // the full HTML), and (c) the current URL and the sidebar's innerHTML. Each
+  // capture is independently try/caught: a diagnostics failure must never mask
+  // the real test failure or abort teardown.
+  //
+  // (a3) is ALSO taken once per session from `afterSession` above, because this
+  // hook does not run at all when the failure precedes the first test.
   // -------------------------------------------------------------------------
   afterTest: async (test, _context, result) => {
     if (result.passed) return
@@ -400,6 +991,32 @@ export const config: WebdriverIO.Config = {
       console.warn(`[afterTest] saved screenshot: ${file}`)
     } catch (error) {
       console.warn(`[afterTest] screenshot capture failed: ${String(error)}`)
+    }
+
+    // (a2) The verdict that distinguishes "missing" from "merely invisible"
+    // (#4428). Runs before the slower captures below so it reflects the DOM as
+    // close to the failure as teardown allows.
+    try {
+      const message = String(
+        (result.error as { message?: unknown } | undefined)?.message ?? result.error ?? '',
+      )
+      const wait = parseWaitFailure(message)
+      if (wait === undefined) {
+        console.warn('[afterTest] failure is not an element wait — no visibility probe.')
+      } else {
+        const probe = await browser.execute(probeVisibilityInPage, wait.selector)
+        console.warn(explainVisibilityProbe(wait, probe))
+      }
+    } catch (error) {
+      console.warn(`[afterTest] visibility probe failed: ${String(error)}`)
+    }
+
+    // (a3) The backend's own account of the session, before `afterSession`
+    // deletes the sandbox that holds it (#4428).
+    try {
+      console.warn(`[afterTest] app logs: ${rescueAppLogs(label)}`)
+    } catch (error) {
+      console.warn(`[afterTest] app log rescue failed: ${String(error)}`)
     }
 
     // (c) Current URL.
