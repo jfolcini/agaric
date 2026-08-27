@@ -589,7 +589,7 @@ jobs:
                 echo "Final attempt: dbus-run-session probed healthy (started and tore down a real bus); keeping it for this attempt too."
                 launcher=(dbus-run-session --)
               else
-                echo "::warning::Final attempt: dbus-run-session missing or failed a live probe; booting WITHOUT it, so a broken session bus degrades to the previous behaviour instead of gating the release."
+                echo "::warning::Final attempt: dbus-run-session missing or failed a live probe; booting WITHOUT it, so a broken session bus degrades to the previous behaviour instead of gating the release." >&2
                 launcher=()
               fi
             elif command -v dbus-run-session >/dev/null 2>&1; then
@@ -762,12 +762,23 @@ jobs:
             # whole snapshot exists to capture `wchan` for — and that gap
             # would not be visible from this file alone.
             #
-            # The basename is interpolated below unescaped into this ERE, so
-            # version dots (`Agaric_X.Y.Z_amd64.AppImage`) act as `.`
-            # wildcards rather than literal dots. Harmless today — the
-            # AppImage naming scheme has no other regex metacharacters — but
-            # it is a regex built from a glob result, not a literal match.
-            snap_pids="$(pgrep -f "$(basename "$APPIMAGE_BIN")|appimage_extracted|[Xx]vfb|dbus-run-session" | paste -sd, - || true)"
+            # The basename is escaped before interpolation into this ERE.
+            # An unescaped basename would treat version dots
+            # (`Agaric_X.Y.Z_amd64.AppImage`) as `.` wildcards — harmless,
+            # since a wildcard still matches the literal character it
+            # stands in for — but a version carrying an actual ERE
+            # quantifier is worse than a wildcard: semver build metadata
+            # (`Agaric_0.9.9+build_amd64.AppImage`) has a literal `+`, and
+            # `9+` would consume it as "one or more 9s", so the arm stops
+            # matching the literal path entirely and silently narrows the
+            # snapshot to whatever the `appimage_extracted` arm still
+            # catches. Escape every ERE metacharacter, not just dots.
+            # shellcheck disable=SC2016  # single quotes are REQUIRED: this
+            # is a literal sed pattern, not a shell expansion — expanding
+            # `$(){}` here would run them as the step shell's own syntax
+            # instead of handing sed a literal character class.
+            _appimage_basename_re="$(printf '%s' "$(basename "$APPIMAGE_BIN")" | sed 's/[]+*.?^$(){}|[\]/\\&/g')"
+            snap_pids="$(pgrep -f "$_appimage_basename_re|appimage_extracted|[Xx]vfb|dbus-run-session" | paste -sd, - || true)"
             if [ -n "$snap_pids" ]; then
               PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p "$snap_pids" 2>&1)" \
                 || PROC_SNAPSHOT="(ps failed for pids '$snap_pids': $PROC_SNAPSHOT)"
@@ -851,10 +862,14 @@ jobs:
               echo "       Otherwise '\$code' is the tell — it is a STRING now, not an" >&2
               echo "       exit status: 'timeout' = alive at the deadline but never produced" >&2
               echo "       the artifact; 'exited:N' = ended on its own before booting" >&2
-              echo "       (134 = SIGABRT under panic=abort, 0 = a quiet false start)." >&2
-              echo "       ('alive' and 'exited-after-boot:N' cannot appear here — both" >&2
-              echo "       require booted=1, which requires the log file this branch just" >&2
-              echo "       proved absent.) There is no" >&2
+              echo "       (134 = SIGABRT under panic=abort, 101 = an early panic on an" >&2
+              echo "       unwinding build, 0 = a quiet false start)." >&2
+              echo "       ('alive' and 'exited-after-boot:N' should not be reachable here —" >&2
+              echo "       both require booted=1, which requires the log line to have been" >&2
+              echo "       read at least once; getting here with either would mean the app" >&2
+              echo "       deleted its own log file sometime in the up-to-${MIN_ALIVE_SECONDS}s dwell" >&2
+              echo "       before the reap. Practically unreachable, not structurally" >&2
+              echo "       impossible.) There is no" >&2
               echo "       124 any more — \$code never carries a timeout(1) status. Or the" >&2
               echo "       sandbox override was not honoured. Sandbox tree:" >&2
               find "$SANDBOX" -maxdepth 3 >&2 || true

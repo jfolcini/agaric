@@ -1050,10 +1050,18 @@ if [ "${1:-}" = "--self-test" ]; then
     if [ ! -f "$_vy" ]; then
         st_bad "divergence ratchet: found _validate.yml" "no such file: $_vy"
     else
-        _vci=$(sed -n "s/^[[:space:]]*ci_re='\(.*\)'[[:space:]]*$/\1/p" "$_vy" | head -1)
-        if [ -z "$_vci" ]; then
-            st_bad "divergence ratchet: found _validate.yml's ci_re" "no ci_re= line matched"
+        _vci_matches=$(sed -n "s/^[[:space:]]*ci_re='\(.*\)'[[:space:]]*$/\1/p" "$_vy")
+        _vci_count=$(printf '%s\n' "$_vci_matches" | sed '/^$/d' | wc -l)
+        if [ "$_vci_count" -ne 1 ]; then
+            # Fail closed the same way the sibling guards in this block do
+            # (`[ ! -f "$_vy" ]`, `[ -z "$_tracked" ]`): a `head -1` here
+            # would silently compare against only the FIRST `ci_re=` line
+            # if `_validate.yml` ever grows a second one in another job,
+            # leaving the second diverge unwatched instead of caught.
+            st_bad "divergence ratchet: found exactly one _validate.yml ci_re= line" \
+                "found $_vci_count (expected 1)"
         else
+            _vci="$_vci_matches"
             _ours=no; _theirs=no
             printf 'scripts/push.sh\n' | grep -qE "$CI_PATH_RE" && _ours=yes
             printf 'scripts/push.sh\n' | grep -qE "$_vci" && _theirs=yes
@@ -1107,9 +1115,21 @@ if [ "${1:-}" = "--self-test" ]; then
             # guard in this block does (`[ ! -f "$_vy" ]`, `[ -z "$_vci" ]`),
             # and this ratchet is not exempt just because its failure mode
             # is a command returning nothing instead of a missing file.
-            _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '^scripts/.*\.sh$')
+            #
+            # Both HALVES of the documented divergence must be excluded
+            # here, or the two halves of this very check disagree with each
+            # other: (a) `scripts/*.sh`, and (b) the four toml arms, which
+            # are UNANCHORED in `CI_PATH_RE` (see the divergence note above
+            # `CI_PATH_RE`) — so ANY tracked path merely ending in one of
+            # those four filenames (a nested `docs/prek.toml`, a
+            # differently-prefixed `myprek.toml`) is CI here and not in
+            # `_validate.yml`'s anchored `ci_re`, same as (a). Omitting (b)
+            # here would make this loop flag that exact documented case as
+            # "wider than documented" and tell you to update a note that
+            # already says it — the failure this fix (#4424) closes.
+            _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$')
             if [ -z "$_tracked" ]; then
-                st_bad "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml" \
+                st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with _validate.yml" \
                     "git ls-files returned no tracked paths — the comparison would silently pass having checked zero"
             else
                 _ours_list=$(printf '%s\n' "$_tracked" | grep -E "$CI_PATH_RE" | sort -u)
@@ -1120,10 +1140,55 @@ if [ "${1:-}" = "--self-test" ]; then
                 )
                 _count=$(printf '%s\n' "$_tracked" | wc -l)
                 if [ -z "$_mismatch" ]; then
-                    st_ok "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml ($_count paths compared)"
+                    st_ok "divergence ratchet: every tracked path outside the documented divergence agrees with _validate.yml ($_count paths compared)"
                 else
-                    st_bad "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml" \
+                    st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with _validate.yml" \
                         "$(printf '%s' "$_mismatch" | tr '\n' ' ')"
+                fi
+            fi
+
+            # RATCHET (#4424): the exclusion just above must actually
+            # cover divergence (b), not just (a) — a nested or
+            # differently-prefixed toml path must not survive into
+            # `_tracked` and trip the loop above as an undocumented
+            # mismatch. This is a pure string/regex property of the
+            # exclusion pattern itself — it needs no git fixture, tracked
+            # or otherwise, to exercise: apply the SAME pattern the
+            # `_tracked=` line uses to a synthetic path list and check what
+            # survives. (An earlier version of this check built a throwaway
+            # `git init` fixture to get a "real" tracked path; #3722's
+            # git-fixture-isolation guard correctly rejected that — a
+            # self-test run as a prek hook executes inside the commit's own
+            # git environment, where GIT_DIR/GIT_INDEX_FILE/GIT_WORK_TREE
+            # outrank `git -C <dir>`, so that fixture's `git init`/`add`/
+            # `commit` would have landed on the real repository, not a
+            # scratch one. No fixture is simpler AND safer here.)
+            #
+            # Extract the exclusion pattern from the `_tracked=` line
+            # itself (not a hand copy that could silently drift from it —
+            # the same failure mode `unrec_ci` already had once in this
+            # file).
+            _tracked_line=$(grep -E '^[[:space:]]*_tracked=\$\(git -C' "${BASH_SOURCE[0]}")
+            _tracked_excl=${_tracked_line#*grep -vE \'}
+            _tracked_excl=${_tracked_excl%\'*}
+            if [ -z "$_tracked_excl" ] || [ "$_tracked_excl" = "$_tracked_line" ]; then
+                st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths like scripts/*.sh" \
+                    "could not extract the grep -vE pattern from the _tracked= line"
+            else
+                # The eight unanchored-toml shapes from the loop above, PLUS
+                # a scripts/*.sh path (divergence (a)) and two ordinary
+                # tracked paths that must NOT be swept up by an
+                # over-broad pattern.
+                _survivors=$(printf '%s\n' \
+                    docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml \
+                    myprek.toml custom.taplo.toml oldlychee.toml backup.gitleaks.toml \
+                    scripts/push.sh src-tauri/src/lib.rs README.md \
+                    | grep -vE "$_tracked_excl")
+                if [ "$_survivors" = "$(printf 'src-tauri/src/lib.rs\nREADME.md')" ]; then
+                    st_ok "divergence ratchet: _tracked excludes nested/prefixed toml paths like scripts/*.sh (and only those)"
+                else
+                    st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths like scripts/*.sh (and only those)" \
+                        "expected only src-tauri/src/lib.rs and README.md to survive; got: $(printf '%s' "$_survivors" | tr '\n' ' ')"
                 fi
             fi
         fi
