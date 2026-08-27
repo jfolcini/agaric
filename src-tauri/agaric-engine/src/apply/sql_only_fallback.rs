@@ -33,6 +33,19 @@
 //! believing they cover the production engine path (the false-drift
 //! class behind #891). It must NOT come back.
 //!
+//! #4472: the in-transaction handlers above are no longer the only
+//! recorders. The materializer's POST-COMMIT engine fan-outs
+//! (`dispatch_delete_descendants`, `dispatch_unswept_cohort`) skip any
+//! cohort member absent from the target space's engine, and record that
+//! skip HERE, with [`SqlOnlyFallbackReason::EngineMissingTarget`], off the
+//! identical `node_for` membership probe. It is the same decision as
+//! `apply_delete_block_via_loro`'s, taken about the same block, one
+//! transaction later: the mirror cannot be represented on that engine, so
+//! SQL stands and boot-replay reconciles. Recording it anywhere else would
+//! split one population across two counters; leaving it silent (as #4468's
+//! first cut did) would make it uncountable, and "absent from the engine"
+//! is also the shape of genuine drift.
+//!
 //! This module makes each fallback *observable* without changing any
 //! control flow: a process-global counter (incremented at every
 //! fallback site) plus a debug log. A nonzero [`count`] in production
@@ -48,7 +61,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Why an `apply_*_via_loro` handler fell back to its `apply_*_sql_only`
-/// path. See the module docs.
+/// path — or, since #4472, why a post-commit engine fan-out skipped a
+/// cohort member's mirror. See the module docs.
 ///
 /// Both variants are **intentional soft fallbacks, not errors**: the
 /// handler records the reason and projects through the SQL-only path
@@ -87,6 +101,13 @@ pub enum SqlOnlyFallbackReason {
     ///   space's tree, which the block's own single-space engine cannot
     ///   reference; SQL is authoritative for the reparent and each
     ///   space's engine converges on replay.
+    ///
+    /// The two bullets above enumerate CAUSES, not recorders. More than one
+    /// site records this reason — the in-tx `apply_*_via_loro` handlers, and
+    /// (since #4472) the post-commit fan-out, which meters the same decision
+    /// about the same block one transaction later. A new recorder is not a
+    /// new cause, so adding one does not extend this list; adding a third
+    /// way for a block to be absent from its space's tree would.
     EngineMissingTarget,
 }
 

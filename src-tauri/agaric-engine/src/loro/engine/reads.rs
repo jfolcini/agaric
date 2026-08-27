@@ -36,6 +36,32 @@ impl LoroEngine {
             position,
         }))
     }
+    /// Membership-only companion to [`Self::read_block`] (#4472).
+    ///
+    /// `true` iff `block_id` resolves to a node in this engine's index. This
+    /// is EXACTLY the predicate `read_block(block_id)` distinguishes with its
+    /// `Ok(None)` arm — that arm is reached on, and only on, a `node_for`
+    /// miss — so `!contains_block(id)` is interchangeable with
+    /// `matches!(read_block(id), Ok(None))` for every input:
+    ///
+    /// * absent from the index ⇒ `read_block` ⇒ `Ok(None)`, here ⇒ `false`;
+    /// * present and well-formed ⇒ `read_block` ⇒ `Ok(Some(_))`, here ⇒ `true`;
+    /// * present but MALFORMED (a meta field of the wrong shape) ⇒ `read_block`
+    ///   ⇒ `Err`, which is not `Ok(None)`, and here ⇒ `true`. Callers that skip
+    ///   on absence therefore still dispatch a malformed node, still let
+    ///   `get_block_map` raise, and still report — the malformed case is
+    ///   real drift and must not be silenced by a membership probe.
+    ///
+    /// It exists because that predicate is all the fan-out guards want, while
+    /// [`Self::read_block`] pays for a whole [`BlockSnapshot`] to answer it: a
+    /// `block_type` scalar, a full `read_text` of the content, a SECOND
+    /// `get_meta` for the parent, and an O(K) sibling scan in
+    /// [`Self::child_rank_position`]. Sweeping a delete cohort that way is
+    /// O(N·K) for a question the index answers in O(1) — the same lean-companion
+    /// move [`Self::read_block_content`] makes for the edit hot path.
+    pub fn contains_block(&self, block_id: &str) -> bool {
+        self.node_for(block_id).is_some()
+    }
     /// Lean, content-only companion to [`Self::read_block`] for the edit
     /// hot path (#2200).
     ///

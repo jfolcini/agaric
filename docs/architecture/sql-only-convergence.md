@@ -31,6 +31,10 @@ model rather than accidents of test scaffolding. They are enumerated as
   reconciliation window (an earlier op for the block was itself projected
   SQL-only) and by cross-space moves.
 
+Two reasons, but — since #4472 — more than one *recorder*: the post-commit
+engine fan-outs record `EngineMissingTarget` too, for the same condition one
+transaction later. See "Instrumentation" below.
+
 Both are **soft fallbacks, not errors**: the handler records the reason and
 takes the SQL projection instead of propagating an `Err`. They are load-bearing
 — the #2326 create-then-`SetProperty(space)` ordering depends on
@@ -113,6 +117,16 @@ Production observability is the counter, surfaced as
 `StatusInfo::sql_only_fallback_count` (#1326) via the materializer coordinator's
 status builder. A nonzero count in a normal session means an op took the
 fallback and is worth explaining.
+
+The in-transaction `apply_*_via_loro` handlers are not the only recorders
+(#4472). The post-commit engine fan-outs (`dispatch_delete_descendants`,
+`dispatch_unswept_cohort`) skip any cohort member absent from the target
+space's engine and record that skip on this same counter, with
+`EngineMissingTarget`, off the identical membership probe — it is the same
+decision about the same block, one transaction later. They deliberately do
+*not* use `descendant_fanout_dropped`, which means "the engine may now be
+divergent from SQL"; a block with no node in that engine has nothing to
+diverge.
 
 ## Test strategy
 

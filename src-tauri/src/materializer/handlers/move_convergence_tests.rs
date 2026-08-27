@@ -2848,19 +2848,16 @@ impl EventBuf {
 }
 
 /// Is `block_id` present in the per-space engine's tree? The exact probe the
-/// #4468 guard makes, so the preconditions below classify POSITIVELY (this
-/// block is known-present / known-absent) rather than inferring membership.
+/// #4468/#4472 guards make (`known_absent_from_engine` → `contains_block`), so
+/// the preconditions below classify POSITIVELY (this block is known-present /
+/// known-absent) rather than inferring membership.
 fn engine_has_block(state: &agaric_engine::loro::shared::LoroState, block_id: &str) -> bool {
     let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
         .expect("for_space (membership probe)");
-    let present = guard
-        .engine_mut()
-        .read_block(block_id)
-        .expect("read_block")
-        .is_some();
+    let present = guard.engine_mut().contains_block(block_id);
     drop(guard);
     present
 }
@@ -2971,5 +2968,150 @@ async fn the_unswept_mirror_skips_a_block_absent_from_the_engine_4468() {
          projection during a no-space window), not drift — the mirror must skip \
          it rather than raise the durable divergence signal. Captured warn \
          output: {log}"
+    );
+}
+
+// ======================================================================
+// #4472 — the delete-cascade mirror and a cohort member absent from the engine
+// ======================================================================
+
+/// #4472 — a `deleted_cohort` member ABSENT from the per-space engine must be
+/// SKIPPED by the delete-cascade mirror, not fed to `engine_apply`.
+///
+/// # The contradiction this pins
+///
+/// `ApplyEffects::deleted_cohort` is the set of rows the SQL cascade
+/// tombstoned. `dispatch_delete_descendants` hands every one of them to
+/// `engine_apply`, whose `DeleteBlock` arm goes through `get_block_map` —
+/// which ERRORS on a node this engine has never seen, and that error becomes a
+/// `merge::divergence::record` bump plus a `warn!` carrying the stable
+/// `engine_apply_diverged` marker.
+///
+/// That is #4468's asymmetry on a strictly more reachable path, and here the
+/// two halves of the system openly disagree: for a delete whose seed is absent,
+/// `apply_delete_block_via_loro` has already probed the SAME membership
+/// in-transaction, recorded `SqlOnlyFallbackReason::EngineMissingTarget`, and
+/// taken the SQL-only cascade — calling the state a legitimate soft fallback.
+/// The post-commit fan-out then called the identical state drift.
+///
+/// # Why the assertion is a TRIPLE
+///
+/// "No divergence was recorded" is true for at least three reasons: the guard
+/// fired, OR control never reached the loop (an empty cohort, or the no-space
+/// early return — both silent), OR the guard over-fired and skipped everything.
+/// A quiet log alone therefore proves nothing. The discriminators only the
+/// intended path can produce, together:
+///
+/// 1. the PRESENT member's engine `deleted_at` register carries the root's
+///    `created_at` — only a run that entered the loop and dispatched can write
+///    it (it starts `None`; nothing in the fixture deletes `C1A`);
+/// 2. the SQL-only fallback counter advanced by EXACTLY ONE across the
+///    dispatch — a positive signal that the skip fired for exactly the absent
+///    member. `0` catches "never reached the loop"; `2` catches an over-firing
+///    guard, from the opposite side to (1);
+/// 3. and the warn stream stayed quiet.
+///
+/// Under `cargo nextest run` each test owns its process, so the exact delta on
+/// the process-global monotonic counter is sound (the canonical statement is on
+/// `agaric_engine::loro::shared`'s module docs, #3983); `before` is sampled
+/// immediately before the dispatch so the fixture's own legitimate fallbacks
+/// (the space-less page create in `seed_engine_world`) are excluded.
+///
+/// Reddens on removing the guard (the absent member reaches `get_block_map`,
+/// `engine_apply_diverged` lands in the log, and the counter delta drops to 0)
+/// and on a guard that over-fires (`C1A` is skipped too — its register stays
+/// `None` and the delta is 2).
+///
+/// `multi_thread` rather than the sibling #4468 test's plain `#[tokio::test]`
+/// because this drives the materializer's post-commit fan-out, which the
+/// single-threaded flavour deadlocks. That is worth stating, because the
+/// #4473 review argued the warn-capture here is safe on the premise that
+/// `#[tokio::test]` is current-thread and so the thread-local subscriber set
+/// by `set_default` cannot be missed. That premise does NOT hold under this
+/// flavour. Capture is still sound for a different reason:
+/// `dispatch_delete_descendants` has no `.await` in its loop, and tokio polls
+/// the top-level future on the calling thread, so the subscriber stays live
+/// across it. Verified rather than assumed — neutering the `continue` while
+/// keeping the `record` reddens the log assertion with the real
+/// `engine_apply_diverged` line, which is only possible if capture works.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_delete_cascade_mirror_skips_a_cohort_member_absent_from_the_engine_4472() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    // Never created through the pipeline, so it lives in no engine — the shape
+    // of a block SQL projected during a no-space window. Crockford base32
+    // (AGENTS.md invariant #8) excludes I/L/O/U, as every other fixture id in
+    // this file does.
+    const SQL_ONLY_ID: &str = "01HZ0000000000000000MVSQ2B";
+
+    let (_dir, pool, state) = seed_engine_world("delete_cohort_absent_block.db").await;
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
+
+    assert!(
+        engine_has_block(&state, C1A_ID),
+        "precondition: C1A must BE in the engine — it is the member whose \
+         successful dispatch discriminates 'the guard fired' from 'control \
+         never reached the loop'"
+    );
+    assert!(
+        !engine_has_block(&state, SQL_ONLY_ID),
+        "precondition: the SQL-only id must be ABSENT from the engine, or the \
+         guard has nothing to guard against and this test cannot redden"
+    );
+    assert_eq!(
+        engine_deleted_at(&state, C1A_ID),
+        None,
+        "precondition: C1A's register must start empty, or half 1 of the \
+         assertion could pass without this dispatch writing anything"
+    );
+
+    // Every member of a delete cohort takes the SAME payload arm
+    // (`DeleteBlock`), so engine membership is the ONLY difference between the
+    // two below.
+    let root = append_delete(&pool, P1_ID).await;
+    let cohort = vec![C1A_ID.to_string(), SQL_ONLY_ID.to_string()];
+
+    let writer = EventBuf::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("warn"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let log_guard = tracing::subscriber::set_default(subscriber);
+
+    let fallbacks_before = super::sql_only_fallback::count();
+    super::apply::dispatch_delete_descendants(&root, &cohort, Some(&space), &state).await;
+    let fallbacks_after = super::sql_only_fallback::count();
+
+    drop(log_guard);
+    let log = writer.contents();
+
+    // Half 1 of the triple: the mirror RAN.
+    assert_eq!(
+        engine_deleted_at(&state, C1A_ID),
+        Some(root.created_at.to_string()),
+        "the present member must still be mirrored at the delete's ts — a \
+         guard that skipped it too would silence the log for the wrong reason"
+    );
+    // Half 2: and it skipped exactly one member, countably.
+    assert_eq!(
+        fallbacks_after - fallbacks_before,
+        1,
+        "#4472: the skip must be METERED — 'absent from the engine' is also \
+         the shape of genuine drift, so a silent skip leaves that population \
+         uncountable. Exactly one member is absent, so exactly one \
+         `EngineMissingTarget` fallback must be recorded (0 ⇒ the loop was \
+         never entered or the skip is silent; 2 ⇒ the guard over-fired)"
+    );
+    // Half 3: and it stayed quiet about the absent one.
+    assert!(
+        !log.contains("engine_apply_diverged"),
+        "#4472: a cohort member absent from the engine is a legitimate state \
+         (SQL-only projection during a no-space window) — the very state the \
+         in-tx apply already recorded as `EngineMissingTarget` — not drift. \
+         The mirror must skip it rather than raise the durable divergence \
+         signal. Captured warn output: {log}"
     );
 }

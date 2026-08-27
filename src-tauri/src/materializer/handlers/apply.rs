@@ -504,6 +504,103 @@ async fn fan_out_restore(
     }
 }
 
+/// Which of `block_ids` are KNOWN-ABSENT from `space_id`'s engine — the shared
+/// membership probe behind the #4468 and #4472 fan-out guards.
+///
+/// # What "absent" means here, exactly
+///
+/// `LoroEngine::contains_block` is `node_for(id).is_some()`, and a `node_for`
+/// miss is the one and only condition on which the engine's `get_block_map`
+/// raises `block <id> not found`. So this set is precisely the set of members
+/// whose `engine_apply` would fail for the reason "this block never entered
+/// this engine" — and NOT for any other reason. A node that is present but
+/// MALFORMED is `contains_block == true`, is not collected, still dispatches,
+/// still raises, and still records the divergence. That case is real drift and
+/// the guard must not silence it.
+///
+/// # Why a set built under ONE guard
+///
+/// The probe takes the per-space engine mutex once for the whole cohort and
+/// drops it before any `engine_apply` takes its own, instead of re-acquiring
+/// per member. `for_space` is not a free read — it lazily creates the engine
+/// and marks the space dirty on every acquisition — so one acquisition for N
+/// members is strictly cheaper than the N the fan-out already performs.
+///
+/// **TOCTOU:** a concurrent import can create a member between this probe and
+/// its dispatch, in which case the mirror is skipped for a block the engine now
+/// knows. That is not a new class: the whole post-commit fan-out is already
+/// non-atomic with respect to the engine (each `engine_apply` takes and
+/// releases the guard independently), and the next boot replay reconciles it.
+/// Noted, not fixed.
+///
+/// # Metering
+///
+/// This function is a pure probe; the count is taken by
+/// [`record_absent_from_engine_skip`] at each caller's actual skip site, so a
+/// guard that stops skipping also stops counting.
+///
+/// The counter is the process-global SQL-only fallback one, with reason
+/// `SqlOnlyFallbackReason::EngineMissingTarget` — the SAME vocabulary, for the
+/// SAME condition, off the SAME `node_for` probe, that
+/// `apply_delete_block_via_loro` already records in-transaction when it finds
+/// its seed absent and takes the SQL-only cascade. The post-commit mirror's
+/// skip is that decision's other half, so it belongs on that counter, which the
+/// coordinator's status builder already surfaces as
+/// `StatusInfo::sql_only_fallback_count`.
+///
+/// It deliberately does NOT record `descendant_fanout_dropped`: that counter
+/// means "the engine may now be divergent from SQL", and a block with no node
+/// in this engine has nothing to diverge. But it must not be silent either —
+/// "absent from the engine" is also the shape of genuine drift (a `CreateBlock`
+/// whose engine mirror failed and was swallowed), and a `trace!`-only skip
+/// leaves that population uncountable at every production level (#4468's skip
+/// was `trace!`-only; #4472 makes both countable).
+///
+/// # On failure to acquire
+///
+/// An `Err` from `for_space` yields an EMPTY set, so every member dispatches
+/// exactly as it did before this guard existed and `engine_apply`'s own
+/// registry-failure arm reports the divergence with the detail. No error is
+/// swallowed and no mirror the engine could have taken is ever skipped.
+fn known_absent_from_engine<'a>(
+    state: &agaric_engine::loro::shared::LoroState,
+    space_id: &agaric_store::space::SpaceId,
+    root_record: &OpRecord,
+    block_ids: impl Iterator<Item = &'a str>,
+) -> std::collections::HashSet<&'a str> {
+    let mut absent: std::collections::HashSet<&'a str> = std::collections::HashSet::new();
+    let Ok(mut guard) = state.registry.for_space(space_id, &root_record.device_id) else {
+        return absent;
+    };
+    let engine = guard.engine_mut();
+    for block_id in block_ids {
+        if !engine.contains_block(block_id) {
+            absent.insert(block_id);
+        }
+    }
+    drop(guard);
+    absent
+}
+
+/// Meter one fan-out member that [`known_absent_from_engine`] found absent and
+/// the caller is therefore skipping (#4468/#4472).
+///
+/// Both fan-out guards call THIS, so the suppressed population is counted the
+/// same way from both — and it is recorded at the point of the actual skip, not
+/// at the probe, so a guard that stops skipping stops counting.
+fn record_absent_from_engine_skip(root_record: &OpRecord, op: &'static str, block_id: &str) {
+    super::sql_only_fallback::record(
+        op,
+        super::sql_only_fallback::SqlOnlyFallbackReason::EngineMissingTarget,
+    );
+    tracing::trace!(
+        seq = root_record.seq,
+        block_id = %block_id,
+        op,
+        "fanout: block absent from the engine; skipping the mirror (#4468/#4472)",
+    );
+}
+
 /// Symmetric companion to [`dispatch_restore_descendants`] for the
 /// `DeleteBlock` cascade.
 ///
@@ -534,6 +631,49 @@ async fn fan_out_restore(
 /// are absorbed (warn + skip) so this helper has nothing to propagate.
 /// Per-call cost is bounded by the per-space engine lock + the engine's
 /// per-block-id mutation (single-digit microseconds).
+///
+/// ## Cohort members absent from this engine (#4472)
+///
+/// `deleted_cohort` is the set of rows the SQL cascade tombstoned, which is
+/// not the same set as the blocks this space's engine knows. A member that was
+/// projected SQL-only during a no-space window has no node here, and
+/// `apply_delete_block` goes through `get_block_map`, which ERRORS on a missing
+/// node — an error `engine_apply` turns into a `merge::divergence::record` bump
+/// plus a `warn!`.
+///
+/// That is the same asymmetry #4468 fixed one helper down, and on this path the
+/// two halves of the system openly contradict each other: for a delete whose
+/// SEED is absent, `apply_delete_block_via_loro` has ALREADY probed the same
+/// membership in-transaction, recorded
+/// `SqlOnlyFallbackReason::EngineMissingTarget`, and taken the SQL-only cascade
+/// — classifying the state as a legitimate soft fallback. The post-commit
+/// fan-out then hands that identical block to `engine_apply`, which classifies
+/// it as drift. So membership is probed here too, per member, via
+/// [`known_absent_from_engine`].
+///
+/// ### Why the guard is here and not at `ApplyEffects::deleted_cohort`
+///
+/// The obvious-looking alternative is to stop populating `deleted_cohort` in
+/// `apply::kernel` when the in-tx apply already found the seed absent. That is
+/// wrong in both directions:
+///
+/// * `deleted_cohort` is the SQL cascade's own output. It also feeds
+///   `PreOpState::Cohort` (the `pages_cache` count refresh) and the command
+///   path's `descendants_affected` reply, neither of which is about engine
+///   membership. Truncating it there would corrupt two unrelated consumers to
+///   fix a third.
+/// * Seed membership does not imply cohort membership. A block C created in
+///   this engine and later MOVED under an engine-absent parent A takes
+///   `apply_move_block_via_loro`'s own `EngineMissingTarget` fallback: SQL
+///   reparents C under A while the engine keeps C where it was. Deleting A then
+///   yields a cohort whose seed is absent and whose descendant C is PRESENT.
+///   Dropping the whole cohort would leave C alive in the engine while SQL
+///   reports it deleted — exactly the divergence this helper exists to prevent,
+///   reintroduced by the "fix".
+///
+/// The contradiction is not that the cohort is populated unconditionally; it is
+/// that the fan-out was reading SQL-cascade membership as engine membership.
+/// Per-member is the only granularity at which that is corrected.
 pub(crate) async fn dispatch_delete_descendants(
     root_record: &OpRecord,
     cohort: &[String],
@@ -565,7 +705,29 @@ pub(crate) async fn dispatch_delete_descendants(
         return;
     };
 
+    // #4472: probe engine membership for the whole cohort under ONE guard,
+    // released before any `engine_apply` takes its own. Only a KNOWN-absent
+    // member is collected, and every skip below is metered as an
+    // `EngineMissingTarget` SQL-only fallback — the same reason, off the same
+    // probe, that `apply_delete_block_via_loro` records in-tx for the seed.
+    // See this function's "Cohort members absent from this engine".
+    let absent = known_absent_from_engine(
+        state,
+        space_id,
+        root_record,
+        cohort.iter().map(String::as_str),
+    );
+
     for cohort_id in cohort {
+        if absent.contains(cohort_id.as_str()) {
+            // Never entered this engine (SQL-only projection during a no-space
+            // window). `apply_delete_block` would raise `block not found` here,
+            // and `engine_apply` would record that as drift — for the very
+            // state the in-tx apply already classified as a legitimate soft
+            // fallback.
+            record_absent_from_engine_skip(root_record, "delete_block_cohort", cohort_id);
+            continue;
+        }
         // Build the typed payload directly (no JSON round-trip).
         let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: BlockId::from_trusted(cohort_id),
@@ -638,7 +800,10 @@ pub(crate) async fn dispatch_delete_descendants(
 /// legitimate state rather than for drift. So membership is probed first and a
 /// known-absent block is skipped, the same guard the engine arm's inline sweep
 /// mirror uses for the same case (`agaric_engine::apply::loro_apply`, the
-/// #4112 sweep block: `if engine.read_block(id)?.is_some()`).
+/// #4112 sweep block: `if engine.read_block(id)?.is_some()`) — expressed here
+/// through [`known_absent_from_engine`], whose O(1) `contains_block` probe is
+/// exactly equivalent to that `read_block` test and which meters each skip as
+/// an `EngineMissingTarget` SQL-only fallback (#4472).
 ///
 /// # Not covered: recovery's third interpreter
 ///
@@ -682,24 +847,29 @@ pub(crate) async fn dispatch_unswept_cohort(
 
     // #4468: probe engine membership up front, under ONE guard that is
     // released before `engine_apply` takes its own. Only a KNOWN-absent block
-    // (`Ok(None)`) is collected — a `read_block` error dispatches exactly as it
-    // did before, so the guard can never swallow a mirror the engine could
-    // have taken. A registry failure is `engine_apply`'s own to report, with
-    // the detail, so nothing is probed and nothing is skipped in that case.
-    let absent: std::collections::HashSet<&str> =
-        match state.registry.for_space(space_id, &root_record.device_id) {
-            Ok(mut guard) => {
-                let engine = guard.engine_mut();
-                let ids = unswept
-                    .iter()
-                    .filter(|b| matches!(engine.read_block(b.block_id.as_str()), Ok(None)))
-                    .map(|b| b.block_id.as_str())
-                    .collect();
-                drop(guard);
-                ids
-            }
-            Err(_) => std::collections::HashSet::new(),
-        };
+    // is collected — a present-but-malformed node dispatches exactly as it did
+    // before, so the guard can never swallow a mirror the engine could have
+    // taken. A registry failure is `engine_apply`'s own to report, with the
+    // detail, so nothing is probed and nothing is skipped in that case.
+    //
+    // NOT a free read: `for_space` lazily creates the engine and marks the
+    // space dirty on every acquisition (`loro_vv` exists precisely to avoid
+    // that on read-only paths). Taking it once here is still strictly cheaper
+    // than the N acquisitions the dispatch loop below already performs — but
+    // this shape must not be copied onto a path that is genuinely read-only.
+    //
+    // TOCTOU: a concurrent import can create a member between the probe and
+    // its dispatch, and the mirror is then skipped for a block the engine now
+    // knows. The probe holds the guard across no `.await` and drops it before
+    // `engine_apply` takes its own, so this adds no new class — the whole
+    // post-commit fan-out is already non-atomic w.r.t. the engine, and boot
+    // replay reconciles. Noted, not fixed. See #4473's analysis.
+    let absent = known_absent_from_engine(
+        state,
+        space_id,
+        root_record,
+        unswept.iter().map(|b| b.block_id.as_str()),
+    );
 
     for block in unswept {
         if absent.contains(block.block_id.as_str()) {
@@ -708,11 +878,7 @@ pub(crate) async fn dispatch_unswept_cohort(
             // already does for the `None` arm; without this the `Some(_)`
             // arm would instead raise a divergence signal for a legitimate
             // state. See this function's "Blocks absent from this engine".
-            tracing::trace!(
-                seq = root_record.seq,
-                block_id = %block.block_id,
-                "un-sweep fanout: block absent from the engine; skipping (#4468)",
-            );
+            record_absent_from_engine_skip(root_record, "move_block_unswept", &block.block_id);
             continue;
         }
         let payload = match block.deleted_at {

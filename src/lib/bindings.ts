@@ -4077,11 +4077,20 @@ export type StatusInfo = {
 	 */
 	retry_persist_capped: number,
 	/**
-	 *  #1326 / #1057: process-global count of SQL-only fallbacks taken by
-	 *  the `apply_*_via_loro` handlers (Loro engine uninitialised or block
-	 *  space unresolved). Monotonic, never reset. **In production both
-	 *  fallback arms are unreachable**, so a non-zero value signals an
-	 *  unexpected engine-uninit or space-resolution miss that warrants
+	 *  #1326 / #1057: process-global count of SQL-only fallbacks, keyed by
+	 *  `SqlOnlyFallbackReason` (`SpaceUnresolved` / `EngineMissingTarget`).
+	 *  TWO recorder classes, not one: the in-transaction
+	 *  `apply_*_via_loro` handlers that fall back to the SQL-only
+	 *  projection, and — since #4472 — the post-commit engine fan-outs
+	 *  (`dispatch_delete_descendants` / `dispatch_unswept_cohort`) that
+	 *  skip a cohort member absent from the target space's engine. Both
+	 *  mean "this block is not represented in that space's engine; boot
+	 *  replay reconciles", which is why they share a counter; the two are
+	 *  still separable at triage by the `op` field
+	 *  (`delete_block` vs `delete_block_cohort`). Monotonic, never reset.
+	 *  **In production every arm is unreachable on a well-formed,
+	 *  fully-reconciled op log**, so a non-zero value signals an
+	 *  unexpected space-resolution or engine-membership miss that warrants
 	 *  investigation — pair with the
 	 *  `target=materializer::sql_only_fallback` debug lines (which carry
 	 *  `op` + `reason`) for triage. Sourced from
