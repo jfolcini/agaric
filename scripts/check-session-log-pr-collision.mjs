@@ -2661,23 +2661,71 @@ function runProcessCasesIn(dir, ok, fail) {
   // page `gh` is asked for must be exactly ONE longer than the cap the guard
   // is told to enforce. `--limit "$PR_LIST_LIMIT"` (the shape that caused
   // #4431 review note 4) fails this; so does any other drift between them.
-  // The expression is allow-listed to shell arithmetic characters before it
-  // is evaluated — this is our own workflow file, but a self-test that
-  // `bash -c`s arbitrary text out of a file is a worse idea than the check
-  // is worth.
+  //
+  // #4466 note 4: this used to allow-list the expression to
+  // `[A-Z_0-9$() +]` and hand it to `bash -c` — bounding the affordance
+  // rather than removing it, since that class still admits `$(SOMEWORD)`
+  // command substitution for an all-uppercase "command" name ahead of the
+  // `bash -c`. Not attacker-controlled (this reads our own workflow file),
+  // but a self-test with a shell in its evaluation path is a worse shape
+  // than the check needs. The value this file actually ever writes is the
+  // shell ARITHMETIC-EXPANSION form `$(( <expr> ))` — never a command
+  // substitution — so this now requires exactly that shape, substitutes the
+  // one named variable it names, and evaluates the result as bare
+  // arithmetic in JS: no shell, and no character in the class this accepts
+  // (digits, whitespace, `+`, `-`) that could ever start a command.
   const cap = declaredCap === null ? null : Number(declaredCap[1])
   const expr = fetchLimit === null ? '' : fetchLimit[1]
+  const arithBody = /^\$\(\(([^$()]*)\)\)$/.exec(expr)?.[1] ?? null
+  const substituted =
+    arithBody === null || cap === null ? null : arithBody.replaceAll('PR_LIST_LIMIT', String(cap))
+  // A GRAMMAR, not a character class: `<int> ( <+|-> <int> )*` with an
+  // optional leading sign, anchored, so every character of `substituted` is
+  // accounted for by a term or an operator. The looser `/^[\s\d+-]+$/` this
+  // replaces was not enough to make the token sum below an EVALUATION: it
+  // admitted two adjacent signs, and `substituted.match()` — which skips
+  // anything it cannot start a match at, rather than failing — silently
+  // dropped the first of them. `$((PR_LIST_LIMIT - +1))` therefore summed to
+  // `100 + 1 = 101` and PASSED this check, while the shell that actually runs
+  // it asks `gh` for 99 — the truncation ambiguity of #4431 review note 4,
+  // waved through by the very assertion that exists to catch it. Refusing an
+  // adjacent-sign expression outright (falling to `NaN`, which can never
+  // equal `cap + 1`) fails closed instead of guessing.
   const evaluated =
-    cap !== null && /^[A-Z_0-9$() +]+$/.test(expr)
-      ? Number(
-          spawnSync('bash', ['-c', `PR_LIST_LIMIT=${cap}; printf '%s' "${expr}"`], {
-            encoding: 'utf8',
-          }).stdout,
+    substituted !== null && /^\s*[+-]?\s*\d+(?:\s*[+-]\s*\d+)*\s*$/.test(substituted)
+      ? // Under that grammar every token IS a signed integer literal and no
+        // character sits outside one, so summing the signed terms IS
+        // evaluating the expression: with only `+`/`-` left there is no
+        // operator precedence to get wrong, and nothing for the scan to skip.
+        (substituted.match(/[+-]?\s*\d+/g) ?? []).reduce(
+          (sum, term) => sum + Number(term.replace(/\s+/g, '')),
+          0,
         )
       : Number.NaN
+  // Why a rejected expression reports WHY it was rejected: `arithBody` is
+  // null for two very different reasons — the expression is not an arithmetic
+  // expansion at all (the real drift this catches, e.g. the bare
+  // `--limit "$PR_LIST_LIMIT"` of #4431 note 4), or it IS one but spells the
+  // variable `$PR_LIST_LIMIT` inside the parens, which the `[^$()]*` body
+  // class refuses. The second is idiomatic shell and arithmetically correct;
+  // it is refused only because admitting `$` back into the body would widen
+  // the class this check narrowed for #4466 note 4. That refusal is
+  // deliberate and fails CLOSED, but without this hint it surfaces as a bare
+  // `evaluated: null` and reads like the guard is broken rather than like the
+  // workflow needs one character removed.
+  const rejectedBecause =
+    arithBody !== null
+      ? null
+      : expr.startsWith('$((')
+        ? 'arithmetic expansion, but the body contains `$` — write the variable bare ' +
+          '(`$((PR_LIST_LIMIT + 1))`, not `$(($PR_LIST_LIMIT + 1))`). The `$`-less ' +
+          'form is required so this check never has to accept `$` in an expression ' +
+          'it evaluates (#4466 note 4).'
+        : 'not a `$(( ... ))` arithmetic expansion at all'
+
   check(
     'cross-file: gh is asked for exactly ONE more PR than the cap the guard enforces',
-    { cap, expr, evaluated },
+    { cap, expr, evaluated, ...(rejectedBecause === null ? {} : { rejectedBecause }) },
     (v) => v.cap !== null && v.evaluated === v.cap + 1,
   )
 

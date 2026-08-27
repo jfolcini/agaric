@@ -40,8 +40,12 @@
  *              call) cannot be resolved and marks the hook UNVERIFIABLE.
  *              A BARE specifier is classified POSITIVELY (#4439 note 3):
  *              a `node:` builtin, a bare builtin name, or a package this
- *              repo declares in `package.json` / actually has under
- *              `node_modules/` is external and contributes nothing;
+ *              repo declares in `package.json` / has resolved in the
+ *              COMMITTED `package-lock.json` is external and contributes
+ *              nothing (#4466 note 2: this used to consult the local
+ *              `node_modules/` directory instead, which made the verdict
+ *              depend on whether `npm install` happened to have been run on
+ *              THIS machine rather than on anything the repo commits);
  *              ANYTHING ELSE — notably a first-party path alias such as
  *              `@/lib/foo`, which no `imports` map makes resolvable under
  *              plain node and which is indistinguishable from `lodash/fp`
@@ -269,11 +273,11 @@ function sliceCall(text, openIdx) {
 }
 
 /**
- * Every package name this repo has POSITIVELY declared, plus whatever is
- * actually installed under `node_modules/`. Memoised per repo root: `analyze`
- * runs over ~180 hooks and `package.json` does not change underneath a run
- * (the CLI self-test rewrites its fixture, but each of its runs is a fresh
- * subprocess -- the same reasoning `extractDirectDeps`'s cache relies on).
+ * Every package name this repo has POSITIVELY declared in `package.json`.
+ * Memoised per repo root: `analyze` runs over ~180 hooks and `package.json`
+ * does not change underneath a run (the CLI self-test rewrites its fixture,
+ * but each of its runs is a fresh subprocess -- the same reasoning
+ * `extractDirectDeps`'s cache relies on).
  *
  * @type {Map<string, Set<string>>}
  */
@@ -302,6 +306,57 @@ function declaredPackages(repoRoot) {
   return names
 }
 
+/**
+ * Every package name the COMMITTED `package-lock.json` actually resolved --
+ * at any nesting depth, so a hoisted transitive-only dependency (one this
+ * repo imports directly but never lists in `package.json`, relying on some
+ * other declared package to have pulled it in) is still recognised.
+ *
+ * #4466 note 2: this replaces an earlier `existsSync(node_modules/<pkg>)`
+ * check. That read the FILESYSTEM, so the verdict depended on whether
+ * `npm install` happened to have been run on the machine executing the
+ * guard -- clean with deps installed, UNVERIFIABLE on a bare checkout of the
+ * identical commit. It also fed a ratchet baseline that fails in BOTH
+ * directions (a hook goes UNVERIFIABLE with no install, or a stale baseline
+ * entry stops reproducing once one is), so which state a run landed in
+ * depended on an ambient fact the guard never controlled. `package-lock.json`
+ * is a file the repo commits and this guard already treats as authoritative
+ * elsewhere in this file (`extractDirectDeps` et al. read `package.json`
+ * itself, never the disk under `node_modules/`), so consulting it instead
+ * makes the verdict a function of the checked-out tree, not of what a
+ * previous `npm install` happened to leave lying around.
+ *
+ * npm's lockfileVersion 3 `packages` map keys every resolved package by its
+ * install path (`node_modules/foo`, or nested as
+ * `node_modules/foo/node_modules/bar` for a version conflict); taking
+ * everything after the LAST `node_modules/` recovers the package name
+ * (scoped names such as `@scope/name` contain no further `/node_modules/`,
+ * so the split does not cut them).
+ *
+ * @type {Map<string, Set<string>>}
+ */
+const lockfilePackagesCache = new Map()
+
+function lockfilePackages(repoRoot) {
+  const hit = lockfilePackagesCache.get(repoRoot)
+  if (hit) return hit
+  const names = new Set()
+  try {
+    const lock = JSON.parse(readFileSync(resolve(repoRoot, 'package-lock.json'), 'utf8'))
+    for (const key of Object.keys(lock?.packages ?? {})) {
+      const name = key.split('node_modules/').pop()
+      if (name) names.add(name)
+    }
+  } catch {
+    // No package-lock.json, or an unreadable/unparseable one. A repo with no
+    // lockfile resolves nothing beyond package.json's own declarations, so
+    // every remaining bare specifier falls through to UNVERIFIABLE below --
+    // the same fail-closed direction `declaredPackages` takes.
+  }
+  lockfilePackagesCache.set(repoRoot, names)
+  return names
+}
+
 /** `@scope/name/deep/path` -> `@scope/name`; `lodash/fp` -> `lodash`. */
 function packageNameOf(spec) {
   const parts = spec.split('/')
@@ -324,8 +379,18 @@ function packageNameOf(spec) {
  * INDISTINGUISHABLE without reading tsconfig/vite config, which this scan
  * does not do. So the classification is positive on the two states that ARE
  * knowable -- a `node:` builtin (or a bare builtin name), and a package the
- * repo declares or actually has installed -- and everything else is
- * UNVERIFIABLE.
+ * repo declares or the COMMITTED `package-lock.json` resolved -- and
+ * everything else is UNVERIFIABLE.
+ *
+ * `package-lock.json`, not `node_modules/` on disk (#4466 note 2): both name
+ * a package this scan did not have to guess at, but only the lockfile is
+ * part of the checked-out tree. Consulting the filesystem instead made the
+ * verdict for a hoisted transitive-only import depend on whether `npm
+ * install` happened to have been run on the machine running the guard --
+ * clean with deps installed, UNVERIFIABLE on a bare checkout of the exact
+ * same commit -- and that ambient fact then fed a ratchet baseline that
+ * fails in both the "new" and the "stale" direction depending on which way
+ * the coin landed.
  *
  * @returns {{kind: 'dep', rel: string} | {kind: 'external'} | {kind: 'unresolvable', reason: string}}
  */
@@ -338,13 +403,13 @@ function classifyJsSpec(repoRoot, scriptRepoDir, spec) {
   if (builtinModules.includes(spec)) return { kind: 'external' }
   const pkg = packageNameOf(spec)
   if (declaredPackages(repoRoot).has(pkg)) return { kind: 'external' }
-  if (existsSync(resolve(repoRoot, 'node_modules', pkg))) return { kind: 'external' }
+  if (lockfilePackages(repoRoot).has(pkg)) return { kind: 'external' }
   return {
     kind: 'unresolvable',
     reason:
       `bare import specifier '${spec}' is neither a node: builtin nor a package this repo ` +
-      `declares or has installed ('${pkg}' is in no package.json dependency field and no ` +
-      'node_modules entry) — it may be a first-party path alias (e.g. `@/lib/foo`), which ' +
+      `declares or has resolved ('${pkg}' is in no package.json dependency field and no ` +
+      'package-lock.json entry) — it may be a first-party path alias (e.g. `@/lib/foo`), which ' +
       'this scan cannot tell from a third-party package without reading tsconfig/vite config',
   }
 }
@@ -513,6 +578,64 @@ function resolvePyModule(repoRoot, scriptRepoDir, moduleName) {
 }
 
 /**
+ * Blank every triple-quoted Python string literal STILL PRESENT after
+ * `stripLineComments(text, 'py')` has run (#4466 note 3).
+ *
+ * `stripLineComments`'s own `blankPyDocstrings` (check-git-fixture-
+ * isolation.mjs) deliberately blanks ONLY a triple-quoted literal that OPENS
+ * A STATEMENT — at the start of a line, indentation and string prefix
+ * aside. That is the right rule for ITS consumer: `hasFixtureGitInit` must
+ * still see `subprocess.run("""git init""")` as the real code it is, and
+ * that file's own doc comment gives exactly that example. This scanner has
+ * the opposite need: an `import`/`from` line found INSIDE ANY triple-quoted
+ * string — say `TEMPLATE = """\n    import subprocess\n"""`, a fixture or
+ * template constant, where `TEMPLATE = ` precedes the delimiter so the
+ * line-start rule leaves it un-blanked — is not a real import no matter
+ * where in the file the string sits, because text inside a string literal
+ * is never executed. Before this pass, `PY_PLAIN_IMPORT_RE` had no
+ * equivalent to the "not a quoted string" check `extractPyDeps` already
+ * applies to a `spec_from_file_location(` match (the `prev === "'"` guard
+ * below) — the two halves of this same scanner disagreed about the
+ * identical hazard.
+ *
+ * Rather than widen `blankPyDocstrings` itself — which every OTHER consumer
+ * of `stripLineComments('py')` relies on to keep non-docstring triple-quoted
+ * code visible — this runs as a SEPARATE, LOCAL second pass, over text where
+ * every docstring-shaped literal has already been blanked (delimiters
+ * included). Anything still spelled `"""`/`'''` in that text therefore did
+ * NOT open a statement, by construction, so unlike `blankPyDocstrings` there
+ * is no per-literal "is this a docstring" distinction left to make — every
+ * remaining pair is blanked unconditionally.
+ *
+ * Same two conservatisms as `blankPyDocstrings`, and for the same reasons
+ * (see its doc comment): an UNTERMINATED literal ends the walk rather than
+ * blanking to EOF, and an escaped delimiter inside a literal is not modelled.
+ */
+function blankRemainingPyTripleQuoted(text) {
+  const DELIM_RE = /"""|'''/g
+  let out = ''
+  let pos = 0
+  for (;;) {
+    DELIM_RE.lastIndex = pos
+    const open = DELIM_RE.exec(text)
+    if (open === null) {
+      out += text.slice(pos)
+      break
+    }
+    const close = text.indexOf(open[0], open.index + 3)
+    if (close === -1) {
+      out += text.slice(pos)
+      break
+    }
+    const end = close + 3
+    out += text.slice(pos, open.index)
+    out += text.slice(open.index, end).replace(/[^\n]/g, ' ')
+    pos = end
+  }
+  return out
+}
+
+/**
  * Extract Python `spec_from_file_location` dependencies, plus unresolved
  * markers for `sys.path.insert`/`append` (a plain `import` after a path
  * splice cannot be statically resolved to a file) and `exec(`/`execfile(`
@@ -525,9 +648,12 @@ function resolvePyModule(repoRoot, scriptRepoDir, moduleName) {
  * same protection #3997's review found missing for the "indented inside a
  * function" shape, which this fixes by not requiring a column-0 anchor at
  * all (the position just has to survive comment/docstring stripping).
+ * `blankRemainingPyTripleQuoted` then blanks every OTHER triple-quoted
+ * string too (#4466 note 3), so a plain import sitting inside one reads the
+ * same as one sitting inside a docstring: not code.
  */
 function extractPyDeps(rawText) {
-  const stripped = stripLineComments(rawText, 'py')
+  const stripped = blankRemainingPyTripleQuoted(stripLineComments(rawText, 'py'))
   const specs = []
   const plainModules = []
   const unresolved = []
@@ -1489,6 +1615,26 @@ function buildInProcessFixture(tmp) {
       '"""\n' +
       'x = 1\n',
   )
+  // #4466 note 3: an indented `import <sibling>` sitting inside a
+  // NON-docstring triple-quoted string (a fixture/template constant, not a
+  // module/function/class docstring -- the delimiter does not OPEN the
+  // line, `TEMPLATE = ` does). `blankPyDocstrings` deliberately does not
+  // blank this shape (see its doc comment: a triple-quoted literal that
+  // does not open a statement is left as "the code it is", which
+  // check-git-fixture-isolation.mjs's OWN scan needs). Without
+  // `blankRemainingPyTripleQuoted`'s extra pass, `PY_PLAIN_IMPORT_RE` would
+  // read the indented line inside the string as a real import of
+  // `py_sibling` -- a real scripts/py_sibling.py -- producing a spurious
+  // dependency edge from text that is never executed.
+  writeFileSync(
+    join(scriptsDir, 'py-string-import.py'),
+    'TEMPLATE = """\n' +
+      'Example usage:\n' +
+      '    import py_sibling\n' +
+      '    py_sibling.sibling()\n' +
+      '"""\n' +
+      'x = 1\n',
+  )
 
   // A script whose only hook matches it in `files:` and then removes it
   // again in `exclude:` -- the own-script slot's mirror of `excluded-dep`
@@ -1695,6 +1841,11 @@ files = "^scripts/py-dynamic-spec\\\\.py$"
 id = "py-docstring-mention"
 entry = "python3 scripts/py-docstring-mention.py"
 files = "^scripts/py-docstring-mention\\\\.py$"
+
+[[repos.hooks]]
+id = "py-string-import"
+entry = "python3 scripts/py-string-import.py"
+files = "^scripts/py-string-import\\\\.py$"
 
 [[repos.hooks]]
 id = "good-sh"
@@ -1910,6 +2061,22 @@ function runSelfTest() {
       ok('a docstring merely naming spec_from_file_location is not a false positive')
     } else {
       fail('docstring mention is not a false positive', JSON.stringify({ broken, unverifiable }))
+    }
+
+    // #4466 note 3: the two halves of this scanner used to disagree about
+    // the same hazard -- PY_SPEC_CALL_RE refuses a call written out as a
+    // quoted string literal, PY_PLAIN_IMPORT_RE had no equivalent, so an
+    // indented `import <sibling>` sitting inside a non-docstring
+    // triple-quoted fixture string read as a real dependency edge.
+    if (!brokenIds.has('py-string-import') && !unverifiableIds.has('py-string-import')) {
+      ok(
+        'a plain import sitting inside a non-docstring string literal is not a false edge (note 3)',
+      )
+    } else {
+      fail(
+        'string-literal import is not a false positive',
+        JSON.stringify({ broken, unverifiable }),
+      )
     }
 
     if (!brokenIds.has('good-sh')) ok('good-sh (self+dep unioned) is clean')

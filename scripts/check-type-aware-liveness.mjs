@@ -118,6 +118,7 @@
 
 import { execFileSync } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -321,6 +322,29 @@ export function checkExitCodeAgrees(exitCode, report) {
  * `assertSameTarget` below then VERIFIES the "same target" claim rather than
  * assuming it, so narrowing the main run's target later cannot silently
  * decouple the two.
+ *
+ * ─── Why the baseline runs BEFORE the canary fixture is written ─────────────
+ *
+ * #4461 note 1: it used to run AFTER — sharing the fixture's own try/finally,
+ * below the two `writeFileSync` calls — so by the time this pathless,
+ * whole-tree baseline ran, `reports/type-aware/canary-…/canary.ts` already
+ * existed ON DISK, while the equivalent file did not exist when the MAIN
+ * run (the one this baseline is supposed to mirror) scanned the tree. The two
+ * runs' file counts matched anyway, ONLY because `.oxlintrc.json`'s
+ * `ignorePatterns` does not list `reports/`, and oxlint honours `.gitignore`
+ * by default — `reports/type-aware/` IS gitignored (see the canary's own
+ * `--no-ignore` flag a few lines below, which exists precisely because the
+ * canary run needs oxlint to look INSIDE that ignored directory). So the
+ * "same target" premise `assertSameTarget` verifies held by a coincidence of
+ * ignore rules that this function does not control and did not even
+ * reference — not by construction. Had that `.gitignore` entry ever been
+ * narrowed, or oxlint's own default-ignore behaviour changed, every
+ * scheduled run of this lane would report UNVERIFIABLE for a reason with
+ * nothing to do with whether `--type-aware` actually ran.
+ *
+ * Running the baseline first removes the dependency instead of documenting
+ * it: there is no fixture directory in the tree yet, gitignored or not, so
+ * whether it WOULD be ignored is moot.
  */
 export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {}) {
   const binary = join(repoRoot, 'node_modules', '.bin', 'oxlint')
@@ -343,6 +367,20 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
         're-run. Nothing is being judged until it is there',
     )
   }
+  // No `-c` and NO PATH: this must mirror the main run exactly — the repo's
+  // own `.oxlintrc.json`, and the whole tree, because the main run passes no
+  // path either. The number it yields is only meaningful as a like-for-like
+  // comparison — and, per the note above, it now runs before ANY canary
+  // fixture file exists on disk, so that comparison no longer depends on
+  // that fixture being gitignored.
+  const baseline = parseReport(run({ binary, cwd: repoRoot, args: ['-f', 'json'] }))
+  if (!baseline.report || typeof baseline.report.number_of_rules !== 'number') {
+    throw new UnverifiableError(
+      `the plain baseline run produced no usable rule count — ${baseline.reason ?? 'no number_of_rules'}. ` +
+        'Without it there is nothing to compare the main run against, so whether `--type-aware` ' +
+        'was actually in effect cannot be decided either way',
+    )
+  }
   // Inside the repo tree on purpose: oxlint resolves tsgolint from the CWD's
   // node_modules, so a fixture in the system temp dir cannot find it.
   const parent = join(repoRoot, 'reports', 'type-aware')
@@ -353,7 +391,7 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
   } catch (err) {
     throw new UnverifiableError(`could not create the canary fixture: ${err.message}`)
   }
-  // Note 3: the fixture WRITE lives inside the same try/finally as the runs.
+  // Note 3: the fixture WRITE lives inside the same try/finally as the run.
   // It used to sit in the block above, so a write that threw (ENOSPC, EACCES)
   // left the just-created `canary-*` directory behind for the artifact upload
   // to collect. `dir` exists from here on, so `finally` can always remove it.
@@ -380,18 +418,6 @@ export function runProbes({ repoRoot = REPO_ROOT, run = defaultRunOxlint } = {})
         ],
       }),
     )
-    // No `-c` and NO PATH: this must mirror the main run exactly — the repo's
-    // own `.oxlintrc.json`, and the whole tree, because the main run passes no
-    // path either. The number it yields is only meaningful as a like-for-like
-    // comparison.
-    const baseline = parseReport(run({ binary, cwd: repoRoot, args: ['-f', 'json'] }))
-    if (!baseline.report || typeof baseline.report.number_of_rules !== 'number') {
-      throw new UnverifiableError(
-        `the plain baseline run produced no usable rule count — ${baseline.reason ?? 'no number_of_rules'}. ` +
-          'Without it there is nothing to compare the main run against, so whether `--type-aware` ' +
-          'was actually in effect cannot be decided either way',
-      )
-    }
     return { canary, baseline: baseline.report }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -473,10 +499,44 @@ export function assertSameTarget(report, baseline) {
   ]
 }
 
-function defaultRunOxlint({ binary, cwd, args }) {
+/**
+ * Headroom for a probe's JSON report (#4461 note 2). `execFileSync`'s own
+ * default is node's generic 1 MiB, sized for nothing in particular; the
+ * whole-tree plain baseline this file actually runs is ~150 KB today, so
+ * this is not a value chosen to just barely clear today's report — it is
+ * chosen to make the buffer itself a non-issue, so overflow stays a real,
+ * rare signal rather than routine noise this guard has to diagnose.
+ */
+const OXLINT_PROBE_MAX_BUFFER = 64 * 1024 * 1024
+
+export function defaultRunOxlint({ binary, cwd, args }) {
   try {
-    return execFileSync(binary, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    return execFileSync(binary, args, {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: OXLINT_PROBE_MAX_BUFFER,
+    })
   } catch (err) {
+    // #4461 note 2: a maxBuffer overflow must be diagnosed as what it is, not
+    // guessed at from its aftermath. On overflow `execFileSync` throws with a
+    // TRUNCATED but non-empty `err.stdout` — exactly the shape the "a
+    // findings run exits non-zero; its stdout is still the report" branch
+    // below exists to return as a genuine report. The caller then fails to
+    // parse the truncated JSON and reports "the plain baseline run produced
+    // no usable rule count" — true, and pointing nowhere near the actual
+    // cause. `ENOBUFS` is node's own `error.code` for this outcome (checked
+    // directly — `error.message`'s wording is not a documented contract, and
+    // this file already prefers a positive, structural signal over matching
+    // text elsewhere), so it is classified BEFORE the generic non-empty-
+    // stdout fallback ever sees the truncated bytes.
+    if (err.code === 'ENOBUFS') {
+      throw new UnverifiableError(
+        `a probe invocation's output exceeded the ${OXLINT_PROBE_MAX_BUFFER}-byte buffer and ` +
+          'was truncated — a buffer-size problem, not a missing rule count and not a broken ' +
+          'backend. Raise OXLINT_PROBE_MAX_BUFFER if the report has genuinely grown past it',
+      )
+    }
     // A findings run exits non-zero; its stdout is still the report. Only a
     // total absence of stdout is a real failure to run.
     if (typeof err.stdout === 'string' && err.stdout.trim() !== '') return err.stdout
@@ -1009,6 +1069,120 @@ function selfTestStaleInstallSkips({ check }) {
   }
 }
 
+/**
+ * #4461 note 1: the pathless baseline run must happen BEFORE the canary
+ * fixture is ever written to `reports/type-aware/canary-…/canary.ts` — see
+ * `runProbes`'s own doc comment for why the old order made the "same
+ * target" premise hold only by a coincidence of `.gitignore` rules.
+ *
+ * Exercised through a FAKE oxlint binary (real `execFileSync`, fake
+ * executable — same shape `selfTestStaleInstallSkips` uses), because the
+ * property under test is an ORDERING of real filesystem operations against
+ * a real subprocess call, not something the parsed report shape can show on
+ * its own. The fake records, into a marker file named by an env var, whether
+ * ANY `canary.ts` existed under `reports/type-aware/` at the moment the
+ * PLAIN (non `--type-aware`) call ran — the one call this test cares about.
+ */
+function selfTestBaselineOrdering({ check }) {
+  const dir = mkdtempSync(join(tmpdir(), 'probe-order-'))
+  const marker = join(dir, 'baseline-saw-canary.marker')
+  try {
+    mkdirSync(join(dir, 'node_modules', '.bin'), { recursive: true })
+    mkdirSync(join(dir, 'node_modules', TSGOLINT_PACKAGE), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', TSGOLINT_PACKAGE, 'package.json'), '{}\n', 'utf8')
+    const oxlintPath = join(dir, 'node_modules', '.bin', 'oxlint')
+    writeFileSync(
+      oxlintPath,
+      '#!/bin/sh\n' +
+        'case " $* " in\n' +
+        '  *" --type-aware "*)\n' +
+        // The canary call: a minimal report that already trips CANARY_RULE,
+        // so this fixture does not also have to fake the fixture's own
+        // config to get a realistic-shaped result back.
+        '    printf \'%s\' \'{"number_of_rules":5,"number_of_files":1,"diagnostics":[{"code":"typescript(no-floating-promises)"}]}\'\n' +
+        '    ;;\n' +
+        '  *)\n' +
+        // The plain baseline call: record whether the canary fixture exists
+        // yet, at the moment THIS call runs.
+        '    if find "$PROBE_ORDER_ROOT/reports/type-aware" -mindepth 1 -name canary.ts ' +
+        '2>/dev/null | grep -q canary.ts; then\n' +
+        '      echo saw-canary > "$PROBE_ORDER_MARKER"\n' +
+        '    else\n' +
+        '      echo no-canary-yet > "$PROBE_ORDER_MARKER"\n' +
+        '    fi\n' +
+        '    printf \'%s\' \'{"number_of_rules":3,"number_of_files":5}\'\n' +
+        '    ;;\n' +
+        'esac\n',
+      'utf8',
+    )
+    chmodSync(oxlintPath, 0o755)
+
+    let result
+    let threw = null
+    const savedRoot = process.env.PROBE_ORDER_ROOT
+    const savedMarker = process.env.PROBE_ORDER_MARKER
+    process.env.PROBE_ORDER_ROOT = dir
+    process.env.PROBE_ORDER_MARKER = marker
+    try {
+      result = runProbes({ repoRoot: dir })
+    } catch (err) {
+      threw = err
+    } finally {
+      if (savedRoot === undefined) delete process.env.PROBE_ORDER_ROOT
+      else process.env.PROBE_ORDER_ROOT = savedRoot
+      if (savedMarker === undefined) delete process.env.PROBE_ORDER_MARKER
+      else process.env.PROBE_ORDER_MARKER = savedMarker
+    }
+
+    check(
+      threw === null && result?.baseline?.number_of_rules === 3,
+      'runProbes completes against the fake toolchain (ordering test is not vacuous)',
+      String(threw?.message ?? JSON.stringify(result)),
+    )
+    const markerContent = existsSync(marker) ? readFileSync(marker, 'utf8').trim() : '<absent>'
+    check(
+      markerContent === 'no-canary-yet',
+      'the plain baseline run sees NO canary fixture on disk — it ran before the fixture was ' +
+        'written, so the "same target" premise no longer rests on `.gitignore` (#4461 note 1)',
+      markerContent,
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * #4461 note 2: a `maxBuffer` overflow must be diagnosed as a buffer
+ * problem, never as "no usable rule count". Drives `defaultRunOxlint`
+ * directly — the real function, a real child process, a real overflow — so
+ * this proves the CLASSIFICATION, not just that `ENOBUFS` happens to be a
+ * string this file recognises somewhere.
+ */
+function selfTestMaxBufferOverflow({ check }) {
+  const oversized = OXLINT_PROBE_MAX_BUFFER + 1024 * 1024
+  let threw = null
+  try {
+    defaultRunOxlint({
+      binary: '/bin/sh',
+      cwd: process.cwd(),
+      args: ['-c', `yes x | head -c ${oversized}`],
+    })
+  } catch (err) {
+    threw = err
+  }
+  check(
+    threw instanceof UnverifiableError,
+    'an oversized probe output is UNVERIFIABLE, not a crash and not a silent truncated return',
+    String(threw),
+  )
+  check(
+    threw !== null && /buffer/i.test(threw.message) && !/no usable rule count/.test(threw.message),
+    'the overflow is diagnosed as a BUFFER problem here, not left to surface downstream as ' +
+      '"no usable rule count" (#4461 note 2)',
+    String(threw?.message),
+  )
+}
+
 function selfTestArgValues({ check }) {
   // Note 3, and a sweep of every option that takes a value.
   check(takeValue(['--report'], 1) === null, 'a missing final value is null, not undefined', '')
@@ -1331,6 +1505,8 @@ function runSelfTest() {
   selfTestArgValues({ check })
   selfTestSameTarget({ check })
   selfTestStaleInstallSkips({ check })
+  selfTestBaselineOrdering({ check })
+  selfTestMaxBufferOverflow({ check })
   selfTestRealProbes({ check, fail })
 
   if (failures.length > 0) {

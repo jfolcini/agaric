@@ -906,15 +906,41 @@ function runSelfTest() {
       // self-test. `PATH: dir` is the fixture directory (no readelf in it);
       // `CI: ''` because a skipped group is a hard failure under CI, which is
       // the very next assertion. The child is told not to recurse.
-      if (process.env[SELFTEST_NO_RECURSE]) return
+      if (process.env[SELFTEST_NO_RECURSE]) {
+        // This branch stops the CHILD spawning a third generation — but the
+        // two assertions immediately below (the `skipRun`/`ciSkipRun` checks)
+        // still do not run in that child, and this file's own rule is that
+        // an assertion that does not run must be counted with `skip()`, never
+        // silently dropped (#4452 item 1 — the over-reporting shape this
+        // self-test exists to catch). Without these two calls the child's
+        // own verdict line under-counted its skipped groups by exactly these
+        // two, so a run that skipped work still read as more fully covered
+        // than it was.
+        // Names deliberately avoid the literal phrases the assertions below
+        // scan the OUTPUT for ("assertions passed") — this skip message is
+        // itself printed into that output, and a name that quoted the target
+        // phrase would make a grandchild run false-positive-match its own
+        // skip line as though it were the verdict being tested for.
+        skip(
+          'grandchild recursion probe: no-recurse run must not claim full local coverage',
+          'recursion guard: this child does not spawn a third generation',
+        )
+        skip(
+          'grandchild recursion probe: no-recurse run under CI must fail without a bogus pass',
+          'recursion guard: this child does not spawn a third generation',
+        )
+        return
+      }
       const noReadelf = { PATH: dir, READELF: '', NDK_HOME: '', [SELFTEST_NO_RECURSE]: '1' }
       const skipRun = run(['--self-test'], { ...noReadelf, CI: '' })
       const skipOut = `${skipRun.stdout}${skipRun.stderr}`
       check(
         skipRun.status === 0 &&
-          /self-test: all non-skipped assertions passed \(\d+ group\(s\) skipped\)/.test(skipOut) &&
+          /self-test: all non-skipped assertions passed \(4 group\(s\) skipped\)/.test(skipOut) &&
           !/self-test: all assertions passed/.test(skipOut),
-        'a real readelf-less self-test run NEVER prints "all assertions passed"',
+        'a real readelf-less self-test run NEVER prints "all assertions passed", and names ' +
+          'ALL FOUR skipped groups (the two fixture/APK skips, plus the two the recursion ' +
+          'guard itself must not drop)',
         `${skipRun.status}: ${skipOut.slice(-600)}`,
       )
       // The other half of the same fact: under CI a skipped group is a
