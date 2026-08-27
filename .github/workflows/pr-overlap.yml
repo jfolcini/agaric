@@ -753,6 +753,18 @@ jobs:
   # happened again live while preparing #3932 (session-1319, caught by hand,
   # nothing in the toolchain would have caught it).
   #
+  # What counts as a CLAIM here is a session-log path that is NOT already on
+  # the merge target — `gh pr list --json files` reports added, MODIFIED and
+  # deleted files identically, so without the base's own file listing (the
+  # `merged-paths.txt` step below) two PRs merely EDITING one of the fifteen
+  # merged `session-1000-*.md` files would be reported as colliding on a
+  # file neither of them created. The same listing lets this job catch the
+  # #3690 shape `check-session-log-numbering.sh` structurally cannot see
+  # after the fact: an open PR whose number was free when it was committed
+  # and has since been merged by a sibling — that guard only ever inspects
+  # STAGED additions, so it never looks again. See the guard's own header,
+  # "Which guard owns which case".
+  #
   # It is also NOT the `compute`/`post` overlap above: that lane intersects
   # CHANGED FILE PATHS, and two PRs colliding on session-1319 add two
   # DIFFERENT filenames (`session-1319-foo.md`, `session-1319-bar.md`) — no
@@ -904,12 +916,23 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
-      - name: Session numbers already merged into the target branch
+      - name: Session-log files already on the target branch
         run: |
           set -euo pipefail
-          git ls-tree -r --name-only HEAD -- docs/session-log \
-            | grep -oE 'session-[0-9]+' | grep -oE '[0-9]+' | sort -n -u > merged-nums.txt || true
-          echo "merged session numbers on $(git rev-parse HEAD): $(wc -l < merged-nums.txt)"
+          # PATHS, not just the numbers parsed out of them: a path already on
+          # the merge target is being MODIFIED by a PR that touches it, not
+          # claimed, and `gh pr list --json files` reports added, modified
+          # and deleted files identically — so this listing is the only
+          # thing that tells the two apart. Without it, two PRs editing one
+          # of the fifteen merged `session-1000-*.md` files read as a
+          # collision on a file neither created. `core.quotePath=false` so a
+          # non-ASCII path arrives as the same bytes GitHub reports; no
+          # `|| true`, because a failed listing must fail this job rather
+          # than degrade into an empty list that makes every touched file
+          # look new.
+          git -c core.quotePath=false ls-tree -r --name-only HEAD -- docs/session-log \
+            > merged-paths.txt
+          echo "session-log files on $(git rev-parse HEAD): $(wc -l < merged-paths.txt)"
 
       - name: List every open PR's changed files
         env:
@@ -928,9 +951,14 @@ jobs:
           # batch-issue PR that also adds a session-log entry, say) has any
           # file past the 100th invisible to `files`, with nothing in that
           # field's shape to say so. `changedFiles` is the PR's true total
-          # count, requested for exactly this cross-check;
-          # `check-session-log-pr-collision.mjs` fails closed whenever
-          # `changedFiles > files.length` for any entry — see its own
+          # count, requested for exactly this cross-check.
+          # `check-session-log-pr-collision.mjs` fails closed on it for THIS
+          # PR's own entry, and warns (naming the PR) for anyone else's:
+          # refusing outright on any entry would let a single 100+-file PR
+          # turn this job red on every open PR until it landed, which is the
+          # permanent unactionable red this file's own header argues
+          # against — and the oversized PR fails closed on its own run of
+          # this job, where its author can act on it. See that script's
           # header.
           if ! gh pr list --repo "$REPO" --state open --limit "$PR_LIST_LIMIT" \
               --json number,files,changedFiles > prs.json; then
@@ -938,7 +966,7 @@ jobs:
             exit 1
           fi
 
-      - name: Check for a session-log number claimed by more than one open PR
+      - name: Check for a session-log number that would be duplicated in the merge result
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # Every path this step touches is an env var rather than a literal,
@@ -949,7 +977,7 @@ jobs:
           # real bytes for every outcome is what catches the next one.
           GUARD_SCRIPT: scripts/check-session-log-pr-collision.mjs
           PRS_JSON: prs.json
-          MERGED_NUMS: merged-nums.txt
+          MERGED_PATHS: merged-paths.txt
         run: |
           # --- BEGIN session-log-pr-collision step shell (extracted verbatim by --self-test) ---
           set -uo pipefail
@@ -1019,7 +1047,7 @@ jobs:
           # while leaving `${PIPESTATUS[0]}` holding the real exit code in
           # the `else` branch.
           if node "$GUARD_SCRIPT" \
-              --prs "$PRS_JSON" --self-pr "$PR_NUMBER" --merged-nums "$MERGED_NUMS" \
+              --prs "$PRS_JSON" --self-pr "$PR_NUMBER" --merged-paths "$MERGED_PATHS" \
               --pr-limit "$PR_LIST_LIMIT" \
               2>&1 | tee collision.log; then
             rc=0
@@ -1041,9 +1069,9 @@ jobs:
           # crashed guard can no longer be reported as a finding.
           verdict="$(sed -n 's/^SESSION_LOG_PR_COLLISION_VERDICT=\([A-Z]*\)$/\1/p' collision.log | tail -n 1)"
           if [ "$rc" -eq 0 ] && [ "$verdict" = "CLEAN" ]; then
-            echo "session-log-pr-collision: verified — no open PR shares a session-log number with another."
+            echo "session-log-pr-collision: verified — no open PR shares a session-log number with another, and none adds a number already on the merge target."
           elif [ "$rc" -eq 20 ] && [ "$verdict" = "COLLISION" ]; then
-            echo "::error::session-log-pr-collision: a session-log number is claimed by more than one open PR — see the log above"
+            echo "::error::session-log-pr-collision: a session-log number would be duplicated in the merge result — either two open PRs claim it, or one adds a number already on the base. See the log above for which, and for the next free number."
             exit 1
           else
             echo "::error::session-log-pr-collision: could not verify (exit=$rc, verdict=${verdict:-<none>}) — the guard did not reach a verdict, so NO collision was observed and none is being reported. Likely causes: the guard is missing or unreadable in the base checkout, a syntax error or uncaught exception in it, node itself crashing or being killed, or the guard refusing to trust its own open-PR payload (its own message is above). Treated as a failure, never a pass (#3933)."

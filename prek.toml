@@ -3143,7 +3143,13 @@ name = "session-log open-PR collision guard self-test (#3933)"
 entry = "node scripts/check-session-log-pr-collision.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = '^(scripts/check-session-log-pr-collision\.mjs|\.github/workflows/pr-overlap\.yml)$'
+# `check-session-log-numbering.sh` is in this list because the self-test now
+# asserts the two guards share a GAP_BOUND (#3929's window): this script's
+# "next free number" suggestion has to be a number that one would also
+# accept, and a change to the bound in either place that is not made in both
+# hands out numbers the other rejects. That parity is only checked if a
+# change to the bash guard re-runs this hook.
+files = '^(scripts/check-session-log-pr-collision\.mjs|scripts/check-session-log-numbering\.sh|\.github/workflows/pr-overlap\.yml)$'
 stages = ["pre-commit"]
 
 # git-scratch-guard-selftest (#3722): the SHARED scrubber that every script

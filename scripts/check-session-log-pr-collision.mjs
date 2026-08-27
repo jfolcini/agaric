@@ -37,6 +37,68 @@
 // filename, not the path itself, so this script parses that number out of
 // every open PR's changed-file list and groups by it instead.
 //
+// ─── What counts as a CLAIM: a file that is NEW to the merge target ───────
+//
+// `gh pr list --json files` returns every changed file of a PR regardless of
+// change type — ADDED, MODIFIED or deleted. The per-file objects it returns
+// carry `path`, `additions` and `deletions` and no status field at all
+// (checked against the live API, and `gh` offers no sub-field selection to
+// ask for one), so "this PR touched a path carrying session number N" is
+// not "this PR claims N" — and reading it as such is a false-positive
+// machine on this repository specifically. `docs/session-log/` carries 15
+// files numbered session-1000, 8 numbered session-1203 and 8 numbered
+// session-1001 (the lexicographic-`ls` accident
+// `check-session-log-numbering.sh`'s header describes), and 30 of the last
+// 300 commits MODIFY an already-merged entry — a docs-lint sweep, a link
+// fix, a correction, a stacked branch. Two of those open at once would have
+// been reported here as `session-1000: claimed by #A and #B`, about a file
+// that has been on `main` for months, that neither PR created, and that
+// already shares its number with fourteen others.
+// `check-session-log-numbering.sh` grandfathers exactly those ("only a
+// STAGED addition can fail"); this guard has to draw the same line, and the
+// line it draws is:
+//
+//   A CLAIM IS A SESSION-LOG PATH THAT IS NOT ALREADY ON THE MERGE TARGET.
+//
+// The merge target's own file list arrives via `--merged-paths` (below),
+// listed from the base checkout — trusted data, not PR-controlled. A
+// session-log path already on the base is being modified or deleted, never
+// claimed; a path that is not is a new file, whatever else the PR does to
+// it. That is an exact added-vs-modified discriminator, which is why it is
+// used in preference to the per-file `additions`/`deletions` counts: a
+// modification that only appends lines also has `deletions: 0`, so those
+// counts cannot tell an addition from an edit.
+//
+// The one shape this reads wrong is a RENAME. GitHub reports a rename as a
+// single entry at the NEW path with no trace of the old one, so
+// `session-1000-typo.md` → `session-1000-fixed.md` looks like a new file
+// bearing an already-merged number. Recorded rather than fixed:
+// `git log --diff-filter=R -M -- docs/session-log` over the whole history
+// of this repository returns ZERO renames, and
+// `check-session-log-numbering.sh` cannot see a rename either (its
+// `--diff-filter=A` excludes one), so this is an unhandled shape for the
+// PAIR of guards, not a regression this one introduces.
+//
+// ─── Which guard owns which case ──────────────────────────────────────────
+//
+//   * A NEW number claimed by two open PRs — the #3933 shape. ONLY this
+//     guard can see it: no branch's checkout contains a sibling PR's
+//     commits. Reported below as a COLLISION.
+//   * A new file whose number is ALREADY ON THE MERGE TARGET.
+//     `check-session-log-numbering.sh` check 1 owns this at the moment the
+//     file is committed, against `origin/main` as it stood THEN — and it
+//     never re-checks, because it only ever examines STAGED ADDITIONS. Once
+//     the adding commit is behind you, a sibling PR merging that number
+//     under your still-open PR is invisible to it forever; that is exactly
+//     the #3690 "two session-1281 files" shape, and the reason a green
+//     local guard is not evidence for an open PR. This guard re-checks it
+//     on every CI run against a base that is fresh at that moment, and
+//     reports it below as a STALE CLAIM. The two overlap deliberately at
+//     the addition commit; only this one covers everything after it.
+//   * Anything about a file that ALREADY EXISTS on the merge target — an
+//     inherited duplicate number, an edit, a deletion. NEITHER guard
+//     reports it. History is history.
+//
 // ─── Fail-closed, not fail-open (the whole point of #3933) ────────────────
 //
 // A guard that reports "no collision" when the API call failed, the PR list
@@ -48,35 +110,55 @@
 //      an integer `changedFiles` count, and a `files` array (`shapeProblem`
 //      below) — not "parses as JSON", which `[]`, `{}`, and `null` all
 //      satisfy trivially; and
-//   2. no entry's `files` array is itself truncated — `gh`'s `files` field
-//      is a GitHub API connection HARD-CAPPED at 100 entries per PR
-//      regardless of `--limit`, silently, with no error and no flag in the
-//      JSON it returns. `changedFiles` (the PR's true total file count,
-//      requested alongside `files`) is what exposes this: if
-//      `changedFiles > files.length`, some of that PR's changed files —
-//      possibly including a `session-NNNN-*.md` this script would otherwise
-//      never see — are missing from the payload, and that PR's claim (if
-//      any) cannot be trusted either way; and
-//   3. the fetched list itself isn't truncated at the CALLER'S OWN
+//   2. the fetched list itself isn't truncated at the CALLER'S OWN
 //      `gh pr list --limit N` — a page exactly N entries long is
 //      indistinguishable from a page cut off at N, so `--pr-limit N` (when
 //      given) makes a list of length >= N unverified rather than read as
 //      "that's just how many PRs happen to be open"; and
-//   4. (when `--self-pr` is given, which the real CI invocation always
+//   3. (when `--self-pr` is given, which the real CI invocation always
 //      does) the PR running this check is ITSELF present in the fetched
 //      list — the cheapest self-consistency check available: if `gh pr
 //      list` silently returned an empty, truncated, or stale result, the
 //      one PR guaranteed to be open (this one) will be missing from it,
 //      and that is caught here before the empty/short list is ever read as
-//      "no other PR is open".
+//      "no other PR is open"; and
+//   4. THIS PR's OWN `files` array is not itself truncated — `gh`'s `files`
+//      field is a GitHub API connection HARD-CAPPED at 100 entries per PR
+//      regardless of `--limit`, silently, with no error and no flag in the
+//      JSON it returns. `changedFiles` (the PR's true total file count,
+//      requested alongside `files`) is what exposes this: if
+//      `changedFiles > files.length`, some of that PR's changed files —
+//      possibly including a `session-NNNN-*.md` this script would otherwise
+//      never see — are missing from the payload.
 // Anything outside that allow-list is `verified: false`, and `main()` exits
 // 2 (a failure to verify) rather than 0 (verified clean) — see the exit-code
 // table in the usage comment below. An unrecognised state is a failure to
 // verify, never a pass.
 //
+// ─── …and why ANOTHER PR's truncated file list is a WARNING, not a refusal ─
+//
+// Point 4 above is deliberately scoped to the SELF PR. The first version of
+// this script refused to verify whenever ANY entry's file list was
+// truncated, which means a single open 100+-file PR turns this job red on
+// EVERY open PR until it lands — permanent, and unactionable for everyone
+// reading it, since they cannot shrink somebody else's PR. That is precisely
+// the "permanent unactionable red ... turns a gate into something people
+// learn to bypass" `pr-overlap.yml`'s own header argues against, and a gate
+// that is routinely bypassed protects nothing.
+//
+// Scoping it to the self PR keeps the fail-closed property exactly where it
+// is actionable and loses no coverage: a truncated PR fails closed on ITS
+// OWN run of this same job, where the author who can act on it is the one
+// reading the failure. So the number hidden past #X's 100-file cutoff still
+// blocks #X — it just no longer blocks #Y, #Z and everyone else. What the
+// other PRs get instead is a `::warning::` naming #X and saying plainly
+// that a collision WITH #X could not be ruled out, which is the truthful
+// statement; silence would not be.
+//
 // Usage:
 //   node scripts/check-session-log-pr-collision.mjs \
-//     --prs prs.json --self-pr <n> [--merged-nums merged.txt] [--pr-limit <n>]
+//     --prs prs.json --self-pr <n> --merged-paths merged-paths.txt \
+//     [--pr-limit <n>]
 //   node scripts/check-session-log-pr-collision.mjs --self-test
 //
 // `--prs` takes the body of
@@ -85,17 +167,32 @@
 //
 // `--pr-limit` takes the SAME number passed to that `gh pr list --limit`
 // invocation, so this script can tell a full page from a truncated one (see
-// point 3 above). Omitted entirely, that specific check is skipped — the
+// point 2 above). Omitted entirely, that specific check is skipped — the
 // CI caller always passes it; it's optional here only so ad-hoc/self-test
 // invocations aren't forced to fabricate a limit that means nothing to them.
 //
-// `--merged-nums` takes newline-separated integers: the session numbers
-// already present in the merge target (`git ls-tree -r --name-only
-// <base-sha> -- docs/session-log | grep -oP 'session-\K[0-9]+'`). Folded
-// into the "next free number" suggestion so the guard's own remedy cannot
-// recreate the collision it just found — omitted entirely, the suggestion
-// is still safe against every OPEN claim, just not against merged history.
+// `--merged-paths` takes the newline-separated file list of the merge
+// target's `docs/session-log/` (`git ls-tree -r --name-only <base-sha> --
+// docs/session-log`). It is REQUIRED, not optional: it is what separates a
+// claim from an edit (above), so without it every touched session log would
+// read as a new claim — the exact false positive this flag exists to
+// prevent. It also feeds the "next free number" suggestion, so the guard's
+// own remedy cannot recreate the collision it just reported.
 //
+// ─── The suggestion, and agreeing with the OTHER guard about "next free" ──
+//
+// The suggestion has to be a number `check-session-log-numbering.sh` would
+// itself accept, or the guard's remedy fails the other guard. That one
+// accepts `(max, max+GAP_BOUND]` over the union of the branch and the merge
+// target (#3929's bounded window), so `max(everything) + 1` is the wrong
+// function: one open PR carrying a wild number (`session-9999`) would poison
+// the suggestion into a value check 2 there rejects outright. Instead this
+// script walks the SAME window — `(mergedMax, mergedMax + GAP_BOUND]`, with
+// `GAP_BOUND` mirrored from that script and pinned equal to it by this
+// script's own self-test — and offers the first number in it that no open PR
+// has claimed. If every number in the window is claimed (more parallel
+// session-log PRs than the window is wide), it offers none at all rather
+// than one the other guard would reject.
 // ─── Exit codes, and why "collision" is NOT 1 (#4431) ─────────────────────
 //
 // The first version of this script used 1 for "a collision was found". That
@@ -175,6 +272,17 @@ export const EXIT_COLLISION = 20
 export const VERDICT_PREFIX = 'SESSION_LOG_PR_COLLISION_VERDICT='
 
 /**
+ * The sibling guard whose notion of "next free number" this script's
+ * `suggestion` must agree with, and the width of the window it accepts
+ * (`(max, max+GAP_BOUND]`, #3929). Mirrored rather than imported — that
+ * script is bash — and pinned equal to the value there by this script's own
+ * self-test, so the two cannot silently drift into recommending numbers the
+ * other rejects.
+ */
+export const NUMBERING_GUARD = 'scripts/check-session-log-numbering.sh'
+export const GAP_BOUND = 10
+
+/**
  * Write the machine-readable verdict as the process's last output and exit.
  * `writeSync(1, …)` rather than `console.log`: writes to a PIPE are
  * asynchronous on some platforms, and `process.exit` does not flush them —
@@ -231,7 +339,6 @@ function shapeProblem(prs) {
   }
   return null
 }
-
 /**
  * PRs whose `files` array is shorter than their true `changedFiles` count —
  * `gh`'s `files` field on a PR is a GitHub API connection hard-capped at 100
@@ -248,95 +355,174 @@ function truncatedFilesPrs(prs) {
 }
 
 /**
- * The core analysis. Pure — no filesystem, no network — so the self-test
- * exercises exactly this and nothing about argument parsing or process
- * exit codes.
+ * A `verified: false` result. Every refusal path returns the same shape, so
+ * a caller reading `.collisions` / `.staleClaims` on an unverified result
+ * sees empty findings rather than `undefined` — a refusal must never be
+ * readable as a finding, in either direction.
  *
- * @param {{prs: unknown, selfPr?: number|null, mergedNums?: number[], prLimit?: number|null}} opts
+ * @param {string} reason
  */
-export function analyze({ prs, selfPr = null, mergedNums = [], prLimit = null }) {
-  const problem = shapeProblem(prs)
-  if (problem) {
-    return {
-      verified: false,
-      reason: `malformed open-PR payload: ${problem}`,
-      collisions: [],
-      suggestion: null,
-    }
+function cannotVerify(reason) {
+  return {
+    verified: false,
+    reason,
+    warnings: [],
+    collisions: [],
+    staleClaims: [],
+    suggestion: null,
   }
+}
 
-  if (prLimit !== null && prs.length >= prLimit) {
-    return {
-      verified: false,
-      reason:
-        `the fetched open-PR list has ${prs.length} entr${prs.length === 1 ? 'y' : 'ies'}, which ` +
-        `meets or exceeds the requested --pr-limit of ${prLimit}. A page exactly that long is ` +
-        'indistinguishable from one GitHub cut off at that length — raise the limit and re-run ' +
-        'rather than trust a full page as "that is just how many PRs are open".',
-      collisions: [],
-      suggestion: null,
-    }
+/**
+ * The merge target's session-log files, indexed both ways: the exact path
+ * set (what separates a modified file from a newly claimed one) and
+ * number → the base paths already holding it (what makes a stale claim
+ * reportable with the file it duplicates, rather than as a bare number).
+ *
+ * @param {string[]} mergedPaths
+ */
+function indexMergedPaths(mergedPaths) {
+  const paths = new Set(mergedPaths.map(String))
+  /** @type {Map<number, string[]>} */
+  const byNumber = new Map()
+  for (const path of paths) {
+    const n = sessionNumberOf(path)
+    if (n === null) continue
+    if (!byNumber.has(n)) byNumber.set(n, [])
+    byNumber.get(n).push(path)
   }
+  return { paths, byNumber }
+}
 
-  const truncated = truncatedFilesPrs(prs)
-  if (truncated.length > 0) {
-    return {
-      verified: false,
-      reason:
-        `${truncated.length} open PR${truncated.length === 1 ? "'s" : "s'"} changed-file list is ` +
-        `truncated by gh's 100-file cap ` +
-        `(${truncated.map((pr) => `#${pr.number}: ${pr.files.length}/${pr.changedFiles} files`).join(', ')}) — ` +
-        'a session-log claim past that cutoff would be invisible to this check, so a truncated ' +
-        'PR can never be read as "contributes nothing".',
-      collisions: [],
-      suggestion: null,
-    }
-  }
-
-  if (selfPr !== null && !prs.some((p) => Number(p.number) === Number(selfPr))) {
-    return {
-      verified: false,
-      reason:
-        `PR #${selfPr} (the one running this check) is not present in the fetched ` +
-        `open-PR list (${prs.length} entr${prs.length === 1 ? 'y' : 'ies'} returned). ` +
-        'A list that omits the PR that is guaranteed to be open is an incomplete or ' +
-        'stale read, not evidence of "no other PR is open".',
-      collisions: [],
-      suggestion: null,
-    }
-  }
-
+/**
+ * number → every open-PR claim on it. A CLAIM is a session-log path that is
+ * NOT already on the merge target: `gh` reports added, modified and deleted
+ * files identically, so path presence on the base is what tells an addition
+ * from an edit (see this file's header — without it, two PRs editing one of
+ * the fifteen merged `session-1000-*.md` files read as a collision).
+ *
+ * @param {{number:number, files:unknown[]}[]} prs
+ * @param {Set<string>} mergedPathSet
+ */
+function claimsByNumber(prs, mergedPathSet) {
   /** @type {Map<number, {pr:number, file:string}[]>} */
   const claims = new Map()
   for (const pr of prs) {
     for (const file of pathsOf(pr)) {
       const n = sessionNumberOf(file)
       if (n === null) continue
+      if (mergedPathSet.has(file)) continue
       if (!claims.has(n)) claims.set(n, [])
       claims.get(n).push({ pr: Number(pr.number), file })
     }
   }
+  return claims
+}
+
+/**
+ * The first number in `check-session-log-numbering.sh`'s OWN window —
+ * `(mergedMax, mergedMax + GAP_BOUND]` — that no open PR has claimed, or
+ * `null` when every number in it is taken. Deliberately not
+ * `max(everything) + 1`: that lets one open PR carrying `session-9999`
+ * poison the suggestion into a number the other guard's check 2 rejects on
+ * sight, so the guard's own remedy would fail the guard next to it.
+ *
+ * @param {Map<number, unknown>} claims
+ * @param {number[]} mergedNums
+ */
+function suggestNextFree(claims, mergedNums) {
+  const mergedMax = mergedNums.length > 0 ? Math.max(...mergedNums) : 0
+  for (let n = mergedMax + 1; n <= mergedMax + GAP_BOUND; n++) {
+    if (!claims.has(n)) return n
+  }
+  return null
+}
+
+/**
+ * The core analysis. Pure — no filesystem, no network — so the self-test
+ * exercises exactly this and nothing about argument parsing or process
+ * exit codes.
+ *
+ * @param {{prs: unknown, selfPr?: number|null, mergedPaths?: string[], prLimit?: number|null}} opts
+ */
+export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }) {
+  const problem = shapeProblem(prs)
+  if (problem) return cannotVerify(`malformed open-PR payload: ${problem}`)
+
+  if (prLimit !== null && prs.length >= prLimit) {
+    return cannotVerify(
+      `the fetched open-PR list has ${prs.length} entr${prs.length === 1 ? 'y' : 'ies'}, which ` +
+        `meets or exceeds the requested --pr-limit of ${prLimit}. A page exactly that long is ` +
+        'indistinguishable from one GitHub cut off at that length — raise the limit and re-run ' +
+        'rather than trust a full page as "that is just how many PRs are open".',
+    )
+  }
+
+  if (selfPr !== null && !prs.some((p) => Number(p.number) === Number(selfPr))) {
+    return cannotVerify(
+      `PR #${selfPr} (the one running this check) is not present in the fetched ` +
+        `open-PR list (${prs.length} entr${prs.length === 1 ? 'y' : 'ies'} returned). ` +
+        'A list that omits the PR that is guaranteed to be open is an incomplete or ' +
+        'stale read, not evidence of "no other PR is open".',
+    )
+  }
+
+  // Truncation, split by WHOSE list it is (see this file's header): the self
+  // PR's own truncated list is a refusal — the author reading this failure
+  // is the one who can act on it — while another PR's is a warning naming
+  // it, because failing here would make one oversized PR turn this job red
+  // on every other open PR until it lands, and that PR fails closed on its
+  // own run of this same job anyway.
+  const truncated = truncatedFilesPrs(prs)
+  const isSelf = (pr) => selfPr !== null && Number(pr.number) === Number(selfPr)
+  if (truncated.some(isSelf)) {
+    const self = truncated.find(isSelf)
+    return cannotVerify(
+      `this PR's own changed-file list (#${self.number}: ${self.files.length}/${self.changedFiles} ` +
+        "files) is truncated by gh's 100-file cap — a session-log claim of its own past that " +
+        'cutoff would be invisible to this check, so this PR cannot be read as "contributes ' +
+        'nothing". Split the PR, or confirm its session-log number by hand against ' +
+        `\`${NUMBERING_GUARD}\`.`,
+    )
+  }
+  const warnings = truncated.map(
+    (pr) =>
+      `open PR #${pr.number}'s changed-file list is truncated by gh's 100-file cap ` +
+      `(${pr.files.length}/${pr.changedFiles} files), so a session-log claim of ITS OWN past ` +
+      `that cutoff is invisible here: a collision with #${pr.number} could not be ruled out. ` +
+      'Not a failure of this PR — #' +
+      `${pr.number} fails closed on its own run of this check, where its author can act on it.`,
+  )
+
+  const merged = indexMergedPaths(mergedPaths)
+  const claims = claimsByNumber(prs, merged.paths)
 
   const collisions = []
+  const staleClaims = []
   for (const [number, entries] of claims) {
-    const distinctPrs = new Set(entries.map((e) => e.pr))
-    if (distinctPrs.size > 1) {
-      collisions.push({
-        number,
-        claims: entries.toSorted((a, b) => a.pr - b.pr || a.file.localeCompare(b.file)),
-      })
+    const sorted = entries.toSorted((a, b) => a.pr - b.pr || a.file.localeCompare(b.file))
+    if (new Set(entries.map((e) => e.pr)).size > 1) collisions.push({ number, claims: sorted })
+    // A number already on the merge target, claimed by a NEW file: the
+    // sibling-merged-under-you shape `check-session-log-numbering.sh` cannot
+    // re-check once the adding commit is behind you (header, "Which guard
+    // owns which case"). Independent of the collision above — a stale claim
+    // needs only ONE open PR.
+    const mergedHere = merged.byNumber.get(number)
+    if (mergedHere) {
+      staleClaims.push({ number, mergedPaths: mergedHere.toSorted(), claims: sorted })
     }
   }
   collisions.sort((a, b) => a.number - b.number)
+  staleClaims.sort((a, b) => a.number - b.number)
 
-  // The next free number must be safe against BOTH merged history and every
-  // open claim (including non-colliding ones) — otherwise the guard's own
-  // remedy hands out a number some other open PR already holds, recreating
-  // exactly the bug it just reported (#3933's own acceptance criterion).
-  const allNums = [...mergedNums, ...claims.keys()].map(Number).filter((n) => Number.isInteger(n))
-  const maxNum = allNums.length > 0 ? Math.max(...allNums) : 0
-
-  return { verified: true, reason: null, collisions, suggestion: maxNum + 1 }
+  return {
+    verified: true,
+    reason: null,
+    warnings,
+    collisions,
+    staleClaims,
+    suggestion: suggestNextFree(claims, [...merged.byNumber.keys()]),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +530,7 @@ export function analyze({ prs, selfPr = null, mergedNums = [], prLimit = null })
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { prs: null, selfPr: null, mergedNums: null, prLimit: null }
+  const args = { prs: null, selfPr: null, mergedPaths: null, prLimit: null }
   for (let i = 0; i < argv.length; i++) {
     const take = () => {
       const v = argv[++i]
@@ -362,8 +548,8 @@ function parseArgs(argv) {
         args.selfPr = v
         break
       }
-      case '--merged-nums': {
-        args.mergedNums = take()
+      case '--merged-paths': {
+        args.mergedPaths = take()
         break
       }
       case '--pr-limit': {
@@ -379,17 +565,29 @@ function parseArgs(argv) {
   }
   if (args.prs === null) throw new Error('--prs is required')
   if (args.selfPr === null) throw new Error('--self-pr is required')
+  // Required, unlike the `--merged-nums` it replaces: the merge target's
+  // file list is what separates a NEW session log from an edited one (see
+  // this file's header). Missing, every touched session log would read as a
+  // fresh claim and two PRs editing one of the fifteen merged
+  // `session-1000-*.md` files would be reported as colliding — so its
+  // absence cannot be allowed to degrade quietly into that behaviour.
+  if (args.mergedPaths === null) throw new Error('--merged-paths is required')
   return args
 }
 
-function readMergedNums(path) {
-  if (path === null) return []
+/**
+ * The merge target's `docs/session-log/` listing. Only the trailing newline
+ * is stripped per line — a path is taken verbatim, because it has to match
+ * the payload's own path byte for byte to be recognised as "already on the
+ * base".
+ *
+ * @param {string} path
+ */
+function readMergedPaths(path) {
   return readFileSync(path, 'utf8')
     .split('\n')
-    .map((s) => s.trim())
+    .map((s) => s.replace(/\r$/, ''))
     .filter(Boolean)
-    .map(Number)
-    .filter(Number.isInteger)
 }
 
 function main(argv) {
@@ -414,17 +612,17 @@ function main(argv) {
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
   }
 
-  let mergedNums
+  let mergedPaths
   try {
-    mergedNums = readMergedNums(args.mergedNums)
+    mergedPaths = readMergedPaths(args.mergedPaths)
   } catch (err) {
     console.error(
-      `::error::check-session-log-pr-collision: could not read --merged-nums ${args.mergedNums}: ${err.message}`,
+      `::error::check-session-log-pr-collision: could not read --merged-paths ${args.mergedPaths}: ${err.message}`,
     )
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
   }
 
-  const result = analyze({ prs, selfPr: args.selfPr, mergedNums, prLimit: args.prLimit })
+  const result = analyze({ prs, selfPr: args.selfPr, mergedPaths, prLimit: args.prLimit })
 
   if (!result.verified) {
     console.error(`::error::check-session-log-pr-collision: could not verify — ${result.reason}`)
@@ -435,27 +633,86 @@ function main(argv) {
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
   }
 
-  if (result.collisions.length > 0) {
-    console.error(
-      `::error::check-session-log-pr-collision: ${result.collisions.length} session-log number(s) claimed by more than one open PR`,
-    )
-    for (const c of result.collisions) {
-      const who = c.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
-      console.error(`  session-${c.number}: claimed by ${who}`)
-    }
-    console.error(
-      `  One of these PRs must renumber. The next free number as of THIS run (considering ` +
-        `merged history and every open PR's claim) is session-${result.suggestion} — rebase onto ` +
-        'the freshest origin/main first, since another PR may claim it before you push.',
-    )
+  // Warnings are NOT findings and never change the verdict: they say what
+  // this run could not see (another PR's truncated file list), which is a
+  // different statement from "a number is doubly claimed".
+  for (const w of result.warnings) {
+    console.error(`::warning::check-session-log-pr-collision: ${w}`)
+  }
+
+  if (result.collisions.length + result.staleClaims.length > 0) {
+    reportFindings(result)
     finish('COLLISION', EXIT_COLLISION)
   }
 
   console.log(
     `check-session-log-pr-collision: OK — ${prs.length} open PR(s) checked, no session-log ` +
-      `number is claimed by more than one; next free number is session-${result.suggestion}.`,
+      `number is newly claimed by more than one and none duplicates a number already on the ` +
+      `merge target; ${nextFreeSentence(result.suggestion)}`,
   )
   finish('CLEAN', EXIT_VERIFIED_CLEAN)
+}
+
+/**
+ * The remedy line, shared by every finding: a number the OTHER guard would
+ * also accept, or an honest "none in the window" when parallel session-log
+ * PRs have taken all of them (see `suggestNextFree`).
+ *
+ * @param {number|null} suggestion
+ */
+function nextFreeSentence(suggestion) {
+  if (suggestion === null) {
+    return (
+      `no number in ${NUMBERING_GUARD}'s window (the ${GAP_BOUND} above the merge target's max) ` +
+      'is free — every one is already claimed by an open PR, so rebase onto the freshest ' +
+      'origin/main and re-derive it there rather than taking one from this run.'
+    )
+  }
+  return `the next free number as of THIS run is session-${suggestion}.`
+}
+
+/**
+ * Print both finding kinds, each with the evidence for THAT kind — a
+ * cross-PR collision names the other PR, a stale claim names the file
+ * already on the merge target. Split out of `main()` so the two stay
+ * distinct in the log: they have different causes and different fixes, and
+ * a reader who cannot tell which one fired cannot act on either.
+ *
+ * @param {ReturnType<typeof analyze>} result
+ */
+function reportFindings(result) {
+  const total = result.collisions.length + result.staleClaims.length
+  console.error(
+    `::error::check-session-log-pr-collision: ${total} session-log number(s) would be duplicated in the merge result`,
+  )
+  for (const c of result.collisions) {
+    const who = c.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
+    console.error(`  session-${c.number}: claimed by more than one open PR — ${who}`)
+    console.error('    One of these PRs must renumber; neither branch can see the other.')
+  }
+  for (const s of result.staleClaims) {
+    const who = s.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
+    // Capped: a number can be held by many merged files (fifteen carry
+    // session-1000), and a finding nobody reads to the end is a finding
+    // nobody acts on. The count is kept, so the line never understates it.
+    const shown = s.mergedPaths.slice(0, 3).map((p) => `\`${p}\``)
+    const rest = s.mergedPaths.length - shown.length
+    const where = rest > 0 ? `${shown.join(', ')} (and ${rest} more)` : shown.join(', ')
+    console.error(
+      `  session-${s.number}: already on the merge target as ${where}, ` +
+        `and newly added by ${who}`,
+    )
+    console.error(
+      '    Either YOUR BASE IS STALE — that number was free when the file was committed and a ' +
+        'sibling PR has merged it since — or the number is simply wrong. Either way ' +
+        `${NUMBERING_GUARD} will not catch it again, because it only ever inspects STAGED ` +
+        'additions: rebase onto origin/main and renumber.',
+    )
+  }
+  console.error(`  ${nextFreeSentence(result.suggestion)}`)
+  console.error(
+    '  Rebase onto the freshest origin/main first, since another PR may claim it before you push.',
+  )
 }
 
 /**
@@ -493,6 +750,16 @@ function mainGuarded(argv) {
 // `main()` itself: `main()` needs `gh pr list`, which is exactly the
 // network dependency this guard must never impose on an offline commit.
 const filesOf = (...names) => names.map((path) => ({ path }))
+
+/**
+ * The merge target's own `docs/session-log/` listing — what `--merged-paths`
+ * carries in CI, and what tells a NEW session log from an edited one.
+ * `mergedLogs(1318)` reads as "session-1318 is already on the base, as
+ * `docs/session-log/session-1318-merged.md`". Fixtures that need a specific
+ * merged FILENAME (the two-PRs-editing-one-merged-file cases) spell the
+ * path out instead.
+ */
+const mergedLogs = (...numbers) => numbers.map((n) => `${LOG_DIR}/session-${n}-merged.md`)
 
 /**
  * One `gh pr list --json number,files,changedFiles` entry. `changedFiles`
@@ -537,7 +804,7 @@ function runCoreCases(ok, fail) {
         pr(102, ['docs/session-log/session-1319-pairing.md']),
       ],
       selfPr: 101,
-      mergedNums: [1318],
+      mergedPaths: mergedLogs(1318),
     }),
     (r) =>
       r.verified &&
@@ -557,7 +824,7 @@ function runCoreCases(ok, fail) {
         pr(102, ['docs/session-log/session-1320-pairing.md']),
       ],
       selfPr: 101,
-      mergedNums: [1318],
+      mergedPaths: mergedLogs(1318),
     }),
     (r) => r.verified && r.collisions.length === 0 && r.suggestion === 1321,
   )
@@ -572,7 +839,7 @@ function runCoreCases(ok, fail) {
         pr(103, ['src/lib/search.ts', 'package.json']),
       ],
       selfPr: 101,
-      mergedNums: [1318],
+      mergedPaths: mergedLogs(1318),
     }),
     (r) => r.verified && r.collisions.length === 0 && r.suggestion === 1320,
   )
@@ -582,7 +849,7 @@ function runCoreCases(ok, fail) {
   // it pass if the API returned an empty list?" question #3933 asks.
   check(
     'an empty PR list fails verification when a self-PR is expected (not a silent pass)',
-    analyze({ prs: [], selfPr: 101, mergedNums: [] }),
+    analyze({ prs: [], selfPr: 101, mergedPaths: [] }),
     (r) => !r.verified && /not present in the fetched/.test(r.reason),
   )
 
@@ -592,7 +859,7 @@ function runCoreCases(ok, fail) {
   // collapsing them would hide which guarantee is actually being relied on.
   check(
     'an empty PR list with no self-PR check is verified-empty, not a failure',
-    analyze({ prs: [], selfPr: null, mergedNums: [42] }),
+    analyze({ prs: [], selfPr: null, mergedPaths: mergedLogs(42) }),
     (r) => r.verified && r.collisions.length === 0 && r.suggestion === 43,
   )
 
@@ -603,7 +870,7 @@ function runCoreCases(ok, fail) {
     analyze({
       prs: [pr(101, ['docs/session-log/session-1319-a.md', 'docs/session-log/session-1320-b.md'])],
       selfPr: 101,
-      mergedNums: [],
+      mergedPaths: [],
     }),
     (r) => r.verified && r.collisions.length === 0,
   )
@@ -619,7 +886,7 @@ function runCoreCases(ok, fail) {
         pr(3, ['docs/session-log/session-1400-c.md']),
       ],
       selfPr: 1,
-      mergedNums: [],
+      mergedPaths: [],
     }),
     (r) => r.verified && r.collisions.length === 1 && r.collisions[0].claims.length === 3,
   )
@@ -632,9 +899,194 @@ function runCoreCases(ok, fail) {
     analyze({
       prs: [pr(1, ['docs/session-log/session-5-a.md'])],
       selfPr: 1,
-      mergedNums: [1318, 1319],
+      mergedPaths: mergedLogs(1318, 1319),
     }),
     (r) => r.verified && r.suggestion === 1320,
+  )
+}
+
+/**
+ * What is, and is not, a CLAIM (#4431 review). `gh pr list --json files`
+ * returns added, MODIFIED and deleted files alike, so every case here is a
+ * PR that TOUCHES a session-log path; what separates them is whether that
+ * path is already on the merge target. The first two are the false
+ * positives the first version of this guard produced on this repository's
+ * actual tree, where fifteen merged files carry session-1000.
+ *
+ * @param {(name: string) => void} ok
+ * @param {(name: string, detail: string) => void} fail
+ */
+function runClaimSemanticsCases(ok, fail) {
+  const check = (name, r, predicate) => {
+    if (predicate(r)) ok(name)
+    else fail(name, JSON.stringify(r))
+  }
+
+  // Two of the real fifteen, plus a recent entry so the merged max is
+  // realistic rather than 1000.
+  const MERGED_A = `${LOG_DIR}/session-1000-stricter-linters.md`
+  const MERGED_B = `${LOG_DIR}/session-1000-ux-keyboard-fundamentals.md`
+  const BASE = [MERGED_A, MERGED_B, ...mergedLogs(1404)]
+
+  // Case 10: two PRs EDITING THE SAME merged session log — a docs-lint
+  // sweep and a link fix, say. The blocking defect: this was reported as
+  // "session-1000: claimed by #101 and #102", about a file on main since
+  // long before either PR existed.
+  check(
+    'two PRs modifying the SAME already-merged session log is not a collision',
+    analyze({
+      prs: [pr(101, [MERGED_A, 'src/lib/search.ts']), pr(102, [MERGED_A])],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.collisions.length === 0 && r.staleClaims.length === 0,
+  )
+
+  // Case 11: the variant that shares no path at all — two DIFFERENT merged
+  // files that happen to carry the same number (fifteen files do). A
+  // path-intersection check calls these disjoint; only the number groups
+  // them, which is precisely why this guard groups by number and precisely
+  // why it must not treat an edit as a claim.
+  check(
+    'two PRs modifying DIFFERENT merged files that share a number is not a collision',
+    analyze({
+      prs: [pr(101, [MERGED_A]), pr(102, [MERGED_B])],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.collisions.length === 0 && r.staleClaims.length === 0,
+  )
+
+  // Case 12: the guard must still fire. Same two PRs, but the files are NEW
+  // — neither path is on the base — and they share a number. This is the
+  // #3933 shape stated against a realistic base, and it is the assertion
+  // that keeps the fix above from being "report nothing, ever".
+  check(
+    'two PRs ADDING files with the same NEW number is still a collision',
+    analyze({
+      prs: [
+        pr(101, [`${LOG_DIR}/session-1405-tooling.md`]),
+        pr(102, [`${LOG_DIR}/session-1405-pairing.md`]),
+      ],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.collisions.length === 1 && r.collisions[0].number === 1405,
+  )
+
+  // Case 13: two PRs each ADDING a file whose number is ALREADY MERGED.
+  // Both findings fire, and that is the decision: the cross-PR collision is
+  // this guard's alone, while the "already on the base" half is
+  // check-session-log-numbering.sh's at the moment each file was committed
+  // — and nobody's afterwards, since that guard only ever re-examines
+  // STAGED additions. Reported here so a PR that was correct when written
+  // and has gone stale since is still caught.
+  check(
+    'two PRs adding files with the same ALREADY-MERGED number is both a collision and a stale claim',
+    analyze({
+      prs: [
+        pr(101, [`${LOG_DIR}/session-1000-mine.md`]),
+        pr(102, [`${LOG_DIR}/session-1000-theirs.md`]),
+      ],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 1 &&
+      r.collisions[0].number === 1000 &&
+      r.staleClaims.length === 1 &&
+      r.staleClaims[0].mergedPaths.includes(MERGED_A),
+  )
+
+  // Case 14: ONE open PR adding a file whose number is already on the base
+  // — the #3690 "two session-1281 files" shape, and the mirror gap of the
+  // blocking defect. No second open PR is involved, so nothing else in CI
+  // looks at it after the adding commit.
+  check(
+    'a single PR adding a file with an already-merged number is a stale claim',
+    analyze({
+      prs: [pr(101, [`${LOG_DIR}/session-1404-mine.md`]), pr(102, ['src/lib/search.ts'])],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 0 &&
+      r.staleClaims.length === 1 &&
+      r.staleClaims[0].number === 1404 &&
+      r.staleClaims[0].claims[0].pr === 101,
+  )
+
+  // Case 15: deleting a merged session log is not claiming its number
+  // either — `gh` reports a deletion as just another changed path, and the
+  // path is on the base, so the same rule covers it.
+  check(
+    'a PR deleting a merged session log claims nothing',
+    analyze({
+      prs: [pr(101, [MERGED_A]), pr(102, [`${LOG_DIR}/session-1405-new.md`])],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.collisions.length === 0 && r.staleClaims.length === 0,
+  )
+}
+
+/**
+ * The suggestion has to be a number the OTHER guard would accept (#4431
+ * review note 3): `max(everything) + 1` is not, once any open PR carries a
+ * number far above the merged max.
+ *
+ * @param {(name: string) => void} ok
+ * @param {(name: string, detail: string) => void} fail
+ */
+function runSuggestionCases(ok, fail) {
+  const check = (name, r, predicate) => {
+    if (predicate(r)) ok(name)
+    else fail(name, JSON.stringify(r))
+  }
+
+  // Case 16: one open PR holding session-9999 must not push the suggestion
+  // to 10000 — check-session-log-numbering.sh's check 2 rejects anything
+  // above (max, max+GAP_BOUND], so that suggestion would fail the guard the
+  // author is being told to satisfy.
+  check(
+    'a wildly high open claim does not poison the suggestion past the other guard’s window',
+    analyze({
+      prs: [pr(101, [`${LOG_DIR}/session-9999-typo.md`])],
+      selfPr: 101,
+      mergedPaths: mergedLogs(1404),
+    }),
+    (r) => r.verified && r.suggestion === 1405,
+  )
+
+  // Case 17: the suggestion skips numbers OTHER open PRs already claim, so
+  // the remedy cannot recreate the collision it is remedying.
+  check(
+    'the suggestion skips every number an open PR already claims',
+    analyze({
+      prs: [
+        pr(101, [`${LOG_DIR}/session-1405-a.md`]),
+        pr(102, [`${LOG_DIR}/session-1406-b.md`]),
+        pr(103, [`${LOG_DIR}/session-1407-c.md`]),
+      ],
+      selfPr: 101,
+      mergedPaths: mergedLogs(1404),
+    }),
+    (r) => r.verified && r.suggestion === 1408,
+  )
+
+  // Case 18: when the whole window is claimed, offer NOTHING rather than a
+  // number the other guard would reject. More open session-log PRs than the
+  // window is wide is itself the story; a fabricated next number would hide
+  // it.
+  const wholeWindow = Array.from({ length: GAP_BOUND }, (_, i) =>
+    pr(200 + i, [`${LOG_DIR}/session-${1405 + i}-a.md`]),
+  )
+  check(
+    'a fully claimed window yields no suggestion at all, not one outside it',
+    analyze({ prs: wholeWindow, selfPr: 200, mergedPaths: mergedLogs(1404) }),
+    (r) => r.verified && r.suggestion === null,
   )
 }
 
@@ -657,7 +1109,7 @@ function runMalformedPayloadCases(ok, fail) {
     ['entry with non-integer changedFiles', [{ number: 1, files: [], changedFiles: '3' }]],
   ]
   for (const [name, bad] of shapes) {
-    const r = analyze({ prs: bad, selfPr: null, mergedNums: [] })
+    const r = analyze({ prs: bad, selfPr: null, mergedPaths: [] })
     if (!r.verified) ok(`malformed payload (${name}) fails verification, not a silent pass`)
     else
       fail(`malformed payload (${name}) fails verification, not a silent pass`, JSON.stringify(r))
@@ -671,6 +1123,11 @@ function runMalformedPayloadCases(ok, fail) {
  * — a `pr()`-shaped fixture with `changedFiles` overridden past what its
  * (short, deliberately non-colliding) `files` array actually lists.
  *
+ * Whose list is truncated decides what happens (#4431 review note 2): THIS
+ * PR's own is a refusal, anyone else's is a warning. The two are asserted
+ * separately below, because collapsing them is exactly how a guard becomes
+ * a permanent red on PRs whose authors cannot do anything about it.
+ *
  * @param {(name: string) => void} ok
  * @param {(name: string, detail: string) => void} fail
  */
@@ -680,19 +1137,73 @@ function runTruncationCases(ok, fail) {
     else fail(name, JSON.stringify(r))
   }
 
-  // A PR whose true file count exceeds what `files` lists must fail
-  // verification — even though the visible slice shows no collision at
-  // all. This is the exact "a session-log claim past the 100-file cutoff
-  // is invisible" scenario: nothing about the VISIBLE files is wrong, so
-  // only the changedFiles cross-check can catch it.
+  // THIS PR's own file list is short of its changedFiles count: refuse —
+  // even though the visible slice shows no collision at all. Nothing about
+  // the VISIBLE files is wrong, so only the changedFiles cross-check can
+  // catch it, and the author reading the failure is the one who can act.
   check(
-    'a PR whose files list is shorter than its changedFiles count is unverified, not a silent pass',
+    "this PR's own truncated files list is unverified, not a silent pass",
     analyze({
       prs: [pr(101, ['docs/session-log/session-1319-tooling.md'], /* changedFiles */ 150)],
       selfPr: 101,
-      mergedNums: [],
+      mergedPaths: [],
     }),
     (r) => !r.verified && /truncated by gh's 100-file cap/.test(r.reason) && /#101/.test(r.reason),
+  )
+
+  // ANOTHER PR's truncated list: verified, plus a warning naming it. The
+  // 411-file PR in this repo's history would otherwise have turned this job
+  // red on every other open PR for as long as it stayed open.
+  check(
+    "another PR's truncated files list warns naming it, and does not fail this PR",
+    analyze({
+      prs: [
+        pr(101, ['docs/session-log/session-1319-tooling.md']),
+        pr(102, ['src/lib/search.ts'], /* changedFiles */ 411),
+      ],
+      selfPr: 101,
+      mergedPaths: [],
+    }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 0 &&
+      r.warnings.length === 1 &&
+      /#102/.test(r.warnings[0]) &&
+      /could not be ruled out/.test(r.warnings[0]),
+  )
+
+  // …and the downgrade must not swallow a collision that IS visible: the
+  // warning is additive, never a substitute for a finding.
+  check(
+    "a real collision is still reported alongside another PR's truncation warning",
+    analyze({
+      prs: [
+        pr(101, ['docs/session-log/session-1319-tooling.md']),
+        pr(102, ['docs/session-log/session-1319-pairing.md']),
+        pr(103, ['src/lib/search.ts'], /* changedFiles */ 411),
+      ],
+      selfPr: 101,
+      mergedPaths: [],
+    }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 1 &&
+      r.collisions[0].number === 1319 &&
+      r.warnings.length === 1 &&
+      /#103/.test(r.warnings[0]),
+  )
+
+  // With no self-PR expectation there is no "own" list to refuse over, so
+  // every truncation is somebody else's — warned, not fatal. (The CI caller
+  // always passes --self-pr; this is the ad-hoc invocation.)
+  check(
+    'with no --self-pr, a truncated entry warns rather than refusing',
+    analyze({
+      prs: [pr(102, ['src/lib/search.ts'], 411)],
+      selfPr: null,
+      mergedPaths: [],
+    }),
+    (r) => r.verified && r.warnings.length === 1 && /#102/.test(r.warnings[0]),
   )
 
   // The boundary: changedFiles EQUAL to files.length (the ordinary case
@@ -703,23 +1214,24 @@ function runTruncationCases(ok, fail) {
     analyze({
       prs: [pr(101, ['docs/session-log/session-1319-tooling.md'], 1)],
       selfPr: 101,
-      mergedNums: [],
+      mergedPaths: [],
     }),
     (r) => r.verified && r.collisions.length === 0,
   )
 
-  // A collision hiding behind ONE truncated sibling and one honest claimant
-  // must still surface as unverified overall, not silently report only the
-  // honest half.
+  // THIS PR truncated while another PR in the same payload claims a number
+  // honestly: the refusal still wins over the partial reading. What is
+  // downgraded above is another PR's truncation, never this PR's, and never
+  // into "verified" while this PR's own claim is unknown.
   check(
-    'a truncated PR is caught even when another PR in the same payload collides honestly',
+    "this PR's truncation still refuses even when the visible half reads cleanly",
     analyze({
       prs: [
         pr(101, ['docs/session-log/session-1319-a.md'], 200),
         pr(102, ['docs/session-log/session-1400-b.md']),
       ],
       selfPr: 101,
-      mergedNums: [],
+      mergedPaths: [],
     }),
     (r) => !r.verified && /truncated by gh's 100-file cap/.test(r.reason),
   )
@@ -747,19 +1259,19 @@ function runPrLimitCases(ok, fail) {
 
   check(
     'a fetched list exactly as long as --pr-limit is unverified, not read as "that many PRs exist"',
-    analyze({ prs: twoPrs, selfPr: 1, mergedNums: [], prLimit: 2 }),
+    analyze({ prs: twoPrs, selfPr: 1, mergedPaths: [], prLimit: 2 }),
     (r) => !r.verified && /meets or exceeds the requested --pr-limit/.test(r.reason),
   )
 
   check(
     'a fetched list SHORTER than --pr-limit passes normally',
-    analyze({ prs: twoPrs, selfPr: 1, mergedNums: [], prLimit: 50 }),
+    analyze({ prs: twoPrs, selfPr: 1, mergedPaths: [], prLimit: 50 }),
     (r) => r.verified && r.collisions.length === 0,
   )
 
   check(
     'no --pr-limit given (prLimit: null) skips the check entirely, whatever the list length',
-    analyze({ prs: twoPrs, selfPr: 1, mergedNums: [], prLimit: null }),
+    analyze({ prs: twoPrs, selfPr: 1, mergedPaths: [], prLimit: null }),
     (r) => r.verified,
   )
 }
@@ -816,6 +1328,8 @@ const jsonPrs = (...entries) => JSON.stringify(entries)
  */
 const SELF_PR = 101
 const GUARD_PATH_IN_PRS = 'scripts/check-session-log-pr-collision.mjs'
+/** The one session log the fixture `merged-paths.txt` puts on the base. */
+const MERGED_LOG = mergedLogs(1318)[0]
 const PAYLOADS = {
   collision: jsonPrs(
     pr(SELF_PR, ['docs/session-log/session-1319-tooling.md']),
@@ -827,6 +1341,12 @@ const PAYLOADS = {
   ),
   // The self PR is missing from the list — the guard's own refusal path.
   unverifiable: jsonPrs(pr(102, ['docs/session-log/session-1320-pairing.md'])),
+  // Two PRs EDITING the same session log that is already on the merge
+  // target (`merged-paths.txt` below lists it) — the blocking false
+  // positive of #4431's review, end to end rather than in `analyze()` alone.
+  modification: jsonPrs(pr(SELF_PR, [MERGED_LOG]), pr(102, [MERGED_LOG, 'src/lib/search.ts'])),
+  // One PR ADDING a new file whose number is already on the merge target.
+  staleClaim: jsonPrs(pr(SELF_PR, [`${LOG_DIR}/session-1318-mine.md`])),
   // Absence discriminator fixtures: this PR adds the guard / does not / its
   // own file list is truncated / it is not in the payload at all.
   selfAddsGuard: jsonPrs(pr(SELF_PR, [GUARD_PATH_IN_PRS, 'prek.toml'])),
@@ -850,8 +1370,8 @@ function runGuard(dir, guardPath) {
       'prs.json',
       '--self-pr',
       String(SELF_PR),
-      '--merged-nums',
-      'merged-nums.txt',
+      '--merged-paths',
+      'merged-paths.txt',
       '--pr-limit',
       '100',
     ],
@@ -883,7 +1403,7 @@ function runStep(dir, stepPath, guardScript) {
       PR_LIST_LIMIT: '100',
       GUARD_SCRIPT: guardScript,
       PRS_JSON: 'prs.json',
-      MERGED_NUMS: 'merged-nums.txt',
+      MERGED_PATHS: 'merged-paths.txt',
       GITHUB_STEP_SUMMARY: `${dir}/summary.md`,
     },
   })
@@ -927,7 +1447,7 @@ function runProcessCasesIn(dir, ok, fail) {
 
   const stepPath = join(dir, 'step.sh')
   writeFileSync(stepPath, extractStepShell(workflow))
-  writeFileSync(join(dir, 'merged-nums.txt'), '1318\n')
+  writeFileSync(join(dir, 'merged-paths.txt'), `${mergedLogs(1318).join('\n')}\n`)
 
   // The guard under test is a COPY, never the checked-in file: one of the
   // cases below deliberately breaks it, and mutating the real file would
@@ -965,6 +1485,50 @@ function runProcessCasesIn(dir, ok, fail) {
     'step: a clean board passes the job and reports "verified"',
     runStep(dir, stepPath, guard),
     (r) => r.code === 0 && /verified — no open PR shares/.test(r.out),
+  )
+
+  // ── Outcome 2b: THE #4431-REVIEW BLOCKING DEFECT, end to end. Two PRs
+  // EDITING the same session log that is already on the merge target. The
+  // first version reported `session-1318: claimed by #101 and #102` and
+  // failed both PRs; the real guard, the real step, and the real
+  // `merged-paths.txt` must now agree it is clean.
+  payload('modification')
+  check(
+    'process: two PRs editing one already-merged session log exit 0 with a CLEAN verdict',
+    runGuard(dir, guard),
+    (r) => r.code === EXIT_VERIFIED_CLEAN && r.verdict === 'CLEAN',
+  )
+  check(
+    'step: two PRs editing one already-merged session log pass the job',
+    runStep(dir, stepPath, guard),
+    (r) => r.code === 0 && !/duplicated in the merge result/.test(r.out),
+  )
+
+  // ── Outcome 2c: the mirror — one PR ADDING a file whose number is
+  // already on the merge target. Same base listing, opposite verdict, and
+  // the message has to name the merged file rather than a second PR.
+  payload('staleClaim')
+  check(
+    'process: a new file with an already-merged number exits 20 with a COLLISION verdict',
+    runGuard(dir, guard),
+    (r) => r.code === EXIT_COLLISION && r.verdict === 'COLLISION',
+  )
+  check(
+    'step: a new file with an already-merged number fails, naming the file it duplicates',
+    runStep(dir, stepPath, guard),
+    (r) =>
+      r.code === 1 && /already on the merge target as/.test(r.out) && /BASE IS STALE/.test(r.out),
+  )
+
+  // ── The two guards must agree about "next free". This script's window is
+  // GAP_BOUND wide because check-session-log-numbering.sh's is; a change to
+  // either that is not made to both hands out numbers the other rejects.
+  const numbering = readFileSync(join(repoRoot, NUMBERING_GUARD), 'utf8')
+  const boundThere = /^GAP_BOUND=(\d+)$/m.exec(numbering)
+  check(
+    `cross-guard: GAP_BOUND is the same in this script and ${NUMBERING_GUARD}`,
+    { here: GAP_BOUND, there: boundThere === null ? null : Number(boundThere[1]) },
+    (v) => v.there !== null && v.there === v.here,
   )
 
   // ── Outcome 3: the guard RAN and refused to vouch for its input. Exit 2,
@@ -1083,6 +1647,8 @@ function runSelfTest() {
   }
 
   runCoreCases(ok, fail)
+  runClaimSemanticsCases(ok, fail)
+  runSuggestionCases(ok, fail)
   runMalformedPayloadCases(ok, fail)
   runTruncationCases(ok, fail)
   runPrLimitCases(ok, fail)
