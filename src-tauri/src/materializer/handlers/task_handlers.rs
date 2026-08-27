@@ -211,6 +211,18 @@ pub(crate) async fn handle_foreground_task(
                     state,
                 )
                 .await;
+                // #4390: the un-sweep's engine mirror, on the batch path too.
+                // A `MoveBlock` whose subject arrives already tombstoned by a
+                // concurrent cascade is exactly the shape a REMOTE batch
+                // delivers, so leaving this off the batch arm would leave the
+                // fix on the single-op path only.
+                super::apply::dispatch_unswept_cohort(
+                    record,
+                    &effects.unswept_cohort,
+                    effects.unswept_space_id.as_ref(),
+                    state,
+                )
+                .await;
                 // #4285: repair the LINK edges of everything this record's
                 // restore un-deleted — the whole cohort, not just the seed.
                 // Mirrors `apply_op`'s single-op call; a batch of remote ops

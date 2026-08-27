@@ -696,25 +696,30 @@ pub async fn apply_delete_block_via_loro(
 /// Calling it here too would be unreachable code, and the `#891` fallback-count
 /// assertions in `move_convergence_tests` pin that routing.
 ///
-/// The consequence is the open half of #4204 (its "finding 3"): because the
-/// tombstoned-subject move runs on the engine-LESS arm, nothing clears the
-/// subject's per-space engine `deleted_at` register, which the delete's
-/// post-commit `dispatch_delete_descendants` fan-out set for the whole cohort.
-/// The SQL re-derivation therefore does not survive the next snapshot import
-/// (`reproject_block_deleted_at_from_engine` takes its `Some(ts)` branch). The
-/// durable fix is a post-commit fan-out in the shape of #2868's purge fix —
-/// resolve the space with
-/// [`agaric_store::space::resolve_soft_deleted_block_space`] and mirror the
-/// clear.
+/// The consequence used to be the open half of #4204 (its "finding 3"):
+/// because the tombstoned-subject move runs on the engine-LESS arm, nothing
+/// cleared the subject's per-space engine `deleted_at` register, which the
+/// delete's post-commit `dispatch_delete_descendants` fan-out set for the
+/// whole cohort — so the SQL re-derivation did not survive the next snapshot
+/// import (`reproject_block_deleted_at_from_engine` took its `Some(ts)`
+/// branch).
 ///
-/// That it is a CRDT-visible resurrection propagated to the DELETING peer is
-/// no longer a reason to hold: the maintainer ruling of 2026-08-26 adopts
-/// exactly that semantics
+/// #4390 closed that, and NOT by bolting the mirror on here: this arm still
+/// never sees a tombstoned subject, so there is no call site here for it to
+/// live at, and a post-commit fan-out belongs outside this function either
+/// way. The fix threads the cleared ids out of the `sql_only` arm instead —
+/// which is why THIS function's return type changed too, forwarding what its
+/// two fallback arms hand back. The engine arm itself always returns an empty
+/// vec: it un-sweeps nothing, by the routing argument above. The mirror lands
+/// in `materializer::handlers::apply::dispatch_unswept_cohort`, resolving the
+/// space with [`agaric_store::space::resolve_soft_deleted_block_space`] in the
+/// shape of #2868's purge fix.
+///
+/// That it is a CRDT-visible resurrection propagated to the DELETING peer was
+/// never a reason to hold: the maintainer ruling of 2026-08-26 adopts exactly
+/// that semantics
 /// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>).
-/// It is not bolted on here for the structural reason above — this arm never
-/// sees a tombstoned subject, so the mirror has no call site here to live at —
-/// and the fan-out is a post-commit concern outside this function either way.
-/// The canonical statement of the gap is on
+/// The canonical statement of the mechanism is on
 /// [`super::sql_only::unsweep_inherited_cohort_after_move`].
 pub async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
@@ -726,7 +731,10 @@ pub async fn apply_move_block_via_loro(
     // caller) reprojects inline. Replaces the retired ambient boot-replay
     // suppression global on `LoroState`.
     replay_dirty: Option<&super::ReplayDirtyParents>,
-) -> Result<(), AppError> {
+    // #4390: returns the ids the tail's un-sweep cleared, forwarded from the
+    // `sql_only` fallback arms (this arm itself never un-sweeps). See the
+    // #4204/#4188 note above.
+) -> Result<Vec<String>, AppError> {
     use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
 
@@ -881,7 +889,10 @@ pub async fn apply_move_block_via_loro(
             drop(guard);
         }
     }
-    Ok(())
+    // #4390: the engine arm un-sweeps nothing — a tombstoned subject never
+    // reaches it (see this function's #4204/#4188 note) — so there is never
+    // anything for the post-commit mirror to do on this path.
+    Ok(Vec::new())
 }
 
 /// Apply RestoreBlock through the engine then project to SQL.

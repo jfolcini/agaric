@@ -723,7 +723,11 @@ pub async fn project_restore_block_to_sql(
     block_id: &str,
     deleted_at_ref: i64,
 ) -> Result<Vec<String>, AppError> {
-    clear_cohort_deleted_at_downward(&mut *conn, block_id, deleted_at_ref).await?;
+    // The cleared ids are not needed here: a `RestoreBlock`'s cohort is
+    // captured PRE-UPDATE by `collect_restore_cohort` and fanned out by
+    // `dispatch_restore_descendants`. Only #4390's un-sweep caller consumes
+    // them.
+    let _cleared = clear_cohort_deleted_at_downward(&mut *conn, block_id, deleted_at_ref).await?;
 
     // #1884: also restore UPWARD, mirroring `restore_block_inner`. The cohort
     // CTE above only clears `deleted_at` downward, but the block's PARENT may
@@ -773,11 +777,24 @@ pub async fn project_restore_block_to_sql(
 ///   invisible orphan either: the caller re-derives its tombstone from the new
 ///   position immediately afterwards.
 ///
+/// # The returned ids (#4390)
+///
+/// Exactly the rows the UPDATE cleared — `RETURNING id`, so it is the
+/// statement's own answer rather than a second SELECT that could disagree with
+/// it, and it costs no extra round trip.
+///
+/// `project_restore_block_to_sql` ignores them (its cohort is already captured
+/// pre-UPDATE by `collect_restore_cohort` for the `dispatch_restore_*`
+/// fan-outs). The un-sweep caller needs them because its cohort has no other
+/// witness: a `MoveBlock` has no `deleted_at_ref` to walk back from once the
+/// clear has run, so without this list the post-commit engine mirror
+/// (`dispatch_unswept_cohort`) would have nothing to mirror. See
+/// [`crate::apply::sql_only::unsweep_inherited_cohort_after_move`].
 pub(crate) async fn clear_cohort_deleted_at_downward(
     conn: &mut SqliteConnection,
     block_id: &str,
     deleted_at_ref: i64,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     // R27: the cohort walk is depth-UNBOUNDED (batched capped CTE,
     // re-anchored at the depth-100 boundary) so a merged sync tree deeper
     // than the cap restores its WHOLE contiguous cohort instead of leaving
@@ -794,15 +811,22 @@ pub(crate) async fn clear_cohort_deleted_at_downward(
     let payload = serde_json::Value::from(cohort).to_string();
     // dynamic-sql: json_each id-list UPDATE over the walked cohort; single
     // bound JSON parameter, immune to the SQLite variable limit.
-    sqlx::query(
+    //
+    // #4390: `RETURNING id` names exactly the rows this UPDATE touched. The
+    // walked cohort is a superset in principle (the walker admits the SEED
+    // unconditionally, whatever its own `deleted_at`), so reading the
+    // statement's own answer is what keeps the engine mirror from restoring a
+    // block SQL never restored.
+    let cleared: Vec<String> = sqlx::query_scalar(
         "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
+         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2 \
+         RETURNING id",
     )
     .bind(&payload)
     .bind(deleted_at_ref)
-    .execute(&mut *conn)
+    .fetch_all(&mut *conn)
     .await?;
-    Ok(())
+    Ok(cleared)
 }
 
 /// Project a `DeleteProperty` engine state into SQL.  Mirrors the
@@ -1412,35 +1436,41 @@ pub async fn reproject_block_tags_from_engine(
 /// (`engine_deleted_at`, from
 /// [`crate::loro::engine::LoroEngine::read_deleted_at`]).
 ///
-/// The engine's `deleted_at` register is written on the **delete seed** by the
-/// engine apply itself (the descendant cascade is an SQL/app derivation per the
-/// boundary), so this helper re-derives the cascade in SQL rather than
-/// trusting per-block engine state:
+/// # What the register does and does not mean (#4204/#4390)
 ///
-/// **The register is NOT reliably seed-only, though** (#4204). The op path fans
+/// The IMPORT path writes `deleted_at` on the **delete seed** only — the
+/// descendant cascade is an SQL/app derivation per the engine boundary — which
+/// is why this helper re-derives the cascade in SQL rather than trusting
+/// per-block engine state.
+///
+/// **The register is NOT seed-only in general, though.** The OP path fans
 /// `ApplyEffects::deleted_cohort` — seed *plus* every cascaded descendant —
 /// onto the per-space engine post-commit
 /// (`materializer::handlers::apply::dispatch_delete_descendants`), and #4112's
 /// move sweep mirrors its own cohort inline. So a cascade member's register is
 /// routinely set on the op path and absent on the import path, and a device
 /// that reads `Some(ts)` here cannot conclude "this block is a delete seed".
-/// The consequence that matters: any arm that clears a cascade member's
-/// `deleted_at` in SQL must mirror the clear onto the register too, or the next
-/// import re-trashes the rows through the `Some(ts)` branch below. #4204's
-/// un-sweep ([`crate::apply::sql_only::unsweep_inherited_cohort_after_move`])
-/// does NOT yet do that, and cannot from where it sits: a move whose subject is
-/// tombstoned is routed to the engine-LESS `apply_move_block_sql_only` by
-/// `resolve_block_space`'s `deleted_at IS NULL` filter. Its SQL clear is
-/// therefore undone by the next import through this very branch — #4204's
-/// finding 3, pinned by `unsweep_does_not_yet_reach_the_engine_register_4204`.
-/// The SEMANTICS are settled (the maintainer ruling of 2026-08-26 adopts the
-/// resurrection —
-/// <https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>);
-/// what is missing is the durable plumbing, a #2868-shaped post-commit fan-out
-/// via `resolve_soft_deleted_block_space`. The canonical statement of that gap
-/// — why it cannot be closed from either move arm, and what closing it takes —
-/// lives on [`crate::apply::sql_only::unsweep_inherited_cohort_after_move`];
-/// this comment names only the branch that undoes the clear.
+/// That asymmetry is deliberate and load-bearing; it is stated here because an
+/// earlier version of this doc claimed the seed-only property outright, and a
+/// reader who believes it will write a bug.
+///
+/// The consequence that matters: **any arm that clears a cascade member's
+/// `deleted_at` in SQL must mirror the clear onto the register too**, or the
+/// next import re-trashes the rows through the `Some(ts)` branch below. There
+/// is exactly one such arm, #4204's un-sweep
+/// ([`crate::apply::sql_only::unsweep_inherited_cohort_after_move`]), and
+/// since #4390 it does mirror — not from where it sits (a move whose subject
+/// is tombstoned is routed to the engine-LESS `apply_move_block_sql_only` by
+/// `resolve_block_space`'s `deleted_at IS NULL` filter) but by threading the
+/// cleared ids out to the post-commit
+/// `materializer::handlers::apply::dispatch_unswept_cohort`, which resolves
+/// the space with `resolve_soft_deleted_block_space` in the shape of #2868's
+/// purge fix. The semantics it propagates — a CRDT-visible resurrection
+/// reaching the DELETING peer — are the maintainer ruling of 2026-08-26
+/// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>).
+/// The canonical statement of the mechanism lives on that un-sweep;
+/// `unsweep_reaches_the_engine_register_4204_4390` is the measurement, and it
+/// reddens here if this branch stops agreeing with it.
 ///
 /// * `Some(ts)` — the block is deleted on the remote. Cascade-soft-
 ///   delete the block + every still-active descendant at `ts` (via

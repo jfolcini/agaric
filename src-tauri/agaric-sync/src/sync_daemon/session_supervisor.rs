@@ -62,7 +62,7 @@ use iroh::{Endpoint, EndpointAddr, SecretKey};
 use iroh_dns::dns::DnsResolver;
 
 use crate::sync_protocol::{SyncOrchestrator, SyncState};
-use crate::sync_scheduler::SyncScheduler;
+use crate::sync_scheduler::{PeerMembership, SyncScheduler};
 use crate::transport::driver::{Role, SessionLimits, finish_session, run_session};
 use crate::transport::egress_probe::{
     BoundSocket, EgressReport, EgressVerdict, probe_peer_egress_with, system_source_address_for,
@@ -1691,6 +1691,16 @@ fn record_initiator_failure(
     // that turns suppression off. See `record_failure_and_take_report`.
     let still_serving_this_peer = peer_pulled_from_us_recently(scheduler, peer_refs, peer_id);
 
+    // #4385: the eviction discriminator, computed HERE for the same reason as
+    // the flag above — this function is handed a fresh `&[PeerRef]` slice it
+    // already reads, and `evict_for_new_peer` runs under a `std::sync::Mutex`
+    // where a DB read would be a blocking call inside a sync mutex on an async
+    // runtime. Row PRESENCE, not `endpoint_id.is_some()`: a migrated pair is
+    // unbound until its first successful iroh session and a refused bind
+    // leaves the row unbound, so the bind predicate is exactly wrong on the
+    // peers the policy protects. See `PeerMembership`.
+    let membership = PeerMembership::of(peer_refs, peer_id);
+
     // ONE acquisition books the failure and decides the report together
     // (#4202). "Already reported" is per `(peer, message, still-serving)`, NOT
     // per peer: a failure whose *cause changes* mid-streak is news the user has
@@ -1704,8 +1714,12 @@ fn record_initiator_failure(
     // failure text that churns (an error string carrying a varying detail)
     // degrades to reporting every cycle — i.e. back to the pre-#4120 behaviour,
     // never quieter than it.
-    let booking =
-        scheduler.record_failure_and_take_report(peer_id, &message, still_serving_this_peer);
+    let booking = scheduler.record_failure_and_take_report(
+        peer_id,
+        &message,
+        still_serving_this_peer,
+        membership,
+    );
 
     if !booking.report {
         // `reason`, not `message`: `message` is tracing's own implicit field
@@ -3079,6 +3093,124 @@ mod tests {
     /// the peer's own inbound sessions keep stamping `streamed_at`, i.e. while
     /// the pair is visibly exchanging data. Only the repeat is suppressed, and
     /// the backoff is booked either way.
+    /// #4385: `record_initiator_failure` must hand the scheduler the
+    /// MEMBERSHIP answer, so a real peer's retry hint outlives an unpaired
+    /// announcer flood.
+    ///
+    /// The peer here is the migrated pre-iroh pair — present in `peer_refs`,
+    /// `endpoint_id IS NULL` because migration 0107 backfilled nothing and
+    /// this pair has not completed an iroh session since. It is failing, which
+    /// is the only reason it holds a backoff entry at all. Classifying by
+    /// `endpoint_id.is_some()` would make it the FIRST eviction victim — the
+    /// peer the policy exists to protect — so this test reddens both on a
+    /// missing `membership` argument and on the wrong predicate.
+    ///
+    /// The flood goes through `SyncScheduler::record_failure`, the
+    /// membership-blind entry point, which books every announcer as
+    /// `PeerMembership::Unknown` — exactly what an mDNS announcer is.
+    ///
+    /// # Why the map is pre-loaded with SATURATED announcers
+    ///
+    /// This module cannot reach the scheduler's private map to pin a stamp, so
+    /// the ladder does it instead. Booking the pre-load announcers six times
+    /// each walks them to the `MAX_BACKOFF` rung (~60s out) while the migrated
+    /// peer sits on its first-failure rung (~2s out), which makes it the
+    /// unambiguous `min(next_retry_at)` — a ~58s margin, where "booked first"
+    /// alone would only be a few microseconds against a ±10 % jitter of ±0.2s
+    /// and the falsification would come out FLAKY rather than RED.
+    #[test]
+    fn a_migrated_unbound_peer_survives_an_announcer_flood_4385() {
+        const MIGRATED_PEER: &str = "peer-4385-migrated";
+        // One below the documented `MAX_BACKOFF_PEERS` cap of 64 (the const is
+        // private to `sync_scheduler`), so the migrated peer's own booking is
+        // what brings the map exactly TO the cap and the flood below is what
+        // makes it bind.
+        const PRELOAD: usize = 63;
+        // Rungs to climb: 2, 4, 8, 16, 32, 60s.
+        const SATURATE: usize = 6;
+        // 4x the cap in fresh ids, each one an eviction.
+        const FLOOD: usize = 256;
+
+        let typed = Arc::new(RecordingEventSink::new());
+        let sink: Arc<dyn SyncEventSink> = typed.clone();
+        let scheduler = SyncScheduler::new();
+        let refs = vec![PeerRef {
+            peer_id: MIGRATED_PEER.to_string(),
+            last_hash: None,
+            last_sent_hash: None,
+            synced_at: None,
+            streamed_at: None,
+            reset_count: 0,
+            last_reset_at: None,
+            cert_hash: None,
+            device_name: Some("Old laptop".into()),
+            remote_device_name: None,
+            last_address: None,
+            // The load-bearing field: paired, but not bound.
+            endpoint_id: None,
+            unpaired_by_peer_at_ms: None,
+        }];
+
+        // Fill the map to one below the cap with announcers saturated at the
+        // 60s rung, so the migrated peer's 2s rung is the strict minimum.
+        for i in 0..PRELOAD {
+            for _ in 0..SATURATE {
+                scheduler.record_failure(&format!("resident-announcer-{i:04}"));
+            }
+        }
+        assert_eq!(
+            scheduler.failure_count("resident-announcer-0000"),
+            u32::try_from(SATURATE).expect("SATURATE is a small literal"),
+            "precondition: every resident climbed the whole ladder to the \
+             MAX_BACKOFF rung — if they sat on the bottom rung instead, the \
+             migrated peer would not be the strict minimum and this test would \
+             stop being able to redden"
+        );
+
+        record_initiator_failure(
+            &scheduler,
+            &sink,
+            &refs,
+            MIGRATED_PEER,
+            "Connection failed: peer did not answer within 10s".into(),
+        );
+        assert_eq!(
+            scheduler.failure_count(MIGRATED_PEER),
+            1,
+            "precondition: the failure was booked, so the peer holds a hint, \
+             and it is on the bottom rung — the position #4385 says makes it \
+             evictable as fast as it is re-created"
+        );
+
+        for i in 0..FLOOD {
+            scheduler.record_failure(&format!("lan-announcer-{i:04}"));
+        }
+
+        // Counted by CLASS, not by naming one victim: which announcer goes is
+        // decided by the ±10 % jitter inside the unknown class, so
+        // `lan-announcer-0000` specifically is not guaranteed to be the one
+        // and asserting on it would make this precondition flaky. Exactly one
+        // flood id can be resident, in EITHER policy: every flood id enters on
+        // the bottom rung, so the next arrival displaces it.
+        assert_eq!(
+            scheduler
+                .failure_counts()
+                .iter()
+                .filter(|(id, _)| id.starts_with("lan-announcer-"))
+                .count(),
+            1,
+            "precondition: {FLOOD} flood ids were booked and the cap must \
+             actually have BOUND, leaving exactly one resident — otherwise the \
+             survival below says nothing about eviction order"
+        );
+        assert_eq!(
+            scheduler.failure_count(MIGRATED_PEER),
+            1,
+            "#4385: a `peer_refs` member — bound or not — must keep its \
+             accumulated retry hint through an unpaired announcer flood"
+        );
+    }
+
     #[test]
     fn a_repeat_pull_failure_against_a_peer_still_pulling_from_us_is_reported_once_4120() {
         let typed = Arc::new(RecordingEventSink::new());

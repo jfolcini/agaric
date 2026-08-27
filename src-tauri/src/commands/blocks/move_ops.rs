@@ -303,7 +303,11 @@ async fn move_block_in_tx(
     //    `apply_op_projected` borrows `&op_record` here, BEFORE the
     //    `enqueue_background(op_record)` move below. The returned `ApplyEffects`
     //    is empty for Move (LOCAL move runs no post-commit cohort fan-out), so it
-    //    is discarded.
+    //    is discarded. #4390 added `unswept_cohort` to that struct and it stays
+    //    empty HERE by construction: it is populated only when the move's
+    //    subject arrives already TOMBSTONED by a concurrent cascade, and
+    //    `validate_move_in_tx` above refuses a trashed subject outright — that
+    //    shape reaches the materializer only as a replayed remote op.
     // #2700: capture the moved block's `page_id` BEFORE the in-tx rederive so
     // we can tell whether this move changes page attribution. The
     // `apply_op_projected` call below re-derives `page_id`/`space_id` for the

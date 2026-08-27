@@ -120,8 +120,103 @@ pub struct SyncScheduler {
     pub resync_interval: Duration,
 }
 
+/// #4385 — the eviction discriminator: is this peer one this vault has a
+/// `peer_refs` row for?
+///
+/// # Why membership and NOT `endpoint_id.is_some()`
+///
+/// The obvious reading of "a peer this device has actually paired with" is the
+/// iroh bind, and it is wrong on exactly the peers this policy exists to
+/// protect:
+///
+/// * **Migrated pairs.** `migrations/0107_peer_refs_endpoint_id.sql` is
+///   explicit — nullable, no `DEFAULT`, no backfill. Every pre-iroh pair has
+///   `endpoint_id IS NULL` until its first *successful* iroh session, and TOFU
+///   on that session is the path by which a migrated pair re-acquires a
+///   binding. So a migrated pair that is currently FAILING is, by definition,
+///   unbound *and* in the backoff map, indefinitely: the bind predicate would
+///   evict it first.
+/// * **Refused binds.** A refused bind leaves the `peer_refs` row present and
+///   unbound (`server.rs`'s pinned-identity refusal, `peer_refs.rs`'s
+///   bind guard).
+///
+/// Membership is also strictly cheaper: same site, same slice, one *fewer*
+/// field access.
+///
+/// # The window where the two classes are indistinguishable
+///
+/// An unpaired device id can be dialled at all only while `pairing_pending`
+/// (bounded by `PAIRING_TIMEOUT`), and in the normal first-ever-pair case the
+/// genuine partner has no `peer_refs` row either — partner and flooder are
+/// byte-for-byte the same under any predicate available here. Two things keep
+/// that from sinking the policy: both pairing commands call
+/// [`SyncScheduler::clear_backoff`], so the map is emptied at each pairing act
+/// and a flood must re-fill every slot from scratch inside that window; and
+/// losing a retry HINT during pairing is not a punishment — it lets the peer
+/// retry immediately instead of after an accumulated wait, which is the
+/// desired behaviour while a user is standing at a pairing dialog. Outside the
+/// window — the treadmill #4385 actually describes — the peer being booked is
+/// a `peer_refs` member and the residents are unpaired announcers, and that is
+/// where the policy pays.
+///
+/// A `bool` would fit in the same space; the named type exists because the one
+/// call site that computes it also passes a `peer_still_serving` flag
+/// ([`SyncScheduler::record_failure_and_take_report`]), and two adjacent bools
+/// of opposite meaning is a call-site footgun the compiler cannot catch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerMembership {
+    /// This device holds a `peer_refs` row for the peer — bound or not.
+    Known,
+    /// No `peer_refs` row: an mDNS announcer this device has never paired
+    /// with, or a genuine partner still inside the pairing window (see the
+    /// type docs).
+    Unknown,
+}
+
+impl PeerMembership {
+    /// Classify `peer_id` against the caller's already-loaded `peer_refs`
+    /// rows.
+    ///
+    /// Positive classification: `Known` is returned only when a row is
+    /// actually present. Every path that has not checked says
+    /// [`PeerMembership::Unknown`] and is evicted first — the "noisier, never
+    /// quieter" direction the cap is documented to prefer.
+    #[must_use]
+    pub fn of(peer_refs: &[PeerRef], peer_id: &str) -> Self {
+        if peer_refs.iter().any(|p| p.peer_id == peer_id) {
+            Self::Known
+        } else {
+            Self::Unknown
+        }
+    }
+
+    /// Eviction rank helper: `false` sorts first, so unknown announcers are
+    /// the first victims. See [`evict_for_new_peer`].
+    const fn is_known(self) -> bool {
+        matches!(self, Self::Known)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct BackoffState {
+    /// #4385: was this peer a [`PeerMembership::Known`] device — one this
+    /// vault holds a `peer_refs` row for — at the moment the most recent
+    /// failure was booked for it?
+    ///
+    /// Stored rather than looked up because [`evict_for_new_peer`] has to rank
+    /// the RESIDENTS, and it runs under a `std::sync::Mutex` with no pool and
+    /// no async handle: a DB read there would be a blocking call inside a sync
+    /// mutex on an async runtime. The caller already holds the rows
+    /// (`record_initiator_failure` is handed a fresh `&[PeerRef]`), so the
+    /// answer is computed there and rides in with the booking — the same shape
+    /// as [`SyncScheduler::peers_due_for_resync`], which is also handed its
+    /// `&[PeerRef]`.
+    ///
+    /// It is therefore the last computed answer, not a live one. Every booking
+    /// refreshes it (see [`book_failure`]), so a device that pairs mid-streak
+    /// stops being first in the eviction queue on its next failure rather than
+    /// at the next restart.
+    membership: PeerMembership,
     /// When the peer may next be retried.
     next_retry_at: Instant,
     /// Current backoff duration (doubles on each failure).
@@ -215,17 +310,31 @@ pub struct FailureBooking {
 ///
 /// This is the ONLY place a `backoff` entry is created, which is why the
 /// [`MAX_BACKOFF_PEERS`] cap is enforced here (#4231).
+///
+/// `membership` is the caller's answer to "does this vault hold a `peer_refs`
+/// row for `peer_id`?" (#4385). It is stored on the entry — and REFRESHED on
+/// every booking, so a device that pairs mid-streak stops being first in the
+/// eviction queue on its next failure — because [`evict_for_new_peer`] ranks
+/// the residents and cannot go to the DB itself. See [`PeerMembership`].
 fn book_failure<'a>(
     backoff: &'a mut HashMap<String, BackoffState>,
     peer_id: &str,
+    membership: PeerMembership,
 ) -> &'a mut BackoffState {
     evict_for_new_peer(backoff, peer_id);
     let state = backoff.entry(peer_id.to_string()).or_insert(BackoffState {
+        membership,
         next_retry_at: Instant::now(),
         backoff: MIN_BACKOFF,
         consecutive_failures: 0,
         reported_errors: Vec::new(),
     });
+    // Refresh rather than keep the seed value: the entry outlives the pairing
+    // act that creates the row (the map is cleared on a pairing act, but the
+    // responder bind path and a `peer_refs` insert from the OTHER side are not
+    // pairing acts here), so the newest answer is the right one in both
+    // directions.
+    state.membership = membership;
     state.consecutive_failures += 1;
     // Doubling happens *before* we write `next_retry_at`, so the
     // first call doubles the `MIN_BACKOFF` seed `1s → 2s`. The sequence
@@ -240,8 +349,12 @@ fn book_failure<'a>(
     state
 }
 
-/// Make room for a *new* `peer_id` in `backoff`, evicting the entry with the
-/// earliest `next_retry_at` once the map is at [`MAX_BACKOFF_PEERS`] (#4231).
+/// Make room for a *new* `peer_id` in `backoff`, evicting the
+/// least-defensible entry once the map is at [`MAX_BACKOFF_PEERS`] (#4231).
+///
+/// The victim is chosen by `(membership.is_known(), next_retry_at)` ascending:
+/// [`PeerMembership::Unknown`] entries go first, and only within one
+/// membership class does the `next_retry_at` order below decide (#4385).
 ///
 /// A no-op when `peer_id` already has an entry (booking another failure for a
 /// peer already in the map cannot grow it) or when the map is below the cap —
@@ -279,17 +392,27 @@ fn evict_for_new_peer(backoff: &mut HashMap<String, BackoffState>, peer_id: &str
     if backoff.len() < MAX_BACKOFF_PEERS || backoff.contains_key(peer_id) {
         return;
     }
+    // #4385: membership is the PRIMARY key and `next_retry_at` only breaks ties
+    // within a class. `false < true`, so every `Unknown` announcer is exhausted
+    // before the first `Known` peer is considered — which is what makes a flood
+    // of unpaired ids unable to displace a real peer's hint, without changing
+    // the cap or the ladder. With no known peers in the map the primary key is
+    // constant and the order degenerates to #4231's `min(next_retry_at)`,
+    // exactly as before, so the cap keeps functioning on a vault that has
+    // never paired.
     let victim = backoff
         .iter()
-        .min_by_key(|(_, state)| state.next_retry_at)
-        .map(|(id, _)| id.clone());
-    if let Some(victim) = victim {
+        .min_by_key(|(_, state)| (state.membership.is_known(), state.next_retry_at))
+        .map(|(id, state)| (id.clone(), state.membership));
+    if let Some((victim, victim_membership)) = victim {
         tracing::debug!(
             evicted_peer = %victim,
+            evicted_peer_membership = ?victim_membership,
             for_peer = %peer_id,
             cap = MAX_BACKOFF_PEERS,
-            "sync scheduler: backoff map at cap; evicting the earliest-retry \
-             peer's retry hint (#4231)"
+            "sync scheduler: backoff map at cap; evicting the least-defensible \
+             peer's retry hint — unpaired announcers before `peer_refs` \
+             members, earliest retry within a class (#4231/#4385)"
         );
         backoff.remove(&victim);
     }
@@ -382,32 +505,37 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// growth is *bounded* — see [`evict_for_new_peer`] for why exceeding it costs
 /// at most one premature retry.
 ///
-/// # The cost is attacker-influenceable, not merely incidental
+/// # The cost is attacker-influenceable, not merely incidental (#4385)
 ///
 /// Since the key set comes from mDNS announcements, *anyone on the LAN* can
 /// keep the map at the cap by announcing more than 64 device ids. Every new
 /// announcer then evicts an entry.
 ///
-/// The treadmill is real but it does not start immediately, and
-/// [`evict_for_new_peer`]'s "# What the `next_retry_at` order does and does not
-/// say" is why: the victim is `min(next_retry_at)`, so a legitimate peer
-/// sitting on an accumulated `now + 60s` sorts *behind* the flooders' own fresh
-/// `now + 2s` entries, which are evicted first. (`next_retry_at` is an absolute
-/// `Instant`, so that ordering is against freshly-stamped entries: a saturated
-/// peer within ~2s of its due time does sort earliest and is evicted first —
-/// which costs nothing, since it was about to fire anyway.) Once that peer has
-/// lost its hint once, though, its re-created stamp is a bottom-rung
-/// `now + 2s`, so from then on it can be evicted about as fast as it is
-/// re-created — though the re-created entry climbs the ladder again
-/// (2s -> 4s -> 8s ...), so the treadmill only persists while new announcers
-/// arrive faster than the victim can climb. That peer is then retried on the
-/// pre-backoff cadence
-/// rather than on its accumulated wait: the "noisier, never quieter"
-/// direction [`evict_for_new_peer`] documents, and exactly what this code did
-/// before #4231, so it is not a regression this cap introduced. It is stated
-/// here so nobody reads the paragraph above as a promise that only incidental
-/// LAN churn can reach the cap — the trigger can be chosen by someone else,
-/// and only the *consequence* is bounded.
+/// Under #4231's pure `min(next_retry_at)` order that was a treadmill against
+/// a REAL peer, and the ordering argument for it is worth keeping because it
+/// is easy to get backwards. It did not start immediately: a legitimate peer
+/// sitting on an accumulated `now + 60s` sorts *behind* the flooders' own
+/// fresh `now + 2s` entries, which are evicted first. (`next_retry_at` is an
+/// absolute `Instant`, so that ordering is against freshly-stamped entries: a
+/// saturated peer within ~2s of its due time does sort earliest and is evicted
+/// first — which costs nothing, since it was about to fire anyway.) But once
+/// that peer had lost its hint ONCE, its re-created stamp was a bottom-rung
+/// `now + 2s`, which now sorted EARLIEST — so from then on it could be evicted
+/// about as fast as it was re-created, and was retried on the pre-backoff
+/// cadence rather than on its accumulated wait.
+///
+/// #4385 closes that by making membership the primary eviction key: a
+/// `peer_refs` member is considered only after every unpaired announcer in the
+/// map has been exhausted, so 64 unknown ids can no longer displace a real
+/// peer's hint at all. What remains — and is deliberately left — is the
+/// pairing window, where a genuine first-ever partner has no `peer_refs` row
+/// and is therefore indistinguishable from a flooder; see [`PeerMembership`]
+/// for why that residue is benign (the map is cleared at each pairing act, and
+/// retrying sooner is the desired behaviour while a user is pairing).
+///
+/// The consequence of an eviction is unchanged and still bounded: the
+/// "noisier, never quieter" direction [`evict_for_new_peer`] documents, and
+/// exactly what this code did before #4231.
 const MAX_BACKOFF_PEERS: usize = 64;
 const DEFAULT_DEBOUNCE: Duration = Duration::from_secs(3);
 const DEFAULT_RESYNC: Duration = Duration::from_secs(60);
@@ -617,12 +745,30 @@ impl SyncScheduler {
     /// the actual retry instant floats by ±10 % around that value, so a
     /// peer with `state.backoff = 8s` may retry anywhere in
     /// `[now + 7.2s, now + 8.8s]`.
+    ///
+    /// # #4385: the membership-BLIND entry point
+    ///
+    /// This one books with [`PeerMembership::Unknown`], because it has not
+    /// been given the `peer_refs` rows and must not claim a membership it did
+    /// not check. The consequence is stated rather than hidden: an entry
+    /// booked here is the FIRST one [`evict_for_new_peer`] takes once the map
+    /// is at [`MAX_BACKOFF_PEERS`], so a real peer booked through this method
+    /// gets exactly the treadmill #4385 is about.
+    ///
+    /// That is deliberate and it is the safe direction — losing a retry hint
+    /// costs one premature retry, "noisier, never quieter" (see
+    /// [`evict_for_new_peer`]) — but it means production code with a peer it
+    /// believes in must route through
+    /// [`record_failure_and_take_report`](Self::record_failure_and_take_report)
+    /// and pass [`PeerMembership::of`]. #4203 removed the last in-tree
+    /// production caller of this method; the remaining ones are tests, which
+    /// never reach the cap.
     pub fn record_failure(&self, peer_id: &str) {
         let mut backoff = self
             .backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        book_failure(&mut backoff, peer_id);
+        book_failure(&mut backoff, peer_id, PeerMembership::Unknown);
     }
 
     /// Book a failure for `peer_id` **and** decide whether `message` is worth
@@ -654,6 +800,12 @@ impl SyncScheduler {
     ///   What it is no longer able to do is *disable* suppression, which is
     ///   what made an unchanged failure against a departed peer toast once a
     ///   minute forever.
+    /// * `membership` — whether this vault holds a `peer_refs` row for the
+    ///   peer (#4385). It has nothing to do with reporting: it rides in
+    ///   because this is the one call that CREATES a backoff entry from a
+    ///   caller that already has the rows, and [`evict_for_new_peer`] needs
+    ///   the answer stored on the entry to rank it. See [`PeerMembership`] for
+    ///   why the predicate is row-presence and not `endpoint_id.is_some()`.
     ///
     /// # What it can and cannot suppress
     ///
@@ -670,12 +822,13 @@ impl SyncScheduler {
         peer_id: &str,
         message: &str,
         peer_still_serving: bool,
+        membership: PeerMembership,
     ) -> FailureBooking {
         let mut backoff = self
             .backoff
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let state = book_failure(&mut backoff, peer_id);
+        let state = book_failure(&mut backoff, peer_id, membership);
         let consecutive_failures = state.consecutive_failures;
         let entry = ReportedFailure {
             message: message.to_string(),
@@ -1006,6 +1159,226 @@ mod tests {
         sched.record_success("peer-a");
         assert!(sched.may_retry("peer-a"));
         assert_eq!(sched.failure_count("peer-a"), 0);
+    }
+
+    /// #4385: a `peer_refs` MEMBER's retry hint must survive a flood of
+    /// unknown announcers — even from the exact position that made the
+    /// treadmill self-sustaining under #4231's pure `min(next_retry_at)`
+    /// order.
+    ///
+    /// The stamp is pinned to `Instant::now()` rather than left to the ±10 %
+    /// jitter: the member is booked first, so its `now + ~2s` and a flooder's
+    /// `now + ~2s` overlap and "booked earlier" would not reliably mean "sorts
+    /// earlier". Pinned, it is the STRICT minimum of the map for the whole
+    /// flood — i.e. the first victim under the old key, every single time.
+    ///
+    /// Reverting `evict_for_new_peer`'s key to `state.next_retry_at` reddens
+    /// this on the first eviction.
+    #[test]
+    fn a_peer_refs_member_survives_an_announcer_flood_at_the_bottom_rung_4385() {
+        const REAL: &str = "real-peer";
+        let sched = SyncScheduler::new();
+
+        sched.record_failure_and_take_report(
+            REAL,
+            "Sync failed: sync ended in terminal state",
+            true,
+            PeerMembership::Known,
+        );
+        {
+            let mut backoff = sched.backoff.lock().unwrap();
+            backoff
+                .get_mut(REAL)
+                .expect("precondition: the member was just booked")
+                .next_retry_at = Instant::now();
+        }
+        assert_eq!(
+            sched.failure_count(REAL),
+            1,
+            "precondition: the member holds a one-failure streak"
+        );
+
+        for i in 0..MAX_BACKOFF_PEERS * 4 {
+            sched.record_failure(&format!("announcer-{i:04}"));
+        }
+
+        // The flood must actually have BOUND — otherwise the survival below is
+        // true for the wrong reason (nothing was ever evicted). Counted by
+        // CLASS rather than by naming one victim: which announcer goes is
+        // decided by the ±10 % jitter within the unknown class, so
+        // `announcer-0000` specifically is not guaranteed to be the one, and
+        // asserting on it would make this precondition flaky.
+        {
+            let backoff = sched.backoff.lock().unwrap();
+            assert_eq!(
+                backoff.len(),
+                MAX_BACKOFF_PEERS,
+                "the cap still binds — #4385 changes the victim, not the bound"
+            );
+            assert_eq!(
+                backoff
+                    .keys()
+                    .filter(|k| k.starts_with("announcer-"))
+                    .count(),
+                MAX_BACKOFF_PEERS - 1,
+                "precondition: {} announcers were booked into {} slots, so all \
+                 but {} of them must have been evicted — otherwise this test \
+                 proves nothing about eviction ORDER",
+                MAX_BACKOFF_PEERS * 4,
+                MAX_BACKOFF_PEERS,
+                MAX_BACKOFF_PEERS - 1,
+            );
+        }
+
+        assert_eq!(
+            sched.failure_count(REAL),
+            1,
+            "#4385: an unpaired announcer flood must not be able to displace a \
+             `peer_refs` member's retry hint, however early that member's \
+             `next_retry_at` sorts"
+        );
+    }
+
+    /// #4385's complement, and the one a "never evict a member" policy fails:
+    /// when every resident IS a member, the cap must still evict. Otherwise
+    /// the bound #4231 exists to enforce quietly stops existing.
+    ///
+    /// Within one membership class the #4231 order still decides, so the
+    /// pinned-minimum member is the victim.
+    #[test]
+    fn a_map_full_of_peer_refs_members_still_evicts_4385() {
+        let sched = SyncScheduler::new();
+        for i in 0..MAX_BACKOFF_PEERS {
+            sched.record_failure_and_take_report(
+                &format!("member-{i:04}"),
+                "boom",
+                true,
+                PeerMembership::Known,
+            );
+        }
+        assert_eq!(
+            sched.backoff.lock().unwrap().len(),
+            MAX_BACKOFF_PEERS,
+            "precondition: the map is exactly at its cap, all members"
+        );
+
+        // Deterministic victim: push every other member an hour out and leave
+        // one at the minimum.
+        const DOOMED: &str = "member-0000";
+        {
+            let mut backoff = sched.backoff.lock().unwrap();
+            let far = Instant::now() + Duration::from_secs(3600);
+            for (id, state) in backoff.iter_mut() {
+                if id != DOOMED {
+                    state.next_retry_at = far;
+                }
+            }
+        }
+
+        sched.record_failure_and_take_report("member-new", "boom", true, PeerMembership::Known);
+
+        let backoff = sched.backoff.lock().unwrap();
+        assert_eq!(
+            backoff.len(),
+            MAX_BACKOFF_PEERS,
+            "#4385 must not turn the cap into a soft limit: a map of members \
+             still evicts one to make room"
+        );
+        assert!(
+            !backoff.contains_key(DOOMED),
+            "within one membership class the #4231 `min(next_retry_at)` order \
+             still picks the victim"
+        );
+        assert!(
+            backoff.contains_key("member-new"),
+            "the peer whose failure triggered the eviction takes the freed slot"
+        );
+    }
+
+    /// #4385: membership is the PRIMARY key, not a tie-break.
+    ///
+    /// One unknown announcer sitting an hour out must be evicted ahead of 63
+    /// members that are all overdue RIGHT NOW. Ordering the key the other way
+    /// round — `(next_retry_at, is_known)` — reddens this, and that ordering
+    /// is the plausible mistake: it looks like it "prefers unknowns" while
+    /// actually never consulting membership at all except on an exact stamp
+    /// tie.
+    #[test]
+    fn membership_outranks_the_retry_stamp_when_choosing_a_victim_4385() {
+        const LATE_UNKNOWN: &str = "announcer-late";
+        let sched = SyncScheduler::new();
+
+        sched.record_failure(LATE_UNKNOWN);
+        for i in 0..MAX_BACKOFF_PEERS - 1 {
+            sched.record_failure_and_take_report(
+                &format!("member-{i:04}"),
+                "boom",
+                true,
+                PeerMembership::Known,
+            );
+        }
+        {
+            let mut backoff = sched.backoff.lock().unwrap();
+            let now = Instant::now();
+            let far = now + Duration::from_secs(3600);
+            for (id, state) in backoff.iter_mut() {
+                state.next_retry_at = if id == LATE_UNKNOWN { far } else { now };
+            }
+        }
+        assert_eq!(
+            sched.backoff.lock().unwrap().len(),
+            MAX_BACKOFF_PEERS,
+            "precondition: at the cap, 1 unknown + 63 members"
+        );
+
+        sched.record_failure("announcer-new");
+
+        let backoff = sched.backoff.lock().unwrap();
+        assert!(
+            !backoff.contains_key(LATE_UNKNOWN),
+            "#4385: the lone unpaired announcer goes first even though its \
+             `next_retry_at` is the LATEST in the map"
+        );
+        assert_eq!(
+            backoff
+                .iter()
+                .filter(|(_, s)| s.membership == PeerMembership::Known)
+                .count(),
+            MAX_BACKOFF_PEERS - 1,
+            "no member may be evicted while an unknown announcer is resident"
+        );
+    }
+
+    /// #4385: the discriminator is `peer_refs` ROW PRESENCE, not the iroh
+    /// bind.
+    ///
+    /// `pr()` builds rows with `endpoint_id: None` — the migrated pre-iroh
+    /// pair migration 0107 deliberately left unbacked-filled. That pair is a
+    /// genuine paired device and, while it is failing, is precisely the peer
+    /// holding a backoff entry; classifying it by `endpoint_id.is_some()`
+    /// would put it first in the eviction queue, which is the case this
+    /// assertion exists to keep out.
+    #[test]
+    fn membership_is_row_presence_not_the_iroh_bind_4385() {
+        let refs = vec![pr("migrated-pair", None), pr("bound-pair", None)];
+
+        assert_eq!(
+            PeerMembership::of(&refs, "migrated-pair"),
+            PeerMembership::Known,
+            "#4385: a `peer_refs` row with `endpoint_id IS NULL` is a paired \
+             device — every pre-iroh pair looks like this until its first \
+             successful iroh session"
+        );
+        assert_eq!(
+            PeerMembership::of(&refs, "some-lan-announcer"),
+            PeerMembership::Unknown,
+            "an id this vault holds no row for is an announcer, not a peer"
+        );
+        assert_eq!(
+            PeerMembership::of(&[], "migrated-pair"),
+            PeerMembership::Unknown,
+            "with no rows at all — a never-paired vault — nothing is known"
+        );
     }
 
     /// #4231: the backoff map's key set is influenced by whatever announces
@@ -1556,7 +1929,12 @@ mod tests {
                     for peer in peers.iter() {
                         gate.wait();
                         if sched
-                            .record_failure_and_take_report(peer, MESSAGE, true)
+                            .record_failure_and_take_report(
+                                peer,
+                                MESSAGE,
+                                true,
+                                PeerMembership::Known,
+                            )
                             .report
                         {
                             reports += 1;
@@ -1616,14 +1994,14 @@ mod tests {
 
         assert!(
             sched
-                .record_failure_and_take_report(PEER, "cause A", true)
+                .record_failure_and_take_report(PEER, "cause A", true, PeerMembership::Known)
                 .report,
             "precondition: the first report of a streak always lands"
         );
         for _ in 0..20 {
             assert!(
                 !sched
-                    .record_failure_and_take_report(PEER, "cause A", true)
+                    .record_failure_and_take_report(PEER, "cause A", true, PeerMembership::Known)
                     .report,
                 "precondition: its repeats are suppressed"
             );
@@ -1631,7 +2009,7 @@ mod tests {
 
         assert!(
             sched
-                .record_failure_and_take_report(PEER, "cause B", true)
+                .record_failure_and_take_report(PEER, "cause B", true, PeerMembership::Known)
                 .report,
             "a text the user has never been shown is news, no matter how long the \
              peer has been failing for another reason"
@@ -1654,7 +2032,7 @@ mod tests {
         for _ in 0..6 {
             for cause in ["cause A", "cause B"] {
                 if sched
-                    .record_failure_and_take_report(PEER, cause, true)
+                    .record_failure_and_take_report(PEER, cause, true, PeerMembership::Known)
                     .report
                 {
                     reported.push(cause);
@@ -1692,7 +2070,7 @@ mod tests {
         for i in 0..MAX_REMEMBERED_REPORTS {
             assert!(
                 sched
-                    .record_failure_and_take_report(PEER, &cause(i), true)
+                    .record_failure_and_take_report(PEER, &cause(i), true, PeerMembership::Known)
                     .report,
                 "precondition: each distinct cause is news the first time"
             );
@@ -1706,7 +2084,12 @@ mod tests {
         // One more distinct cause pushes the set over the cap.
         assert!(
             sched
-                .record_failure_and_take_report(PEER, &cause(MAX_REMEMBERED_REPORTS), true)
+                .record_failure_and_take_report(
+                    PEER,
+                    &cause(MAX_REMEMBERED_REPORTS),
+                    true,
+                    PeerMembership::Known
+                )
                 .report
         );
         assert_eq!(
@@ -1719,14 +2102,19 @@ mod tests {
 
         assert!(
             sched
-                .record_failure_and_take_report(PEER, &cause(0), true)
+                .record_failure_and_take_report(PEER, &cause(0), true, PeerMembership::Known)
                 .report,
             "the OLDEST remembered text is the one evicted, so it is reported again — \
              the safe direction (a duplicate toast), not a swallowed one"
         );
         assert!(
             !sched
-                .record_failure_and_take_report(PEER, &cause(MAX_REMEMBERED_REPORTS), true)
+                .record_failure_and_take_report(
+                    PEER,
+                    &cause(MAX_REMEMBERED_REPORTS),
+                    true,
+                    PeerMembership::Known
+                )
                 .report,
             "…while the newest text is still remembered and still suppressed, which is \
              what makes the eviction order observable rather than the whole set being \
@@ -1751,14 +2139,14 @@ mod tests {
 
         assert!(
             sched
-                .record_failure_and_take_report(PEER, "cause A", false)
+                .record_failure_and_take_report(PEER, "cause A", false, PeerMembership::Known)
                 .report,
             "the first report of a failure always lands, dark or not"
         );
         for cycle in 0..5 {
             assert!(
                 !sched
-                    .record_failure_and_take_report(PEER, "cause A", false)
+                    .record_failure_and_take_report(PEER, "cause A", false, PeerMembership::Known)
                     .report,
                 "#4305: cycle {cycle} of an unchanged failure against an unchanged \
                  dark peer must be silent — the durable surfaces are the peer row \
@@ -1786,7 +2174,7 @@ mod tests {
         let sched = SyncScheduler::new();
         let take = |serving: bool| {
             sched
-                .record_failure_and_take_report(PEER, "cause A", serving)
+                .record_failure_and_take_report(PEER, "cause A", serving, PeerMembership::Known)
                 .report
         };
 
@@ -1820,7 +2208,7 @@ mod tests {
         let sched = SyncScheduler::new();
         let take = |sched: &SyncScheduler| {
             sched
-                .record_failure_and_take_report(PEER, "cause A", true)
+                .record_failure_and_take_report(PEER, "cause A", true, PeerMembership::Known)
                 .report
         };
 

@@ -385,6 +385,28 @@ impl ChunkAccumulator {
 /// can resolve the space inline; post-delete-UPDATE the cohort is
 /// dead, so we capture the space at the same pre-UPDATE moment as the
 /// cohort itself.
+/// #4390 — one block whose INHERITED tombstone a `MoveBlock`'s un-sweep
+/// cleared, paired with the `deleted_at` the move's WHOLE tail left on it.
+///
+/// The pairing is the point. The un-sweep clears, and then
+/// `sweep_move_under_tombstoned_ancestor` — the tail's other half — may
+/// re-stamp the very same rows at the cohort the block's NEW position implies
+/// (#4188's shape). A post-commit mirror that assumed "un-swept ⇒ restore"
+/// would then leave the engine holding `NULL` while SQL holds the new cohort
+/// ts: #4204's divergence traded for #4188's. So the final SQL value is read
+/// back after the tail, in the same transaction that commits it, and the
+/// mirror simply reproduces it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsweptBlock {
+    /// The block whose tombstone was re-derived.
+    pub block_id: String,
+    /// Its `deleted_at` after the whole move tail: `None` when the new
+    /// position implies no cohort (#4204 — a genuine resurrection, ruled on
+    /// 2026-08-26), `Some(ts)` when the sweep re-stamped it at the new
+    /// ancestor's cohort (#4188).
+    pub deleted_at: Option<i64>,
+}
+
 #[derive(Debug, Default)]
 pub struct ApplyEffects {
     /// Block ids restored by a `RestoreBlock` apply — seed AND every
@@ -416,6 +438,25 @@ pub struct ApplyEffects {
     /// `resolve_block_space` filters `deleted_at IS NULL`; a
     /// post-commit resolve attempt would fail on every cohort row.
     pub delete_space_id: Option<agaric_store::space::SpaceId>,
+    /// #4390: blocks whose INHERITED tombstone a `MoveBlock`'s un-sweep
+    /// re-derived, with the `deleted_at` the move's tail settled on. Empty for
+    /// every op type other than `MoveBlock`, and for every `MoveBlock` whose
+    /// subject was not a cascade member of its old parent's cohort — which is
+    /// every LOCAL move (`validate_move_in_tx` refuses a trashed subject) and
+    /// the overwhelming majority of remote ones.
+    ///
+    /// The SQL clear is durable on its own; the engine register is not, and
+    /// the move that produces the clear runs on the arm with no engine. Fanned
+    /// out post-commit by
+    /// `materializer::handlers::apply::dispatch_unswept_cohort`.
+    pub unswept_cohort: Vec<UnsweptBlock>,
+    /// Space id for [`Self::unswept_cohort`], resolved with
+    /// `resolve_soft_deleted_block_space` — NOT `resolve_block_space`, which
+    /// filters `deleted_at IS NULL` and would answer `None` for exactly the
+    /// #4188 half (the rows the sweep re-stamped). `None` only when the block
+    /// carries a NULL `space_id` (pre-spaces data), in which case there is no
+    /// engine to mirror onto.
+    pub unswept_space_id: Option<agaric_store::space::SpaceId>,
 }
 
 /// Core apply-op logic operating on a bare [`sqlx::SqliteConnection`].
@@ -622,7 +663,26 @@ pub async fn apply_op_tx_with_mode(
                 src_page,
                 old_parent_id,
             };
-            apply_move_block_via_loro(conn, state, &record.device_id, &p, replay_dirty).await?;
+            // #4390: the move tail's un-sweep clears an INHERITED tombstone in
+            // SQL, on the arm that has no engine. Capture what it cleared, and
+            // the value the tail SETTLED on, so the post-commit fan-out can
+            // mirror the re-derivation onto the per-space engine — otherwise
+            // the next `reproject_block_deleted_at_from_engine` re-trashes the
+            // subtree from the stale register.
+            let unswept =
+                apply_move_block_via_loro(conn, state, &record.device_id, &p, replay_dirty).await?;
+            if !unswept.is_empty() {
+                effects.unswept_cohort = read_settled_deleted_at(conn, &unswept).await?;
+                // `resolve_soft_deleted_block_space`, not `resolve_block_space`:
+                // in #4188's shape the sweep re-stamped the subject, so the
+                // `deleted_at IS NULL` filter would answer `None` for exactly
+                // the half that still needs mirroring. The denormalized
+                // `blocks.space_id` survives a soft delete either way, which is
+                // the same reason #2868's purge fix reads it.
+                effects.unswept_space_id =
+                    agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id)
+                        .await?;
+            }
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
@@ -671,6 +731,42 @@ pub async fn apply_op_tx_with_mode(
     maintain_pages_cache_counts_after_op(conn, &pre_state, chunk).await?;
     tracing::debug!(op_type = %record.op_type, seq = record.seq, "applied op to materialized tables");
     Ok(effects)
+}
+
+/// #4390 — read the `deleted_at` the move tail SETTLED on for each id the
+/// un-sweep cleared.
+///
+/// Runs after the whole tail (un-sweep AND
+/// `sweep_move_under_tombstoned_ancestor`) and inside the apply transaction,
+/// so what it reports is exactly what commits. Both outcomes are expressible:
+/// `None` for #4204's resurrection, `Some(ts)` for #4188's re-stamp at the new
+/// ancestor's cohort.
+///
+/// A row that vanished between the clear and this read is dropped rather than
+/// reported as `None` — "absent" is not "live", and mirroring a restore for a
+/// row SQL no longer has would resurrect it on the next import.
+async fn read_settled_deleted_at(
+    conn: &mut sqlx::SqliteConnection,
+    ids: &[String],
+) -> Result<Vec<UnsweptBlock>, AppError> {
+    let payload = serde_json::Value::from(ids.to_vec()).to_string();
+    // dynamic-sql: json_each id-list filter over the cleared cohort; single
+    // bound JSON parameter, immune to the SQLite variable limit. Mirrors
+    // `collect_delete_cohort` / `collect_restore_cohort`'s shape.
+    let rows: Vec<(String, Option<i64>)> = sqlx::query_as::<_, (String, Option<i64>)>(
+        "SELECT id, deleted_at FROM blocks \
+         WHERE id IN (SELECT value FROM json_each(?1))",
+    )
+    .bind(&payload)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(block_id, deleted_at)| UnsweptBlock {
+            block_id,
+            deleted_at,
+        })
+        .collect())
 }
 
 /// Capture the descendant cohort that `apply_restore_block_tx` is
