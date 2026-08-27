@@ -235,6 +235,22 @@ jobs:
         run: xvfb-run -a npm run test:e2e-tauri
 
       - name: Upload WebdriverIO logs
+        # #4428 — `**/*.log` swept `node_modules`. Every failing run's
+        # `e2e-tauri-logs` artifact was byte-identical at 1114 bytes and held
+        # exactly three files: `node_modules/spdx-compare/test.log`,
+        # `node_modules/spdx-ranges/outdated.log`,
+        # `node_modules/spdx-satisfies/test.log`. No WebdriverIO log, no app
+        # log, ever — `logs/` and `wdio-logs*/` are never created (wdio.conf.ts
+        # sets no `outputDir`; the spec reporter writes to stdout). A step that
+        # produces a plausibly-named artifact containing none of the evidence it
+        # promises is worse than one that produces nothing, so exclude the
+        # dependency tree: with `if-no-files-found: ignore` the step now yields
+        # NO artifact rather than a misleading one.
+        #
+        # The evidence that does exist is in `e2e-tauri-diagnostics` below:
+        # wdio.conf.ts's `afterTest` now copies the app's own
+        # `<AGARIC_DATA_DIR>/logs/agaric.log*` into `e2e-tauri/artifacts/`
+        # before `afterSession` deletes the throwaway vault that holds it.
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -243,6 +259,7 @@ jobs:
             logs/
             wdio-logs*/
             **/*.log
+            !node_modules/**
           if-no-files-found: ignore
           retention-days: 14
 

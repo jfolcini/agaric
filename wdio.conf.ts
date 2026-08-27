@@ -22,7 +22,15 @@
 // ---------------------------------------------------------------------------
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -69,6 +77,152 @@ const DIAG_EXCERPT_CAP = 3000
 function sanitizeForFilename(value: string): string {
   const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
   return (cleaned || 'failure').slice(0, 120)
+}
+
+// ---------------------------------------------------------------------------
+// "Why was it not displayed?" (#4428).
+//
+// `waitForDisplayed` fails with one sentence — `element ("<selector>") still
+// not displayed after 60000ms` — and that sentence cannot tell the two failures
+// it covers apart:
+//
+//   * the asserted state NEVER EXISTED (the backend lost the write, the view
+//     did not re-query) — the failure the spec was written to catch; or
+//   * the state exists and something is HIDING it (a stuck fade, a modal, a
+//     collapsed container) — a rendering bug in code the spec is not about.
+//
+// The lane paid for that ambiguity: runs 31355052132 / 32687143146 failed on
+// `tag-roundtrip.e2e.ts`, the #3081 regression guard, and read as a tag
+// regression for three weeks. The tag was in the DOM the whole time; the
+// App-level view-transition wrapper was stuck at `opacity-0` (#3388/#4393), so
+// `checkVisibility` — which honours ancestor opacity — returned false for the
+// full 60s. The evidence was already in the artifacts (the screenshot shows a
+// blank pane under a correct sidebar; the testid dump lists the tag) and was
+// still misread, because nothing in the output NAMED the ancestor.
+//
+// So on a failure we now ask the page directly, and name it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Recover the selector a failing WDIO wait was watching from its own message.
+ *
+ * WDIO renders these as `element ("<selector>") still not displayed after Nms`.
+ * The selector itself routinely contains `"` (every `[data-testid="…"]`), so
+ * the capture is GREEDY and anchored on the ` still not ` tail, which the
+ * selector cannot contain. Returns `undefined` for any other failure (a plain
+ * `expect`, a `waitUntil` with a custom `timeoutMsg`), which is the signal to
+ * skip the probe rather than guess.
+ */
+export function selectorFromWaitFailure(message: string): string | undefined {
+  return /element \("(.+)"\) still not (?:displayed|clickable|existing|enabled)/.exec(message)?.[1]
+}
+
+/** Flat by design: a discriminated union buys nothing across the wire. */
+export interface VisibilityProbe {
+  status: 'absent' | 'present' | 'unsupported-selector'
+  width: number
+  height: number
+  /** Human-readable: every node on the ancestor chain that hides the element. */
+  hiddenBy: string[]
+}
+
+/**
+ * Runs IN THE PAGE. Walks from the element to the document root and reports
+ * every node whose computed style takes the element off screen.
+ *
+ * Ancestors matter as much as the element: `opacity`, `display` and
+ * `visibility` are all inherited-in-effect for hit/visibility testing, and it
+ * is precisely an ANCESTOR that hid the tag. Reporting only the element's own
+ * style would have reproduced the original misdiagnosis.
+ *
+ * WDIO selectors are not all CSS (`button*=Add Tag`, `.//button[…]`), so an
+ * invalid `querySelector` argument is reported as such rather than thrown —
+ * this is diagnostics, and diagnostics may never become the failure.
+ */
+export function probeVisibilityInPage(selector: string): VisibilityProbe {
+  let element: Element | null = null
+  try {
+    element = document.querySelector(selector)
+  } catch {
+    return { status: 'unsupported-selector', width: 0, height: 0, hiddenBy: [] }
+  }
+  if (!element) return { status: 'absent', width: 0, height: 0, hiddenBy: [] }
+
+  const describe = (node: Element): string => {
+    const testid = node.getAttribute('data-testid')
+    const cls = node.getAttribute('class') ?? ''
+    const shortCls = cls.length > 100 ? `${cls.slice(0, 100)}…` : cls
+    const testidPart = testid === null ? '' : ` data-testid="${testid}"`
+    const classPart = shortCls === '' ? '' : ` class="${shortCls}"`
+    return `<${node.tagName.toLowerCase()}${testidPart}${classPart}>`
+  }
+
+  const hiddenBy: string[] = []
+  let node: Element | null = element
+  let depth = 0
+  while (node) {
+    const style = window.getComputedStyle(node)
+    const reasons: string[] = []
+    if (style.display === 'none') reasons.push('display:none')
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') {
+      reasons.push(`visibility:${style.visibility}`)
+    }
+    // `parseFloat`, not `Number`: a computed style that reports opacity as ''
+    // (an engine that has not resolved it) coerces to 0 under `Number` and
+    // would make EVERY node "hidden by opacity:0", which is the loudest
+    // possible way for a diagnostic to be wrong. Unresolved is not zero.
+    const opacity = Number.parseFloat(style.opacity)
+    if (Number.isFinite(opacity) && opacity === 0) reasons.push('opacity:0')
+    if (style.contentVisibility === 'hidden') reasons.push('content-visibility:hidden')
+    if (reasons.length > 0) {
+      const where = depth === 0 ? 'the element itself' : `ancestor ${depth} level(s) up`
+      hiddenBy.push(`${where} ${describe(node)} — ${reasons.join(', ')}`)
+    }
+    node = node.parentElement
+    depth += 1
+  }
+
+  const rect = element.getBoundingClientRect()
+  return {
+    status: 'present',
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+    hiddenBy,
+  }
+}
+
+/**
+ * Turn a probe into the one sentence a reader of a red run needs, which is
+ * always an answer to "is the asserted state missing, or merely invisible?".
+ */
+export function explainVisibilityProbe(selector: string, probe: VisibilityProbe): string {
+  const head = `[afterTest] why "${selector}" never became displayed:`
+  if (probe.status === 'unsupported-selector') {
+    return `${head} not a CSS selector, so the DOM probe could not resolve it (no verdict).`
+  }
+  if (probe.status === 'absent') {
+    return (
+      `${head} NO element matches it. The asserted state is genuinely MISSING — ` +
+      'this is the failure the spec exists to catch, not a rendering artefact.'
+    )
+  }
+  if (probe.hiddenBy.length > 0) {
+    return (
+      `${head} the element IS in the DOM (${probe.width}x${probe.height}px) but is hidden by ` +
+      `${probe.hiddenBy.join('; ')}. The asserted state EXISTS — this is a RENDERING failure ` +
+      'in whatever owns that node, NOT a failure of the feature under test.'
+    )
+  }
+  if (probe.width === 0 || probe.height === 0) {
+    return (
+      `${head} the element is in the DOM and nothing hides it, but its box is ` +
+      `${probe.width}x${probe.height}px — it is laid out to zero size.`
+    )
+  }
+  return (
+    `${head} the element is in the DOM, unhidden, and ${probe.width}x${probe.height}px RIGHT NOW — ` +
+    'it became visible after the wait expired. A timing failure, not a state failure.'
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +345,40 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
     XDG_STATE_HOME: xdg('xdg-state'),
     XDG_CACHE_HOME: xdg('xdg-cache'),
   }
+}
+
+/**
+ * Copy the APP's own log out of the sandbox before teardown destroys it
+ * (#4428).
+ *
+ * The Rust side writes to `<AGARIC_DATA_DIR>/logs/agaric.log*`
+ * (`log_dir_for_app_data`, src-tauri/src/lib.rs), and `AGARIC_DATA_DIR` is the
+ * per-session `mkdtemp` sandbox — which `afterSession` deletes unconditionally,
+ * including after a failure. So the one artefact that carries the BACKEND's
+ * account of a red run was being removed exactly when it was needed, and the
+ * workflow's "Upload WebdriverIO logs" step, globbing `**\/*.log` from the repo
+ * root, shipped three unrelated `node_modules/spdx-*` files instead — 1114
+ * bytes of noise, byte-identical across all three failing runs, which is how a
+ * step can look like evidence for weeks while collecting none.
+ *
+ * Copied into `ARTIFACTS_DIR`, which the weekly workflow already uploads.
+ * Best-effort: a diagnostics failure must never mask the real test failure.
+ */
+function rescueAppLogs(label: string): string {
+  const vault = sandboxVaultDir
+  if (!vault) return 'no sandbox vault was recorded — nothing to rescue.'
+  const logDir = path.join(vault, 'logs')
+  if (!existsSync(logDir)) {
+    return `the app never created ${logDir} — it produced NO log at all this session.`
+  }
+  const names = readdirSync(logDir).filter((name) => name.startsWith('agaric.log'))
+  if (names.length === 0) return `${logDir} exists but holds no agaric.log* file.`
+  const destination = path.join(ARTIFACTS_DIR, 'app-logs', label)
+  mkdirSync(destination, { recursive: true })
+  for (const name of names) {
+    copyFileSync(path.join(logDir, name), path.join(destination, name))
+  }
+  return `rescued ${String(names.length)} app log file(s) into ${destination}`
 }
 
 /** Remove this run's sandbox. `WDIO_KEEP_VAULT=1` keeps it for post-mortems. */
@@ -400,6 +588,32 @@ export const config: WebdriverIO.Config = {
       console.warn(`[afterTest] saved screenshot: ${file}`)
     } catch (error) {
       console.warn(`[afterTest] screenshot capture failed: ${String(error)}`)
+    }
+
+    // (a2) The verdict that distinguishes "missing" from "merely invisible"
+    // (#4428). Runs before the slower captures below so it reflects the DOM as
+    // close to the failure as teardown allows.
+    try {
+      const message = String(
+        (result.error as { message?: unknown } | undefined)?.message ?? result.error ?? '',
+      )
+      const selector = selectorFromWaitFailure(message)
+      if (selector === undefined) {
+        console.warn('[afterTest] failure is not an element wait — no visibility probe.')
+      } else {
+        const probe = await browser.execute(probeVisibilityInPage, selector)
+        console.warn(explainVisibilityProbe(selector, probe))
+      }
+    } catch (error) {
+      console.warn(`[afterTest] visibility probe failed: ${String(error)}`)
+    }
+
+    // (a3) The backend's own account of the session, before `afterSession`
+    // deletes the sandbox that holds it (#4428).
+    try {
+      console.warn(`[afterTest] app logs: ${rescueAppLogs(label)}`)
+    } catch (error) {
+      console.warn(`[afterTest] app log rescue failed: ${String(error)}`)
     }
 
     // (c) Current URL.
