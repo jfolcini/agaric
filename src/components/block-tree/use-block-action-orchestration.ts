@@ -265,6 +265,20 @@ export function useBlockActionOrchestration({
     [],
   )
 
+  // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.
+  const deleteInProgress = useRef(false)
+
+  // Re-entrancy guard: prevents rapid Enter presses from creating duplicate blocks.
+  const enterSaveInProgress = useRef(false)
+
+  // Re-entrancy guard for merges: handleMergeWithPrev/handleMergeById unmount
+  // the roving editor (resetting its doc to empty) BEFORE awaiting the edit
+  // IPC, so an autorepeat Backspace in that window matches the
+  // Backspace-on-empty rule and an Enter matches the create rule — both on
+  // the block that is being merged away. handleDeleteBlock/handleEnterSave
+  // honor this flag so no concurrent structural op races the merge.
+  const mergeInProgress = useRef(false)
+
   const handleFocusPrev = useCallback(() => {
     const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
     if (idx > 0) {
@@ -746,20 +760,6 @@ export function useBlockActionOrchestration({
     },
     [collapsedVisible, blocks, moveBlocks, focusedBlockId, mergeBlocksAndHandle, setFocused],
   )
-
-  // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.
-  const deleteInProgress = useRef(false)
-
-  // Re-entrancy guard: prevents rapid Enter presses from creating duplicate blocks.
-  const enterSaveInProgress = useRef(false)
-
-  // Re-entrancy guard for merges: handleMergeWithPrev/handleMergeById unmount
-  // the roving editor (resetting its doc to empty) BEFORE awaiting the edit
-  // IPC, so an autorepeat Backspace in that window matches the
-  // Backspace-on-empty rule and an Enter matches the create rule — both on
-  // the block that is being merged away. handleDeleteBlock/handleEnterSave
-  // honor this flag so no concurrent structural op races the merge.
-  const mergeInProgress = useRef(false)
 
   const handleEnterSave = useCallback(async () => {
     if (!focusedBlockId) return

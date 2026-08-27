@@ -979,6 +979,7 @@ describe('PageBlockStore', () => {
         const map = usePageBlockStore((s) => s.blocksById)
         const renderedRef = useRef(0)
         renderedRef.current++
+        // oxlint-disable-next-line react/globals -- publishes the render count to an outer variable so the assertion after render can read it; test-only instrumentation, not production render logic (#4409)
         renderCount = renderedRef.current
         return createElement('span', { 'data-testid': 'probe' }, `size=${map.size}`)
       }

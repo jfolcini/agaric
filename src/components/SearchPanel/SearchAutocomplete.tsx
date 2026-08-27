@@ -167,6 +167,15 @@ export function SearchAutocomplete({
     onApply(nextValue, nextCaret)
   }
 
+  function moveHighlight(direction: 1 | -1) {
+    if (items.length === 0) return
+    const idx = selected != null ? items.findIndex((it) => it.value === selected) : -1
+    const startIdx = idx === -1 ? (direction > 0 ? -1 : 0) : idx
+    const nextIdx = (startIdx + direction + items.length) % items.length
+    const next = items[nextIdx]
+    if (next) setSelected(next.value)
+  }
+
   useImperativeHandle(ref, () => ({
     syncCaret: (pos: number) => setCaretPos(pos),
     handleKeyDown: (e) => {
@@ -195,15 +204,6 @@ export function SearchAutocomplete({
       return false
     },
   }))
-
-  function moveHighlight(direction: 1 | -1) {
-    if (items.length === 0) return
-    const idx = selected != null ? items.findIndex((it) => it.value === selected) : -1
-    const startIdx = idx === -1 ? (direction > 0 ? -1 : 0) : idx
-    const nextIdx = (startIdx + direction + items.length) % items.length
-    const next = items[nextIdx]
-    if (next) setSelected(next.value)
-  }
 
   return (
     <AutocompletePopover

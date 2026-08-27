@@ -113,6 +113,7 @@ describe('useDebouncedCallback', () => {
 
     function TestComponent() {
       const debounced = useDebouncedCallback(callback, 300)
+      // oxlint-disable-next-line react/globals -- test harness: publishes the hook's schedule fn to an outer variable so the test can call it after render/unmount; not production render logic (#4409)
       scheduleRef = debounced.schedule
       return null
     }

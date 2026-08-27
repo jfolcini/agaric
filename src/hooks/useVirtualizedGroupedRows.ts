@@ -129,6 +129,7 @@ export function useVirtualizedGroupedRows<TGroup, TItem extends { id: string }>(
     [virtualRows, headerHeight, itemHeight],
   )
 
+  // oxlint-disable-next-line react/incompatible-library -- @tanstack/react-virtual returns imperative functions (measureElement, scrollToIndex, getVirtualItems) whose identity the Compiler cannot prove memoization-safe across renders; a third-party API shape it can't analyze, not a bug here (#4409)
   const virtualizer = useVirtualizer<HTMLDivElement, Element>({
     count: virtualRows.length,
     getScrollElement: () => scrollParentRef.current,

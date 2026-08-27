@@ -76,6 +76,7 @@ export function HistoryListView({
   // `measureElement` corrects to actual height after first paint, so
   // expanded rows do not push subsequent rows out of view.
   const estimateSize = useCallback(() => 80, [])
+  // oxlint-disable-next-line react/incompatible-library -- @tanstack/react-virtual returns imperative functions (measureElement, scrollToIndex, getVirtualItems) whose identity the Compiler cannot prove memoization-safe across renders; a third-party API shape it can't analyze, not a bug here (#4409)
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => listRef.current,

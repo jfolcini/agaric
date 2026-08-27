@@ -86,6 +86,7 @@ export function usePropertySave({
         notify.error(repeatReason ?? t(toasts?.saveFailed ?? 'property.saveFailed'))
       }
     },
+    // oxlint-disable-next-line react/preserve-manual-memoization -- deliberately depends on individual `toasts` string fields, not the `toasts` object itself: PagePropertyTable passes a fresh `toasts` object literal on every render, so keying on the object identity (what the Compiler infers) would rebuild handleSave/handleDelete on every render and defeat the memoization the property-level deps exist to preserve (#4409)
     [blockId, t, setProperties, toasts?.invalidNumber, toasts?.saveFailed, announceOnSave, logTag],
   )
 

@@ -182,26 +182,29 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
    *   `agenda-unfiltered:` cursor consumed by `loadMoreUnfilteredAgenda`
    *   (#721).
    */
-  const loadMoreAgenda = useCallback(async () => {
-    if (!agendaCursor) return
-    setAgendaLoading(true)
-    try {
-      const result =
-        agendaFilters.length > 0
-          ? await loadMoreAgendaFilters(agendaFilters, agendaCursor, currentSpaceId, agendaToday)
-          : await loadMoreUnfilteredAgenda(agendaCursor, currentSpaceId)
-      setFilteredBlocks((prev) => appendUniqueBlocks(prev, result.blocks))
-      setAgendaHasMore(result.hasMore)
-      setAgendaCursor(result.cursor)
-    } catch (err) {
-      logger.warn('AgendaView', 'Failed to load more agenda items', undefined, err)
-      // #1345 — a load-more failure used to silently return the button to
-      // idle with no feedback or retry path. Surface a retryable toast so
-      // the user can re-attempt the same page fetch.
-      notify.retry(t('agenda.loadMoreFailed'), loadMoreAgenda)
-    }
-    setAgendaLoading(false)
-  }, [agendaCursor, agendaFilters, currentSpaceId, agendaToday])
+  const loadMoreAgenda = useCallback(
+    async function loadMoreAgenda() {
+      if (!agendaCursor) return
+      setAgendaLoading(true)
+      try {
+        const result =
+          agendaFilters.length > 0
+            ? await loadMoreAgendaFilters(agendaFilters, agendaCursor, currentSpaceId, agendaToday)
+            : await loadMoreUnfilteredAgenda(agendaCursor, currentSpaceId)
+        setFilteredBlocks((prev) => appendUniqueBlocks(prev, result.blocks))
+        setAgendaHasMore(result.hasMore)
+        setAgendaCursor(result.cursor)
+      } catch (err) {
+        logger.warn('AgendaView', 'Failed to load more agenda items', undefined, err)
+        // #1345 — a load-more failure used to silently return the button to
+        // idle with no feedback or retry path. Surface a retryable toast so
+        // the user can re-attempt the same page fetch.
+        notify.retry(t('agenda.loadMoreFailed'), loadMoreAgenda)
+      }
+      setAgendaLoading(false)
+    },
+    [agendaCursor, agendaFilters, currentSpaceId, agendaToday],
+  )
 
   // #1345 — re-run the initial filter query after a failure. Reuses the
   // `refreshKey` bump (which also re-triggers the fetch effect) so the

@@ -53,6 +53,7 @@ function makeLiveHandle(overrides: Partial<RovingEditorHandle> = {}): RovingEdit
 let latest: ReturnType<typeof useLazyRovingEditor> | null = null
 function Harness(): ReactNode {
   const result = useLazyRovingEditor({} as never)
+  // oxlint-disable-next-line react/globals -- test harness: publishes the hook's render result to an outer variable so assertions outside the React tree can read it; not production render logic (#4409)
   latest = result
   return result.editorHost
 }

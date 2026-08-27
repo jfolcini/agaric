@@ -74,6 +74,39 @@ describe('Sidebar displayName', () => {
 })
 
 // ---------------------------------------------------------------------------
+// SidebarMenuSkeleton — random width is computed once per instance (#4409:
+// react(purity), Math.random moved from a `useMemo(() => …, [])` to a
+// `useState(() => …)` lazy initializer so the Compiler doesn't flag a
+// render-phase impure call; behaviour must stay "computed once, stable
+// across re-renders").
+// ---------------------------------------------------------------------------
+
+describe('SidebarMenuSkeleton width', () => {
+  function readWidthPercent(container: HTMLElement): number {
+    const text = container.querySelector('[data-sidebar="menu-skeleton-text"]')
+    const style = text?.getAttribute('style') ?? ''
+    const match = /--skeleton-width:\s*([\d.]+)%/.exec(style)
+    expect(match).not.toBeNull()
+    return Number(match?.[1])
+  }
+
+  it('picks a width between 50% and 90%', () => {
+    const { container } = render(<SidebarMenuSkeleton />)
+    const width = readWidthPercent(container)
+    expect(width).toBeGreaterThanOrEqual(50)
+    expect(width).toBeLessThan(90)
+  })
+
+  it('keeps the same width across re-renders of the same instance', () => {
+    const { container, rerender } = render(<SidebarMenuSkeleton />)
+    const first = readWidthPercent(container)
+    rerender(<SidebarMenuSkeleton className="unrelated-class-change" />)
+    const second = readWidthPercent(container)
+    expect(second).toBe(first)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // ref forwarding — simple HTML sub-components that don't need SidebarProvider
 // ---------------------------------------------------------------------------
 
