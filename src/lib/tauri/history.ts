@@ -1,8 +1,11 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import type { HistoryEntry, PageResponse } from '@/lib/bindings'
+import type { HistoryEntry, OpRef, PageResponse, UndoResult } from '@/lib/bindings'
 import type { SafeLimit } from '@/lib/safe-limit'
 import { toSpaceScope } from '@/lib/tauri/_shared'
+
+/** The generated wire shapes (#4414) — re-exported, not redeclared. */
+export type { OpRef, UndoResult } from '@/lib/bindings'
 
 /** List op-log history for a block, paginated (newest first).
  *
@@ -48,19 +51,6 @@ export async function listPageHistory(params: {
       params.limit ?? null,
     ),
   )
-}
-
-export interface OpRef {
-  device_id: string
-  seq: number
-}
-
-export interface UndoResult {
-  reversed_op: OpRef
-  reversed_op_type: string
-  new_op_ref: OpRef
-  new_op_type: string
-  is_redo: boolean
 }
 
 /**

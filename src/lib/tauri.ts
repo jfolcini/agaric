@@ -48,18 +48,13 @@ export { unwrap } from '@/lib/app-error'
 // (`toSpaceScope`, `requireActiveScope`) live in `./tauri/_shared` and are
 // intentionally NOT re-exported (they were never public).
 // ---------------------------------------------------------------------------
-export * from '@/lib/tauri/core'
 export * from '@/lib/tauri/blocks'
 export * from '@/lib/tauri/pages'
 export * from '@/lib/tauri/queries'
-export * from '@/lib/tauri/tags'
 export * from '@/lib/tauri/search'
 export * from '@/lib/tauri/links'
 export * from '@/lib/tauri/history'
 export * from '@/lib/tauri/properties'
-export * from '@/lib/tauri/sync'
 export * from '@/lib/tauri/attachments'
 export * from '@/lib/tauri/import'
-export * from '@/lib/tauri/drafts'
 export * from '@/lib/tauri/logging'
-export * from '@/lib/tauri/system'

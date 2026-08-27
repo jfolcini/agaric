@@ -25,14 +25,23 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { type FilterToken, parse, serialize, tokenSource } from '@/lib/search-query'
 import type { TagCacheRow } from '@/lib/tauri'
-import { listTagsByPrefix } from '@/lib/tauri'
 
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
-  return { ...actual, listTagsByPrefix: vi.fn() }
+// `listTagsByPrefix` retired its `@/lib/tauri` wrapper (#4411); the popover
+// now calls `commands.listTagsByPrefix` directly and unwraps the `Result`
+// envelope, so the mock intercepts THAT and resolves the `{ status: 'ok',
+// data }` shape.
+const mockedListTags = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listTagsByPrefix: (...args: unknown[]) =>
+        mockedListTags(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
 })
-
-const mockedListTags = vi.mocked(listTagsByPrefix)
 
 function tag(id: string, name: string): TagCacheRow {
   return { tag_id: id, name, usage_count: 0, updated_at: '' }
@@ -152,13 +161,14 @@ describe('FilterHelperPopover — tag fetch race guard (FE-A20)', () => {
     renderPopover()
     await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
     await user.click(screen.getByText(t('search.filterCategory.tag')))
-    // prefill on open is immediate (un-debounced).
-    expect(mockedListTags).toHaveBeenCalledWith({ prefix: '', limit: 20 })
+    // prefill on open is immediate (un-debounced). `commands.listTagsByPrefix`
+    // is positional: (prefix, limit).
+    expect(mockedListTags).toHaveBeenCalledWith('', 20)
     mockedListTags.mockClear()
 
     await user.type(screen.getByRole('combobox'), 'work')
     await waitFor(() => {
-      expect(mockedListTags).toHaveBeenCalledWith({ prefix: 'work', limit: 20 })
+      expect(mockedListTags).toHaveBeenCalledWith('work', 20)
     })
     // Coalesced: exactly one typed-query fetch, not one per keystroke.
     expect(mockedListTags).toHaveBeenCalledTimes(1)

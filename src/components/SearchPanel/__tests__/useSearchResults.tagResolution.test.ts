@@ -24,19 +24,34 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   return {
     ...actual,
     searchBlocks: vi.fn(),
-    listTagsByPrefix: vi.fn(),
     batchResolve: vi.fn(),
     getBlock: vi.fn(),
+  }
+})
+
+// `listTagsByPrefix` retired its `@/lib/tauri` wrapper (#4411) — `useTagResolution`
+// now calls `commands.listTagsByPrefix` directly and unwraps the `Result`
+// envelope, so the mock backs the `commands.*` surface and resolves the
+// `{ status: 'ok', data }` shape.
+const mockedListTags = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listTagsByPrefix: (...args: unknown[]) =>
+        mockedListTags(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 
 import { UNRESOLVED_TAG_SENTINEL } from '@/components/SearchPanel/searchFilterParams'
 import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
 import { parse } from '@/lib/search-query'
-import { batchResolve, listTagsByPrefix, searchBlocks, type TagCacheRow } from '@/lib/tauri'
+import { batchResolve, searchBlocks, type TagCacheRow } from '@/lib/tauri'
 
 const mockedSearchBlocks = vi.mocked(searchBlocks)
-const mockedListTags = vi.mocked(listTagsByPrefix)
 const mockedBatchResolve = vi.mocked(batchResolve)
 
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }

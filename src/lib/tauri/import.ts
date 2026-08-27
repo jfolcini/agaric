@@ -1,56 +1,19 @@
-import { Channel } from '@tauri-apps/api/core'
-
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
-import type { ImportProgressUpdate, VaultFile } from '@/lib/bindings'
-
-export interface ImportResult {
-  page_title: string
-  blocks_created: number
-  properties_set: number
-  warnings: string[]
-}
+/** The generated wire shape (#4414) — re-exported, not redeclared. */
+export type { ImportResult } from '@/lib/bindings'
 
 /**
- * Import a Logseq/Markdown file. Creates a page from the filename and
- * blocks from content.
+ * `importMarkdown` is channel-based (`Channel<ImportProgressUpdate>` progress
+ * plumbing), so it is part of the migration floor and its single definition
+ * lives in `@/lib/ipc-helpers` (#4413) — see that module's doc comment.
  *
- * `spaceId` — required. The created page is stamped
- * with `space = ?spaceId` inside the same backend transaction as the
- * `CreateBlock` op, so an imported page can never exist without its
- * space property. Callers must pass the active space's ULID; the
- * import button must stay disabled while the space store is not
- * bootstrapped (no active space) so this never receives an empty
- * string.
- *
- * `onProgress` (#128) — optional. When
- * supplied, the backend streams per-block progress over a
- * `Channel<ImportProgressUpdate>`: one `started` event, one `progress`
- * per block, then one `complete` after the import transaction commits.
- * A failed import emits `started` (+ any `progress`) but no `complete`,
- * so a consumer that never sees `complete` should treat it as failed.
- * The channel is always created (mirroring `startSync`) even when no
- * callback is passed; events are simply discarded.
+ * This is a re-export shim, NOT a second copy: the wrapper layer must not
+ * hand-declare a duplicate of a function that already has a home, for exactly
+ * the reason #4414 gives for the duplicated *types* — nothing detects when
+ * one of two declarations drifts. `useImportRunner` still imports it from the
+ * `@/lib/tauri` barrel; that import graduates to `@/lib/ipc-helpers` with the
+ * rest of the file, and this line goes away with `src/lib/tauri/`.
  */
-export async function importMarkdown(
-  content: string,
-  filename: string | undefined,
-  spaceId: string,
-  onProgress?: (update: ImportProgressUpdate) => void,
-  vaultFiles?: VaultFile[] | null,
-): Promise<ImportResult> {
-  const channel = new Channel<ImportProgressUpdate>()
-  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri `Channel` is an IPC primitive, not a DOM EventTarget; it only exposes an `onmessage` setter (no `addEventListener`)
-  if (onProgress) channel.onmessage = onProgress
-  // #1925 — `vaultFiles` carries the referenced attachment bytes the backend
-  // ingests and rewrites to `attachment:<id>`. Only the `webkitdirectory`
-  // vault picker can supply siblings (see DataSettingsTab); a single-file
-  // import has no siblings and omits it. Defaults to `null` ⇒ exactly the
-  // pre-#1925 behaviour for every caller that does not pass it.
-  return unwrap(
-    await commands.importMarkdown(content, filename ?? null, spaceId, vaultFiles ?? null, channel),
-  )
-}
+export { importMarkdown } from '@/lib/ipc-helpers'
 
 // ---------------------------------------------------------------------------
 // Bibliography import (#1454)

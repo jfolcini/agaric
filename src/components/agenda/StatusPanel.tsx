@@ -22,10 +22,12 @@ import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePollingQuery } from '@/hooks/usePollingQuery'
 import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { StatusInfo } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
+import { startSync } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
-import type { StatusInfo } from '@/lib/tauri'
-import { getStatus, startSync } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { type SyncState, useSyncStore } from '@/stores/sync'
 
@@ -245,7 +247,7 @@ function BoundedStalenessNotice({ status }: { status: StatusInfo }): React.React
 }
 
 export function StatusPanel(): React.ReactElement {
-  const queryFn = useCallback(() => getStatus(), [])
+  const queryFn = useCallback(() => commands.getStatus().then(unwrap), [])
   const {
     data: status,
     loading,

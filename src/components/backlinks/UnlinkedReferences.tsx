@@ -26,6 +26,8 @@ import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import { useUnlinkedReferences } from '@/hooks/useUnlinkedReferences'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
@@ -37,7 +39,7 @@ import type {
   BacklinkSort,
   GroupedBacklinkResponse,
 } from '@/lib/tauri'
-import { editBlock, getPageAliases, listTagsByPrefix } from '@/lib/tauri'
+import { editBlock, getPageAliases } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -195,7 +197,9 @@ export function UnlinkedReferences({
   // mount/unmount).
   useEffect(() => {
     let cancelled = false
-    listTagsByPrefix({ prefix: '' })
+    commands
+      .listTagsByPrefix('', null)
+      .then(unwrap)
       .then((result) => {
         if (cancelled) return
         setTags((result ?? []).map((tag) => ({ id: tag.tag_id, name: tag.name })))

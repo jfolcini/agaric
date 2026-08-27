@@ -18,13 +18,14 @@ import { useDebouncedContentCommit } from '@/hooks/useDebouncedContentCommit'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard'
-import { retryOnPoolBusy } from '@/lib/app-error'
+import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
+import { commands } from '@/lib/bindings'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import { addAttachmentWithBytes, deleteDraft, saveDraft } from '@/lib/tauri'
+import { addAttachmentWithBytes } from '@/lib/tauri'
 import { runUnmountFlush } from '@/lib/unmount-flush'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
@@ -72,14 +73,17 @@ function persistUnmount(
   // #770 gap 1 — drop the previous block's draft row so it can't resurrect at
   // boot. Best-effort; deleting an absent row is a harmless no-op.
   const deletePrevDraft = () => {
-    void deleteDraft(prevId).catch((err: unknown) => {
-      logger.warn(
-        'EditableBlock',
-        'deleteDraft failed during programmatic unmount',
-        { prevId },
-        err,
-      )
-    })
+    void commands
+      .deleteDraft(prevId)
+      .then(unwrap)
+      .catch((err: unknown) => {
+        logger.warn(
+          'EditableBlock',
+          'deleteDraft failed during programmatic unmount',
+          { prevId },
+          err,
+        )
+      })
   }
   if (changed === null) {
     // Unchanged: no op appended → existing committed content is canonical.
@@ -133,14 +137,16 @@ function persistUnmount(
       // re-save (`useDraftAutosave` discardDraftFor) — so boot-time
       // `flush_all_drafts` recovers the full typed text. Best-effort with the
       // standard pool_busy retry.
-      void retryOnPoolBusy(() => saveDraft(prevId, changed)).catch((err: unknown) => {
-        logger.warn(
-          'EditableBlock',
-          'draft re-save after failed programmatic save failed',
-          { prevId },
-          err,
-        )
-      })
+      void retryOnPoolBusy(() => commands.saveDraft(prevId, changed).then(unwrap)).catch(
+        (err: unknown) => {
+          logger.warn(
+            'EditableBlock',
+            'draft re-save after failed programmatic save failed',
+            { prevId },
+            err,
+          )
+        },
+      )
     })
   return changed
 }

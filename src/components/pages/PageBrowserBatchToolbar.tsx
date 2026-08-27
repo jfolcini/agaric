@@ -55,7 +55,6 @@ import { invalidateNameCaches, notifyPageRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import type { TagCacheRow } from '@/lib/tauri'
 import {
-  addTagsByIds,
   deleteBlocksByIds,
   listAllTagsInSpace,
   moveBlocksToSpace,
@@ -322,7 +321,7 @@ export function PageBrowserBatchToolbar({
     if (selectedIds.length === 0 || selectedTagId === '' || busy) return
     setBusy(true)
     try {
-      const count = await addTagsByIds(selectedIds, selectedTagId)
+      const count = unwrap(await commands.addTagsByIds(selectedIds, selectedTagId))
       closePickers()
       onClearSelection()
       onMutated()

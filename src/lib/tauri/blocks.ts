@@ -1,4 +1,4 @@
-import { isAppError, unwrap } from '@/lib/app-error'
+import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type {
   BlockRow,
@@ -11,7 +11,6 @@ import type {
   SpaceScope,
   WithOps,
 } from '@/lib/bindings'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 import type { SafeLimit } from '@/lib/safe-limit'
 import { toSpaceScope, requireActiveScope } from '@/lib/tauri/_shared'
 
@@ -147,10 +146,6 @@ export async function purgeBlock(blockId: string): Promise<PurgeResponse> {
   return unwrap(await commands.purgeBlock(blockId))
 }
 
-export interface BulkTrashResponse {
-  affected_count: number
-}
-
 /**
  * Restore a list of soft-deleted blocks in a single IPC.
  *
@@ -187,149 +182,6 @@ export async function restoreBlocksByIds(blockIds: string[]): Promise<number> {
 export async function purgeBlocksByIds(blockIds: string[]): Promise<number> {
   const resp = unwrap(await commands.purgeBlocksByIds(blockIds))
   return resp.affected_count
-}
-
-/**
- * Backend cap on the `block_ids` batch accepted by `restore_blocks_by_ids`
- * / `purge_blocks_by_ids` (`MAX_BATCH_BLOCK_IDS` in
- * `src-tauri/src/commands/mod.rs`). Mirrored here so
- * {@link restoreAllDeletedInSpace} / {@link purgeAllDeletedInSpace} can
- * chunk an arbitrarily large trash into backend-accepted batches instead
- * of surfacing `AppError::Validation` for a busy trash. Exported (#3885)
- * so tests of the chunked path can build a fixture sized off this
- * constant — `MAX_TRASH_BATCH_IDS + 1` — instead of a magic literal that
- * silently stops meaning "one over the batch cap" if this value ever
- * changes. (It is a plain numeric constant, so being reachable via the
- * `src/lib/tauri.ts` `*`-barrel too, beyond this module, is harmless —
- * noted here since that's slightly wider than "tests only".)
- */
-export const MAX_TRASH_BATCH_IDS = 1000
-
-/**
- * Collect every trash-root id belonging to `spaceId` by walking
- * `listTrash`'s cursor chain to completion — independent of whatever page
- * / cursor position the caller's own UI list happens to be showing.
- * Shared by {@link restoreAllDeletedInSpace} and
- * {@link purgeAllDeletedInSpace}.
- */
-async function collectAllTrashRootIds(spaceId: string): Promise<string[]> {
-  const ids: string[] = []
-  let cursor: string | undefined
-  for (;;) {
-    const page = await listTrash({
-      ...(cursor != null && { cursor }),
-      limit: PAGINATION_LIMIT,
-      spaceId,
-    })
-    ids.push(...page.items.map((b) => b.id))
-    if (!page.has_more || page.next_cursor == null) break
-    cursor = page.next_cursor
-  }
-  return ids
-}
-
-/**
- * Restore every soft-deleted block in `spaceId`.
- *
- * #2544 — the backend's `restore_all_deleted` command is intentionally
- * NOT called here: it takes no `space_id` and would resurrect trashed
- * blocks across EVERY space, not just the one the Trash view displays
- * (and the one its confirmation dialog counted). Instead this drains the
- * already space-scoped `listTrash` cursor chain for `spaceId` (mirroring
- * the "ignore the frontend's own load-more frontier, act on everything in
- * trash" semantics `purge_all_deleted` used to provide, just space-scoped)
- * and hands the resulting root ids to `restoreBlocksByIds` — the same
- * space-safe path the per-row and multi-select restore actions already
- * use — chunked to the backend's batch-size cap.
- */
-export async function restoreAllDeletedInSpace(spaceId: string): Promise<BulkTrashResponse> {
-  const ids = await collectAllTrashRootIds(spaceId)
-  let affectedCount = 0
-  // #3838 made this chunk loop depend on the ORDER of `ids`, where it
-  // previously did not. `restoreBlocksByIds` now REFUSES a live id, and one
-  // chunk's #1884 upward ancestor walk can make a later chunk's trash root
-  // live — which would abort the whole remaining restore.
-  //
-  // It is unreachable today, and the reason is worth writing down because it
-  // lives in another crate: `list_trash` orders `deleted_at DESC`
-  // (`agaric-store/src/pagination/trash.rs`), an ancestor trash root always
-  // carries a LATER `deleted_at` than a descendant trash root, and an equal
-  // `deleted_at` disqualifies the descendant from being a root at all. So an
-  // ancestor is always in an EARLIER chunk than anything it would revive.
-  // If that ordering ever changes, this loop breaks silently — nothing here
-  // would notice.
-  for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
-    affectedCount += await restoreBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS))
-  }
-  return { affected_count: affectedCount }
-}
-
-/**
- * Thrown by {@link purgeAllDeletedInSpace} when a chunk fails part-way
- * through the drain. #3835 — each chunk is its own backend IMMEDIATE
- * transaction, so any chunk before the failing one has ALREADY committed:
- * a plain rethrow of the chunk's error discarded that count, so a
- * partially-completed "empty trash" surfaced to the caller as a pure
- * failure with no sign that most of it succeeded. `affectedCount` carries
- * what actually landed so a caller can tell "removed 0 of N, nothing
- * happened" apart from "removed N-1 of N, one chunk away from done" and
- * word its toast (and its retry) accordingly. `cause` is the triggering
- * error (also available via the standard `Error.cause`), preserved so
- * existing `.message`-based assertions on the underlying failure still see
- * it — this wraps the failure, it does not replace it.
- */
-export class PartialPurgeError extends Error {
-  readonly affectedCount: number
-
-  constructor(affectedCount: number, cause: unknown) {
-    super(PartialPurgeError.messageOf(cause), { cause })
-    this.name = 'PartialPurgeError'
-    this.affectedCount = affectedCount
-  }
-
-  /**
-   * The `isAppError` arm is the REALISTIC one, not a defensive extra:
-   * `unwrap` throws the raw `{ kind, message }` AppError envelope, which is
-   * a plain object and NOT an `Error`. Without it every IPC-originated
-   * chunk failure — i.e. the whole reason this class exists — would take
-   * the `String(cause)` arm and degrade to `"[object Object]"`, silently
-   * discarding the backend's message. `cause instanceof Error` only ever
-   * held for locally-constructed errors, which is exactly the shape the
-   * tests happened to use.
-   */
-  private static messageOf(cause: unknown): string {
-    if (isAppError(cause)) return cause.message
-    if (cause instanceof Error) return cause.message
-    return String(cause)
-  }
-}
-
-/**
- * Permanently purge every soft-deleted block in `spaceId`. Irreversible.
- *
- * #2544 — mirrors {@link restoreAllDeletedInSpace}'s rationale: the
- * backend's `purge_all_deleted` command is unscoped and would destroy
- * trash in every space, not just the active one shown (and confirmed) by
- * the Trash view's "Empty trash" dialog. Scoped here the same way, via
- * `purgeBlocksByIds`.
- *
- * #3835 — a chunk failing part-way through (e.g. `InvalidOperation` from a
- * concurrently-restored id, or any other backend rejection) throws
- * {@link PartialPurgeError} instead of the bare chunk error, carrying
- * whatever `affectedCount` the EARLIER, already-committed chunks purged, so
- * that progress is not discarded from the caller's view of the outcome.
- */
-export async function purgeAllDeletedInSpace(spaceId: string): Promise<BulkTrashResponse> {
-  const ids = await collectAllTrashRootIds(spaceId)
-  let affectedCount = 0
-  for (let i = 0; i < ids.length; i += MAX_TRASH_BATCH_IDS) {
-    try {
-      affectedCount += await purgeBlocksByIds(ids.slice(i, i + MAX_TRASH_BATCH_IDS))
-    } catch (err) {
-      throw new PartialPurgeError(affectedCount, err)
-    }
-  }
-  return { affected_count: affectedCount }
 }
 
 /**

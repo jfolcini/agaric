@@ -28,7 +28,7 @@ import { useTranslation } from 'react-i18next'
 import { useExternalImageAllowlist, useExternalImagePolicy } from '@/hooks/useExternalImagePolicy'
 import { isAttachmentRef, parseAttachmentRef } from '@/lib/attachment-ref'
 import { externalImageHost, shouldLoadExternalImage } from '@/lib/external-image-policy'
-import { readAttachment } from '@/lib/tauri'
+import { readAttachment } from '@/lib/ipc-helpers'
 
 /** Wrap raw bytes in a typed `Blob` (mime defaults to a generic octet-stream). */
 function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {

@@ -21,7 +21,6 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   return {
     ...actual,
     searchBlocks: vi.fn(),
-    listTagsByPrefix: vi.fn(),
     batchResolve: vi.fn(),
     getBlock: vi.fn(),
   }

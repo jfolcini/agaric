@@ -10,15 +10,21 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// #4338 — the palette's `create-new-page` command calls `createPageInSpace`
-// from `@/lib/tauri` at module scope. Spread the real module so every other
-// importer still binds what it expects, and intercept just the create.
+// #4338 — the palette's `create-new-page` command calls
+// `commands.createPageInSpace` from `@/lib/bindings` directly (its
+// `@/lib/tauri` wrapper was retired, #4411). Spread the real module so every
+// other importer still binds what it expects, and intercept just the create;
+// resolve the OK-envelope shape so the real `unwrap` at the call site runs.
 const mockedCreatePageInSpace = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    createPageInSpace: (...args: unknown[]) => mockedCreatePageInSpace(...args),
+    commands: {
+      ...actual.commands,
+      createPageInSpace: (...args: unknown[]) =>
+        mockedCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 

@@ -43,13 +43,15 @@ import {
 } from 'lucide-react'
 
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { SHOW_SHORTCUTS_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
-import { createPageInSpace, exportPageMarkdown } from '@/lib/tauri'
+import { exportPageMarkdown } from '@/lib/tauri'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -218,7 +220,9 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
         notify.error(t('space.notReady'))
         return
       }
-      createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
+      commands
+        .createPageInSpace(null, 'Untitled', currentSpaceId)
+        .then(unwrap)
         .then((newId) => {
           useResolveStore.getState().set(newId, 'Untitled', false)
           // #4338 — publish the create so warm picker caches stay right.

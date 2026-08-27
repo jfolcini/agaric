@@ -75,9 +75,25 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
     // `searchBlocksPartitioned`. Both must be mocked.
     searchBlocks: vi.fn(),
     searchBlocksPartitioned: vi.fn(),
-    // #2942 — `create-new-page` / `export-page-markdown` palette commands.
-    createPageInSpace: vi.fn(),
+    // #2942 — `export-page-markdown` palette command.
     exportPageMarkdown: vi.fn(),
+  }
+})
+
+// #2942 — `create-new-page` retired its `@/lib/tauri` wrapper (#4411); the
+// palette command now calls `commands.createPageInSpace` directly and
+// unwraps the `Result` envelope, so the mock backs the `commands.*` surface
+// and resolves the `{ status: 'ok', data }` shape.
+const mockedCreatePageInSpace = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      createPageInSpace: (...args: unknown[]) =>
+        mockedCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 
@@ -89,17 +105,11 @@ vi.mock('@/hooks/useIsMobile', () => ({
 }))
 
 import { useIsMobile } from '@/hooks/useIsMobile'
-import {
-  createPageInSpace,
-  exportPageMarkdown,
-  searchBlocks,
-  searchBlocksPartitioned,
-} from '@/lib/tauri'
+import { exportPageMarkdown, searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
 
 const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
-const mockedCreatePageInSpace = vi.mocked(createPageInSpace)
 const mockedExportPageMarkdown = vi.mocked(exportPageMarkdown)
 const mockedNotify = vi.mocked(notify)
 const mockedWriteText = vi.mocked(clipboardWriteText)
@@ -1150,10 +1160,8 @@ describe('CommandPalette — commands mode', () => {
     fireEvent.click(screen.getByTestId('palette-cmd-create-new-page'))
     expect(useCommandPaletteStore.getState().open).toBe(false)
     await waitFor(() => {
-      expect(mockedCreatePageInSpace).toHaveBeenCalledWith({
-        content: 'Untitled',
-        spaceId: 'SPACE_TEST',
-      })
+      // `commands.createPageInSpace` is positional: (parentId, content, spaceId).
+      expect(mockedCreatePageInSpace).toHaveBeenCalledWith(null, 'Untitled', 'SPACE_TEST')
     })
     await waitFor(() => {
       expect(navigateToPage).toHaveBeenCalledWith('PAGE_NEW', 'Untitled')

@@ -205,6 +205,13 @@ function callsIpc(src) {
   // Match `from '@/lib/tauri'` (single or double quotes).
   if (/from\s+['"]@\/lib\/tauri['"]/.test(withoutTypeImports)) return true
 
+  // Match `from '@/lib/ipc-helpers'` — the migration floor (#4413):
+  // `readAttachment`, `startSync`, `importMarkdown`,
+  // `restoreAllDeletedInSpace` / `purgeAllDeletedInSpace` all reject exactly
+  // like the wrapper layer they moved out of, and need the same
+  // error-path coverage.
+  if (/from\s+['"]@\/lib\/ipc-helpers['"]/.test(withoutTypeImports)) return true
+
   // Match a plugin-shim submodule import (`from '@/lib/platform/<domain>'`),
   // the layer split out of `@/lib/tauri/{system,notifications}` in #3202.
   // The `/<domain>` segment is REQUIRED so the bare `@/lib/platform` barrel

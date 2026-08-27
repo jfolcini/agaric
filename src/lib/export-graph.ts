@@ -1,15 +1,12 @@
 import JSZip from 'jszip'
 
 import { flushActiveDraft } from '@/lib/active-draft-flush'
+import { unwrap } from '@/lib/app-error'
 import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
+import { commands } from '@/lib/bindings'
+import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
-import {
-  exportPageMarkdown,
-  listAllPagesInSpace,
-  listSpaces,
-  readAttachment,
-  readAttachmentMeta,
-} from '@/lib/tauri'
+import { exportPageMarkdown, listAllPagesInSpace } from '@/lib/tauri'
 
 /**
  * Characters that are illegal in a path SEGMENT on common filesystems
@@ -450,7 +447,7 @@ export async function exportAllSpacesAsZip(): Promise<ExportAllSpacesResult> {
   // #2969 — see exportGraphAsZip: flush before reading ANY page's markdown.
   await flushActiveDraft()
 
-  const spaces = await listSpaces()
+  const spaces = unwrap(await commands.listSpaces())
 
   const folderNamesSeen = new Set<string>()
   let exportedPages = 0
@@ -539,7 +536,7 @@ async function rewriteAttachmentRefs(
   for (const id of ids) {
     if (emittedAssets.has(id)) continue
     try {
-      const meta = await readAttachmentMeta(id)
+      const meta = unwrap(await commands.readAttachmentMeta(id))
       const bytes = await readAttachment(id)
       // Prefix the asset filename with the attachment id so two attachments
       // sharing a filename (e.g. `image.png`) never collide in `assets/`.
@@ -628,7 +625,7 @@ export async function resolveAttachmentRefsForCopy(md: string): Promise<string> 
   const resolved = new Map<string, string | null>()
   for (const id of ids) {
     try {
-      const meta = await readAttachmentMeta(id)
+      const meta = unwrap(await commands.readAttachmentMeta(id))
       // Flatten any path separator in the stored filename (settable via
       // `rename_attachment`, which has no traversal check) so the stand-in
       // never reads as a nested path — mirrors `rewriteAttachmentRefs`'s

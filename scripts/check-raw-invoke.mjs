@@ -35,6 +35,13 @@
 //   - `src/lib/tauri/`             the bindings migration funnels
 //                                  through (`unwrap(await commands.*)`);
 //                                  split into per-domain modules in #2902.
+//   - `src/lib/ipc-helpers.ts`     the migration floor (#4413): holds the
+//                                  ONE sanctioned raw invoke, `readAttachment`
+//                                  (#2654 — a raw-response command can't
+//                                  carry a `specta::Type`, so it has no
+//                                  generated binding). Exact FILE only —
+//                                  `src/lib/` is not a directory prefix, so a
+//                                  raw invoke in any sibling still fails.
 //   - `src/lib/observability/`     the invoke-instrumentation seam that
 //                                  patches `__TAURI_INTERNALS__.invoke`.
 //   - `src/lib/tauri-mock.ts` /    the e2e / dev IPC mock that stands in
@@ -59,7 +66,15 @@ const SRC_DIR = path.join(ROOT, 'src')
 // Repo-relative (POSIX) exact-file and directory-prefix exemptions.
 // Directory prefixes end with `/`.
 const EXEMPT_FILES = Object.freeze(
-  new Set(['src/lib/bindings.ts', 'src/lib/tauri.ts', 'src/lib/tauri-mock.ts']),
+  new Set([
+    'src/lib/bindings.ts',
+    'src/lib/tauri.ts',
+    'src/lib/tauri-mock.ts',
+    // The sanctioned raw-invoke seam (`readAttachment`, #2654) moved here
+    // from `src/lib/tauri/attachments.ts` when the migration floor got a
+    // real home (#4413) — see the module doc comment in ipc-helpers.ts.
+    'src/lib/ipc-helpers.ts',
+  ]),
 )
 const EXEMPT_DIR_PREFIXES = Object.freeze([
   'src/lib/observability/',

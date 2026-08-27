@@ -14,11 +14,30 @@ vi.mock('sonner', () => {
   return { toast: fn }
 })
 
-// Mock tauri.ts
-vi.mock('@/lib/tauri', () => ({
-  listPeerRefs: vi.fn(),
+const mockListPeerRefs = vi.fn()
+const mockFlushAllDrafts = vi.fn()
+
+// `listPeerRefs` / `flushAllDrafts` are now direct `commands.*` calls
+// (#4411); mock the generated binding's OK-envelope shape so the real
+// `unwrap` at the call site still runs.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listPeerRefs: (...args: unknown[]) =>
+        mockListPeerRefs(...args).then((data: unknown) => ({ status: 'ok', data })),
+      flushAllDrafts: (...args: unknown[]) =>
+        mockFlushAllDrafts(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
+
+// `startSync` still has real logic (Channel plumbing, #4413) and lives in
+// `@/lib/ipc-helpers`.
+vi.mock('@/lib/ipc-helpers', () => ({
   startSync: vi.fn(),
-  flushAllDrafts: vi.fn(),
 }))
 
 vi.mock('@/lib/announcer', () => ({
@@ -27,8 +46,8 @@ vi.mock('@/lib/announcer', () => ({
 
 import { mapPeerRefToInfo, resetReportedSyncFailures, useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
-import type { PeerRef, SyncSessionInfo } from '@/lib/tauri'
-import { flushAllDrafts, listPeerRefs, startSync } from '@/lib/tauri'
+import type { PeerRef, SyncSessionInfo } from '@/lib/bindings'
+import { startSync } from '@/lib/ipc-helpers'
 import { useSyncStore } from '@/stores/sync'
 
 /**
@@ -68,9 +87,7 @@ function makePeerRow(overrides: Partial<PeerRef> = {}): PeerRef {
   }
 }
 
-const mockListPeerRefs = vi.mocked(listPeerRefs)
 const mockStartSync = vi.mocked(startSync)
-const mockFlushAllDrafts = vi.mocked(flushAllDrafts)
 const mockedAnnounce = vi.mocked(announce)
 
 describe('useSyncTrigger', () => {

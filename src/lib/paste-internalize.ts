@@ -8,15 +8,12 @@
  * the `pasteBlocks` reducer.
  */
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { RefInternalizers } from '@/lib/block-clipboard'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
-import {
-  createBlock,
-  createPageInSpace,
-  listAllPagesInSpace,
-  listAllTagsInSpace,
-} from '@/lib/tauri'
+import { createBlock, listAllPagesInSpace, listAllTagsInSpace } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -108,7 +105,7 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
       if (existing && existing.length > 1) return null
       if (existing && existing.length === 1) return existing[0] ?? null
       try {
-        const newId = await createPageInSpace({ content: name, spaceId })
+        const newId = unwrap(await commands.createPageInSpace(null, name, spaceId))
         map.set(name, [newId])
         // Seed the resolve cache so the new link chip renders its title at once.
         useResolveStore.getState().set(newId, name, false)

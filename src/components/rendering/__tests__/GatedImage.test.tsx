@@ -20,8 +20,9 @@ import {
 } from '@/lib/external-image-policy'
 
 // #1434 — resolving an `attachment:<id>` ref reads the bytes over IPC.
+// `readAttachment` lives in `@/lib/ipc-helpers` (#4413, the migration floor).
 const mockReadAttachment = vi.fn()
-vi.mock('@/lib/tauri', () => ({
+vi.mock('@/lib/ipc-helpers', () => ({
   readAttachment: (...args: unknown[]) => mockReadAttachment(...args),
 }))
 

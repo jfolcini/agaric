@@ -17,8 +17,9 @@ import { useTranslation } from 'react-i18next'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-import { isCancellation } from '@/lib/app-error'
+import { isCancellation, unwrap } from '@/lib/app-error'
 import type { AutocompleteItem } from '@/lib/autocomplete-item'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { getPathHistory } from '@/lib/path-history'
@@ -37,7 +38,7 @@ import {
 import { queryClient } from '@/lib/query-client'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
 import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
-import { getPropertyDef, listTagsByPrefix, paginationLimit } from '@/lib/tauri'
+import { getPropertyDef, paginationLimit } from '@/lib/tauri'
 
 export const STATE_VALUES = TASK_STATE_AUTOCOMPLETE_VALUES
 export const DATE_BUCKET_VALUES = [
@@ -248,7 +249,9 @@ export function useAutocompleteSources(
     setTagLoading(true)
     tagDebounceTimerRef.current = setTimeout(() => {
       tagDebounceTimerRef.current = null
-      listTagsByPrefix({ prefix: query, limit: paginationLimit(TAG_LIMIT) })
+      commands
+        .listTagsByPrefix(query, paginationLimit(TAG_LIMIT))
+        .then(unwrap)
         .then((rows) => {
           if (!tagGen.isCurrent(requestId)) return
           setTagItems(rows.map((row) => ({ value: row.name })))

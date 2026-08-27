@@ -23,17 +23,13 @@ import { ListItem } from '@/components/ui/list-item'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import {
-  createPageInSpace,
-  deleteProperty,
-  paginationLimit,
-  queryByProperty,
-  setProperty,
-} from '@/lib/tauri'
+import { deleteProperty, paginationLimit, queryByProperty, setProperty } from '@/lib/tauri'
 import { loadTemplatePagesWithPreview } from '@/lib/template-utils'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
@@ -135,7 +131,7 @@ export function TemplatesView(): React.ReactElement {
         setIsCreating(false)
         return
       }
-      const newId = await createPageInSpace({ content: name, spaceId: activeSpaceId })
+      const newId = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
       // #4338 — published BEFORE the `template` property is set, because
       // that is when the row starts being returned by
       // `list_all_pages_in_space` (which has no template filter): if the

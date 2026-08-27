@@ -26,10 +26,12 @@
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
-import { createBlock, createPageInSpace } from '@/lib/tauri'
+import { createBlock } from '@/lib/tauri'
 import {
   insertTemplateBlocks,
   insertTemplateBlocksFromString,
@@ -91,7 +93,7 @@ export function useJournalBlockCreation({
             // before Journal mounts; this branch is a defence-in-depth.
             throw new Error('No active space; cannot create journal page')
           }
-          const newId = await createPageInSpace({ content: dateStr, spaceId: currentSpaceId })
+          const newId = unwrap(await commands.createPageInSpace(null, dateStr, currentSpaceId))
           // Defensive: if the IPC returned a non-string (mock leak, schema
           // drift, …) treat it as a failure so we don't seed `createdPages`
           // with a non-string and render a phantom page.

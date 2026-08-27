@@ -11,9 +11,10 @@ import {
 import { MimeIcon } from '@/components/rendering/MimeIcon'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { formatSize } from '@/lib/attachment-utils'
+import { readAttachment } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { readAttachment, setProperty } from '@/lib/tauri'
+import { setProperty } from '@/lib/tauri'
 
 /** Map an alignment value to the flex justification of the image row. */
 const ALIGNMENT_JUSTIFY: Record<ImageAlignment, string> = {

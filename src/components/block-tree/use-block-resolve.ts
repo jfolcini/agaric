@@ -79,13 +79,14 @@ export interface UseBlockResolveReturn {
    * keeping is the enumeration behind that answer, so it is recorded here
    * rather than re-derived:
    *
-   *  1. TWO ENTRY POINTS. `createPageInSpace` exists both as a typed helper
-   *     (`@/lib/tauri/system.ts`) AND as the raw binding
-   *     (`commands.createPageInSpace`), so a reference query on either one
-   *     alone undercounts — asymmetrically: the helper reaches five of the
-   *     sites below and the raw binding the other four, so searching the
-   *     helper alone misses four and searching the binding alone misses
-   *     five. There are NINE creation sites outside
+   *  1. ONE ENTRY POINT (as of #4411). `createPageInSpace` used to exist
+   *     both as a typed wrapper in the (now-deleted) `system` module under
+   *     the `@/lib/tauri` layer AND as the raw binding, so a reference
+   *     query on either alone undercounted — asymmetrically: the wrapper
+   *     reached five of the sites below and the binding the other four.
+   *     That wrapper is gone; every site now calls
+   *     `commands.createPageInSpace` directly, so a single reference query
+   *     on the binding is complete. There are NINE creation sites outside
    *     `onCreatePage`: eight do not register, one does
    *     (`src/components/block-tree/use-block-date-picker.ts:180`, the #4319 site above).
    *  2. THE EIGHT CANNOT REGISTER — they did not forget to.

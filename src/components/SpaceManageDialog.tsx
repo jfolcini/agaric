@@ -63,9 +63,11 @@ import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { createSpace, getBatchProperties, listBlocks, listBlocksLimit } from '@/lib/tauri'
+import { getBatchProperties, listBlocks, listBlocksLimit } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -115,10 +117,7 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
     if (!trimmed || submitting) return
     setSubmitting(true)
     try {
-      await createSpace({
-        name: trimmed,
-        accentColor: accent ?? null,
-      })
+      unwrap(await commands.createSpace(trimmed, accent ?? null))
       setName('')
       setAccent(null)
       setOpen(false)

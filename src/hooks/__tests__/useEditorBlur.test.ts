@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '@/hooks/useEditorBlur'
-import { deleteDraft, getPropertyDef, saveDraft, setProperty } from '@/lib/tauri'
+import { getPropertyDef, setProperty } from '@/lib/tauri'
 
 // Only used by the findings-2/48 integration tests (real useDraftAutosave
 // composed with useEditorBlur) and the #2675 inline-property tests (the
@@ -30,9 +30,12 @@ import { deleteDraft, getPropertyDef, saveDraft, setProperty } from '@/lib/tauri
 // `commands.{saveDraft,flushDraft,deleteDraft}` from `@/lib/bindings`, and the
 // #2675 tests drive the real `commitInlineProperties`, which now calls
 // `commands.{getPropertyDef,setProperty}` — both unwrap the `Result` envelope.
-// The same spies back both the (still-wrapped) `@/lib/tauri` surface and the
-// `commands.*` surface so the `vi.mocked(...)` assertions keep working, and
-// they resolve the `{ status: 'ok', data }` shape.
+// `getPropertyDef`/`setProperty` still back BOTH the (still-wrapped)
+// `@/lib/tauri` surface and the `commands.*` surface so their `vi.mocked(...)`
+// assertions keep working; `saveDraft`/`deleteDraft` retired their
+// `@/lib/tauri` wrapper (#4411) so only `commands.*` is mocked for those —
+// assert on the bare `mockSaveDraft`/`mockDeleteDraft` spies instead. All
+// spies resolve the `{ status: 'ok', data }` shape.
 const {
   mockSaveDraft,
   mockFlushDraft,
@@ -52,9 +55,6 @@ const {
 }))
 
 vi.mock('@/lib/tauri', () => ({
-  saveDraft: mockSaveDraft,
-  flushDraft: mockFlushDraft,
-  deleteDraft: mockDeleteDraft,
   getPropertyDef: mockGetPropertyDef,
   setProperty: mockSetProperty,
 }))
@@ -1528,8 +1528,8 @@ describe('useEditorBlur', () => {
       // The draft row — the boot-time flush_all_drafts recovery net — must
       // survive the failed save, and the failed content is re-saved so the
       // row exists even when no 2s debounce tick ever landed.
-      expect(vi.mocked(deleteDraft)).not.toHaveBeenCalled()
-      expect(vi.mocked(saveDraft)).toHaveBeenCalledWith('B1', 'typed paragraph')
+      expect(mockDeleteDraft).not.toHaveBeenCalled()
+      expect(mockSaveDraft).toHaveBeenCalledWith('B1', 'typed paragraph')
     })
 
     it('edit resolving true deletes the draft row (integration)', async () => {
@@ -1559,8 +1559,8 @@ describe('useEditorBlur', () => {
       })
       await flushMicrotasks()
 
-      expect(vi.mocked(deleteDraft)).toHaveBeenCalledTimes(1)
-      expect(vi.mocked(deleteDraft)).toHaveBeenCalledWith('B1')
+      expect(mockDeleteDraft).toHaveBeenCalledTimes(1)
+      expect(mockDeleteDraft).toHaveBeenCalledWith('B1')
     })
   })
 

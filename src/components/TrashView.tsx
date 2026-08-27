@@ -41,6 +41,11 @@ import { announce } from '@/lib/announcer'
 import { isInvalidOperation } from '@/lib/app-error'
 import { resolveStoreTitle } from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import {
+  PartialPurgeError,
+  purgeAllDeletedInSpace,
+  restoreAllDeletedInSpace,
+} from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
@@ -48,11 +53,8 @@ import { queryClient } from '@/lib/query-client'
 import type { BlockRow, PageResponse } from '@/lib/tauri'
 import {
   listTrash,
-  PartialPurgeError,
-  purgeAllDeletedInSpace,
   purgeBlock,
   purgeBlocksByIds,
-  restoreAllDeletedInSpace,
   restoreBlock,
   restoreBlocksByIds,
 } from '@/lib/tauri'
