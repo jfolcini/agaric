@@ -1,7 +1,8 @@
-# Session log — template & conventions
+# Session log — numbering, format, and plan-issue bookkeeping
 
-Create one file per session at `docs/session-log/session-NNN-<slug>.md`. `NNN` is an
-unused number in the window **`(max, max + GAP_BOUND]`**, no zero-padding, where
+Create one file per session at `docs/session-log/session-NNNN-<slug>.md`. `NNNN` is an
+unused number in the window **`(max, max + GAP_BOUND]`**, no zero-padding — the digit
+count above just matches today's live numbers, not a fixed width — where
 `GAP_BOUND` is 10 (`scripts/check-session-log-numbering.sh`). `max + 1` is the number
 to take when nothing else is in flight; the window exists so several parallel PRs can
 each hold a distinct valid number instead of every one renumbering the moment a sibling
@@ -39,6 +40,80 @@ commit time.
 `<slug>` is a short kebab-case derivation of the title. **One file per session, never
 appended to.** See `docs/session-log/README.md` for naming + discovery conventions.
 
+## Session log format
+
+Session logs are prose narratives describing what was accomplished, what was learned, and
+what failed or required correction. There is no required metadata table or structured
+section format — the purpose of a session log is to preserve knowledge rather than to
+record metrics.
+
+The `# Session NNNN — <title>` heading is the first line of the file — a real H1, one `#`,
+and nothing above it. This is enforced: the `session-log-numbering` pre-commit guard greps
+for `^#[[:space:]]+Session[[:space:]]+[0-9]+` in the staged file and rejects the commit
+with "no '# Session NNNN' heading found" if it is missing, so a `##` heading aborts the
+commit.
+
+### Typical structure
+
+Most session logs follow this pattern (by convention, not by requirement):
+
+- **Opening paragraph:** a short framing of the work — what the session set out to do,
+  or what problem it addressed. Often includes issue numbers.
+
+- **Named sections (##):** multiple sections exploring different aspects of the work,
+  lessons learned, corrected assumptions, guards that failed, or mechanisms that were
+  discovered. Section titles capture what the session discovered, not a template category.
+  Examples: "The docblock forbade this, and it was half right", "What a delete means to
+  a block that moved out", "Guards that fail open", "Measurement beat reasoning".
+
+- **What shipped (optional, when applicable):** a section listing the PR numbers and
+  brief descriptions of work that shipped, typically formatted as a bulleted list with
+  issue/PR numbers.
+
+- **Verification (optional):** a prose description of testing — test counts, CI results,
+  areas verified. This is not a command recipe; it summarizes what was checked.
+
+No metadata table, no LOC delta line-item list, and no commit-plan enum are required.
+When a session's content naturally calls for any of these (e.g., "21 files changed,
++500/−30" summarizes scope), include it; do not omit it because it is not mandatory.
+
+### Example
+
+```markdown
+# Session 1401 — the create event the bus deliberately did not have
+
+#4338. The name-change bus published renames and deletes but never creates, so a page
+created anywhere outside a picker's own hook was invisible to every warm cache.
+
+## The docblock forbade this, and it was half right
+
+[explanation of the design and why it was incomplete]
+
+## The steer I gave was wrong, and the mechanism says why
+
+[discovery that the brief's assumption was incorrect, and the mechanism that explains it]
+
+## Falsification
+
+[description of test cases that were reverted to verify the fix was load-bearing]
+
+## Verification
+
+[the suites actually run, with real counts — e.g. "Whole frontend suite: **NNN files,
+NNNNN passed**, 1 expected fail, 37 skipped. `tsc -b` clean; `oxlint` clean across all N
+changed files."]
+```
+
+Only the bracketed spans above are unwritten placeholders. Everything else in the
+block — the heading, its number, its title, the opening paragraph (`#4338` included),
+and the section titles — is session 1401's real, already-published content, kept
+unbracketed here so the example shows what a log's voice and shape actually looks like.
+It is not a template to fill in: give your own session its own number, title, opening
+paragraph, and section names, and don't carry over any of the surrounding prose. An
+earlier draft of this file made exactly this mistake with the Verification counts,
+which an author filling in only the bracketed blanks would have republished as their
+own; the same risk applies to the unbracketed heading and opening above.
+
 ## Plan-issue bookkeeping
 
 - If the session fully resolves a plan, the commit message must include `Closes #NN`
@@ -51,48 +126,9 @@ appended to.** See `docs/session-log/README.md` for naming + discovery conventio
 **Keep docs/FEATURE-MAP.md in sync:** if the session added commands, components, hooks,
 stores, or database tables, update the relevant section.
 
-## Template
+## Archives
 
-The `# Session N — …` heading is the first line of the file — a real H1, one `#`, and
-nothing above it. This is enforced: the `session-log-numbering` pre-commit guard greps
-for `^#[[:space:]]+Session[[:space:]]+[0-9]+` in the staged file and rejects the commit
-with "no '# Session NNNN' heading found" if it is missing, so a `##` heading aborts the
-commit.
-
-```text
-# Session N — <short title> (YYYY-MM-DD)
-
-| Metadata | Value |
-|----------|-------|
-| **Date** | YYYY-MM-DD |
-| **Subagents** | <count> build + <count> review (or "orchestrator-only") |
-| **Items closed** | <ID list — issue `#NN`, or "—"> |
-| **Items modified** | <ID list, or "—"> |
-| **Tests added** | +N (frontend) / +M (backend) |
-| **Files touched** | <count> |
-
-**Summary:** <2-3 sentence high-level outcome>
-
-**Files touched (this session):**
-- `path/to/file.ext` (LOC delta)
-- ...
-
-**Verification:**
-- `cd src-tauri && cargo nextest run --workspace` — N tests run, N passed. (Bare form
-  without `--workspace` is package-scoped to `agaric` only and silently skips every
-  `agaric-engine`/`agaric-store`/`agaric-sync`/etc. test — #3212.)
-- pre-commit hook — all staged-file checks pass.
-- pre-push hook — full clippy + push-staged checks pass.
-
-**Process notes:** <optional, only when worth capturing>
-
-**Lessons learned (for future sessions):** <optional, only when applicable>
-
-**Commit plan:** single commit / split / not pushed / pushed.
-```
-
-Do NOT add a trailing `---` separator — the file ends at the commit-plan line.
-
-Apply this template to NEW sessions. Sessions 801–846 already migrated to per-session
-files; sessions 1–800 remain in the two archive files (`docs/session-log/2024-2025.md`,
+Sessions 1–800 live in two archive files (`docs/session-log/2024-2025.md`,
 `docs/session-log/2026-sessions-401-800.md`) — frozen historical records, never edited.
+Session 801 onward is one file per session in this directory, as described above; that
+range has no fixed upper bound, so it is deliberately not restated here as a number.
