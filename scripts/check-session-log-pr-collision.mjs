@@ -364,6 +364,37 @@ function finish(verdict, code) {
 }
 
 /**
+ * Every byte this guard emits on a path that ends in `finish()`.
+ *
+ * `writeSync`, never `console.error`/`console.log` (#4452 item 3). Node's
+ * writes to a PIPE are ASYNCHRONOUS and `process.exit` does not flush them,
+ * and the CI step runs this guard under `2>&1 | tee collision.log` — so the
+ * REASON text queued as async writes can be dropped while `finish()`'s own
+ * synchronous verdict line survives. `reportFindings` was moved to
+ * `writeSync` for exactly that hazard; the refusal, warning, OK and
+ * crash-handler paths were left behind, which is how the step can print
+ * "its own message is above" with nothing above it.
+ *
+ * One `writeSync` call per emission, not one per line: N async gaps would be
+ * N truncation points instead of one, and this matches `finish()`'s own
+ * single-syscall shape.
+ *
+ * Diagnostics only — the exit code and the verdict line are unaffected by
+ * which mechanism writes these bytes. What is affected is whether a red job
+ * carries the explanation for why it is red.
+ *
+ * @param {string} text
+ */
+function emitErr(text) {
+  writeSync(2, `${text}\n`)
+}
+
+/** As `emitErr`, on stdout — where `finish()`'s verdict line also goes. */
+function emitOut(text) {
+  writeSync(1, `${text}\n`)
+}
+
+/**
  * The session number embedded in a `docs/session-log/session-NNN-*.md`
  * path, or `null` if the path doesn't match that shape at all (a PR that
  * touches some OTHER file under `docs/session-log/`, or no session-log file
@@ -961,7 +992,7 @@ function main(argv) {
   try {
     args = parseArgs(argv)
   } catch (err) {
-    console.error(`check-session-log-pr-collision: ${err.message}`)
+    emitErr(`check-session-log-pr-collision: ${err.message}`)
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
   }
 
@@ -969,10 +1000,10 @@ function main(argv) {
   try {
     prs = JSON.parse(readFileSync(args.prs, 'utf8'))
   } catch (err) {
-    console.error(
+    emitErr(
       `::error::check-session-log-pr-collision: could not read/parse --prs ${args.prs}: ${err.message}`,
     )
-    console.error(
+    emitErr(
       'Treated as UNVERIFIED, not as "no open PRs": an unreadable payload must never read as safety this check did not actually check (#3933).',
     )
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
@@ -982,7 +1013,7 @@ function main(argv) {
   try {
     mergedPaths = readMergedPaths(args.mergedPaths)
   } catch (err) {
-    console.error(
+    emitErr(
       `::error::check-session-log-pr-collision: could not read --merged-paths ${args.mergedPaths}: ${err.message}`,
     )
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
@@ -991,8 +1022,8 @@ function main(argv) {
   const result = analyze({ prs, selfPr: args.selfPr, mergedPaths, prLimit: args.prLimit })
 
   if (!result.verified) {
-    console.error(`::error::check-session-log-pr-collision: could not verify — ${result.reason}`)
-    console.error(
+    emitErr(`::error::check-session-log-pr-collision: could not verify — ${result.reason}`)
+    emitErr(
       'An unverifiable open-PR dataset is a FAILURE here, not a pass (#3933): an empty or ' +
         'malformed result is absence of evidence, never evidence of safety.',
     )
@@ -1003,7 +1034,7 @@ function main(argv) {
   // this run could not see (another PR's truncated file list), which is a
   // different statement from "a number is doubly claimed".
   for (const w of result.warnings) {
-    console.error(`::warning::check-session-log-pr-collision: ${w}`)
+    emitErr(`::warning::check-session-log-pr-collision: ${w}`)
   }
 
   if (result.collisions.length + result.staleClaims.length > 0) {
@@ -1011,7 +1042,7 @@ function main(argv) {
     finish('COLLISION', EXIT_COLLISION)
   }
 
-  console.log(
+  emitOut(
     `check-session-log-pr-collision: OK — ${prs.length} open PR(s) checked, no session-log ` +
       `number is newly claimed by more than one and none duplicates a number already on the ` +
       `merge target; ${nextFreeSentence(result.suggestion)}`,
@@ -1111,19 +1142,19 @@ function reportFindings(result) {
   lines.push(
     '  Rebase onto the freshest origin/main first, since another PR may claim it before you push.',
   )
-  // `writeSync`, not `console.error` (#4431 review round 4 note 1): the CI
-  // step runs this guard under `2>&1 | tee collision.log`, and a write to a
-  // PIPE is ASYNCHRONOUS in node — the exact hazard `finish()`'s verdict
-  // line already guards against with `writeSync`. `console.error` here is
-  // the same hazard one level up: `main()` calls `finish()` (which
-  // `process.exit`s) immediately after this function returns, so a long
-  // finding list queued as async pipe writes can be truncated while the
-  // SYNCHRONOUS verdict line still survives — a red job carrying
-  // `COLLISION` with none of the explanation for which numbers collided.
-  // One `writeSync` call, not one per line: matches `finish()`'s own
-  // single-syscall shape and avoids N interleavable async gaps becoming N
-  // truncation points instead of one.
-  writeSync(2, `${lines.join('\n')}\n`)
+  // `emitErr` (a single `writeSync`), not `console.error` (#4431 review
+  // round 4 note 1): the CI step runs this guard under
+  // `2>&1 | tee collision.log`, and a write to a PIPE is ASYNCHRONOUS in
+  // node — the exact hazard `finish()`'s verdict line already guards against.
+  // `console.error` here is the same hazard one level up: `main()` calls
+  // `finish()` (which `process.exit`s) immediately after this function
+  // returns, so a long finding list queued as async pipe writes can be
+  // truncated while the SYNCHRONOUS verdict line still survives — a red job
+  // carrying `COLLISION` with none of the explanation for which numbers
+  // collided. Since #4452 item 3 the refusal, warning, OK and crash-handler
+  // paths go through the same helper, so this is no longer the one careful
+  // site among four careless siblings.
+  emitErr(lines.join('\n'))
 }
 
 /**
@@ -1141,12 +1172,10 @@ function mainGuarded(argv) {
   try {
     main(argv)
   } catch (err) {
-    console.error(
+    emitErr(
       `::error::check-session-log-pr-collision: unexpected internal failure — ${err?.stack ?? err}`,
     )
-    console.error(
-      'A crash is a failure to verify, never a finding: this run checked nothing (#4431).',
-    )
+    emitErr('A crash is a failure to verify, never a finding: this run checked nothing (#4431).')
     finish('UNVERIFIED', EXIT_COULD_NOT_VERIFY)
   }
 }
@@ -2274,6 +2303,15 @@ const PAYLOADS = {
   ),
   // The self PR is missing from the list — the guard's own refusal path.
   unverifiable: jsonPrs(pr(102, ['docs/session-log/session-1320-pairing.md'])),
+  // A CLEAN board on which a SIBLING's changed-file list was truncated by
+  // gh's 100-file cap. No collision is observed and the verdict is CLEAN —
+  // but a session-log claim of #102's own, past the cutoff, was invisible to
+  // this run, so it emits a `::warning::` and the step must not call the
+  // result "verified" (#4452 item 5).
+  cleanButTruncatedSibling: jsonPrs(
+    pr(SELF_PR, ['docs/session-log/session-1319-tooling.md']),
+    pr(102, ['src/lib/search.ts'], 250),
+  ),
   // Two PRs EDITING the same session log that is already on the merge
   // target (`merged-paths.txt` below lists it) — the blocking false
   // positive of #4431's review, end to end rather than in `analyze()` alone.
@@ -2344,45 +2382,101 @@ function runStep(dir, stepPath, guardScript) {
 }
 
 /**
- * #4431 review round 4 note 1: `reportFindings` must write with the same
- * synchronous mechanism `finish()` already uses for the verdict line, not
- * `console.error`. Node's writes to a PIPE are asynchronous, and `finish()`
- * calls `process.exit` immediately after `reportFindings` returns without
- * waiting for anything still in flight — so a long finding list queued as
- * async writes can be silently truncated under the CI step's
+ * Every function on a path that ends in `finish()` (i.e. in `process.exit`),
+ * and therefore every function whose output must be SYNCHRONOUS.
+ *
+ * `emitErr`/`emitOut` are in the list as well as the functions that call
+ * them: without them the property would be "these four call something named
+ * emitErr", which a rename of that helper to a `console.error` wrapper would
+ * satisfy while breaking the actual guarantee.
+ */
+const TERMINAL_OUTPUT_FUNCTIONS = [
+  { name: 'main', signature: 'function main(argv) {', mustEmit: true },
+  { name: 'mainGuarded', signature: 'function mainGuarded(argv) {', mustEmit: true },
+  { name: 'reportFindings', signature: 'function reportFindings(result) {', mustEmit: true },
+  { name: 'emitErr', signature: 'function emitErr(text) {', mustEmit: false },
+  { name: 'emitOut', signature: 'function emitOut(text) {', mustEmit: false },
+]
+
+/**
+ * #4431 review round 4 note 1, widened by #4452 item 3: EVERY function on a
+ * terminal path must write with the same synchronous mechanism `finish()`
+ * uses for the verdict line, not `console.error`/`console.log`.
+ *
+ * Node's writes to a PIPE are asynchronous, and `finish()` calls
+ * `process.exit` without waiting for anything still in flight — so text
+ * queued as async writes can be silently truncated under the CI step's
  * `2>&1 | tee collision.log` while the SYNCHRONOUS verdict line still
- * survives, producing a red job with `COLLISION` and none of the
- * explanation for which numbers collided. The actual OS-level race (a pipe
- * whose reader is slow enough to leave bytes queued when the writer exits)
- * is not something a fast, deterministic self-test can reliably force —
- * `spawnSync`'s own pipe draining hides it — so this checks the SOURCE
- * mechanically instead: the same shape `extractStepShell`'s marker-comment
- * extraction and the `GAP_BOUND` cross-guard check already use elsewhere in
- * this file for a fact about text rather than about one program run.
+ * survives. #4431 fixed `reportFindings` and this check pinned that ONE
+ * function; the refusal, warning, OK and crash-handler paths kept
+ * `console.error`/`console.log`, so the step could print "its own message is
+ * above" with nothing above it. Checking a list rather than a single
+ * function is the difference between pinning the fix and pinning the class.
+ *
+ * The actual OS-level race (a pipe whose reader is slow enough to leave bytes
+ * queued when the writer exits) is not something a fast, deterministic
+ * self-test can reliably force — `spawnSync`'s own pipe draining hides it —
+ * so this checks the SOURCE mechanically instead: the same shape
+ * `extractStepShell`'s marker-comment extraction and the `GAP_BOUND`
+ * cross-guard check already use elsewhere in this file for a fact about text
+ * rather than about one program run.
  *
  * @param {(name: string) => void} ok
  * @param {(name: string, detail: string) => void} fail
  */
 function runFindingsOutputCases(ok, fail) {
   const src = readFileSync(realpathSync(import.meta.filename), 'utf8')
-  // `\n\}` — a newline immediately followed by a ZERO-INDENT `}` — matches
-  // only the function's OWN closing brace: every closing brace of a nested
-  // block inside `reportFindings` (the two `for` loops) is indented at
-  // least two spaces, so it cannot satisfy this pattern first.
-  const m = /function reportFindings\(result\) \{[\s\S]*?\n\}/.exec(src)
-  if (m === null) {
-    fail(
-      "`reportFindings`'s source could be located for the writeSync check",
-      'regex did not match — the function signature or its closing-brace shape changed',
-    )
-    return
+  for (const { name, signature, mustEmit } of TERMINAL_OUTPUT_FUNCTIONS) {
+    // `\n\}` — a newline immediately followed by a ZERO-INDENT `}` — matches
+    // only the function's OWN closing brace: every closing brace of a nested
+    // block inside it is indented at least two spaces, so it cannot satisfy
+    // this pattern first.
+    const start = src.indexOf(signature)
+    if (start === -1) {
+      // A FAILURE, never a skip: a signature that no longer matches means
+      // this check verified nothing about that function, which is exactly
+      // what it exists to stop happening silently.
+      fail(
+        `\`${name}\`'s source could be located for the synchronous-output check`,
+        `no occurrence of ${JSON.stringify(signature)} — the signature changed`,
+      )
+      continue
+    }
+    const end = src.indexOf('\n}', start)
+    ok(`\`${name}\`'s source could be located for the synchronous-output check`)
+    const body = src.slice(start, end)
+    if (/console\.(?:error|log|warn|info)\(/.test(body)) {
+      fail(
+        `\`${name}\` emits nothing through console.* (a PIPE write node does not flush on exit)`,
+        body,
+      )
+    } else {
+      ok(`\`${name}\` emits nothing through console.* (a PIPE write node does not flush on exit)`)
+    }
+    // ...and the positive half. Without it, "no console.*" is satisfied by a
+    // function that emits nothing at all — including one whose diagnostics
+    // were deleted rather than converted, which is the same lost-explanation
+    // outcome by a different route.
+    if (!mustEmit) continue
+    if (/\bemit(?:Err|Out)\(/.test(body)) {
+      ok(`\`${name}\` still emits its diagnostics, through emitErr/emitOut`)
+    } else {
+      fail(`\`${name}\` still emits its diagnostics, through emitErr/emitOut`, body)
+    }
   }
-  ok("`reportFindings`'s source could be located for the writeSync check")
-  const body = m[0]
-  if (/writeSync\(2,/.test(body) && !/console\.error\(/.test(body)) {
-    ok('`reportFindings` writes findings with `writeSync`, not `console.error`')
-  } else {
-    fail('`reportFindings` writes findings with `writeSync`, not `console.error`', body)
+  // `emitErr`/`emitOut` are the only two places the bytes actually leave, so
+  // they are where `writeSync` itself has to be spelled out.
+  for (const [name, fd] of [
+    ['emitErr', 2],
+    ['emitOut', 1],
+  ]) {
+    const start = src.indexOf(`function ${name}(text) {`)
+    const body = start === -1 ? '' : src.slice(start, src.indexOf('\n}', start))
+    if (new RegExp(`writeSync\\(${fd},`).test(body)) {
+      ok(`\`${name}\` writes with writeSync(${fd}, …)`)
+    } else {
+      fail(`\`${name}\` writes with writeSync(${fd}, …)`, body || '<not found>')
+    }
   }
 }
 
@@ -2463,6 +2557,33 @@ function runProcessCasesIn(dir, ok, fail) {
     (r) => r.code === 0 && /verified — no open PR shares/.test(r.out),
   )
 
+  // ── Outcome 2a: #4452 item 5. A clean verdict reached over a board this
+  // run could not fully see. The guard's own warnings say a collision with a
+  // truncated sibling COULD NOT BE RULED OUT, and the step used to print
+  // "verified — no open PR shares a session-log number with another" right
+  // on top of them. Still passes (each such sibling fails closed on its own
+  // run, so nothing merges unchecked) — but it must not claim coverage this
+  // run did not have. Both halves are asserted: the honest sentence appears,
+  // and the overstating one does not.
+  payload('cleanButTruncatedSibling')
+  check(
+    'process: a clean board with a truncated sibling still exits 0 with a CLEAN verdict',
+    runGuard(dir, guard),
+    (r) =>
+      r.code === EXIT_VERIFIED_CLEAN &&
+      r.verdict === 'CLEAN' &&
+      /could not be ruled out/.test(r.out),
+  )
+  check(
+    'step: a clean verdict over a board it could not fully see is NOT reported as "verified"',
+    runStep(dir, stepPath, guard),
+    (r) =>
+      r.code === 0 &&
+      /did not see the whole board/.test(r.out) &&
+      /NOT a clean bill of health/.test(r.out) &&
+      !/verified — no open PR shares/.test(r.out),
+  )
+
   // ── Outcome 2b: THE #4431-REVIEW BLOCKING DEFECT, end to end. Two PRs
   // EDITING the same session log that is already on the merge target. The
   // first version reported `session-1318: claimed by #101 and #102` and
@@ -2505,6 +2626,59 @@ function runProcessCasesIn(dir, ok, fail) {
     'step: a stale-claim finding also names the RENAME case, not only "renumber"',
     runStep(dir, stepPath, guard),
     (r) => r.code === 1 && /RENAME of a file already on the merge target/.test(r.out),
+  )
+
+  // ── #4452 item 4: the FETCH step's `+1`, which no run of this self-test
+  // executes. `extractStepShell`'s BEGIN/END markers wrap only the
+  // CLASSIFICATION step, so the `gh pr list` step above it is never run here
+  // — and the `+1` is exactly what lets the guard tell a full page from a
+  // truncated one. Dropping it passed every assertion in this file while
+  // silently restoring the ambiguity it exists to remove: at precisely
+  // PR_LIST_LIMIT open PRs, every PR's run refuses, permanently, with no
+  // author able to clear it (#4431 review note 4). Marker-extracting the
+  // fetch step is not an option — it calls `gh` — so the offset is pinned
+  // the way `GAP_BOUND` is: as text, plus the arithmetic actually evaluated.
+  //
+  // The behavioural half of the same fact — `prLimit` entries pass and
+  // `prLimit + 1` refuses — is `runPrLimitCases`; this is the half that says
+  // the CALLER really does hand over that extra entry.
+  const workflowSrc = readFileSync(workflow, 'utf8')
+  const fetchLimit = /gh pr list[^\n]*--limit "([^"\n]+)"[^\n]*\\\n[^\n]*changedFiles/.exec(
+    workflowSrc,
+  )
+  const guardLimit = /--pr-limit "\$([A-Z_]+)"/.exec(workflowSrc)
+  const declaredCap = /^\s*PR_LIST_LIMIT: "(\d+)"\s*$/m.exec(workflowSrc)
+  check(
+    'cross-file: the collision job declares PR_LIST_LIMIT, fetches with it, and gates on it',
+    {
+      fetchExpr: fetchLimit === null ? null : fetchLimit[1],
+      guardVar: guardLimit === null ? null : guardLimit[1],
+      cap: declaredCap === null ? null : declaredCap[1],
+    },
+    (v) => v.fetchExpr !== null && v.guardVar === 'PR_LIST_LIMIT' && v.cap !== null,
+  )
+  // …and the arithmetic itself, EVALUATED rather than pattern-matched: the
+  // page `gh` is asked for must be exactly ONE longer than the cap the guard
+  // is told to enforce. `--limit "$PR_LIST_LIMIT"` (the shape that caused
+  // #4431 review note 4) fails this; so does any other drift between them.
+  // The expression is allow-listed to shell arithmetic characters before it
+  // is evaluated — this is our own workflow file, but a self-test that
+  // `bash -c`s arbitrary text out of a file is a worse idea than the check
+  // is worth.
+  const cap = declaredCap === null ? null : Number(declaredCap[1])
+  const expr = fetchLimit === null ? '' : fetchLimit[1]
+  const evaluated =
+    cap !== null && /^[A-Z_0-9$() +]+$/.test(expr)
+      ? Number(
+          spawnSync('bash', ['-c', `PR_LIST_LIMIT=${cap}; printf '%s' "${expr}"`], {
+            encoding: 'utf8',
+          }).stdout,
+        )
+      : Number.NaN
+  check(
+    'cross-file: gh is asked for exactly ONE more PR than the cap the guard enforces',
+    { cap, expr, evaluated },
+    (v) => v.cap !== null && v.evaluated === v.cap + 1,
   )
 
   // ── The two guards must agree about "next free". This script's window is

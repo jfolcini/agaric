@@ -69,8 +69,12 @@ third-party deps.
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -314,6 +318,133 @@ def read_baseline() -> dict[str, int]:
     return parse_baseline(BASELINE_PATH.read_text(encoding="utf-8"))
 
 
+def _build_cli_sandbox(root: Path) -> Path:
+    """Lay out a throw-away repo `root` that this guard can be RUN inside.
+
+    `REPO_ROOT` is derived from `Path(__file__).resolve().parent.parent`, and
+    `main()` only ever scans files under `<REPO_ROOT>/src-tauri/src` — so the
+    only way to drive the real CLI over a fixture is to give it a repo root of
+    its own. `root/scripts/` gets a SYMLINK per entry of the real
+    `scripts/` directory (so every sibling this guard imports now, or imports
+    next year, resolves without this function having to enumerate them), and
+    then the guard itself is overwritten with a real COPY — a symlink would
+    make `.resolve()` walk back to the real checkout and point `REPO_ROOT` at
+    the actual repo, which is precisely what must not happen.
+
+    Copying the guard also means a DECOY edit to the checked-in file is
+    carried into the sandbox: the subprocess under test is always the current
+    bytes of this file, never a stale snapshot.
+
+    Returns the path of the guard copy to invoke.
+    """
+    scripts_dir = root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    real_scripts = REPO_ROOT / "scripts"
+    for entry in os.scandir(real_scripts):
+        os.symlink(entry.path, scripts_dir / entry.name)
+    guard = scripts_dir / Path(__file__).name
+    guard.unlink()
+    shutil.copyfile(Path(__file__).resolve(), guard)
+    (root / "src-tauri" / "src").mkdir(parents=True)
+    return guard
+
+
+def _run_cli(guard: Path, args: list[str]) -> tuple[int, str]:
+    """Spawn the guard as a REAL subprocess; return (exit code, stderr+stdout)."""
+    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, str(guard), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stderr + proc.stdout
+
+
+def run_cli_self_test(record) -> None:
+    """Drive `main()`'s EXIT WIRING through a real subprocess (#4447).
+
+    Every case above drives `scan_text` / `parse_baseline` — the ANALYSIS.
+    None of them ever ran `main()`, so the branch that turns a finding into a
+    non-zero exit status was unpinned, and the guard's own suite could not
+    tell a working guard from one rewired to never fail a commit. Confirmed by
+    falsification rather than by reading: with `main()`'s findings `return 1`
+    changed to `return 0`, this file's self-test output was BYTE-IDENTICAL to
+    the control's. A self-test that exercises a guard's analysis but not its
+    exit verifies the half that was never in doubt, and the failure mode being
+    defended against is a guard that quietly stops failing.
+
+    Mirrors what #4434 did for `check-hook-deps.mjs`'s `runGuard()` and
+    `check-store-layering.mjs`: spawn the CLI with `sys.executable` and an
+    argv array, and assert the exit code.
+
+    BOTH directions are asserted, and that is not symmetry for its own sake:
+    a suite that only checked "a finding exits non-zero" would pass just as
+    happily against a guard that exits non-zero unconditionally — the
+    mirror-image fail-closed bug, noisier but equally broken. So a clean tree
+    is pinned to exit 0 as well, and it is a clean tree with a REAL canonical
+    fragment in it rather than an empty one, so "exits 0" cannot be satisfied
+    by a scan that sees nothing at all.
+    """
+    with tempfile.TemporaryDirectory(prefix="space-filter-drift-cli-") as tmp:
+        root = Path(tmp)
+        guard = _build_cli_sandbox(root)
+        src = root / "src-tauri" / "src"
+        baseline_path = root / "src-tauri" / "space-filter-baseline.txt"
+
+        # --- direction 1: a clean tree exits 0 -----------------------------
+        # A canonical fragment, and a baseline that expects exactly it. Not a
+        # vacuous pass: the file really does carry a guarded fragment, and the
+        # baseline really is satisfied.
+        clean = src / "clean.rs"
+        clean.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(clean)])
+        record(
+            "CLI: a clean tree with a satisfied baseline exits 0",
+            (code, out.strip()),
+            (0, ""),
+        )
+
+        # --- direction 2: a RULE A finding exits non-zero -------------------
+        drifted = src / "drifted.rs"
+        drifted.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE (?2 IS NULL OR b.space_id = ?3)";\n',
+            encoding="utf-8",
+        )
+        code, out = _run_cli(guard, [str(drifted)])
+        if code != 0 and "mismatched bind index" in out:
+            record("CLI: a Rule-A shape drift exits non-zero and says why", True, True)
+        else:
+            record(
+                "CLI: a Rule-A shape drift exits non-zero and says why",
+                (code, out.strip()),
+                "non-zero exit mentioning 'mismatched bind index'",
+            )
+
+        # --- direction 2b: a RULE B removal exits non-zero ------------------
+        # A separate case, not a duplicate of the one above: Rule A and Rule B
+        # reach `main()`'s failing return through two different lists, and a
+        # regression can drop either one on its own.
+        removed = src / "removed.rs"
+        removed.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/removed.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(removed)])
+        if code != 0 and "baseline expects 2" in out:
+            record("CLI: a Rule-B guard removal exits non-zero and says why", True, True)
+        else:
+            record(
+                "CLI: a Rule-B guard removal exits non-zero and says why",
+                (code, out.strip()),
+                "non-zero exit mentioning 'baseline expects 2'",
+            )
+
+
 def run_self_test() -> int:
     """Assert scan_text/parse_baseline's exit-relevant behavior.
 
@@ -334,10 +465,21 @@ def run_self_test() -> int:
         refactor that swapped in the shared stripper would silently zero out
         every real site while still passing a naive smoke test;
       - the baseline text format round-trips through parse_baseline.
+
+    …and then, since #4447, `main()`'s own EXIT WIRING through a real
+    subprocess — see `run_cli_self_test`. Everything above is analysis; none
+    of it can tell a working guard from one rewired never to fail a commit.
     """
     failures: list[str] = []
+    cases = 0
 
     def expect(name: str, got, want) -> None:
+        # Counted here rather than in a literal at the bottom: a hard-coded
+        # case count is a number that drifts the moment someone adds a case
+        # and forgets, and a suite that misreports its own size is the small
+        # version of the defect this file's #4447 work is about.
+        nonlocal cases
+        cases += 1
         if got != want:
             failures.append(f"{name}: expected {want!r}, got {got!r}")
 
@@ -355,10 +497,11 @@ def run_self_test() -> int:
     # baseline.
     mismatched = 'let sql = "(?2 IS NULL OR b.space_id = ?3)";'
     cnt, viols = scan_text("mismatched.rs", mismatched)
-    if cnt == 0 and len(viols) == 1 and "mismatched bind index" in viols[0]:
-        pass
-    else:
-        failures.append(f"mismatched bind index is a Rule-A violation, not a count: {(cnt, viols)!r}")
+    expect(
+        "mismatched bind index is a Rule-A violation, not a count",
+        (cnt, len(viols), "mismatched bind index" in viols[0] if viols else False),
+        (0, 1, True),
+    )
 
     # A `//` comment mentioning the shape is never counted.
     line_comment = "// (?2 IS NULL OR b.space_id = ?2) is the canonical shape\nlet x = 1;"
@@ -402,12 +545,16 @@ def run_self_test() -> int:
         },
     )
 
+    # …and the half that was missing until #4447: the real CLI, spawned as a
+    # subprocess, asserted on its EXIT CODE in both directions.
+    run_cli_self_test(expect)
+
     if failures:
         print("check-space-filter-drift self-test FAILED:", file=sys.stderr)
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print("check-space-filter-drift self-test passed (7 cases).")
+    print(f"check-space-filter-drift self-test passed ({cases} cases).")
     return 0
 
 

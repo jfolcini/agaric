@@ -653,6 +653,33 @@ export function synthZip(files, { alignSo = true } = {}) {
   return Buffer.concat([...locals, cd, eocd])
 }
 
+/**
+ * The self-test's FINAL LINE — the sentence a reader, a log scanner or a
+ * `grep` takes as the verdict.
+ *
+ * Its own function, and exported, for one reason (#4452 item 1): the skip
+ * path used to warn about the skipped group and then fall through to
+ * `self-test: all assertions passed`, which is false — a group of assertions
+ * did not run. The rest of this file is unusually careful never to let an
+ * unverified thing read as a pass (`Verified nothing`, exit 3, "an empty
+ * result set is not a pass"); this was the one line that failed its own
+ * standard. Pulling the decision out means the self-test can assert on the
+ * BYTES it will emit, which is what the acceptance for this item asks for,
+ * rather than on an exit code that was never in doubt (0 either way).
+ *
+ * @param {number} skipped how many assertion GROUPS did not run
+ */
+export function selfTestVerdictLine(skipped) {
+  if (skipped > 0) {
+    return `self-test: all non-skipped assertions passed (${skipped} group(s) skipped) — NOT full coverage`
+  }
+  return 'self-test: all assertions passed'
+}
+
+// Set on the CHILD when the self-test runs ITSELF (see the skip-verdict
+// assertions), so that child does not spawn a third generation.
+const SELFTEST_NO_RECURSE = 'AGARIC_SO_ALIGN_SELFTEST_NO_RECURSE'
+
 function runSelfTest() {
   const failures = []
   let skipped = 0
@@ -818,6 +845,89 @@ function runSelfTest() {
       'an unknown option is exit 3, not silently ignored',
       `${r.status}`,
     )
+    // #4452 item 2: the `--stage` argument assertions belong HERE, next to
+    // `--bogus`, not inside `runApkFixtureAssertions`. `main()` validates
+    // every flag before it ever calls `findReadelf()`, so none of these
+    // needs a readelf — yet sitting in the APK block meant they were SKIPPED
+    // on a readelf-less machine, which is precisely the machine the skip
+    // exists to serve: a contributor editing `ci.yml`/`release.yml`, the
+    // trigger path this hook's `files:` names. Argument parsing that only
+    // runs where a readelf happens to be installed is argument parsing this
+    // repo does not test on the machines that most need it.
+    //
+    // Its own function for the same reason `runElfFixtureAssertions` is: so
+    // eslint counts its branches separately from `runSelfTest`'s.
+    function runArgumentAndVerdictAssertions() {
+      let a = run(['--stage=sideways', good])
+      check(
+        a.status === EXIT_UNVERIFIED && /unknown --stage value/.test(a.stderr),
+        'an unrecognised --stage value is exit 3, not silently accepted',
+        `${a.status}: ${a.stderr}`,
+      )
+      a = run(['--stage=pre-zipalign', '--stage=post-zipalign', good])
+      check(
+        a.status === EXIT_UNVERIFIED && /at most once/.test(a.stderr),
+        'a repeated --stage flag is exit 3, not "last one wins"',
+        `${a.status}: ${a.stderr}`,
+      )
+      // ...and the positive half, which is what stops the two above from
+      // being satisfied by a `main()` that refuses EVERY `--stage`: a
+      // RECOGNISED value must get past argument parsing. Asserted as "not an
+      // argument refusal" rather than as a specific verdict, because what
+      // happens after parsing does need a readelf and this block
+      // deliberately does not have one.
+      a = run(['--stage=pre-zipalign', good])
+      check(
+        !/unknown --stage value/.test(a.stderr) && !/at most once/.test(a.stderr),
+        'a RECOGNISED --stage value is accepted by argument parsing',
+        `${a.status}: ${a.stderr}`,
+      )
+
+      // ── the SKIP path's own verdict line (#4452 item 1) ──────────────────
+      // Asserted on the emitted BYTES, not on an exit code: the exit code is
+      // 0 either way, so it was never the thing in doubt. What was in doubt
+      // is whether a run that skipped a group of assertions still prints the
+      // sentence a reader greps for.
+      check(
+        selfTestVerdictLine(0) === 'self-test: all assertions passed',
+        'a fully-covered self-test still ends with the unqualified pass line',
+        selfTestVerdictLine(0),
+      )
+      check(
+        selfTestVerdictLine(2).startsWith(
+          'self-test: all non-skipped assertions passed (2 group(s) skipped)',
+        ) && selfTestVerdictLine(2) !== 'self-test: all assertions passed',
+        'a self-test that skipped a group says SO in its verdict line, and names the count',
+        selfTestVerdictLine(2),
+      )
+      // ...and end to end, because the assertion above would still hold if
+      // `runSelfTest` stopped calling this function and printed a literal.
+      // Forces a readelf-less environment onto a real child run of THIS
+      // self-test. `PATH: dir` is the fixture directory (no readelf in it);
+      // `CI: ''` because a skipped group is a hard failure under CI, which is
+      // the very next assertion. The child is told not to recurse.
+      if (process.env[SELFTEST_NO_RECURSE]) return
+      const noReadelf = { PATH: dir, READELF: '', NDK_HOME: '', [SELFTEST_NO_RECURSE]: '1' }
+      const skipRun = run(['--self-test'], { ...noReadelf, CI: '' })
+      const skipOut = `${skipRun.stdout}${skipRun.stderr}`
+      check(
+        skipRun.status === 0 &&
+          /self-test: all non-skipped assertions passed \(\d+ group\(s\) skipped\)/.test(skipOut) &&
+          !/self-test: all assertions passed/.test(skipOut),
+        'a real readelf-less self-test run NEVER prints "all assertions passed"',
+        `${skipRun.status}: ${skipOut.slice(-600)}`,
+      )
+      // The other half of the same fact: under CI a skipped group is a
+      // FAILURE, so the affordance cannot launder into a green CI lane.
+      const ciSkipRun = run(['--self-test'], { ...noReadelf, CI: '1' })
+      const ciSkipOut = `${ciSkipRun.stdout}${ciSkipRun.stderr}`
+      check(
+        ciSkipRun.status === 2 && !/all (non-skipped )?assertions passed/.test(ciSkipOut),
+        'under CI a readelf-less self-test FAILS (exit 2) and prints no pass line at all',
+        `${ciSkipRun.status}: ${ciSkipOut.slice(-600)}`,
+      )
+    }
+    runArgumentAndVerdictAssertions()
     // The same emptiness one layer in: a real "Program Headers:" table that
     // happens to contain no LOAD row (only NOTE/DYNAMIC/…). Exercised directly
     // because readelf omits the whole table when e_phnum is 0.
@@ -945,18 +1055,9 @@ function runSelfTest() {
         '--stage=post-zipalign blames the signing step',
         apkR.stderr,
       )
-      apkR = run(['--stage=sideways', offApk])
-      check(
-        apkR.status === EXIT_UNVERIFIED && /unknown --stage value/.test(apkR.stderr),
-        'an unrecognised --stage value is exit 3, not silently accepted',
-        `${apkR.status}: ${apkR.stderr}`,
-      )
-      apkR = run(['--stage=pre-zipalign', '--stage=post-zipalign', offApk])
-      check(
-        apkR.status === EXIT_UNVERIFIED && /at most once/.test(apkR.stderr),
-        'a repeated --stage flag is exit 3, not "last one wins"',
-        `${apkR.status}: ${apkR.stderr}`,
-      )
+      // (The `--stage=sideways` and duplicate-`--stage` assertions used to
+      // live here, and moved OUT to the readelf-independent block below —
+      // see the comment there. #4452 item 2.)
 
       // A misaligned library that is NOT libagaric_lib.so — e.g. a
       // third-party .so arriving via an AAR — must not be blamed on
@@ -1087,7 +1188,10 @@ function runSelfTest() {
       return 2
     }
   }
-  console.log('self-test: all assertions passed')
+  // #4452 item 1: on the skip path this is NOT `self-test: all assertions
+  // passed` — see `selfTestVerdictLine`. Routed through that function rather
+  // than branching here so the self-test can assert on the exact bytes.
+  console.log(selfTestVerdictLine(skipped))
   return 0
 }
 

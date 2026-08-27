@@ -16,7 +16,9 @@
  *
  * For every hook in prek.toml whose `entry` runs a recognisable repo script
  * (`node scripts/x.mjs`, `python3 scripts/x.py`, `bash scripts/x.sh`, with
- * or without trailing flags), whose own entry script EXISTS on disk, and
+ * or without trailing flags — and since #4439 also the `.cjs`/`.js`/`.ts`/
+ * `.mts`/`.cts`/`.bash` spellings, which used to fall through as "not a
+ * script" and be SKIPPED), whose own entry script EXISTS on disk, and
  * that is not `always_run` (an `always_run` hook ignores `files:` entirely,
  * so the question does not apply):
  *
@@ -36,6 +38,15 @@
  *              too. A `require(`/`import(` CALL whose argument is not a
  *              plain string literal (concatenation, a variable, a computed
  *              call) cannot be resolved and marks the hook UNVERIFIABLE.
+ *              A BARE specifier is classified POSITIVELY (#4439 note 3):
+ *              a `node:` builtin, a bare builtin name, or a package this
+ *              repo declares in `package.json` / actually has under
+ *              `node_modules/` is external and contributes nothing;
+ *              ANYTHING ELSE — notably a first-party path alias such as
+ *              `@/lib/foo`, which no `imports` map makes resolvable under
+ *              plain node and which is indistinguishable from `lodash/fp`
+ *              without reading tsconfig/vite config — marks the hook
+ *              UNVERIFIABLE instead of being discarded as third-party.
  *        - Python: `importlib.util.spec_from_file_location(...)` anywhere
  *          (including indented inside a function — no column anchor),
  *          found against `check-git-fixture-isolation.mjs`'s
@@ -52,6 +63,23 @@
  *          splice, or code run from a string, cannot be statically
  *          resolved with any confidence) — their presence marks the whole
  *          hook UNVERIFIABLE instead of silently omitting the edge.
+ *          PLAIN imports are resolved too since #4439 (note 2):
+ *          `python3 scripts/x.py` puts `scripts/` on `sys.path[0]`, so
+ *          `import <sibling>` / `from lib.x import y` really do load a
+ *          file out of `scripts/` — they are dependency EDGES, where
+ *          before they yielded neither an edge nor a marker. A name that
+ *          matches no file under `scripts/` is stdlib or third-party, and
+ *          that is knowledge rather than a guess (`sys.path[0]` is the
+ *          only place a first-party one could come from). An explicit
+ *          RELATIVE import, and `importlib.import_module(`/`__import__(`
+ *          (a module named at run time), are UNVERIFIABLE.
+ *        - A dependency whose extension NONE of the above can walk
+ *          (`.ts`, say) is UNVERIFIABLE, not a silent closure leaf
+ *          (#4439 notes 4/6). Only an explicit allow-list of DATA
+ *          extensions (`.json`, `.toml`, …) ends a closure cleanly,
+ *          because a data file has no imports of its own by
+ *          construction; every other unanticipated extension fails
+ *          closed.
  *        - Shell: a `.`/`source` statement (either keyword, at any
  *          indent — `stripLineComments(text, 'sh')` first, then a
  *          trimmed-line test mirroring `sourcesSharedGuard`'s), naming a
@@ -102,7 +130,11 @@
  * `lib-layering-baseline.json` elsewhere in this file: a NEW entry — one
  * not already in the relevant baseline — FAILS, and so does a baseline
  * entry that no longer reproduces (the gap was fixed, or a hook stopped
- * being unverifiable). `--update-baseline` refuses to WRITE a baseline that
+ * being unverifiable). A third direction since #4439 (note 5): a baselined
+ * pair that still reproduces but under a DIFFERENT `class` is RECLASSIFIED
+ * — neither new nor stale, so both of the other two checks used to walk
+ * past it while the baseline kept the wrong label and each label has a
+ * different fix. `--update-baseline` refuses to WRITE a baseline that
  * is larger than the one on disk unless `--allow-growth` is also passed —
  * printing exactly what would be added — because a bare regenerate-and-trust
  * command is the same policy-not-mechanism gap that let #3997's nine holes
@@ -127,6 +159,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { builtinModules } from 'node:module'
 import os from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 
@@ -157,6 +190,17 @@ const UNVERIFIABLE_BASELINE_PATH = resolve(__dirname, 'hook-deps-unverifiable-ba
 // `git add -A`.
 const CLI_FIXTURE_PREFIX = '.hookdeps-cli-selftest-'
 
+// Extensions whose files are DATA rather than code: they carry no imports of
+// their own, so a closure that ends at one has genuinely ended. Kept as an
+// explicit ALLOW-LIST, never a deny-list of "extensions we know are bad":
+// every extension NOT named here falls through to UNVERIFIABLE in
+// `extractDirectDepsUncached`, so the next unanticipated one fails closed.
+const INERT_DEP_EXT_RE = /\.(?:json|jsonc|txt|md|toml|ya?ml|lock)$/
+
+// Exit code for a FAILED `--self-test`, matched to check-store-layering.mjs's
+// (#4439 note 7). Distinct from `runGuard`'s 1 and from node's own crash code.
+const SELF_TEST_FAILURE_EXIT = 2
+
 // ─── prek.toml parsing ──────────────────────────────────────────────────
 
 function loadHooks(prekTomlPath) {
@@ -170,8 +214,23 @@ function loadHooks(prekTomlPath) {
 
 // ─── entry -> script resolution ─────────────────────────────────────────
 
-const ENTRY_SHAPE_RE = /^(node|python3|bash)\s+(scripts\/[\w./-]+\.(?:mjs|py|sh))\b/
-const ANY_SCRIPT_MENTION_RE = /scripts\/[\w./-]+\.(?:mjs|py|sh)/
+// Extensions that make a `scripts/**` path a RUNNABLE SCRIPT at all. This is
+// deliberately WIDER than the set this scan can walk (see
+// `extractDirectDepsUncached`): #4439 note 1 found the two restricted to
+// `mjs|py|sh`, so `entry = "node scripts/check-foo.js"` fell through to
+// `{kind: 'none'}` and the hook was SKIPPED -- not reported UNVERIFIABLE,
+// just silently dropped, in a guard whose whole premise is that input it does
+// not recognise must never read as clean. The two halves of this file
+// disagreed, too: `extractDirectDepsUncached` has always accepted `.js` as a
+// DEPENDENCY. Recognising the path here and letting the extension decide
+// afterwards is the classify-positively version: an entry naming a `.ts`
+// script is now UNVERIFIABLE (this scan cannot walk it), and one naming a
+// `.js`/`.cjs` script is scanned for real.
+const SCRIPT_EXT_GROUP = '(?:mjs|cjs|js|mts|cts|ts|py|sh|bash)'
+const ENTRY_SHAPE_RE = new RegExp(
+  `^(node|python3|bash)\\s+(scripts/[\\w./-]+\\.${SCRIPT_EXT_GROUP})\\b`,
+)
+const ANY_SCRIPT_MENTION_RE = new RegExp(`scripts/[\\w./-]+\\.${SCRIPT_EXT_GROUP}`)
 
 /**
  * Classify one hook's entry.
@@ -209,13 +268,85 @@ function sliceCall(text, openIdx) {
   return text.slice(openIdx + 1, i - 1)
 }
 
-function resolveJsSpec(repoRoot, scriptRepoDir, spec) {
-  if (spec.startsWith('.')) {
-    const abs = resolve(repoRoot, scriptRepoDir, spec)
-    return relative(repoRoot, abs)
+/**
+ * Every package name this repo has POSITIVELY declared, plus whatever is
+ * actually installed under `node_modules/`. Memoised per repo root: `analyze`
+ * runs over ~180 hooks and `package.json` does not change underneath a run
+ * (the CLI self-test rewrites its fixture, but each of its runs is a fresh
+ * subprocess -- the same reasoning `extractDirectDeps`'s cache relies on).
+ *
+ * @type {Map<string, Set<string>>}
+ */
+const declaredPackagesCache = new Map()
+
+function declaredPackages(repoRoot) {
+  const hit = declaredPackagesCache.get(repoRoot)
+  if (hit) return hit
+  const names = new Set()
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8'))
+    for (const field of [
+      'dependencies',
+      'devDependencies',
+      'peerDependencies',
+      'optionalDependencies',
+    ]) {
+      for (const name of Object.keys(pkg?.[field] ?? {})) names.add(name)
+    }
+  } catch {
+    // No package.json, or an unreadable one. Not an error here: a repo with
+    // no manifest simply declares nothing, and every bare specifier then
+    // falls through to the UNVERIFIABLE branch below rather than to "fine".
   }
-  if (spec.startsWith('scripts/')) return spec
-  return null // third-party / node: builtin / bare specifier
+  declaredPackagesCache.set(repoRoot, names)
+  return names
+}
+
+/** `@scope/name/deep/path` -> `@scope/name`; `lodash/fp` -> `lodash`. */
+function packageNameOf(spec) {
+  const parts = spec.split('/')
+  return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]
+}
+
+/**
+ * Classify one JS import specifier.
+ *
+ * Returns a DISCRIMINATED result, never a bare `null` (#4439 note 3). The old
+ * form returned `null` for ANYTHING not starting with `.` or `scripts/`, so a
+ * FIRST-PARTY path alias -- `@/lib/foo`, the vite/tsconfig alias this repo
+ * uses throughout `src/` -- was discarded as though it were an npm package.
+ * That is the fail-open direction, and it is exactly the classify-positively
+ * rule this file already applies to a dynamic `require(`/`import(` argument,
+ * not applied here.
+ *
+ * The honest position (#4439's follow-up round): with no `imports` map and no
+ * `exports` field in `package.json`, `@/lib/foo` and `lodash/fp` are
+ * INDISTINGUISHABLE without reading tsconfig/vite config, which this scan
+ * does not do. So the classification is positive on the two states that ARE
+ * knowable -- a `node:` builtin (or a bare builtin name), and a package the
+ * repo declares or actually has installed -- and everything else is
+ * UNVERIFIABLE.
+ *
+ * @returns {{kind: 'dep', rel: string} | {kind: 'external'} | {kind: 'unresolvable', reason: string}}
+ */
+function classifyJsSpec(repoRoot, scriptRepoDir, spec) {
+  if (spec.startsWith('.')) {
+    return { kind: 'dep', rel: relative(repoRoot, resolve(repoRoot, scriptRepoDir, spec)) }
+  }
+  if (spec.startsWith('scripts/')) return { kind: 'dep', rel: spec }
+  if (spec.startsWith('node:')) return { kind: 'external' }
+  if (builtinModules.includes(spec)) return { kind: 'external' }
+  const pkg = packageNameOf(spec)
+  if (declaredPackages(repoRoot).has(pkg)) return { kind: 'external' }
+  if (existsSync(resolve(repoRoot, 'node_modules', pkg))) return { kind: 'external' }
+  return {
+    kind: 'unresolvable',
+    reason:
+      `bare import specifier '${spec}' is neither a node: builtin nor a package this repo ` +
+      `declares or has installed ('${pkg}' is in no package.json dependency field and no ` +
+      'node_modules entry) — it may be a first-party path alias (e.g. `@/lib/foo`), which ' +
+      'this scan cannot tell from a third-party package without reading tsconfig/vite config',
+  }
 }
 
 // `d` (indices) flag: needed on the `from`-form to check the `from` KEYWORD's
@@ -325,6 +456,61 @@ function extractJsDeps(rawText) {
 const PY_SPEC_CALL_RE = /\bimportlib\.util\.spec_from_file_location\s*\(/g
 const PY_SYS_PATH_RE = /\bsys\.path\.(?:insert|append)\s*\(/
 const PY_EXEC_RE = /\bexec(?:file)?\s*\(/
+// A PLAIN import statement, at any indent: `import a.b`, `import a, b`,
+// `from a.b import c`, `from . import c`. Group 1 is the `from` module (may
+// be dotted or relative), group 2 the comma-separated `import` list.
+const PY_PLAIN_IMPORT_RE = /^[ \t]*(?:from[ \t]+([.\w]+)[ \t]+import\b|import[ \t]+([\w.,\t ]+))/gm
+// A DYNAMIC import by name. Both take a module NAME rather than a path, so
+// neither is resolved here; their presence marks the hook unverifiable, the
+// same treatment `sys.path`/`exec(` already get.
+const PY_DYNAMIC_IMPORT_RE = /\b(?:importlib\.import_module|__import__)\s*\(/
+
+/**
+ * Resolve one PLAIN Python module name to a `scripts/**` path, if it names
+ * one (#4439 note 2).
+ *
+ * `python3 scripts/x.py` puts `scripts/` on `sys.path[0]`, and
+ * `classifyEntry` accepts no other Python entry shape — so a plain
+ * `import <sibling>` or `from lib.x import y` in a hook's entry script
+ * really does load a file out of `scripts/`, at runtime, today. Before this,
+ * `extractPyDeps` resolved only `spec_from_file_location`, so such an import
+ * produced neither a dependency edge NOR an unresolved marker: it read as
+ * "no dependency here", the fail-open direction.
+ *
+ * The classification is POSITIVE, and soundly so rather than by convention:
+ * `sys.path[0]` is `scripts/` (or, for a module loaded from a subdirectory,
+ * that module's own directory), so a plain import can only ever resolve to a
+ * file under one of those two roots or to a genuinely installed package. A
+ * name that matches no file under `scripts/` is therefore KNOWN not to be a
+ * first-party `scripts/**` dependency — that is knowledge, not a guess.
+ *
+ * An explicit RELATIVE import (`from . import x`) is the one shape that is
+ * neither: it cannot work in a script run as `__main__` at all, so this scan
+ * has no model for what it would load, and it is reported unresolved.
+ *
+ * @returns {{kind: 'dep', rel: string} | {kind: 'external'} | {kind: 'unresolvable', reason: string}}
+ */
+function resolvePyModule(repoRoot, scriptRepoDir, moduleName) {
+  if (moduleName.startsWith('.')) {
+    return {
+      kind: 'unresolvable',
+      reason:
+        `explicit relative import '${moduleName}' in a script this guard models as run via ` +
+        '`python3 scripts/<path>` (i.e. as __main__, where a relative import cannot resolve) — ' +
+        'this scan has no model for what it loads',
+    }
+  }
+  const asPath = moduleName.split('.').join('/')
+  for (const base of new Set([scriptRepoDir, 'scripts'])) {
+    for (const candidate of [`${base}/${asPath}.py`, `${base}/${asPath}/__init__.py`]) {
+      const rel = relative(repoRoot, resolve(repoRoot, candidate))
+      if (rel.startsWith('scripts/') && existsSync(resolve(repoRoot, rel))) {
+        return { kind: 'dep', rel }
+      }
+    }
+  }
+  return { kind: 'external' } // stdlib or an installed third-party package
+}
 
 /**
  * Extract Python `spec_from_file_location` dependencies, plus unresolved
@@ -343,7 +529,31 @@ const PY_EXEC_RE = /\bexec(?:file)?\s*\(/
 function extractPyDeps(rawText) {
   const stripped = stripLineComments(rawText, 'py')
   const specs = []
+  const plainModules = []
   const unresolved = []
+
+  PY_PLAIN_IMPORT_RE.lastIndex = 0
+  let pm
+  while ((pm = PY_PLAIN_IMPORT_RE.exec(stripped)) !== null) {
+    if (pm[1] !== undefined) {
+      plainModules.push(pm[1])
+      continue
+    }
+    // `import a.b, c as d` -> the module names are the first token of each
+    // comma-separated clause. `as` aliases and trailing whitespace are
+    // dropped; a name that is not a dotted identifier is skipped rather than
+    // guessed at (the regex cannot produce one, but the filter says so).
+    for (const clause of (pm[2] ?? '').split(',')) {
+      const name = clause.trim().split(/\s+/)[0]
+      if (/^[\w.]+$/.test(name)) plainModules.push(name)
+    }
+  }
+  if (PY_DYNAMIC_IMPORT_RE.test(stripped)) {
+    unresolved.push(
+      'importlib.import_module(/__import__( found — a module loaded by NAME at run time cannot ' +
+        'be resolved to a file by this scan',
+    )
+  }
 
   PY_SPEC_CALL_RE.lastIndex = 0
   let m
@@ -365,7 +575,7 @@ function extractPyDeps(rawText) {
       'exec(/execfile( found — code run from a computed string is opaque to this scan',
     )
   }
-  return { specs, unresolved }
+  return { specs, plainModules, unresolved }
 }
 
 /**
@@ -530,7 +740,7 @@ function extractDirectDepsUncached(repoRoot, scriptRel) {
   const text = readFileSync(abs, 'utf8')
   const scriptRepoDir = dirname(scriptRel)
 
-  if (scriptRel.endsWith('.mjs') || scriptRel.endsWith('.js')) {
+  if (scriptRel.endsWith('.mjs') || scriptRel.endsWith('.js') || scriptRel.endsWith('.cjs')) {
     let extracted
     try {
       extracted = extractJsDeps(text)
@@ -555,13 +765,18 @@ function extractDirectDepsUncached(repoRoot, scriptRel) {
       }
     }
     const { specs, unresolved } = extracted
-    const deps = specs
-      .map((spec) => resolveJsSpec(repoRoot, scriptRepoDir, spec))
-      .filter((d) => d && d !== scriptRel)
+    const deps = []
+    for (const spec of specs) {
+      const r = classifyJsSpec(repoRoot, scriptRepoDir, spec)
+      // A specifier this scan cannot judge is REPORTED, never filtered away
+      // as though it were third-party -- see classifyJsSpec's doc comment.
+      if (r.kind === 'unresolvable') unresolved.push(r.reason)
+      else if (r.kind === 'dep' && r.rel !== scriptRel) deps.push(r.rel)
+    }
     return { deps, unresolved }
   }
   if (scriptRel.endsWith('.py')) {
-    const { specs, unresolved } = extractPyDeps(text)
+    const { specs, plainModules, unresolved } = extractPyDeps(text)
     const deps = []
     for (const argText of specs) {
       const r = resolvePySpec(repoRoot, scriptRepoDir, argText)
@@ -570,13 +785,40 @@ function extractDirectDepsUncached(repoRoot, scriptRel) {
       if (r.kind === 'unresolvable') unresolved.push(r.reason)
       else if (r.rel !== scriptRel) deps.push(r.rel)
     }
+    for (const moduleName of plainModules) {
+      const r = resolvePyModule(repoRoot, scriptRepoDir, moduleName)
+      if (r.kind === 'unresolvable') unresolved.push(r.reason)
+      else if (r.kind === 'dep' && r.rel !== scriptRel) deps.push(r.rel)
+    }
     return { deps, unresolved }
   }
   if (scriptRel.endsWith('.sh')) {
     const { specs, unresolved } = extractShDeps(text, repoRoot, scriptRepoDir)
     return { deps: specs.filter((d) => d !== scriptRel), unresolved }
   }
-  return { deps: [], unresolved: [] }
+  if (INERT_DEP_EXT_RE.test(scriptRel)) {
+    // DATA, not code. A `.json` payload has no imports of its own BY
+    // CONSTRUCTION, so "no further edges" here is knowledge rather than a
+    // guess -- which is the whole difference this function's fall-through
+    // below exists to make.
+    return { deps: [], unresolved: [] }
+  }
+  // #4439 notes 4/6: everything else. The old unqualified
+  // `return { deps: [], unresolved: [] }` made a dependency whose extension
+  // this scan cannot walk a silent CLOSURE LEAF -- its own imports invisible,
+  // reported as "no dependency here". Live example: `check-bundle-budget.mjs`
+  // really does `import … from './vendor-chunk-groups.ts'` (Node type
+  // stripping). The DIRECT edge to that `.ts` file was always caught
+  // (`classifyJsSpec` is extension-agnostic for relative paths) and demanded
+  // in `files:`; only its TRANSITIVE imports vanished. Unreachable today only
+  // because no hook's `entry` is that script.
+  return {
+    deps: [],
+    unresolved: [
+      `${scriptRel} has no dependency scanner for its extension, so its own imports are ` +
+        'invisible to this scan — that is "could not check", not "nothing to check"',
+    ],
+  }
 }
 
 /**
@@ -663,14 +905,27 @@ function selfCoveredScripts(hooks, repoRoot) {
   return covered
 }
 
+/**
+ * The hook's `files:` pattern as a RegExp, or `null` if it does not compile.
+ *
+ * Named (#4439 note 6) because `analyze` used to get this signal by calling
+ * `hookFilesMatch(h, cls.scriptRel)` purely to look at whether the result was
+ * `null`, and then call it a SECOND time for the same path inside the
+ * `targets` loop. Two calls, two meanings, one of them not about matching at
+ * all.
+ */
+function compileFilesRegex(h) {
+  try {
+    return new RegExp(h.files)
+  } catch {
+    return null
+  }
+}
+
 /** `files:` match AND not removed again by `exclude:`, if the hook has one. */
 function hookFilesMatch(h, targetPath) {
-  let re
-  try {
-    re = new RegExp(h.files)
-  } catch {
-    return null // caller already reports a compile-error separately
-  }
+  const re = compileFilesRegex(h)
+  if (re === null) return null // caller already reports a compile-error separately
   if (!re.test(targetPath)) return false
   if (h.exclude) {
     try {
@@ -720,8 +975,7 @@ function analyze(prekTomlPath, repoRoot = dirname(prekTomlPath)) {
       continue
     }
 
-    const matches0 = hookFilesMatch(h, cls.scriptRel)
-    if (matches0 === null) {
+    if (compileFilesRegex(h) === null) {
       unverifiable.push({ hookId: h.id, reason: `files: regex does not compile: ${h.files}` })
       continue
     }
@@ -757,8 +1011,37 @@ function analyze(prekTomlPath, repoRoot = dirname(prekTomlPath)) {
 
 // ─── baselines (ratchets) ───────────────────────────────────────────────
 
+/**
+ * A pair's IDENTITY. Deliberately excludes `class` -- growth is about which
+ * (hook, dep) pairs are baselined at all, and a pair whose LABEL changed is
+ * not a new deferral for a reviewer to approve.
+ */
 function pairKey(p) {
   return `${p.hookId}::${p.dep}`
+}
+
+/**
+ * A pair's identity PLUS its class, used only to detect a baseline entry
+ * whose label has gone stale (#4439 note 5).
+ *
+ * `pairKey` alone is what both ratchet directions used to compare, so a
+ * baselined pair whose class flipped between `no-self-test` and
+ * `missing-union` was neither NEW nor stale: the baseline silently kept the
+ * old label, and `runGuard` never noticed. `--update-baseline` would have
+ * rewritten it correctly (`writeBrokenBaseline` emits the CURRENT class), so
+ * the staleness persisted exactly as long as nobody regenerated -- which is
+ * the kind of silent drift the rest of this file is careful about. The
+ * trigger is narrow (class derives from `t === cls.scriptRel`, so it can only
+ * flip if the hook's `entry` changes to or from that dep path), which is why
+ * this is its own third bucket rather than being folded into NEW/stale: a
+ * relabelling is neither of those, and reporting it as both would be noise.
+ *
+ * `?? '<none>'` rather than `p.class`: a hand-edited baseline entry with NO
+ * class field at all must also be reported, not compared as `undefined` and
+ * quietly matched against nothing.
+ */
+function pairClassKey(p) {
+  return `${pairKey(p)}::${p.class ?? '<none>'}`
 }
 
 /**
@@ -824,6 +1107,12 @@ function runGuard(
   const brokenKeys = new Set(broken.map(pairKey))
   const newPairs = broken.filter((p) => !baselineKeys.has(pairKey(p)))
   const staleEntries = baseline.filter((p) => !brokenKeys.has(pairKey(p)))
+  // Same pair, different label -- neither NEW nor stale, and invisible to
+  // both of the checks above. See pairClassKey.
+  const baselineClassKeys = new Set(baseline.map(pairClassKey))
+  const reclassified = broken.filter(
+    (p) => baselineKeys.has(pairKey(p)) && !baselineClassKeys.has(pairClassKey(p)),
+  )
 
   const unverifiableIds = new Set(unverifiable.map((u) => u.hookId))
   const unverifiableBaselineSet = new Set(unverifiableBaseline)
@@ -838,6 +1127,7 @@ function runGuard(
   const allClean =
     newPairs.length === 0 &&
     staleEntries.length === 0 &&
+    reclassified.length === 0 &&
     newUnverifiable.length === 0 &&
     staleUnverifiable.length === 0
 
@@ -873,6 +1163,19 @@ function runGuard(
         `fixed, so the baseline must shrink:`,
     )
     for (const p of staleEntries) console.error(`  - ${p.hookId} :: ${p.dep}`)
+    console.error('\n  -> Re-run: node scripts/check-hook-deps.mjs --update-baseline\n')
+  }
+  if (reclassified.length > 0) {
+    const classIn = new Map(baseline.map((p) => [pairKey(p), p.class ?? '<none>']))
+    console.error(
+      `FAIL: ${reclassified.length} baseline entr(y/ies) still reproduce but under a DIFFERENT ` +
+        `class -- the pair is right, the label is stale, and each class has a different fix:`,
+    )
+    for (const p of reclassified) {
+      console.error(
+        `  - ${p.hookId} :: ${p.dep}: baseline says '${classIn.get(pairKey(p))}', now '${p.class}'`,
+      )
+    }
     console.error('\n  -> Re-run: node scripts/check-hook-deps.mjs --update-baseline\n')
   }
   if (newUnverifiable.length > 0) {
@@ -1021,6 +1324,57 @@ function buildInProcessFixture(tmp) {
     "const name = 'shared'\nconst s = require('./lib/' + name + '.mjs')\n",
   )
 
+  // ── #4439 note 1: a `.js` entry script. `ENTRY_SHAPE_RE` used to accept
+  // only `mjs|py|sh`, so this returned `{kind: 'none'}` and the hook was
+  // SKIPPED -- while `extractDirectDepsUncached` had always accepted `.js` as
+  // a DEPENDENCY. It must now be scanned like any other JS, i.e. its missing
+  // union must be FLAGGED.
+  writeFileSync(
+    join(scriptsDir, 'js-entry.js'),
+    "import { helper } from './lib/shared.mjs'\nexport const x = helper()\n",
+  )
+  // ...and a `.ts` entry: recognised as a script, but not walkable by this
+  // scan, so UNVERIFIABLE rather than skipped.
+  writeFileSync(join(scriptsDir, 'ts-entry.ts'), "import './lib/shared.mjs'\nexport const t = 1\n")
+
+  // ── #4439 notes 4/6: a dependency whose extension this scan cannot walk.
+  // The DIRECT edge is found (`classifyJsSpec` is extension-agnostic for
+  // relative paths) and IS unioned into files: below, so nothing is broken --
+  // what must still be reported is that the `.ts` file's OWN imports are
+  // invisible. Live shape: check-bundle-budget.mjs imports
+  // ./vendor-chunk-groups.ts under Node type-stripping.
+  writeFileSync(
+    join(scriptsDir, 'vendor-thing.ts'),
+    "import './lib/shared.mjs'\nexport const v = 1\n",
+  )
+  writeFileSync(join(scriptsDir, 'ts-dep.mjs'), "import './vendor-thing.ts'\nexport const y = 1\n")
+  // The converse, and the reason the fall-through is an ALLOW-LIST: a `.json`
+  // dependency is DATA and has no imports of its own by construction, so the
+  // closure genuinely ends there. Edge found and unioned; not unverifiable.
+  writeFileSync(join(scriptsDir, 'data.json'), '{ "budget": 1 }\n')
+  writeFileSync(
+    join(scriptsDir, 'json-dep.mjs'),
+    "import data from './data.json' with { type: 'json' }\nexport const d = data\n",
+  )
+
+  // ── #4439 note 3: a first-party PATH ALIAS. `resolveJsSpec` returned
+  // `null` for anything not starting with `.` or `scripts/`, so `@/lib/foo`
+  // was discarded as though it were an npm package. Indistinguishable from
+  // `lodash/fp` without reading tsconfig/vite config -- which is precisely
+  // why it must be UNVERIFIABLE rather than silently dropped.
+  writeFileSync(
+    join(scriptsDir, 'bare-alias.mjs'),
+    "import { foo } from '@/lib/foo'\nexport const a = foo\n",
+  )
+  // ...and the positive half: a `node:` builtin, and a bare builtin name, are
+  // KNOWN not to be first-party, so they are neither edges nor markers. Without
+  // this case the rule above could be satisfied by calling everything
+  // unverifiable.
+  writeFileSync(
+    join(scriptsDir, 'bare-builtin.mjs'),
+    "import { readFileSync } from 'node:fs'\nimport { join } from 'path'\nexport const b = [readFileSync, join]\n",
+  )
+
   // A dependency the shared tokenizer REFUSES to scan. `js-scanner.mjs`
   // fails CLOSED -- it throws `ScanError` rather than guess (here: an
   // ASI-ambiguous `/` after `i++` across a newline). The throw must be
@@ -1060,6 +1414,38 @@ function buildInProcessFixture(tmp) {
       '    )\n' +
       '    return spec\n',
   )
+  // ── #4439 note 2: PLAIN Python sibling imports. `python3 scripts/x.py`
+  // puts `scripts/` on `sys.path[0]`, so both of these load a real file out
+  // of `scripts/` at run time -- yet `extractPyDeps` resolved only
+  // `spec_from_file_location`, so they produced neither an edge nor a marker
+  // and read as "no dependency here".
+  writeFileSync(join(scriptsDir, 'py_sibling.py'), 'def sibling():\n    return 1\n')
+  writeFileSync(
+    join(scriptsDir, 'py-plain-import.py'),
+    'import py_sibling\n\n\ndef go():\n    return py_sibling.sibling()\n',
+  )
+  writeFileSync(
+    join(scriptsDir, 'py-from-lib.py'),
+    'from lib.shared_py import helper\n\n\ndef go():\n    return helper()\n',
+  )
+  // The positive half: stdlib / third-party names resolve to no file under
+  // `scripts/`, which is KNOWLEDGE that they are not first-party (that is the
+  // only place `sys.path[0]` can put one) -- so no edge and no marker. Without
+  // this case, "mark every plain import unverifiable" would pass the two above.
+  writeFileSync(
+    join(scriptsDir, 'py-stdlib-import.py'),
+    'import json\nfrom pathlib import Path\n\n\ndef go():\n    return json.dumps(str(Path(".")))\n',
+  )
+  // ...and the two plain-import shapes that genuinely cannot be resolved.
+  writeFileSync(
+    join(scriptsDir, 'py-relative-import.py'),
+    'from . import py_sibling\n\n\ndef go():\n    return py_sibling\n',
+  )
+  writeFileSync(
+    join(scriptsDir, 'py-import-module.py'),
+    'import importlib\n\n\ndef go(name):\n    return importlib.import_module(name)\n',
+  )
+
   // sys.path.insert + plain import, and exec( -- #3997-review gaps 7 and 9:
   // must be UNRESOLVED, not silently clean.
   writeFileSync(
@@ -1216,6 +1602,36 @@ entry = "node scripts/scan-throws.mjs"
 files = "^scripts/scan-throws\\\\.mjs$"
 
 [[repos.hooks]]
+id = "js-entry"
+entry = "node scripts/js-entry.js"
+files = "^scripts/js-entry\\\\.js$"
+
+[[repos.hooks]]
+id = "ts-entry"
+entry = "node scripts/ts-entry.ts"
+files = "^scripts/ts-entry\\\\.ts$"
+
+[[repos.hooks]]
+id = "ts-dep-js"
+entry = "node scripts/ts-dep.mjs"
+files = "^scripts/(ts-dep\\\\.mjs|vendor-thing\\\\.ts)$"
+
+[[repos.hooks]]
+id = "json-dep-js"
+entry = "node scripts/json-dep.mjs"
+files = "^scripts/(json-dep\\\\.mjs|data\\\\.json)$"
+
+[[repos.hooks]]
+id = "bare-alias-js"
+entry = "node scripts/bare-alias.mjs"
+files = "^scripts/bare-alias\\\\.mjs$"
+
+[[repos.hooks]]
+id = "bare-builtin-js"
+entry = "node scripts/bare-builtin.mjs"
+files = "^scripts/bare-builtin\\\\.mjs$"
+
+[[repos.hooks]]
 id = "good-py"
 entry = "python3 scripts/good.py"
 files = "^scripts/(good\\\\.py|lib/shared_py\\\\.py)$"
@@ -1229,6 +1645,31 @@ files = "^scripts/bad\\\\.py$"
 id = "indented-spec-py"
 entry = "python3 scripts/indented-spec.py"
 files = "^scripts/indented-spec\\\\.py$"
+
+[[repos.hooks]]
+id = "py-plain-import"
+entry = "python3 scripts/py-plain-import.py"
+files = "^scripts/py-plain-import\\\\.py$"
+
+[[repos.hooks]]
+id = "py-from-lib"
+entry = "python3 scripts/py-from-lib.py"
+files = "^scripts/py-from-lib\\\\.py$"
+
+[[repos.hooks]]
+id = "py-stdlib-import"
+entry = "python3 scripts/py-stdlib-import.py"
+files = "^scripts/py-stdlib-import\\\\.py$"
+
+[[repos.hooks]]
+id = "py-relative-import"
+entry = "python3 scripts/py-relative-import.py"
+files = "^scripts/py-relative-import\\\\.py$"
+
+[[repos.hooks]]
+id = "py-import-module"
+entry = "python3 scripts/py-import-module.py"
+files = "^scripts/py-import-module\\\\.py$"
 
 [[repos.hooks]]
 id = "sys-path-py"
@@ -1418,6 +1859,14 @@ function runSelfTest() {
       fail('unscannable dependency is unverifiable', JSON.stringify(unverifiable))
     }
 
+    runClassificationCases(ok, fail, {
+      broken,
+      unverifiable,
+      brokenIds,
+      brokenPairs,
+      unverifiableIds,
+    })
+
     if (!brokenIds.has('good-py')) ok('good-py (self+dep unioned) is clean')
     else fail('good-py is clean', JSON.stringify(broken))
 
@@ -1602,6 +2051,41 @@ function runSelfTest() {
       fail('non-baselined pair is still NEW', asBaseline(newPairs))
     }
 
+    // #4439 note 5: a baselined pair whose CLASS flipped is neither NEW nor
+    // stale, so both checks above walk straight past it and the baseline
+    // keeps the wrong label. Driven through the same `pairKey` / `pairClassKey`
+    // pair `runGuard` uses, so a regression there is what this catches.
+    const relabelled = broken
+      .filter((p) => p.hookId === 'bad-js')
+      .map((p) => ({
+        hookId: p.hookId,
+        dep: p.dep,
+        files: p.files,
+        class: p.class === 'missing-union' ? 'no-self-test' : 'missing-union',
+      }))
+    const relabelledIdKeys = new Set(relabelled.map(pairKey))
+    const relabelledClassKeys = new Set(relabelled.map(pairClassKey))
+    const reclassified = stillBroken.filter(
+      (p) => relabelledIdKeys.has(pairKey(p)) && !relabelledClassKeys.has(pairClassKey(p)),
+    )
+    if (reclassified.length === 1 && reclassified[0].hookId === 'bad-js') {
+      ok('a baselined pair whose class flipped is reported as RECLASSIFIED (neither NEW nor stale)')
+    } else {
+      fail('class flip on a baselined pair is reported', JSON.stringify(reclassified))
+    }
+    // ...and the same computation must NOT fire when the class still agrees,
+    // or "reclassified" would just be a second name for "baselined".
+    const agreeingIdKeys = new Set(baselineWithBadJs.map(pairKey))
+    const agreeingClassKeys = new Set(baselineWithBadJs.map(pairClassKey))
+    const notReclassified = stillBroken.filter(
+      (p) => agreeingIdKeys.has(pairKey(p)) && !agreeingClassKeys.has(pairClassKey(p)),
+    )
+    if (notReclassified.length === 0) {
+      ok('a baselined pair whose class still agrees is NOT reported as reclassified')
+    } else {
+      fail('unchanged class is not reclassified', JSON.stringify(notReclassified))
+    }
+
     const staleBaseline = [{ hookId: 'good-js', dep: 'scripts/lib/shared.mjs' }] // never broken
     const brokenKeysNow = new Set(stillBroken.map(pairKey))
     const stale = staleBaseline.filter((p) => !brokenKeysNow.has(pairKey(p)))
@@ -1640,9 +2124,98 @@ function runSelfTest() {
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(1)
+    // 2, not 1 (#4439 note 7): `check-store-layering.mjs`'s self-test -- this
+    // one's sibling, added in the same PR -- has always exited 2, and both
+    // being non-zero satisfied prek while leaving a reader to wonder whether
+    // the difference meant something. It did not. 2 also keeps a self-test
+    // failure distinguishable from a GUARD failure (`runGuard` returns 1) and
+    // from node's own crash code, which is 1 as well.
+    process.exit(SELF_TEST_FAILURE_EXIT)
   }
   console.log('self-test: all assertions passed')
+}
+
+/**
+ * The #4439 classification cases: every place where an input this scan does
+ * not recognise must read as UNVERIFIABLE rather than as "no dependency
+ * here", plus the positive counterpart of each (a `node:` builtin, a stdlib
+ * python import, a `.json` data leaf) that stops the rule being satisfied by
+ * calling everything unverifiable.
+ *
+ * Its own function purely so eslint counts its branches separately from
+ * `runSelfTest`'s — the same reason `runCliSelfTest` and
+ * `runUpdateBaselineGrowthSelfTest` are split out below.
+ *
+ * @param {(name: string) => void} ok
+ * @param {(name: string, detail: string) => void} fail
+ */
+function runClassificationCases(
+  ok,
+  fail,
+  { broken, unverifiable, brokenIds, brokenPairs, unverifiableIds },
+) {
+  // ── #4439 note 1: a `.js` entry is SCANNED, not skipped ─────────────
+  if (brokenPairs.has('js-entry::scripts/lib/shared.mjs')) {
+    ok('a `.js` entry script is scanned like any other JS, not silently skipped (note 1)')
+  } else {
+    fail('.js entry script is scanned', JSON.stringify({ broken, unverifiable }))
+  }
+  if (unverifiableIds.has('ts-entry')) {
+    ok('a `.ts` entry script is UNVERIFIABLE (recognised, not walkable), not skipped (note 1)')
+  } else {
+    fail('.ts entry script is unverifiable', JSON.stringify({ broken, unverifiable }))
+  }
+
+  // ── #4439 notes 4/6: a non-walkable DEPENDENCY is not a silent leaf ──
+  if (unverifiableIds.has('ts-dep-js') && !brokenIds.has('ts-dep-js')) {
+    ok('a `.ts` dependency is unioned AND its own invisible imports make the hook UNVERIFIABLE')
+  } else {
+    fail('non-walkable dep is unverifiable', JSON.stringify({ broken, unverifiable }))
+  }
+  if (!unverifiableIds.has('json-dep-js') && !brokenIds.has('json-dep-js')) {
+    ok('a `.json` dependency is an INERT leaf — the closure really does end there, not "unknown"')
+  } else {
+    fail('json dep is an inert leaf', JSON.stringify({ broken, unverifiable }))
+  }
+
+  // ── #4439 note 3: a bare specifier this scan cannot classify ─────────
+  if (unverifiableIds.has('bare-alias-js')) {
+    ok('a first-party-looking path alias is UNVERIFIABLE, not discarded as third-party (note 3)')
+  } else {
+    fail('path alias is unverifiable', JSON.stringify({ broken, unverifiable }))
+  }
+  if (!unverifiableIds.has('bare-builtin-js') && !brokenIds.has('bare-builtin-js')) {
+    ok('a node: builtin (and a bare builtin name) is positively external — no edge, no marker')
+  } else {
+    fail('builtin specifiers stay clean', JSON.stringify({ broken, unverifiable }))
+  }
+
+  // ── #4439 note 2: plain Python sibling imports ───────────────────────
+  if (brokenPairs.has('py-plain-import::scripts/py_sibling.py')) {
+    ok('a plain `import <sibling>` is a real dependency edge, not "no dependency here" (note 2)')
+  } else {
+    fail('plain python sibling import is an edge', JSON.stringify({ broken, unverifiable }))
+  }
+  if (brokenPairs.has('py-from-lib::scripts/lib/shared_py.py')) {
+    ok('a plain `from lib.x import y` is a real dependency edge (note 2)')
+  } else {
+    fail('plain python package import is an edge', JSON.stringify({ broken, unverifiable }))
+  }
+  if (!brokenIds.has('py-stdlib-import') && !unverifiableIds.has('py-stdlib-import')) {
+    ok('a stdlib/third-party plain import is positively external — no edge, no marker')
+  } else {
+    fail('stdlib python import stays clean', JSON.stringify({ broken, unverifiable }))
+  }
+  if (unverifiableIds.has('py-relative-import')) {
+    ok('an explicit relative python import is UNVERIFIABLE (no model for what it loads)')
+  } else {
+    fail('relative python import is unverifiable', JSON.stringify({ broken, unverifiable }))
+  }
+  if (unverifiableIds.has('py-import-module')) {
+    ok('importlib.import_module(/__import__( is UNVERIFIABLE, not silently clean')
+  } else {
+    fail('dynamic python import is unverifiable', JSON.stringify({ broken, unverifiable }))
+  }
 }
 
 /**

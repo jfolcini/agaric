@@ -3506,7 +3506,17 @@ stages = ["pre-commit"]
 # sibling — is found while an import-shaped FIXTURE STRING, a commented-out
 # mention, or a docstring naming the idiom is never read as a real edge; an
 # unresolvable construct (Python sys.path/exec(, a fully dynamic shell
-# source) is UNVERIFIABLE, not silently clean; a missing entry script is
+# source) is UNVERIFIABLE, not silently clean; and — since #4439, all in the
+# same fail-open direction — a `.js`/`.cjs` entry script is SCANNED rather
+# than skipped while a `.ts` one is UNVERIFIABLE, a plain Python
+# `import <sibling>` / `from lib.x import y` is a real dependency EDGE while
+# a stdlib name is positively external, a bare JS specifier this scan cannot
+# tell from a first-party path alias (`@/lib/foo`) is UNVERIFIABLE while a
+# `node:` builtin or declared package is positively external, a dependency
+# whose extension nothing here can walk is UNVERIFIABLE while a `.json` data
+# leaf genuinely ends the closure, and a baselined pair whose `class` flipped
+# is reported as RECLASSIFIED (it is neither NEW nor stale, so both other
+# ratchet directions used to walk past it); a missing entry script is
 # UNVERIFIABLE; a dep unioned into `files:` but removed again by `exclude:`
 # is still flagged; an `always_run` hook is exempt from `files:` matching
 # entirely; a hook's own script is exempt when ANY sibling hook fires on it
