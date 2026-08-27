@@ -186,6 +186,14 @@ pub async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTable
 ///
 /// # `up_to_hash` is opaque, `up_to_seqs` is the real causal anchor
 ///
+/// Note for anyone grepping the tree for op-log ordering after #4402: this
+/// `ORDER BY` is now the ONLY remaining `device_id`-before-`seq` comparator
+/// with an LWW shape. That is deliberate and the rest of this section says
+/// why — the value is opaque and never compared across devices, so it is not
+/// an LWW decision at all. Do not "fix" it to the canonical
+/// `(created_at, seq, device_id)` for consistency: that would change a
+/// wire-adjacent value for no gain.
+///
 /// The "latest hash" returned here is selected via `ORDER BY created_at DESC,
 /// device_id DESC, seq DESC LIMIT 1` — i.e. wall-clock-ordered. Because two
 /// devices' clocks can disagree by seconds (and the op log has no global

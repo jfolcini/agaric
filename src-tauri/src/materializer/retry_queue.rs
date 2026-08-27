@@ -4739,7 +4739,12 @@ mod tests {
         assert_eq!(
             pending_count(&pool).await.unwrap(),
             1,
-            "#4402: a re-enqueued row is leased, not cleared — it must remain pending"
+            "#4402: a re-enqueued row is leased, not cleared — it must remain pending" // This is race-free against the live materializer consumer only
+                                                                                       // because `seed_apply_op_retry_row` plants the row via raw SQL
+                                                                                       // without seeding the pending-retry gauge, so `clear_on_success`
+                                                                                       // takes its fast path and skips the DELETE. A future seeder that
+                                                                                       // also bumps that gauge would make this assertion flaky rather
+                                                                                       // than wrong — read it as depending on the seeder, not on timing.
         );
         mat.shutdown();
     }
@@ -5003,7 +5008,12 @@ mod tests {
         assert_eq!(
             pending_count(&pool).await.unwrap(),
             1,
-            "#4402: a re-enqueued row is leased, not cleared — it must remain pending"
+            "#4402: a re-enqueued row is leased, not cleared — it must remain pending" // This is race-free against the live materializer consumer only
+                                                                                       // because `seed_apply_op_retry_row` plants the row via raw SQL
+                                                                                       // without seeding the pending-retry gauge, so `clear_on_success`
+                                                                                       // takes its fast path and skips the DELETE. A future seeder that
+                                                                                       // also bumps that gauge would make this assertion flaky rather
+                                                                                       // than wrong — read it as depending on the seeder, not on timing.
         );
         mat.shutdown();
     }
