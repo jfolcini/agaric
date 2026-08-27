@@ -247,7 +247,12 @@ names within a resync interval.
 window a joiner dials *every* mDNS-discovered device on the LAN — so a hostname
 (which often embeds the user's real name) reaches devices that go on to reject
 the session. A real but marginal exposure, and not a new one: `pairing_proof`
-already travels the same frame to the same over-broad audience.
+already travels the same frame to the same over-broad audience, and
+`sender_device_id` (#4380) now travels it too. That last one is a change of
+degree, not of kind — a v4 UUID is strictly less sensitive than the hostname
+above it, and it reaches exactly the same devices — but it is disclosed
+*unconditionally*, where before a fresh joiner with an empty op log advertised
+no device id at all (its `heads` carried none of its own).
 
 `sender_device_id: Option<String>` (#4380) is the device id the sender states
 for **itself**.

@@ -937,7 +937,7 @@ async fn handle_incoming_sync_inner(
         // corrects it, it then refuses to re-point the key, and every guard keyed on
         // "is this peer bound?" starts permitting the session — for the wrong device.
         // The user sees one device-list entry where two devices are involved and has
-        // no way to tell it is wrong. Declining leaves NO wrong state at all: the
+        // no way to tell it is wrong. Declining leaves no PERMANENT wrong state: the
         // session still moved its data, the pairing window is deliberately left open
         // (it is only consumed by a bind), and the pair completes through the
         // responder's own initiator pass, which binds against the id the peer
@@ -945,10 +945,22 @@ async fn handle_incoming_sync_inner(
         // the path `discovery::should_attempt_sync_with_discovered_peer` keeps open
         // for exactly the duration of the window (#2008/#3502).
         //
-        // The bookkeeping this session already wrote is #4230/#4251's problem, not
-        // this branch's: it ran under `with_unverified_claim_guard`, which is why
-        // refusing here is a refusal to create PERMANENT state rather than a
-        // half-measure.
+        // Residual, and it is not nothing. The bookkeeping this session already wrote
+        // is keyed on the same wrongly-sorted id. It ran under
+        // `with_unverified_claim_guard`, but that guard refuses only an id whose row
+        // is bound to ANOTHER key — a foreign id this host holds no bound row for is
+        // not refused, so `record_stream_in_tx` and `persist_peer_loro_vvs` upsert a
+        // row for it and stamp a `loro_vv_bytes` export floor that is the JOINER's
+        // frontier, on a row named for a device that never received those ops. What
+        // that costs when the real device does pair is bounded: the floor is read
+        // back only as the fallback for a space the peer advertised no vv for, and
+        // `apply_remote`'s reachability gate turns an unbridgeable `from_vv` into a
+        // full snapshot — so the price is a `ResetRequired` round trip and a phantom
+        // peer row, not silently dropped ops. That is #4230/#4251's residual, which
+        // this branch neither creates nor closes; it is strictly smaller than what
+        // preceded #4380 (the same row, PLUS a permanent mis-bind). Refusing here is
+        // a refusal to create permanent state, not a claim that the session wrote
+        // none.
         tracing::warn!(
             peer_id = %settled_remote_id,
             %endpoint_id,
