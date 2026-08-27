@@ -499,20 +499,30 @@ async fn handle_incoming_sync_inner(
     // at the write site further down. It is the first thing this process does with an
     // untrusted string from the wire, so there is no window in which an unbounded value
     // exists in a variable something else could pick up.
+    //
+    // #4380: `sender_device_id` is normalised here for the same reason — it is
+    // untrusted wire text that ends up as a `peer_refs.peer_id`, and
+    // `accept_stated_device_id` REJECTS rather than truncates, so an unusable
+    // value becomes `None` at the boundary and every reader below sees one
+    // answer to "did this peer identify itself".
     let opening_parts = match &opening {
         SyncMessage::HeadExchange {
             heads,
             pairing_proof,
             device_name,
+            sender_device_id,
             ..
         } => Some((
             heads.clone(),
             pairing_proof.clone(),
             device_name.as_deref().and_then(clamp_device_name),
+            sender_device_id
+                .as_deref()
+                .and_then(crate::sync_protocol::accept_stated_device_id),
         )),
         _ => None,
     };
-    let Some((heads, offered_proof, offered_device_name)) = opening_parts else {
+    let Some((heads, offered_proof, offered_device_name, stated_device_id)) = opening_parts else {
         // Log the variant only (`discriminant`, the convention in
         // `session_state_machine::handle_message`) — never the payload.
         tracing::warn!(
@@ -538,17 +548,53 @@ async fn handle_incoming_sync_inner(
     // connection may touch.
     let bound = peer_refs::get_peer_ref_by_endpoint_id(&pool_ref, &endpoint_id_str).await?;
 
-    // The identity the peer *claims* through its advertised heads. #778: heads are sync
-    // state, not identity — a fresh device (empty op_log) has no head of its own, so
-    // this can legitimately be empty and MUST NOT be treated as "self". #2481: a peer
-    // advertises the frontier of every device it holds, so the first non-self head is
-    // not reliably the peer's own identity either. It is used only where there is
-    // nothing better, and never as an authorization input.
-    let claimed_id = heads
+    // The identity the peer *claims*. #778: heads are sync state, not identity — a
+    // fresh device (empty op_log) has no head of its own, so this can legitimately be
+    // empty and MUST NOT be treated as "self". #2481: a peer advertises the frontier of
+    // every device it holds, so the first non-self head is not reliably the peer's own
+    // identity either. It is used only where there is nothing better, and never as an
+    // authorization input.
+    //
+    // #4380: `sender_device_id` is the peer stating which device it is, so prefer it —
+    // it is exactly as unverified as the heads (nothing signs either, and a hostile
+    // peer that could state an id could equally have advertised it as a head), but it
+    // answers the question actually being asked. The heads-derived value answers a
+    // different one: `get_local_heads` is `ORDER BY d.device_id`, so the first non-self
+    // entry is *the lowest-sorting device id in the peer's op log*. In a three-device
+    // vault that is the joiner's own id about half the time, and the TOFU bind below
+    // used to make the coin flip permanent.
+    let heads_derived_id = heads
         .iter()
         .find(|h| h.device_id != device_id)
         .map(|h| h.device_id.clone())
         .unwrap_or_default();
+    // #4380: whether the heads ALONE identify the joiner, for the peers too old to
+    // state an id. They do not once the peer holds more than one foreign frontier:
+    // picking one is picking by sort order, and there is nothing in the frame that
+    // says which is right. Read at the bind, which is the write that cannot be undone
+    // — `bind_endpoint_id` refuses to re-point a key afterwards, and nothing in the
+    // codebase notices that the row names the wrong device.
+    //
+    // Deliberately NOT extended to "one non-self head" (the pre-#4380 case that is
+    // also wrong: a peer that has replicated one device's ops and authored none of its
+    // own advertises exactly one head, its peer's). That case is indistinguishable
+    // from the overwhelmingly common correct one — the ordinary two-device first pair,
+    // where the single non-self head IS the joiner — and refusing it would change the
+    // first-pair flow for every peer predating this field to close a corner of it.
+    // The residual is bounded and shrinking: it needs a joiner on a pre-#4380 build
+    // that has never authored an op, and the stated id closes it outright for any
+    // build that has the field.
+    let heads_are_ambiguous = stated_device_id.is_none()
+        && heads
+            .iter()
+            .filter(|h| h.device_id != device_id)
+            .map(|h| &h.device_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            > 1;
+    // Computed after `heads_are_ambiguous` because that is the last reader of
+    // `stated_device_id` as an `Option`; this consumes it.
+    let claimed_id = stated_device_id.unwrap_or(heads_derived_id);
 
     let (remote_id, pairing_pending) = match bound {
         // A bound key. This is the authoritative identity, and the one the orchestrator
@@ -685,8 +731,11 @@ async fn handle_incoming_sync_inner(
     // never compared against it, precisely because #2481 frontier advertisement makes
     // the first non-self head an unreliable identity and a mismatch would false-fail a
     // legitimate multi-device peer. It is deliberately NOT set from `claimed_id` for the
-    // same reason; with it unset the FSM falls back to the same heads-derived id, which
-    // is exactly what the old cert-less path did.
+    // same reason; with it unset the FSM derives the same value this function did, by
+    // the same #4380 precedence — the peer's stated `sender_device_id` first, the
+    // first non-self head only for a peer too old to state one. The two must agree,
+    // because `heads_are_ambiguous` above is computed from THIS frame and gates the
+    // bind on `settled_remote_id`, which is the FSM's answer.
     // #3328: the orchestrator takes ownership of the host, but the file-transfer
     // phase below still needs it to resolve the attachment root. An `Arc` clone
     // is a refcount bump — the host itself is not duplicated.
@@ -845,6 +894,11 @@ async fn handle_incoming_sync_inner(
     // one write here that is expensive to undo, since `bind_endpoint_id` then refuses to
     // re-point it.
     //
+    // #4380: which is why this block asks TWO questions, not one. `already_bound_elsewhere`
+    // asks whether the row is somebody else's; `heads_are_ambiguous` asks whether we
+    // actually know whose row it is. The second is new, and it is the one that fires
+    // with no attacker present.
+    //
     // `bind_endpoint_id` is an `ON CONFLICT(peer_id) DO UPDATE` touching only its own
     // column, so re-binding a peer preserves its version vectors and sync state; a
     // device that merely re-paired must not be reset.
@@ -873,6 +927,47 @@ async fn handle_incoming_sync_inner(
             %endpoint_id,
             "refusing to re-bind an already-bound peer to a different key; the device id \
              came from the peer's advertised heads, which is a claim (#800)"
+        );
+    } else if pairing_pending && heads_are_ambiguous {
+        // #4380: the peer did not state an id and its heads name more than one
+        // candidate, so `settled_remote_id` is whichever sorted lowest. Refuse.
+        //
+        // Refusing is the strictly better failure. A wrong bind is permanent and
+        // silent: `bind_endpoint_id` writes only its own column, so nothing later
+        // corrects it, it then refuses to re-point the key, and every guard keyed on
+        // "is this peer bound?" starts permitting the session — for the wrong device.
+        // The user sees one device-list entry where two devices are involved and has
+        // no way to tell it is wrong. Declining leaves no PERMANENT wrong state: the
+        // session still moved its data, the pairing window is deliberately left open
+        // (it is only consumed by a bind), and the pair completes through the
+        // responder's own initiator pass, which binds against the id the peer
+        // ANNOUNCED over mDNS rather than one this frame sorted into first place —
+        // the path `discovery::should_attempt_sync_with_discovered_peer` keeps open
+        // for exactly the duration of the window (#2008/#3502).
+        //
+        // Residual, and it is not nothing. The bookkeeping this session already wrote
+        // is keyed on the same wrongly-sorted id. It ran under
+        // `with_unverified_claim_guard`, but that guard refuses only an id whose row
+        // is bound to ANOTHER key — a foreign id this host holds no bound row for is
+        // not refused, so `record_stream_in_tx` and `persist_peer_loro_vvs` upsert a
+        // row for it and stamp a `loro_vv_bytes` export floor that is the JOINER's
+        // frontier, on a row named for a device that never received those ops. What
+        // that costs when the real device does pair is bounded: the floor is read
+        // back only as the fallback for a space the peer advertised no vv for, and
+        // `apply_remote`'s reachability gate turns an unbridgeable `from_vv` into a
+        // full snapshot — so the price is a `ResetRequired` round trip and a phantom
+        // peer row, not silently dropped ops. That is #4230/#4251's residual, which
+        // this branch neither creates nor closes; it is strictly smaller than what
+        // preceded #4380 (the same row, PLUS a permanent mis-bind). Refusing here is
+        // a refusal to create permanent state, not a claim that the session wrote
+        // none.
+        tracing::warn!(
+            peer_id = %settled_remote_id,
+            %endpoint_id,
+            "refusing to bind a pairing peer that did not state its own device id and \
+             advertised more than one foreign frontier: the id would be whichever \
+             sorted lowest, not the joiner's (#4380). Leaving it unbound for its own \
+             initiator pass to bind."
         );
     } else if !settled_remote_id.is_empty() && settled_remote_id != device_id {
         match peer_refs::bind_endpoint_id(&pool_ref, &settled_remote_id, &endpoint_id_str).await {

@@ -121,7 +121,8 @@ HeadExchange { heads: Vec<DeviceHead>,
                op_log_replication: bool,             // #[serde(default)] capability
                op_log_batch_chunked: bool,           // #[serde(default)] capability
                pairing_proof: Option<String>,        // #[serde(default)]
-               device_name: Option<String> }         // #[serde(default)]
+               device_name: Option<String>,          // #[serde(default)]
+               sender_device_id: Option<String> }    // #[serde(default)]
 ```
 
 Every field after `heads` is `#[serde(default)]`, so a peer predating any of
@@ -246,9 +247,68 @@ names within a resync interval.
 window a joiner dials *every* mDNS-discovered device on the LAN — so a hostname
 (which often embeds the user's real name) reaches devices that go on to reject
 the session. A real but marginal exposure, and not a new one: `pairing_proof`
-already travels the same frame to the same over-broad audience.
+already travels the same frame to the same over-broad audience, and
+`sender_device_id` (#4380) now travels it too. That last one is a change of
+degree, not of kind — a v4 UUID is strictly less sensitive than the hostname
+above it, and it reaches exactly the same devices — but it is disclosed
+*unconditionally*, where before a fresh joiner with an empty op log advertised
+no device id at all (its `heads` carried none of its own).
 
-**`HeadExchange` carries no `device_id`, and S-5 is keyed accordingly (#3511).**
+`sender_device_id: Option<String>` (#4380) is the device id the sender states
+for **itself**.
+
+Before it, the responder's only handle on an unpaired joiner's identity was
+"the first non-self entry in `heads`". Since #2481 a peer advertises the
+frontier of *every* device it holds, and `get_local_heads` emits them
+`ORDER BY device_id` — so that expression resolves to **the lowest-sorting
+device id in the joiner's op log**, which is the joiner's own id only by
+coincidence. Device ids are v4 UUIDs, so in a three-device vault the responder
+bound the joiner's endpoint key to another device's `peer_refs` row roughly
+half the time, with no attacker involved and an error rate of `(N-1)/N`. That
+bind is permanent: `bind_endpoint_id` writes only its own column, then refuses
+to re-point the key, and the user sees one device-list entry where two devices
+are involved.
+
+**It is a claim, not a credential.** Nothing signs it, and it grants a peer no
+reach it did not already have — `heads` is unauthenticated wire data too, so
+anything a hostile peer could state here it could equally have advertised as a
+head. The gates that make a claim harmless are unchanged and elsewhere: the
+passphrase proof of #855 to be admitted at all, `peer_is_bound_to_another_key`
+at the bind, and #4230/#4251's guard on the session's bookkeeping. What the field
+changes is the *honest* case, which is the one that was broken. There is no
+useful cross-check against `heads`: a joiner that has replicated a peer's ops
+but authored none of its own legitimately advertises a frontier it is not in,
+so requiring membership would false-reject a real device.
+
+Normalised on receive by `accept_stated_device_id`, which **rejects** rather
+than truncates — unlike `clamp_device_name`. A shortened name is still the same
+name; a shortened id is a *different* id, naming a different row, which is the
+mis-bind this field exists to close.
+
+It is `#[serde(default)]` (→ `None`) for the same wire back-compat reason as
+`pairing_proof` and `device_name`, and the degradation is deliberate in both
+directions:
+
+- **A peer predating the field pairs with this build.** It omits the key; the
+  responder falls back to the heads-derived guess, and at the bind refuses
+  outright when the heads are *provably* ambiguous (more than one non-self
+  frontier), leaving the peer unbound rather than binding one at random. The
+  session still runs and the pairing window stays open — only a bind consumes
+  it — so the pair completes through the responder's own initiator pass, which
+  binds against the id the peer announced over mDNS. A single non-self head is
+  not refused: that is the ordinary two-device first pair, and it is
+  unambiguous. The residual is a pre-#4380 joiner that has never authored an op
+  and holds exactly one foreign frontier; the field closes it for any build
+  that has it.
+- **This build pairs with a peer predating the field.** That peer ignores the
+  unknown key (no `deny_unknown_fields`) and keeps its own behaviour.
+
+Initiator-only, because `HeadExchange` is. The initiator needs no reverse
+direction: it dialled a peer it had already resolved to a `peer_id`, so it
+never had to guess.
+
+**`HeadExchange` carried no `device_id` when S-5 was keyed, and that is still
+why S-5 is keyed on `EndpointId` (#3511).**
 The responder cannot learn the peer's Agaric device id before the session runs:
 the certificate CN used to supply it unconditionally, and `get_local_heads` reads
 only `op_log`, so a fresh joiner with an empty log advertises no head of its own
@@ -260,7 +320,11 @@ overlap until a binding existed.
 Resolved by keying **both roles on the peer's `EndpointId`**
 (`sync_daemon::peer_lock_key`), not by adding a `device_id` to the frame. A wire
 field would arrive *after* the connection is accepted, so the responder would
-still have to choose a key before it had one, and it would cost a field forever.
+still have to choose a key before it had one. #4380 later added
+`sender_device_id` for a different consumer and that reasoning is untouched:
+the lock still keys on `EndpointId`, because the *bind* runs after the session
+ends, where "arrives with the first frame" is early enough by a wide margin,
+and the lock does not.
 The `EndpointId` is the only identifier both roles hold unconditionally: the
 responder has it from the QUIC/TLS 1.3 handshake before any application byte, and
 the initiator must have it to dial at all. The trade-off is that an `EndpointId`

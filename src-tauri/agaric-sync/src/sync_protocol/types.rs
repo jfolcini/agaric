@@ -70,6 +70,60 @@ pub fn decode_persisted_loro_vvs(bytes: &[u8]) -> Vec<SpaceVersionVector> {
 /// name to a fraction of that (or, worse, mid-scalar).
 pub const MAX_DEVICE_NAME_CHARS: usize = 64;
 
+/// The maximum length, in Unicode scalar values, of a **device id** on the
+/// wire (#4380).
+///
+/// A device id is a canonical lowercase-hyphenated v4 UUID
+/// (`device::get_or_create_device_id`), i.e. 36 characters. 64 leaves room for
+/// the fixture ids the test suite uses and for any future id shape, while
+/// still bounding what a peer can hand us for a column every peer-facing query
+/// keys on.
+///
+/// Deliberately **not** a UUID parse. Requiring one here would make production
+/// and the test harnesses disagree about what a valid id is — the harnesses
+/// use short symbolic ids (`JOIN4380`) precisely so a failure names the device
+/// it is about — and the responder would then silently take a different code
+/// path under test than in the field, which is the one property this gate must
+/// not have.
+pub const MAX_DEVICE_ID_CHARS: usize = 64;
+
+/// Normalise the device id a peer states for **itself** in
+/// [`SyncMessage::HeadExchange::sender_device_id`] (#4380).
+///
+/// Trims, rejects empty/whitespace-only, rejects anything containing a
+/// display-hostile scalar (see [`is_display_hostile`] — an id reaches the
+/// device list too), and rejects anything longer than
+/// [`MAX_DEVICE_ID_CHARS`].
+///
+/// # Why this rejects rather than clamps
+///
+/// [`clamp_device_name`] truncates, because a truncated *name* is still
+/// recognisably the same name and the column is display text. An id is not
+/// display text: a truncated id is a **different id**, naming a different row,
+/// and the whole point of this field is that the responder binds the joiner's
+/// key to the right row. Silently shortening an over-long id would manufacture
+/// exactly the mis-bind #4380 exists to close, from a value that at least
+/// announced itself as malformed. So an id that is not usable whole is not
+/// usable at all, and the caller falls back to the pre-#4380 heads-derived
+/// guess (and, at the bind, to refusing an ambiguous one).
+///
+/// Applied on **receive** only. The sender's own id comes from its device-id
+/// file, which `get_or_create_device_id` already validated as a UUID; there is
+/// nothing for a send-side normalisation to catch that this would not, and a
+/// send-side clamp that silently altered this device's own identity would be
+/// worse than advertising nothing.
+#[must_use]
+pub fn accept_stated_device_id(id: &str) -> Option<String> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > MAX_DEVICE_ID_CHARS {
+        return None;
+    }
+    if trimmed.chars().any(is_display_hostile) {
+        return None;
+    }
+    Some(trimmed.to_owned())
+}
+
 /// Borrowed handle onto Unicode's General_Category property table, used only
 /// to test membership in `Cf` (Format) below. `new()` is `const` and the
 /// handle is `Copy` (a pointer into the data `icu_properties` bakes into the
@@ -510,6 +564,54 @@ pub enum SyncMessage {
         /// first pair and the peer's first outbound dial.
         #[serde(default)]
         device_name: Option<String>,
+        /// #4380 — the device id the sender states for **itself**.
+        ///
+        /// `heads` carries every device frontier the sender holds (#2481),
+        /// ordered by `device_id` (`get_local_heads`'s `ORDER BY d.device_id`),
+        /// so before this field the only thing a responder could do with them
+        /// was take the first non-self entry — *the lowest-sorting device id in
+        /// the peer's op log*. Device ids are v4 UUIDs, so in a three-device
+        /// vault that is the peer's own id only about half the time, and the
+        /// responder's TOFU bind then pinned the joiner's key to another
+        /// device's row: permanent state, invisible to the user, with no attacker
+        /// involved. This field is the peer saying which one it is.
+        ///
+        /// **It is a claim, exactly as `heads` is** — nothing signs it, and the
+        /// responder must not read it as authorization. It grants a peer no
+        /// reach it did not already have: `heads` is unauthenticated wire data
+        /// too, so anything a hostile peer could state here it could equally
+        /// have advertised as a head. What stops a claim from doing damage is
+        /// unchanged and elsewhere — the #855 passphrase proof to get in at all,
+        /// `peer_is_bound_to_another_key` at the bind, and #4230's guard on the
+        /// session's bookkeeping. What this field changes is the *honest* case,
+        /// which is the one that was broken.
+        ///
+        /// `#[serde(default)]` (→ `None`) for wire back-compat, exactly as
+        /// `pairing_proof` and `device_name` above: a peer predating this field
+        /// omits it, and the responder falls back to the pre-#4380 heads-derived
+        /// guess — refusing the bind outright when the heads are *provably*
+        /// ambiguous (more than one non-self frontier) rather than binding one
+        /// at random. A peer predating this field that *receives* it ignores the
+        /// unknown key; this enum carries no `deny_unknown_fields`.
+        ///
+        /// Normalised on receive by [`accept_stated_device_id`], which rejects
+        /// rather than truncates — see there for why an id is not display text.
+        ///
+        /// Initiator-only, because `HeadExchange` is. The responder does not
+        /// need the reverse direction: the initiator dialled a peer it had
+        /// already resolved to a `peer_id`, so it never had to guess.
+        ///
+        /// **Not the S-5 lock key, and not a retraction of #3511.**
+        /// `threat-model.md` records "a `#[serde(default)]` `device_id` on
+        /// `HeadExchange`" as a *rejected* fix for the asymmetric per-peer lock,
+        /// on the grounds that it arrives after the connection is accepted and
+        /// the responder needs a lock key before then. That reasoning is intact
+        /// and this field does not touch it: the lock still keys on
+        /// `EndpointId` (`sync_daemon::peer_lock_key`). This field is read at the
+        /// *bind*, which happens after the session ends, where "arrives with the
+        /// first frame" is early enough by a wide margin.
+        #[serde(default)]
+        sender_device_id: Option<String>,
     },
     /// Loro-CRDT-based sync wire envelope.
     ///

@@ -650,6 +650,7 @@ fn sync_message_serde_roundtrip() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         },
         SyncMessage::LoroSync {
             msg: agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
@@ -761,6 +762,7 @@ async fn orchestrator_rejects_incompatible_engine_format() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await;
 
@@ -816,6 +818,7 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
                 op_log_batch_chunked: false,
                 pairing_proof: None,
                 device_name: None,
+                sender_device_id: None,
             })
             .await
             .unwrap_or_else(|e| {
@@ -1110,6 +1113,7 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await;
     assert!(
@@ -1224,6 +1228,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await;
 
@@ -1329,6 +1334,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await;
     assert!(
@@ -1499,6 +1505,7 @@ async fn orchestrator_uses_cert_cn_identity_over_advertised_heads_2481() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await;
 
@@ -1543,6 +1550,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await;
 
@@ -1621,6 +1629,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .unwrap();
@@ -1738,6 +1747,7 @@ async fn issue4096_short_circuit_writes_no_row_when_peer_is_unidentified() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .expect(
@@ -1864,6 +1874,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
         op_log_batch_chunked: false,
         pairing_proof: None,
         device_name: None,
+        sender_device_id: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
@@ -1943,6 +1954,7 @@ fn json_shape_head_exchange_matches_wire_format() {
         op_log_batch_chunked: false,
         pairing_proof: None,
         device_name: None,
+        sender_device_id: None,
     };
     let json: serde_json::Value =
         serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
@@ -1978,6 +1990,7 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
             op_log_batch_chunked,
             pairing_proof,
             device_name,
+            sender_device_id,
         } => {
             assert_eq!(heads.len(), 1, "heads must round-trip");
             assert!(
@@ -2006,6 +2019,15 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
                  peer predating the field says nothing about what it is called, which \
                  must read as 'no name supplied' — the receiver then keeps whatever \
                  name it already had rather than clearing the row to an empty string"
+            );
+            assert!(
+                sender_device_id.is_none(),
+                "a missing sender_device_id field must default to None (#4380 old-peer). \
+                 This is the whole of the compatibility story for #4380: a peer predating \
+                 the field must still PARSE here, because a parse failure would end \
+                 pairing with an older device rather than degrade it. `None` is what \
+                 routes the responder back to the pre-#4380 heads-derived guess — and, \
+                 at the bind, to refusing an ambiguous one"
             );
         }
         other => panic!("expected HeadExchange, got {other:?}"),
@@ -2048,6 +2070,7 @@ fn json_shape_all_variants_have_type_tag() {
                 op_log_batch_chunked: false,
                 pairing_proof: None,
                 device_name: None,
+                sender_device_id: None,
             },
         ),
         (
@@ -2190,6 +2213,7 @@ fn serde_roundtrip_empty_heads() {
         op_log_batch_chunked: false,
         pairing_proof: None,
         device_name: None,
+        sender_device_id: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
     let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
@@ -2236,6 +2260,7 @@ fn serde_roundtrip_many_heads() {
         op_log_batch_chunked: false,
         pairing_proof: None,
         device_name: None,
+        sender_device_id: None,
     };
     let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
     let deser: SyncMessage =
@@ -2381,6 +2406,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await;
     assert!(
@@ -2478,6 +2504,7 @@ async fn handle_message_emits_within_sync_msg_span() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await;
 
@@ -2528,6 +2555,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .expect("HeadExchange must not error under the engine path");
@@ -3945,6 +3973,7 @@ async fn streamer_appends_op_log_batch_for_capable_peer_2481() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .unwrap();
@@ -3999,6 +4028,7 @@ async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .unwrap();
@@ -4053,6 +4083,7 @@ async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
             op_log_batch_chunked: true,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .unwrap();
@@ -4105,6 +4136,7 @@ async fn streamer_skips_oversized_op_record_for_chunked_incapable_peer_2593() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .unwrap();
@@ -4143,6 +4175,7 @@ async fn streamer_rejects_inbound_op_log_batch_2481() {
             op_log_batch_chunked: false,
             pairing_proof: None,
             device_name: None,
+            sender_device_id: None,
         })
         .await
         .unwrap();
@@ -5009,6 +5042,7 @@ async fn certless_session_still_resolves_the_peer_from_heads_4085() {
         op_log_batch_chunked: false,
         pairing_proof: None,
         device_name: None,
+        sender_device_id: None,
     })
     .await
     .unwrap();
@@ -5038,6 +5072,7 @@ fn head_exchange_round_trips_the_device_name_4298() {
         op_log_batch_chunked: true,
         pairing_proof: None,
         device_name: Some("javier-thinkpad".into()),
+        sender_device_id: None,
     };
 
     let json = serde_json::to_string(&msg).expect("HeadExchange must serialize");
@@ -5306,4 +5341,200 @@ async fn orchestrator_start_advertises_the_clamped_local_device_name_4298() {
     }
 
     materializer.shutdown();
+}
+
+// ── #4380: the joiner states its own device id ──────────────────────
+//
+// `get_local_heads` is `ORDER BY d.device_id`, and since #2481 a peer advertises
+// the frontier of every device it holds — so "the first non-self head" is *the
+// lowest-sorting device id in the peer's op log*, which is the peer's own id
+// only by coincidence. These tests cover the wire field that replaces the
+// coincidence, and its normalisation. The bind that used to make the
+// coincidence permanent is covered in `sync_daemon::tests` (#4380), because it
+// needs the real admission path.
+
+/// The normaliser accepts a real device id, trims, and **rejects** — never
+/// truncates — anything it cannot use whole.
+///
+/// The rejection half is the load-bearing one and is the reason this is not
+/// `clamp_device_name`. A truncated *name* is still recognisably the same name;
+/// a truncated *id* is a different id, naming a different `peer_refs` row. A
+/// clamp here would manufacture the exact mis-bind #4380 exists to close, out of
+/// a value that had at least announced itself as malformed.
+#[test]
+fn accept_stated_device_id_rejects_rather_than_truncating_4380() {
+    let real = "e3d48f0a-45a0-4c9e-9a4b-1f2e3d4c5b6a";
+    assert_eq!(
+        accept_stated_device_id(real).as_deref(),
+        Some(real),
+        "a canonical v4 UUID — what `get_or_create_device_id` produces — must survive"
+    );
+    assert_eq!(
+        accept_stated_device_id("  JOIN4380 \n").as_deref(),
+        Some("JOIN4380"),
+        "surrounding whitespace is not part of an id"
+    );
+
+    assert_eq!(accept_stated_device_id(""), None, "an empty id is no id");
+    assert_eq!(
+        accept_stated_device_id("   \t "),
+        None,
+        "a whitespace-only id is no id"
+    );
+
+    // The cap, from both sides, so this pins a boundary rather than "long is
+    // refused". Without the accepted arm, a normaliser that refused everything
+    // would pass the refused arm.
+    let at_cap = "d".repeat(MAX_DEVICE_ID_CHARS);
+    assert_eq!(
+        accept_stated_device_id(&at_cap).as_deref(),
+        Some(at_cap.as_str()),
+        "exactly at the cap is usable whole, so it is accepted"
+    );
+    let over_cap = "d".repeat(MAX_DEVICE_ID_CHARS + 1);
+    assert_eq!(
+        accept_stated_device_id(&over_cap),
+        None,
+        "one over the cap must be REFUSED, not shortened to the cap: a shortened id \
+         is a different id, and binding a peer's key to it is precisely the permanent \
+         mis-bind this issue is about"
+    );
+
+    // Display-hostile scalars, for the same reason `clamp_device_name` strips
+    // them: an id reaches the device list too. Stripping is not an option here
+    // (see above), so the whole value is refused.
+    assert_eq!(
+        accept_stated_device_id("JOIN\u{202E}4380"),
+        None,
+        "a bidi override inside an id must refuse the id, not silently remove it and \
+         bind the remainder"
+    );
+    assert_eq!(
+        accept_stated_device_id("JOIN\u{0000}4380"),
+        None,
+        "…and so must a control character"
+    );
+}
+
+/// `start()` states this device's own id, which is the only place it is known
+/// for certain.
+///
+/// The control is the *value*: asserting merely that the field is `Some`
+/// would pass for an orchestrator that stated the peer's id, the empty string,
+/// or a constant. The id under test is deliberately not one that could be
+/// derived from the (empty) op log, so the only way to produce it is to have
+/// read `self.device_id`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_start_states_this_devices_own_id_4380() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // An op authored by a LOWER-sorting device, and none of our own: exactly the
+    // #4380 shape, and it makes `heads` disagree with the stated id.
+    append_local_op_at(&pool, "AAAA-foreign", test_create_payload("B1"), FIXED_TS)
+        .await
+        .unwrap();
+
+    let mut orchestrator =
+        SyncOrchestrator::new(pool.clone(), "MMMM-local".into(), materializer.clone());
+    match orchestrator.start().await.unwrap() {
+        SyncMessage::HeadExchange {
+            sender_device_id,
+            heads,
+            ..
+        } => {
+            assert_eq!(
+                sender_device_id.as_deref(),
+                Some("MMMM-local"),
+                "the sender must state its OWN device id"
+            );
+            assert_eq!(
+                heads
+                    .iter()
+                    .map(|h| h.device_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["AAAA-foreign"],
+                "fixture control: the advertised heads name only the FOREIGN device, so \
+                 a `sender_device_id` derived from them could not have produced the \
+                 assertion above"
+            );
+        }
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+
+    materializer.shutdown();
+}
+
+/// The receiver prefers the stated id over the lowest-sorting head, and falls
+/// back to the head only for a peer too old to state one.
+///
+/// Both arms run against the SAME `heads`, in which the foreign device sorts
+/// first — so the two results differ only by the field under test, and the
+/// legacy arm doubles as a demonstration of the defect: it is what every peer
+/// got before this field existed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn head_exchange_identifies_the_peer_by_its_stated_id_4380() {
+    async fn identified_as(sender_device_id: Option<&str>) -> String {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        // No `with_expected_remote_id`: this is the responder's pairing branch,
+        // where no bound row exists to resolve the key against and the claim is
+        // all there is.
+        let mut orch = SyncOrchestrator::new(pool, "HOST-4380".into(), materializer.clone());
+        orch.handle_message(SyncMessage::HeadExchange {
+            // Ordered as `get_local_heads` emits them: `ORDER BY d.device_id`.
+            heads: vec![
+                DeviceHead {
+                    device_id: "AAAA-foreign".into(),
+                    seq: 1,
+                    hash: "h".into(),
+                },
+                DeviceHead {
+                    device_id: "MMMM-joiner".into(),
+                    seq: 1,
+                    hash: "h".into(),
+                },
+            ],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: sender_device_id.map(str::to_owned),
+        })
+        .await
+        .unwrap();
+        let id = orch.session().remote_device_id.clone();
+        materializer.shutdown();
+        id
+    }
+
+    assert_eq!(
+        identified_as(Some("MMMM-joiner")).await,
+        "MMMM-joiner",
+        "#4380: the peer said which device it is, and it is NOT the one its heads sort \
+         first — the stated id must win"
+    );
+    assert_eq!(
+        identified_as(None).await,
+        "AAAA-foreign",
+        "the pre-#4380 behaviour, preserved for a peer that states nothing: the \
+         lowest-sorting head. This arm is the defect, kept as a control — the assertion \
+         above is only meaningful because this one shows what the same frame yields \
+         without the field"
+    );
+    assert_eq!(
+        identified_as(Some("   ")).await,
+        "AAAA-foreign",
+        "an unusable stated id is not a stated id: it falls back rather than keying the \
+         session on whitespace"
+    );
+    assert_eq!(
+        identified_as(Some("HOST-4380")).await,
+        "AAAA-foreign",
+        "and a peer stating OUR OWN id is refused the claim here too. The daemon rejects \
+         that session as `Rejection::Self_` before this core sees it; this pins the \
+         cert-less path, where taking it verbatim would key bookkeeping on our own row"
+    );
 }
