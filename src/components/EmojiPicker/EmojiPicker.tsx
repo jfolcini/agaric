@@ -582,17 +582,21 @@ function SkinToneSelector({ value, onChange, tonable }: SkinToneSelectorProps) {
   // declared role="radiogroup" but every swatch was its own tab stop with no
   // key handlers; reuse the shared toolbar-pattern hook (same as the category
   // tablist) so Tab lands once and arrows move between swatches.
-  const roving = useRovingTabindex()
+  // #4406 — destructure before use: oxlint's react(refs) rule flags a member
+  // expression passed directly to `ref=`/handler props as "accessing a ref
+  // during render" (syntax-only check, blind to the actual property type).
+  // Binding to local identifiers first satisfies it with no behaviour change.
+  const { containerRef, onKeyDown: rovingOnKeyDown, onFocus: rovingOnFocus } = useRovingTabindex()
   return (
     <div
-      ref={roving.containerRef}
+      ref={containerRef}
       role="radiogroup"
       aria-label={t('emojiPicker.skinTone')}
       className="flex items-center gap-0.5"
       // Not a tab stop itself; the roving tab moves the single tabindex 0.
       tabIndex={-1}
-      onKeyDown={roving.onKeyDown}
-      onFocus={roving.onFocus}
+      onKeyDown={rovingOnKeyDown}
+      onFocus={rovingOnFocus}
     >
       {SKIN_TONES.map((tone) => {
         const label = t(tone.labelKey)

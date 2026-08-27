@@ -28,15 +28,17 @@ function Harness({
   withDisabled?: boolean
   withHiddenSentinel?: boolean
 }): React.ReactElement {
-  const roving = useRovingTabindex()
+  // #4406 — destructure before use: a member expression passed directly to
+  // `ref=`/handler props trips oxlint's react(refs) rule (syntax-only check).
+  const { containerRef, onKeyDown, onFocus } = useRovingTabindex()
   return (
     <div
       tabIndex={-1}
       role="toolbar"
       aria-label="test"
-      ref={roving.containerRef}
-      onKeyDown={roving.onKeyDown}
-      onFocus={roving.onFocus}
+      ref={containerRef}
+      onKeyDown={onKeyDown}
+      onFocus={onFocus}
     >
       <button type="button" data-testid="b0">
         zero
@@ -148,14 +150,15 @@ describe('useRovingTabindex', () => {
   })
 
   function ResizableHarness(): React.ReactElement {
-    const roving = useRovingTabindex()
+    // #4406 — destructure before use (see Harness above).
+    const { containerRef } = useRovingTabindex()
     const [count, setCount] = useState(1)
     return (
       <div>
         <button type="button" data-testid="add" onClick={() => setCount((c) => c + 1)}>
           add
         </button>
-        <div role="toolbar" aria-label="resizable" ref={roving.containerRef}>
+        <div role="toolbar" aria-label="resizable" ref={containerRef}>
           {Array.from({ length: count }, (_, i) => (
             <button type="button" key={i} data-testid={`t${i}`}>
               {i}

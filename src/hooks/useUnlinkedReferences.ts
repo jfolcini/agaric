@@ -252,6 +252,14 @@ export function useUnlinkedReferences(
   // claims there is nothing — `UnlinkedReferences` renders an explicit error +
   // Retry for that case instead.
   const countIdentity = useMemo(() => JSON.stringify(queryKeyPrefix), [queryKeyPrefix])
+  // #4406 — `carriedRef` is written AND read within this same render (never
+  // from an effect), matching the "ref written and read during the same
+  // render" exception in docs/architecture/frontend.md § Latest-value
+  // mirrors: moving the write into an effect would leave the very render
+  // that needs the carried count reading a stale (pre-write) value one
+  // commit late, defeating the whole point of the carry (see the #3733/#3738
+  // notes above). oxlint's react(refs) finding on it is deliberately left
+  // open rather than restructured or suppressed.
   const carriedRef = useRef<{
     identity: string
     total: number

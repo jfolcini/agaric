@@ -275,14 +275,20 @@ export function SelectionBubbleMenu({
   // WAI-ARIA toolbar roving-tabindex model (#1724): one tab stop, Arrow/Home/End
   // move focus between the mark/link buttons. BubbleMenu forwards ref + DOM
   // handlers to its container div.
-  const roving = useRovingTabindex()
+  // #4406 — `ref`/handler props must be plain identifiers, not member
+  // expressions: oxlint's react(refs) rule treats a member access passed
+  // directly to `ref=` as "accessing a ref during render" regardless of
+  // whether the property actually holds a ref object at all (it's a
+  // syntax-only check). Destructuring first satisfies the rule with no
+  // behaviour change — same values, bound to local names before use.
+  const { containerRef, onKeyDown: rovingOnKeyDown, onFocus: rovingOnFocus } = useRovingTabindex()
 
   return (
     <BubbleMenu
       tabIndex={-1}
-      ref={roving.containerRef}
-      onKeyDown={roving.onKeyDown}
-      onFocus={roving.onFocus}
+      ref={containerRef}
+      onKeyDown={rovingOnKeyDown}
+      onFocus={rovingOnFocus}
       editor={editor}
       // #1958 — open the bubble BELOW the selection (end/last line) rather than
       // above it. The always-visible FormattingToolbar sits at the top edge of

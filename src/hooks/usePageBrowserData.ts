@@ -257,6 +257,14 @@ export function usePageBrowserData({
   // error path, leaving the prior `items` untouched (stale-while-revalidate).
   // We reproduce that by retaining the last successfully-flattened list; a
   // genuinely empty *valid* response (`{ items: [], … }`) still clears it.
+  // #4406 — a `useMemo` cache: `lastGoodPagesRef` is both written and read
+  // inside this same memo, within the same render (docs/architecture/
+  // frontend.md § Latest-value mirrors' "different hazard" bucket — a ref
+  // written and read during the same render, not a mirror candidate).
+  // Moving the write to an effect would empty the cache exactly when a
+  // malformed response needs it read back on THIS render. `pages` itself,
+  // and the returned object below, carry the same finding downstream by
+  // construction. Left open rather than restructured.
   const lastGoodPagesRef = useRef<(BlockRow | PageWithMetadataRow)[]>([])
   const pages = useMemo<(BlockRow | PageWithMetadataRow)[]>(() => {
     const raw = data?.pages

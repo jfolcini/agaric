@@ -53,11 +53,19 @@ interface SelectProps {
 
 export function Select({ value, onValueChange, disabled, children }: SelectProps) {
   const triggerPropsRef = useRef<TriggerProps>({})
+  /* oxlint-disable react/refs -- test mock: `ctx` carries `triggerPropsRef`
+     (a real ref) down to SelectTrigger/SelectContent so they can hand off
+     captured props synchronously within one render pass (see the
+     `react/immutability` disable on SelectTrigger below for the full
+     rationale). Every downstream reference to `ctx` in this function is
+     tainted by that ref for the same reason and shares the same safety
+     argument; not a pattern used in production code (#4409). */
   const ctx: SelectCtx = { triggerPropsRef }
   if (value !== undefined) ctx.value = value
   if (onValueChange !== undefined) ctx.onValueChange = onValueChange
   if (disabled !== undefined) ctx.disabled = disabled
   return createElement(Ctx.Provider, { value: ctx }, children)
+  /* oxlint-enable react/refs */
 }
 
 interface SelectTriggerProps {

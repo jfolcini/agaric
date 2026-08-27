@@ -66,7 +66,11 @@ export function ImageResizeToolbar({
   onAlignmentChange: (alignment: ImageAlignment) => void
 }): React.ReactElement {
   const { t } = useTranslation()
-  const roving = useRovingTabindex()
+  // #4406 — destructure before use: oxlint's react(refs) rule flags a member
+  // expression passed directly to `ref=`/handler props as "accessing a ref
+  // during render" (syntax-only check, blind to the actual property type).
+  // Binding to local identifiers first satisfies it with no behaviour change.
+  const { containerRef, onKeyDown: rovingOnKeyDown, onFocus: rovingOnFocus } = useRovingTabindex()
 
   const handleClick = useCallback(
     (value: string) => {
@@ -115,9 +119,9 @@ export function ImageResizeToolbar({
   return (
     <div
       tabIndex={-1}
-      ref={roving.containerRef}
-      onKeyDown={roving.onKeyDown}
-      onFocus={roving.onFocus}
+      ref={containerRef}
+      onKeyDown={rovingOnKeyDown}
+      onFocus={rovingOnFocus}
       className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-10 flex items-center gap-1 rounded-full bg-popover border border-border shadow-(--shadow-floating) px-2 py-1"
       role="toolbar"
       aria-label={t('imageResize.toolbar')}
