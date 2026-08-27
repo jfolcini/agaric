@@ -41,7 +41,7 @@ Reference the token, don't reinvent the value. The tokens themselves are defined
 
 - **`useIsMobile`** initialises synchronously (reads `window.innerWidth` on first render) to prevent a frame of desktop layout before the switch.
 - **`100dvh`, not `100vh`.** Mobile chrome makes `100vh` taller than the visible area.
-- **Safe-area insets** matter on mobile (`env(safe-area-inset-bottom)` etc.) — use them for any bottom-pinned element.
+- **Safe-area insets** matter on mobile — use them for any bottom-pinned element, and read `var(--safe-area-bottom)` rather than `env(safe-area-inset-bottom)` directly. `index.css` declares the four `--safe-area-*` variables with `env()` as their fallback, so going through the variable keeps one definition site; on Android the webview is inset natively (`MainActivity.kt`) and `env()` is legitimately `0px`.
 - **DnD sensors split by pointer type.** Desktop = distance threshold (start drag immediately on a few pixels of movement). Touch = delay threshold (250 ms hold) — otherwise every scroll gesture would start a drag.
 - **Long-press** for mobile context menus is owned by `useBlockTouchLongPress` (`src/components/block-tree/use-block-touch-long-press.ts`). The delay + move-tolerance constants are there.
 - **`onPointerDown`, never `onMouse*`.** Mouse events don't fire on touch. Toolbar/popover handlers must also `e.preventDefault()` so focus stays in the editor.

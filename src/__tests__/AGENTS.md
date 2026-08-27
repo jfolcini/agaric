@@ -35,8 +35,11 @@ npx vitest run -t "splitBlock" # one name pattern
 npm run test:e2e               # playwright — builds and serves the app itself
 npm run test:e2e:ui            # playwright interactive UI
 npm run test:e2e-tauri         # WebdriverIO against the real Tauri binary (weekly CI)
+npm run test:e2e-android       # adb against a CONNECTED device — manual, never run by CI
 npm run mutation               # Stryker mutation run (stryker.config.mjs)
 ```
+
+**`test:e2e-android` is manual.** [`scripts/android-e2e-safe-area.mjs`](../../scripts/android-e2e-safe-area.mjs) drives a real device over `adb` (system-bar insets and the tappability of the mobile header hamburger, #4301) — something no browser or jsdom environment can observe. It needs a connected, unlocked device or emulator, so **no workflow invokes it**: the regression it covers is documented, not pinned. Run it by hand after touching `MainActivity.kt` or the mobile header.
 
 Coverage include/exclude globs and the CI-gating thresholds both live in [`vitest.config.ts`](../../vitest.config.ts) — that block is the single source of truth (#749). Read it rather than copying numbers here.
 

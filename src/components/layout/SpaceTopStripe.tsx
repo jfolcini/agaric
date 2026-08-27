@@ -15,19 +15,13 @@
  * `SpaceAccentBadge` (collapsed rail), and the OS window title
  * (`<SpaceName> · Agaric`). The stripe is a *visual* anchor only.
  *
- * Android safe-area: the body has `padding-top:
- * var(--safe-area-top)`, but `position: fixed` is relative to
- * the viewport — not the body — so a bare `top-0` would render
- * behind the OS status bar. Pinning to `var(--safe-area-top)`
- * (which resolves to `0` on desktop) lets the stripe clear the inset
- * everywhere. Mirrors the pattern already used by App.tsx for the
- * bottom inset (`pb-[calc(1rem+var(--safe-area-bottom))]`).
- *
- * Read the VARIABLE, not `env(safe-area-inset-top)` directly: Android's
- * WebView reports `env()` for display cutouts only and never for the status
- * bar, so `index.css` declares these variables with `env()` as their fallback
- * and `MainActivity.kt` overrides them with the real insets (#4301). Using
- * `env()` here would opt this element back out of that fix.
+ * Safe-area: the body has `padding-top: var(--safe-area-top)`, but
+ * `position: fixed` is relative to the viewport — not the body — so a bare
+ * `top-0` would render behind an iOS notch. Pinning to `var(--safe-area-top)`
+ * (which resolves to `0` on desktop, and on Android, where the webview is
+ * already inset natively) lets the stripe clear the inset everywhere. Mirrors
+ * the pattern already used by App.tsx for the bottom inset
+ * (`pb-[calc(1rem+var(--safe-area-bottom))]`).
  */
 
 import type React from 'react'

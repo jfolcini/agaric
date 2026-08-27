@@ -10,7 +10,7 @@
   ],
   "project": ["src/**/*.{ts,tsx}"],
   "ignore": ["src/lib/bindings.ts"],
-  "ignoreBinaries": ["taplo", "rustc"],
+  "ignoreBinaries": ["taplo", "rustc", "adb"],
   "ignoreDependencies": [
     "tailwindcss",
     "markdownlint-cli2",

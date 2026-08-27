@@ -48,11 +48,17 @@ describe('QuickCaptureFab', () => {
     // bottom-right column with this FAB. A ~1rem offset (the value #1747 tried)
     // floats the size-14 FAB over that toolbar and swallows the "More" tap
     // (caught by the `formatting-toolbar-mobile` e2e). The offset must stay at
-    // 5rem (80px) so the FAB clears the 47px toolbar, stacked on the iOS
-    // home-indicator inset.
+    // 5rem (80px) so the FAB clears the 47px toolbar, stacked on the bottom
+    // safe-area inset.
+    //
+    // The VARIABLE, not `env()` directly — same convention as
+    // `App.test.tsx`'s main-content-viewport assertion: `index.css` is the
+    // one definition site for `--safe-area-*`, and every consumer, this FAB
+    // included, reads the variable rather than `env()` directly.
     render(<QuickCaptureFab setQuickCaptureOpen={vi.fn()} />)
     const fab = screen.getByTestId('quick-capture-fab')
-    expect(fab.className).toContain('bottom-[calc(5rem+env(safe-area-inset-bottom))]')
+    expect(fab.className).toContain('bottom-[calc(5rem+var(--safe-area-bottom))]')
+    expect(fab.className).not.toContain('env(safe-area-inset-bottom)')
   })
 
   it('is an accessible, labelled button', () => {
