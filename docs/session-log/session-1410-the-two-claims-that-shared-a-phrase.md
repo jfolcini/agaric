@@ -128,6 +128,32 @@ the claim. Leaving the phrase in place would have preserved the ambiguity that g
 the over-broad note in the first place, which is a strange thing for a PR about that
 ambiguity to do.
 
+## And then the guard's name lied too
+
+A second review round found five more, and the one worth recording is the name.
+`isDirectiveFirstStatement` had just been corrected to accept a directive anywhere in the
+prologue — its docstring said so — while the name went on asserting the rule the same
+change had disproved. A reader who greps the name and does not read the body reproduces
+exactly the misreading this PR exists to correct, inside the file written to correct it.
+It is now `isDirectiveInPrologue`.
+
+The rest were the scanner's remaining unearned assumptions: `matchBracket` was quote-aware
+but not comment-aware, sixty lines above the parameter-list loop that had just been fixed
+for precisely that; the directive-literal scan ignored backslash escapes while its sibling
+handled them; the return-type skip covers a type that opens with a bracket but not a
+generic-wrapped one like `Promise<{ node: X }>`; and both helpers were exported from a test
+file with no importers — an invitation to exactly the reuse the documented limitation says
+is unsafe.
+
+The generic case was left unhandled and the docstring narrowed to what is actually covered,
+which is the honest version of the same fix. The exports were dropped.
+
+Three rounds on a fifty-line scanner is worth a note. None of it was gold-plating: every
+round found a case where the guard would have been red for a correct component, or green
+for a broken one. The pattern is that a hand-rolled scanner accumulates assumptions faster
+than its author notices, and the only reliable way to find them is to attack it with
+fixtures rather than to read it.
+
 ## What shipped
 
 - The `useRovingTabindex.test.tsx` comment, restated against what was measured.

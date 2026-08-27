@@ -29,11 +29,22 @@ import { describe, expect, it } from 'vitest'
  * 'versionMajorMinor']` — and `@babel/parser` is only a transitive
  * dependency of `@babel/core`, not one this repo declares directly.
  *
- * Also guards PR #4475's non-blocking review notes 1, 2, 3, and 4 on this
- * scanner itself: a same-name-prefixed sibling declaration ahead of the real
- * one, an inline object return type, a comment containing an apostrophe
+ * Also guards PR #4475's first-review non-blocking notes 1, 2, 3, and 4 on
+ * this scanner itself: a same-name-prefixed sibling declaration ahead of the
+ * real one, an inline object return type, a comment containing an apostrophe
  * inside the parameter list, and a directive prologue holding more than one
  * entry.
+ *
+ * A second review of the same PR then found the scanner's own fixes needed
+ * hardening: `matchBracket` wasn't comment-aware like its sibling loop
+ * (note 2), the literal scan ignored backslash escapes (note 3), the name
+ * `isDirectiveFirstStatement` contradicted the semantics note 4 above
+ * established — renamed to `isDirectiveInPrologue` (note 4), and the two
+ * helpers were exported with no importer (note 5, addressed by dropping the
+ * exports). Note 1 (a generic-wrapped return type such as
+ * `Promise<{ node: X }>`) is recorded as a known limit on
+ * `findFunctionBodyStart` rather than closed, since no such signature exists
+ * in this file's source today.
  */
 
 const COMPONENT_PATH = join(__dirname, '../SelectionBubbleMenu.tsx')
@@ -62,10 +73,10 @@ function skipTrivia(src: string, start: number): number {
 
 /**
  * Given `src[openIdx]` is one of `{`, `[`, or `(`, return the index just past
- * its matching close (bracket-depth and quote aware — any open bracket type
- * increments the same counter a matching close decrements, which is enough
- * for well-formed TS even when the group nests a different bracket kind
- * inside it). Returns -1 if the group is never closed.
+ * its matching close (bracket-depth, quote, and comment aware — any open
+ * bracket type increments the same counter a matching close decrements,
+ * which is enough for well-formed TS even when the group nests a different
+ * bracket kind inside it). Returns -1 if the group is never closed.
  */
 function matchBracket(src: string, openIdx: number): number {
   let depth = 0
@@ -78,6 +89,21 @@ function matchBracket(src: string, openIdx: number): number {
         continue
       }
       if (c === quote) quote = null
+      continue
+    }
+    // A comment inside the group is not string content: an apostrophe in
+    // `/* the node we don't own */` must not latch `quote` and start
+    // swallowing every real closing bracket looking for a `'` that could be
+    // found anywhere later in the source (#4475 note 2 — the same fix as
+    // the parameter-list loop below, applied here too).
+    if (c === '/' && src[k + 1] === '/') {
+      const nl = src.indexOf('\n', k)
+      k = nl === -1 ? src.length : nl
+      continue
+    }
+    if (c === '/' && src[k + 1] === '*') {
+      const end = src.indexOf('*/', k + 2)
+      k = end === -1 ? src.length : end + 1
       continue
     }
     if (c === '"' || c === "'" || c === '`') {
@@ -101,8 +127,22 @@ function matchBracket(src: string, openIdx: number): number {
  * annotation, and return the position right after the body's own opening
  * brace. Returns null if `functionName` isn't found as a function
  * declaration in `src`.
+ *
+ * Known limit, deliberately not closed (#4475 note 1): the return-type skip
+ * below only covers a brace-free type (`React.ReactElement`) or one whose
+ * FIRST character opens a `{`, `[`, or `(` group (an inline object type, a
+ * tuple type, a function type). It does NOT cover a generic-wrapped type
+ * whose type argument list itself contains a bracket (`Promise<{ node: X
+ * }>`, `Record<string, { a: 1 }>`) — there the character right after `:` is
+ * an identifier, not a bracket, so the skip never triggers and the fallback
+ * lands on the type's own brace instead of the body's, reading the wrong
+ * text. No such signature exists in this file's current source, and the
+ * failure is loud (a red assertion), never a silent pass — closing it needs
+ * a second, angle-bracket-aware scan, disproportionate for a guard that
+ * reads one known file. Revisit if this ever needs to model a
+ * generic-wrapped return type.
  */
-export function findFunctionBodyStart(src: string, functionName: string): number | null {
+function findFunctionBodyStart(src: string, functionName: string): number | null {
   const marker = `function ${functionName}`
   // A bare `indexOf` would match `function ${functionName}Header` too, since
   // that text starts with `marker` — silently scanning the WRONG function's
@@ -213,13 +253,13 @@ export function findFunctionBodyStart(src: string, functionName: string): number
  * just the first one). A REAL statement ahead of the run breaks it — the
  * silent regression #4469 documents — but another directive ahead of
  * `directiveText` (e.g. a leading `'use client'`) does not, so this walks
- * the whole run instead of only checking the very first token.
+ * the whole run instead of only checking the very first token. Named for
+ * that semantics rather than `isDirectiveFirstStatement` (this file's own
+ * prior name): the directive need not be first, only somewhere in the
+ * prologue, and a name asserting otherwise is the exact misreading this
+ * guard exists to correct (#4475 note 4).
  */
-export function isDirectiveFirstStatement(
-  src: string,
-  functionName: string,
-  directiveText: string,
-): boolean {
+function isDirectiveInPrologue(src: string, functionName: string, directiveText: string): boolean {
   const bodyStart = findFunctionBodyStart(src, functionName)
   if (bodyStart === null) {
     throw new Error(`Could not find \`function ${functionName}(...) { ... }\` in the given source`)
@@ -228,8 +268,20 @@ export function isDirectiveFirstStatement(
   for (;;) {
     const quote = src[i]
     if (quote !== '"' && quote !== "'") return false
-    const close = src.indexOf(quote, i + 1)
-    if (close === -1) return false
+    // Escape-aware, mirroring `matchBracket`: a bare `indexOf(quote, i + 1)`
+    // would treat an escaped quote (`\'`) inside a prologue entry as the
+    // literal's end, truncating the slice and resuming the walk mid-literal
+    // (#4475 note 3).
+    let close = i + 1
+    for (;;) {
+      if (close >= src.length) return false
+      if (src[close] === '\\') {
+        close += 2
+        continue
+      }
+      if (src[close] === quote) break
+      close++
+    }
     if (src.slice(i + 1, close) === directiveText) return true
     i = skipTrivia(src, close + 1)
     if (src[i] === ';') i = skipTrivia(src, i + 1)
@@ -237,9 +289,9 @@ export function isDirectiveFirstStatement(
 }
 
 describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #4471 note 3)`, () => {
-  it('is the first statement of the live component body', () => {
+  it('is in the live component body directive prologue', () => {
     const source = readFileSync(COMPONENT_PATH, 'utf8')
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
   })
 
   it('detector sanity: accepts a body where the directive genuinely leads', () => {
@@ -250,7 +302,7 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return ok
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
   })
 
   it('detector sanity: rejects a body where a statement precedes the directive', () => {
@@ -261,7 +313,7 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return t
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(false)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(false)
   })
 
   it('detector sanity: rejects a body whose leading string literal is not the directive', () => {
@@ -271,7 +323,7 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         'not the directive'
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(false)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(false)
   })
 
   it('does not mistake a same-name-prefixed sibling function for the real component (#4475 note 1)', () => {
@@ -287,7 +339,7 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return ok
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
   })
 
   it("does not confuse an inline object return type's brace for the body's (#4475 note 2)", () => {
@@ -297,7 +349,7 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return { node: null }
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
   })
 
   it('does not let an apostrophe inside a `//` comment in the parameter list swallow the real `)` (#4475 note 3)', () => {
@@ -310,7 +362,7 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return ok
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
   })
 
   it('does not let an apostrophe inside a `/* */` comment in the parameter list swallow the real `)` (#4475 note 3)', () => {
@@ -323,7 +375,29 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return ok
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+  })
+
+  it('does not let an apostrophe inside a comment in an inline object return type swallow the real `}` (#4475 second-review note 2)', () => {
+    const source = `
+      function ${COMPONENT_NAME}(props: Props): { /* the node we don't own */ node: React.ReactElement } {
+        '${DIRECTIVE}'
+        return { node: null }
+      }
+    `
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+  })
+
+  it('does not let an escaped quote inside a prologue entry end the literal scan early (#4475 second-review note 3)', () => {
+    const source = `
+      function ${COMPONENT_NAME}({ editor }: Props) {
+        'it\\'s a prologue entry, not the directive'
+        '${DIRECTIVE}'
+        const ok = 1
+        return ok
+      }
+    `
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
   })
 
   it('accepts the directive when another directive precedes it in the prologue (#4475 note 4)', () => {
@@ -335,7 +409,7 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return ok
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
   })
 
   it('still rejects the directive when a real statement interrupts the prologue ahead of it', () => {
@@ -347,7 +421,7 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return ok
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(false)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(false)
   })
 
   it('resolves correctly when the sibling-prefix, return-type, and comment fixes all apply together', () => {
@@ -364,6 +438,6 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
         return { node: null }
       }
     `
-    expect(isDirectiveFirstStatement(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
   })
 })
