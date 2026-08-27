@@ -628,12 +628,18 @@ jobs:
       # together at the end, so neither step depends on an assumption about
       # what the next gradle invocation leaves behind — a guard that reds
       # because its input vanished teaches nothing.
+      #
+      # `--stage=pre-zipalign` on both: ci.yml has no zipalign step at all,
+      # so a ZIP-offset finding here is AGP's own packaging, not something
+      # any step below can fix — the guard's remediation text says so
+      # instead of pointing at release.yml's signing step (#4425 review
+      # notes 2 and 3).
       - name: Assert 16 KB page alignment (x86_64 debug APK) (#4425)
         shell: bash
         run: |
           set -uo pipefail
           rc=0
-          node scripts/check-android-so-alignment.mjs \
+          node scripts/check-android-so-alignment.mjs --stage=pre-zipalign \
             src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
             || rc=$?
           # The guard's contract is 0 clean / 2 finding / 3 verified-nothing.
@@ -662,7 +668,7 @@ jobs:
         run: |
           set -uo pipefail
           rc=0
-          node scripts/check-android-so-alignment.mjs \
+          node scripts/check-android-so-alignment.mjs --stage=pre-zipalign \
             src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk \
             || rc=$?
           case "$rc" in

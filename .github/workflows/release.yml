@@ -1753,12 +1753,16 @@ jobs:
       # keystore, so a regression in the `-Wl,-z,max-page-size=16384` flag
       # src-tauri/build.rs emits fails the release without ever touching the
       # signing secrets, and is attributed to the link rather than to zipalign.
+      # `--stage=pre-zipalign`: this file has not been through zipalign yet
+      # (that happens in "Sign Android APK" below), so a ZIP-offset finding
+      # here is AGP's own packaging, not something zipalign getting rerun
+      # would fix (#4425 review notes 2 and 3).
       - name: Assert 16 KB page alignment before signing (#4425)
         shell: bash
         run: |
           set -uo pipefail
           rc=0
-          node scripts/check-android-so-alignment.mjs \
+          node scripts/check-android-so-alignment.mjs --stage=pre-zipalign \
             src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk \
             || rc=$?
           # 0 clean / 2 finding / 3 verified-nothing. `1` is node's own crash
@@ -1841,30 +1845,43 @@ jobs:
             # is ephemeral, but no reason to leave the .jks readable for
             # the rest of the job.
             shred -u "$keystore" 2>/dev/null || rm -f "$keystore"
+            stage=post-zipalign
           else
             echo "ANDROID_KEYSTORE_BASE64 secret is not set — staging unsigned APK."
             echo "Add ANDROID_KEYSTORE_BASE64 / _PASSWORD / KEY_ALIAS / KEY_PASSWORD"
             echo "secrets in repo Settings → Secrets and variables → Actions to enable signing."
             dest="$RUNNER_TEMP/agaric-${GITHUB_REF_NAME}-android-aarch64-unsigned.apk"
             cp "$src" "$dest"
+            # No keystore secret means no zipalign either — `$dest` above is
+            # a byte-for-byte copy of the pre-signing `$src`, so the guard
+            # below is looking at the SAME pre-zipalign bytes as the check
+            # above, not a signed/aligned asset (#4425 review notes 2 and 3).
+            stage=pre-zipalign
           fi
 
           echo "apk=$dest" >> "$GITHUB_OUTPUT"
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
 
       # #4425 — second alignment assertion, on the EXACT bytes that get
       # attested and uploaded. The pre-signing check above cannot cover
       # zipalign + apksigner, which run after it and are what decide where the
       # stored .so lands inside the archive; this one re-reads the staged file
       # so neither half of 16 KB compatibility can be lost between the link and
-      # the release asset.
+      # the release asset. `$STAGE` (from the "Sign Android APK" step's
+      # `stage` output) tells the guard whether that step actually zipaligned
+      # this file (keystore secret present) or only copied the unsigned,
+      # pre-zipalign bytes through unchanged (no keystore secret) — the two
+      # branches leave the guard looking at different artifacts, and the
+      # remediation text needs to know which (#4425 review notes 2 and 3).
       - name: Assert 16 KB page alignment of the release asset (#4425)
         shell: bash
         env:
           APK: ${{ steps.sign_apk.outputs.apk }}
+          STAGE: ${{ steps.sign_apk.outputs.stage }}
         run: |
           set -uo pipefail
           rc=0
-          node scripts/check-android-so-alignment.mjs "$APK" || rc=$?
+          node scripts/check-android-so-alignment.mjs "--stage=$STAGE" "$APK" || rc=$?
           case "$rc" in
             0) ;;
             2) echo "::error::The staged release APK is NOT 16 KB-aligned (#4425) — see the guard output above. It must not be published."

@@ -51,8 +51,12 @@ fn main() {
 /// printing `0x4000`; `scripts/check-android-so-alignment.mjs` asserts it in
 /// CI so this cannot regress silently again.
 fn android_16kb_page_alignment() {
-    // Cargo re-runs this script when it changes; make that explicit, since
-    // emitting any `cargo::` instruction suppresses the default heuristic.
+    // `tauri_build::build()` below already emits its own `cargo:rerun-if-changed`
+    // instructions (for `tauri.conf.json`, the gradle scaffold, etc.), which
+    // means cargo's default "rerun if anything in the package changed"
+    // heuristic was ALREADY off before this function existed. Without this
+    // line, editing this file alone — the only file this function reads —
+    // would not trigger a rebuild, since nothing else names it.
     println!("cargo::rerun-if-changed=build.rs");
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
