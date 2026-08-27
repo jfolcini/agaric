@@ -3468,7 +3468,11 @@ stages = ["pre-commit"]
 # deleted each other's database mid-`prepare --check` and produced a
 # spurious Phase E failure blaming sqlx. The fixture suite asserts the
 # per-invocation allocation and cleanup, plus a ratchet that fails if the
-# fixed path ever comes back. Fast: exercised before the verifier body.
+# fixed path ever comes back. Also runs the #4419/#4424 divergence
+# ratchet, which checks every tracked path against two regexes via a
+# fixed handful of `grep`+`comm` processes rather than one grep pair per
+# file, so it stays fast at this repo's tree size. Fast: exercised before
+# the verifier body.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

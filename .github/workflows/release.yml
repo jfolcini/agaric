@@ -171,6 +171,32 @@ jobs:
         # that cannot serve the index no longer reds this job as a code
         # failure; the INSTALL decides. Measured trace + exit codes in
         # .github/actions/apt-install/action.yml.
+        #
+        # CONFIRMED on a noble host (2026-08-27), not inferred from the
+        # package description: `dpkg -S /usr/bin/dbus-run-session` answers
+        # `dbus-daemon: /usr/bin/dbus-run-session` on ubuntu 24.04, the same
+        # release the runner image uses. Review of #4424 suspected the
+        # binary had moved to `dbus-bin` in the noble source split; it has
+        # not. `dbus-bin` exists (1.14.10-4ubuntu4.1) but does not own it.
+        #
+        # `dbus-run-session` lives here, in `dbus-daemon` (pinned below), NOT
+        # in `dbus-x11`. Verified against the noble package index and this
+        # runner's own image: `dbus-x11` ships only `dbus-launch`
+        # (`/usr/bin/dbus-launch`) and reaches `dbus-run-session` only
+        # transitively, via `Depends: dbus-bin (= …), dbus-daemon (= …)`.
+        # Pin `dbus-daemon` directly so the guarantee is the package that
+        # actually contains the binary, not a dependency edge of a package
+        # we'd otherwise pull in for no reason (nothing here uses
+        # `dbus-launch`).
+        #
+        # This is defence against runner-image drift, not a fix for a live
+        # failure: ubuntu-24.04's published image manifest already lists the
+        # `dbus` metapackage, which itself `Depends: dbus-daemon (= …)`, so
+        # `command -v dbus-run-session` was already succeeding before this
+        # line existed and the smoke step's fallback branch was almost
+        # certainly never taken. Explicitly pinning `dbus-daemon` stops that
+        # from being an unstated assumption about what the image happens to
+        # ship today.
         uses: ./.github/actions/apt-install
         with:
           packages: >-
@@ -183,6 +209,7 @@ jobs:
             patchelf
             pkg-config
             xvfb
+            dbus-daemon
 
       - name: Setup Node.js
         # No package-manager cache on a publishing lane (#3573). The
@@ -546,7 +573,42 @@ jobs:
             # anomaly CI shows, so it is worth providing rather than guessing
             # at graphics flags; if the runner image ever drops it we fall back
             # rather than fail, since it is a mitigation and not a requirement.
-            if command -v dbus-run-session >/dev/null 2>&1; then
+            # LAST attempt: PROBE before deciding to drop the launcher, rather
+            # than dropping it unconditionally. `command -v` only proves the
+            # binary exists, not that it can start a bus, and #4418's own
+            # evidence is that a real session bus is what fixed the original
+            # hang — unconditionally dropping it on the final try would spend
+            # that attempt on exactly the configuration that already failed
+            # twice. A cheap, throwaway `dbus-run-session -- true` distinguishes
+            # "present but cannot start a bus" from "present and healthy, the
+            # first two attempts failed for some other reason" directly, so the
+            # fallback engages only when the probe itself proves the bus is
+            # unusable. `timeout` bounds it: a probe that wedges must degrade
+            # to the safe fallback, not hang the step and gate the release the
+            # way this whole retry exists to avoid. This is not a full
+            # guarantee — a probe that passes now does not prove the bus
+            # stays healthy for the rest of the attempt — but it is strictly
+            # more evidence than `command -v` alone, at the cost of at most a
+            # few seconds paid once, on the final attempt only.
+            if [ "${attempt:-1}" -ge "$MAX_BOOT_ATTEMPTS" ] && [ "$MAX_BOOT_ATTEMPTS" -gt 1 ]; then
+              if ! command -v dbus-run-session >/dev/null 2>&1; then
+                # Binary absent: image drift. The apt pin above should make
+                # this unreachable, so reaching it means the pin no longer
+                # covers what it claims.
+                echo "::warning::Final attempt: dbus-run-session is NOT INSTALLED (image drift — the apt pin no longer provides it); booting WITHOUT it, so a missing session bus degrades to the previous behaviour instead of gating the release." >&2
+                launcher=()
+              elif timeout -k 5 10 dbus-run-session -- true >/dev/null 2>&1; then
+                echo "Final attempt: dbus-run-session probed healthy (started and tore down a real bus); keeping it for this attempt too."
+                launcher=(dbus-run-session --)
+              else
+                # Binary present but cannot start a bus: the #4418 case.
+                # Distinguishing these two is the entire reason the probe
+                # replaced a bare `command -v`, so the annotation a
+                # maintainer actually reads must distinguish them too.
+                echo "::warning::Final attempt: dbus-run-session IS INSTALLED but FAILED a live probe (present, cannot start a bus — the #4418 shape); booting WITHOUT it, so a broken session bus degrades to the previous behaviour instead of gating the release." >&2
+                launcher=()
+              fi
+            elif command -v dbus-run-session >/dev/null 2>&1; then
               launcher=(dbus-run-session --)
             else
               echo "::warning::dbus-run-session unavailable on this runner; booting without a session bus. The a11y/dbus stall this mitigates is unguarded for this run." >&2
@@ -688,12 +750,56 @@ jobs:
             # a rejection would leave PROC_SNAPSHOT empty — silently dropping the
             # `wchan` capture that is this whole change's payload. A diagnostic
             # that can fail quietly is the failure it was added to prevent.
-            snap_pids="$(pgrep -f 'agaric|[Xx]vfb|dbus-run-session' | paste -sd, - || true)"
+            # Match the AppImage BASENAME, not a bare 'agaric': the runner's
+            # workspace is /home/runner/work/agaric/agaric, so an unanchored
+            # match sweeps in every process whose cmdline embeds the repo path
+            # and buries the wchan rows that are the point of this capture.
+            #
+            # That basename arm alone only matches the top-level AppImage
+            # runtime wrapper. With APPIMAGE_EXTRACT_AND_RUN=1 the runtime
+            # extracts to /tmp/appimage_extracted_<hex> and execs
+            # <dir>/AppRun, which execs <dir>/usr/bin/agaric — neither
+            # cmdline contains the AppImage's basename, so the real app
+            # process (the one the wchan capture exists for) was silently
+            # dropped from the snapshot. Add an `appimage_extracted` arm to
+            # catch AppRun and the app under it. It stays as narrow as the
+            # basename arm: that substring is distinctive to the extraction
+            # tmpdir and never appears in the runner's own workspace path
+            # (/home/runner/work/agaric/agaric), so it does not reopen the
+            # noise problem the basename-only match was introduced to close.
+            #
+            # Unverifiable from this repo: this arm assumes the AppImage's
+            # generated AppRun execs the app by ABSOLUTE path, so the child
+            # process's cmdline still contains the extraction tmpdir and
+            # matches `appimage_extracted` here. That is what Tauri's
+            # bundled AppRun does today. If it ever exec'd the binary by a
+            # RELATIVE path instead, only the AppRun process itself would
+            # match this pattern — not `usr/bin/agaric`, the process this
+            # whole snapshot exists to capture `wchan` for — and that gap
+            # would not be visible from this file alone.
+            #
+            # The basename is escaped before interpolation into this ERE.
+            # An unescaped basename would treat version dots
+            # (`Agaric_X.Y.Z_amd64.AppImage`) as `.` wildcards — harmless,
+            # since a wildcard still matches the literal character it
+            # stands in for — but a version carrying an actual ERE
+            # quantifier is worse than a wildcard: semver build metadata
+            # (`Agaric_0.9.9+build_amd64.AppImage`) has a literal `+`, and
+            # `9+` would consume it as "one or more 9s", so the arm stops
+            # matching the literal path entirely and silently narrows the
+            # snapshot to whatever the `appimage_extracted` arm still
+            # catches. Escape every ERE metacharacter, not just dots.
+            # shellcheck disable=SC2016  # single quotes are REQUIRED: this
+            # is a literal sed pattern, not a shell expansion — expanding
+            # `$(){}` here would run them as the step shell's own syntax
+            # instead of handing sed a literal character class.
+            _appimage_basename_re="$(printf '%s' "$(basename "$APPIMAGE_BIN")" | sed 's/[]+*.?^$(){}|[\]/\\&/g')"
+            snap_pids="$(pgrep -f "$_appimage_basename_re|appimage_extracted|[Xx]vfb|dbus-run-session" | paste -sd, - || true)"
             if [ -n "$snap_pids" ]; then
               PROC_SNAPSHOT="$(ps -o pid,stat,etimes,wchan:24,comm -p "$snap_pids" 2>&1)" \
                 || PROC_SNAPSHOT="(ps failed for pids '$snap_pids': $PROC_SNAPSHOT)"
             else
-              PROC_SNAPSHOT="(no agaric/Xvfb/dbus processes matched at snapshot time)"
+              PROC_SNAPSHOT="(no agaric/appimage_extracted/Xvfb/dbus processes matched at snapshot time)"
             fi
 
             # #4418 note 5 — re-probe the group before giving up on it. The guard
@@ -765,16 +871,23 @@ jobs:
               echo "ERROR: no log file under $AGARIC_DATA_DIR/logs after ${waited}s" >&2
               echo "       (budget ${BOOT_SECONDS}s; a shorter time means the process ended" >&2
               echo "       early rather than the budget expiring)." >&2
-              echo "       Outcome was '$code' (alive = still running, timeout = never" >&2
-              echo "       produced the artifact, exited:N = ended on its own with code N)." >&2
+              echo "       Outcome was '$code' — see below for the full vocabulary." >&2
               echo "       Read the boot output dumped above FIRST: if it shows xvfb-run or" >&2
               echo "       the AppImage failing to start, the process never reached Rust at" >&2
               echo "       all and none of the boot-phase readings below apply." >&2
-              echo "       Otherwise the code is the tell: 134 (or 101 on an unwinding" >&2
-              echo "       build) means it panicked before" >&2
-              echo "       init_logging, 124 means it was alive but never got there, anything" >&2
-              echo "       else means it exited early. Or the sandbox override was not" >&2
-              echo "       honoured. Sandbox tree:" >&2
+              echo "       Otherwise '\$code' is the tell — it is a STRING now, not an" >&2
+              echo "       exit status: 'timeout' = alive at the deadline but never produced" >&2
+              echo "       the artifact; 'exited:N' = ended on its own before booting" >&2
+              echo "       (134 = SIGABRT under panic=abort, 101 = an early panic on an" >&2
+              echo "       unwinding build, 0 = a quiet false start)." >&2
+              echo "       ('alive' and 'exited-after-boot:N' should not be reachable here —" >&2
+              echo "       both require booted=1, which requires the log line to have been" >&2
+              echo "       read at least once; getting here with either would mean the app" >&2
+              echo "       deleted its own log file sometime in the up-to-${MIN_ALIVE_SECONDS}s dwell" >&2
+              echo "       before the reap. Practically unreachable, not structurally" >&2
+              echo "       impossible.) There is no" >&2
+              echo "       124 any more — \$code never carries a timeout(1) status. Or the" >&2
+              echo "       sandbox override was not honoured. Sandbox tree:" >&2
               find "$SANDBOX" -maxdepth 3 >&2 || true
               # #4418 — the 0.9.9 failure left nothing to diagnose with: the
               # captured boot.log held one dbus warning and the step stopped.
@@ -784,6 +897,9 @@ jobs:
               echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
               cat "$SANDBOX/boot.log" >&2 || true
               echo "       --- environment ---" >&2
+              echo "       XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>} (step shell's own value —" >&2
+              echo "        carried here in case the child never reached its [child-env] echo" >&2
+              echo "        in the boot.log dump above, e.g. xvfb-run itself failed to start)" >&2
               echo "       (the app's own DISPLAY/DBUS are on the [child-env] line of" >&2
               echo "        boot.log above — the step shell's values are NOT the app's)" >&2
               echo "       --- process state captured BEFORE the reap ---" >&2
@@ -806,8 +922,12 @@ jobs:
                 echo "       and flushing init_logging. Full diagnostics:" >&2
                 echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
                 cat "$SANDBOX/boot.log" >&2 || true
-                echo "       DISPLAY=${DISPLAY:-<unset>} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>}" >&2
-                echo "       DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<unset>}" >&2
+                echo "       --- environment ---" >&2
+                echo "       XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>} (step shell's own value —" >&2
+                echo "        carried here in case the child never reached its [child-env] echo" >&2
+                echo "        in the boot.log dump above)" >&2
+                echo "       (the app's own DISPLAY/DBUS are on the [child-env] line of" >&2
+                echo "        boot.log above — the step shell's values are NOT the app's)" >&2
                 echo "       --- process state captured BEFORE the reap ---" >&2
                 printf '%s\n' "$PROC_SNAPSHOT" | sed 's/^/       /' >&2
               fi
