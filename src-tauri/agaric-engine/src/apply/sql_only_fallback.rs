@@ -116,16 +116,28 @@ pub enum SqlOnlyFallbackReason {
 /// nextest parallelism.
 static SQL_ONLY_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 
-/// Record that the `op` handler fell back to its SQL-only path for
-/// `reason`. Increments the global counter and emits a debug log. Purely
-/// additive — does not alter control flow.
+/// Record that `op` took a SQL-only outcome for `reason` — either an
+/// `apply_*_via_loro` handler falling back to its `apply_*_sql_only`
+/// projection in-transaction, or (since #4472) a post-commit fan-out skipping
+/// one cohort member's engine mirror. Increments the global counter and emits
+/// a debug log. Purely additive — does not alter control flow.
+///
+/// The message is deliberately site-NEUTRAL. The older wording, "materializer
+/// apply fell back to the sql_only path", was true of the first class only:
+/// on a fan-out skip nothing is projected and no apply falls back — the SQL
+/// write committed a transaction earlier and the mirror is simply not taken.
+/// This line is the triage companion that `StatusInfo::sql_only_fallback_count`
+/// tells operators to pair with the counter, so it has to hold at every call
+/// site; the `op` field is what names the site (`delete_block` / `move_block`
+/// / … for the in-tx handlers, `delete_block_cohort` and `move_block_unswept`
+/// for the two fan-outs).
 pub fn record(op: &'static str, reason: SqlOnlyFallbackReason) {
     SQL_ONLY_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
     tracing::debug!(
         target: "materializer::sql_only_fallback",
         op,
         ?reason,
-        "materializer apply fell back to the sql_only path"
+        "materializer: SQL stands for this block with no engine mirror"
     );
 }
 

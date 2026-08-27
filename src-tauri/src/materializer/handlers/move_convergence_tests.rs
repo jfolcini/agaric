@@ -3022,19 +3022,23 @@ async fn the_unswept_mirror_skips_a_block_absent_from_the_engine_4468() {
 /// and on a guard that over-fires (`C1A` is skipped too — its register stays
 /// `None` and the delta is 2).
 ///
-/// `multi_thread` rather than the sibling #4468 test's plain `#[tokio::test]`
-/// because this drives the materializer's post-commit fan-out, which the
-/// single-threaded flavour deadlocks. That is worth stating, because the
-/// #4473 review argued the warn-capture here is safe on the premise that
-/// `#[tokio::test]` is current-thread and so the thread-local subscriber set
-/// by `set_default` cannot be missed. That premise does NOT hold under this
-/// flavour. Capture is still sound for a different reason:
-/// `dispatch_delete_descendants` has no `.await` in its loop, and tokio polls
-/// the top-level future on the calling thread, so the subscriber stays live
-/// across it. Verified rather than assumed — neutering the `continue` while
-/// keeping the `record` reddens the log assertion with the real
-/// `engine_apply_diverged` line, which is only possible if capture works.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+/// Plain `#[tokio::test]`, the same flavour as the sibling #4468 test. An
+/// earlier draft used `flavor = "multi_thread"` and justified it with "the
+/// single-threaded flavour deadlocks here". That was guessed, not measured,
+/// and it is FALSE: `dispatch_delete_descendants` contains no `.await` at
+/// all, so a current-thread runtime has nothing to block on. Measured on the
+/// #4479 review — four consecutive runs under the plain flavour, four passes.
+/// The flavour is not free to choose, though, so the real constraint is
+/// recorded instead of the guessed one: `set_default` installs the capturing
+/// subscriber as a THREAD-LOCAL, so the assertions below are only meaningful
+/// if the dispatch is polled on the thread that installed it. Under
+/// `#[tokio::test]` it is — `block_on` polls the top-level future on the
+/// calling thread, and the dispatch has no `.await` to yield at, so nothing
+/// can migrate it to a worker. Verified rather than assumed — neutering the
+/// `continue` while keeping the `record` reddens the log assertion with the
+/// real `engine_apply_diverged` line, which is only possible if capture
+/// works.
+#[tokio::test]
 async fn the_delete_cascade_mirror_skips_a_cohort_member_absent_from_the_engine_4472() {
     use tracing_subscriber::layer::SubscriberExt;
 

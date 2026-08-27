@@ -125,8 +125,24 @@ space's engine and record that skip on this same counter, with
 `EngineMissingTarget`, off the identical membership probe — it is the same
 decision about the same block, one transaction later. They deliberately do
 *not* use `descendant_fanout_dropped`, which means "the engine may now be
-divergent from SQL"; a block with no node in that engine has nothing to
-diverge.
+divergent from SQL": the population the probe is written for — a member
+projected SQL-only during a no-space window — has no node in *any* engine, so
+there is nothing anywhere to diverge.
+
+Two caveats on reading that counter, both written up in full on
+`known_absent_from_engine` in `src-tauri/src/materializer/handlers/apply.rs`:
+
+- The probe asks the SEED's space engine only, so it proves absence from *that*
+  engine, not from every engine. A block whose `blocks.space_id` still names
+  space Y can be reparented by `apply_move_block_sql_only` (which never touches
+  that column) under a block in space X, and the `parent_id` cohort walk then
+  puts it in X's delete cohort; the skip is then understated — that member
+  really is a `descendant_fanout_dropped` case. Accepted: no state regresses
+  (the fan-out only ever dispatches into the seed's space, so the mirror onto Y
+  never happened either way) and boot replay reconciles both spaces.
+- It counts *decisions*, not distinct blocks. A `DeleteBlock` whose seed is
+  absent records once in-tx and once again from the fan-out, whose cohort
+  includes the seed.
 
 ## Test strategy
 

@@ -549,12 +549,43 @@ async fn fan_out_restore(
 /// `StatusInfo::sql_only_fallback_count`.
 ///
 /// It deliberately does NOT record `descendant_fanout_dropped`: that counter
-/// means "the engine may now be divergent from SQL", and a block with no node
-/// in this engine has nothing to diverge. But it must not be silent either —
-/// "absent from the engine" is also the shape of genuine drift (a `CreateBlock`
-/// whose engine mirror failed and was swallowed), and a `trace!`-only skip
-/// leaves that population uncountable at every production level (#4468's skip
-/// was `trace!`-only; #4472 makes both countable).
+/// means "the engine may now be divergent from SQL", and for the population
+/// this probe is written for — a member projected SQL-only during a no-space
+/// window, so it never entered ANY engine — there is no node anywhere to
+/// diverge.
+///
+/// **That justification is narrower than the probe, and the gap is real.**
+/// `contains_block` answers for `space_id`'s engine ALONE, and `space_id` is
+/// the SEED's space (each fan-out resolves exactly one). So a member can be
+/// absent HERE and present in a DIFFERENT space's engine:
+/// `apply_move_block_sql_only` reparents through `project_move_block_to_sql`,
+/// which binds only `block_id` / `parent_id` / `position` and leaves
+/// `blocks.space_id` untouched, so a block stamped for space Y can become a
+/// `parent_id` descendant of a block in space X. `descendants_cte_active!()`
+/// walks `parent_id` alone, so that block joins X's delete cohort; this probe
+/// asks X, gets "absent", and the caller skips — while the block is still
+/// alive in Y's engine and SQL has just tombstoned it. On THAT member the
+/// classification is understated: it is exactly the "SQL deleted a cohort the
+/// engine did not mirror" condition `descendant_fanout_dropped` names.
+///
+/// Accepted, and written down here rather than papered over. Nothing
+/// REGRESSES: the mirror onto Y never happened either way, because a fan-out
+/// only ever dispatches into the seed's space. Pre-#4472 that member was
+/// dispatched to X, failed inside `get_block_map`, and bumped `divergence` —
+/// loud, but by accident and against the wrong engine, since X was never the
+/// engine that could have taken the mirror. Splitting the counter on "does
+/// this member's own resolved space equal the fan-out's" would cost a
+/// `resolve_block_space` round-trip PER MEMBER on a post-commit path that
+/// today issues no query and holds no connection, to separate a residue that
+/// requires a cross-space move under a since-deleted parent. Boot replay
+/// reconciles both spaces regardless. Revisit if cross-space moves stop being
+/// a corner case.
+///
+/// The skip must not be silent either — "absent from the engine" is also the
+/// shape of genuine drift (a `CreateBlock` whose engine mirror failed and was
+/// swallowed), and a `trace!`-only skip leaves that population uncountable at
+/// every production level (#4468's skip was `trace!`-only; #4472 makes both
+/// countable).
 ///
 /// # On failure to acquire
 ///

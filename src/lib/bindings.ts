@@ -4077,19 +4077,27 @@ export type StatusInfo = {
 	 */
 	retry_persist_capped: number,
 	/**
-	 *  #1326 / #1057: process-global count of SQL-only fallbacks, keyed by
-	 *  `SqlOnlyFallbackReason` (`SpaceUnresolved` / `EngineMissingTarget`).
-	 *  TWO recorder classes, not one: the in-transaction
-	 *  `apply_*_via_loro` handlers that fall back to the SQL-only
-	 *  projection, and — since #4472 — the post-commit engine fan-outs
-	 *  (`dispatch_delete_descendants` / `dispatch_unswept_cohort`) that
-	 *  skip a cohort member absent from the target space's engine. Both
+	 *  #1326 / #1057: process-global count of SQL-only fallback DECISIONS,
+	 *  keyed by `SqlOnlyFallbackReason` (`SpaceUnresolved` /
+	 *  `EngineMissingTarget`). TWO recorder classes, not one: the
+	 *  in-transaction `apply_*_via_loro` handlers that fall back to the
+	 *  SQL-only projection, and — since #4472 — the post-commit engine
+	 *  fan-outs (`dispatch_delete_descendants` / `dispatch_unswept_cohort`)
+	 *  that skip a cohort member absent from the target space's engine. Both
 	 *  mean "this block is not represented in that space's engine; boot
 	 *  replay reconciles", which is why they share a counter; the two are
-	 *  still separable at triage by the `op` field
-	 *  (`delete_block` vs `delete_block_cohort`). Monotonic, never reset.
-	 *  **In production every arm is unreachable on a well-formed,
-	 *  fully-reconciled op log**, so a non-zero value signals an
+	 *  still separable at triage by the `op` field — the in-tx recorders
+	 *  carry the op's own name (`delete_block`, `move_block`, …), and each
+	 *  fan-out carries a name unique to its site (`delete_block_cohort` for
+	 *  `dispatch_delete_descendants`, `move_block_unswept` for
+	 *  `dispatch_unswept_cohort`). It counts DECISIONS, not distinct blocks,
+	 *  and the two classes are not disjoint per block: a `DeleteBlock` whose
+	 *  SEED is absent records once in-tx and once again from the fan-out,
+	 *  whose cohort deliberately includes the seed — two increments, one
+	 *  transaction apart, for one block's one decision. Read it as "how often
+	 *  did we take this route", never as a population of blocks. Monotonic,
+	 *  never reset. **In production every arm is unreachable on a
+	 *  well-formed, fully-reconciled op log**, so a non-zero value signals an
 	 *  unexpected space-resolution or engine-membership miss that warrants
 	 *  investigation — pair with the
 	 *  `target=materializer::sql_only_fallback` debug lines (which carry
@@ -4100,16 +4108,18 @@ export type StatusInfo = {
 	/**
 	 *  #2031: process-global count of post-commit descendant fan-out
 	 *  skips that left the Loro engine potentially divergent from SQL.
-	 *  Bumped whenever `super::handlers::apply::dispatch_restore_descendants`
-	 *  or `super::handlers::apply::dispatch_delete_descendants` aborts at a
+	 *  Bumped whenever `super::handlers::apply::dispatch_restore_descendants`,
+	 *  `super::handlers::apply::dispatch_delete_descendants` or — since
+	 *  #4390 — `super::handlers::apply::dispatch_unswept_cohort` aborts at a
 	 *  divergence-leaving early-return: a malformed root payload, a
-	 *  `resolve_block_space` error, or a missing space. Monotonic, never
-	 *  reset. Mirrors `fg_apply_dropped`'s "silent divergence" signal for
-	 *  the fan-out paths, which otherwise heal only on full boot replay.
-	 *  A non-zero value means SQL deleted/restored a cohort the engine
-	 *  did not mirror on this run — pair with the `restore-cascade
-	 *  fanout` / `delete-cascade fanout` warn/trace lines for triage.
-	 *  Sourced from
+	 *  `resolve_block_space` error, or a missing space (for the un-sweep
+	 *  fan-out, a `resolve_soft_deleted_block_space` that answered `None`).
+	 *  Monotonic, never reset. Mirrors `fg_apply_dropped`'s "silent
+	 *  divergence" signal for the fan-out paths, which otherwise heal only
+	 *  on full boot replay. A non-zero value means SQL
+	 *  deleted/restored/re-derived a cohort the engine did not mirror on
+	 *  this run — pair with the `restore-cascade fanout` / `delete-cascade
+	 *  fanout` / `un-sweep fanout` warn/trace lines for triage. Sourced from
 	 *  [`super::handlers::descendant_fanout_dropped::count`].
 	 */
 	descendant_fanout_dropped: number,
