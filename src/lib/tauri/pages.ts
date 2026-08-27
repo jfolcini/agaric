@@ -3,11 +3,6 @@ import { commands } from '@/lib/bindings'
 import type { PageHeading, PageSubtree, TagCacheRow } from '@/lib/bindings'
 import { toSpaceScope, requireActiveScope } from '@/lib/tauri/_shared'
 
-/** Set the complete list of aliases for a page (replaces existing). */
-export async function setPageAliases(pageId: string, aliases: string[]): Promise<string[]> {
-  return unwrap(await commands.setPageAliases(pageId, aliases))
-}
-
 /** Get all aliases for a page. */
 export async function getPageAliases(pageId: string): Promise<string[]> {
   return unwrap(await commands.getPageAliases(pageId))

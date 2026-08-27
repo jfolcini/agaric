@@ -99,33 +99,9 @@ export async function setPropertyBatch(
   return unwrap(await commands.setPropertyBatch(blockIds, key, value))
 }
 
-/** List all distinct property keys currently in use. */
-export async function listPropertyKeys(): Promise<string[]> {
-  return unwrap(await commands.listPropertyKeys())
-}
-
-/**
- * List the distinct text values in use for a property `key`, usage-ranked
- * (most-used first). Powers the property-VALUE autocomplete (#1425).
- */
-export async function listPropertyValues(key: string): Promise<string[]> {
-  return unwrap(await commands.listPropertyValues(key))
-}
-
 // ---------------------------------------------------------------------------
 // Property definition commands
 // ---------------------------------------------------------------------------
-
-/** Create a new property definition. */
-export async function createPropertyDef(params: {
-  key: string
-  valueType: string
-  options?: string | null | undefined
-}): Promise<PropertyDefinition> {
-  return unwrap(
-    await commands.createPropertyDef(params.key, params.valueType, params.options ?? null),
-  )
-}
 
 /** Fetch a single property definition by key.
  *
@@ -157,23 +133,3 @@ export async function listPropertyDefs(opts?: {
 }): Promise<PageResponse<PropertyDefinition>> {
   return unwrap(await commands.listPropertyDefs(opts?.cursor ?? null, opts?.limit ?? null))
 }
-
-/** Update the options JSON for a select-type property definition. */
-export async function updatePropertyDefOptions(
-  key: string,
-  options: string,
-): Promise<PropertyDefinition> {
-  return unwrap(await commands.updatePropertyDefOptions(key, options))
-}
-
-/** Delete a property definition by key. */
-export async function deletePropertyDef(key: string): Promise<void> {
-  unwrap(await commands.deletePropertyDef(key))
-}
-
-// ---------------------------------------------------------------------------
-// Sync / Peer-ref commands
-// ---------------------------------------------------------------------------
-// NOTE: Only peer_refs CRUD exists on the backend so far. Full sync protocol
-// commands (startPairing, startSync, etc.) will be added when the backend
-// implements them.

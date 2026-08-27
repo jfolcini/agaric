@@ -2,37 +2,12 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type {
   BacklinkFilter,
-  BacklinkQueryResponse,
   BacklinkSort,
-  BlockRow,
   GroupedBacklinkResponse,
   PageLinksResponse,
-  PageResponse,
 } from '@/lib/bindings'
 import type { SafeLimit } from '@/lib/safe-limit'
 import { toSpaceScope } from '@/lib/tauri/_shared'
-
-/** List blocks that link to the given block (backlinks), paginated.
- *
- * `spaceId` (Phase 4) — when set, restricts the backlinks to
- * source blocks whose owning page carries `space = <spaceId>`. `null` /
- * `undefined` leaves the result set unscoped (cross-space view).
- */
-export async function getBacklinks(params: {
-  blockId: string
-  cursor?: string | undefined
-  limit?: SafeLimit | undefined
-  spaceId?: string | null | undefined
-}): Promise<PageResponse<BlockRow>> {
-  return unwrap(
-    await commands.getBacklinks(
-      params.blockId,
-      params.cursor ?? null,
-      params.limit ?? null,
-      toSpaceScope(params.spaceId),
-    ),
-  )
-}
 
 /** List all page-to-page links for graph visualization.
  *
@@ -73,32 +48,6 @@ export async function listPageLinks(
   const params = typeof arg === 'object' && arg !== null ? arg : { spaceId: arg ?? null }
   const tagIds = params.tagIds && params.tagIds.length > 0 ? params.tagIds : null
   return unwrap(await commands.listPageLinks(toSpaceScope(params.spaceId), tagIds))
-}
-
-/** Query backlinks with composable filters, sort, and pagination.
- *
- * `spaceId` (Phase 4) — when set, restricts the source set to
- * blocks whose owning page carries `space = <spaceId>`. `null` /
- * `undefined` leaves the result set unscoped (cross-space view).
- */
-export async function queryBacklinksFiltered(params: {
-  blockId: string
-  filters?: BacklinkFilter[] | undefined
-  sort?: BacklinkSort | undefined
-  cursor?: string | undefined
-  limit?: SafeLimit | undefined
-  spaceId?: string | null | undefined
-}): Promise<BacklinkQueryResponse> {
-  return unwrap(
-    await commands.queryBacklinksFiltered(
-      params.blockId,
-      params.filters ?? null,
-      params.sort ?? null,
-      params.cursor ?? null,
-      params.limit ?? null,
-      toSpaceScope(params.spaceId),
-    ),
-  )
 }
 
 /** Query backlinks grouped by source page, with filters and pagination.

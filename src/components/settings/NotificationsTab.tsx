@@ -16,7 +16,8 @@
  *    on Android 13+ this prompts for `POST_NOTIFICATIONS`, on desktop it
  *    resolves once the capability is granted.
  *  - "Send test notification" — gated on the toggle; first ensures the
- *    permission, then fires a sample notification via {@link notifyTask}.
+ *    permission, then fires a sample notification via
+ *    {@link commands.notifyTask}.
  *
  * Every IPC / plugin call has an error-path fallback per AGENTS.md
  * §Testing Conventions — log + toast, never throw out of a handler.

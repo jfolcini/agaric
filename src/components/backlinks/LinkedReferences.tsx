@@ -58,7 +58,7 @@ export function LinkedReferences({
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   const [sourcePageIncluded, setSourcePageIncluded] = useState<string[]>([])
   const [sourcePageExcluded, setSourcePageExcluded] = useState<string[]>([])
-  // Shared cache replaces per-mount `listPropertyKeys()` IPC.
+  // Shared cache replaces per-mount `commands.listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 

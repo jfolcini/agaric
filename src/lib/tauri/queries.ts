@@ -77,48 +77,6 @@ export async function listProjectedAgenda(opts: {
   )
 }
 
-/** Batch-count agenda items per date. Returns a map of date -> count.
- *
- * `spaceId` (Phase 4) — when set, restricts counts to agenda
- * items whose owning page carries `space = <spaceId>`. `null` /
- * `undefined` leaves the counts cross-space.
- */
-export async function countAgendaBatch(params: {
-  dates: string[]
-  spaceId?: string | null | undefined
-}): Promise<Record<string, number>> {
-  return unwrap(await commands.countAgendaBatch(params.dates, toSpaceScope(params.spaceId)))
-}
-
-/** Batch-count agenda items per (date, source). Returns nested map: date -> source -> count.
- *
- * `spaceId` (Phase 4) — when set, restricts counts to agenda
- * items whose owning page carries `space = <spaceId>`. `null` /
- * `undefined` leaves the counts cross-space.
- */
-export async function countAgendaBatchBySource(params: {
-  dates: string[]
-  spaceId?: string | null | undefined
-}): Promise<Record<string, Record<string, number>>> {
-  return unwrap(await commands.countAgendaBatchBySource(params.dates, toSpaceScope(params.spaceId)))
-}
-
-/** Batch-count backlinks per target page. Returns a map of pageId -> count.
- *
- * `spaceId` — when set, restricts the counted source
- * blocks to those whose owning page carries `space = <spaceId>`.
- * `null` / `undefined` keeps the cross-space (legacy) behaviour. The
- * scope is forwarded as a [`SpaceScope`] via `toSpaceScope`. Without
- * this filter a page in space A could surface a non-zero badge count
- * whose source blocks live in space B — backlinks the user can't see.
- */
-export async function countBacklinksBatch(params: {
-  pageIds: string[]
-  spaceId?: string | null | undefined
-}): Promise<Record<string, number>> {
-  return unwrap(await commands.countBacklinksBatch(params.pageIds, toSpaceScope(params.spaceId)))
-}
-
 // ---------------------------------------------------------------------------
 // Block fixed-field commands (thin wrappers for reserved properties)
 // ---------------------------------------------------------------------------

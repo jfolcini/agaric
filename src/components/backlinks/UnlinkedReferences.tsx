@@ -110,7 +110,7 @@ export function UnlinkedReferences({
   // regex compiled from `pageTitle` alone misses and the user is told
   // "linked" while the block silently reappears on the next refetch.
   const [aliases, setAliases] = useState<string[]>([])
-  // Shared cache replaces per-mount `listPropertyKeys()` IPC.
+  // Shared cache replaces per-mount `commands.listPropertyKeys()` IPC.
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 

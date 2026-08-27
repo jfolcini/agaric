@@ -5,7 +5,7 @@
  * `t('rename.cancel')` buttons.
  * Triggered by the user-configured global hotkey (registered at app
  * startup via `registerGlobalShortcut`). On submit, dispatches
- * `quickCaptureBlock(content)` against today's journal page and closes
+ * `commands.quickCaptureBlock(content)` against today's journal page and closes
  * with a success toast — failure surfaces a `notify.error` plus a
  * `logger.error` capture.
  *

@@ -14,30 +14,6 @@ export interface AttachmentRow {
   created_at: number
 }
 
-/** List all attachments for a block. */
-export async function listAttachments(blockId: string): Promise<AttachmentRow[]> {
-  return unwrap(await commands.listAttachments(blockId))
-}
-
-/**
- * Batch-fetch full attachment lists for many blocks in one IPC.
- *
- * Returns a record mapping block_id → AttachmentRow[]. Block IDs absent
- * from the record have either 0 attachments or are not in the database;
- * callers should default missing keys to `[]`. Counts are derivable as
- * `result[id].length` — folded the separate count
- * batch (`get_batch_attachment_counts`) into this one.
- *
- * Replaces N per-block `listAttachments` IPCs for both the
- * SortableBlock paperclip badge and the StaticBlock inline-image render
- * path with a single batched query mounted at the BlockTree level.
- */
-export async function getBatchAttachments(
-  blockIds: string[],
-): Promise<Record<string, AttachmentRow[]>> {
-  return unwrap(await commands.listAttachmentsBatch(blockIds))
-}
-
 /**
  * Add an attachment by passing the file's raw bytes over IPC.
  * The backend is the sole writer — it persists the bytes under
@@ -83,11 +59,6 @@ export async function readAttachment(attachmentId: string): Promise<Uint8Array> 
  */
 export async function readAttachmentMeta(attachmentId: string): Promise<AttachmentRow> {
   return unwrap(await commands.readAttachmentMeta(attachmentId))
-}
-
-/** Delete an attachment by ID. */
-export async function deleteAttachment(attachmentId: string): Promise<void> {
-  unwrap(await commands.deleteAttachment(attachmentId))
 }
 
 // ---------------------------------------------------------------------------
