@@ -1202,6 +1202,37 @@ function selfTestGhFailureModes({ check }) {
       'the written file has one entry per watched workflow and preserves the unhealthy one',
       JSON.stringify(written),
     )
+    // #4400 — the TYPE of `runId` in this file is load-bearing, not
+    // incidental: `file-scheduled-failures.mjs` persists it into an issue
+    // body as TEXT and reads it back as a string, so its `advanceStreaks`
+    // has to coerce before comparing. A fixture that quietly used strings
+    // here (or a future change that stringified `databaseId` on the way out)
+    // would make the consumer's round trip look type-stable when production
+    // is not. Pinned positively: every entry is a NUMBER or an explicit
+    // `null`, never anything else.
+    const runIds = Object.values(written).map((v) => v.runId)
+    check(
+      // `some` already implies non-empty, so an "at least one" guard would be
+      // the useless length check oxlint's `no-useless-length-check` rejects.
+      runIds.some((r) => typeof r === 'number') &&
+        runIds.every((r) => r === null || typeof r === 'number'),
+      '`runId` is written as a NUMBER (`gh`’s `databaseId`) or an explicit null — the type the filer must coerce',
+      JSON.stringify(runIds.map((r) => `${typeof r}:${r}`)),
+    )
+    // #4400, latent-hazard guard — the filer encodes one tracked lane per
+    // marker line as `job|count|runId` and splits on `|`. A watched workflow
+    // FILENAME is that `job` field, so a `|` in one would silently corrupt
+    // both `parseKnownLanes` and `parseKnownStreaks`. Allow-listed rather
+    // than deny-listed (a deny-list of "bad" characters fails open on the
+    // next one nobody thought of), and asserted here, at the source of those
+    // ids, rather than defended against in a parser that cannot tell a
+    // corrupt line from an exotic one.
+    const oddNames = WATCHED.map((w) => w.workflow).filter((n) => !/^[A-Za-z0-9._-]+$/.test(n))
+    check(
+      oddNames.length === 0,
+      'every watched workflow filename is plain `[A-Za-z0-9._-]` — safe as a `|`-delimited marker-line field',
+      oddNames.join(', '),
+    )
   }
 }
 
