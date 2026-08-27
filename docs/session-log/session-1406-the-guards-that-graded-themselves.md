@@ -21,7 +21,7 @@ open.
 | **#4431** | CI: catch two open PRs claiming the same session number |
 | **#4432** | `create_property_def` refusing a declaration the key's own stored values would violate |
 | **#4434** | Nine prek hooks that could be silently defanged, plus a meta-guard |
-| **#4425** | The shipped `.so` is 4 KB-aligned and cannot load on a 16 KB page device |
+| **#4435** | The shipped `.so` is 4 KB-aligned and cannot load on a 16 KB page device (#4425) |
 
 Filed: **#4425**, **#4428**, **#4433**. Closed as duplicate: **#4415** → #4294.
 
@@ -94,10 +94,11 @@ compared zero paths — while every sibling guard in the same block fails closed
 **A predicate with three unfalsifiable arms.** #4432's shape check mirrors the engine's
 `type_matches` arm for arm. Mutating it to reinstate the #4382 trap for `ref` and `boolean`
 left the suite **silent at 518 passed**. `number`, `date` and select-membership each had a
-refusal test; the other three had none.
+refusal test; `ref`, `boolean` and the `value_ref` half of the `text | select` arm had
+none.
 
-**A fix that was not enough.** #4425's link flag gets the ELF to `0x4000` — but
-`release.yml` ran `zipalign -p 4`, whose own help reads "4kb page-align uncompressed .so
+**A fix that was not enough.** #4435's link flag gets the ELF to `0x4000` — but
+`release.yml` ran `zipalign -p -f 4`, whose `-p` is documented as "4kb page-align uncompressed .so
 files". The library is stored uncompressed, so the loader mmaps it in place and the payload
 must also *begin* on a 16 KB boundary. 0.9.9's landed there by arithmetic luck.
 
