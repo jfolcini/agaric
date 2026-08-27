@@ -951,6 +951,14 @@ export function BlockContextMenu({
       itemRefs,
       nextIndex: () => itemIndex++,
     })
+  // #4406 — `itemRefs` (a raw ref object) is handed to `renderItem` below
+  // (via `groups.map`), which passes it on to `renderMenuItem`; that
+  // function turns it into a ref CALLBACK (`el => { itemRefs.current[idx] =
+  // el }`) that only writes `.current` when React attaches the DOM node —
+  // never during render. Handing the ref object itself down to a consumer so
+  // it can register into it later is the intended, safe use of a ref; oxlint
+  // flags the hand-off itself because it is syntax-only and can't see that
+  // the actual mutation is deferred. Left open.
 
   const menu = (
     <div

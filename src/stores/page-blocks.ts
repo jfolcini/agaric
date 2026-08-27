@@ -616,6 +616,15 @@ export function PageBlockStoreProvider({
   pageId: string
   children: React.ReactNode
 }): React.ReactElement {
+  // #4406 — the classic React-documented lazy-ref-initialization exception
+  // (react.dev: "if (!ref.current) ref.current = new Thing()"), extended to
+  // re-init when `pageId` changes rather than only on first render. Every
+  // downstream use of `store` in this component is tainted by the same read
+  // and shares this same finding; oxlint's react(refs) rule has no special
+  // case for the documented pattern. Left open rather than restructured —
+  // replacing it with the state-adjustment-during-render idiom would add an
+  // extra discarded render on every `pageId` change to a hot per-page-mount
+  // path, for a rule that is warn-level today.
   const storeRef = useRef<{ store: StoreApi<PageBlockState>; pageId: string } | null>(null)
   if (!storeRef.current || storeRef.current.pageId !== pageId) {
     storeRef.current = { store: createPageBlockStore(pageId), pageId }
