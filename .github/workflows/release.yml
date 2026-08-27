@@ -566,15 +566,32 @@ jobs:
             # anomaly CI shows, so it is worth providing rather than guessing
             # at graphics flags; if the runner image ever drops it we fall back
             # rather than fail, since it is a mitigation and not a requirement.
-            # LAST attempt drops the launcher. `command -v` proves the binary
-            # exists, not that it can start a bus — and a present-but-broken
-            # dbus-daemon would fail all three attempts identically and block
-            # publication, which is precisely the outcome this step exists to
-            # prevent. Degrading to the pre-#4418 invocation on the final try
-            # means a broken bus costs a warning, not a release.
+            # LAST attempt: PROBE before deciding to drop the launcher, rather
+            # than dropping it unconditionally. `command -v` only proves the
+            # binary exists, not that it can start a bus, and #4418's own
+            # evidence is that a real session bus is what fixed the original
+            # hang — unconditionally dropping it on the final try would spend
+            # that attempt on exactly the configuration that already failed
+            # twice. A cheap, throwaway `dbus-run-session -- true` distinguishes
+            # "present but cannot start a bus" from "present and healthy, the
+            # first two attempts failed for some other reason" directly, so the
+            # fallback engages only when the probe itself proves the bus is
+            # unusable. `timeout` bounds it: a probe that wedges must degrade
+            # to the safe fallback, not hang the step and gate the release the
+            # way this whole retry exists to avoid. This is not a full
+            # guarantee — a probe that passes now does not prove the bus
+            # stays healthy for the rest of the attempt — but it is strictly
+            # more evidence than `command -v` alone, at the cost of at most a
+            # few seconds paid once, on the final attempt only.
             if [ "${attempt:-1}" -ge "$MAX_BOOT_ATTEMPTS" ] && [ "$MAX_BOOT_ATTEMPTS" -gt 1 ]; then
-              echo "::warning::Final attempt: booting WITHOUT dbus-run-session, so a broken session bus degrades to the previous behaviour instead of gating the release."
-              launcher=()
+              if command -v dbus-run-session >/dev/null 2>&1 \
+                && timeout 10 dbus-run-session -- true >/dev/null 2>&1; then
+                echo "Final attempt: dbus-run-session probed healthy (started and tore down a real bus); keeping it for this attempt too."
+                launcher=(dbus-run-session --)
+              else
+                echo "::warning::Final attempt: dbus-run-session missing or failed a live probe; booting WITHOUT it, so a broken session bus degrades to the previous behaviour instead of gating the release."
+                launcher=()
+              fi
             elif command -v dbus-run-session >/dev/null 2>&1; then
               launcher=(dbus-run-session --)
             else
@@ -835,7 +852,9 @@ jobs:
               echo "       exit status: 'timeout' = alive at the deadline but never produced" >&2
               echo "       the artifact; 'exited:N' = ended on its own before booting" >&2
               echo "       (134 = SIGABRT under panic=abort, 0 = a quiet false start);" >&2
-              echo "       'exited-after-boot:N' = a later boot phase failed. There is no" >&2
+              echo "       'exited-after-boot:N' = a later boot phase failed. ('alive' cannot" >&2
+              echo "       appear here — it requires booted=1, which requires the log file" >&2
+              echo "       this branch just proved absent.) There is no" >&2
               echo "       124 any more — the step no longer uses timeout(1). Or the sandbox" >&2
               echo "       override was not honoured. Sandbox tree:" >&2
               find "$SANDBOX" -maxdepth 3 >&2 || true
@@ -872,6 +891,10 @@ jobs:
                 echo "       and flushing init_logging. Full diagnostics:" >&2
                 echo "       --- full boot.log ($(wc -c < "$SANDBOX/boot.log") bytes) ---" >&2
                 cat "$SANDBOX/boot.log" >&2 || true
+                echo "       --- environment ---" >&2
+                echo "       XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>} (step shell's own value —" >&2
+                echo "        carried here in case the child never reached its [child-env] echo" >&2
+                echo "        in the boot.log dump above)" >&2
                 echo "       (the app's own DISPLAY/DBUS are on the [child-env] line of" >&2
                 echo "        boot.log above — the step shell's values are NOT the app's)" >&2
                 echo "       --- process state captured BEFORE the reap ---" >&2

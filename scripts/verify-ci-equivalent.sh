@@ -1075,21 +1075,31 @@ if [ "${1:-}" = "--self-test" ]; then
                         "ours=$_a theirs=$_b — if the toml arms got (un)anchored to match, update the divergence note"
                 fi
             done
-            # ...and every OTHER CI path — including these same filenames at
-            # the repo TOP LEVEL, where anchored and unanchored agree — must
-            # still agree with _validate.yml, or the divergence is wider
-            # than documented.
+            # ...and every OTHER CI path must still agree with _validate.yml,
+            # or the divergence is wider than documented. "Every other" used
+            # to mean a hardcoded five-path list — .github/workflows/ci.yml,
+            # prek.toml, .taplo.toml, lychee.toml, .gitleaks.toml — which
+            # made the "fails closed if a new one opens anywhere else" claim
+            # in the comment above CI_PATH_RE untrue: a new arm added to
+            # either regex covering a path outside that list (e.g. a future
+            # `^Justfile$`) would pass silently. Run both regexes over the
+            # actual tracked tree instead, so the claim is literally true.
             _mismatch=""
-            for _p in .github/workflows/ci.yml prek.toml .taplo.toml lychee.toml .gitleaks.toml; do
+            while IFS= read -r _p; do
+                # scripts/*.sh is the one documented divergence already
+                # asserted above; skip it here so it isn't double-counted.
+                case "$_p" in
+                    scripts/*.sh) continue ;;
+                esac
                 _a=no; _b=no
                 printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _a=yes
                 printf '%s\n' "$_p" | grep -qE "$_vci" && _b=yes
                 [ "$_a" = "$_b" ] || _mismatch="$_mismatch $_p(ours=$_a,theirs=$_b)"
-            done
+            done < <(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files)
             if [ -z "$_mismatch" ]; then
-                st_ok "divergence ratchet: every top-level non-scripts CI path agrees with _validate.yml"
+                st_ok "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml"
             else
-                st_bad "divergence ratchet: every top-level non-scripts CI path agrees with _validate.yml" "$_mismatch"
+                st_bad "divergence ratchet: every tracked non-scripts CI path agrees with _validate.yml" "$_mismatch"
             fi
         fi
     fi
