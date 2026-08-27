@@ -211,10 +211,18 @@ pub async fn apply_restore_block_sql_only(
 /// cannot drift. The rejection still differs by design: the command path errs,
 /// this sync-replay fallback no-op-warns (aborting would wedge inbound sync;
 /// dropping a self-evidently invalid move is recoverable).
+/// #4390 — returns the ids [`unsweep_inherited_cohort_after_move`] cleared, so
+/// the caller can mirror the re-derivation onto the per-space engine after the
+/// transaction commits. Empty on every path that did not un-sweep, which is
+/// every path but the tombstoned-INHERITED subject: the cycle skip, a live
+/// subject, and an INTRINSIC tombstone all return `vec![]`. This arm has no
+/// engine by construction — that is what `resolve_block_space`'s
+/// `deleted_at IS NULL` filter routes here — so threading the ids out is the
+/// only way the clear can reach one.
 pub async fn apply_move_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: MoveBlockPayload,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     use crate::loro::engine::BlockSnapshot;
 
     let new_parent_str = p.new_parent_id.as_ref().map(|id| id.as_str().to_owned());
@@ -233,7 +241,7 @@ pub async fn apply_move_block_sql_only(
              (new parent is the block itself or one of its descendants); \
              skipping the UPDATE (#383)"
         );
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // #4204: classify the subject's tombstone BEFORE the reparent — inheritance
@@ -261,11 +269,18 @@ pub async fn apply_move_block_sql_only(
     // #4204: an INHERITED tombstone is positional, so the reparent above
     // invalidated it. Clear it and let the sweep below re-derive the cohort
     // from the new position. This arm has no engine to mirror the clear onto,
-    // and it is the arm that RUNS for a tombstoned subject — see
-    // `unsweep_inherited_cohort_after_move`'s "What this does NOT fix".
-    if let Some(inherited_ts) = inherited {
-        unsweep_inherited_cohort_after_move(&mut *conn, block_id_str, inherited_ts).await?;
-    }
+    // and it is the arm that RUNS for a tombstoned subject — so #4390 threads
+    // the cleared ids OUT to a post-commit mirror instead. See
+    // `unsweep_inherited_cohort_after_move`'s "Why it returns the cleared ids".
+    // #4390: the cleared ids are threaded back out to `apply_op_tx`, which
+    // reads their FINAL `deleted_at` (the sweep below may re-stamp them) into
+    // `ApplyEffects::unswept_cohort` for the post-commit engine mirror.
+    let unswept = match inherited {
+        Some(inherited_ts) => {
+            unsweep_inherited_cohort_after_move(&mut *conn, block_id_str, inherited_ts).await?
+        }
+        None => Vec::new(),
+    };
     // #4112: the moved block may now sit LIVE under a tombstone. Sweep it into
     // the tombstone's cohort — the SAME R9 rule the sync-import path applies —
     // and let the sweep own the tag maintenance when it fires (a fully
@@ -289,7 +304,7 @@ pub async fn apply_move_block_sql_only(
     {
         tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     }
-    Ok(())
+    Ok(unswept)
 }
 
 /// #4204/#4188 — the pre-`MoveBlock` half of the shared tail: is the subject's
@@ -417,29 +432,41 @@ pub(crate) async fn inherited_cohort_before_move(
 /// refuses to move a trashed block, so no device that had already seen the
 /// delete could have authored this move.
 ///
-/// ## What this does NOT fix (#4204's open half)
+/// ## Why it returns the cleared ids (#4390)
 ///
-/// The clear is SQL-only. On the device that replayed the delete first, the
-/// subject's per-space engine `deleted_at` register still holds the OLD
-/// cohort's timestamp, because `apply_op_projected` fans a delete's whole
-/// `deleted_cohort` — seed plus descendants — onto the engine
-/// (`dispatch_delete_descendants`). The next
-/// [`crate::loro::projection::reproject_block_deleted_at_from_engine`] takes
-/// its `Some(ts)` branch and re-trashes the subtree, so the convergence this
-/// helper produces survives op replay and boot recovery but NOT a snapshot
-/// import.
+/// The clear is SQL-only, and on its own that is not durable. On the device
+/// that replayed the delete first, the subject's per-space engine `deleted_at`
+/// register still holds the OLD cohort's timestamp, because
+/// `apply_op_projected` fans a delete's whole `deleted_cohort` — seed plus
+/// descendants — onto the engine (`dispatch_delete_descendants`). The next
+/// [`crate::loro::projection::reproject_block_deleted_at_from_engine`] would
+/// take its `Some(ts)` branch and re-trash the subtree, so the convergence
+/// this helper produces survived op replay and boot recovery but NOT a
+/// snapshot import.
 ///
-/// It cannot be mirrored from here, nor from `apply_move_block_via_loro`: a
-/// move whose subject is TOMBSTONED — the only kind this helper ever sees — is
-/// routed to `apply_move_block_sql_only` by `resolve_block_space`'s
-/// `deleted_at IS NULL` filter, and that arm has no engine by construction. The
-/// durable form is a post-commit fan-out in the shape of #2868's purge fix
-/// (`resolve_soft_deleted_block_space` + a mirror dispatch), which is a
-/// CRDT-visible resurrection propagated to the DELETING peer. Pinned, with the
-/// re-trash measured, by `unsweep_does_not_yet_reach_the_engine_register_4204`.
+/// The mirror cannot live HERE, nor in `apply_move_block_via_loro`: a move
+/// whose subject is TOMBSTONED — the only kind this helper ever sees — is
+/// routed to [`apply_move_block_sql_only`] by `resolve_block_space`'s
+/// `deleted_at IS NULL` filter, and that arm has no engine by construction. So
+/// #4390 threads the answer OUT instead: this helper returns the ids it
+/// cleared, [`apply_move_block_sql_only`] returns them to its caller,
+/// `apply_op_tx` re-reads their FINAL `deleted_at` into
+/// `ApplyEffects::unswept_cohort`, and the post-commit
+/// `materializer::handlers::apply::dispatch_unswept_cohort` mirrors that final
+/// state onto the per-space engine — the shape of #2868's purge fix
+/// (`resolve_soft_deleted_block_space` + a mirror dispatch).
 ///
-/// The resurrection itself is SETTLED, and this docstring is the canonical
-/// record of that. The maintainer ruling of 2026-08-26 adopts the
+/// FINAL state, not "restore them all": the tail's other half
+/// ([`sweep_move_under_tombstoned_ancestor`], which the caller runs next) may
+/// re-stamp the very rows this one cleared, at the cohort the NEW position
+/// implies. That is #4188's shape, and mirroring a blanket restore there would
+/// leave the engine holding `NULL` while SQL holds `t2` — trading #4204's
+/// divergence for #4188's. Reading the committed SQL value per id is the only
+/// form that answers both.
+///
+/// The resurrection this propagates to the DELETING peer is SETTLED, and this
+/// docstring is the canonical record of that. The maintainer ruling of
+/// 2026-08-26 adopts the
 /// converged-tree rule —
 /// <https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056> —
 /// "a block moved out of a deleted parent onto a live one stays live — a real
@@ -452,27 +479,41 @@ pub(crate) async fn inherited_cohort_before_move(
 /// an explicit move out of a trashed subtree wins over an inherited stamp the
 /// block never carried intrinsically.
 ///
-/// What is open is therefore the PLUMBING, not the decision: the fan-out above
-/// is unwritten, so the ruled-on semantics hold on the op-replay and
-/// boot-recovery paths but not across a snapshot import.
+/// The plumbing that was open when the ruling landed is #4390, and it is
+/// written: the return value below is its first link.
 ///
-/// Three other sites bear on that gap and CROSS-REFERENCE here rather than
-/// restating it — keep the argument in one place:
+/// ## The interpreter this does NOT reach
+///
+/// `db/recovery.rs`'s `move_block` arm hand-rolls the same un-sweep (the third
+/// interpreter of the op, #2894) and #4390 deliberately does not extend the
+/// mirror to it. That arm runs BEFORE `sqlx::migrate!`, at whatever era
+/// `max_applied_migration` names, on a raw executor — there is no `LoroState`
+/// and no per-space engine in scope at that point, so the mirror has no call
+/// site to live at, and the statements there are era-agnostic by construction
+/// precisely because they never move `deleted_at` through Rust. The residue is
+/// recorded at that arm rather than left implicit.
+///
+/// Three other sites bear on the mechanism and CROSS-REFERENCE here rather
+/// than restating it — keep the argument in one place:
 /// [`crate::loro::projection::reproject_block_deleted_at_from_engine`] (the
-/// branch that undoes the clear), `apply_move_block_via_loro` (why the mirror
-/// cannot be bolted on there), and
-/// `unsweep_does_not_yet_reach_the_engine_register_4204` (the measurement).
+/// branch that used to undo the clear), `apply_move_block_via_loro` (why the
+/// mirror cannot be bolted on there), and
+/// `unsweep_reaches_the_engine_register_4204_4390` (the measurement, flipped
+/// from characterisation to convergence by #4390).
+///
+/// Returns the ids the clear touched — empty when the short-circuit fired, so
+/// "nothing was cleared" and "nothing needs mirroring" are the same value.
 pub(crate) async fn unsweep_inherited_cohort_after_move(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
     inherited_ts: i64,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     let new_ancestor =
         agaric_store::block_descendants::nearest_tombstoned_ancestor(&mut *conn, block_id).await?;
     if let Some((_, ancestor_ts)) = new_ancestor
         && ancestor_ts == inherited_ts
     {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // Loud for the same reason the sweep is: a cross-device reconciliation, not

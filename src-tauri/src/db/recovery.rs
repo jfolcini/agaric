@@ -2349,6 +2349,33 @@ async fn recover_blocks_from_op_log(
                 // reorder and the move within one cohort, and is expressed as
                 // an equality between two stored `deleted_at` values, so it is
                 // era-agnostic for the same reason the probe above is.
+                //
+                // #4390 — the engine mirror is OUT OF SCOPE here, decided
+                // explicitly rather than left implicit. #4390 made the
+                // materializer's un-sweep durable by threading the ids it
+                // cleared out to a post-commit engine fan-out
+                // (`materializer::handlers::apply::dispatch_unswept_cohort`),
+                // so the SQL re-derivation survives a snapshot import. This arm
+                // has no such fan-out and cannot have one: it runs BEFORE
+                // `sqlx::migrate!`, at whatever era `max_applied_migration`
+                // names, on a raw `executor` — there is no `LoroState`, no
+                // per-space engine registry and no `SpaceId` in scope at this
+                // point in boot, and reaching for one would import the
+                // head-shaped, i64-only engine API into a pass whose whole
+                // premise is that the schema is NOT at head (see reasons 2 and
+                // 3 above).
+                //
+                // The residue, stated plainly: a vault whose `blocks` table is
+                // rebuilt by this pass gets the correct SQL answer, while its
+                // per-space engine keeps whatever `deleted_at` register its
+                // persisted snapshot holds — so a snapshot import after such a
+                // rebuild can still re-trash the subtree, exactly as the whole
+                // op path did before #4390. It is narrower than what #4390
+                // closed (that was every remote move; this is only a move
+                // replayed by a corrupt-DB rebuild) and it is not made worse by
+                // #4390. Widening the derived pass to cover it means giving
+                // recovery an engine handle after migration, which is a change
+                // to the boot sequence, not to this arm.
                 if let Some(old_parent_id) = inherited_from_parent {
                     let same_cohort_at_new_position = match tombstoned_ancestor.as_deref() {
                         None => false,

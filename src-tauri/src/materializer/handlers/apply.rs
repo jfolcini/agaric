@@ -10,8 +10,9 @@ use super::*;
 // `domain::block_ops`, the batch import path) calling the kernel through the
 // unchanged `crate::materializer::handlers::…` paths.
 pub(crate) use agaric_engine::apply::kernel::{
-    ApplyEffects, ApplyMode, ChunkAccumulator, advance_apply_cursor, apply_op_projected,
-    apply_op_projected_with_mode, apply_op_tx, collect_delete_cohort, collect_restore_cohort,
+    ApplyEffects, ApplyMode, ChunkAccumulator, UnsweptBlock, advance_apply_cursor,
+    apply_op_projected, apply_op_projected_with_mode, apply_op_tx, collect_delete_cohort,
+    collect_restore_cohort,
 };
 
 /// RAII timer that records the elapsed wall-clock of one [`apply_op`] to the
@@ -153,6 +154,16 @@ pub(super) async fn apply_op_with_mode(
         record,
         &effects.deleted_cohort,
         effects.delete_space_id.as_ref(),
+        state,
+    )
+    .await;
+    // #4390: the THIRD `deleted_at` fan-out. A `MoveBlock` whose subject
+    // carried an INHERITED tombstone re-derives it from the new position, in
+    // SQL only, on the arm that has no engine — see `dispatch_unswept_cohort`.
+    dispatch_unswept_cohort(
+        record,
+        &effects.unswept_cohort,
+        effects.unswept_space_id.as_ref(),
         state,
     )
     .await;
@@ -570,6 +581,125 @@ pub(crate) async fn dispatch_delete_descendants(
             &root_record.device_id,
             space_id,
             &root_record.created_at.to_string(),
+            state,
+        );
+    }
+}
+
+/// #4390 — the THIRD `deleted_at` fan-out, and the one that closes #4204's
+/// open half.
+///
+/// # What it mirrors
+///
+/// `apply_move_block_sql_only`'s tail re-derives an INHERITED tombstone from
+/// the subject's NEW position: it CLEARS the old cohort
+/// (`unsweep_inherited_cohort_after_move`) and then lets
+/// `sweep_move_under_tombstoned_ancestor` stamp whatever the new position
+/// implies. Both halves write SQL and neither can write the engine — a move
+/// whose subject is tombstoned is routed to that arm precisely BY
+/// `resolve_block_space`'s `deleted_at IS NULL` filter, so the arm has no
+/// engine by construction.
+///
+/// Without this fan-out the subject's per-space register keeps the OLD
+/// cohort's timestamp, which a delete's `dispatch_delete_descendants` put
+/// there for the whole cascade (seed *and* descendants — the reason
+/// `reproject_block_deleted_at_from_engine`'s old "the engine stores
+/// `deleted_at` on the delete seed only" claim was false for the op path).
+/// The next snapshot import then reads that register and re-trashes the
+/// subtree, so two peers disagree about whether the subtree is in the tree at
+/// all (#4204) or about which cohort it is in (#4188) purely on whether they
+/// learned the move by op replay or by import.
+///
+/// # Why it replays the SETTLED value rather than a blanket restore
+///
+/// [`UnsweptBlock`] carries the `deleted_at` the whole tail left on each row,
+/// read back in-tx. `None` ⇒ `RestoreBlock` on the engine (#4204's shape, the
+/// resurrection the maintainer ruling of 2026-08-26 adopts); `Some(ts)` ⇒
+/// `DeleteBlock` at that exact marker (#4188's shape, where the sweep
+/// re-stamped the rows this same tail had just cleared). A helper that
+/// restored everything it un-swept would fix #4204 by breaking #4188.
+///
+/// # Space resolution
+///
+/// The space rides in from `ApplyEffects` rather than being resolved here,
+/// captured in-tx with `resolve_soft_deleted_block_space` — the #2868 purge
+/// helper, which reads the denormalized `blocks.space_id` and therefore
+/// answers for a row that is soft-deleted. `resolve_block_space` would return
+/// `None` for exactly the #4188 half.
+///
+/// # Not covered: recovery's third interpreter
+///
+/// `db/recovery.rs`'s `move_block` arm hand-rolls the same un-sweep and is
+/// deliberately out of scope: it runs before `sqlx::migrate!`, on a raw
+/// executor, with no `LoroState` in scope — there is no engine there to
+/// mirror onto. Recorded at that arm rather than left implicit.
+///
+/// Errors inside `engine_apply` are absorbed (warn + skip), so this helper has
+/// nothing to propagate — the same contract as
+/// [`dispatch_delete_descendants`].
+pub(crate) async fn dispatch_unswept_cohort(
+    root_record: &OpRecord,
+    unswept: &[UnsweptBlock],
+    space_id: Option<&agaric_store::space::SpaceId>,
+    state: &agaric_engine::loro::shared::LoroState,
+) {
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{OpPayload, RestoreBlockPayload};
+
+    if unswept.is_empty() {
+        return;
+    }
+
+    let Some(space_id) = space_id else {
+        // The moved block carries a NULL `space_id` (pre-spaces data), so
+        // there is no canonical engine to mirror onto. The SQL re-derivation
+        // still stands as the durable outcome. Metered on the same counter as
+        // the delete/restore fan-outs' unresolved-space skip (#2031) so the
+        // divergence is observable rather than silent.
+        super::descendant_fanout_dropped::record();
+        tracing::trace!(
+            seq = root_record.seq,
+            "un-sweep fanout: no space for the moved block; skipping (#4390)",
+        );
+        return;
+    };
+
+    for block in unswept {
+        let payload = match block.deleted_at {
+            // #4204: the new position implies no cohort — the block is live in
+            // SQL, so the engine must agree or the next import undoes it.
+            None => OpPayload::RestoreBlock(RestoreBlockPayload {
+                block_id: BlockId::from_trusted(&block.block_id),
+                // Per-block-id on the engine; `apply_restore_block` clears the
+                // marker regardless of the SQL timestamp, exactly as
+                // `fan_out_restore` documents for its own synthesised value.
+                deleted_at_ref: root_record.created_at,
+            }),
+            // #4188: the sweep re-stamped it at the new ancestor's cohort.
+            // Mirror THAT timestamp, not the op's `created_at` — the engine
+            // marker is the cohort identity a later import reads back.
+            Some(_) => OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: BlockId::from_trusted(&block.block_id),
+            }),
+        };
+
+        let op_id = format!(
+            "{}/{}#unswept/{}",
+            root_record.device_id, root_record.seq, block.block_id,
+        );
+        // `engine_apply`'s `DeleteBlock` arm writes `op_created_at` as the
+        // engine's `deleted_at` marker, so the settled cohort ts is threaded
+        // through that parameter. The `RestoreBlock` arm ignores it.
+        let marker = block
+            .deleted_at
+            .unwrap_or(root_record.created_at)
+            .to_string();
+        agaric_engine::merge::engine_apply(
+            &op_id,
+            &payload,
+            &root_record.device_id,
+            space_id,
+            &marker,
             state,
         );
     }
