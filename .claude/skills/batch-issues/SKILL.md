@@ -74,8 +74,9 @@ issues. Where the work lives:
 ## 1. PLAN
 
 **FIRST — at the start of a batch (and ONLY then), sweep the open-PR board once.**
-`gh pr list --state open` — **not** `--author @me`, which silently drops every Dependabot
-PR from the sweep on a board where they are usually the majority (session 1391) — to see
+`gh pr list --state open --limit 100` — **not** `--author @me`, which silently drops every
+Dependabot PR from the sweep on a board where they are usually the majority (session 1391),
+and **not** the default page size (30), which silently truncates a board this size — to see
 the whole board, then `gh pr checks <n>` for each. **Acting on what you see is narrower
 than seeing it: the actionable set is your own PRs plus Dependabot's** (§8.4's
 authorization) — merge what's green and fix what's red *within that set only*. An outside
@@ -518,7 +519,11 @@ async over many minutes. Instead:
    cap blocks a new PR. One sweep, all PRs at once; never poll CI per-wake-up or
    per-subagent-completion (maintainer feedback 2026-06-10):
    - `gh pr checks <prevPR>`. All green + mergeable → **read the full review before
-     merging** (see below), then merge (`gh pr merge <prevPR> --squash --delete-branch`);
+     merging** (see below), then merge (`gh pr merge <prevPR> --squash --delete-branch`;
+     for a Dependabot PR carrying a human commit, add `--subject "<human commit subject>"`
+     — this CLI path takes the repo default silently otherwise, and the diagnosis never
+     reaches `main`'s subject line; see pitfalls' "A commit pushed onto a Dependabot branch
+     survives only if you make it survive");
      `Closes #NN` then fires.
    - Any failed → diagnose (`gh run view --log-failed`), fix on that branch (new commit,
      push), leave for the *next* checkpoint sweep. Don't merge red.
@@ -541,14 +546,20 @@ async over many minutes. Instead:
    This applies to **already-merged** PRs too: when sweeping recently-merged PRs, read
    their review bodies and open follow-up commits/issues for anything left unaddressed.
 4. **Keep the pending-PR list bounded** (up to **10** open PRs — maintainer preference,
-   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). `gh pr list --state open` shows
-   what's outstanding if you lose track — again NOT `--author @me`, which would hide the
-   very Dependabot PRs the next sentence authorises you to merge. Merging is authorized
-   (maintainer, 2026-06-10): approve+merge Dependabot PRs; for own green PRs blocked only
-   by `REVIEW_REQUIRED`, `--admin` is sanctioned — but only when the required checks
-   (`validate-all`, `dco`) are green. Those are the branch-protection CONTEXT names;
-   `statusCheckRollup` reports the first as `validate / validate-all`, so match on the
-   suffix — see the recipe above.
+   raised from 5 on 2026-06-19; reconfirmed 2026-08-26). **This cap counts the whole
+   board, not just your own pending PRs** — session 1391's correction ("you have 12 open
+   PRs, merge them") was itself a whole-board count on a board whose majority author is
+   Dependabot, so scoping the cap to `--author @me` would let an agent believe it has
+   headroom while the board it is actually bound by is full. `gh pr list --state open
+   --limit 100` shows what's outstanding if you lose track — again NOT `--author @me`,
+   which would hide the very Dependabot PRs the next sentence authorises you to merge, and
+   `--limit 100` because the default page size (30) silently truncates a board this size.
+   Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs (add
+   `--subject "<human commit subject>"` when the PR carries a human commit on top of
+   Dependabot's — see pitfalls); for own green PRs blocked only by `REVIEW_REQUIRED`,
+   `--admin` is sanctioned — but only when the required checks (`validate-all`, `dco`) are
+   green. Those are the branch-protection CONTEXT names; `statusCheckRollup` reports the
+   first as `validate / validate-all`, so match on the suffix — see the recipe above.
 
 **An ABSENT check is not a passing check.** On a freshly-pushed PR the required checks do
 not exist yet, and that is exactly when you poll. A filter like

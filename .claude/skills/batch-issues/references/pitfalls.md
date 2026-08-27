@@ -128,30 +128,48 @@ newer upstream release superseding the group **force-pushes it**, and a commit t
 `dependabot[bot]`'s disappears with no trace. The PR goes red again for the *original*
 reason, and the next reader has no record the problem was ever diagnosed (#4360).
 
-It does not take a force-push to lose the commit's own record, either — **by default**.
-This repo squash-merges every Dependabot PR, and GitHub's squash box defaults to the *PR
-title*, which is Dependabot's own commit subject; if the merger accepts that default, the
-human commit's message never reaches `main`, only its diff. But this is a default, not a
-law: the merger can override it — the GitHub **web UI** does this by editing the
-squash-commit message box before confirming, but the CLI path this skill actually
-prescribes (§8.3, `gh pr merge <n> --squash --delete-branch`) never shows that box; it
-takes the repo default silently. From the CLI, override it with `-t`/`--subject` (and
-`-b`/`--body` if needed) instead. Three of the eight instances below show someone
-overriding the default one way or the other: the merge commit for #3780 reads
-`fix(mcp): port adapter to rmcp 3.1`; for #3779, `fix(deps): harden fuzz dependency update`;
-and for #3771, `fix(tooling): apply OXC 0.62 migrations` — all three are the *human*
-commit's subject, not Dependabot's. **Pass `gh pr merge <n> --squash --subject "<human
-commit subject>"` (add `--body` too if useful) when merging** — it costs nothing and it is
-the one thing in this whole hazard that already has a track record of working.
+It does not take a force-push to cost this repo the human commit's *subject line* — **by
+default**. This repo's actual settings (`gh api repos/jfolcini/agaric --jq
+'.squash_merge_commit_title, .squash_merge_commit_message'`): `squash_merge_commit_title`
+is `COMMIT_OR_PR_TITLE` and `squash_merge_commit_message` is `COMMIT_MESSAGES`. On a
+two-commit PR (Dependabot's bump plus a human fix), `COMMIT_OR_PR_TITLE` falls back to the
+*PR title* — Dependabot's own commit subject — but `COMMIT_MESSAGES` concatenates every
+commit's message into the squash **body**, human commit included. So accepting the default
+does not erase the human commit's message; it demotes it from the subject line to a bullet
+inside the body. The merger can still override the subject — the GitHub **web UI** does
+this by editing the squash-commit message box before confirming, but the CLI path this
+skill actually prescribes (§8.3, `gh pr merge <n> --squash --delete-branch`) never shows
+that box; it takes the repo default silently. From the CLI, override it with
+`-t`/`--subject`.
+
+Three of the eight instances below show someone overriding it: the merge commit for #3780
+reads `fix(mcp): port adapter to rmcp 3.1`; for #3779, `fix(deps): harden fuzz dependency
+update`; and for #3771, `fix(tooling): apply OXC 0.62 migrations` — all three are the
+*human* commit's subject, not Dependabot's. Reading those three merge commits in full shows
+more than an overridden subject, though: **the Dependabot bump text is entirely absent from
+the body too** — no "Bump X from A to B" line, no release-notes link, nothing. Under
+`COMMIT_MESSAGES`, overriding only the subject (`--subject` with no `--body`) still leaves
+the body as the default concatenation of every commit's message, bump line included; a body
+containing *only* the human message means the merger overrode the body as well, and that
+override is what dropped the dependency provenance (see below for what that costs). **Pass
+`gh pr merge <n> --squash --subject "<human commit subject>"` and leave `--body` unset
+unless you are prepared to reproduce the bump line inside it** — the subject override costs
+nothing and already has a track record of working; overriding the body wholesale is what
+makes the provenance disappear.
 
 Real numbers (60 most-recently-merged Dependabot PRs, 2026-07-29 through 2026-08-26,
 independently re-derived — not just asserted): **8 (13%)** carried at least one
 non-Dependabot commit — a fuzz relock (#4326), a test-assertion fix (#4329), an `overrides`
 dedupe (#4331), a stryker-pair follow-up (#4333), an rmcp adapter port (#3780), a
 fuzz-dependency hardening (#3779), an OXC-migration fix (#3771), a bundle-budget rebaseline
-(#3237). Of those 8, the squash commit on `main` kept Dependabot's own message for 5
-(#4326, #4329, #4331, #4333, #3237) and the human commit's message for the other three
-(#3780, #3779, #3771) — checked by reading the actual merge commit, not inferred.
+(#3237). Of those 8, the squash commit on `main` kept the default — Dependabot's subject,
+both messages concatenated in the body — for 5 (#4326, #4329, #4331, #4333, #3237), and had
+an overridden subject *and* body (human message only, bump line gone) for the other three
+(#3780, #3779, #3771) — checked by reading the actual merge commit, not inferred. So the
+split is not "message kept vs. message lost": under this repo's settings the human message
+reaches `main` either way. What it actually demonstrates is the real risk — overriding the
+subject alone is free, but whoever merged the three also overrode the body, and *that* is
+what erased the dependency line, not the act of promoting the human subject by itself.
 
 **"None of the 8 lost the commit" is not a safe conclusion, and this method cannot support
 it.** A PR only enters this sample of 8 *because* its final, merged state still has a
@@ -165,8 +183,9 @@ later as #3780). Anything commented on #3451 would have been stranded there, inv
 its replacement. So the count this section can actually stand behind is: **at least two recorded
 near-misses where a live force-push collided with an in-flight human push, both caught
 immediately, zero recorded *silent* losses** — not "zero losses", which nothing here
-measures. The near-misses: #4326 (a mid-session force-push turned an in-flight push into a
-non-fast-forward, caught because the push failed *loudly*) and #3237
+measures. The near-misses: #4326 (per #4360's own first-hand account: "Dependabot
+force-pushed #4326's branch mid-session, which turned an in-flight push into a
+non-fast-forward. That time it was noticed because a push failed loudly.") and #3237
 (`docs/session-log/session-1242-retiring-surface.md`: "Dependabot force-rebased over the
 fix commit while it was in flight. `git ls-remote` showed a SHA I had not pushed."
 recovered with `git rebase --onto FETCH_HEAD` + `--force-with-lease`). That session log's
@@ -199,8 +218,11 @@ What to do:
   closing the PR outright and opening a fresh one (the #3451 → #3780 pattern) — if you
   inherit a Dependabot PR that superseded another, check the closed one's comments before
   assuming you are starting clean. And at merge time, `gh pr merge <n> --squash --subject
-  "<human commit subject>"` (add `--body` too if useful) so the diagnosis reaches `main`
-  too, not just the diff.
+  "<human commit subject>"`, leaving `--body` unset — the default `COMMIT_MESSAGES`
+  concatenation keeps Dependabot's own bump line in `main`'s history alongside the
+  diagnosis, so the subject override costs the provenance nothing. Only pass `--body`
+  yourself if you reproduce that bump line inside it; overriding it wholesale is what drops
+  the provenance (see above).
 
 No *local* mechanical guard here: the destructive event is Dependabot's own server-side
 force-push, which can land hours or days later, in a different session — nothing that runs
