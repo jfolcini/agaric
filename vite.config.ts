@@ -56,9 +56,17 @@ const analyze = process.env['ANALYZE'] === '1'
 // against the static preview build. Never set for normal builds/releases.
 const e2e = !!process.env['VITE_E2E']
 
-// React Compiler (#887) — full-tree auto-memoization. The eval proved
-// the codebase compiler-clean (healthcheck 469/469, 0 bails; TipTap
-// NodeViews are vanilla DOM). `@vitejs/plugin-react` v6 runs on
+// React Compiler (#887) — full-tree auto-memoization. The tree is NOT
+// bail-free, and nothing in this repo measures whether it is: the
+// "healthcheck 469/469, 0 bails" claim that stood here until #4469 named a
+// script that has never existed, and re-running the plugin by hand refutes
+// it. The compiler bails per FUNCTION, on ordinary things — a destructuring
+// default in a parameter object pattern, a `try`/`finally` — and on every
+// open `react/refs` violation, which is the compiler's own rule (#4469). A
+// bail is not a build failure; that function is simply left unoptimised.
+// TipTap NodeViews are vanilla DOM. `SelectionBubbleMenu` carries a
+// deliberate `'use no memo'` opt-out (#4469) that any future bail-counting
+// guard must allow for. `@vitejs/plugin-react` v6 runs on
 // rolldown/oxc, so the compiler is wired via the `reactCompilerPreset`
 // helper + `@rolldown/plugin-babel` (the v5 `react({ babel })` option no
 // longer exists). The preset defaults to `compilationMode: 'infer'`

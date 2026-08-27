@@ -65,7 +65,16 @@ export function Select({ value, onValueChange, disabled, children }: SelectProps
   if (onValueChange !== undefined) ctx.onValueChange = onValueChange
   if (disabled !== undefined) ctx.disabled = disabled
   return createElement(Ctx.Provider, { value: ctx }, children)
-  /* oxlint-enable react/refs */
+  /* oxlint-enable react/refs -- deliberately AFTER the `return`, which is not
+     dead code: oxlint directives are lexical, and the return line reads `ctx`
+     and so needs the suppression too. Measured, not assumed — strip both
+     directives and oxlint reports FOUR sites in this function: the three
+     conditional `ctx.x =` assignments and the `return`. (The `const ctx`
+     declaration does NOT fire; the taint starts at the first assignment.)
+     #4470 proposed two `disable-next-line` directives, which is one short of
+     even the assignment lines and misses the return entirely — hence the
+     block pair. Do not hoist this above the return: that un-suppresses the
+     return line and re-reds the file with exactly one new finding. */
 }
 
 interface SelectTriggerProps {

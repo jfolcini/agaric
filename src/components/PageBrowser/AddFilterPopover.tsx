@@ -564,15 +564,15 @@ export function AddFilterPopover({
           />
         )}
 
+        {/* #4406 — `renderHasParentEditor` is an opaque render-prop invoked
+            during render; its actual implementation (FilterGroup.tsx) mounts
+            `HasParentMatchingEditor`, which itself carries an open
+            react(refs) finding of the same "ref-touching callback reachable
+            from a call made during render" shape (see the comment there).
+            oxlint's syntax-only analysis can't see through the render-prop
+            boundary to know the callbacks below don't touch a ref
+            themselves, so it flags the call site conservatively. Left open. */}
         {editor === 'hasParent' &&
-          // #4406 — `renderHasParentEditor` is an opaque render-prop invoked
-          // during render; its actual implementation (FilterGroup.tsx) mounts
-          // `HasParentMatchingEditor`, which itself carries an open
-          // react(refs) finding of the same "ref-touching callback reachable
-          // from a call made during render" shape (see the comment there).
-          // oxlint's syntax-only analysis can't see through the render-prop
-          // boundary to know the callbacks below don't touch a ref
-          // themselves, so it flags the call site conservatively. Left open.
           renderHasParentEditor?.({
             onBack: () => setEditor(null),
             onApply: (matcher) => emit({ type: 'HasParentMatching', matcher }),

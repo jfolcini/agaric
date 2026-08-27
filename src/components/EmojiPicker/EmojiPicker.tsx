@@ -582,10 +582,26 @@ function SkinToneSelector({ value, onChange, tonable }: SkinToneSelectorProps) {
   // declared role="radiogroup" but every swatch was its own tab stop with no
   // key handlers; reuse the shared toolbar-pattern hook (same as the category
   // tablist) so Tab lands once and arrows move between swatches.
-  // #4406 — destructure before use: oxlint's react(refs) rule flags a member
-  // expression passed directly to `ref=`/handler props as "accessing a ref
-  // during render" (syntax-only check, blind to the actual property type).
-  // Binding to local identifiers first satisfies it with no behaviour change.
+  // #4406 — destructure before use: reading `containerRef` off the hook
+  // result during render (`roving.containerRef`) is a ref access as far as
+  // `react(refs)` is concerned, and once `roving` is tainted every later read
+  // of it is flagged too — which is why the handler props drew findings here
+  // as well. Destructuring at the hook call is not an access. The rule is
+  // property-aware, not a blanket ban on member expressions: a component that
+  // reads only `roving.onKeyDown` draws no finding at all.
+  //
+  // Binding to local identifiers is the fix, and it is NOT inert: it
+  // also un-bails the React Compiler, which then memoises this component
+  // (#4469 — `react/refs` ports the compiler's own validation, so the
+  // violation was keeping this function unoptimised). Verified by compiling
+  // the file: the fixed form emits a `_c(...)` cache the pre-fix form did
+  // not. Safe here because nothing the cache is keyed on can go
+  // stale: the key set is `value`, `onChange`, the i18n `t`, and `tonable` —
+  // the only object among them, and `<EmojiPicker>` rebuilds it with a
+  // `useMemo` over the loaded dataset, so its identity tracks its contents.
+  // Contrast SelectionBubbleMenu, where a TipTap `Editor` in the key set —
+  // a stable identity that mutates internally — froze the subtree and the
+  // identical edit had to be reverted.
   const { containerRef, onKeyDown: rovingOnKeyDown, onFocus: rovingOnFocus } = useRovingTabindex()
   return (
     <div
