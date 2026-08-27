@@ -1169,6 +1169,17 @@ if [ "${1:-}" = "--self-test" ]; then
             # the same failure mode `unrec_ci` already had once in this
             # file).
             _tracked_line=$(grep -E '^[[:space:]]*_tracked=\$\(git -C' "${BASH_SOURCE[0]}")
+            # Cardinality guard, matching the `_vci_count` sibling above: a
+            # second `_tracked=$(git -C` line would make the parameter
+            # expansions below splice ACROSS both lines and silently yield a
+            # mangled exclusion pattern, which would then be compared as if it
+            # were the real one. Fail closed instead.
+            _tracked_line_count=$(grep -cE '^[[:space:]]*_tracked=\$\(git -C' "${BASH_SOURCE[0]}")
+            if [ "$_tracked_line_count" -ne 1 ]; then
+                st_bad "divergence ratchet: exactly one _tracked= line" \
+                    "found $_tracked_line_count (expected 1) — the extraction below would splice across them"
+                _tracked_line=''
+            fi
             _tracked_excl=${_tracked_line#*grep -vE \'}
             _tracked_excl=${_tracked_excl%\'*}
             if [ -z "$_tracked_excl" ] || [ "$_tracked_excl" = "$_tracked_line" ]; then
