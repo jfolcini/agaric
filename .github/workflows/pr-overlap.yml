@@ -313,6 +313,21 @@ jobs:
           # PR's changed files (the `gh pr list --json files` API), not code
           # any PR author runs, so it needs no special handling as untrusted
           # input the way `artifact/diverged.txt` below does.
+          #
+          # `--limit 50` here, against `session-log-pr-collision`'s
+          # `PR_LIST_LIMIT + 1` (101) further down — two different numbers for
+          # "every open PR" in one file, deliberately, because the two jobs
+          # mean different things by it (#4431 review note 7). This one is
+          # INFORMATIONAL: it renders a table, it fails OPEN to `[]` three
+          # lines below, and under-reporting past 50 costs a row in a comment
+          # no merge depends on. That one GATES, so it may not under-report at
+          # all: it asks for one MORE than its own cap precisely so it can
+          # tell a full page from a truncated one, and REFUSES when the extra
+          # entry shows up. So 50 is the weaker number and knowingly so, not
+          # an oversight — raising it would buy a longer table and a larger
+          # API call and change nothing about what is gated. If the two are
+          # ever unified, the gating job's semantics (an explicit cap plus an
+          # overflow refusal) are the ones to keep, not this one's.
           if ! gh pr list --repo "$REPO" --state open --limit 50 \
               --json number,title,files > prs.json; then
             echo '[]' > prs.json
@@ -848,17 +863,38 @@ jobs:
   # The checkout above is pinned to `base.sha` deliberately, and
   # `check-pr-overlap-trust-boundary.mjs` enforces that it stays so; it must
   # NOT be moved to the PR head to make the guard present. The consequence is
-  # that the guard is absent from THIS CHECKOUT only when `base.sha` — the
-  # merge target as it stood before this PR — does not have it yet. That is
-  # true for the PR introducing the guard, and it is NOT true for a PR that
-  # deletes or moves it: that PR's `base.sha` predates its own deletion
-  # commit, so the checkout still contains the guard, `[ ! -f "$GUARD_SCRIPT"
-  # ]` is false, and this branch never runs on that PR at all — it runs the
-  # guard normally, same as any other PR (#4431 review note 7; an earlier
-  # version of this comment claimed a deleting/moving PR lands here too,
-  # which is wrong about WHICH PR sees the absence, though not about the
-  # eventual outcome — see below). Decided from THIS PR's own changed-file
-  # list in the payload already fetched above:
+  # that `[ ! -f "$GUARD_SCRIPT" ]` compares TWO REFS, not one: `GUARD_SCRIPT`
+  # is read from the workflow file, which on a `pull_request` event GitHub
+  # takes from the PR's MERGE ref, while the file it looks for comes from the
+  # `base.sha` checkout. Three cases, and they are not the same one (#4431
+  # review notes 6/7 — earlier versions of this comment got two of them
+  # wrong, in opposite directions):
+  #
+  #   * ADDS the guard. `base.sha` predates it, `GUARD_SCRIPT` names a path
+  #     that does not exist there → ABSENT. This branch runs.
+  #   * DELETES the guard. `base.sha` predates the deletion, so the checkout
+  #     still HAS it and `GUARD_SCRIPT` still names it → present. This branch
+  #     never runs on that PR; it runs the guard normally, same as any other
+  #     PR. (The fail-closed consequence lands on the NEXT PRs — see below.)
+  #   * MOVES the guard and updates `GUARD_SCRIPT` to match. `GUARD_SCRIPT`
+  #     is the PR's NEW path (merge ref) while the checkout is `base.sha`,
+  #     which only has the OLD one → ABSENT, and since GitHub reports a
+  #     rename as an entry at the new path, `self_adds` is `YES` and this
+  #     branch WARNS AND PASSES. Not the deletion case at all, despite
+  #     looking like one. That is the correct outcome — the guard genuinely
+  #     is not on the merge target at the path this workflow now names, so
+  #     there is nothing there to run — and it is safe, because the next
+  #     PR's `base.sha` carries the guard at its new path and the workflow
+  #     at its new `GUARD_SCRIPT`, so the guard runs normally from then on.
+  #     (A move that does NOT update `GUARD_SCRIPT` is the delete case: the
+  #     old path is still on `base.sha`, so the guard runs — from the base's
+  #     copy, which is the point of the pin.)
+  #
+  # Which of ADDS / MOVES this is does not need distinguishing: both are "the
+  # guard is not on the merge target at the path we were told to run, and
+  # this PR's own diff contains that path", which is one positively-identified
+  # state. Decided from THIS PR's own changed-file list in the payload
+  # already fetched above:
   #
   #   * this PR adds `scripts/check-session-log-pr-collision.mjs` → warn and
   #     pass. Expected, and there is genuinely nothing to check: the guard is
@@ -866,12 +902,14 @@ jobs:
   #     the guard unmergeable by the guard it introduces.
   #   * anything else → fail. The guard is missing from `base.sha` and this
   #     PR did not add it — which is also exactly what happens to every PR
-  #     opened AFTER a deletion/move has already merged to `main`: their own
+  #     opened AFTER a DELETION has already merged to `main`: their own
   #     `base.sha` inherits the absence, they didn't add the guard back
-  #     either, and this branch (correctly) fails them. So a delete/move is
+  #     either, and this branch (correctly) fails them. So a deletion is
   #     still fail-closed overall — #3933's actual concern — it just surfaces
   #     on the NEXT PRs to open against the now-guard-less `main`, not on the
-  #     PR that did the deleting.
+  #     PR that did the deleting. A MOVE does not reach this branch at all
+  #     for anyone: the moving PR takes the warn-and-pass branch above, and
+  #     every PR after it finds the guard present at its new path.
   #
   # "Anything else" includes every state the discriminator cannot vouch for —
   # this PR missing from the payload, its file list truncated by gh's 100-file
@@ -915,6 +953,11 @@ jobs:
       # `check-session-log-pr-collision.mjs`'s `--pr-limit` flag is what
       # makes exceeding this number a FAILURE (see its own header).
       #
+      # Deliberately NOT the `--limit 50` the `post` job's overlap step uses
+      # (#4431 review note 7): that step is informational and fails open to
+      # `[]`, this one gates and refuses on overflow. The two numbers differ
+      # because the two guarantees do — see that step's own comment.
+      #
       # This is the INTENDED cap, not the literal `gh pr list --limit`
       # argument: the `gh pr list` step below actually asks for
       # `PR_LIST_LIMIT + 1`, one more than this value, while the guard is
@@ -953,6 +996,25 @@ jobs:
           # `|| true`, because a failed listing must fail this job rather
           # than degrade into an empty list that makes every touched file
           # look new.
+          #
+          # `HEAD` here is `base.sha` — the checkout above — which is THIS
+          # PR's merge target and not necessarily `main` (#4431 review note
+          # 4). For a stacked PR (this repo's convention sets a child's base
+          # to its PARENT's branch until the parent merges) it is the parent
+          # branch's head, so a session number that has merged to `main` but
+          # is absent from that parent branch is not in this listing and is
+          # invisible to the guard's STALE-CLAIM half on that PR. Known and
+          # accepted, for two reasons. The COLLISION half is unaffected: it
+          # reads the open-PR board, not this file, and every open PR is in
+          # that board regardless of its base. And the stale claim resurfaces
+          # the moment the child is retargeted to `main` (`base.sha` becomes
+          # a `main` commit and the number reappears here), which the
+          # convention requires before it can merge — so the gap closes
+          # before the merge it would otherwise let through. Listing `main`
+          # instead would be WRONG in the other direction: for a stacked
+          # child, a file its parent adds is already on its merge target and
+          # would read as a fresh claim off `main`, reintroducing exactly the
+          # added-vs-modified false positive this listing exists to prevent.
           git -c core.quotePath=false ls-tree -r --name-only HEAD -- docs/session-log \
             > merged-paths.txt
           echo "session-log files on $(git rev-parse HEAD): $(wc -l < merged-paths.txt)"
@@ -961,6 +1023,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          # For the unconditional self-PR REST re-fetch below (#4431 review
+          # note 1) — an `env:` var, never interpolated into the `run:` body,
+          # same as every other value this job passes to a shell.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -uo pipefail
           # Explicit failure, NOT a `[]` fallback: unlike `post`'s
@@ -1054,19 +1120,47 @@ jobs:
           # PER PAGE concatenated back to back (`[...][...]`) — two adjacent
           # top-level values, not one valid array. Confirmed the broken form
           # first, then the fix, against the same real >100-file PR.
+          #
+          # THIS PR is re-fetched too, truncated or not (#4431 review note
+          # 1), for a second fact the GraphQL `files` field cannot express at
+          # any length: a RENAME. `gh pr list --json files` returns `path`,
+          # `additions` and `deletions` per entry and nothing else — no
+          # `status`, no previous name — and reports a rename as a single
+          # entry at the NEW path (verified against this repo's own PR #4416,
+          # which renames four files: 16 `changedFiles`, 16 entries, every
+          # one at its new path). So `session-1000-typo.md` →
+          # `session-1000-fixed.md` is indistinguishable from a new file
+          # claiming an already-merged number, and the guard reported it as a
+          # hard stale claim telling the author to "rebase and renumber" — a
+          # remedy for a problem they do not have. The REST list carries
+          # `previous_filename` for exactly that entry, so mapping it in as
+          # `previousPath` lets the guard exempt a rename that KEEPS its
+          # number (and only that: a renumber still claims the new number —
+          # see `isSameNumberRename` in the guard).
+          #
+          # Scoped to the self PR because that is the only PR this run can
+          # FAIL — the same self/other split the truncation handling uses.
+          # Another PR's rename is a board warning here and a hard finding on
+          # its OWN run, where its own re-fetch applies. Cost is one extra
+          # paginated REST call per run, and a failure of it is a no-op: the
+          # entry keeps its `gh pr list` shape, `previousPath` is absent, and
+          # the guard behaves exactly as it did before — a false stale claim,
+          # never a false pass.
           truncated_numbers="$(jq -r '.[] | select(.changedFiles > (.files | length)) | .number' prs.json)"
-          if [ -n "$truncated_numbers" ]; then
+          refetch_numbers="$(printf '%s\n%s\n' "$truncated_numbers" "$PR_NUMBER" \
+            | grep -E '^[0-9]+$' | sort -n -u || true)"
+          if [ -n "$refetch_numbers" ]; then
             while IFS= read -r n; do
               [ -z "$n" ] && continue
               if full="$(gh api "repos/$REPO/pulls/$n/files" --paginate \
-                  --jq '.[] | {path: .filename, additions, deletions}' 2>/dev/null | jq -s -c '.')" \
+                  --jq '.[] | {path: .filename, additions, deletions, previousPath: .previous_filename}' 2>/dev/null | jq -s -c '.')" \
                   && [ -n "$full" ] \
                   && echo "$full" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
                 jq --argjson n "$n" --argjson files "$full" \
                     '[.[] | if .number == $n then .files = $files else . end]' \
                     prs.json > prs.json.tmp && mv prs.json.tmp prs.json
               fi
-            done <<< "$truncated_numbers"
+            done <<< "$refetch_numbers"
           fi
 
       - name: Check for a session-log number that would be duplicated in the merge result
@@ -1091,11 +1185,17 @@ jobs:
           # This job checks out `base.sha` on purpose — a commit already in
           # this repo's history, never a fork's — and that trust boundary is
           # pinned mechanically by `check-pr-overlap-trust-boundary.mjs`. The
-          # price is that the guard we run is the BASE branch's copy, so it is
-          # absent on the PR that introduces it, and on a PR that deletes or
-          # moves it. `node <missing file>` exits 1 with MODULE_NOT_FOUND,
-          # which the previous version of this step reported as a confirmed
-          # collision. Detect absence HERE, before node is ever invoked.
+          # price is that the guard we run is the BASE branch's copy while
+          # `GUARD_SCRIPT` comes from the workflow file, which a
+          # `pull_request` run takes from the PR's MERGE ref. So the guard
+          # reads as absent on the PR that INTRODUCES it, and on a PR that
+          # MOVES it and updates `GUARD_SCRIPT` (new path in the workflow,
+          # only the old path in the checkout) — but NOT on a PR that merely
+          # deletes it, whose `base.sha` still carries the file (#4431 review
+          # note 6; the job header above walks all three cases).
+          # `node <missing file>` exits 1 with MODULE_NOT_FOUND, which the
+          # previous version of this step reported as a confirmed collision.
+          # Detect absence HERE, before node is ever invoked.
           #
           # The two absent cases are not the same and must not share a
           # verdict. `prs.json` (fetched above) contains THIS PR's own
@@ -1121,17 +1221,19 @@ jobs:
             fi
             if [ "$self_adds" = "YES" ]; then
               # Expected and harmless: the guard does not exist on the merge
-              # target yet and this is the PR adding it, so there is nothing
-              # for it to have verified. Correctness of the guard itself is
+              # target at the path `GUARD_SCRIPT` names, and this PR's own
+              # diff adds that path — it is the PR introducing the guard, or
+              # the PR moving it there (#4431 review note 6) — so there is
+              # nothing for it to have verified. Correctness of the guard itself is
               # covered by its `--self-test` (a prek hook, and part of
               # validate-all), not by this job. A warning, not a failure —
               # failing would make the introducing PR unmergeable by the very
               # guard it introduces.
-              echo "::warning::session-log-pr-collision: NOT RUN — $GUARD_SCRIPT does not exist on this PR's base branch, and PR #$PR_NUMBER is the PR that adds it. No collision check was performed. It takes effect for every PR whose base contains this merge."
+              echo "::warning::session-log-pr-collision: NOT RUN — $GUARD_SCRIPT does not exist on this PR's base branch, and PR #$PR_NUMBER is the PR that adds it there (introducing the guard, or moving it to this path). No collision check was performed. It takes effect for every PR whose base contains this merge."
               {
                 echo "### session-log-pr-collision — not run"
                 echo
-                echo "\`$GUARD_SCRIPT\` is not on this PR's base branch and this PR is the one adding it, so there was nothing to run. The guard applies from the next PR onwards."
+                echo "\`$GUARD_SCRIPT\` is not on this PR's base branch and this PR is the one adding it there (introducing it, or moving it to this path), so there was nothing to run. The guard applies from the next PR onwards."
               } >> "$summary"
               exit 0
             fi

@@ -69,15 +69,48 @@
 // modification that only appends lines also has `deletions: 0`, so those
 // counts cannot tell an addition from an edit.
 //
-// The one shape this reads wrong is a RENAME. GitHub reports a rename as a
-// single entry at the NEW path with no trace of the old one, so
-// `session-1000-typo.md` → `session-1000-fixed.md` looks like a new file
-// bearing an already-merged number. Recorded rather than fixed:
-// `git log --diff-filter=R -M -- docs/session-log` over the whole history
-// of this repository returns ZERO renames, and
-// `check-session-log-numbering.sh` cannot see a rename either (its
-// `--diff-filter=A` excludes one), so this is an unhandled shape for the
-// PAIR of guards, not a regression this one introduces.
+// ─── A RENAME needs one extra fact, and `gh pr list` does not carry it ─────
+//
+// GitHub reports a rename as a SINGLE entry at the NEW path with no trace
+// of the old one, and `gh pr list --json files` returns only `path`,
+// `additions` and `deletions` per entry — no `status`, no previous name —
+// with no sub-field selection available to ask for more. Verified against
+// this repo's own PR #4416, which renames four files: `changedFiles` 16,
+// `files` 16 entries, every one at its NEW path, not one old path among
+// them. So on that payload alone `session-1000-typo.md` →
+// `session-1000-fixed.md` is indistinguishable from a new file bearing an
+// already-merged number, and lands as a hard STALE CLAIM whose remedy
+// ("rebase and renumber") is wrong for it: nothing about the branch is
+// stale and no number is actually duplicated (#4431 review note 1).
+//
+// An earlier version of this header called that shape unfixable and cited
+// zero historical renames under `docs/session-log`. That count is right for
+// `main` (squash merges flatten them) and WRONG for the repository: seven
+// exist across all refs, and every one is a RENUMBER —
+// `session-1314-tag-inheritance-convergence.md` →
+// `session-1316-tag-inheritance-convergence.md` and friends — i.e. this
+// guard's OWN prescribed remedy, performed on a file already on the merge
+// target. So the shape is not hypothetical here.
+//
+// The REST endpoint does carry the missing fact: `gh api
+// repos/<o>/<r>/pulls/<n>/files` returns `status: "renamed"` and
+// `previous_filename` (same PR, same verification). `pr-overlap.yml`
+// therefore re-fetches THIS PR's file list over REST on every run and
+// splices `previousPath` in, and `claimsByNumber` below exempts an entry
+// POSITIVELY — only when `previousPath` is a string, is itself already on
+// the merge target, AND parses to the SAME session number. A renumber
+// (`session-1314-x.md` → `session-1316-x.md`, all seven of the real ones)
+// is still a claim on 1316, because it is one; a rename whose previous path
+// is not on the merge target is still a claim, because this run cannot see
+// what it came from.
+//
+// Scoped to the SELF PR, exactly like the truncation split below: another
+// PR's rename is only a board warning here and is exempted on ITS OWN run,
+// where its own re-fetch applies. If the re-fetch does not reach a run at
+// all (rate limit, network, an older workflow replay), the entry keeps the
+// `gh pr list` shape, `previousPath` is absent, and the behaviour is the
+// pre-fix one — a false stale claim, never a false pass — with the finding's
+// own text now naming the rename case instead of only "renumber".
 //
 // ─── Which guard owns which case ──────────────────────────────────────────
 //
@@ -192,16 +225,37 @@
 //
 // The suggestion has to be a number `check-session-log-numbering.sh` would
 // itself accept, or the guard's remedy fails the other guard. That one
-// accepts `(max, max+GAP_BOUND]` over the union of the branch and the merge
-// target (#3929's bounded window), so `max(everything) + 1` is the wrong
-// function: one open PR carrying a wild number (`session-9999`) would poison
-// the suggestion into a value check 2 there rejects outright. Instead this
-// script walks the SAME window — `(mergedMax, mergedMax + GAP_BOUND]`, with
-// `GAP_BOUND` mirrored from that script and pinned equal to it by this
-// script's own self-test — and offers the first number in it that no open PR
-// has claimed. If every number in the window is claimed (more parallel
-// session-log PRs than the window is wide), it offers none at all rather
-// than one the other guard would reject.
+// accepts `(max, max+GAP_BOUND]` (#3929's bounded window) where `max` is
+// `existing_max`, taken over `HEAD ∪ origin/main` — the BRANCH as well as
+// the merge target. Both halves of that matter, and an earlier version of
+// this script got the second one wrong (#4431 review note 2):
+//
+//   * WIDTH. `max(everything) + 1` is not it: one open PR carrying a wild
+//     number (`session-9999`) would poison the suggestion into a value that
+//     guard's check 2 rejects on sight. Only numbers inside the window are
+//     ever offered.
+//   * ORIGIN. The window does not start at the MERGE TARGET's max; it
+//     starts at the max of the merge target AND the branch. A branch that
+//     has already committed a session number above the target's max — a
+//     multi-entry PR, or one whose earlier entry is still unmerged, and
+//     especially one with a gap (target max 1404, branch holding 1420) —
+//     makes `mergedMax + 1` land BELOW that guard's `expected`, exactly
+//     where its check 2 rejects it. So the origin used here is
+//     `max(mergedMax, the SELF PR's own claimed numbers)`, which is this
+//     script's view of the same union: the self PR's claims are precisely
+//     the session numbers its branch carries that the merge target does
+//     not. Other PRs' claims are deliberately NOT in the origin (they are
+//     not in anyone else's `HEAD`) — they are only skipped over inside the
+//     window, which is what keeps the `session-9999` case from poisoning it.
+//
+// The window is then `(origin, origin + GAP_BOUND]`, with `GAP_BOUND`
+// mirrored from that script and pinned equal to it by this script's own
+// self-test — which also re-implements that guard's `expected`/`max_allowed`
+// arithmetic and asserts the suggestion lands inside it, so the ORIGIN is
+// pinned now and not only the width. The first number in the window that no
+// open PR has claimed is offered; if every number in it is claimed (more
+// parallel session-log PRs than the window is wide), none is offered at all
+// rather than one the other guard would reject.
 // ─── Exit codes, and why "collision" is NOT 1 (#4431) ─────────────────────
 //
 // The first version of this script used 1 for "a collision was found". That
@@ -339,24 +393,51 @@ export function sessionNumberOf(path) {
 
 /**
  * The one shape a `gh pr list --json files` entry is allowed to take: a bare
- * string, or an object carrying a string `path`. `pathsOf()` and
- * `shapeProblem()` both call this — a SINGLE predicate, not two, because two
- * independent notions of "a usable file entry" is exactly how #4431 review
- * note 1 happened: `pathsOf()`'s `.filter(Boolean)` quietly dropped a `path`-
- * less entry while `shapeProblem()` never looked inside `files` at all, so
+ * string, or an object carrying a string `path` and, optionally, a string or
+ * null `previousPath`. `fileEntriesOf()` and `shapeProblem()` both call this
+ * — a SINGLE predicate, not two, because two independent notions of "a
+ * usable file entry" is exactly how #4431 review round 4's note 1 happened:
+ * the path reader's `.filter(Boolean)` quietly dropped a `path`-less entry
+ * while `shapeProblem()` never looked inside `files` at all, so
  * `{additions: 3, deletions: 0}` passed validation and contributed zero paths
  * — a session-log claim made invisible rather than refused.
+ *
+ * `previousPath` is OPTIONAL: only `pr-overlap.yml`'s REST re-fetch supplies
+ * it (`gh pr list --json files` has no such field — see this file's header).
+ * When it IS present it must be a string or null, and that is checked here
+ * rather than shrugged off, because a string value can turn a CLAIM into a
+ * non-claim in `claimsByNumber()` below. An unrecognised shape reaching that
+ * exemption would be a fail-OPEN, which is the one direction this script is
+ * not allowed to fail in.
  *
  * @param {unknown} f
  */
 function isUsableFileEntry(f) {
   if (typeof f === 'string') return true
-  return f !== null && typeof f === 'object' && typeof f.path === 'string'
+  if (f === null || typeof f !== 'object') return false
+  if (typeof f.path !== 'string') return false
+  return (
+    f.previousPath === undefined || f.previousPath === null || typeof f.previousPath === 'string'
+  )
 }
 
-/** The changed paths of one `gh pr list --json number,files` entry. */
-function pathsOf(pr) {
-  return (pr?.files ?? []).map((f) => (typeof f === 'string' ? f : f?.path))
+/**
+ * The changed files of one `gh pr list --json number,files` entry,
+ * normalised to `{path, previousPath}`. `previousPath` is `null` unless the
+ * workflow's REST re-fetch supplied GitHub's own `previous_filename` for a
+ * renamed entry (#4431 review note 1).
+ *
+ * @param {{files?: unknown[]}} pr
+ */
+function fileEntriesOf(pr) {
+  return (pr?.files ?? []).map((f) =>
+    typeof f === 'string'
+      ? { path: f, previousPath: null }
+      : {
+          path: f?.path,
+          previousPath: typeof f?.previousPath === 'string' ? f.previousPath : null,
+        },
+  )
 }
 
 /**
@@ -376,16 +457,20 @@ function shapeProblem(prs) {
     if (!Number.isInteger(pr.changedFiles)) {
       return `entry ${i} (#${pr.number}) has no integer "changedFiles" field`
     }
-    // #4431 review note 1: an entry that IS an array can still hold a file
-    // object with no usable path (e.g. `{additions, deletions}` with the
-    // `path` field itself missing or non-string). `pathsOf()` reads exactly
-    // the same predicate, so a shape it cannot turn into a path is refused
-    // here rather than silently contributing nothing to the analysis.
+    // #4431 review: an entry that IS an array can still hold a file object
+    // with no usable path (e.g. `{additions, deletions}` with the `path`
+    // field itself missing or non-string), or a `previousPath` of a type
+    // this script did not anticipate — and `previousPath` is what the rename
+    // exemption in `claimsByNumber()` keys on, so an unrecognised value
+    // there could suppress a real claim. `fileEntriesOf()` reads exactly the
+    // same predicate, so a shape it cannot turn into a usable entry is
+    // refused here rather than silently contributing nothing to the
+    // analysis.
     for (const [j, f] of pr.files.entries()) {
       if (!isUsableFileEntry(f)) {
         return (
-          `entry ${i} (#${pr.number}) file ${j} has no usable "path" ` +
-          `(got ${JSON.stringify(f)})`
+          `entry ${i} (#${pr.number}) file ${j} has no usable "path" (or a "previousPath" ` +
+          `that is neither a string nor null) (got ${JSON.stringify(f)})`
         )
       }
     }
@@ -481,6 +566,20 @@ function indexMergedPaths(mergedPaths) {
  * ordering and — for the stacked case — is normally the sibling PR the file
  * actually belongs to.
  *
+ * EVERY carrier is recorded too, in `prs` (#4431 review note 3), because the
+ * representative alone loses the stacked CHILD. Folding to the lowest number
+ * attributes the parent's file to the PARENT, so on the child's own run
+ * `isSelfClaim()` said "not mine" about a genuine collision between that
+ * file and a third PR's — downgrading it to a board warning and letting the
+ * child go GREEN on a duplicate it would carry into the merge result. The
+ * parent still failed closed, so nothing was silent; the child was simply
+ * wrong. `prs` is what `isSelfClaim()` reads now, so any PR whose file list
+ * carries the path owns the finding.
+ *
+ * An entry is also skipped when it is a same-number rename of a file already
+ * on the merge target (`isSameNumberRename()` below, #4431 review note 1) —
+ * that is a file MOVING, not a number being claimed.
+ *
  * @param {{number:number, files:unknown[]}[]} prs
  * @param {Set<string>} mergedPathSet
  */
@@ -488,41 +587,100 @@ function claimsByNumber(prs, mergedPathSet) {
   /** @type {Map<number, Map<string, number[]>>} */
   const byNumberThenFile = new Map()
   for (const pr of prs) {
-    for (const file of pathsOf(pr)) {
+    for (const { path: file, previousPath } of fileEntriesOf(pr)) {
       const n = sessionNumberOf(file)
       if (n === null) continue
       if (mergedPathSet.has(file)) continue
+      if (isSameNumberRename(n, previousPath, mergedPathSet)) continue
       if (!byNumberThenFile.has(n)) byNumberThenFile.set(n, new Map())
       const byFile = byNumberThenFile.get(n)
       if (!byFile.has(file)) byFile.set(file, [])
       byFile.get(file).push(Number(pr.number))
     }
   }
-  /** @type {Map<number, {pr:number, file:string}[]>} */
+  /** @type {Map<number, {pr:number, prs:number[], file:string}[]>} */
   const claims = new Map()
   for (const [n, byFile] of byNumberThenFile) {
     claims.set(
       n,
-      [...byFile.entries()].map(([file, prNumbers]) => ({ pr: Math.min(...prNumbers), file })),
+      [...byFile.entries()].map(([file, prNumbers]) => {
+        const carriers = [...new Set(prNumbers)].toSorted((a, b) => a - b)
+        return { pr: carriers[0], prs: carriers, file }
+      }),
     )
   }
   return claims
 }
 
 /**
- * The first number in `check-session-log-numbering.sh`'s OWN window —
- * `(mergedMax, mergedMax + GAP_BOUND]` — that no open PR has claimed, or
- * `null` when every number in it is taken. Deliberately not
+ * Whether a changed file is a RENAME OF AN ALREADY-MERGED SESSION LOG THAT
+ * KEEPS ITS NUMBER — the one shape that looks exactly like a new claim in
+ * `gh pr list --json files` and is not one (#4431 review note 1; see this
+ * file's header for why the payload cannot tell on its own, and where
+ * `previousPath` comes from).
+ *
+ * Classified POSITIVELY, all three conditions required: the entry must
+ * actually carry a string `previousPath` (absent means "this run does not
+ * know", which stays a claim), that path must already be on the merge target
+ * (a rename from somewhere this run cannot see stays a claim), and it must
+ * parse to the SAME session number (a RENUMBER — `session-1314-x.md` →
+ * `session-1316-x.md`, which is what all seven real renames under
+ * `docs/session-log` in this repo's history are — genuinely claims the new
+ * number, and must keep being reported as claiming it).
+ *
+ * @param {number} number
+ * @param {string|null} previousPath
+ * @param {Set<string>} mergedPathSet
+ */
+function isSameNumberRename(number, previousPath, mergedPathSet) {
+  if (typeof previousPath !== 'string') return false
+  if (!mergedPathSet.has(previousPath)) return false
+  return sessionNumberOf(previousPath) === number
+}
+
+/**
+ * One claim rendered for a human: the PR that represents the file, plus
+ * every OTHER open PR whose `gh`-reported file list carries that exact path
+ * (#4431 review note 3). A stacked child contains its parent's commits, so
+ * both PRs report the parent's file and the two fold into one claim —
+ * naming the carriers is what lets the child see why a finding it did not
+ * author is nonetheless its problem: the child would carry the duplicate
+ * into the merge result.
+ *
+ * @param {{pr:number, prs:number[], file:string}} claim
+ */
+function describeClaim(claim) {
+  const others = claim.prs.filter((p) => p !== claim.pr)
+  const also = others.length > 0 ? `, also carried by ${others.map((p) => `#${p}`).join(', ')}` : ''
+  return `#${claim.pr} (\`${claim.file}\`${also})`
+}
+
+/**
+ * The first number in `check-session-log-numbering.sh`'s OWN window that no
+ * open PR has claimed, or `null` when every number in it is taken.
+ *
+ * The window is `(origin, origin + GAP_BOUND]`, and BOTH ends have to match
+ * that guard (see this file's header). Its width is deliberately not
  * `max(everything) + 1`: that lets one open PR carrying `session-9999`
  * poison the suggestion into a number the other guard's check 2 rejects on
- * sight, so the guard's own remedy would fail the guard next to it.
+ * sight, so the guard's own remedy would fail the guard next to it. Its
+ * ORIGIN is `max(the merge target's numbers, THE SELF PR'S OWN claimed
+ * numbers)` and not the merge target's max alone (#4431 review note 2): that
+ * guard computes `existing_max` over `HEAD ∪ origin/main`, so a branch
+ * already carrying a number above the target's max — a multi-entry PR, or
+ * one with a gap, say target max 1404 and branch holding 1420 — moves its
+ * `expected` up with it, and a suggestion derived from the target alone
+ * would land below `expected` and be rejected there. Other PRs' claims stay
+ * OUT of the origin (they are in nobody else's `HEAD`); they are only
+ * skipped over inside the window.
  *
  * @param {Map<number, unknown>} claims
  * @param {number[]} mergedNums
+ * @param {number[]} selfClaimedNums
  */
-function suggestNextFree(claims, mergedNums) {
-  const mergedMax = mergedNums.length > 0 ? Math.max(...mergedNums) : 0
-  for (let n = mergedMax + 1; n <= mergedMax + GAP_BOUND; n++) {
+function suggestNextFree(claims, mergedNums, selfClaimedNums = []) {
+  const origin = Math.max(0, ...mergedNums, ...selfClaimedNums)
+  for (let n = origin + 1; n <= origin + GAP_BOUND; n++) {
     if (!claims.has(n)) return n
   }
   return null
@@ -566,12 +724,30 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
   // reintroduces the exact truncation-ambiguity #3933 is about, with no
   // signal left to tell "that's every open PR" from "that's the first N of
   // more". Kept as a refusal on that basis, not overlooked.
+  //
+  // What DID change (#4431 review note 5) is the message: the remedy it used
+  // to offer ("raise the limit and re-run") is a repo edit, and the person
+  // reading the failure is a PR author who cannot make it. It now says so —
+  // whose action clears this, and that it is not specific to their PR — so
+  // nobody spends a cycle looking for something to change on their branch.
+  // The cliff itself is real and unaddressed here; it deserves a tracked
+  // follow-up rather than living only in this comment.
   if (prLimit !== null && prs.length > prLimit) {
     return cannotVerify(
       `the fetched open-PR list has ${prs.length} entr${prs.length === 1 ? 'y' : 'ies'}, which ` +
         `exceeds the intended --pr-limit of ${prLimit}. That means there are MORE than ` +
-        `${prLimit} open PRs right now — raise the limit and re-run rather than trust a ` +
-        'partial read as "that is just how many PRs are open".',
+        `${prLimit} open PRs right now, and a partial read of the board cannot be told apart ` +
+        'from "that is just how many PRs are open", so it is refused rather than trusted. ' +
+        // #4431 review note 5: the old wording ("raise the limit and re-run")
+        // read as an instruction to the person seeing the failure, and it is
+        // not one — the cap is a repo file, and past it EVERY open PR's run
+        // refuses at once. Say plainly whose action clears it, so nobody
+        // burns a cycle looking for something to change on their branch.
+        'NOTHING ON THIS BRANCH CLEARS THIS, and it is not specific to this PR: past the cap ' +
+        "every open PR's run of this check refuses. The cap is `PR_LIST_LIMIT` in " +
+        '`.github/workflows/pr-overlap.yml`, so raising it — or bringing the open-PR count ' +
+        'back under it — is a MAINTAINER action on the repository, not a change any single ' +
+        'PR author can make. Report it rather than trying to fix it here.',
     )
   }
 
@@ -660,8 +836,25 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
   // invocation — see `parseArgs`, which requires it), there is no "self" to
   // filter by, so nothing is downgraded: every finding stays a hard finding,
   // matching this function's behaviour before the split existed.
+  // Reads `c.prs` — EVERY open PR whose file list carries that exact path —
+  // not the folded representative `c.pr` (#4431 review note 3). A PR stacked
+  // on another open PR's branch contains its commits, so the parent's
+  // session-log file appears in the child's `gh`-reported file list too and
+  // folds to the PARENT's (lower) number. Keying self-attribution on the
+  // representative therefore told the CHILD "not your finding" about a
+  // collision between the parent's file and a third PR's — a green check on
+  // a duplicate the child would carry into the merge result. Keying it on
+  // the carrier set makes it the finding of every PR that actually carries
+  // the file, which for a stack is both of them.
   const isSelfClaim = (entries) =>
-    selfPr !== null && entries.some((c) => Number(c.pr) === Number(selfPr))
+    selfPr !== null && entries.some((c) => c.prs.some((p) => Number(p) === Number(selfPr)))
+  // The session numbers THIS PR's branch carries that the merge target does
+  // not — this script's view of what `check-session-log-numbering.sh` sees
+  // in `HEAD` but not in `origin/main`, and therefore the other half of the
+  // suggestion window's origin (#4431 review note 2, `suggestNextFree`).
+  const selfClaimedNums = [...claims.entries()]
+    .filter(([, entries]) => isSelfClaim(entries))
+    .map(([number]) => number)
   const selfCollisions =
     selfPr === null ? collisions : collisions.filter((c) => isSelfClaim(c.claims))
   const otherCollisions = selfPr === null ? [] : collisions.filter((c) => !isSelfClaim(c.claims))
@@ -671,7 +864,7 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
 
   const boardWarnings = [
     ...otherCollisions.map((c) => {
-      const who = c.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
+      const who = c.claims.map(describeClaim).join(' and ')
       return (
         `session-${c.number} is claimed by more than one open PR, and THIS PR is not one of ` +
         `them — ${who}. Not a failure of this PR: each of those PRs fails closed on its own ` +
@@ -679,7 +872,7 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
       )
     }),
     ...otherStaleClaims.map((s) => {
-      const who = s.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
+      const who = s.claims.map(describeClaim).join(' and ')
       return (
         `session-${s.number} is already on the merge target and newly added by ${who}, none ` +
         'of which is this PR. Not a failure of this PR: each of those PRs fails closed on its ' +
@@ -694,7 +887,7 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
     warnings: [...warnings, ...boardWarnings],
     collisions: selfCollisions,
     staleClaims: selfStaleClaims,
-    suggestion: suggestNextFree(claims, [...merged.byNumber.keys()]),
+    suggestion: suggestNextFree(claims, [...merged.byNumber.keys()], selfClaimedNums),
   }
 }
 
@@ -878,12 +1071,12 @@ function reportFindings(result) {
     `::error::check-session-log-pr-collision: ${total} session-log number(s) would be duplicated in the merge result`,
   ]
   for (const c of result.collisions) {
-    const who = c.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
+    const who = c.claims.map(describeClaim).join(' and ')
     lines.push(`  session-${c.number}: claimed by more than one open PR — ${who}`)
     lines.push('    One of these PRs must renumber; neither branch can see the other.')
   }
   for (const s of result.staleClaims) {
-    const who = s.claims.map((cl) => `#${cl.pr} (\`${cl.file}\`)`).join(' and ')
+    const who = s.claims.map(describeClaim).join(' and ')
     // Capped: a number can be held by many merged files (fifteen carry
     // session-1000), and a finding nobody reads to the end is a finding
     // nobody acts on. The count is kept, so the line never understates it.
@@ -898,6 +1091,20 @@ function reportFindings(result) {
         'sibling PR has merged it since — or the number is simply wrong. Either way ' +
         `${NUMBERING_GUARD} will not catch it again, because it only ever inspects STAGED ` +
         'additions: rebase onto origin/main and renumber.',
+    )
+    // #4431 review note 1: "rebase and renumber" is the WRONG remedy for a
+    // rename that keeps its number, and this run can only tell the two apart
+    // when GitHub's `previous_filename` reached it. When it did, the rename
+    // was exempted and this finding is not one; when it did not, the finding
+    // above is what a rename looks like, and the author must not be told to
+    // renumber a file that is only moving.
+    lines.push(
+      '    ...UNLESS this is a RENAME of a file already on the merge target that KEEPS its ' +
+        'number. GitHub reports a rename as one entry at the NEW path, so this check needs ' +
+        "GitHub's own `previous_filename` (re-fetched for THIS PR over `gh api " +
+        '.../pulls/<n>/files`) to tell that apart from a fresh claim, and that re-fetch is ' +
+        'best-effort. If that is what this is, the number is NOT duplicated and renumbering ' +
+        'is the wrong fix: re-run this job, and if it still fires, say so on the PR.',
     )
   }
   lines.push(`  ${nextFreeSentence(result.suggestion)}`)
@@ -1413,6 +1620,70 @@ function runSelfAttributionCases(ok, fail) {
       /#201/.test(r.warnings[0]) &&
       /#202/.test(r.warnings[0]),
   )
+
+  // Case 26 (#4431 review note 3): the STACKED CHILD, where the two fixes
+  // above meet and used to cancel each other out. The path-collapse fix
+  // folds an identical path to the LOWEST PR carrying it — for a stack, the
+  // PARENT — and the self-attribution fix then asked "is the self PR one of
+  // the claimants?" of that folded representative alone. On the child's own
+  // run the answer was "no" about a genuine collision between its parent's
+  // file and a third PR's, so the child went GREEN on a duplicate its own
+  // merge result would contain. The parent still failed closed, so nothing
+  // was silent — the child was simply wrong. Falsify by reverting
+  // `isSelfClaim` to `Number(c.pr) === Number(selfPr)`: this goes from one
+  // hard collision to zero collisions and one warning.
+  const STACK = [
+    // #301 is unrelated and adds its own file with the same number.
+    pr(301, [`${LOG_DIR}/session-1405-third-party.md`]),
+    // #302 is the parent, and actually adds the file.
+    pr(302, [`${LOG_DIR}/session-1405-parent.md`]),
+    // #303 is stacked on #302's branch, so `gh` reports #302's file under it
+    // too — one file seen twice through ancestry.
+    pr(303, [`${LOG_DIR}/session-1405-parent.md`, 'src/lib/search.ts']),
+  ]
+  check(
+    'a stacked child fails on a collision it carries through its parent’s file',
+    analyze({ prs: STACK, selfPr: 303, mergedPaths: [] }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 1 &&
+      r.collisions[0].number === 1405 &&
+      r.staleClaims.length === 0,
+  )
+
+  // Case 27 (complement): the PARENT still fails on the same board. The fix
+  // must not have moved ownership from the parent to the child, only widened
+  // it to both.
+  check(
+    'the parent of a stack still fails on the same collision',
+    analyze({ prs: STACK, selfPr: 302, mergedPaths: [] }),
+    (r) => r.verified && r.collisions.length === 1 && r.collisions[0].number === 1405,
+  )
+
+  // Case 28: and a genuinely uninvolved PR still gets a warning — with the
+  // folded claim naming EVERY carrier, so the report says which PRs the file
+  // is actually in rather than only the lowest-numbered one. Without the
+  // carrier list, the stacked child reading its own hard failure would see a
+  // finding that named two PRs, neither of them itself.
+  check(
+    'a folded claim names every PR that carries it, not just the representative',
+    analyze({ prs: [...STACK, pr(304, ['package.json'])], selfPr: 304, mergedPaths: [] }),
+    (r) =>
+      r.verified &&
+      r.collisions.length === 0 &&
+      r.warnings.length === 1 &&
+      /also carried by #303/.test(r.warnings[0]),
+  )
+
+  // Case 29: the collapse still holds — a stacked pair with NO third party
+  // is not a collision with itself, which is what case 19 asserts from the
+  // other direction. Restated here from the CHILD's side, because that is
+  // the run the carrier-set change altered.
+  check(
+    'a stacked child with no third-party claimant is still not a collision',
+    analyze({ prs: STACK.slice(1), selfPr: 303, mergedPaths: [] }),
+    (r) => r.verified && r.collisions.length === 0 && r.staleClaims.length === 0,
+  )
 }
 
 /**
@@ -1429,18 +1700,39 @@ function runSuggestionCases(ok, fail) {
     else fail(name, JSON.stringify(r))
   }
 
-  // Case 16: one open PR holding session-9999 must not push the suggestion
-  // to 10000 — check-session-log-numbering.sh's check 2 rejects anything
-  // above (max, max+GAP_BOUND], so that suggestion would fail the guard the
-  // author is being told to satisfy.
+  // Case 16: ANOTHER open PR holding session-9999 must not push the
+  // suggestion to 10000 — check-session-log-numbering.sh's check 2 rejects
+  // anything above (max, max+GAP_BOUND], and that guard's max is taken over
+  // HEAD ∪ origin/main, neither of which contains a SIBLING's commits. So
+  // a sibling's wild number is not in the origin, only skipped inside the
+  // window. #102 is the self PR here and claims nothing; case 16b below is
+  // the deliberately-different case where the wild number is the self PR's
+  // OWN, which its own HEAD does carry (#4431 review note 2).
   check(
-    'a wildly high open claim does not poison the suggestion past the other guard’s window',
+    'another PR’s wildly high claim does not poison the suggestion past the other guard’s window',
+    analyze({
+      prs: [pr(101, [`${LOG_DIR}/session-9999-typo.md`]), pr(102, ['src/lib/search.ts'])],
+      selfPr: 102,
+      mergedPaths: mergedLogs(1404),
+    }),
+    (r) => r.verified && r.suggestion === 1405,
+  )
+
+  // Case 16b (#4431 review note 2): the SELF PR holding session-9999 is the
+  // opposite answer, and 1405 would be the wrong one. That number is in the
+  // author's own HEAD, so check-session-log-numbering.sh's `existing_max` is
+  // 9999 and its check 2 accepts only [10000, 10009] on the very next
+  // commit. Suggesting 1405 here would hand the author a number the guard
+  // they are being told to satisfy rejects on sight. Falsify by reverting
+  // `suggestNextFree`'s origin to `max(mergedNums)`: this returns 1405.
+  check(
+    'a wildly high claim made by the SELF PR moves the window, because that guard’s HEAD carries it',
     analyze({
       prs: [pr(101, [`${LOG_DIR}/session-9999-typo.md`])],
       selfPr: 101,
       mergedPaths: mergedLogs(1404),
     }),
-    (r) => r.verified && r.suggestion === 1405,
+    (r) => r.verified && r.suggestion === 10000,
   )
 
   // Case 17: the suggestion skips numbers OTHER open PRs already claim, so
@@ -1466,11 +1758,228 @@ function runSuggestionCases(ok, fail) {
   const wholeWindow = Array.from({ length: GAP_BOUND }, (_, i) =>
     pr(200 + i, [`${LOG_DIR}/session-${1405 + i}-a.md`]),
   )
+  // The self PR here (#300) deliberately claims NOTHING, so the window's
+  // origin is the merge target's max and the fixture says what it means to
+  // say: GAP_BOUND numbers claimed by GAP_BOUND other PRs fills the window.
+  // Were the self PR one of the claimants, its own claim would move the
+  // origin up (case 16b) and the window would no longer be full — which is
+  // correct behaviour, and a different statement from this one.
   check(
     'a fully claimed window yields no suggestion at all, not one outside it',
-    analyze({ prs: wholeWindow, selfPr: 200, mergedPaths: mergedLogs(1404) }),
+    analyze({
+      prs: [...wholeWindow, pr(300, ['src/lib/search.ts'])],
+      selfPr: 300,
+      mergedPaths: mergedLogs(1404),
+    }),
     (r) => r.verified && r.suggestion === null,
   )
+
+  // Case 18b (#4431 review note 2): the reviewer's exact shape — the branch
+  // has already committed a session number ABOVE the merge target's max,
+  // with a gap. `mergedMax + 1` is 1405; check-session-log-numbering.sh's
+  // `existing_max` is 1420 (HEAD carries it), so its check 2 accepts only
+  // [1421, 1430] and would reject 1405 outright. Falsify by reverting
+  // `suggestNextFree`'s origin to `max(mergedNums)`: this returns 1405.
+  check(
+    'a self PR already carrying a number above the target’s max moves the window origin with it',
+    analyze({
+      prs: [pr(101, [`${LOG_DIR}/session-1420-earlier-entry.md`])],
+      selfPr: 101,
+      mergedPaths: mergedLogs(1404),
+    }),
+    (r) => r.verified && r.suggestion === 1421,
+  )
+
+  // Case 18c (#4431 review note 2): the ORIGIN pinned against the other
+  // guard's OWN arithmetic rather than against a hand-computed constant.
+  // `check-session-log-numbering.sh` computes `existing_max` over
+  // `HEAD ∪ origin/main`, `expected = existing_max + 1` and
+  // `max_allowed = expected + GAP_BOUND - 1`, then hard-fails any number
+  // outside `[expected, max_allowed]`. This re-implements exactly that and
+  // asserts the suggestion lands inside it for every shape of branch/target
+  // relationship, which is the check the GAP_BOUND cross-guard assertion
+  // could not make: that one pins the window's WIDTH, this one its ORIGIN.
+  // Falsify by reverting `suggestNextFree`'s origin to `max(mergedNums)`:
+  // the last two scenarios' suggestions fall below `expected`.
+  const numberingWindow = (mergedNums, branchNums) => {
+    const existingMax = Math.max(0, ...mergedNums, ...branchNums)
+    return { expected: existingMax + 1, maxAllowed: existingMax + GAP_BOUND }
+  }
+  const originScenarios = [
+    { what: 'branch adds nothing above the target', merged: [1404], own: [] },
+    { what: 'branch sits one above the target', merged: [1404], own: [1405] },
+    { what: 'branch sits above the target with a gap', merged: [1404], own: [1420] },
+    { what: 'branch sits more than a window above the target', merged: [1404], own: [1425] },
+  ]
+  for (const sc of originScenarios) {
+    const r = analyze({
+      prs: [
+        pr(
+          101,
+          sc.own.map((n) => `${LOG_DIR}/session-${n}-mine.md`),
+        ),
+      ],
+      selfPr: 101,
+      mergedPaths: sc.merged.map((n) => `${LOG_DIR}/session-${n}-merged.md`),
+    })
+    // HEAD carries the merge target's numbers AND the branch's own, which is
+    // exactly `mergedNums ∪ own` here.
+    const w = numberingWindow(sc.merged, sc.own)
+    check(
+      `cross-guard: the suggestion is inside ${NUMBERING_GUARD}'s own window (${sc.what})`,
+      { suggestion: r.suggestion, ...w },
+      (v) => v.suggestion !== null && v.suggestion >= v.expected && v.suggestion <= v.maxAllowed,
+    )
+  }
+}
+
+/**
+ * A RENAME is the one shape `gh pr list --json files` cannot describe: it
+ * reports a rename as a single entry at the NEW path, so a rename that keeps
+ * its session number is indistinguishable from a fresh claim on an
+ * already-merged number — a hard stale claim whose remedy ("rebase and
+ * renumber") is wrong for it (#4431 review note 1). `pr-overlap.yml`
+ * re-fetches THIS PR's file list over `gh api .../pulls/<n>/files`, which
+ * does carry GitHub's `previous_filename`, and splices it in as
+ * `previousPath`; these cases pin the exemption it enables and, just as
+ * importantly, everything it must NOT exempt.
+ *
+ * @param {(name: string) => void} ok
+ * @param {(name: string, detail: string) => void} fail
+ */
+function runRenameCases(ok, fail) {
+  const check = (name, r, predicate) => {
+    if (predicate(r)) ok(name)
+    else fail(name, JSON.stringify(r))
+  }
+
+  const MERGED_TYPO = `${LOG_DIR}/session-1000-typo.md`
+  const BASE = [MERGED_TYPO, ...mergedLogs(1404)]
+  /** A `files` entry as the REST re-fetch supplies it. */
+  const entry = (path, previousPath = null) => ({ path, previousPath })
+  const prEntries = (number, files, changedFiles = files.length) => ({
+    number,
+    files,
+    changedFiles,
+  })
+
+  // R1: the shape itself — `session-1000-typo.md` → `session-1000-fixed.md`,
+  // the old path on the merge target, the number unchanged. Nothing is
+  // claimed and nothing is duplicated: one file is moving. Falsify by
+  // deleting the `isSameNumberRename` line from `claimsByNumber`: this goes
+  // from no finding to a hard stale claim on session-1000.
+  check(
+    'a same-number rename of an already-merged log is not a claim when previousPath is supplied',
+    analyze({
+      prs: [prEntries(101, [entry(`${LOG_DIR}/session-1000-fixed.md`, MERGED_TYPO)])],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.staleClaims.length === 0 && r.collisions.length === 0,
+  )
+
+  // R2: a RENUMBER is not the same shape and must NOT be exempted — all
+  // seven real renames under `docs/session-log` in this repo's history are
+  // renumbers (`session-1314-x.md` → `session-1316-x.md`), i.e. this guard's
+  // own prescribed remedy. Moving a file ONTO an already-merged number is a
+  // genuine stale claim, rename or not.
+  check(
+    'a rename that CHANGES the number onto an already-merged one is still a stale claim',
+    analyze({
+      prs: [prEntries(101, [entry(`${LOG_DIR}/session-1404-fixed.md`, MERGED_TYPO)])],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.staleClaims.length === 1 && r.staleClaims[0].number === 1404,
+  )
+
+  // R3: positive classification — a previousPath this run cannot corroborate
+  // (not on the merge target) exempts nothing. The exemption's whole
+  // justification is "that file already exists over there under another
+  // name"; if it does not, there is nothing to move.
+  check(
+    'a rename whose previous path is NOT on the merge target is still a claim',
+    analyze({
+      prs: [
+        prEntries(101, [
+          entry(`${LOG_DIR}/session-1404-mine.md`, `${LOG_DIR}/session-777-never-merged.md`),
+        ]),
+      ],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.staleClaims.length === 1 && r.staleClaims[0].number === 1404,
+  )
+
+  // R4: the fallback, stated as an assertion rather than left implicit. With
+  // no `previousPath` at all — the plain `gh pr list --json files` shape,
+  // which is what a run gets when the REST re-fetch did not land — the same
+  // rename still reads as a stale claim. That is a FALSE POSITIVE and never
+  // a false pass, which is the direction this guard is allowed to fail in;
+  // the finding's own text names the rename case (asserted end to end in the
+  // process cases below).
+  check(
+    'without previousPath the same rename still reads as a stale claim (false positive, never a false pass)',
+    analyze({
+      prs: [pr(101, [`${LOG_DIR}/session-1000-fixed.md`])],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => r.verified && r.staleClaims.length === 1 && r.staleClaims[0].number === 1000,
+  )
+
+  // R5: the exemption is per ENTRY, not per number — #101 moving
+  // `session-1000-typo.md` must not launder #102's genuine new claim on
+  // session-1000 into silence. Run from #102's side, where it is a hard
+  // finding.
+  check(
+    'exempting one PR’s rename does not exempt another PR’s real claim on the same number',
+    analyze({
+      prs: [
+        prEntries(101, [entry(`${LOG_DIR}/session-1000-fixed.md`, MERGED_TYPO)]),
+        pr(102, [`${LOG_DIR}/session-1000-brand-new.md`]),
+      ],
+      selfPr: 102,
+      mergedPaths: BASE,
+    }),
+    (r) =>
+      r.verified &&
+      r.staleClaims.length === 1 &&
+      r.staleClaims[0].number === 1000 &&
+      r.staleClaims[0].claims.length === 1 &&
+      r.staleClaims[0].claims[0].pr === 102,
+  )
+}
+
+/**
+ * The exit-code contract, asserted rather than only documented. The header's
+ * table is load-bearing: `EXIT_COLLISION` has to stay outside every code a
+ * runtime, kernel or shell can synthesize on its own, or #4431's original
+ * defect comes straight back — a crashed guard reported as a confirmed
+ * finding. A future exit path that reused 1, 126, 127 or 128+N would break
+ * that silently, since every one of those is a perfectly ordinary integer.
+ *
+ * @param {(name: string) => void} ok
+ * @param {(name: string, detail: string) => void} fail
+ */
+function runExitCodeCases(ok, fail) {
+  // node reserves 1–14 for its own failures, POSIX shells add 126 (found but
+  // not executable) and 127 (not found), and a signal death is 128+N.
+  const SYNTHESIZABLE = new Set([...Array.from({ length: 14 }, (_, i) => i + 1), 126, 127])
+  const distinct = new Set([EXIT_VERIFIED_CLEAN, EXIT_COULD_NOT_VERIFY, EXIT_COLLISION]).size === 3
+  // Only the FINDING code must be disjoint. `EXIT_COULD_NOT_VERIFY` (2) is
+  // deliberately inside the reserved range: "could not verify" is exactly
+  // what a crash means, so aliasing there costs nothing.
+  const collisionIsUnforgeable =
+    !SYNTHESIZABLE.has(EXIT_COLLISION) && EXIT_COLLISION > 0 && EXIT_COLLISION < 128
+  if (distinct && collisionIsUnforgeable) {
+    ok('exit codes are mutually distinct, and the FINDING code cannot be synthesized by a crash')
+  } else {
+    fail(
+      'exit codes are mutually distinct, and the FINDING code cannot be synthesized by a crash',
+      JSON.stringify({ EXIT_VERIFIED_CLEAN, EXIT_COULD_NOT_VERIFY, EXIT_COLLISION }),
+    )
+  }
 }
 
 /**
@@ -1502,6 +2011,23 @@ function runMalformedPayloadCases(ok, fail) {
     [
       'file entry with no usable "path"',
       [{ number: 7, changedFiles: 1, files: [{ additions: 3, deletions: 0 }] }],
+    ],
+    // #4431 review note 1: `previousPath` is optional, but a value of an
+    // unanticipated TYPE must refuse rather than be coerced or ignored — it
+    // is the field the rename exemption in `claimsByNumber` keys on, so
+    // shrugging at it is the one failure direction that could suppress a
+    // real claim. Falsify by deleting the `previousPath` clause from
+    // `isUsableFileEntry`: this case goes from failing verification to
+    // `r.verified === true`.
+    [
+      'file entry with a non-string, non-null "previousPath"',
+      [
+        {
+          number: 7,
+          changedFiles: 1,
+          files: [{ path: 'docs/session-log/session-1-a.md', previousPath: 42 }],
+        },
+      ],
     ],
   ]
   for (const [name, bad] of shapes) {
@@ -1969,6 +2495,17 @@ function runProcessCasesIn(dir, ok, fail) {
     (r) =>
       r.code === 1 && /already on the merge target as/.test(r.out) && /BASE IS STALE/.test(r.out),
   )
+  // …and the SAME finding has to name the rename case, end to end, because
+  // that is what this finding looks like when GitHub's `previous_filename`
+  // did not reach the run (#4431 review note 1). "Rebase and renumber" alone
+  // is wrong advice for a rename, and this is the message the author reads.
+  // Falsify by deleting the rename paragraph from `reportFindings`: this
+  // goes red while the assertion above stays green.
+  check(
+    'step: a stale-claim finding also names the RENAME case, not only "renumber"',
+    runStep(dir, stepPath, guard),
+    (r) => r.code === 1 && /RENAME of a file already on the merge target/.test(r.out),
+  )
 
   // ── The two guards must agree about "next free". This script's window is
   // GAP_BOUND wide because check-session-log-numbering.sh's is; a change to
@@ -1979,6 +2516,24 @@ function runProcessCasesIn(dir, ok, fail) {
     `cross-guard: GAP_BOUND is the same in this script and ${NUMBERING_GUARD}`,
     { here: GAP_BOUND, there: boundThere === null ? null : Number(boundThere[1]) },
     (v) => v.there !== null && v.there === v.here,
+  )
+
+  // …and the window's ORIGIN, which the GAP_BOUND check above does not
+  // cover (#4431 review note 2). That guard takes its max over `HEAD ∪
+  // origin/main` — the BRANCH as well as the merge target — and
+  // `suggestNextFree` mirrors the branch half by folding the self PR's own
+  // claims into the origin. Pinned as TEXT, exactly like GAP_BOUND: if
+  // either of those two lines is rewritten over there, this stops matching
+  // and whoever rewrote it has to come here. The behavioural half of the
+  // same fact (the suggestion actually landing inside that window) is
+  // `runSuggestionCases`'s scenario loop.
+  check(
+    `cross-guard: ${NUMBERING_GUARD}'s window origin is still max(HEAD ∪ merge target)`,
+    {
+      unionIncludesHead: numbering.includes('"$head_nums" "$target_nums"'),
+      expectedIsMaxPlusOne: numbering.includes('expected=$((existing_max + 1))'),
+    },
+    (v) => v.unionIncludesHead && v.expectedIsMaxPlusOne,
   )
 
   // ── Outcome 3: the guard RAN and refused to vouch for its input. Exit 2,
@@ -2098,11 +2653,13 @@ function runSelfTest() {
 
   runCoreCases(ok, fail)
   runClaimSemanticsCases(ok, fail)
+  runRenameCases(ok, fail)
   runSelfAttributionCases(ok, fail)
   runSuggestionCases(ok, fail)
   runMalformedPayloadCases(ok, fail)
   runTruncationCases(ok, fail)
   runPrLimitCases(ok, fail)
+  runExitCodeCases(ok, fail)
   runFindingsOutputCases(ok, fail)
   runProcessCases(ok, fail)
 
