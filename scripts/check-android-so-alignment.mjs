@@ -38,6 +38,19 @@
 // "4kb page-align uncompressed .so files" and cannot be combined with `-P`;
 // the 16 KB form is `zipalign -P 16 -f 4`.
 //
+// Three of this guard's four CI call sites (both `ci.yml` steps, and
+// `release.yml`'s pre-signing step) run this ZIP-offset half BEFORE
+// zipalign — `ci.yml` never runs it at all. That offset is then whatever
+// AGP's own packaging produced, which this pipeline does not control.
+// Measured against this repo's actual gradle output (AGP 8.11.0, minSdk 30,
+// #4425 review note 2): both the debug and release universal APKs already
+// store `libagaric_lib.so` 16 KB-aligned pre-zipalign, so today these steps
+// pass on AGP's own alignment, not on anything zipalign does later. This is
+// not verified for any earlier AGP version — if a downgrade ever reintroduces
+// a pre-zipalign offset finding on one of those three steps, that is a
+// packaging-config regression, not a bug in this guard or in zipalign's
+// invocation; the `--stage=pre-zipalign` remediation text below says so.
+//
 // ─── Why it cannot silently pass ─────────────────────────────────────────────
 //
 // Every path that cannot answer the question is a FAILURE, never a pass:
@@ -74,8 +87,14 @@
 // 0 = every assertion passed, 2 = an assertion failed.
 //
 // Usage:
-//   node scripts/check-android-so-alignment.mjs <path>...   # .apk and/or .so
+//   node scripts/check-android-so-alignment.mjs [--stage=pre-zipalign|post-zipalign] <path>...
 //   node scripts/check-android-so-alignment.mjs --self-test
+//
+// `--stage` only changes the ZIP-offset remediation text on a finding — it
+// tells the guard whether zipalign has already run on what it was given, so
+// it can point at the right fix (an AGP/packaging setting pre-zipalign, the
+// signing step post-zipalign) instead of always blaming release.yml's
+// signing step, which three of this repo's four call sites run before.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { spawnSync } from 'node:child_process'
@@ -86,6 +105,14 @@ import { inflateRawSync } from 'node:zlib'
 
 /** Android's 16 KB page size, the minimum acceptable `p_align`. */
 export const REQUIRED_ALIGN = 0x4000
+
+/**
+ * The `.so` that `src-tauri/build.rs` actually controls the link flags for.
+ * Everything else this guard finds under `lib/<abi>/*.so` — a third-party
+ * native library pulled in via an AAR, say — arrives through some other
+ * build step, and the build.rs remediation text does not apply to it.
+ */
+export const OUR_SO_BASENAME = 'libagaric_lib.so'
 
 export const EXIT_OK = 0
 export const EXIT_FINDING = 2
@@ -170,9 +197,16 @@ export function parseLoadAlignments(out, label) {
 /**
  * Check one on-disk ELF file.
  *
- * @returns {{label: string, aligns: number[], bad: {index: number, align: number}[]}}
+ * @param {string} path
+ * @param {string} label
+ * @param {string} readelfBin
+ * @param {{own?: boolean}} [opts]  `own: true` when this is
+ *   {@link OUR_SO_BASENAME}, i.e. the library `src-tauri/build.rs`'s linker
+ *   flag actually reaches — carried through so the caller can attribute an
+ *   ELF finding correctly instead of always blaming our own build script.
+ * @returns {{label: string, aligns: number[], bad: {index: number, align: number}[], own: boolean}}
  */
-export function checkElfFile(path, label, readelfBin) {
+export function checkElfFile(path, label, readelfBin, { own = true } = {}) {
   if (!existsSync(path)) {
     throw new Unverifiable(`${label}: no such file: ${path}. Verified nothing.`)
   }
@@ -194,7 +228,7 @@ export function checkElfFile(path, label, readelfBin) {
     const isPowerOfTwo = align > 0 && (align & (align - 1)) === 0
     if (!isPowerOfTwo || align < REQUIRED_ALIGN) bad.push({ index, align })
   })
-  return { label, aligns, bad }
+  return { label, aligns, bad, own }
 }
 
 // ─── Minimal zip reader (APKs) ───────────────────────────────────────────────
@@ -330,9 +364,18 @@ export function checkApk(path, readelfBin) {
   const tmp = mkdtempSync(join(tmpdir(), 'so-align-'))
   try {
     return libs.map((entry) => {
-      const out = join(tmp, entry.name.replaceAll('/', '_'))
+      // `NATIVE_LIB_ENTRY`'s `[^/]+` ABI/name segments admit a backslash, so
+      // an untrusted APK's entry name could contain `..\` — inert on Linux,
+      // where `\` is just another filename byte, but a `\`-aware `join`
+      // (Windows) would climb out of `tmp`. Strip BOTH separators so the
+      // written basename can never contain one, `..` included: with no `/`
+      // or `\` left, `..` is an ordinary three-byte filename component, not
+      // a traversal.
+      const out = join(tmp, entry.name.replaceAll(/[/\\]/g, '_'))
       writeFileSync(out, zipRead(buf, entry, label))
-      const result = checkElfFile(out, `${label}!${entry.name}`, readelfBin)
+      const result = checkElfFile(out, `${label}!${entry.name}`, readelfBin, {
+        own: basename(entry.name) === OUR_SO_BASENAME,
+      })
       // The second half of 16 KB compatibility. A STORED (uncompressed) native
       // library is mmap'd straight out of the APK — `extractNativeLibs=false`,
       // the AGP default at our minSdk — so the loader needs its payload to
@@ -355,11 +398,31 @@ export function checkApk(path, readelfBin) {
 
 const hex = (n) => `0x${n.toString(16)}`
 
+/**
+ * Optional `--stage=` values a caller may pass so the ZIP-offset
+ * remediation text can name what actually ran, instead of always pointing
+ * at `release.yml`'s signing step regardless of which of the four call
+ * sites hit it. `checkApk`'s offset check runs on whatever bytes it is
+ * given; only the *caller* knows whether zipalign has touched them yet.
+ */
+const ZIP_STAGES = new Set(['pre-zipalign', 'post-zipalign'])
+
 export function main(argv) {
+  const flags = argv.filter((a) => a.startsWith('--'))
   const paths = argv.filter((a) => !a.startsWith('--'))
-  const unknown = argv.filter((a) => a.startsWith('--'))
+  const stageFlags = flags.filter((a) => a.startsWith('--stage='))
+  const unknown = flags.filter((a) => !a.startsWith('--stage='))
   if (unknown.length > 0) {
     throw new Unverifiable(`unknown option(s): ${unknown.join(' ')}`)
+  }
+  if (stageFlags.length > 1) {
+    throw new Unverifiable(`--stage may be given at most once, got: ${stageFlags.join(' ')}`)
+  }
+  const stage = stageFlags[0]?.slice('--stage='.length)
+  if (stage !== undefined && !ZIP_STAGES.has(stage)) {
+    throw new Unverifiable(
+      `unknown --stage value "${stage}" (expected one of: ${[...ZIP_STAGES].join(', ')})`,
+    )
   }
   if (paths.length === 0) {
     throw new Unverifiable(
@@ -372,18 +435,26 @@ export function main(argv) {
   const results = []
   for (const path of paths) {
     if (path.endsWith('.apk')) results.push(...checkApk(path, readelfBin))
-    else results.push(checkElfFile(path, basename(path), readelfBin))
+    else {
+      results.push(
+        checkElfFile(path, basename(path), readelfBin, {
+          own: basename(path) === OUR_SO_BASENAME,
+        }),
+      )
+    }
   }
 
   const failed = results.filter((r) => r.bad.length > 0 || r.zipMisaligned)
   if (failed.length > 0) {
     console.error(`ERROR: 16 KB page-alignment check FAILED for ${failed.length} library(ies):`)
-    let anyElf = false
+    let anyOwnElf = false
+    let anyOtherElf = false
     let anyZip = false
     for (const r of failed) {
       console.error(`  ${r.label}`)
       for (const { index, align } of r.bad) {
-        anyElf = true
+        if (r.own) anyOwnElf = true
+        else anyOtherElf = true
         console.error(
           `    ELF: LOAD[${index}] p_align ${hex(align)} (${align}) — needs >= ` +
             `${hex(REQUIRED_ALIGN)} (${REQUIRED_ALIGN})`,
@@ -402,20 +473,49 @@ export function main(argv) {
         'map a 4 KB-aligned library, so the app does not start at all on those devices, and\n' +
         'Google Play requires 16 KB support for apps targeting Android 15+ (#4425).',
     )
-    if (anyElf) {
+    // `own` (this run's own libagaric_lib.so) and "other" (anything else
+    // under lib/<abi>/*.so — e.g. a third-party library arriving via an
+    // AAR) are attributed separately: src-tauri/build.rs's linker flag has
+    // no influence over a library it never links.
+    if (anyOwnElf) {
       console.error(
-        '\nELF alignment is set by the flag src-tauri/build.rs emits:\n' +
+        `\nELF alignment for ${OUR_SO_BASENAME} is set by the flag src-tauri/build.rs emits:\n` +
           '  cargo::rustc-link-arg=-Wl,-z,max-page-size=16384   (when target_os == "android")\n' +
           "If that is still in place, the Android link is no longer going through this crate's\n" +
           'build script — check what changed about how the .so is produced.',
       )
     }
-    if (anyZip) {
+    if (anyOtherElf) {
       console.error(
-        '\nAPK offset alignment is set by zipalign. `zipalign -p` page-aligns .so entries to\n' +
-          '4 KB and CANNOT be combined with `-P`; the 16 KB form is `zipalign -P 16 -f 4 …`\n' +
-          '(build-tools 35+). Check the signing step in .github/workflows/release.yml.',
+        `\nAt least one misaligned library above is not ${OUR_SO_BASENAME}, so src-tauri/` +
+          "build.rs's linker flag has no effect on it — it most likely arrived through a Gradle " +
+          "dependency or AAR rather than this crate's own build. Check whatever brings that " +
+          'library into the APK for its own 16 KB alignment support.',
       )
+    }
+    if (anyZip) {
+      const mechanism =
+        '\nAPK offset alignment is set by zipalign. `zipalign -p` page-aligns .so entries to\n' +
+        '4 KB and CANNOT be combined with `-P`; the 16 KB form is `zipalign -P 16 -f 4 …`\n' +
+        '(build-tools 35+).'
+      if (stage === 'pre-zipalign') {
+        console.error(
+          `${mechanism}\nThis check ran BEFORE zipalign (or on a workflow that never runs it) — ` +
+            "the offset here is whatever AGP's own packaging produced, not something any step " +
+            'in this pipeline set. Look at the AGP version / packaging config that built this ' +
+            'APK, not at a signing step.',
+        )
+      } else if (stage === 'post-zipalign') {
+        console.error(
+          `${mechanism}\nThis check ran on the zipalign/signing output — see the "Sign Android ` +
+            'APK" step in .github/workflows/release.yml.',
+        )
+      } else {
+        console.error(
+          `${mechanism}\nThis guard was not told which stage it ran at (no --stage flag) — check ` +
+            'whichever step packages, zipaligns, or signs this exact artifact.',
+        )
+      }
     }
     return EXIT_FINDING
   }
@@ -537,10 +637,15 @@ export function synthZip(files, { alignSo = true } = {}) {
 
 function runSelfTest() {
   const failures = []
+  let skipped = 0
   const check = (cond, name, detail) => {
     if (cond) return console.log(`  ok   - ${name}`)
     failures.push(name)
     console.error(`  FAIL - ${name}: ${detail}`)
+  }
+  const skip = (name, reason) => {
+    skipped++
+    console.log(`  skip - ${name}: ${reason}`)
   }
 
   const dir = mkdtempSync(join(tmpdir(), 'so-align-selftest-'))
@@ -557,6 +662,30 @@ function runSelfTest() {
     const p = join(dir, name)
     writeFileSync(p, buf)
     return p
+  }
+
+  // Most assertions below run the guard against real ELF/APK fixtures, which
+  // needs a real `readelf` on THIS machine — a self-test convenience, and a
+  // different question from whether the guard has one when it runs for
+  // real. macOS ships neither `readelf` nor `llvm-readelf` on the default
+  // PATH, and this hook's *other* trigger paths are ci.yml/release.yml —
+  // files with nothing to do with Android — so a contributor editing only
+  // those would otherwise hard-fail a self-test that has nothing to say
+  // about their change. When none is found here, the fixture assertions are
+  // SKIPPED (counted separately, never as a pass) instead of failing the
+  // hook. This does NOT touch the guard's own contract: `findReadelf()` is
+  // unchanged, and `main()` still throws `Unverifiable` → exit 3 ("verified
+  // nothing") whenever IT cannot find a readelf, self-test or not. The "no
+  // readelf on PATH" assertion below is what proves that contract, and it
+  // always runs — it forces a readelf-less environment onto the CHILD
+  // process regardless of what this machine has, so the skip here can never
+  // launder into "the guard passes with no readelf".
+  let readelfBin = null
+  try {
+    readelfBin = findReadelf()
+  } catch (err) {
+    console.warn(`\nself-test: ${err.message}`)
+    console.warn('self-test: skipping the assertions that need a real readelf.\n')
   }
 
   try {
@@ -577,51 +706,89 @@ function runSelfTest() {
       `finding=${EXIT_FINDING} unverified=${EXIT_UNVERIFIED} ok=${EXIT_OK}`,
     )
 
-    // ── verified clean ───────────────────────────────────────────────────────
     const good = write('good.so', synthElf([0x4000, 0x4000, 0x4000, 0x4000]))
-    let r = run([good])
-    check(r.status === EXIT_OK, 'a 16 KB-aligned .so exits 0', `${r.status}: ${r.stderr}`)
-    check(
-      r.stdout.includes('0x4000') && r.stdout.includes('4 LOAD segment'),
-      'the clean report names the alignment and the segment count it saw',
-      r.stdout,
-    )
 
-    // ── verified a finding ───────────────────────────────────────────────────
-    const bad = write('bad.so', synthElf([0x1000, 0x1000]))
-    r = run([bad])
-    check(
-      r.status === EXIT_FINDING,
-      'a 4 KB-aligned .so exits 2, not 1',
-      `${r.status}: ${r.stderr}`,
-    )
-    check(
-      r.stderr.includes('p_align 0x1000') && r.stderr.includes('#4425'),
-      'the finding names the observed alignment and the issue',
-      r.stderr,
-    )
+    // Split out of runSelfTest's own body (rather than inlined under the
+    // `if` below) so eslint's per-function complexity count does not lump
+    // these branches in with the rest of the self-test.
+    function runElfFixtureAssertions() {
+      // ── verified clean ─────────────────────────────────────────────────────
+      let r = run([good])
+      check(r.status === EXIT_OK, 'a 16 KB-aligned .so exits 0', `${r.status}: ${r.stderr}`)
+      check(
+        r.stdout.includes('0x4000') && r.stdout.includes('4 LOAD segment'),
+        'the clean report names the alignment and the segment count it saw',
+        r.stdout,
+      )
 
-    // A single bad segment among good ones must still fail: the linker aligns
-    // all LOAD segments, and "the largest is fine" is exactly the check that
-    // would have waved 0.9.9 through if it looked only at the maximum.
-    const mixed = write('mixed.so', synthElf([0x4000, 0x1000, 0x4000]))
-    r = run([mixed])
-    check(
-      r.status === EXIT_FINDING && r.stderr.includes('LOAD[1]'),
-      'one 4 KB segment among 16 KB ones is still a finding, and is named by index',
-      `${r.status}: ${r.stderr}`,
-    )
+      // ── verified a finding ─────────────────────────────────────────────────
+      const bad = write('bad.so', synthElf([0x1000, 0x1000]))
+      r = run([bad])
+      check(
+        r.status === EXIT_FINDING,
+        'a 4 KB-aligned .so exits 2, not 1',
+        `${r.status}: ${r.stderr}`,
+      )
+      check(
+        r.stderr.includes('p_align 0x1000') && r.stderr.includes('#4425'),
+        'the finding names the observed alignment and the issue',
+        r.stderr,
+      )
 
-    // A power-of-two check, so a nonsense p_align cannot pass by being large.
-    r = run([write('odd.so', synthElf([0x5000]))])
-    check(
-      r.status === EXIT_FINDING,
-      'a non-power-of-two p_align above 0x4000 is a finding, not a pass',
-      `${r.status}: ${r.stderr}`,
-    )
+      // A single bad segment among good ones must still fail: the linker
+      // aligns all LOAD segments, and "the largest is fine" is exactly the
+      // check that would have waved 0.9.9 through if it looked only at the
+      // maximum.
+      const mixed = write('mixed.so', synthElf([0x4000, 0x1000, 0x4000]))
+      r = run([mixed])
+      check(
+        r.status === EXIT_FINDING && r.stderr.includes('LOAD[1]'),
+        'one 4 KB segment among 16 KB ones is still a finding, and is named by index',
+        `${r.status}: ${r.stderr}`,
+      )
 
-    // ── verified nothing ─────────────────────────────────────────────────────
-    r = run([])
+      // A power-of-two check, so a nonsense p_align cannot pass by being large.
+      r = run([write('odd.so', synthElf([0x5000]))])
+      check(
+        r.status === EXIT_FINDING,
+        'a non-power-of-two p_align above 0x4000 is a finding, not a pass',
+        `${r.status}: ${r.stderr}`,
+      )
+
+      // ── verified nothing (fixture-dependent cases) ───────────────────────────
+      r = run([join(dir, 'absent.so')])
+      check(
+        r.status === EXIT_UNVERIFIED,
+        'a missing file is exit 3, not a pass',
+        `${r.status}: ${r.stderr}`,
+      )
+      r = run([write('garbage.so', Buffer.from('not an elf at all'))])
+      check(
+        r.status === EXIT_UNVERIFIED,
+        'a non-ELF file is exit 3, not a pass',
+        `${r.status}: ${r.stderr}`,
+      )
+      r = run([write('noload.so', synthElf([]))])
+      check(
+        r.status === EXIT_UNVERIFIED && /Verified nothing/.test(r.stderr),
+        'an ELF with zero LOAD segments is exit 3, not a vacuous pass',
+        `${r.status}: ${r.stderr}`,
+      )
+    }
+
+    if (readelfBin) {
+      runElfFixtureAssertions()
+    } else {
+      skip(
+        'verified-clean / verified-finding / fixture-dependent verified-nothing assertions',
+        'no readelf on this machine',
+      )
+    }
+
+    // ── verified nothing (readelf-independent cases) ───────────────────────────
+    // These fail before the guard ever looks for readelf, so they hold
+    // regardless of whether this machine has one.
+    let r = run([])
     check(
       r.status === EXIT_UNVERIFIED && /verifies nothing/.test(r.stderr),
       'no arguments is exit 3 (verified nothing), never a pass',
@@ -632,24 +799,6 @@ function runSelfTest() {
       r.status === EXIT_UNVERIFIED,
       'an unknown option is exit 3, not silently ignored',
       `${r.status}`,
-    )
-    r = run([join(dir, 'absent.so')])
-    check(
-      r.status === EXIT_UNVERIFIED,
-      'a missing file is exit 3, not a pass',
-      `${r.status}: ${r.stderr}`,
-    )
-    r = run([write('garbage.so', Buffer.from('not an elf at all'))])
-    check(
-      r.status === EXIT_UNVERIFIED,
-      'a non-ELF file is exit 3, not a pass',
-      `${r.status}: ${r.stderr}`,
-    )
-    r = run([write('noload.so', synthElf([]))])
-    check(
-      r.status === EXIT_UNVERIFIED && /Verified nothing/.test(r.stderr),
-      'an ELF with zero LOAD segments is exit 3, not a vacuous pass',
-      `${r.status}: ${r.stderr}`,
     )
     // The same emptiness one layer in: a real "Program Headers:" table that
     // happens to contain no LOAD row (only NOTE/DYNAMIC/…). Exercised directly
@@ -702,84 +851,161 @@ function runSelfTest() {
     )
 
     // ── APKs ─────────────────────────────────────────────────────────────────
-    const okApk = write(
-      'ok.apk',
-      synthZip([
-        ['AndroidManifest.xml', Buffer.from('<manifest/>')],
-        ['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000, 0x4000])],
-      ]),
-    )
-    r = run([okApk])
-    check(
-      r.status === EXIT_OK && r.stdout.includes('lib/arm64-v8a/libagaric_lib.so'),
-      'an APK whose native lib is 16 KB-aligned exits 0 and names the entry',
-      `${r.status}: ${r.stdout}${r.stderr}`,
-    )
-    const badApk = write(
-      'bad.apk',
-      synthZip([
-        ['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000])],
-        ['lib/x86_64/libagaric_lib.so', synthElf([0x1000])],
-      ]),
-    )
-    r = run([badApk])
-    check(
-      r.status === EXIT_FINDING && r.stderr.includes('lib/x86_64/libagaric_lib.so'),
-      'one misaligned ABI inside an APK is a finding, and the ABI is named',
-      `${r.status}: ${r.stderr}`,
-    )
-    // The zip half: a perfectly 16 KB-aligned ELF that the loader still cannot
-    // map, because the STORED entry does not begin on a 16 KB boundary.
-    const offApk = write(
-      'offset.apk',
-      synthZip([['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000, 0x4000])]], {
-        alignSo: false,
-      }),
-    )
-    r = run([offApk])
-    check(
-      r.status === EXIT_FINDING && /ZIP: stored at APK offset/.test(r.stderr),
-      'a 16 KB-aligned ELF stored at a non-16 KB APK offset is still a finding',
-      `${r.status}: ${r.stderr}`,
-    )
-    check(
-      /zipalign -P 16/.test(r.stderr) && !/max-page-size/.test(r.stderr),
-      'the zip finding points at zipalign, and does not misattribute it to the link flag',
-      r.stderr,
-    )
+    // Same reasoning as runElfFixtureAssertions above: its own function so
+    // eslint counts its branches separately from runSelfTest's.
+    function runApkFixtureAssertions() {
+      const okApk = write(
+        'ok.apk',
+        synthZip([
+          ['AndroidManifest.xml', Buffer.from('<manifest/>')],
+          ['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000, 0x4000])],
+        ]),
+      )
+      let apkR = run([okApk])
+      check(
+        apkR.status === EXIT_OK && apkR.stdout.includes('lib/arm64-v8a/libagaric_lib.so'),
+        'an APK whose native lib is 16 KB-aligned exits 0 and names the entry',
+        `${apkR.status}: ${apkR.stdout}${apkR.stderr}`,
+      )
+      const badApk = write(
+        'bad.apk',
+        synthZip([
+          ['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000])],
+          ['lib/x86_64/libagaric_lib.so', synthElf([0x1000])],
+        ]),
+      )
+      apkR = run([badApk])
+      check(
+        apkR.status === EXIT_FINDING && apkR.stderr.includes('lib/x86_64/libagaric_lib.so'),
+        'one misaligned ABI inside an APK is a finding, and the ABI is named',
+        `${apkR.status}: ${apkR.stderr}`,
+      )
+      // The zip half: a perfectly 16 KB-aligned ELF that the loader still
+      // cannot map, because the STORED entry does not begin on a 16 KB
+      // boundary.
+      const offApk = write(
+        'offset.apk',
+        synthZip([['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000, 0x4000])]], {
+          alignSo: false,
+        }),
+      )
+      apkR = run([offApk])
+      check(
+        apkR.status === EXIT_FINDING && /ZIP: stored at APK offset/.test(apkR.stderr),
+        'a 16 KB-aligned ELF stored at a non-16 KB APK offset is still a finding',
+        `${apkR.status}: ${apkR.stderr}`,
+      )
+      check(
+        /zipalign -P 16/.test(apkR.stderr) && !/max-page-size/.test(apkR.stderr),
+        'the zip finding points at zipalign, and does not misattribute it to the link flag',
+        apkR.stderr,
+      )
 
-    r = run([write('nolibs.apk', synthZip([['AndroidManifest.xml', Buffer.from('<manifest/>')]]))])
-    check(
-      r.status === EXIT_UNVERIFIED && /no lib\/<abi>/.test(r.stderr),
-      'an APK with no native libraries is exit 3 — an empty result set is not a pass',
-      `${r.status}: ${r.stderr}`,
-    )
-    r = run([write('notzip.apk', Buffer.from('PK-ish but not really'))])
-    check(
-      r.status === EXIT_UNVERIFIED,
-      'a file that is not a zip is exit 3',
-      `${r.status}: ${r.stderr}`,
-    )
+      // No `--stage` given: the guard says it was not told, rather than
+      // guessing at a specific step.
+      check(
+        /not told which stage/.test(apkR.stderr),
+        'with no --stage flag, the zip finding says it was not told the stage',
+        apkR.stderr,
+      )
+      // `--stage=pre-zipalign`: three of this repo's four call sites run
+      // before zipalign, so the default text (blaming release.yml's signing
+      // step) would be wrong for them. #4425 review note 2/3.
+      apkR = run(['--stage=pre-zipalign', offApk])
+      check(
+        apkR.status === EXIT_FINDING &&
+          /ran BEFORE zipalign/.test(apkR.stderr) &&
+          !/Sign Android APK/.test(apkR.stderr),
+        '--stage=pre-zipalign blames AGP packaging, not the signing step',
+        apkR.stderr,
+      )
+      apkR = run(['--stage=post-zipalign', offApk])
+      check(
+        apkR.status === EXIT_FINDING &&
+          /Sign Android APK/.test(apkR.stderr) &&
+          !/ran BEFORE zipalign/.test(apkR.stderr),
+        '--stage=post-zipalign blames the signing step',
+        apkR.stderr,
+      )
+      apkR = run(['--stage=sideways', offApk])
+      check(
+        apkR.status === EXIT_UNVERIFIED && /unknown --stage value/.test(apkR.stderr),
+        'an unrecognised --stage value is exit 3, not silently accepted',
+        `${apkR.status}: ${apkR.stderr}`,
+      )
+      apkR = run(['--stage=pre-zipalign', '--stage=post-zipalign', offApk])
+      check(
+        apkR.status === EXIT_UNVERIFIED && /at most once/.test(apkR.stderr),
+        'a repeated --stage flag is exit 3, not "last one wins"',
+        `${apkR.status}: ${apkR.stderr}`,
+      )
 
-    // zip64: flip the EOCD entry count to the sentinel.
-    const z64 = synthZip([['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000])]])
-    z64.writeUInt16LE(ZIP64_SENTINEL_16, z64.length - 22 + 10)
-    r = run([write('zip64.apk', z64)])
-    check(
-      r.status === EXIT_UNVERIFIED && /zip64/.test(r.stderr),
-      'a zip64 container is exit 3, not a pass on the entries it could still see',
-      `${r.status}: ${r.stderr}`,
-    )
+      // A misaligned library that is NOT libagaric_lib.so — e.g. a
+      // third-party .so arriving via an AAR — must not be blamed on
+      // src-tauri/build.rs, which never links it. #4425 review note 3.
+      const thirdPartyApk = write(
+        'thirdparty.apk',
+        synthZip([
+          ['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000, 0x4000])],
+          ['lib/arm64-v8a/libsomevendor.so', synthElf([0x1000])],
+        ]),
+      )
+      apkR = run([thirdPartyApk])
+      check(
+        apkR.status === EXIT_FINDING &&
+          /libsomevendor\.so/.test(apkR.stderr) &&
+          /Gradle dependency or AAR/.test(apkR.stderr) &&
+          !/build.rs's linker flag has no influence over it/.test(apkR.stderr),
+        'a misaligned non-own .so is attributed to its own build step, not src-tauri/build.rs',
+        apkR.stderr,
+      )
+      check(
+        !new RegExp(`ELF alignment for ${OUR_SO_BASENAME} is set`).test(apkR.stderr),
+        'the own-library remediation is not printed when only a third-party .so is misaligned',
+        apkR.stderr,
+      )
 
-    // A corrupted payload must not read as a clean library.
-    const tampered = synthZip([['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000])]])
-    tampered[tampered.length - 22 - 200] ^= 0xff
-    r = run([write('tampered.apk', tampered)])
-    check(
-      r.status !== EXIT_OK,
-      'a payload that fails its CRC never reports clean',
-      `${r.status}: ${r.stdout}${r.stderr}`,
-    )
+      apkR = run([
+        write('nolibs.apk', synthZip([['AndroidManifest.xml', Buffer.from('<manifest/>')]])),
+      ])
+      check(
+        apkR.status === EXIT_UNVERIFIED && /no lib\/<abi>/.test(apkR.stderr),
+        'an APK with no native libraries is exit 3 — an empty result set is not a pass',
+        `${apkR.status}: ${apkR.stderr}`,
+      )
+      apkR = run([write('notzip.apk', Buffer.from('PK-ish but not really'))])
+      check(
+        apkR.status === EXIT_UNVERIFIED,
+        'a file that is not a zip is exit 3',
+        `${apkR.status}: ${apkR.stderr}`,
+      )
+
+      // zip64: flip the EOCD entry count to the sentinel.
+      const z64 = synthZip([['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000])]])
+      z64.writeUInt16LE(ZIP64_SENTINEL_16, z64.length - 22 + 10)
+      apkR = run([write('zip64.apk', z64)])
+      check(
+        apkR.status === EXIT_UNVERIFIED && /zip64/.test(apkR.stderr),
+        'a zip64 container is exit 3, not a pass on the entries it could still see',
+        `${apkR.status}: ${apkR.stderr}`,
+      )
+
+      // A corrupted payload must not read as a clean library.
+      const tampered = synthZip([['lib/arm64-v8a/libagaric_lib.so', synthElf([0x4000])]])
+      tampered[tampered.length - 22 - 200] ^= 0xff
+      apkR = run([write('tampered.apk', tampered)])
+      check(
+        apkR.status !== EXIT_OK,
+        'a payload that fails its CRC never reports clean',
+        `${apkR.status}: ${apkR.stdout}${apkR.stderr}`,
+      )
+    }
+
+    if (readelfBin) {
+      runApkFixtureAssertions()
+    } else {
+      skip('APK assertions', 'no readelf on this machine')
+    }
 
     // ── the CI wiring actually calls this guard ──────────────────────────────
     const repoRoot = join(import.meta.dirname, '..')
@@ -799,6 +1025,15 @@ function runSelfTest() {
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
     return 2
+  }
+  if (skipped > 0) {
+    console.warn(
+      `\nself-test: ${skipped} assertion group(s) skipped (no readelf on this machine) — ` +
+        'the rest passed. This is NOT full coverage; install binutils (or point READELF at an ' +
+        'llvm-readelf, e.g. the one under $NDK_HOME) to run the fixture and APK assertions too. ' +
+        'The guard\'s own no-readelf behaviour is still covered above regardless (see "no ' +
+        'readelf on PATH is exit 3").',
+    )
   }
   console.log('self-test: all assertions passed')
   return 0
