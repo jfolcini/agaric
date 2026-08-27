@@ -811,6 +811,49 @@ jobs:
   # session-log file at all — each is a DISTINCT tested outcome, not a shared
   # "green").
   #
+  # ─── #4431 — a crash must never be reported as a finding ──────────────────
+  #
+  # Found by running this job on its own PR. The guard did not exist on that
+  # PR's base, node exited 1 with `MODULE_NOT_FOUND`, and this step announced
+  # `a session-log number is claimed by more than one open PR`. Nothing had
+  # run. Two independent changes close it, and the step below needs BOTH to
+  # believe a verdict:
+  #
+  #   1. The guard's "real collision" exit code is 20, not 1. Node reserves
+  #      1–14 and 128+N for its own failures and the shell adds 126/127, so
+  #      no crash, kill or missing file can synthesize 20. A bare 1 is now
+  #      "could not verify" — the truthful reading of every way node produces
+  #      it — never a finding.
+  #   2. The guard writes `SESSION_LOG_PR_COLLISION_VERDICT=<verdict>` as its
+  #      last line on every path it chooses. A crash chooses no path, so it
+  #      emits none. The step requires the exit code and the verdict line to
+  #      AGREE, and believes only (0, CLEAN) and (20, COLLISION); every other
+  #      combination is "could not verify". Positive classification, the same
+  #      rule the guard applies to its own input.
+  #
+  # ─── #4431 — and the guard being ABSENT is its own outcome ────────────────
+  #
+  # The checkout above is pinned to `base.sha` deliberately, and
+  # `check-pr-overlap-trust-boundary.mjs` enforces that it stays so; it must
+  # NOT be moved to the PR head to make the guard present. The consequence is
+  # that the guard is absent on the PR introducing it — and on any PR that
+  # deletes or moves it. Those are opposite situations and get opposite
+  # answers, decided from THIS PR's own changed-file list in the payload
+  # already fetched above:
+  #
+  #   * this PR adds `scripts/check-session-log-pr-collision.mjs` → warn and
+  #     pass. Expected, and there is genuinely nothing to check: the guard is
+  #     not on the merge target. Failing here would make the PR introducing
+  #     the guard unmergeable by the guard it introduces.
+  #   * anything else → fail. The guard was deleted or moved and nobody
+  #     restored it, which is precisely the silent fail-open #3933 is about,
+  #     and it would otherwise present as a permanently green check.
+  #
+  # "Anything else" includes every state the discriminator cannot vouch for —
+  # this PR missing from the payload, its file list truncated by gh's 100-file
+  # cap, a malformed payload, `jq` absent or crashing, empty output. Only one
+  # positively-identified state passes.
+  #
   # A fork PR's `GITHUB_TOKEN` under `pull_request` is read-only regardless
   # of the `permissions:` block (GitHub's own default, documented in this
   # file's own header above) — which is exactly the `pull-requests: read`
@@ -898,8 +941,73 @@ jobs:
       - name: Check for a session-log number claimed by more than one open PR
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Every path this step touches is an env var rather than a literal,
+          # so `check-session-log-pr-collision.mjs --self-test` can extract
+          # the shell below VERBATIM (between the BEGIN/END markers) and run
+          # it against fixtures in a temp directory. Reading the YAML is what
+          # let the exit-code aliasing of #4431 survive review; executing the
+          # real bytes for every outcome is what catches the next one.
+          GUARD_SCRIPT: scripts/check-session-log-pr-collision.mjs
+          PRS_JSON: prs.json
+          MERGED_NUMS: merged-nums.txt
         run: |
+          # --- BEGIN session-log-pr-collision step shell (extracted verbatim by --self-test) ---
           set -uo pipefail
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          # ── #4431 defect 2: the guard may not exist in THIS checkout ──────
+          #
+          # This job checks out `base.sha` on purpose — a commit already in
+          # this repo's history, never a fork's — and that trust boundary is
+          # pinned mechanically by `check-pr-overlap-trust-boundary.mjs`. The
+          # price is that the guard we run is the BASE branch's copy, so it is
+          # absent on the PR that introduces it, and on a PR that deletes or
+          # moves it. `node <missing file>` exits 1 with MODULE_NOT_FOUND,
+          # which the previous version of this step reported as a confirmed
+          # collision. Detect absence HERE, before node is ever invoked.
+          #
+          # The two absent cases are not the same and must not share a
+          # verdict. `prs.json` (fetched above) contains THIS PR's own
+          # changed-file list, so we can ask which one this is — but only
+          # POSITIVELY: pass solely when the self PR is present exactly once,
+          # its file list is complete (`changedFiles == files|length`, the
+          # same 100-file cap the guard itself refuses to trust), and that
+          # list contains the guard's path. Every other answer — truncated,
+          # self PR absent, malformed, jq missing, jq crashed, empty output —
+          # falls through to the failing branch.
+          if [ ! -f "$GUARD_SCRIPT" ]; then
+            self_adds=UNKNOWN
+            if [ -f "$PRS_JSON" ]; then
+              self_adds="$(jq -r --argjson n "$PR_NUMBER" --arg g "$GUARD_SCRIPT" '
+                [ .[]? | select(type == "object" and .number == $n) ] as $self
+                | if ($self | length) != 1 then "UNKNOWN"
+                  elif ($self[0].files | type) != "array" then "UNKNOWN"
+                  elif ($self[0].changedFiles | type) != "number" then "UNKNOWN"
+                  elif $self[0].changedFiles != ($self[0].files | length) then "TRUNCATED"
+                  elif ([ $self[0].files[]? | .path? ] | index($g)) != null then "YES"
+                  else "NO"
+                  end' "$PRS_JSON" 2>/dev/null)" || self_adds=UNKNOWN
+            fi
+            if [ "$self_adds" = "YES" ]; then
+              # Expected and harmless: the guard does not exist on the merge
+              # target yet and this is the PR adding it, so there is nothing
+              # for it to have verified. Correctness of the guard itself is
+              # covered by its `--self-test` (a prek hook, and part of
+              # validate-all), not by this job. A warning, not a failure —
+              # failing would make the introducing PR unmergeable by the very
+              # guard it introduces.
+              echo "::warning::session-log-pr-collision: NOT RUN — $GUARD_SCRIPT does not exist on this PR's base branch, and PR #$PR_NUMBER is the PR that adds it. No collision check was performed. It takes effect for every PR whose base contains this merge."
+              {
+                echo "### session-log-pr-collision — not run"
+                echo
+                echo "\`$GUARD_SCRIPT\` is not on this PR's base branch and this PR is the one adding it, so there was nothing to run. The guard applies from the next PR onwards."
+              } >> "$summary"
+              exit 0
+            fi
+            echo "::error::session-log-pr-collision: could not verify — $GUARD_SCRIPT is missing from the base-branch checkout and this PR does not add it (self-PR file list: $self_adds). Either the guard was deleted or moved without this PR restoring it, or its own open-PR payload could not be trusted. Both are the fail-open #3933 exists to prevent, so this fails."
+            exit 1
+          fi
+
           # `-e` (the default GitHub Actions shell) aborts the step the
           # instant a pipeline with `pipefail` returns non-zero — capturing
           # `${PIPESTATUS[0]}` AFTER a trailing `|| true` does not work,
@@ -910,21 +1018,35 @@ jobs:
           # as an `if` CONDITION is what actually suppresses `-e` for it
           # while leaving `${PIPESTATUS[0]}` holding the real exit code in
           # the `else` branch.
-          if node scripts/check-session-log-pr-collision.mjs \
-              --prs prs.json --self-pr "$PR_NUMBER" --merged-nums merged-nums.txt \
+          if node "$GUARD_SCRIPT" \
+              --prs "$PRS_JSON" --self-pr "$PR_NUMBER" --merged-nums "$MERGED_NUMS" \
               --pr-limit "$PR_LIST_LIMIT" \
               2>&1 | tee collision.log; then
             rc=0
           else
             rc="${PIPESTATUS[0]}"
           fi
-          cat collision.log >> "$GITHUB_STEP_SUMMARY" || true
-          if [ "$rc" -eq 0 ]; then
+          cat collision.log >> "$summary" || true
+
+          # ── #4431 defect 1: two channels, and they have to agree ──────────
+          #
+          # The guard writes `SESSION_LOG_PR_COLLISION_VERDICT=<verdict>` as
+          # its last line on every path it CHOOSES to take. A crash — syntax
+          # error, missing module, uncaught throw, OOM, a signal — takes no
+          # such path, so it produces no verdict line, and node's own exit
+          # code for all of them is 1. That is why "collision" is 20 here and
+          # not 1, and why the verdict is required as well: only the two
+          # anticipated (code, verdict) pairs are believed, and every other
+          # combination — including a bare 1 — is "could not verify". A
+          # crashed guard can no longer be reported as a finding.
+          verdict="$(sed -n 's/^SESSION_LOG_PR_COLLISION_VERDICT=\([A-Z]*\)$/\1/p' collision.log | tail -n 1)"
+          if [ "$rc" -eq 0 ] && [ "$verdict" = "CLEAN" ]; then
             echo "session-log-pr-collision: verified — no open PR shares a session-log number with another."
-          elif [ "$rc" -eq 1 ]; then
+          elif [ "$rc" -eq 20 ] && [ "$verdict" = "COLLISION" ]; then
             echo "::error::session-log-pr-collision: a session-log number is claimed by more than one open PR — see the log above"
             exit 1
           else
-            echo "::error::session-log-pr-collision: could not verify (rc=$rc) — treated as a failure, never a pass (#3933)"
+            echo "::error::session-log-pr-collision: could not verify (exit=$rc, verdict=${verdict:-<none>}) — the guard did not reach a verdict, so NO collision was observed and none is being reported. Likely causes: the guard is missing or unreadable in the base checkout, a syntax error or uncaught exception in it, node itself crashing or being killed, or the guard refusing to trust its own open-PR payload (its own message is above). Treated as a failure, never a pass (#3933)."
             exit 1
           fi
+          # --- END session-log-pr-collision step shell ---
