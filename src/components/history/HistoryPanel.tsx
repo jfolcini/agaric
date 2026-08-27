@@ -246,16 +246,28 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // `[[`/`#` picker's name-change bus) is a SEPARATE step every other rename
   // surface performs via `renamePage` (`@/stores/page-rename`) — it does no
   // IPC of its own, so this call does not double-write the block.
-  // #4458 — `spaceId` is a PARAMETER, not read here. The row this undo acts
-  // on is `targetBlockId`, restored earlier by `handleRestore`, which
-  // captured the space it was restoring INTO at that click (see the comment
-  // there). Reading `useSpaceStore.getState().currentSpaceId` in THIS
-  // callback instead reads the space live at the *Undo* click, which can
-  // differ from the row's own space: restore in space A, switch to space B,
-  // then click the toast's Undo — the live read is B, but the block (and the
-  // rename event it needs to reach) belongs to A. Threading the caller's
-  // captured value keeps this on the same side of the "space acted in" vs.
-  // "space the row is in" distinction as every other capture in this module.
+  // #4458 — reverses the #4391 decision this callback used to make: that
+  // comment argued the toast's Undo click was its OWN decision and should
+  // read `currentSpaceId` live, at the click, rather than reuse the space
+  // `handleRestore` captured earlier (on the grounds that the user may have
+  // switched since). `spaceId` is now threaded in as a PARAMETER instead —
+  // the value `handleRestore` captured when it restored `targetBlockId`
+  // (see the comment there) — and the live read is gone.
+  //
+  // This is not the repair of an observable bug: tracing both readings
+  // through `useBlockResolve`'s subscriber (the generation bump is
+  // unconditional and runs before the space check; the renamed arm of
+  // `applyPageNameChange` is `if (!present) return list`) shows a
+  // live-at-Undo-click read and a captured-at-restore read reach the same
+  // outcome for every cache in the straddle case — restore in space A,
+  // switch to space B, then click the toast's Undo. Reversed anyway, because
+  // `spaceId` is supposed to describe the space `targetBlockId` actually
+  // lives in (A, in that case), and the live read described whichever space
+  // happened to be active at the Undo click instead (B) — a mislabel that is
+  // currently harmless but not something to leave in place once noticed.
+  // Threading the captured value keeps the label truthful and keeps this
+  // call site on the same "captured, not read-at-emit" contract as every
+  // other capture in this module.
   const handleUndoRestore = useCallback(
     async (
       targetBlockId: string,

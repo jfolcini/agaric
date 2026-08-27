@@ -1,9 +1,10 @@
 # Session 1412 — the space you were in when you clicked
 
 Three issues that turned out to share a single shape: a space identity read at the
-wrong moment, or not read at all. #4458 and #4450 are real user-visible bugs; #4462 is
-the documentation around the same machinery, which had drifted into claiming more than
-it could support.
+wrong moment, or not read at all. #4450 is a real user-visible bug. #4458 looked like
+one and isn't — tracing both readings to the end shows the mislabelling it fixes was
+already being absorbed downstream, on both sides of the fix. #4462 is the documentation
+around the same machinery, which had drifted into claiming more than it could support.
 
 ## Captured, not current
 
@@ -11,11 +12,23 @@ it could support.
 `useSpaceStore.getState().currentSpaceId`, read live at the moment the user clicks Undo
 in the toast. The restore it is undoing captured its own space earlier, at restore time.
 
-Those are the same value in the common case, which is exactly why the bug survived: the
-toast is short-lived and most users do not switch spaces while it is up. Restore in space
-A, switch to B, click Undo, and the event goes out labelled B — for a block that lives in
-A. The fix threads the captured `spaceId` through the toast's `onClick` closure instead of
-re-reading the store.
+Those are the same value in the common case. Restore in space A, switch to B, click
+Undo, and the live read labels the event B for a block that lives in A — but that
+mislabelling turns out not to be observable. `useBlockResolve`'s subscriber bumps its
+generation counter unconditionally, before it looks at the event's space at all, so the
+old B-labelled event and the new A-labelled one bump the same counter and force the same
+refetch either way. And on the half that does look at the space, the B-labelled event
+passes the check and then no-ops anyway: the renamed arm of `applyPageNameChange` is a
+plain `if (!present) return list`, and an A-space page id was never in B's cache to
+begin with. The new A-labelled event fails the space check and is dropped before it gets
+that far. Both paths leave every cache byte identical.
+
+So the fix — threading the captured `spaceId` through the toast's `onClick` closure
+instead of re-reading the store — is a labelling and consistency fix, not the repair of
+a user-visible defect. The event is supposed to describe where the rename happened, and
+the live read made it lie about that; it just happens that nothing downstream currently
+acts on the lie. Worth fixing regardless, but worth being honest that it was not, in
+practice, reaching a user.
 
 The test has to distinguish the two readings rather than merely exercise the path, since a
 test where both spaces are the same passes against either implementation. It restores in

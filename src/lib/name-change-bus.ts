@@ -82,8 +82,10 @@
  *    `src/stores/page-rename.ts:87` and `src/components/TagList.tsx:156` do.
  *  - Fall back to {@link invalidateNameCaches}. Conservative, and what
  *    `src/components/TagList.tsx:197`, `src/components/TagList.tsx:236`,
- *    `src/hooks/usePageDeleteAction.tsx:195` and
- *    `src/components/pages/PageBrowserBatchToolbar.tsx:288` do.
+ *    `src/hooks/usePageDeleteAction.tsx:195`,
+ *    `src/components/pages/PageBrowserBatchToolbar.tsx:288` (`handleTrash`)
+ *    and `src/components/pages/PageBrowserBatchToolbar.tsx:363`
+ *    (`handleMoveToSpace`) do.
  *
  * They are equivalent because with no active space both name caches are
  * provably EMPTY: `useBlockResolve`'s space-switch subscriber clears both on
