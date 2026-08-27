@@ -83,6 +83,13 @@ blob-report/
 # Stryker mutation testing (#886) — sandbox copy + generated reports
 .stryker-tmp/
 reports/mutation/
+
+# Type-aware lint lane (#4408) — the `oxlint --type-aware` JSON report and the
+# generated canary fixture `scripts/check-type-aware-liveness.mjs` writes here.
+# It lives inside the repo because oxlint resolves the tsgolint binary from the
+# working directory's node_modules, so a fixture in the system temp dir cannot
+# find it.
+reports/type-aware/
 worktrees/
 UNDO-REDO-PLAN.md
 agaric-release.apk

@@ -59,6 +59,18 @@ name: Scheduled deep checks
 #                    genuinely NEW findings (see
 #                    `scripts/file-fuzz-findings.mjs`). Scheduled-event-only;
 #                    needs `issues: write`.
+#   type-aware-lint — #4408: `oxlint --type-aware`, the type-aware half of
+#                    the linter, which needs the separately-published
+#                    `oxlint-tsgolint` (typescript-go) binary and so had never
+#                    run against this repo at all. REPORTING-ONLY: it reports
+#                    hundreds of pre-existing findings and failing on them
+#                    would make the lane permanently red and therefore
+#                    ignored. What it CAN fail on is liveness
+#                    (`scripts/check-type-aware-liveness.mjs`), because a step
+#                    that cannot fail is a step that can silently stop running
+#                    — see #3330 and `mutants-frontend` above. Findings feed
+#                    the per-rule burn-down; promote a rule to `error` in
+#                    `.oxlintrc.json` once its count reaches zero.
 #   prek-all-files — #3058: `prek run --all-files` (pre-commit stage, whole
 #                    tree), HARD-FAILING — unlike every other lane above,
 #                    this one gates. No cargo build/clippy/test (the
@@ -1644,6 +1656,113 @@ jobs:
             --require-targets-manifest
 
   # ---------------------------------------------------------------------------
+  # type-aware-lint (#4408) — `oxlint --type-aware`. Reporting-only, with a
+  # liveness guard that is emphatically NOT reporting-only.
+  #
+  # Why it is not a gate: 397 of the findings it reports today pre-date the
+  # lane (the type-aware backend had never been installed, so these rules had
+  # never once been evaluated — two of them, `typescript/only-throw-error` and
+  # `typescript/require-await`, were configured as `error` in `.oxlintrc.json`
+  # the whole time and were inert). Failing on them would put this lane
+  # permanently red on day one, which is how a lane stops being read. Runtime
+  # is not the reason: the whole-repo type-aware run measures ~4s wall clock
+  # against ~1.1s for the plain one, so `validate` could afford it — the
+  # backlog is what disqualifies it, and the burn-down below is the path back.
+  #
+  # Why it can still go red: #3330. `mutants-frontend` above spent a while
+  # STRUCTURALLY INCAPABLE of failing — a `|| true` ate a total crash and the
+  # summary rendered a crashed run identically to a perfect one. So the
+  # analysis step tolerates findings and NOTHING else, and the liveness guard
+  # after it classifies the run POSITIVELY: allow-listed exit code, a
+  # parseable `-f json` envelope, exit code and error count that agree, and a
+  # generated canary fixture that must still trip a type-aware rule.
+  #
+  # The canary is load-bearing rather than belt-and-braces, because the exit
+  # code cannot carry this signal. Measured against oxlint 1.79.0, ALL of
+  # these exit 1: findings exist, `oxlint-tsgolint` missing, unknown flag,
+  # rejected config, absent path. Keying lane health on "exit 1 means it
+  # worked" would be a deny-list that fails open on every breakage nobody has
+  # thought of yet. See the script header for the full rationale.
+  #
+  # No count is hardcoded here or in the guard — not 397, not a threshold.
+  # Every figure in the step summary is computed from the report just
+  # produced, so the burn-down cannot make this lane lie.
+  # ---------------------------------------------------------------------------
+  type-aware-lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        # `npm ci` (not `npm install`): `oxlint-tsgolint` is a devDependency
+        # whose exact version is pinned in the lock and checked against the
+        # `typescript` it pairs with by the `tsgolint-version-pin` prek hook.
+        run: npm ci
+
+      - name: Run oxlint --type-aware
+        # Reporting-only: findings must not fail this step. The exit code is
+        # captured rather than propagated, and handed to the liveness guard
+        # below, which is the ONLY thing in this job allowed to judge the run.
+        #
+        # `-f json` on purpose: the human-readable formatter cannot be told
+        # apart from an error message, whereas every known failure mode prints
+        # a bare line INSTEAD of the JSON envelope. stderr goes to its own file
+        # so it can never corrupt the report the guard parses.
+        run: |
+          mkdir -p reports/type-aware
+          set +e
+          npx oxlint --type-aware -f json \
+            > reports/type-aware/report.json \
+            2> reports/type-aware/stderr.log
+          echo "oxlint_exit=$?" >> "$GITHUB_ENV"
+          set -e
+
+      - name: Liveness guard (#4408) — the load-bearing acceptance item
+        # Deliberately OUTSIDE the reporting-only step above, and the direct
+        # analogue of `mutants-frontend`'s `Lane-liveness guard (#3330)`.
+        # Fails ONLY on whether the lane RAN — never on how many findings it
+        # reported, which stays pure triage signal per this lane's design.
+        # Its own fixture suite runs as the `type-aware-liveness-selftest`
+        # prek hook.
+        if: always()
+        env:
+          OXLINT_EXIT: ${{ env.oxlint_exit }}
+        run: |
+          node scripts/check-type-aware-liveness.mjs \
+            --report reports/type-aware/report.json \
+            --exit-code "$OXLINT_EXIT"
+
+      - name: Type-aware summary
+        # Presentational only — never fails, by design (same contract as the
+        # mutation lanes' summaries). The liveness guard above is the single
+        # place this job can go red; if it did, this table is the diagnosis.
+        if: always()
+        run: |
+          node scripts/check-type-aware-liveness.mjs \
+            --summary --report reports/type-aware/report.json \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload type-aware report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: type-aware-report
+          path: reports/type-aware/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
   # prek-all-files (#3058) — the whole-tree pre-commit-stage prek backstop.
   # Unlike every other lane in this workflow, this one GATES: these are the
   # same hooks that block a local push, so a scheduled whole-tree finding on
@@ -2171,6 +2290,7 @@ jobs:
       - file-mutation-survivors
       - fuzz
       - file-fuzz-findings
+      - type-aware-lint
       - prek-all-files
       - full-suite
     if: always()
