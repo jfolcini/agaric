@@ -1748,6 +1748,32 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
 
+      # #4425 — first of two alignment assertions. This one judges the linker
+      # output straight from gradle, BEFORE the signing step decodes the
+      # keystore, so a regression in the `-Wl,-z,max-page-size=16384` flag
+      # src-tauri/build.rs emits fails the release without ever touching the
+      # signing secrets, and is attributed to the link rather than to zipalign.
+      - name: Assert 16 KB page alignment before signing (#4425)
+        shell: bash
+        run: |
+          set -uo pipefail
+          rc=0
+          node scripts/check-android-so-alignment.mjs \
+            src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk \
+            || rc=$?
+          # 0 clean / 2 finding / 3 verified-nothing. `1` is node's own crash
+          # code and the contract never uses it, so no branch below claims an
+          # observation the guard did not make.
+          case "$rc" in
+            0) ;;
+            2) echo "::error::The release APK's native library is NOT 16 KB-aligned (#4425) — see the guard output above."
+               exit 1 ;;
+            3) echo "::error::The 16 KB alignment guard could not verify the release APK, so nothing was checked. This is NOT a report that the library is misaligned; the reason is printed above."
+               exit 1 ;;
+            *) echo "::error::The 16 KB alignment guard itself exited $rc, which its contract never emits (1 is node's crash code). Nothing was verified — do not read this as a misalignment."
+               exit 1 ;;
+          esac
+
       - name: Sign Android APK
         # If the four ANDROID_KEYSTORE_* secrets are configured, this step
         # zipaligns and signs the APK with apksigner (APK signing scheme
@@ -1793,7 +1819,15 @@ jobs:
             # masks secrets in logs anyway, but defence-in-depth is cheap.
             base64 -d <<<"$ANDROID_KEYSTORE_BASE64" > "$keystore"
 
-            "$BUILD_TOOLS/zipalign" -p -f 4 "$src" "$aligned"
+            # `-P 16`, not `-p` (#4425). zipalign's own help documents `-p` as
+            # "4kb page-align uncompressed .so files", and the two flags are
+            # mutually exclusive. This APK stores its native library
+            # uncompressed (extractNativeLibs=false), so the loader mmaps it
+            # straight out of the archive and its payload must START on a
+            # 16 KB boundary as well as being internally 16 KB-aligned. Under
+            # `-p` that held for 0.9.9 only by arithmetic luck. `-P` needs
+            # build-tools 35+; this job installs 36.0.0.
+            "$BUILD_TOOLS/zipalign" -P 16 -f 4 "$src" "$aligned"
             "$BUILD_TOOLS/apksigner" sign \
               --ks "$keystore" \
               --ks-key-alias "$ANDROID_KEY_ALIAS" \
@@ -1816,6 +1850,30 @@ jobs:
           fi
 
           echo "apk=$dest" >> "$GITHUB_OUTPUT"
+
+      # #4425 — second alignment assertion, on the EXACT bytes that get
+      # attested and uploaded. The pre-signing check above cannot cover
+      # zipalign + apksigner, which run after it and are what decide where the
+      # stored .so lands inside the archive; this one re-reads the staged file
+      # so neither half of 16 KB compatibility can be lost between the link and
+      # the release asset.
+      - name: Assert 16 KB page alignment of the release asset (#4425)
+        shell: bash
+        env:
+          APK: ${{ steps.sign_apk.outputs.apk }}
+        run: |
+          set -uo pipefail
+          rc=0
+          node scripts/check-android-so-alignment.mjs "$APK" || rc=$?
+          case "$rc" in
+            0) ;;
+            2) echo "::error::The staged release APK is NOT 16 KB-aligned (#4425) — see the guard output above. It must not be published."
+               exit 1 ;;
+            3) echo "::error::The 16 KB alignment guard could not verify the staged release APK, so nothing was checked. This is NOT a report that the library is misaligned; the reason is printed above."
+               exit 1 ;;
+            *) echo "::error::The 16 KB alignment guard itself exited $rc, which its contract never emits (1 is node's crash code). Nothing was verified — do not read this as a misalignment."
+               exit 1 ;;
+          esac
 
       # PEND-41 R9 — SBOM for the Android APK in both standard formats.
       # Anchore's `sbom-action` extracts dependency metadata from the APK

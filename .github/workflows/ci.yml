@@ -198,6 +198,13 @@ jobs:
           # session_supervisor}.rs` — and the patch script; `release.yml`
           # covers the rest at tag time.
           #
+          # #4425 added two more: `src-tauri/build.rs`, which is where the
+          # Android 16 KB link flag is emitted (an edit there changes how the
+          # shipped `.so` is linked and nothing else in this list would
+          # notice), and `scripts/check-android-so-alignment.mjs`, the guard
+          # that asserts it — a change to a guard must re-run the job that
+          # runs it.
+          #
           # Two matched files carry NO android gate today and stay anyway:
           # `src/lifecycle.rs` and `agaric-sync/src/sync_daemon/mod.rs`
           # (the latter only references one in a comment). Over-triggering
@@ -223,7 +230,7 @@ jobs:
           # literal path here still exists, so the class is closed rather
           # than this instance of it.
           desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'
-          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|android_network_block|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
+          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/build\.rs$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|android_network_block|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/check-android-so-alignment\.mjs$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
 
           desktop=false
           android=false
@@ -608,10 +615,65 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
 
+      # #4425 — the 0.9.9 release APK shipped with 4 KB-aligned ELF LOAD
+      # segments, so the app cannot start on a device booted with a 16 KB page
+      # size (Android 15+). Nothing said so: the on-device
+      # "This app isn't 16 KB-compatible" dialog appears only for DEBUGGABLE
+      # builds, and the release build is silently identical, failing later on
+      # hardware we do not test on. The fix is a linker flag emitted by
+      # src-tauri/build.rs; these two steps are what stop it regressing
+      # silently a second time.
+      #
+      # Each ABI is judged immediately after its own build rather than both
+      # together at the end, so neither step depends on an assumption about
+      # what the next gradle invocation leaves behind — a guard that reds
+      # because its input vanished teaches nothing.
+      - name: Assert 16 KB page alignment (x86_64 debug APK) (#4425)
+        shell: bash
+        run: |
+          set -uo pipefail
+          rc=0
+          node scripts/check-android-so-alignment.mjs \
+            src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
+            || rc=$?
+          # The guard's contract is 0 clean / 2 finding / 3 verified-nothing.
+          # `1` is node's own crash code and is deliberately unused by the
+          # contract, so each case below says only what was actually observed —
+          # a crash must never be reported as a misaligned library.
+          case "$rc" in
+            0) ;;
+            2) echo "::error::The x86_64 debug APK's native library is NOT 16 KB-aligned (#4425) — see the guard output above."
+               exit 1 ;;
+            3) echo "::error::The 16 KB alignment guard could not verify the x86_64 debug APK, so nothing was checked. This is NOT a report that the library is misaligned; the reason is printed above."
+               exit 1 ;;
+            *) echo "::error::The 16 KB alignment guard itself exited $rc, which its contract never emits (1 is node's crash code). Nothing was verified — do not read this as a misalignment."
+               exit 1 ;;
+          esac
+
       - name: Build Android APK (aarch64 release, unsigned)
         run: cargo tauri android build --target aarch64
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+
+      # Same assertion for the ABI that actually ships, placed before the
+      # upload so a misaligned APK never becomes an artifact.
+      - name: Assert 16 KB page alignment (aarch64 release APK) (#4425)
+        shell: bash
+        run: |
+          set -uo pipefail
+          rc=0
+          node scripts/check-android-so-alignment.mjs \
+            src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk \
+            || rc=$?
+          case "$rc" in
+            0) ;;
+            2) echo "::error::The aarch64 release APK's native library is NOT 16 KB-aligned (#4425) — see the guard output above."
+               exit 1 ;;
+            3) echo "::error::The 16 KB alignment guard could not verify the aarch64 release APK, so nothing was checked. This is NOT a report that the library is misaligned; the reason is printed above."
+               exit 1 ;;
+            *) echo "::error::The 16 KB alignment guard itself exited $rc, which its contract never emits (1 is node's crash code). Nothing was verified — do not read this as a misalignment."
+               exit 1 ;;
+          esac
 
       - name: Upload Android release APK (aarch64, unsigned)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

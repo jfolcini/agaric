@@ -106,3 +106,9 @@ Sur = "Sur"
 # provenance filename Scorecard's Signed-Releases probe matches. Appears in
 # `release.yml` and `docs/BUILD.md`. typos otherwise flags it as `into`.
 intoto = "intoto"
+# `FileSiz` / `MemSiz` — readelf's own program-header column headings, which
+# readelf itself truncates. They appear verbatim in
+# `scripts/check-android-so-alignment.mjs`: once in the comment describing the
+# column layout the guard parses, and once in a self-test fixture that has to
+# stay byte-identical to real `readelf -lW` output to be worth anything.
+Siz = "Siz"
