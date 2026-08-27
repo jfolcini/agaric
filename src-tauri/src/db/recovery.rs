@@ -1903,14 +1903,19 @@ async fn recover_blocks_from_op_log(
     // is a separate rework: #2503 / #2504.)
     diagnostics.engine_snapshots = persisted_engine_snapshot_count(&mut *executor).await?;
 
-    // C8 (#345): replay in materializer LWW order. The live materializer
-    // resolves cross-device same-block edits by `created_at DESC` (last
-    // writer wins); replaying in `(device_id, seq)` order instead would
-    // let the lexically-largest `device_id` win regardless of wall-clock
-    // time, diverging the recovered `blocks` table from a normally-applied
-    // log. `created_at` is an indexed INTEGER-ms column post-migration
-    // 0079/0080; `(device_id, seq)` is the deterministic tiebreaker for
-    // ops sharing a millisecond.
+    // C8 (#345): replay in ascending `(created_at, device_id, seq)` order —
+    // this function's own deterministic last-writer-wins convention.
+    // Replaying in `(device_id, seq)` order alone would let the
+    // lexically-largest `device_id` win regardless of wall-clock time;
+    // replaying ascending by `created_at` and letting each later write
+    // overwrite an earlier one reproduces `created_at DESC` last-writer-wins
+    // semantics without a second pass. `created_at` is an indexed
+    // INTEGER-ms column post-migration 0079/0080; `(device_id, seq)` is the
+    // deterministic tiebreaker for ops sharing a millisecond. (This is NOT
+    // the canonical `(created_at, seq, device_id)` order that
+    // `agaric_store::op_log::BlockEditScan`, `commands::history`, and every
+    // `reverse::*` scan use — a pre-existing divergence, unrelated to and
+    // not widened by #4402.)
     // #3268: replay LOCALLY-AUTHORED ops only. Post-#2481-phase-1 the op_log is
     // no longer strictly device-local: the sync puller lands foreign audit
     // records through `dag::insert_replicated_op`, stamped `is_replicated = 1`.
@@ -2954,10 +2959,13 @@ pub(crate) async fn recover_derived_state_from_op_log(
 
     let mut tx = pool.begin().await?;
 
-    // C8 (#345): replay derived-state ops in materializer LWW order
-    // (`created_at DESC` semantics → ascending replay with last-writer
-    // overwriting earlier values), `(device_id, seq)` as the same-ms
-    // tiebreaker. See the matching rationale in `recover_blocks_from_op_log`.
+    // C8 (#345): replay derived-state ops in the same ascending
+    // `(created_at, device_id, seq)` order as `recover_blocks_from_op_log`
+    // (`created_at DESC` last-writer-wins semantics via ascending replay
+    // with each later write overwriting an earlier one, `(device_id, seq)`
+    // as the same-ms tiebreaker). See the rationale there — this is this
+    // pass's own convention, not the canonical `(created_at, seq,
+    // device_id)` order used elsewhere.
     //
     // #616: streamed in keyset-paginated chunks — see [`fetch_derived_replay_chunk`].
     //
@@ -3318,7 +3326,9 @@ const STATE_REPLAYABLE: &str = "is_replicated = 0 \
 const ATTACHMENT_REPLAYABLE: &str =
     "op_type IN ('add_attachment', 'delete_attachment', 'rename_attachment')";
 
-/// One keyset-paginated chunk of the derived replay, in materializer LWW order.
+/// One keyset-paginated chunk of the derived replay, in the same ascending
+/// `(created_at, device_id, seq)` last-writer-wins order as
+/// `recover_blocks_from_op_log` (see the rationale there).
 ///
 /// #616: the replay streams in chunks instead of one unbounded `fetch_all` — at
 /// the 100k-op target a whole-log buffer inside a write tx is a multi-second,
