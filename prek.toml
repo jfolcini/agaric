@@ -644,7 +644,13 @@ name = "frontend import cycles (zero)"
 entry = "node scripts/check-import-cycles.mjs"
 language = "system"
 pass_filenames = false
-files = "^src/.*\\.(ts|tsx|js|jsx|mjs|cjs)$"
+# #3997: this script is its own hook's entry AND has no self-test hook, so
+# without unioning its own path here an edit confined to
+# scripts/check-import-cycles.mjs fired NO hook whatsoever — worse than the
+# sibling gaps below, which at least had an always_run self-test as a
+# partial backstop. pass_filenames=false, so this re-runs the real whole-tree
+# scan, not a fixture suite.
+files = "^(src/.*\\.(ts|tsx|js|jsx|mjs|cjs)|scripts/check-import-cycles\\.mjs)$"
 stages = ["pre-commit"]
 
 # Store-dependency layering guard (#2465). Distinct from `import-cycles`
@@ -661,7 +667,28 @@ name = "store dependency layering (page-block stores -> global focus, never the 
 entry = "node scripts/check-store-layering.mjs"
 language = "system"
 pass_filenames = false
-files = "^src/stores/.*\\.(ts|tsx)$"
+# #3997: this guard `import`s `detectImports` from check-import-cycles.mjs,
+# and its own script wasn't covered either — both are unioned in so an edit
+# to either can't defang this hook by running nothing. See
+# store-layering-selftest below, added for the same reason (no backstop of
+# any kind existed before).
+files = "^(src/stores/.*\\.(ts|tsx)|scripts/(check-store-layering|check-import-cycles)\\.mjs)$"
+stages = ["pre-commit"]
+
+# Self-test the store-layering guard's own exit behavior (family-allowlist
+# violation FAILS, intra-family import PASSES, an allowed cross-store import
+# PASSES, the reverse ban on blocks.ts FAILS, storeBasename resolves both the
+# relative and `@/stores/` spellings) whenever the guard script — or the
+# check-import-cycles.mjs module it delegates import-detection to — changes,
+# so a regression that defangs it can't land. Added by #3997: this hook had
+# no self-test of any kind before.
+[[repos.hooks]]
+id = "store-layering-selftest"
+name = "store-layering guard self-test (#3997)"
+entry = "node scripts/check-store-layering.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/(check-store-layering|check-import-cycles)\\.mjs$"
 stages = ["pre-commit"]
 
 # lib-layering ratchet (#3121): names four frontend tiers —
@@ -681,7 +708,9 @@ name = "frontend tier layering (lib < stores < hooks < components, ratchet)"
 entry = "node scripts/check-lib-layering.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src/(lib|stores|hooks|components)/.*\\.(ts|tsx)|scripts/lib-layering-baseline\\.json)$"
+# #3997: this guard imports `detectImports` from check-import-cycles.mjs;
+# union it so an edit confined to that shared module can't defang the ratchet.
+files = "^(src/(lib|stores|hooks|components)/.*\\.(ts|tsx)|scripts/(lib-layering-baseline\\.json|check-import-cycles\\.mjs))$"
 stages = ["pre-commit"]
 
 # Self-test the lib-layering ratchet's own exit behavior (legal downward
@@ -694,7 +723,11 @@ name = "lib-layering ratchet self-test"
 entry = "node scripts/check-lib-layering.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-lib-layering\\.mjs$"
+# #3997: also keyed on check-import-cycles.mjs, the shared module this guard
+# delegates import-detection to (its own fixture CLI self-test copies that
+# file alongside the guard — see runCliSelfTest), so an edit to either
+# re-runs this self-test.
+files = "^scripts/(check-lib-layering|check-import-cycles)\\.mjs$"
 stages = ["pre-commit"]
 
 # src/types/ must stay type-only (#4226): check-lib-layering.mjs excludes
@@ -1498,7 +1531,10 @@ name = "session-log numbering guard"
 entry = "bash scripts/check-session-log-numbering.sh"
 language = "system"
 pass_filenames = false
-files = "^docs/session-log/session-.*\\.md$"
+# #3997: this guard sources the shared `scripts/lib/git-scratch-guard.sh`
+# scrubber before building its throwaway git fixtures; union it so an edit
+# confined to that shared module can't select this hook out entirely.
+files = "^(docs/session-log/session-.*\\.md|scripts/lib/git-scratch-guard\\.sh)$"
 stages = ["pre-commit"]
 
 # #3690: the guard above is only worth having if it fails on a collision it
@@ -1512,7 +1548,9 @@ name = "session-log numbering guard self-test (#3690 parallel-collision fixtures
 entry = "bash scripts/check-session-log-numbering.sh --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/check-session-log-numbering\\.sh$"
+# #3997: also keyed on the shared git-scratch-guard.sh scrubber the guard
+# sources, so an edit to either re-runs this self-test.
+files = "^scripts/(check-session-log-numbering\\.sh|lib/git-scratch-guard\\.sh)$"
 stages = ["pre-commit"]
 
 # JS: better-npm-audit (security advisories). Pre-push only (#817, #1087):
@@ -1781,7 +1819,39 @@ language = "system"
 # its callers into agaric-store/agaric-engine/agaric-sync. Mirrors the sibling
 # check-table-ownership trigger regex. (diagnostics has no triggering files
 # today; its src/bin audit tools are skipped inside the script.)
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$'
+#
+# #3997: `main()` resolves which copy of each file to judge (staged index vs
+# working tree) via `scripts/lib/guard_file_source.py`, loaded by
+# `importlib.util.spec_from_file_location` — a real, directly-used
+# dependency, not a transitively-inert one. Unioned here for uniformity with
+# the sibling hooks below (all of which share this dependency), even though
+# `py-guard-file-source-selftest` (further down this file) ALREADY unions
+# `lib/guard_file_source.py` into its own `files:` and is a genuine
+# falsification suite (#4017: plants a staged violation behind a clean
+# working tree and asserts the index reader catches it) — so, corrected from
+# an earlier round of this comment, editing `guard_file_source.py` alone did
+# NOT select zero hooks before this union; it selected that hook, which does
+# real work.
+#
+# KNOWN RESIDUAL GAP (falsified, not corrected by this union — #3997 second
+# review round): `main()` filters its argv to `.rs`-suffixed paths and has
+# no whole-tree fallback when given none. With `guard_file_source.py`'s
+# `exists()` defanged to always return `False`, this hook returns rc=0 NOT
+# ONLY when handed just `guard_file_source.py` (scans zero files — expected)
+# but ALSO when handed a REAL `.rs` file alongside it: `main()`'s
+# `if not src.exists(rel): continue` treats the real file as absent and
+# skips it too, unconditionally, regardless of its actual content. Unioning
+# `guard_file_source.py` in makes this hook SELECTED, which is strictly
+# better than skipped, but does not by itself make it EFFECTIVE against a
+# defanged `exists()`/`read()` — only `py-guard-file-source-selftest`
+# (already existing, see above) demonstrably catches that. Closing this gap
+# for `main()` itself would need a `sys.exit(2)`-on-`GitError`-shaped rework
+# of the skip path or a "no valid `.rs` arg -> scan the whole crate roots"
+# fallback (`check-command-arity.py` has the identical shape) — a CLI
+# behavior change to a script other callers (`pr-merge-result-check.sh`)
+# also invoke, out of scope for a `files:` regex fix. Tracked, not silently
+# claimed closed.
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/lib/guard_file_source\.py$'
 stages = ["pre-commit", "pre-push"]
 
 # #653: the raw-tx guard now also flags a bare `pool.begin()` (DEFERRED)
@@ -1828,7 +1898,25 @@ id = "check-dynamic-sql"
 name = "dynamic-SQL justification guard (#646)"
 entry = "python3 scripts/check-dynamic-sql.py"
 language = "system"
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$'
+# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py` (for
+# strip_rust_comments/cfg_test_line_set/is_test_file/_glob_match) AND
+# `scripts/lib/guard_file_source.py` directly (for the staged-index-vs-
+# working-tree source it judges) — both real dependencies. `check-raw-tx.py`
+# was not previously unioned in anywhere for THIS hook, so a commit editing
+# only it selected this hook not at all — the always_run self-test only
+# re-drives its own fixtures, not this hook's live-tree judgment.
+# `guard_file_source.py` is a narrower correction: `py-guard-file-source-
+# selftest` (further down this file) already unions it and is a genuine
+# falsification suite (#4017), so editing it alone was never truly
+# zero-hooks; unioned here anyway for uniformity with the sibling hooks.
+# Falsified (#3997 second review round): with `guard_file_source.exists()`
+# defanged to always `False`, THIS hook — unlike its four siblings — DOES
+# genuinely redden even on a non-`.rs` arg, because its baseline orphan
+# sweep is GLOBAL (every baselined file, not just the ones in argv) and asks
+# `exists()` for each: a defanged always-`False` answer reads every
+# baselined file as deleted and reports the whole baseline as drifted. This
+# union is the one case where "selected" and "effective" coincide.
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
 # #1188: the guard's detection regex must tolerate a turbofish between the
@@ -1864,7 +1952,16 @@ id = "check-table-ownership"
 name = "table-ownership baseline guard (#2895)"
 entry = "python3 scripts/check-table-ownership.py"
 language = "system"
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$'
+# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py` for
+# cfg_test_line_set/is_test_file/_glob_match; union it so a commit that
+# edits only that shared module can't select this hook out entirely (the
+# always_run self-test is only a partial backstop — it re-drives its own
+# fixtures, not this hook's live-tree judgment). `guard_file_source.py` is
+# unioned too: loading check-raw-tx.py as a library runs ITS top-level
+# `exec_module(guard_file_source)` as a side effect, so a broken
+# guard_file_source.py would break this load even though nothing here calls
+# into it directly.
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
 # #2895: the ownership guard must match SQL inside `sqlx::query!("…")` macro
@@ -1904,7 +2001,17 @@ id = "check-op-log-delete"
 name = "op_log delete confinement guard (#4018)"
 entry = "python3 scripts/check-op-log-delete.py"
 language = "system"
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src|diagnostics/src)/.*\.rs$'
+# #3997: this guard `importlib`-loads BOTH `scripts/check-raw-tx.py` (for
+# cfg_test_line_set) and `scripts/check-table-ownership.py` (for
+# strip_comments_keep_strings) — real dependencies, found by the #3997 sweep
+# and not previously unioned in, so a commit editing only one of them
+# selected this hook not at all (the always_run self-test below is only a
+# partial backstop — see the sibling hooks above for the same shape).
+# `guard_file_source.py` is unioned too: loading check-raw-tx.py as a
+# library runs ITS top-level `exec_module(guard_file_source)` as a side
+# effect, so a broken guard_file_source.py would break this load even
+# though nothing here calls into it directly.
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src|diagnostics/src)/.*\.rs$|^scripts/(check-raw-tx\.py|check-table-ownership\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
 # #4018: the confinement guard must read SQL inside `sqlx::query!("…")` macro
@@ -1979,7 +2086,28 @@ id = "check-command-arity"
 name = "tauri-specta 10-arg ceiling guard (#1317)"
 entry = "python3 scripts/check-command-arity.py"
 language = "system"
-files = '^src-tauri/src/commands/.*\.rs$'
+# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py` (for
+# strip_rust_comments) AND `scripts/lib/guard_file_source.py` directly (for
+# the staged-index-vs-working-tree source it judges) — both real
+# dependencies. `check-raw-tx.py` was not previously unioned in anywhere for
+# THIS hook, so a commit editing only it selected this hook not at all.
+# `guard_file_source.py` is a narrower correction: `py-guard-file-source-
+# selftest` (further down this file) already unions it and is a genuine
+# falsification suite (#4017), so editing it alone was never truly
+# zero-hooks; unioned here anyway for uniformity with the sibling hooks.
+#
+# KNOWN RESIDUAL GAP for the guard_file_source.py half (falsified — #3997
+# second review round, corrected from an earlier, wrong version of this
+# comment): `main()` filters argv to `.rs`-suffixed paths with no whole-tree
+# fallback. With `exists()` defanged to always `False`, this hook returns
+# rc=0 not only when handed just `guard_file_source.py` but ALSO when handed
+# a REAL `.rs` command file alongside it — `main()`'s
+# `if not src.exists(rel): continue` treats the real file as absent and
+# skips it too, regardless of content. This union makes the hook SELECTED,
+# which is strictly better than skipped, but does not by itself make it
+# EFFECTIVE against a defanged `exists()`/`read()`; only
+# `py-guard-file-source-selftest` demonstrably catches that today.
+files = '^src-tauri/src/commands/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
 # #1317: the arity parser must survive multiline signatures, nested generics /
@@ -2015,7 +2143,35 @@ id = "check-space-filter-drift"
 name = "space-filter drift guard (#139)"
 entry = "python3 scripts/check-space-filter-drift.py"
 language = "system"
-files = '^src-tauri/src/.*\.rs$'
+# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py`; union it so
+# an edit confined to that shared module can't select this hook out
+# entirely. (Currently this guard defines its own `strip_comments_keep_strings`
+# rather than calling into the loaded module, but the load itself still runs
+# at import time — a broken check-raw-tx.py would still crash this guard —
+# and unioning it keeps this hook consistent with its three siblings above,
+# all of which delegate to check-raw-tx.py for real.) `guard_file_source.py`
+# is unioned too: loading check-raw-tx.py runs ITS top-level
+# `exec_module(guard_file_source)` as a side effect.
+files = '^src-tauri/src/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
+stages = ["pre-commit", "pre-push"]
+
+# Self-test the space-filter drift guard's own exit behavior (a canonical
+# numbered fragment and the bare-`?` placeholder form are both counted, a
+# mismatched bind index is a Rule-A violation, a mention inside a `//` or
+# `/* */` comment is never counted, a fragment INSIDE a SQL string literal
+# IS counted — the guard deliberately does NOT reuse check-raw-tx.py's
+# string-blanking `strip_rust_comments` for exactly this reason — and the
+# baseline line format round-trips) whenever the guard script itself
+# changes, so a regression that defangs it can't land. Added by #3997: this
+# hook had no self-test of any kind before, structurally identical to the
+# gap `wdio-driver-gate` had before #3996.
+[[repos.hooks]]
+id = "check-space-filter-drift-selftest"
+name = "space-filter drift guard self-test (#3997)"
+entry = "python3 scripts/check-space-filter-drift.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
 stages = ["pre-commit", "pre-push"]
 
 # Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a
@@ -2798,7 +2954,10 @@ name = "stryker.modules.mjs path guard self-test"
 entry = "node scripts/check-stryker-modules.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = '^scripts/check-stryker-modules\.mjs$'
+# #3997: also keyed on stryker.modules.mjs, which this guard imports
+# (`import { MODULES } from '../stryker.modules.mjs'`) — the sibling
+# `stryker-modules-paths` hook already unions it, this self-test did not.
+files = '^(scripts/check-stryker-modules\.mjs|stryker\.modules\.mjs)$'
 stages = ["pre-commit"]
 
 # mutation-reports-guard-selftest (#3330): the `mutants-frontend` lane's
@@ -3198,6 +3357,76 @@ pass_filenames = false
 files = '^scripts/(check-git-fixture-isolation\.mjs|lib/git-scratch-guard\.(mjs|sh))$'
 stages = ["pre-commit"]
 
+# hook-deps (#3997 meta-guard): a one-time manual sweep found nine hook ids
+# across four families whose `files:` pattern missed a first-party module
+# their `entry` script `import`s / `source`s / `importlib`-loads — editing
+# that shared module alone selected the hook not at all, defanging it
+# silently. Fixing those nine by hand does not fix the CLASS: the tenth
+# would be authored the same way next month. This guard is the class fix —
+# it parses prek.toml itself, resolves every recognised hook's first-party
+# dependencies (recursively), and fails when a `files:` regex does not match
+# one of them. `always_run` for the same reason as `git-fixture-isolation`
+# above: this has to catch an edit ANYWHERE in scripts/ (a new import edge)
+# or in prek.toml itself (a new hook), which no `files:` pattern can name in
+# advance, and prek's changed-file set excludes deletions besides. Pairs
+# already broken before this guard existed — narrower gaps #3997 swept but
+# did not fix, mostly the `*-citations` doc-guards missing the shared
+# `lib/guard-file-source.mjs` / `lib/git-scratch-guard.mjs` pair on their
+# PRIMARY hook (their `-selftest` siblings already have it) — are
+# grandfathered in `scripts/hook-deps-baseline.json`, shrink-only like the
+# repo's other ratchets (`dynamic-sql-baseline.txt`, `lib-layering-
+# baseline.json`): a NEW pair fails, and so does a baseline entry that no
+# longer reproduces. A hook selected by `types`/`types_or` instead of a
+# `files:` regex (`cargo-test`, `vitest`), or whose `entry` does not match
+# the recognised `<interpreter> scripts/<path>` shape, is reported
+# UNVERIFIABLE rather than silently skipped — see the script's own header
+# for why (classify positively, per #3997's own falsification requirement).
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "hook-deps"
+name = "hook files: pattern covers its first-party dependencies (#3997 meta-guard)"
+entry = "node scripts/check-hook-deps.mjs"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+
+# Self-test the meta-guard's own exit behavior (a missing dependency union
+# FAILS, a correctly-unioned one PASSES, every recognised dependency shape —
+# JS import/export-from/bare-import/require()/dynamic import(), Python
+# spec_from_file_location at any indent, shell `.`/`source` under lib/ or a
+# sibling — is found while an import-shaped FIXTURE STRING, a commented-out
+# mention, or a docstring naming the idiom is never read as a real edge; an
+# unresolvable construct (Python sys.path/exec(, a fully dynamic shell
+# source) is UNVERIFIABLE, not silently clean; a missing entry script is
+# UNVERIFIABLE; a dep unioned into `files:` but removed again by `exclude:`
+# is still flagged; an `always_run` hook is exempt from `files:` matching
+# entirely; a hook's own script is exempt when ANY sibling hook fires on it
+# — but that exemption does NOT extend to a dependency of that script; a
+# `types:`-selected or ambiguous-entry hook is UNVERIFIABLE not silently
+# clean; both ratchets (broken pairs AND unverifiable ids) work in both
+# directions — baselined is not NEW, non-baselined still is, stale FAILS;
+# `--update-baseline` refuses to grow either baseline without
+# `--allow-growth`; and a real subprocess spawn of the CLI itself — not just
+# `analyze()` called in-process — exits 1 on a broken fixture and 0 on a
+# clean one, which is what actually pins `runGuard`'s exit code: #3997's
+# second-round review replaced `runGuard` with `return 0` and every
+# in-process assertion above still passed, because none of them ran the
+# CLI's own `process.exit(runGuard())` wiring) whenever the guard script —
+# or the shared scanners it now delegates to, `check-git-fixture-
+# isolation.mjs`'s `stripLineComments` and `lib/js-scanner.mjs`'s
+# `stripComments`/`blankStringsAndTemplates` — changes, so a regression that
+# defangs it can't land.
+[[repos.hooks]]
+id = "hook-deps-selftest"
+name = "hook-deps meta-guard self-test (#3997)"
+entry = "node scripts/check-hook-deps.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/(check-hook-deps\.mjs|check-git-fixture-isolation\.mjs|lib/js-scanner\.mjs)$'
+stages = ["pre-commit"]
+
 # py-guard-file-source (#4017): the falsification suite for the three PYTHON
 # guards' index-vs-working-tree behaviour. Each of them took prek's
 # changed-file list and `open()`ed those paths from disk, so a violation that
@@ -3212,6 +3441,20 @@ stages = ["pre-commit"]
 # Python sibling of scripts/lib/git-scratch-guard.sh to build them through;
 # writing one would be a fresh private copy of the scrub, which is what
 # #3722's helper and the meta-guard above exist to prevent.
+#
+# KNOWN GAP surfaced by #3997's sweep (deliberately deferred, not fixed
+# here): `scripts/check-table-ownership.py` is NOT in this hook's `files:`
+# and its fixture suite does not exercise it, even though it is now a real
+# dependency of `check-op-log-delete.py` (which loads it via `importlib` for
+# `strip_comments_keep_strings`) — the SAME shared-python-guard-library
+# shape this suite exists to falsify. It is correctly absent from THIS
+# particular list, though: `check-table-ownership.py` does not consume
+# `guard_file_source.py` (confirmed — it has no `guard_file_source` import
+# at all), so this suite's own subject (staged-vs-working-tree behaviour)
+# does not apply to it. Extending `test-py-guard-file-source.sh` (a ~1400-
+# line fixture suite) to also cover `check-op-log-delete.py`'s dependency on
+# `check-table-ownership.py` is out of scope for a `files:` regex fix; noted
+# here rather than silently left for the next sweep to re-discover.
 [[repos]]
 repo = "local"
 [[repos.hooks]]

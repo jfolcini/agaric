@@ -212,20 +212,20 @@ def line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
-def scan_file(path: Path) -> tuple[int, list[str]]:
-    """Return (canonical_count, rule_A_violations) for one file.
+def scan_text(rel: str, raw: str) -> tuple[int, list[str]]:
+    """Return (canonical_count, rule_A_violations) for `raw` source text.
+
+    `rel` is the display path (relative to `src-tauri/src/`) used in
+    violation messages. Pure function — no filesystem access — so the
+    self-test can drive it directly against synthetic fixtures without
+    writing real files under SRC_ROOT.
 
     `canonical_count` counts only well-formed canonical guarded fragments
     (matching bind indices, `b.space_id` column). A drifted guard match is
     NOT counted toward the baseline (it is a Rule-A violation instead), so a
     param-mismatch edit can't keep the baseline count satisfied.
     """
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return 0, []
     text = strip_comments_keep_strings(raw)
-    rel = path.relative_to(SRC_ROOT).as_posix()
     count = 0
     violations: list[str] = []
     for m in GUARD_RE.finditer(text):
@@ -240,6 +240,16 @@ def scan_file(path: Path) -> tuple[int, list[str]]:
                 f"(?{a or '?'} … ?{b or '?'}) in `{frag}`"
             )
     return count, violations
+
+
+def scan_file(path: Path) -> tuple[int, list[str]]:
+    """Return (canonical_count, rule_A_violations) for one file on disk."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return 0, []
+    rel = path.relative_to(SRC_ROOT).as_posix()
+    return scan_text(rel, raw)
 
 
 def all_source_files() -> list[Path]:
@@ -280,11 +290,11 @@ def write_baseline(baseline: dict[str, int]) -> None:
     BASELINE_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def read_baseline() -> dict[str, int]:
+def parse_baseline(text: str) -> dict[str, int]:
+    """Parse the `<count> <path>` baseline format. Pure — no filesystem
+    access — so the self-test can drive it directly against synthetic text."""
     baseline: dict[str, int] = {}
-    if not BASELINE_PATH.exists():
-        return baseline
-    for raw in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -298,7 +308,112 @@ def read_baseline() -> dict[str, int]:
     return baseline
 
 
+def read_baseline() -> dict[str, int]:
+    if not BASELINE_PATH.exists():
+        return {}
+    return parse_baseline(BASELINE_PATH.read_text(encoding="utf-8"))
+
+
+def run_self_test() -> int:
+    """Assert scan_text/parse_baseline's exit-relevant behavior.
+
+    Added by #3997: this hook had no self-test of any kind before —
+    structurally the same gap `wdio-driver-gate` had before #3996. Drives
+    the pure text-processing core directly (no filesystem access needed),
+    covering the properties a regression could silently break:
+      - a canonical numbered fragment and the bare-`?` placeholder form are
+        both counted;
+      - a mismatched bind index is a Rule-A violation, not silently counted
+        or silently dropped;
+      - a mention inside a `//` or `/* */` comment is never counted (the
+        comment-stripper must still run);
+      - a fragment INSIDE a SQL string literal IS counted — the guard
+        deliberately does NOT reuse check-raw-tx.py's string-blanking
+        `strip_rust_comments` for exactly this reason (the real production
+        sites live inside `sqlx::query!("…")` string literals), so a "helpful"
+        refactor that swapped in the shared stripper would silently zero out
+        every real site while still passing a naive smoke test;
+      - the baseline text format round-trips through parse_baseline.
+    """
+    failures: list[str] = []
+
+    def expect(name: str, got, want) -> None:
+        if got != want:
+            failures.append(f"{name}: expected {want!r}, got {got!r}")
+
+    # Canonical numbered fragment, matching indices -> counted, no violation.
+    numbered = 'let sql = "SELECT * FROM blocks b WHERE (?2 IS NULL OR b.space_id = ?2)";'
+    cnt, viols = scan_text("numbered.rs", numbered)
+    expect("canonical numbered fragment is counted", (cnt, viols), (1, []))
+
+    # Canonical bare-`?` fragment (tag_query/backlink dynamic builders).
+    bare = 'let sql = "(? IS NULL OR b.space_id = ?)";'
+    cnt, viols = scan_text("bare.rs", bare)
+    expect("canonical bare-? fragment is counted", (cnt, viols), (1, []))
+
+    # Mismatched bind index -> Rule-A violation, NOT counted toward the
+    # baseline.
+    mismatched = 'let sql = "(?2 IS NULL OR b.space_id = ?3)";'
+    cnt, viols = scan_text("mismatched.rs", mismatched)
+    if cnt == 0 and len(viols) == 1 and "mismatched bind index" in viols[0]:
+        pass
+    else:
+        failures.append(f"mismatched bind index is a Rule-A violation, not a count: {(cnt, viols)!r}")
+
+    # A `//` comment mentioning the shape is never counted.
+    line_comment = "// (?2 IS NULL OR b.space_id = ?2) is the canonical shape\nlet x = 1;"
+    expect(
+        "line-comment mention is not counted", scan_text("comment.rs", line_comment), (0, [])
+    )
+
+    # A `/* */` comment mentioning the shape is never counted.
+    block_comment = "/* (?2 IS NULL OR b.space_id = ?2) */\nlet x = 1;"
+    expect(
+        "block-comment mention is not counted", scan_text("block.rs", block_comment), (0, [])
+    )
+
+    # The load-bearing design choice: a fragment INSIDE a string literal
+    # (the real production shape, sqlx::query!("...")) IS counted — proving
+    # this guard's local strip_comments_keep_strings (which keeps string
+    # contents) is doing real work, not check-raw-tx.py's strip_rust_comments
+    # (which would blank the string and silently zero this out).
+    in_string = (
+        'sqlx::query!("SELECT id FROM blocks b WHERE '
+        '(?1 IS NULL OR b.space_id = ?1)")'
+    )
+    cnt, viols = scan_text("in_string.rs", in_string)
+    expect("fragment inside a string literal is counted", (cnt, viols), (1, []))
+
+    # Baseline round-trip: format, comments, and blank lines.
+    baseline_text = (
+        "# header comment\n"
+        "\n"
+        "3 src-tauri/src/pagination/mod.rs\n"
+        "1 src-tauri/src/backlink/query.rs\n"
+        "malformed line with no count\n"
+    )
+    parsed = parse_baseline(baseline_text)
+    expect(
+        "parse_baseline reads count/path pairs and skips comments/malformed lines",
+        parsed,
+        {
+            "src-tauri/src/pagination/mod.rs": 3,
+            "src-tauri/src/backlink/query.rs": 1,
+        },
+    )
+
+    if failures:
+        print("check-space-filter-drift self-test FAILED:", file=sys.stderr)
+        for f in failures:
+            print(f"  {f}", file=sys.stderr)
+        return 1
+    print("check-space-filter-drift self-test passed (7 cases).")
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if "--self-test" in argv:
+        return run_self_test()
     if "--update-baseline" in argv:
         write_baseline(compute_baseline())
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")

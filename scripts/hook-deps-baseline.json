@@ -1,0 +1,87 @@
+[
+  {
+    "hookId": "architecture-citations",
+    "dep": "scripts/lib/git-scratch-guard.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "architecture-citations",
+    "dep": "scripts/lib/guard-file-source.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "audit-toml-in-sync",
+    "dep": "scripts/sync-audit-from-deny.mjs",
+    "class": "no-self-test"
+  },
+  {
+    "hookId": "axe-presence",
+    "dep": "scripts/check-axe-presence.sh",
+    "class": "no-self-test"
+  },
+  {
+    "hookId": "dead-symbol-citations",
+    "dep": "scripts/lib/git-scratch-guard.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "dead-symbol-citations",
+    "dep": "scripts/lib/guard-file-source.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "doc-vs-code-paths",
+    "dep": "scripts/lib/git-scratch-guard.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "doc-vs-code-paths",
+    "dep": "scripts/lib/guard-file-source.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "doc-vs-code-paths",
+    "dep": "scripts/lib/js-scanner.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "migrations-strict-tables",
+    "dep": "scripts/check-migrations-strict.mjs",
+    "class": "no-self-test"
+  },
+  {
+    "hookId": "remove-after-markers",
+    "dep": "scripts/lib/git-scratch-guard.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "remove-after-markers",
+    "dep": "scripts/lib/guard-file-source.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "tauri-command-sanitize",
+    "dep": "scripts/check-tauri-command-sanitize.mjs",
+    "class": "no-self-test"
+  },
+  {
+    "hookId": "tauri-mock-parity",
+    "dep": "scripts/check-tauri-mock-parity.mjs",
+    "class": "no-self-test"
+  },
+  {
+    "hookId": "types-erasure-selftest",
+    "dep": "scripts/lib/js-scanner.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "types-erasure",
+    "dep": "scripts/lib/js-scanner.mjs",
+    "class": "missing-union"
+  },
+  {
+    "hookId": "unsafe-allowlist",
+    "dep": "scripts/check-unsafe-allowlist.sh",
+    "class": "no-self-test"
+  }
+]
