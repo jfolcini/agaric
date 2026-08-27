@@ -799,10 +799,12 @@ describe('refresh after undo/redo', () => {
   // the keystroke (the undo IPC, `load()`, `getBlock`), which is ample room
   // for the user to switch spaces. The name-change event must be labelled
   // with the space the undo was invoked in, NOT the space that happens to be
-  // live when the emit finally runs: a fresh emit-time read would label this
-  // page's rename `SPACE_B`, and the `use-block-resolve` subscriber would let
-  // it through — bumping `nameChangeGenerationRef` and aborting an in-flight
-  // SPACE_B fill for a page that is not even in SPACE_B.
+  // live when the emit finally runs. Threading the captured value keeps this
+  // call site on the same "captured, not read-at-emit" contract as every
+  // other bus publisher (see `@/stores/page-rename`'s docblock for exactly
+  // what a fresh emit-time read would and would not break for a `renamed`
+  // event specifically — this straddle does not corrupt SPACE_B's cache the
+  // way an `added` mislabel would).
   it('labels the rename with the space the undo was invoked in, not the one live at emit', async () => {
     const events: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((change) => events.push(change))

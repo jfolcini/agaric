@@ -70,19 +70,22 @@
  *
  * ── When the caller has NO active space ──────────────────────────────────
  *
- * The publishers take `spaceId: string` (required); the two shared fan-outs
- * that sit in front of them (`src/stores/page-rename.ts`'s `renamePage`) take
- * `string | null`, because "no active space" is a real state a caller can be
- * in. Both of the responses in the tree are CORRECT and interchangeable, and
- * this is the one place that says so, so a new call site does not have to
- * infer a policy from whichever precedent it happens to read first:
+ * The publishers take `spaceId: string` (required); the one shared fan-out
+ * that sits in front of them (`src/stores/page-rename.ts`'s `renamePage`)
+ * takes `string | null`, because "no active space" is a real state a caller
+ * can be in. Both of the responses in the tree are CORRECT and
+ * interchangeable, and this is the one place that says so, so a new call
+ * site does not have to infer a policy from whichever precedent it happens
+ * to read first:
  *
  *  - SKIP the notification. Cheapest, and what
- *    `src/stores/page-rename.ts:75` and `src/components/TagList.tsx:156` do.
+ *    `src/stores/page-rename.ts:87` and `src/components/TagList.tsx:156` do.
  *  - Fall back to {@link invalidateNameCaches}. Conservative, and what
- *    `src/components/TagList.tsx:196`, `src/components/TagList.tsx:235`,
- *    `src/hooks/usePageDeleteAction.tsx:193` and
- *    `src/components/pages/PageBrowserBatchToolbar.tsx:287` do.
+ *    `src/components/TagList.tsx:197`, `src/components/TagList.tsx:236`,
+ *    `src/hooks/usePageDeleteAction.tsx:195`,
+ *    `src/components/pages/PageBrowserBatchToolbar.tsx:288` (`handleTrash`)
+ *    and `src/components/pages/PageBrowserBatchToolbar.tsx:363`
+ *    (`handleMoveToSpace`) do.
  *
  * They are equivalent because with no active space both name caches are
  * provably EMPTY: `useBlockResolve`'s space-switch subscriber clears both on

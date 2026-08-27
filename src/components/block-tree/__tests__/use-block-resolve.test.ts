@@ -55,6 +55,7 @@ import {
   invalidateNameCaches,
   notifyPageAdded,
   notifyPageRemoved,
+  notifyPageRenamed,
   notifyTagAdded,
   notifyTagRemoved,
   notifyTagRenamed,
@@ -4616,6 +4617,97 @@ describe('picker name caches — space-scoped drop (#4391)', () => {
     // Still there — a real (matching-space) removal is pinned separately by
     // 'a page deleted elsewhere stops being offered on the next read' above.
     expect(result.current.pagesListRef.current.map((p) => p.id)).toContain('P_KEEP')
+  })
+
+  // #4462 item 4 — the guard's own comment ("generalizes the guard past
+  // 'added'") claims 'renamed' is covered by the same reasoning as 'removed',
+  // but nothing pinned it. `applyPageNameChange`'s 'renamed' arm only touches
+  // a row that is ALREADY present (`if (!present) return list`), so a
+  // foreign-space rename reaching a cache that DOES hold the id is the one
+  // case that actually exercises the space check for this kind — the id
+  // being present is what makes "the drop happened" and "the arm no-op'd
+  // anyway" distinguishable.
+  it("drops a 'renamed' event whose captured space differs from the live active space, leaving the title in place", async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('P_KEEP', 'Original Title')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('')
+    })
+
+    const seen: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => seen.push(c))
+    act(() => {
+      notifyPageRenamed('P_KEEP', 'Foreign Rename', 'SPACE_B')
+    })
+    unsubscribe()
+    expect(seen).toEqual([
+      { kind: 'renamed', entity: 'page', id: 'P_KEEP', name: 'Foreign Rename', spaceId: 'SPACE_B' },
+    ])
+
+    // Title unchanged — if the space check were skipped, the 'renamed' arm
+    // WOULD apply (the id is present), so this is a genuine drop, not a
+    // presence no-op.
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P_KEEP', title: 'Original Title' }])
+  })
+})
+
+// #4462 item 4 — `invalidateNameCaches()`'s exemption from the #4391 space
+// check is documented as deliberate in three docblocks (the module docblock
+// here, `name-change-bus.ts`, and the subscriber's own inline comment), on
+// the grounds that an 'invalidated' event carries no `spaceId` to compare in
+// the first place. Nothing pinned that the exemption actually holds at every
+// active-space value a caller could see it fire against — if it were ever
+// folded into the same `change.spaceId !== activeSpaceId` comparison the
+// other kinds go through, a sync/MCP write or a restore would silently stop
+// invalidating whenever there happened to be a "mismatching" active space
+// (or none at all), with nothing to notice.
+//
+// Both refs are seeded DIRECTLY (bypassing `searchPages`/`searchTags`) so the
+// space-switch subscriber — a SEPARATE effect that clears both refs on any
+// `currentSpaceId` STORE transition — cannot be the one doing the clearing.
+// That subscriber never fires here because `currentSpaceId` is set once,
+// before the hook mounts, and never changes again in either test.
+describe('invalidateNameCaches() clears both caches regardless of active space (#4462)', () => {
+  it('clears both caches when the active space is null', () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P1', title: 'Page One' }]
+      result.current.tagsListRef.current = [
+        { tag_id: 'T1', name: 'Tag One', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+      ]
+    })
+
+    act(() => {
+      invalidateNameCaches()
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([])
+    expect(result.current.tagsListRef.current).toEqual([])
+  })
+
+  it('clears both caches when the active space differs from the default test space', () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P1', title: 'Page One' }]
+      result.current.tagsListRef.current = [
+        { tag_id: 'T1', name: 'Tag One', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+      ]
+    })
+
+    act(() => {
+      invalidateNameCaches()
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([])
+    expect(result.current.tagsListRef.current).toEqual([])
   })
 })
 

@@ -50,11 +50,23 @@ import { useTabsStore } from '@/stores/tabs'
  * title refresh (after the undo IPC, `load()` and `getBlock`),
  * `HistoryPanel`'s restore and undo-restore (after `getBlock` / `editBlock`),
  * and `useUndoShortcuts.refreshAfterUndoRedo` (after the undo/redo IPC and
- * `load()`). A read taken here would therefore be a FRESH read at emit time,
- * which the name-change-bus docblock explains is worse than no scoping: a
- * rename started in space A while the user switches to B would be labelled
- * `B` and let into B's warm cache, aborting an in-flight B fill (the
- * one-keystroke empty picker at `src/components/block-tree/use-block-resolve.ts:1132-1142`).
+ * `load()`). A read taken here would therefore be a FRESH read at emit time.
+ *
+ * The name-change-bus docblock's "worse than no scoping" scenario — a rename
+ * started in space A while the user switches to B gets labelled `B` and let
+ * into B's warm cache, aborting an in-flight B fill — is the reason `added`
+ * must be threaded, not read fresh. It does NOT hold for the `renamed` event
+ * this function emits: the generation bump at
+ * `src/components/block-tree/use-block-resolve.ts:1220` is unconditional and
+ * runs BEFORE the space check, so an in-flight fill aborts on a genuine
+ * rename either way, mislabelled or not; and `applyPageNameChange`'s renamed
+ * arm (`if (!present) return list`) only mutates a row already in the target
+ * cache, so a mislabelled event could not inject an A-space id into B's list.
+ * Threading the caller's captured value here is still correct — it keeps this
+ * function's contract identical to `notifyPageAdded`'s, so a future reader
+ * does not have to remember a per-kind exception to the "captured, not
+ * read-at-emit" rule — but the concrete cache-corruption scenario above is
+ * not why.
  *
  * `null` skips the bus notification — there is no space to scope a
  * picker-cache patch to — but the tabs/recents/resolve fan-out above still

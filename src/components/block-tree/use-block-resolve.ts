@@ -1197,7 +1197,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
         // guards measure different spaces: this listener compares the event
         // against the space that is LIVE right now, while an in-flight fill
         // is pinned to the space it CAPTURED at dispatch
-        // (`searchPagesViaCache`, `src/components/block-tree/use-block-resolve.ts:290`).
+        // (`searchPagesViaCache`, `src/components/block-tree/use-block-resolve.ts:279`).
         // Those diverge across an A→B→A round trip. Dropping the bump on a
         // mismatch reopens #4007 exactly: a fill issued for A captures
         // generation G; the user switches to B (both caches clear); a genuine
