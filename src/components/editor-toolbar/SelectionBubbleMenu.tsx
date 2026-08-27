@@ -129,8 +129,12 @@ export function SelectionBubbleMenu({
   // Do not remove this directive without re-running
   // `e2e/mobile-editor.spec.ts` — the compiler is disabled under Vitest
   // (`vite.config.ts`), so the unit suite structurally cannot see this. CI
-  // shards the whole Playwright suite on every PR, so that spec is a real
-  // gate — this is enforced, not merely requested.
+  // shards the whole Playwright suite whenever `detect-changes` classifies
+  // the PR as touching frontend (`.github/workflows/_validate.yml`,
+  // `playwright` job gated on `frontend == 'true'`), not unconditionally —
+  // but any edit capable of removing this directive is itself a `.tsx`
+  // under `src/`, which the classifier always marks frontend, so the gate
+  // is enforced on exactly the diffs that could break it.
   'use no memo'
 
   const { t } = useTranslation()
