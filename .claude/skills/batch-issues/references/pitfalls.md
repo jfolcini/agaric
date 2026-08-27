@@ -128,10 +128,16 @@ things erase the commit without warning:
 - **Force-push.** A `@dependabot rebase`/`recreate`, or a newer upstream release
   superseding the group, force-pushes the branch; any commit that isn't
   `dependabot[bot]`'s vanishes with no trace, and the PR reds again with no record it
-  was ever diagnosed (#4360). Fired for real twice (#4326, #3237), both caught only
-  because the push was verified **by SHA, not exit code** (`git ls-remote origin
-  <branch>` right after pushing) — a rejected push is loud, a silently superseded one is
-  not.
+  was ever diagnosed (#4360). One confirmed erasure, recovered: **#3237**, where a
+  rebase silently won the race and `git ls-remote origin <branch>` right after pushing
+  showed a SHA that had never been pushed — caught **by SHA, not exit code**
+  (`docs/session-log/session-1242-retiring-surface.md`), recovered with
+  `git rebase --onto FETCH_HEAD` + `--force-with-lease`. One ordering-adjacent
+  near-miss, not an erasure: **#4326**, where Dependabot's own push collided with an
+  in-flight human push and rejected it outright — loud, not silent (#4360's own
+  account) — the human commits landed after Dependabot's and all three survived to the
+  merge; nothing was lost there. Verify the push landed by SHA regardless — a rejected
+  push is loud, a silently superseded one is not.
 - **Close-and-reopen under a new number.** Dependabot sometimes closes the PR and opens
   a replacement instead of rebasing in place. Live example: #3451 (`bump rmcp … to
   3.0.0`) was closed as superseded on 2026-08-05, reopened five days later as #3780.
