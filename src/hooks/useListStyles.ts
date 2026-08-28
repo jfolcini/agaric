@@ -55,26 +55,24 @@
  * `listMarkerValue` gate depends on via `prev.listStyles === listStyles`.
  * That would compound one extra-render regression on top of another for
  * a purity benefit this hook doesn't get for free either way: oxlint's
- * `react/refs` (error, #4406) DOES flag this exact read/write pair on
- * its own merits (confirmed directly — same shape as the two suppressed
- * sites in `use-block-zoom.ts`, another plain `.ts` build-and-compare-
- * within-one-`useMemo` cache). `npx oxlint src/hooks/useListStyles.ts`
- * nonetheless reports zero findings on THIS file as it stands, but that
- * is not evidence the rule considers this site exempt: it is an artifact
- * of the `react-hooks/exhaustive-deps` suppression on the memo's dep array —
- * removing that one line alone (leaving everything else untouched) makes
- * the `react/refs` findings on the `prevRef` read and write reappear, and
- * conversely adding this site's own `react/refs` disable directives back
- * in gets THEM flagged unused by
- * `--report-unused-disable-directives-severity=error` (the flag `npm run
- * lint` and the prek `oxlint` hook both run), i.e. the exhaustive-deps
- * directive is already eating the diagnostic first. So: do not cite this
- * file's lint output as corroboration, in either direction — the
- * safety argument rests entirely on `mapsEqual`'s content-equality
- * check, not on the linter's silence. Filed as #4493, which also records
- * that fixing it must add this file's `react/refs` suppressions in the SAME
- * commit — they cannot be added in advance, because until the masking is
- * gone they report as unused and are themselves an error.
+ * `react/refs` (error, #4406) DOES flag this exact read/write pair on its
+ * own merits — same shape as the two suppressed sites in `use-block-zoom.ts`.
+ *
+ * `npx oxlint src/hooks/useListStyles.ts` nonetheless reports zero findings on
+ * THIS file, and that is NOT evidence the rule considers this site exempt: an
+ * unrelated disable directive in the file is eating the diagnostic first.
+ * Filed as #4493, which carries the reproduction and the measurement — kept
+ * there rather than restated here, because the moment #4493 is fixed a
+ * detailed account of the current behaviour becomes a wrong one, and this is
+ * the file least likely to be revisited when that happens.
+ *
+ * #4493 also records the consequence for this file specifically: fixing it
+ * must add the `react/refs` suppressions here in the SAME commit, since until
+ * the masking is gone they report as unused and are themselves an error.
+ *
+ * The operative rule, which does not depend on any of that: do not cite this
+ * file's lint output as corroboration, in either direction. The safety
+ * argument rests entirely on `mapsEqual`'s content-equality check.
  */
 
 import { useMemo, useRef } from 'react'

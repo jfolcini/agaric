@@ -66,7 +66,9 @@ so the signature genuinely changes while content stays equal, and asserts refere
 
 It **supplements** rather than replaces: the old test is still there, annotated with what it
 actually covers. Calling it a replacement would have been the tidier sentence and the false one
-— the diff has no deletions at all.
+— `useListStyles.test.tsx` has no deletions at all. (The PR's overall diff does have two, in the
+popover test's rewritten comment. Worth stating precisely: an unqualified "zero deletions" is
+the kind of true-of-a-subset, written-as-the-whole claim this session is otherwise about.)
 
 The second is the session's real find, below.
 
