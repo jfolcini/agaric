@@ -127,7 +127,7 @@ import {
   resolveSource,
   SOURCE_INDEX,
 } from './lib/guard-file-source.mjs'
-import { ScanError, tokenize } from './lib/js-scanner.mjs'
+import { ScanError, stripComments, tokenize } from './lib/js-scanner.mjs'
 
 // cwd-derived, not script-anchored — the documented EXCEPTION to "a guard
 // judges the tree that contains it", taken through the SHARED
@@ -146,6 +146,179 @@ const REPO_ROOT = repoRootFromCwd()
 // readily as `--cached` — while `cwd=REPO_ROOT` made it look otherwise. See
 // `gitEnv`.
 const GIT_ENV = gitEnv(REPO_ROOT, process.env)
+
+// #4482 — the `@/` path-alias map, read from `tsconfig.app.json`'s
+// `compilerOptions.paths` rather than hardcoded. `vite.config.ts` declares
+// the identical mapping under `resolve.alias`, but it is an executable TS
+// module (plugin imports, `__dirname` calls) — evaluating it just to read
+// one object literal is neither cheap nor safe for a guard that runs on
+// every commit. `tsconfig.app.json` carries the same value in a config file
+// this guard can read directly, so IT is the source of truth this guard
+// uses. A hand-copied `@/` → `src/` rewrite here would itself be a second,
+// driftable copy of that value — the exact defect class #4482 exists to
+// close (an alias-form citation was invisible because the guard never
+// looked for the alias at all) — so the mapping is derived at runtime,
+// once per invocation, instead.
+//
+// Nothing in the tree enforces that the two declarations AGREE, and this
+// guard does not check: it follows `tsconfig.app.json` alone. A divergence
+// would not be caught here — it would surface wherever the disagreeing
+// consumer runs (`tsc` for the tsconfig side, the bundler for the vite
+// side), which is why this is recorded rather than guarded. Stated so a
+// reader does not infer a cross-check that is not written.
+//
+// `tsconfig.app.json` uses JSONC (block comments) — see it for yourself —
+// so a bare `JSON.parse` would throw on the very file this guard needs to
+// read; `stripComments` (the shared tokenizer this guard already uses to
+// isolate `.ts`/`.tsx` comments, see `extractCommentText`) blanks those out
+// first without needing a second, purpose-built JSONC parser.
+//
+// Missing entirely (no `tsconfig.app.json` at `REPO_ROOT`) reads as "no
+// alias configured for this tree" — same rule as `BASELINE_FILE` above,
+// and for the same reason: every self-test fixture below is a throwaway
+// scratch repo with no frontend build config at all, and none of the
+// non-alias fixtures cite the alias form, so this must not become an
+// invocation error for them. A `tsconfig.app.json` that DOES exist but
+// cannot be parsed, or carries no usable `paths` entry, is a different
+// situation — a config this guard expected to be able to read and could
+// not — and FAILS CLOSED: `PATH_ALIAS_MAP_ERROR` is set instead of quietly
+// falling back to an empty map, and `computeMisses` turns that into a loud
+// invocation error before any scanning happens. Silently treating an
+// unreadable config as "no alias" would silently reopen the exact blind
+// spot #4482 reports, only one config edit away.
+//
+// The ASYMMETRY is deliberate and worth naming, because it resolves the same
+// tension the trailing-comma retry resolves the other way. Deleting
+// `tsconfig.app.json` entirely degrades quietly to "no alias configured";
+// REMOVING `compilerOptions.paths` from a file that still exists throws and
+// hard-blocks every commit. Both are legal edits for a project that stops
+// using aliases, and only the second is loud.
+//
+// That is the intended split, not an oversight: an absent file is the shape
+// every self-test fixture below has (throwaway repos with no frontend build
+// config at all), so it MUST be the quiet case. A file that exists but has
+// had its `paths` removed is far more likely to be a half-finished edit than
+// a deliberate retirement, and a guard whose entire value is a negative
+// claim should not answer "nothing is stale" while it has quietly stopped
+// being able to see the alias corpus. If aliases are ever genuinely
+// retired, deleting the entry here is a one-line, deliberate follow-up —
+// which is the correct amount of friction for that decision.
+// One more scoping caveat, called out because `prek.toml` was widened
+// specifically to route `tsconfig.app.json` edits into this hook: this reads
+// the WORKING TREE from plain disk at module scope, while `--cached` judges
+// citations against the INDEX. So a STAGED-only alias retarget is resolved
+// against the UNSTAGED config. Same convention as `BASELINE_FILE` above, and
+// the divergence window is one commit wide, but it is more load-bearing now
+// that a `tsconfig.app.json` edit is a trigger for this hook rather than
+// incidental to it.
+function loadPathAliasMap(repoRoot) {
+  const tsconfigPath = join(repoRoot, 'tsconfig.app.json')
+  if (!existsSync(tsconfigPath)) return new Map()
+  let raw
+  try {
+    raw = readFileSync(tsconfigPath, 'utf8')
+  } catch (err) {
+    throw new Error(`could not read ${tsconfigPath}: ${err.message}`)
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(stripComments(raw))
+  } catch (err) {
+    // JSONC's OTHER concession that `JSON.parse` rejects, and the one
+    // `stripComments` alone does not cover: a TRAILING COMMA before `}` or
+    // `]`. `tsc` accepts one, so adding one to `tsconfig.app.json` is a
+    // LEGAL edit to that file — and without this retry it would hard-block
+    // every commit in the repo on a parse error naming a config its author
+    // had just left valid. Fail-closed is the right direction for a config
+    // this guard genuinely cannot read (see the header); a config it can
+    // read but chose to reject on a spelling TypeScript itself allows is
+    // not that case.
+    //
+    // Retried ONLY after the strict parse has already thrown, so the
+    // rescue can never change how an already-parseable config reads — the
+    // strict result wins whenever there is one. If the retry fails too the
+    // trailing comma was evidently not the problem, so the ORIGINAL error
+    // is what gets reported rather than a second one describing a string
+    // this guard synthesised.
+    //
+    // The regex is a blunt instrument, not a structural edit: it deletes
+    // EVERY comma followed by whitespace and a `}` or `]` anywhere in the
+    // document, string values included, so a path value like
+    // `["./src/*,]"` would be rewritten too. That is tolerable only
+    // because of where it sits — reachable exclusively on a document
+    // `JSON.parse` has already rejected, and `compilerOptions.paths` values
+    // in practice are glob strings with no such sequence in them. A
+    // rescue that mangles a string and still fails to parse reports the
+    // ORIGINAL error above; one that mangles a string and DOES parse would
+    // have to have been unparseable to begin with.
+    try {
+      parsed = JSON.parse(stripComments(raw).replace(/,(?=\s*[}\]])/g, ''))
+    } catch {
+      throw new Error(`could not parse ${tsconfigPath} as JSON(C): ${err.message}`)
+    }
+  }
+  const paths = parsed?.compilerOptions?.paths
+  if (paths === undefined || paths === null || typeof paths !== 'object') {
+    throw new Error(
+      `${tsconfigPath} has no compilerOptions.paths — cannot resolve @/-alias citations`,
+    )
+  }
+  // Each entry maps an ALIAS PREFIX ("@/*") to a TARGET PREFIX ("./src/*").
+  // Only the "prefix/*" shape is handled — the only shape this repo's own
+  // config uses — so an entry in some other shape is skipped rather than
+  // guessed at; nothing about #4482 requires modelling every `paths` shape
+  // TypeScript allows, only the one this codebase actually declares.
+  //
+  // Two narrowings, stated because the sentence above covers only the KEY
+  // shape and a reader could take it for the whole story:
+  //
+  //   1. Only `values[0]` is read. TypeScript treats the array as an ORDERED
+  //      FALLBACK LIST and tries each in turn, so a config declaring
+  //      `["./src/*", "./generated/*"]` resolves through the second entry for
+  //      anything absent from the first. This guard sees only the first. The
+  //      effect is a citation reported unresolved that `tsc` would in fact
+  //      resolve — a FALSE POSITIVE, i.e. loud and fixable, not a miss.
+  //   2. Overlapping prefixes are not ranked here; see `ALIAS_PREFIXES`.
+  const map = new Map()
+  for (const [key, values] of Object.entries(paths)) {
+    if (!key.endsWith('/*')) continue
+    if (!Array.isArray(values) || typeof values[0] !== 'string') continue
+    const target = values[0].replace(/^\.\//, '')
+    if (!target.endsWith('/*')) continue
+    map.set(key.slice(0, -1), target.slice(0, -1))
+  }
+  if (map.size === 0) {
+    throw new Error(
+      `${tsconfigPath}'s compilerOptions.paths has no usable "prefix/*" entry to resolve @/-alias citations against`,
+    )
+  }
+  return map
+}
+
+// #4482 follow-up — the alias prefixes, LONGEST FIRST, computed once.
+//
+// Two reasons this is not just `[...PATH_ALIAS_MAP.keys()]` at each use site:
+//
+//   1. ORDER IS CORRECTNESS, not cosmetics. TypeScript resolves against the
+//      LONGEST matching `paths` key; a `Map` iterates in INSERTION order. With
+//      overlapping entries (`"@/*"` plus `"@/lib/*"`) a first-match-wins loop
+//      would resolve `@/lib/foo` through whichever key happens to be declared
+//      first in `tsconfig.app.json` — silently, and differently from the
+//      compiler. This repo declares a single `@/*` today, so the bug is
+//      unreachable; it becomes reachable the moment a second entry is added,
+//      which is exactly when nobody would think to look here.
+//   2. It is otherwise rebuilt per candidate — ~1425 throwaway arrays per run
+//      on this repo's current corpus.
+let ALIAS_PREFIXES = []
+let PATH_ALIAS_MAP
+let PATH_ALIAS_MAP_ERROR = null
+try {
+  PATH_ALIAS_MAP = loadPathAliasMap(REPO_ROOT)
+  ALIAS_PREFIXES = [...PATH_ALIAS_MAP.keys()].toSorted((a, b) => b.length - a.length)
+} catch (err) {
+  PATH_ALIAS_MAP = new Map()
+  PATH_ALIAS_MAP_ERROR = err
+}
 
 // #4126 shrink-only baseline of pre-existing (file, ref) misses — see the
 // header's "Baseline" section. Deliberately read from PLAIN DISK, not
@@ -309,7 +482,12 @@ function isLocalPathCandidate(raw) {
   // Prose tells: whitespace, glob wildcards, brace expansion, regex
   // anchors, Rust path-with-function (::name), shell-ellipsis. Skip.
   if (/[\s*<>?|{}]/.test(raw)) return false
-  if (raw.includes('...') || raw.includes('::')) return false
+  // #4482 — the same "shell-ellipsis" prose tell, but the single Unicode
+  // ellipsis GLYPH (U+2026, `…`) rather than three ASCII dots. Surfaced by
+  // widening the scan to `@/…` candidates: `BlockTree.lazy-editor-import-
+  // graph.test.ts` genuinely writes `` `@/…` `` as a PLACEHOLDER describing
+  // "any alias-rooted edge", not a citation of a file literally named `…`.
+  if (raw.includes('...') || raw.includes('::') || raw.includes('…')) return false
   // Strip anchor / query / line-number suffixes. The line-number suffix is
   // not always a single `:N` / `:N-M` — a citation naming several spots in
   // one file spells it as a comma-separated list (`:220,349-351`, the shape
@@ -327,9 +505,20 @@ function isLocalPathCandidate(raw) {
     .trim()
   if (!cleaned) return false
   if (isAbsolute(cleaned)) return false
-  // Must be repo-rooted under one of the known source prefixes — bare
-  // filenames in prose ("`Cargo.toml`", "`README.md`") are out of scope.
-  if (!PATH_PREFIX_RE.test(`${cleaned}/`)) return false
+  // Must be repo-rooted under one of the known source prefixes, OR under a
+  // configured path alias (#4482 — `@/…`) — bare filenames in prose
+  // ("`Cargo.toml`", "`README.md`") are out of scope. Anchored the same way
+  // `PATH_PREFIX_RE` is (a literal prefix match, not "contains somewhere"),
+  // which is what keeps a module specifier embedded in a larger snippet —
+  // `` `vi.mock('@/App.tsx')` `` or `` `import('@/x')` `` — from matching:
+  // neither string STARTS with an alias prefix, so this gate rejects them
+  // exactly as it already rejects `` `const p = 'src/x.ts'` ``-shaped
+  // prose. No separate "is this a citation" mechanism was added — this is
+  // the same anchored-prefix test the `src/…` form already relies on.
+  const hasKnownPrefix =
+    PATH_PREFIX_RE.test(`${cleaned}/`) ||
+    ALIAS_PREFIXES.some((prefix) => cleaned.startsWith(prefix))
+  if (!hasKnownPrefix) return false
   // Skip references into gitignored build-output / cache paths.
   if (GITIGNORED_PREFIX_RE.test(cleaned)) return false
   return cleaned
@@ -787,10 +976,79 @@ function extractPartiallyRootedCitations(text) {
   return found
 }
 
+// #4482 — surfaced once alias-form (`@/…`) candidates started being judged
+// at all: this codebase's own convention for citing a module BY ITS IMPORT
+// SPECIFIER omits the extension (`` `@/lib/priority-levels` ``, matching the
+// nearby `import { priorityRank } from '@/lib/priority-levels'`), the same
+// way a real bundler resolves it. That style is overwhelmingly the norm for
+// alias-form comment citations — surfacing them without this produced ~190
+// false "misses" on this repo's own live, correct citations, every one
+// naming a real module that merely omitted the extension. The `src/…` form
+// doesn't hit this in practice (its existing corpus always spells the
+// extension out), but the fallback is applied uniformly rather than gated
+// on alias-vs-`src/` — it can only ever turn a would-be miss into a pass
+// (when `resolved + ext` IS tracked), never the reverse, so it cannot
+// regress an already-passing `src/…` citation; adding it as one general
+// step keeps this the SAME resolution mechanism for both forms rather than
+// a parallel one bolted on for aliases only.
+//
+// Deliberately narrow: only fires when `resolved` does not ALREADY end in
+// one of these extensions (a bare module path, `src/lib/priority-levels`) —
+// a candidate that already spells `.ts`/`.tsx`/… is either already resolved
+// above, or genuinely wrong, and appending a second extension on top of it
+// would paper over exactly the kind of drift this guard exists to catch.
+const RESOLVABLE_MODULE_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.cjs', '.js', '.jsx']
+
+function resolveTrackedPath(resolved, tracked, trackedDirs) {
+  if (tracked.has(resolved) || trackedDirs.has(resolved)) return resolved
+  // "Already carries an extension" is MEMBERSHIP in the set above, not
+  // "ends in any dotted segment". The `/\.[A-Za-z0-9]+$/` test this
+  // replaces read a dotted BASENAME as an extension, so
+  // `@/components/graph/GraphView.helpers` — the idiomatic import-specifier
+  // spelling this whole fallback exists to support — never reached the
+  // fallback at all and was a hard miss, even though
+  // `src/components/graph/GraphView.helpers.ts` is tracked (it forced
+  // `src/lib/graph-types.ts` to spell the `.ts` out as a workaround).
+  // Direction is unchanged: a candidate ending in a resolvable extension is
+  // still returned untouched, and for everything else the loop below can
+  // only turn a would-be miss into a pass when `resolved + ext` is
+  // genuinely tracked — never the reverse.
+  //
+  // The fallback is applied UNIFORMLY, so it rescues `src/…`-form citations
+  // too, not just alias ones. That is deliberate (one resolution rule, not
+  // two that can drift), but it makes one shape newly invisible that the
+  // paragraph above does not cover: an extensionless `src/x` citation naming
+  // a DELETED DIRECTORY now passes if an unrelated `src/x.ts` happens to
+  // exist. Measured empty on this repo today — no `src/…` candidate is
+  // rescued by the fallback at all, so nothing currently relies on it — and
+  // it fails in the quiet direction, which is why it is recorded here rather
+  // than special-cased. Narrowing the fallback to alias-form candidates only
+  // would close it, at the cost of the two-rules drift this avoids.
+  if (RESOLVABLE_MODULE_EXTENSIONS.some((ext) => resolved.endsWith(ext))) return resolved
+  for (const ext of RESOLVABLE_MODULE_EXTENSIONS) {
+    if (tracked.has(resolved + ext)) return resolved + ext
+  }
+  return resolved
+}
+
 function resolveAgainstDoc(_docFile, ref) {
-  // Every candidate is already gated through `PATH_PREFIX_RE` so it's
-  // repo-rooted by construction. Normalise to strip any redundant `./`
-  // or duplicate slashes.
+  // #4482 — an alias-form candidate (`ref` starting with a `PATH_ALIAS_MAP`
+  // key, e.g. `@/lib/foo.ts`) is rewritten to its repo-rooted form
+  // (`src/lib/foo.ts`) BEFORE existence is checked against the tracked
+  // set, which only ever holds repo-rooted paths. `ref` itself — what gets
+  // PRINTED and baseline-keyed — is deliberately left untouched: a
+  // developer who wrote `@/lib/foo.ts` should see their own citation
+  // quoted back, not a rewritten spelling they never typed.
+  // Longest prefix first (see `ALIAS_PREFIXES`), matching how TypeScript ranks
+  // overlapping `paths` keys — NOT `Map` insertion order.
+  for (const aliasPrefix of ALIAS_PREFIXES) {
+    if (ref.startsWith(aliasPrefix)) {
+      return normalize(PATH_ALIAS_MAP.get(aliasPrefix) + ref.slice(aliasPrefix.length))
+    }
+  }
+  // Every non-alias candidate is already gated through `PATH_PREFIX_RE` so
+  // it's repo-rooted by construction. Normalise to strip any redundant
+  // `./` or duplicate slashes.
   return normalize(ref)
 }
 
@@ -822,6 +1080,15 @@ function computeMisses() {
   if (process.argv.includes('--print-source')) {
     console.log(`check-doc-code-paths: ${describeSource(chosen.source)} (${chosen.why})`)
     return { exitCode: 0 }
+  }
+  // #4482 — a `tsconfig.app.json` that exists but could not be read as the
+  // alias map this guard needs is a loud, whole-run invocation error, not a
+  // silent fallback to "no alias" — see `loadPathAliasMap`'s header for why.
+  if (PATH_ALIAS_MAP_ERROR) {
+    process.stderr.write(
+      `check-doc-code-paths: invocation error: ${PATH_ALIAS_MAP_ERROR.message}\n`,
+    )
+    return { exitCode: 2 }
   }
   let entries
   try {
@@ -925,7 +1192,11 @@ function computeMisses() {
   const lineCitations = []
   const judge = (citingFile, text) => {
     for (const ref of extractCandidates(text)) {
-      const resolved = resolveAgainstDoc(citingFile, ref)
+      const resolvedRaw = resolveAgainstDoc(citingFile, ref)
+      // #4482 — try the extensionless-module-specifier fallback BEFORE the
+      // tracked/dir checks below, so both read off the same final path (see
+      // `resolveTrackedPath`'s own header for why this exists at all).
+      const resolved = resolveTrackedPath(resolvedRaw, tracked, trackedDirs)
       // Gated behind the exact-match result: the common case (a live
       // citation) resolves on `tracked.has` alone. The fallback — a
       // directory-shaped citation — answers from `trackedDirs`, the
@@ -946,7 +1217,11 @@ function computeMisses() {
       }
     }
     for (const { cleaned, lineNumbers } of extractLineCitations(text)) {
-      const resolved = resolveAgainstDoc(citingFile, cleaned)
+      const resolved = resolveTrackedPath(
+        resolveAgainstDoc(citingFile, cleaned),
+        tracked,
+        trackedDirs,
+      )
       const isTracked = tracked.has(resolved) || trackedDirs.has(resolved)
       if (!isTracked) continue // already a `missing` miss above — nothing to bound-check
       lineCitations.push({ doc: citingFile, resolved, lineNumbers })
@@ -1596,6 +1871,347 @@ function bareCitationScenarios(root) {
       unbaselined.status === 1 && /session_supervisor\.rs:708-716/.test(unbaselined.stderr),
       `expected 1 naming session_supervisor.rs:708-716, got ${unbaselined.status}: ${unbaselined.stderr}`,
     )
+    return results
+  })
+}
+
+/**
+ * #4482 — `@/…`-alias citations. Before this, `isLocalPathCandidate` only
+ * recognised `src/…`-form paths, so this codebase's own idiomatic import
+ * spelling (`@/lib/foo.ts`) opted out of drift detection entirely: it could
+ * neither go stale loudly nor be counted. The alias map itself is read from
+ * `tsconfig.app.json`'s `compilerOptions.paths` AT RUNTIME (see
+ * `loadPathAliasMap`'s own header for why, and why not `vite.config.ts`),
+ * so every fixture below that exercises alias resolution writes its OWN
+ * `tsconfig.app.json` — a throwaway scratch repo otherwise has no frontend
+ * config at all, and every OTHER self-test battery in this file relies on
+ * that absence being read as "no alias configured" rather than an
+ * invocation error (see `PATH_ALIAS_MAP`'s own header).
+ *
+ * The issue's own minimum corpus — one live alias citation, one dead alias
+ * citation, one plain import — is pinned first; the remaining arms cover
+ * the extensionless module-specifier convention this repo's real citations
+ * turned out to use almost universally (`resolveTrackedPath`'s header),
+ * the `src/…` form staying unaffected, and the fail-closed config-error
+ * path.
+ */
+function aliasCitationScenarios(root) {
+  return withScrubbedProcessEnv(root, () => {
+    const results = []
+    const record = (name, ok, detail = '') => results.push({ name, ok, detail })
+    const dir = join(root, 'alias-citation')
+    const env = scrubbedGitEnv(root)
+    const git = initScratchRepo(dir, env)
+    const run = (flags) => {
+      const r = spawnSync(process.execPath, [import.meta.filename, ...flags], {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+      })
+      return { status: r.status, stderr: r.stderr ?? '' }
+    }
+    const writeTsconfig = (paths) =>
+      writeFileSync(
+        join(dir, 'tsconfig.app.json'),
+        `${JSON.stringify({ compilerOptions: { paths } }, null, 2)}\n`,
+      )
+    writeTsconfig({ '@/*': ['./src/*'] })
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'real.ts'), 'export const REAL = 1\n')
+
+    // ACCEPTANCE ARM 1 — a LIVE alias citation of a real, tracked file.
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `@/real.ts` today.\n')
+    git('add', '-A')
+    const liveAlias = run(['--worktree'])
+    record(
+      'a LIVE alias-form citation of a real file is green',
+      liveAlias.status === 0,
+      `expected 0, got ${liveAlias.status}: ${liveAlias.stderr}`,
+    )
+
+    // ACCEPTANCE ARM 2 — a DEAD alias citation (the motivating #4482 shape:
+    // `@/lib/tauri/system.ts`, a real module deleted out from under a
+    // comment that still named it) is red, and the ALIAS spelling is what
+    // gets reported back verbatim — not a rewritten `src/…` form the
+    // developer never typed (see `resolveAgainstDoc`'s own comment).
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The pipeline lives in `@/nowhere/deleted-module.ts` today.\n',
+    )
+    git('add', '-A')
+    const deadAlias = run(['--worktree'])
+    record(
+      'a DEAD alias-form citation is red, and reports the ALIAS spelling verbatim',
+      deadAlias.status === 1 && /`@\/nowhere\/deleted-module\.ts`/.test(deadAlias.stderr),
+      `expected 1 naming @/nowhere/deleted-module.ts verbatim, got ${deadAlias.status}: ${deadAlias.stderr}`,
+    )
+    // Clear the dead citation before the next arm — otherwise it keeps
+    // failing every subsequent run in this same scratch repo, for a reason
+    // that has nothing to do with what that run is testing.
+    writeFileSync(join(dir, 'README.md'), 'Nothing interesting here.\n')
+    git('add', '-A')
+
+    // ACCEPTANCE ARM 3 — an ordinary import of an EXISTING module must NOT
+    // become a build failure now that alias resolution is on: a real
+    // `import`/`export … from '@/x'` (code, never scanned at all — see the
+    // `tsCommentScenarios` "STRING LITERAL" case this mirrors) AND the same
+    // shapes ECHOED in a `//` comment (`` `vi.mock('@/x')` ``,
+    // `` `import('@/x')` `` — these ARE scanned, being comments) are all
+    // module SPECIFIERS, not citations. Reusing the SAME anchored-prefix
+    // gate `isLocalPathCandidate` already applies to `src/…` form (no
+    // parallel mechanism was added): none of these strings STARTS with the
+    // alias prefix once wrapped in `vi.mock(…)` / `import(…)` / quotes, so
+    // none is even a candidate.
+    writeFileSync(
+      join(dir, 'src', 'importer.ts'),
+      [
+        "import { REAL } from '@/real.ts'",
+        "export { REAL as REAL2 } from '@/real.ts'",
+        "// see `vi.mock('@/real.ts')` below for the test double",
+        "// lazy-loaded via `import('@/real.ts')` on demand",
+        'void REAL',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const plainImport = run(['--worktree'])
+    record(
+      'a plain import / vi.mock / dynamic import of an existing alias module is not flagged',
+      plainImport.status === 0,
+      `expected 0, got ${plainImport.status}: ${plainImport.stderr}`,
+    )
+
+    // The arm that actually PROVES "not a citation" rather than merely "a
+    // citation that happens to still resolve": the same specifier shapes,
+    // naming a module that does NOT exist. A `vi.mock('@/deleted.ts')` or
+    // `import('@/deleted.ts')` mention must stay green even though the
+    // module it names is gone — #4482's own concern in full, that a
+    // specifier must never become a build failure, whatever it names.
+    writeFileSync(
+      join(dir, 'src', 'importer.ts'),
+      [
+        "import { X } from '@/deleted.ts'",
+        "// see `vi.mock('@/deleted.ts')` below for the test double",
+        "// lazy-loaded via `import('@/deleted.ts')` on demand",
+        'void X',
+        '',
+      ].join('\n'),
+    )
+    git('add', '-A')
+    const specifierOfDeletedModule = run(['--worktree'])
+    record(
+      'a module specifier naming a DELETED module is still not a citation (not a build failure)',
+      specifierOfDeletedModule.status === 0,
+      `expected 0, got ${specifierOfDeletedModule.status}: ${specifierOfDeletedModule.stderr}`,
+    )
+    rmSync(join(dir, 'src', 'importer.ts'))
+    git('add', '-A')
+
+    // #4482 — the dominant style the REAL corpus turned out to use: an
+    // alias citation with NO extension, matching the import-specifier
+    // spelling verbatim (`@/real` rather than `@/real.ts`). See
+    // `resolveTrackedPath`'s header — surfacing alias citations without
+    // this fallback produced ~190 false failures on this repo's own live,
+    // correct citations.
+    writeFileSync(join(dir, 'README.md'), 'Implemented in `@/real` (no extension).\n')
+    git('add', '-A')
+    const extensionless = run(['--worktree'])
+    record(
+      'an extensionless alias citation resolves against the real file (module-specifier convention)',
+      extensionless.status === 0,
+      `expected 0, got ${extensionless.status}: ${extensionless.stderr}`,
+    )
+
+    // The fallback must not fail OPEN: an extensionless citation of a
+    // module that genuinely does not exist under ANY known extension is
+    // still red.
+    writeFileSync(join(dir, 'README.md'), 'Implemented in `@/nowhere` (no extension).\n')
+    git('add', '-A')
+    const extensionlessDead = run(['--worktree'])
+    record(
+      'an extensionless DEAD alias citation is still red — the fallback does not fail open',
+      extensionlessDead.status === 1 && /@\/nowhere/.test(extensionlessDead.stderr),
+      `expected 1 naming @/nowhere, got ${extensionlessDead.status}: ${extensionlessDead.stderr}`,
+    )
+
+    // A DOTTED BASENAME, the shape the original `/\.[A-Za-z0-9]+$/` gate
+    // could not see: `GraphView.helpers` looks extensioned to a "any
+    // trailing dotted segment" test, so the extensionless fallback was
+    // never even reached and the citation was a hard miss despite
+    // `GraphView.helpers.ts` being tracked (`resolveTrackedPath`'s header).
+    // Fixture mirrors the real file that exposed it,
+    // `src/components/graph/GraphView.helpers.ts`.
+    mkdirSync(join(dir, 'src', 'graph'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'graph', 'GraphView.helpers.ts'), 'export const H = 1\n')
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The layout maths lives in `@/graph/GraphView.helpers` today.\n',
+    )
+    git('add', '-A')
+    const dottedBasename = run(['--worktree'])
+    record(
+      'an extensionless citation of a DOTTED-BASENAME module resolves (GraphView.helpers)',
+      dottedBasename.status === 0,
+      `expected 0, got ${dottedBasename.status}: ${dottedBasename.stderr}`,
+    )
+
+    // Both directions, on the SAME dotted-basename shape: widening the
+    // gate must not degenerate into "resolve anything with a dot in it".
+    // A dotted-basename citation naming a module that exists under NO
+    // resolvable extension is still red — the arm above alone would pass
+    // just as well against a `resolveTrackedPath` that returned tracked
+    // for everything.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The layout maths lives in `@/graph/GraphView.missing` today.\n',
+    )
+    git('add', '-A')
+    const dottedBasenameDead = run(['--worktree'])
+    record(
+      'a DOTTED-BASENAME citation of a module that does not exist is still red',
+      dottedBasenameDead.status === 1 &&
+        /@\/graph\/GraphView\.missing/.test(dottedBasenameDead.stderr),
+      `expected 1 naming @/graph/GraphView.missing, got ${dottedBasenameDead.status}: ${dottedBasenameDead.stderr}`,
+    )
+
+    // #4482 — `@/…` using the single Unicode ELLIPSIS GLYPH (U+2026, not
+    // three ASCII dots) is prose describing "any alias-rooted edge" in
+    // general, not a citation of a file literally named `…`. Found live in
+    // `BlockTree.lazy-editor-import-graph.test.ts`'s own header comment
+    // once the real corpus was scanned; the pre-existing `raw.includes(
+    // '...')` prose-tell only caught the three-ASCII-dot spelling.
+    writeFileSync(join(dir, 'README.md'), 'Follows local `@/…` edges wherever they lead.\n')
+    git('add', '-A')
+    const ellipsisPlaceholder = run(['--worktree'])
+    record(
+      'a `@/…` ELLIPSIS placeholder is prose, not a citation of a file named "…"',
+      ellipsisPlaceholder.status === 0,
+      `expected 0, got ${ellipsisPlaceholder.status}: ${ellipsisPlaceholder.stderr}`,
+    )
+
+    // #4482 follow-up — OVERLAPPING alias prefixes resolve LONGEST-FIRST,
+    // the way TypeScript ranks `paths` keys, not in `Map` insertion order.
+    // `@/lib/foo.ts` must resolve through `@/lib/*` -> `other/*` (which
+    // exists) and NOT through the shorter, earlier-declared `@/*` ->
+    // `src/*` (where it does not). Insertion-order matching makes this arm
+    // red, so it discriminates the ranking specifically rather than merely
+    // re-testing that aliases work at all.
+    //
+    // This repo declares one alias today, so nothing here is reachable from
+    // the real tree. That is the point: the fixture is the only place the
+    // second entry exists, and without it the ordering could regress with
+    // no signal until someone adds an overlapping key for real.
+    writeTsconfig({ '@/*': ['./src/*'], '@/lib/*': ['./other/*'] })
+    mkdirSync(join(dir, 'other'), { recursive: true })
+    writeFileSync(join(dir, 'other', 'foo.ts'), 'export const FOO = 1\n')
+    writeFileSync(join(dir, 'README.md'), 'The helper lives in `@/lib/foo.ts` today.\n')
+    git('add', '-A')
+    const longestPrefix = run(['--worktree'])
+    record(
+      'OVERLAPPING alias prefixes resolve longest-first, not in declaration order',
+      longestPrefix.status === 0,
+      `expected 0 (resolved via @/lib/* -> other/), got ${longestPrefix.status}: ${longestPrefix.stderr}`,
+    )
+    // Restore the single-entry config and clear the citation so the
+    // remaining arms below run against the shape they were written for.
+    writeTsconfig({ '@/*': ['./src/*'] })
+    writeFileSync(join(dir, 'README.md'), 'Nothing interesting here.\n')
+    git('add', '-A')
+
+    // The pre-existing `src/…` form, PROVEN UNCHANGED alongside the new
+    // alias path — pinned here (in a repo that DOES declare an alias,
+    // unlike every other battery in this file) so alias support is proven
+    // additive rather than disturbing `src/…` resolution when both are
+    // configured together.
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `src/real.ts` today.\n')
+    git('add', '-A')
+    const liveSrcForm = run(['--worktree'])
+    record(
+      'the pre-existing `src/…` form still resolves a live citation, alongside alias support',
+      liveSrcForm.status === 0,
+      `expected 0, got ${liveSrcForm.status}: ${liveSrcForm.stderr}`,
+    )
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `src/nowhere.ts` today.\n')
+    git('add', '-A')
+    const deadSrcForm = run(['--worktree'])
+    record(
+      'the pre-existing `src/…` form still flags a dead citation, alongside alias support',
+      deadSrcForm.status === 1 && /src\/nowhere\.ts/.test(deadSrcForm.stderr),
+      `expected 1 naming src/nowhere.ts, got ${deadSrcForm.status}: ${deadSrcForm.stderr}`,
+    )
+
+    // FAIL CLOSED — a `tsconfig.app.json` that EXISTS but carries no usable
+    // `compilerOptions.paths` is a loud invocation error (exit 2), never a
+    // silent fallback to "no alias" (see `loadPathAliasMap`'s own header).
+    // README.md is reset to a clean, live citation first — the config-error
+    // gate fires before any doc is even read, but isolating the assertion
+    // from the previous scenario's leftover dead `src/nowhere.ts` citation
+    // keeps this arm honest about WHICH failure it is proving.
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `src/real.ts` today.\n')
+    writeFileSync(
+      join(dir, 'tsconfig.app.json'),
+      `${JSON.stringify({ compilerOptions: {} }, null, 2)}\n`,
+    )
+    git('add', '-A')
+    const malformedConfig = run(['--worktree'])
+    record(
+      'a tsconfig.app.json with no usable paths entry fails CLOSED (exit 2), not open',
+      malformedConfig.status === 2 && /compilerOptions\.paths/.test(malformedConfig.stderr),
+      `expected 2 naming compilerOptions.paths, got ${malformedConfig.status}: ${malformedConfig.stderr}`,
+    )
+    writeTsconfig({ '@/*': ['./src/*'] })
+    git('add', '-A')
+
+    // …but a TRAILING COMMA is not that failure. It is JSONC that `tsc`
+    // accepts, so it is a legal edit to `tsconfig.app.json`, and treating
+    // it as an unreadable config would hard-block every commit in the repo
+    // over a file its author had just left valid (see `loadPathAliasMap`'s
+    // retry). Both arms pinned in the SAME config: the alias still
+    // resolves (live citation green) AND still catches drift (dead
+    // citation red) — a rescue that quietly produced an empty map would
+    // pass the first assertion alone.
+    writeFileSync(
+      join(dir, 'tsconfig.app.json'),
+      '{\n  "compilerOptions": {\n    /* Path aliases */\n    "paths": {\n      "@/*": ["./src/*"],\n    },\n  },\n}\n',
+    )
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `@/real.ts` today.\n')
+    git('add', '-A')
+    const trailingCommaLive = run(['--worktree'])
+    record(
+      'a TRAILING COMMA in tsconfig.app.json is JSONC, not an unreadable config (live citation green)',
+      trailingCommaLive.status === 0,
+      `expected 0, got ${trailingCommaLive.status}: ${trailingCommaLive.stderr}`,
+    )
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `@/nowhere.ts` today.\n')
+    git('add', '-A')
+    const trailingCommaDead = run(['--worktree'])
+    record(
+      'the trailing-comma-rescued map still RESOLVES — a dead alias citation under it is red',
+      trailingCommaDead.status === 1 && /@\/nowhere\.ts/.test(trailingCommaDead.stderr),
+      `expected 1 naming @/nowhere.ts, got ${trailingCommaDead.status}: ${trailingCommaDead.stderr}`,
+    )
+    writeTsconfig({ '@/*': ['./src/*'] })
+    writeFileSync(join(dir, 'README.md'), 'Nothing interesting here.\n')
+    git('add', '-A')
+
+    // MISSING entirely reads as "no alias configured", NOT an invocation
+    // error: every other self-test battery in this file spawns the guard
+    // in a scratch repo with no `tsconfig.app.json` at all, and none of
+    // them may be broken by this feature. Proven directly: without any
+    // tsconfig, the SAME alias citation that failed above is invisible
+    // again (a `@/…` string no longer starts with any known prefix) — the
+    // pre-#4482 behaviour this guard is explicitly allowed to keep for a
+    // tree that declares no alias at all.
+    rmSync(join(dir, 'tsconfig.app.json'))
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `@/nowhere.ts` today.\n')
+    git('add', '-A')
+    const noTsconfigAtAll = run(['--worktree'])
+    record(
+      'no tsconfig.app.json at all reads as "no alias configured" (not an invocation error)',
+      noTsconfigAtAll.status === 0,
+      `expected 0, got ${noTsconfigAtAll.status}: ${noTsconfigAtAll.stderr}`,
+    )
+
     return results
   })
 }
@@ -2773,6 +3389,7 @@ function selfTest() {
     results.push(...linkTargetScenarios(root))
     results.push(...tsCommentScenarios(root))
     results.push(...bareCitationScenarios(root))
+    results.push(...aliasCitationScenarios(root))
     results.push(...partiallyRootedCitationScenarios(root))
     results.push(...spanPairingScenarios(root))
     results.push(...lineBoundsWarningScenarios(root))

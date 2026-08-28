@@ -14,7 +14,7 @@
     "preview:e2e": "VITE_E2E=1 vite preview --port 5173 --strictPort",
     "gen:emoji": "node scripts/generate-emoji-data.mjs",
     "lint": "oxlint --report-unused-disable-directives-severity=error",
-    "lint:fix": "oxlint --fix",
+    "lint:fix": "oxlint --fix --report-unused-disable-directives-severity=error",
     "format": "oxfmt --write .",
     "format:changed": "bash scripts/format-changed.sh",
     "format:check": "oxfmt --check .",

@@ -2534,7 +2534,17 @@ const ARITH_PREFIX_RE = /^\$\(\(([^$()]*)\)\)/
 // shell asked `gh` for a different count entirely. Refusing any leading zero
 // on a multi-digit literal falls it to `NaN` instead of guessing which base
 // was meant; a bare `0` is still one valid literal, not a "leading zero".
-const ARITH_GRAMMAR_RE = /^\s*[+-]?\s*(?:0|[1-9]\d*)(?:\s*[+-]\s*(?:0|[1-9]\d*))*\s*$/
+//
+// Whitespace inside the grammar is written as `[ \t\n]`, NOT `\s` (#4486
+// note 2): JavaScript's `\s` also matches NBSP, U+2028 and other Unicode
+// space separators that bash arithmetic does not accept as a separator at
+// all. An expression using one of those would be REJECTED by the shell that
+// actually runs it but could still satisfy this grammar and sum to `cap +
+// 1` here — the same fail-open-divergence-from-bash shape the adjacent-sign
+// and leading-zero fixes above already closed, just via a different
+// character class instead of a different token shape.
+const ARITH_GRAMMAR_RE =
+  /^[ \t\n]*[+-]?[ \t\n]*(?:0|[1-9]\d*)(?:[ \t\n]*[+-][ \t\n]*(?:0|[1-9]\d*))*[ \t\n]*$/
 
 /**
  * Evaluate the workflow's `--pr-limit` fetch expression against the declared
@@ -2564,8 +2574,13 @@ function evaluatePrLimitExpr(expr, cap) {
         // character sits outside one, so summing the signed terms IS
         // evaluating the expression: with only `+`/`-` left there is no
         // operator precedence to get wrong, and nothing for the scan to skip.
-        (substituted.match(/[+-]?\s*\d+/g) ?? []).reduce(
-          (sum, term) => sum + Number(term.replace(/\s+/g, '')),
+        // Same `[ \t\n]`-not-`\s` reasoning as ARITH_GRAMMAR_RE above (#4486
+        // note 2) — this only ever runs on a `substituted` that already
+        // passed that grammar, so it is belt-and-braces today, but a term
+        // regex is not the place to reintroduce the wider class it was just
+        // excluded from.
+        (substituted.match(/[+-]?[ \t\n]*\d+/g) ?? []).reduce(
+          (sum, term) => sum + Number(term.replace(/[ \t\n]+/g, '')),
           0,
         )
       : Number.NaN
@@ -2598,7 +2613,19 @@ function evaluatePrLimitExpr(expr, cap) {
             'octal to `bash`). This check refuses to guess how to combine or read them rather ' +
             'than risk the exact truncation ambiguity it exists to catch (#4466 note 4) — write ' +
             'the single signed decimal integer literal the expression means.'
-        : null
+        : // #4486 note 3: `arithBody !== null` here, so `substituted` is null
+          // for exactly one reason in this branch — `cap` itself is null (the
+          // workflow's declared PR_LIST_LIMIT could not be parsed) — and
+          // without a hint that surfaces as the same bare, unexplained
+          // `evaluated: NaN` the two branches above exist to eliminate, one
+          // branch further over. The caller already reports `cap: null` in
+          // the assertion payload, which names the actual defect; this hint
+          // just says so in the same channel as every other rejection.
+          cap === null
+          ? 'the expression is a well-formed `$(( ... ))` arithmetic expansion, but the ' +
+            'declared `PR_LIST_LIMIT` cap could not be parsed from the workflow (`cap` is ' +
+            'null), so `PR_LIST_LIMIT` could not be substituted before evaluation.'
+          : null
       : !expr.startsWith('$((')
         ? 'not a `$(( ... ))` arithmetic expansion at all'
         : // #4477 note 3: the two remaining cases both start with `$((` but
@@ -2735,6 +2762,68 @@ function runPrLimitExprSelfTest(ok, fail) {
     (r) =>
       r.arithBody === null &&
       r.rejectedBecause === 'not a `$(( ... ))` arithmetic expansion at all',
+  )
+
+  // #4486 note 2, REJECTION arm: a non-ASCII space (NBSP, U+00A0) is
+  // whitespace to JavaScript's `\s` but not to bash arithmetic, which only
+  // accepts space/tab/newline as a separator. Before the `[ \t\n]` fix this
+  // matched `ARITH_GRAMMAR_RE` and summed to `cap + 1` (100) here while the
+  // shell that actually runs the expression would reject it outright — the
+  // fail-open divergence the issue describes. Must now fail CLOSED (NaN),
+  // with a grammar-defect hint, not the unsubstituted-variable one (there is
+  // no letter in this expression).
+  //
+  // The separator is spelled `\u00A0` rather than pasted in raw on purpose:
+  // as a literal character this arm is byte-for-byte indistinguishable from
+  // its ordinary-space control below in any diff, review, or editor, so the
+  // one thing it exists to test would be invisible — and any
+  // whitespace-normalising edit would silently collapse the two into the
+  // same assertion.
+  check(
+    'evaluatePrLimitExpr: a non-ASCII space (NBSP) separator is rejected, not summed (note 2)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT\u00A0+\u00A01))', 99),
+    (r) =>
+      r.arithBody !== null &&
+      Number.isNaN(r.evaluated) &&
+      typeof r.rejectedBecause === 'string' &&
+      /does not parse as/.test(r.rejectedBecause) &&
+      !/unsubstituted variable/.test(r.rejectedBecause),
+  )
+
+  // #4486 note 2, ACCEPTANCE arm: the fix must not overcorrect into
+  // rejecting the whitespace bash DOES accept. A fix that rejected every
+  // separator (e.g. dropping the character class to empty) would pass the
+  // rejection arm above for the wrong reason and must be caught here.
+  check(
+    'evaluatePrLimitExpr: an ordinary space separator still evaluates cleanly (note 2)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT + 1))', 99),
+    (r) => r.evaluated === 100 && r.rejectedBecause === null,
+  )
+  check(
+    'evaluatePrLimitExpr: a tab separator still evaluates cleanly (note 2)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT\t+\t1))', 99),
+    (r) => r.evaluated === 100 && r.rejectedBecause === null,
+  )
+  check(
+    'evaluatePrLimitExpr: a newline separator still evaluates cleanly (note 2)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT\n+\n1))', 99),
+    (r) => r.evaluated === 100 && r.rejectedBecause === null,
+  )
+
+  // #4486 note 3: `cap === null` (the workflow's declared PR_LIST_LIMIT
+  // could not be parsed) with an otherwise well-formed `$(( ... ))` body
+  // used to surface as a bare, unexplained `evaluated: NaN` with
+  // `rejectedBecause: null` — the exact shape the hint exists to eliminate,
+  // one branch the hint did not cover.
+  check(
+    'evaluatePrLimitExpr: a null cap against a well-formed body is explained, not a bare NaN (note 3)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT + 1))', null),
+    (r) =>
+      r.arithBody !== null &&
+      r.substituted === null &&
+      Number.isNaN(r.evaluated) &&
+      typeof r.rejectedBecause === 'string' &&
+      /cap could not be parsed/.test(r.rejectedBecause),
   )
 }
 

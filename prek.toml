@@ -467,7 +467,15 @@ pass_filenames = false
 # `remove-after-markers`: those are source-SELECTION plumbing (which copy of
 # a file to judge, index vs working tree), a different call than the
 # detector itself, and they are a four-hook family to be decided together.
-files = '\.(md|ts|tsx)$|^scripts/(doc-code-paths-baseline\.json|check-doc-code-paths\.mjs|lib/js-scanner\.mjs)$'
+#
+# #4482: `tsconfig.app.json` is unioned in too — it is the runtime source of
+# truth for the `@/…` path-alias map this guard now resolves citations
+# through (`loadPathAliasMap`), read via a plain `readFileSync`, not a JS
+# `import`, so `check-hook-deps.mjs`'s import-graph analysis cannot see the
+# edge and this pattern is the only thing keeping an alias-mapping edit
+# (e.g. retargeting `@/*`) from silently skipping this hook on a commit that
+# touches nothing else it already matches.
+files = '\.(md|ts|tsx)$|^(tsconfig\.app\.json|scripts/(doc-code-paths-baseline\.json|check-doc-code-paths\.mjs|lib/js-scanner\.mjs))$'
 stages = ["pre-commit"]
 # `verbose = true` is load-bearing, same as `commit-sentinel` below: prek
 # swallows a PASSING hook's output, and the line-bounds check (#4258) exits

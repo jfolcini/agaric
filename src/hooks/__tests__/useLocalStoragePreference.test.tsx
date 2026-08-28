@@ -27,6 +27,53 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { logger } from '@/lib/logger'
 
+// The one `useState(null)` call in useLocalStoragePreference is the
+// `failedWrite` slot (nothing else in this tree calls `useState` with a
+// `null` initializer). Vitest can't `vi.spyOn` a live ESM namespace export
+// (`useState` is non-configurable), so intercept it via `vi.mock` instead —
+// wrapping each real setter in a `vi.fn` the first time it's seen lets a
+// test assert on the actual setter invocation, not on an inferable side
+// effect like render count (which React's own same-value bailout could mask
+// either way). See "does not fire a redundant setState…" below.
+const failedWriteSetterSpies = new Map<
+  (value: unknown) => void,
+  ReturnType<typeof vi.fn<(value: unknown) => void>>
+>()
+
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>()
+  return {
+    ...actual,
+    useState: (initial: unknown) => {
+      const result = actual.useState(initial as never)
+      if (initial === null) {
+        const real = result[1] as (value: unknown) => void
+        let spy = failedWriteSetterSpies.get(real)
+        if (spy === undefined) {
+          spy = vi.fn(real)
+          failedWriteSetterSpies.set(real, spy)
+        }
+        return [result[0], spy]
+      }
+      return result
+    },
+  }
+})
+
+// Attached to every `failedWriteSetterSpies.size` assertion below. That
+// count is not a property of the hook under test — it is the mock's
+// `initial === null` heuristic asserting it still identifies exactly one
+// slot. Without this, a future `useState(null)` ANYWHERE in the rendered
+// tree fails these tests with "expected 2 to be 1", pointing at spy
+// bookkeeping instead of at the change that actually broke it.
+const ONE_NULL_SLOT =
+  "the `vi.mock('react')` above identifies the `failedWrite` setter purely by " +
+  '`initial === null`, so it expects exactly ONE `useState(null)` in the rendered tree. ' +
+  'A count other than 1 means that assumption broke, not the hook: either something new ' +
+  'under <Harness> now calls `useState(null)`, or `useLocalStoragePreference` stopped ' +
+  'doing so. Retarget the heuristic (identify the slot by something other than its ' +
+  'initializer) — do not relax the count.'
+
 interface HarnessProps<T> {
   storageKey: string
   defaultValue: T
@@ -43,6 +90,7 @@ function Harness<T>({ storageKey, defaultValue, options, onState }: HarnessProps
 beforeEach(() => {
   localStorage.clear()
   vi.restoreAllMocks()
+  failedWriteSetterSpies.clear()
 })
 
 afterEach(() => {
@@ -545,6 +593,137 @@ describe('useLocalStoragePreference', () => {
         window.removeEventListener('storage', listener)
         setItemSpy.mockRestore()
       }
+    })
+
+    // #4490 — the three points below pin the success-path clear added for
+    // #4406. That clear is deliberately guarded on `failedWriteRef.current`
+    // (a ref), not on `failedWrite` (the state it mirrors for render output).
+    // A test that only checks "the value is correct after a successful
+    // write" passes under EITHER guard, so it proves nothing about which one
+    // is in place — these instead target the specific compositions that only
+    // the ref guard gets right.
+
+    it('a fail-then-succeed pair batched into one tick still clears the failed value', () => {
+      // Discriminator: `setPreference` is memoized once and does not close
+      // over `failedWrite`, so within a single tick its closed-over value is
+      // whatever `failedWrite` was BEFORE this tick started (here: null).
+      // Guarding the clear on that stale state would silently skip clearing
+      // on the second (successful) call, stranding the first call's failed
+      // value even though the pair together should leave nothing failed.
+      // Guarding on the ref (which the first call updates synchronously,
+      // within the same tick) clears correctly. This test goes red if the
+      // guard is switched from the ref to the state.
+      let captured: string | null = null
+      let setter: ((next: string | ((prev: string) => string)) => void) | null = null
+      render(
+        <Harness
+          storageKey="test:batched-fail-then-succeed"
+          defaultValue="initial"
+          onState={(v, s) => {
+            captured = v
+            setter = s
+          }}
+        />,
+      )
+      expect(captured).toBe('initial')
+
+      // First setItem call (the first setPreference below) throws; every
+      // call after that falls through to the real implementation.
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+        throw new Error('quota exceeded')
+      })
+      try {
+        act(() => {
+          setter?.('rejected')
+          setter?.('accepted')
+        })
+        expect(captured).toBe('accepted')
+        expect(localStorage.getItem('test:batched-fail-then-succeed')).toBe(
+          JSON.stringify('accepted'),
+        )
+      } finally {
+        setItemSpy.mockRestore()
+      }
+    })
+
+    it('does not fire a redundant setState on a successful write when there was no prior failure', () => {
+      let captured: string | null = null
+      let setter: ((next: string | ((prev: string) => string)) => void) | null = null
+      render(
+        <Harness
+          storageKey="test:no-redundant-clear"
+          defaultValue="initial"
+          onState={(v, s) => {
+            captured = v
+            setter = s
+          }}
+        />,
+      )
+      expect(failedWriteSetterSpies.size, ONE_NULL_SLOT).toBe(1)
+      const failedWriteSetterSpy = [...failedWriteSetterSpies.values()][0]
+      expect(failedWriteSetterSpy).toHaveBeenCalledTimes(0)
+
+      act(() => {
+        setter?.('updated')
+      })
+      expect(captured).toBe('updated')
+      expect(failedWriteSetterSpy).toHaveBeenCalledTimes(0)
+    })
+
+    it('a successful write of the value already in storage clears a stale failed value (latent re-render fix)', () => {
+      // Previously the success path only cleared the ref, so `getSnapshot()`
+      // returned an unchanged snapshot (same value already in storage) and
+      // `useSyncExternalStore` had no reason to re-render — the UI kept
+      // showing the stale failed value forever. `setFailedWrite(null)` is
+      // what forces the re-render here; the store snapshot alone does not.
+      let captured: string | null = null
+      let setter: ((next: string | ((prev: string) => string)) => void) | null = null
+      render(
+        <Harness
+          storageKey="test:rerender-fix"
+          defaultValue="stored-value"
+          onState={(v, s) => {
+            captured = v
+            setter = s
+          }}
+        />,
+      )
+      expect(captured).toBe('stored-value')
+      expect(localStorage.getItem('test:rerender-fix')).toBe(JSON.stringify('stored-value'))
+
+      // Positive control for the spy wiring itself (see the no-redundant-
+      // clear test's 0-calls assertion above, which this complements): show
+      // the SAME spy fires on both the failure-set and the success-clear, so
+      // a 0-calls assertion elsewhere is actually discriminating something
+      // rather than passing because the spy never fires at all.
+      expect(failedWriteSetterSpies.size, ONE_NULL_SLOT).toBe(1)
+      const failedWriteSetterSpy = [...failedWriteSetterSpies.values()][0]
+
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+        throw new Error('quota exceeded')
+      })
+      try {
+        act(() => {
+          setter?.('rejected')
+        })
+        expect(captured).toBe('rejected')
+      } finally {
+        setItemSpy.mockRestore()
+      }
+      expect(failedWriteSetterSpy).toHaveBeenNthCalledWith(1, {
+        key: 'test:rerender-fix',
+        value: 'rejected',
+      })
+
+      // The value being written back is exactly what's already persisted —
+      // the raw stored string does not change — but the failed value must
+      // still clear.
+      act(() => {
+        setter?.('stored-value')
+      })
+      expect(captured).toBe('stored-value')
+      expect(failedWriteSetterSpy).toHaveBeenNthCalledWith(2, null)
+      expect(failedWriteSetterSpy).toHaveBeenCalledTimes(2)
     })
   })
 

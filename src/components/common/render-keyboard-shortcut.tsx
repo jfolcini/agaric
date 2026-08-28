@@ -10,8 +10,11 @@
  * a single implementation of the keyboard-chip style across the app. These
  * are prominent settings/help chips, so they use the `md` size variant.
  *
- * #4006 — moved down from `@/lib/render-keyboard-shortcut`: it renders JSX
- * (a `<KbdChord>` wrapper), so it is a component, not a `lib/`-tier utility.
+ * #4006 — moved down from lib/'s former render-keyboard-shortcut module
+ * (deleted outright, no re-export left behind, so the old location stays
+ * prose rather than a citation — there is no live path to point at): it
+ * renders JSX (a `<KbdChord>` wrapper), so it is a component, not a
+ * `lib/`-tier utility.
  */
 
 import React from 'react'

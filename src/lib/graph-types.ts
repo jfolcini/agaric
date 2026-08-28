@@ -2,7 +2,7 @@
  * Shared graph-view data types (#761).
  *
  * `GraphNode`/`GraphEdge` were previously declared in
- * `@/components/GraphView.helpers`, which forced `lib/graph-sim-helpers.ts` to
+ * `@/components/graph/GraphView.helpers`, which forced `lib/graph-sim-helpers.ts` to
  * type-import from `components/` — a lib→components layering inversion. Hoisting
  * the types into this leaf (a sibling of `graph-sim-helpers`) lets the lib and
  * hook layers depend only on `lib/`, while `GraphView.helpers` re-exports them

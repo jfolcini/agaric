@@ -15,8 +15,11 @@
  * lookups in `useHeaderLabel` / `ViewDispatcher` — which `.find()` by id
  * regardless of order — keep working unchanged.
  *
- * #4006 — moved down from `@/components/common/nav-items`: this is a data
- * manifest (icon component *references* + labels/ids), not a component —
+ * #4006 — moved down from components/common's former nav-items module
+ * (deleted outright, no re-export left behind, so the old location is named
+ * as prose rather than cited — there is no path there to keep honest): this
+ * is a data manifest
+ * (icon component *references* + labels/ids), not a component —
  * it renders nothing — so it belongs in `lib/`, letting the two `hooks/`
  * consumers (`useAppSpaceLifecycle`, `useViewChangeAnnouncer`) read it
  * without importing `components/`, which the lib-layering guard (#3121)
