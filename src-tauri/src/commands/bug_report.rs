@@ -28,10 +28,12 @@
 //! application's log format; a file reached through a planted link is not that,
 //! and `recent_errors` is pasted into a public issue body. See that function
 //! for why the confinement of a log FILE is not a check-then-open race, and
-//! for the hard-link residual it deliberately leaves. The OTel *directory*
-//! guard in `read_logs_for_report_inner` is the one part that is a path check
-//! gating a path read rather than a property of the open; it says so where it
-//! stands.
+//! for the hard-link residual it deliberately leaves. Two parts are path checks
+//! rather than properties of an open, and so are mitigations with a race left
+//! in them rather than closed holes: the OTel *directory* guard in
+//! `read_logs_for_report_inner` (#4487), and the mtime ranking in
+//! `plain_log_outranks_dated`. Neither can exfiltrate — the open re-decides —
+//! but both can suppress. Each says so where it stands.
 
 use std::fs;
 use std::io::Read;
@@ -720,10 +722,40 @@ fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Ve
 /// - An unreadable mtime loses, on either side. Without a clock reading
 ///   there is no evidence against the default, and a dated file whose
 ///   metadata cannot be read is not evidence *for* the plain file.
+///
+/// # The ranking `stat` does not follow, and the residual that leaves
+///
+/// #4283 — both sides are read with `symlink_metadata`, not `fs::metadata`.
+/// Every candidate reaching here was classified by an `lstat` back at
+/// `read_dir` time (or, for the plain file, by [`is_regular_file_no_follow`]),
+/// so it is a proven regular file and the two calls return the same stamp for
+/// it: the non-following form costs nothing legitimate. What it buys is the
+/// window between those two syscalls. A following `stat` re-resolves the name,
+/// so a link swapped in during that window would rank by its TARGET's mtime —
+/// any file anywhere on the machine, freshly touched — and that is enough to
+/// decide which log family is read.
+///
+/// Stated plainly, because it is the same TOCTOU class as the OTel-directory
+/// residual (#4487) and was previously unmentioned: this narrows the window's
+/// value, it does not close the window. An attacker who still wins it gets a
+/// candidate stamped with the LINK's own mtime, which they also control (it is
+/// the moment they create the link), and the open that follows then refuses
+/// the link so that day yields nothing. So the residual is a SUPPRESSION one —
+/// steering which family is read, or emptying the entry that was picked, which
+/// is the harm `a_planted_symlink_cannot_suppress_the_live_plain_log_4283`
+/// pins. It is not an exfiltration one: ranking reads no bytes, and every byte
+/// is re-decided at the open by [`open_confined_log_file`] against the handle
+/// it actually got. The precondition is the same as the other residuals here —
+/// write access to the app's own log directory — and closing it needs
+/// `openat`-relative I/O this crate cannot spell (it denies `unsafe_code` and
+/// nothing in the dependency set exposes a safe one).
 fn plain_log_outranks_dated(plain_path: &Path, days: &[(chrono::NaiveDate, PathBuf)]) -> bool {
-    // `path`'s mtime, or `None` if the filesystem will not say.
+    // `path`'s OWN mtime, or `None` if the filesystem will not say. `lstat`,
+    // not `stat` — see the residual section above.
     fn mtime(path: &Path) -> Option<std::time::SystemTime> {
-        fs::metadata(path).and_then(|meta| meta.modified()).ok()
+        fs::symlink_metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
     }
 
     if days.is_empty() {
@@ -954,19 +986,59 @@ const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 #[cfg(windows)]
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
+// The no-follow open below is spelled with per-platform `custom_flags` and has
+// no portable fallback. On a target that is neither `unix` nor `windows` BOTH
+// `#[cfg]` arms in `open_confined_log_file` vanish, `options` carries nothing
+// but `read(true)`, and the function degrades to an ordinary `File::open` that
+// FOLLOWS symlinks with only the `fstat` behind it — a silent loss of the
+// #4283 property, not a compile failure. Made a build break here instead, which
+// is the same fail-loudly rule the rest of this section is built on. Every
+// target this app ships is one or the other (Android is `cfg(unix)`), so this
+// is latent today; porting to a third one means supplying its no-follow open,
+// not deleting this. The predicate is the exact complement of the two arms
+// below — keep the three in step if either arm's `cfg` ever changes.
+#[cfg(not(any(unix, windows)))]
+compile_error!(
+    "bug_report's log confinement (#4283) has no no-follow open for this \
+     target: `open_confined_log_file` would silently follow symlinks into \
+     files the bug report then publishes. Add a `custom_flags` arm for this \
+     platform (and widen the `cfg` above) before enabling the target."
+);
+
 /// Open `path` for reading with symlink resolution of the final component
 /// **disabled**, then prove from the open handle that what was opened is a
 /// regular file (#4283).
 ///
 /// # What this confines, and why it is the whole of the confinement
 ///
-/// Every caller builds `path` as `log_dir.join(<single component>)`, where the
-/// component is either a name that came out of `read_dir(log_dir)` (a directory
-/// entry name can contain neither `/` nor a `..` traversal) or the literal
-/// `"agaric.log"`. So "the final component does not resolve through a symlink"
-/// and "the bytes read came from a regular file sitting directly inside
-/// `log_dir`" are the same statement, and no path arithmetic is needed to
-/// reach it.
+/// There are exactly two caller shapes, and what each one gets out of this
+/// function is NOT the same guarantee. Spelled out because the sentence a
+/// later reader lifts the invariant from is this one:
+///
+/// 1. `log_dir.join(<single component>)` — the `agaric.log[.YYYY-MM-DD]`
+///    readers (`recent_errors_from_log_dir_at`, `read_logs_for_report_inner`).
+///    The component is either a name that came out of `read_dir(log_dir)` (a
+///    directory entry name can contain neither `/` nor a `..` traversal) or the
+///    literal `"agaric.log"`. For these, "the final component does not resolve
+///    through a symlink" and "the bytes read came from a regular file sitting
+///    directly inside `log_dir`" are the same statement, and no path arithmetic
+///    is needed to reach it.
+///
+/// 2. `log_dir.join(<subdir>).join(<single component>)` — the OTel reader in
+///    `read_logs_for_report_inner`, where `<subdir>` is one of the fixed
+///    `OTEL_SUBDIRS` literals and the component came out of
+///    `read_dir(log_dir/<subdir>)`. For these the guarantee is one directory
+///    weaker: the bytes came from a regular file sitting directly inside *the
+///    directory that was enumerated*, which is not by itself a statement about
+///    `log_dir`. That the enumerated directory IS `log_dir/<subdir>` is a
+///    separate guarantee and it is not this function's — it comes from the
+///    `lstat` on `<subdir>` at the enumeration site, which is a check-then-read
+///    pair rather than a property of the open, and is a mitigated residual
+///    rather than a closed hole (#4487).
+///
+/// So a new caller of shape 2 needs its own directory guard: nothing in here
+/// supplies one, and shape 1's "directly inside the log dir" conclusion is
+/// available only because that path has a single component.
 ///
 /// That is deliberate. The alternative the issue floats — canonicalise the
 /// candidate and require it to be prefixed by the log dir — has a trap:
@@ -998,6 +1070,11 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 ///   a FIFO planted under a log name would otherwise block the open until a
 ///   writer appeared. With it the open returns immediately and the `fstat`
 ///   below rejects it.
+///
+/// The no-follow half of that is per-platform (`O_NOFOLLOW` on unix,
+/// `FILE_FLAG_OPEN_REPARSE_POINT` on Windows) and there is no portable
+/// fallback, so the `compile_error!` above refuses to build a target that has
+/// neither arm rather than letting the open quietly become a following one.
 ///
 /// # Positive classification
 ///
@@ -3000,12 +3077,20 @@ mod tests {
     ///
     /// This is the assertion the enumeration filter alone answers, and the
     /// reason that filter is not redundant with the `O_NOFOLLOW` open. A dated
-    /// entry that survives enumeration is fed to `plain_log_outranks_dated`,
-    /// which ranks it by `fs::metadata` — the LINK TARGET's mtime. Point the
-    /// link at something freshly touched and the plain file, which is the only
-    /// one still being appended to, stops outranking the dated family; the open
-    /// then refuses the link and the walk yields nothing at all. The report goes
-    /// blind, and no symlink content is needed to do it.
+    /// entry that survives enumeration is fed to `plain_log_outranks_dated`;
+    /// point it at something freshly touched and the plain file, which is the
+    /// only one still being appended to, stops outranking the dated family; the
+    /// open then refuses the link and the walk yields nothing at all. The report
+    /// goes blind, and no symlink content is needed to do it.
+    ///
+    /// Read as a discriminator, this pins the ENUMERATION filter specifically:
+    /// the link never reaches the ranking at all, because `entry.metadata()` is
+    /// an `lstat` and drops it. The second, independent reason the same attack
+    /// now fails — the ranking's own `stat` no longer follows either — is
+    /// exercised on its own by
+    /// `ranking_a_swapped_in_link_reads_its_own_mtime_not_its_targets_4283`,
+    /// because an assertion that would pass for either reason cannot tell you
+    /// that both are alive.
     #[cfg(unix)]
     #[test]
     fn a_planted_symlink_cannot_suppress_the_live_plain_log_4283() {
@@ -3046,6 +3131,55 @@ mod tests {
             errors.len(),
             1,
             "exactly the one legitimate line, got: {errors:?}"
+        );
+    }
+
+    /// The ranking `stat` must not follow a link either (#4283, review of #4488).
+    ///
+    /// The enumeration filter drops symlinks from `days` before ranking ever
+    /// sees them, so the state under test is reachable only by winning the
+    /// window between that `lstat` and the ranking — the residual documented on
+    /// [`plain_log_outranks_dated`]. No in-process fixture can drive
+    /// `recent_errors_from_log_dir_at` into it, so the ranking is called
+    /// DIRECTLY with the post-swap candidate set. That is the point of the
+    /// test: it isolates the layer the suppression test above cannot reach.
+    ///
+    /// Discriminating by construction: the link's TARGET is stamped newer than
+    /// the live plain log, while the link's OWN mtime is its creation time and
+    /// so older than both (the two real files are stamped into the future
+    /// because `std` cannot set a link's own timestamps). A following
+    /// `fs::metadata` therefore reads the target's stamp and demotes the live
+    /// log — the pre-fix behaviour, and the only way this assertion can go red.
+    #[cfg(unix)]
+    #[test]
+    fn ranking_a_swapped_in_link_reads_its_own_mtime_not_its_targets_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        let today = d4216_today();
+        let now = std::time::SystemTime::now();
+
+        // The live log, stamped ahead of the link's creation time.
+        let plain = log_dir.join("agaric.log");
+        fs::write(
+            &plain,
+            "2025-03-10T00:00:00.000000Z ERROR agaric: M4283_LEGITIMATE_LOG\n",
+        )
+        .unwrap();
+        set_mtime(&plain, now + std::time::Duration::from_secs(3_600));
+
+        // The link's target: newer still, so following the link wins the rank.
+        let secret = plant_secret_4283(dir.path());
+        set_mtime(&secret, now + std::time::Duration::from_secs(7_200));
+
+        let link = day_log_path(&log_dir, today);
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+        assert!(
+            plain_log_outranks_dated(&plain, &[(today, link)]),
+            "#4283: ranking a candidate must not resolve it — a link swapped in \
+             after enumeration must rank by its own mtime, not by the mtime of \
+             whatever it points at, or it can demote the live plain log"
         );
     }
 
