@@ -235,7 +235,7 @@ export function BlockListRenderer({
   // Children of those parents get a CSS enter animation.
   const prevCollapsedRef = useRef(collapsedIds)
   const animatingBlockIds = useMemo(() => {
-    // oxlint-disable-next-line react/refs -- `prevCollapsedRef` is a same-render expand-detection cache: the previous `collapsedIds` must be compared on the render that animates, not one commit later; see #4406
+    // oxlint-disable-next-line react/refs -- `prevCollapsedRef` is read same-render (compared against the current `collapsedIds` to detect just-expanded parents) but written only from the effect below, never during render; see #4406 and frontend.md's ref-directive buckets
     const prev = prevCollapsedRef.current
     if (prev === collapsedIds) return new Set<string>()
 

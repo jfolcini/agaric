@@ -397,7 +397,7 @@ one — treat it as the exception that has to argue for itself, not as precedent
 
 A directive without a reason is worse than a warning, because it is permanent
 and silent — so each one names what the rule flagged and why the code is
-nonetheless correct. Four buckets were accepted:
+nonetheless correct. Five buckets were accepted:
 
 - **A ref written *and* read within the same render** (the `useMemo` cache case
   above): `src/components/block-tree/use-block-zoom.ts`,
