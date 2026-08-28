@@ -28,8 +28,20 @@ function Harness({
   withDisabled?: boolean
   withHiddenSentinel?: boolean
 }): React.ReactElement {
-  // #4406 — destructure before use: a member expression passed directly to
-  // `ref=`/handler props trips oxlint's react(refs) rule (syntax-only check).
+  // #4406 — destructure before use: reading `containerRef` off the hook
+  // result during render (`roving.containerRef`) is a ref access as far as
+  // `react(refs)` is concerned, and once `roving` is tainted every later
+  // read of it is flagged too — which is why the handler props draw
+  // findings here as well. Destructuring at the hook call is not an access;
+  // the rule is property-aware, not a blanket "syntax-only" ban on member
+  // expressions (a component that reads only `roving.onKeyDown` draws no
+  // finding at all).
+  //
+  // The destructuring is not inert everywhere — it can un-bail the React
+  // Compiler and enable memoisation (#4469; see SelectionBubbleMenu.tsx for
+  // where that changed runtime behaviour). It is inert in this file only
+  // because the compiler is disabled under `VITEST` (vite.config.ts), not
+  // because the rewrite itself is behaviour-preserving.
   const { containerRef, onKeyDown, onFocus } = useRovingTabindex()
   return (
     <div
