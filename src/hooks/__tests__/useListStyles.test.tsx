@@ -91,4 +91,43 @@ describe('useListStyles', () => {
     rerender()
     expect(result.current).toBe(first)
   })
+
+  // The test above passes even for the WRONG reason: the render callback
+  // recreates `[{ id: 'A' }]` on every call, but `idSignature` is a joined
+  // STRING ("A"), a primitive that compares equal by value across renders —
+  // so the outer `useMemo`'s dep array never actually changes and React
+  // bails out without ever re-invoking the compute-and-compare body at all.
+  // A no-op `rerender()` would look identical whether or not the
+  // content-equality reuse (#4012, `mapsEqual`/`prevRef`) works or is
+  // deleted outright.
+  //
+  // This test forces a genuine RECOMPUTE — reordering `blocks` changes
+  // `idSignature` ("A\0B" -> "B\0A") without touching the batch data — and
+  // is exactly the "drag/reorder that does not refetch" case the file's
+  // docblock invariant promises. It is the one that would go red if the
+  // content-equality reuse were broken.
+  it('keeps a stable map reference across a reorder that changes no style (content-equality reuse)', async () => {
+    mockedGetBatchProperties.mockResolvedValue({
+      A: [row({ key: LIST_STYLE_KEY, value_text: 'bullet' })],
+      B: [row({ key: LIST_STYLE_KEY, value_text: 'ordered' })],
+    })
+    const { result, rerender } = renderHook(
+      ({ blocks }: { blocks: { id: string }[] }) => useListStyles(blocks),
+      {
+        initialProps: { blocks: [{ id: 'A' }, { id: 'B' }] },
+        wrapper: providerWrapper(['A', 'B']),
+      },
+    )
+    await waitFor(() => expect(result.current.get('A')).toBe('bullet'))
+    expect(result.current.get('B')).toBe('ordered')
+    const first = result.current
+
+    // Same ids, same styles, reversed order — idSignature changes, so the
+    // memo body actually re-runs and recomputes `next` from scratch.
+    rerender({ blocks: [{ id: 'B' }, { id: 'A' }] })
+
+    expect(result.current.get('A')).toBe('bullet')
+    expect(result.current.get('B')).toBe('ordered')
+    expect(result.current).toBe(first)
+  })
 })

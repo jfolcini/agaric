@@ -127,6 +127,39 @@ const POPOVER_CONTENT_BASE =
  * EVERY popover opened with the IME up, and where the keyboard covers more
  * than half the visible band the value goes negative and the browser drops the
  * `max-height` declaration entirely.
+ *
+ * #4339 — before #4313 this prop was not set at all, so every call site got
+ * Radix's own default of `0`. `EDGE_PADDING_PX` is a deliberate app-wide
+ * change (~31 production call sites, none of which pass `collisionPadding`
+ * themselves), not an incidental one, so it gets its own disposition:
+ *
+ * - The default itself IS pinned by a test
+ *   (`__tests__/popover.test.tsx`, "defaults collisionPadding to
+ *   EDGE_PADDING_PX"). It calls `PopoverContent` directly as a function and
+ *   reads the element tree it returns, because `collisionPadding` isn't
+ *   reflected anywhere in the rendered DOM (no attribute, no style) — it
+ *   only affects floating-ui's internal geometry once `size()`/`flip`/`shift`
+ *   actually run, which happy-dom never lays out enough to do (same reason
+ *   the height-cap test above asserts the class expression, not a computed
+ *   px value). That is deliberately narrower than "the popover sits 4px off
+ *   the edge in a real browser", and NOTHING covers that wider claim —
+ *   grepping `collisionPadding` and `data-side` across `e2e/` finds only
+ *   comment mentions, and the one spec that touches this area asserts the
+ *   available-height variable rather than the 4px inset. Stated plainly
+ *   rather than deferred to "whatever end-to-end checks exist", because an
+ *   unexamined elsewhere is exactly the absence-read-as-coverage this
+ *   disposition exists to avoid.
+ * - Whether 4px of padding flips any existing popover to a different side
+ *   than it used to land on was checked and not resolved: no test in this
+ *   repo asserts `data-side` for any popover, so there is no "before"
+ *   behavior recorded anywhere to diff against, and reproducing it would
+ *   mean measuring real layout for every call site at the specific viewport
+ *   sizes/anchor positions where it opens — outside what this environment
+ *   (or a targeted unit-test pass) can do. A flip only changes for a
+ *   placement that was already within 4px of its threshold, which is a
+ *   narrow band for the button/menu-anchored popovers this codebase has,
+ *   but that is reasoning, not a measurement, and is not a substitute for
+ *   one.
  */
 const EDGE_PADDING_PX = 4
 
