@@ -2500,6 +2500,244 @@ function runProcessCases(ok, fail) {
   }
 }
 
+// The body class the workflow's `--pr-limit` fetch expression must be:
+// `$(( <body> ))` where `<body>` contains no `$`, `(` or `)` at all. Two
+// variants of the SAME class, exported to module scope so both the live
+// check against the real workflow (below) and its unit self-test
+// (`runPrLimitExprSelfTest`, #4477 notes 2/3) share one definition:
+//   - `ARITH_ANCHORED_RE` — the actual grammar this check enforces (byte for
+//     byte since #4466 note 4): the WHOLE expression must be the expansion.
+//   - `ARITH_PREFIX_RE` — the same body class without the end anchor, used
+//     ONLY to diagnose (#4477 note 3) what is left over when the anchored
+//     form fails to match the whole expression, never to accept anything
+//     the anchored form itself would not.
+const ARITH_ANCHORED_RE = /^\$\(\(([^$()]*)\)\)$/
+const ARITH_PREFIX_RE = /^\$\(\(([^$()]*)\)\)/
+// `<int> ( <+|-> <int> )*` with an optional leading sign, anchored, so every
+// character of the substituted expression is accounted for by a term or an
+// operator. The looser `/^[\s\d+-]+$/` this replaces was not enough to make
+// the token sum below an EVALUATION: it admitted two adjacent signs, and
+// `String#match()` — which skips anything it cannot start a match at, rather
+// than failing — silently dropped the first of them. `$((PR_LIST_LIMIT -
+// +1))` therefore summed to `100 + 1 = 101` and PASSED this check, while the
+// shell that actually runs it asks `gh` for 99 — the truncation ambiguity of
+// #4431 review note 4, waved through by the very assertion that exists to
+// catch it. Refusing an adjacent-sign expression outright (falling to `NaN`,
+// which can never equal `cap + 1`) fails closed instead of guessing.
+//
+// Each integer literal is `0` or a `[1-9]`-led run (never a BARE `\d+`,
+// #4477-round-2 note 1): with a bare `\d+`, a literal with a leading zero
+// (e.g. `010`) is read by `Number()` below as DECIMAL 10, but `bash` reads
+// the very same literal as OCTAL 8 — a second silent divergence from the
+// shell this check exists to stand in for, on top of the adjacent-sign one
+// above. `$((PR_LIST_LIMIT - 010 + 11))` summed to `cap + 1` here while the
+// shell asked `gh` for a different count entirely. Refusing any leading zero
+// on a multi-digit literal falls it to `NaN` instead of guessing which base
+// was meant; a bare `0` is still one valid literal, not a "leading zero".
+const ARITH_GRAMMAR_RE = /^\s*[+-]?\s*(?:0|[1-9]\d*)(?:\s*[+-]\s*(?:0|[1-9]\d*))*\s*$/
+
+/**
+ * Evaluate the workflow's `--pr-limit` fetch expression against the declared
+ * cap: the shell arithmetic-expansion body, with the one named variable
+ * substituted, evaluated as a signed-integer sum — plus, when it cannot be
+ * evaluated, WHY not. Pure and synchronous, so it is unit-testable with
+ * synthetic `expr` values (`runPrLimitExprSelfTest`) rather than only
+ * against the one expression this repo's own workflow happens to have today.
+ *
+ * `rejectedBecause` is null whenever `evaluated` is a real number; a
+ * rejection happens for several very different reasons, and without a hint
+ * every one of them reads as the same bare `evaluated: NaN`/`null` — like
+ * the guard itself is broken, rather than like the workflow needs one
+ * specific edit (#4477 notes 2 and 3 extend this beyond the one branch
+ * #4466 note 4 originally covered).
+ *
+ * @param {string} expr
+ * @param {number | null} cap
+ */
+function evaluatePrLimitExpr(expr, cap) {
+  const arithBody = ARITH_ANCHORED_RE.exec(expr)?.[1] ?? null
+  const substituted =
+    arithBody === null || cap === null ? null : arithBody.replaceAll('PR_LIST_LIMIT', String(cap))
+  const evaluated =
+    substituted !== null && ARITH_GRAMMAR_RE.test(substituted)
+      ? // Under that grammar every token IS a signed integer literal and no
+        // character sits outside one, so summing the signed terms IS
+        // evaluating the expression: with only `+`/`-` left there is no
+        // operator precedence to get wrong, and nothing for the scan to skip.
+        (substituted.match(/[+-]?\s*\d+/g) ?? []).reduce(
+          (sum, term) => sum + Number(term.replace(/\s+/g, '')),
+          0,
+        )
+      : Number.NaN
+  const rejectedBecause =
+    arithBody !== null
+      ? // #4477 note 2: this branch used to be flat `null` — a body that IS
+        // `$(( ... ))` but fails the grammar (e.g. `$((PR_LIST_LIMIT - -1))`,
+        // valid shell arithmetic, and equal to cap + 1 here) surfaced as a
+        // bare `evaluated: NaN` with no explanation, the SAME readability
+        // gap the hint below was originally added to close, one branch over.
+        substituted !== null && !ARITH_GRAMMAR_RE.test(substituted)
+        ? // #4477-round-2 note 2: a body naming some OTHER variable (e.g.
+          // `$((OTHER + 1))`) is untouched by the `PR_LIST_LIMIT` substitution
+          // above, so `substituted` still has a letter/underscore in it — a
+          // completely different defect from an adjacent-sign or leading-zero
+          // literal, and the two hints below must not be swapped: telling the
+          // author to fix "adjacent signs" in an expression with none of them
+          // is the same misattribution class note 3 (below) already fixes for
+          // trailing content, one branch over.
+          /[A-Za-z_]/.test(substituted)
+          ? 'arithmetic expansion, but the substituted expression ' +
+            `(${JSON.stringify(substituted)}) still contains a letter or underscore — an ` +
+            'unsubstituted variable, not an arithmetic-grammar defect. This check only knows ' +
+            'how to substitute `PR_LIST_LIMIT`; any other name must be written as a literal ' +
+            'signed integer.'
+          : 'arithmetic expansion, but the substituted expression ' +
+            `(${JSON.stringify(substituted)}) does not parse as ` +
+            '`<int> ( <+|-> <int> )*` — almost always two adjacent signs (e.g. `- -1`, `+ +1`) ' +
+            'or a leading zero on a multi-digit literal (e.g. `010`, decimal to this check but ' +
+            'octal to `bash`). This check refuses to guess how to combine or read them rather ' +
+            'than risk the exact truncation ambiguity it exists to catch (#4466 note 4) — write ' +
+            'the single signed decimal integer literal the expression means.'
+        : null
+      : !expr.startsWith('$((')
+        ? 'not a `$(( ... ))` arithmetic expansion at all'
+        : // #4477 note 3: the two remaining cases both start with `$((` but
+          // are otherwise unrelated, and the OLD code here reported the
+          // second as the first — for `$((PR_LIST_LIMIT + 1)) 2`, `arithBody`
+          // is null (the anchored regex demands the WHOLE expression be the
+          // expansion) and the body contains no `$` at all, yet the old
+          // fallback advised "write the variable bare" regardless. Checking
+          // the SAME body class without the end anchor first tells the two
+          // apart: if it closes with `))` before the string ends, the defect
+          // is what comes AFTER, not the body's spelling.
+          (() => {
+            const prefix = ARITH_PREFIX_RE.exec(expr)
+            if (prefix !== null && prefix[0].length !== expr.length) {
+              return (
+                'arithmetic expansion, but there is trailing content after the closing `))` ' +
+                `(${JSON.stringify(expr.slice(prefix[0].length))}) — the WHOLE expression must ` +
+                'be the arithmetic expansion, nothing before or after it.'
+              )
+            }
+            return expr.slice(3).includes('$')
+              ? 'arithmetic expansion, but the body contains `$` — write the variable bare ' +
+                  '(`$((PR_LIST_LIMIT + 1))`, not `$(($PR_LIST_LIMIT + 1))`). The `$`-less ' +
+                  'form is required so this check never has to accept `$` in an expression ' +
+                  'it evaluates (#4466 note 4).'
+              : 'starts with `$((` but its body is not a single run of digits, whitespace, ' +
+                  '`+` and `-` followed by `))` — nested parentheses, for example, are not ' +
+                  'modelled either.'
+          })()
+  return { arithBody, substituted, evaluated, rejectedBecause }
+}
+
+/**
+ * Unit-level coverage for `evaluatePrLimitExpr` with SYNTHETIC expressions
+ * this repo's own workflow does not (and should not need to) contain —
+ * #4477 notes 2 and 3 are gaps that only show up on inputs the live
+ * cross-file check in `runProcessCasesIn` never exercises, since that check
+ * runs once against whatever `pr-overlap.yml` currently has.
+ */
+function runPrLimitExprSelfTest(ok, fail) {
+  const check = (name, r, predicate) => {
+    if (predicate(r)) ok(name)
+    else fail(name, JSON.stringify(r))
+  }
+
+  check(
+    'evaluatePrLimitExpr: the bare form evaluates cleanly, no hint needed',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT + 1))', 99),
+    (r) => r.evaluated === 100 && r.rejectedBecause === null,
+  )
+
+  // #4477 note 2: valid shell arithmetic (adjacent signs cancel to a single
+  // effective `+`), refused by the grammar on purpose -- must now say why.
+  check(
+    'evaluatePrLimitExpr: an arithBody that fails the GRAMMAR after substitution is explained (note 2)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT - -1))', 99),
+    (r) =>
+      r.arithBody !== null &&
+      Number.isNaN(r.evaluated) &&
+      typeof r.rejectedBecause === 'string' &&
+      /adjacent signs/.test(r.rejectedBecause) &&
+      !/write the variable bare/.test(r.rejectedBecause),
+  )
+
+  // #4477-round-2 note 1: `010` is DECIMAL 10 to `Number()` but OCTAL 8 to
+  // `bash` -- the very divergence the adjacent-sign fix above closed one
+  // token over. Must fail closed (NaN), not silently agree with the wrong
+  // base. `$((PR_LIST_LIMIT - 010 + 11))` sums to `cap + 1` under the OLD
+  // (bare `\d+`) grammar, so this is a genuine counterexample if it passes.
+  check(
+    'evaluatePrLimitExpr: a leading zero on a multi-digit literal is refused (round-2 note 1)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT - 010 + 11))', 99),
+    (r) =>
+      r.arithBody !== null && Number.isNaN(r.evaluated) && typeof r.rejectedBecause === 'string',
+  )
+
+  // A bare `0` is one valid literal, not a "leading zero" -- must still
+  // evaluate cleanly (round-2 note 1 must not overcorrect into rejecting it).
+  check(
+    'evaluatePrLimitExpr: a bare `0` literal is still accepted (round-2 note 1)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT - 0))', 99),
+    (r) => r.evaluated === 99 && r.rejectedBecause === null,
+  )
+
+  // An ordinary multi-digit literal with no leading zero is unaffected by
+  // round-2 note 1's grammar tightening.
+  check(
+    'evaluatePrLimitExpr: an ordinary multi-digit literal is unaffected (round-2 note 1)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT + 100))', 99),
+    (r) => r.evaluated === 199 && r.rejectedBecause === null,
+  )
+
+  // #4477-round-2 note 2: a body naming a variable OTHER than PR_LIST_LIMIT
+  // is untouched by the substitution, so letters survive into `substituted`
+  // -- must be named as an unsubstituted variable, NOT blamed on adjacent
+  // signs (a defect this expression does not have).
+  check(
+    'evaluatePrLimitExpr: an unsubstituted variable is named as such, not blamed on signs (round-2 note 2)',
+    evaluatePrLimitExpr('$((OTHER + 1))', 99),
+    (r) =>
+      r.arithBody !== null &&
+      Number.isNaN(r.evaluated) &&
+      typeof r.rejectedBecause === 'string' &&
+      /unsubstituted variable/.test(r.rejectedBecause) &&
+      !/adjacent signs/.test(r.rejectedBecause),
+  )
+
+  // #4477 note 3: trailing garbage after a well-formed `$(( ... ))` must NOT
+  // be blamed on `$` in the body -- there is no `$` in this body at all.
+  check(
+    'evaluatePrLimitExpr: trailing content after `))` is named, not misattributed to `$` (note 3)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT + 1)) 2', 99),
+    (r) =>
+      r.arithBody === null &&
+      typeof r.rejectedBecause === 'string' &&
+      /trailing content/.test(r.rejectedBecause) &&
+      !/write the variable bare/.test(r.rejectedBecause),
+  )
+
+  // The ORIGINAL #4466 note 4 case must still say "write it bare" -- this
+  // change must not have swallowed the case it was already correct about.
+  check(
+    'evaluatePrLimitExpr: `$` inside the body still gets the "write it bare" hint',
+    evaluatePrLimitExpr('$(($PR_LIST_LIMIT + 1))', 99),
+    (r) =>
+      r.arithBody === null &&
+      typeof r.rejectedBecause === 'string' &&
+      /write the variable bare/.test(r.rejectedBecause),
+  )
+
+  check(
+    'evaluatePrLimitExpr: not a $(( ... )) expansion at all is still named as such',
+    evaluatePrLimitExpr('--limit "$PR_LIST_LIMIT"', 99),
+    (r) =>
+      r.arithBody === null &&
+      r.rejectedBecause === 'not a `$(( ... ))` arithmetic expansion at all',
+  )
+}
+
 /**
  * @param {string} dir
  * @param {(name: string) => void} ok
@@ -2661,23 +2899,28 @@ function runProcessCasesIn(dir, ok, fail) {
   // page `gh` is asked for must be exactly ONE longer than the cap the guard
   // is told to enforce. `--limit "$PR_LIST_LIMIT"` (the shape that caused
   // #4431 review note 4) fails this; so does any other drift between them.
-  // The expression is allow-listed to shell arithmetic characters before it
-  // is evaluated — this is our own workflow file, but a self-test that
-  // `bash -c`s arbitrary text out of a file is a worse idea than the check
-  // is worth.
+  //
+  // #4466 note 4: this used to allow-list the expression to
+  // `[A-Z_0-9$() +]` and hand it to `bash -c` — bounding the affordance
+  // rather than removing it, since that class still admits `$(SOMEWORD)`
+  // command substitution for an all-uppercase "command" name ahead of the
+  // `bash -c`. Not attacker-controlled (this reads our own workflow file),
+  // but a self-test with a shell in its evaluation path is a worse shape
+  // than the check needs. The value this file actually ever writes is the
+  // shell ARITHMETIC-EXPANSION form `$(( <expr> ))` — never a command
+  // substitution — so this now requires exactly that shape, substitutes the
+  // one named variable it names, and evaluates the result as bare
+  // arithmetic in JS: no shell, and no character in the class this accepts
+  // (digits, whitespace, `+`, `-`) that could ever start a command. See
+  // `evaluatePrLimitExpr` (and `runPrLimitExprSelfTest`, #4477 notes 2/3) for
+  // the evaluation itself and the WHY it prints on a rejection.
   const cap = declaredCap === null ? null : Number(declaredCap[1])
   const expr = fetchLimit === null ? '' : fetchLimit[1]
-  const evaluated =
-    cap !== null && /^[A-Z_0-9$() +]+$/.test(expr)
-      ? Number(
-          spawnSync('bash', ['-c', `PR_LIST_LIMIT=${cap}; printf '%s' "${expr}"`], {
-            encoding: 'utf8',
-          }).stdout,
-        )
-      : Number.NaN
+  const { evaluated, rejectedBecause } = evaluatePrLimitExpr(expr, cap)
+
   check(
     'cross-file: gh is asked for exactly ONE more PR than the cap the guard enforces',
-    { cap, expr, evaluated },
+    { cap, expr, evaluated, ...(rejectedBecause === null ? {} : { rejectedBecause }) },
     (v) => v.cap !== null && v.evaluated === v.cap + 1,
   )
 
@@ -2833,6 +3076,7 @@ function runSelfTest() {
   runMalformedPayloadCases(ok, fail)
   runTruncationCases(ok, fail)
   runPrLimitCases(ok, fail)
+  runPrLimitExprSelfTest(ok, fail)
   runExitCodeCases(ok, fail)
   runFindingsOutputCases(ok, fail)
   runProcessCases(ok, fail)

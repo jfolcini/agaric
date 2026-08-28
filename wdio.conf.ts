@@ -74,6 +74,13 @@ const ARTIFACTS_DIR = path.resolve(rootDir, 'e2e-tauri', 'artifacts')
 const DIAG_EXCERPT_CAP = 3000
 
 /**
+ * Directory name for the session-level log rescue (see `rescueAppLogs`
+ * below); never a spec title. Declared here, ahead of `sanitizeForFilename`,
+ * so that function can reserve it — see its doc comment.
+ */
+export const SESSION_LOG_LABEL = 'session'
+
+/**
  * Make a string safe as a single path segment.
  *
  * `.` survives the character filter (a spec title may legitimately contain
@@ -82,11 +89,45 @@ const DIAG_EXCERPT_CAP = 3000
  * `.` or `..` traverses instead of naming. Not reachable from this repo's own
  * spec titles today — which is exactly why it is worth pinning before some
  * future title makes it reachable.
+ *
+ * `SESSION_LOG_LABEL` is reserved for the same directory-collision reason:
+ * `rescueAppLogs` is idempotent per label (#4428), so a per-test label that
+ * sanitized to exactly `SESSION_LOG_LABEL` would let a per-test `afterTest`
+ * call claim that directory first, and the SESSION-level `afterSession`
+ * rescue — the more complete one, taken after the driver is killed — would
+ * then be skipped as "already rescued" (#4457). Unlike the `.`/`..` case
+ * above, this ONE IS reachable from an ordinary spec title: a root-level test
+ * titled "session" (no enclosing `describe`, so `test.parent` is `''`)
+ * sanitizes to exactly that string. Suffixed rather than rejected, so the
+ * function still returns something legible for a screenshot/log-dir name.
+ *
+ * NOT collision-proof (#4477 note 1): the suffix, `session-test`, is itself
+ * an ORDINARY reachable label — exactly what `describe('session')` +
+ * `it('test')` sanitizes to with no reservation involved, since this
+ * function is already many-to-one (any run of characters outside
+ * `[a-zA-Z0-9._-]` collapses to one hyphen). Whichever of those two shapes'
+ * `afterTest` call fires first still claims `app-logs/session-test`
+ * idempotently, and the other is skipped as "already rescued" — the same
+ * failure mode this reservation exists to close, one level removed. Strictly
+ * better than the bug fixed here (that one swallowed the MORE COMPLETE
+ * session-level rescue; this one is between two ordinary per-test rescues,
+ * and needs both specific shapes present in the same run) and consistent
+ * with this function's existing many-to-one behaviour elsewhere, so it is
+ * documented rather than treated as closed. A collision-proof reservation is
+ * possible in principle — pick a `SESSION_LOG_LABEL` this function can PROVE
+ * no title can ever produce, e.g. one with a leading/trailing hyphen or
+ * composed only of dots, both already structurally impossible outputs of
+ * `truncated` above — but `SESSION_LOG_LABEL` names the real on-disk CI
+ * artifact directory and is pinned by literal value in
+ * `e2e-tauri/session-log-label.test.ts`, so changing it is a deliberate,
+ * reviewed decision, not a drive-by. See that file's last test for the
+ * concrete demonstration.
  */
-function sanitizeForFilename(value: string): string {
+export function sanitizeForFilename(value: string): string {
   const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
   if (cleaned === '' || /^\.+$/.test(cleaned)) return 'failure'
-  return cleaned.slice(0, 120)
+  const truncated = cleaned.slice(0, 120)
+  return truncated === SESSION_LOG_LABEL ? `${truncated}-test` : truncated
 }
 
 // ---------------------------------------------------------------------------
@@ -463,22 +504,63 @@ export function explainVisibilityProbe(wait: WaitFailure, probe: VisibilityProbe
     parts.push(
       `Nothing hides it, but its box is ${probe.width}x${probe.height}px — it is laid out to zero size.`,
     )
-  } else if (wait.waitedFor === 'displayed within viewport' && probe.inViewport === false) {
-    parts.push(
-      'Nothing hides it and the engine agrees it is visible, but its box does not intersect the ' +
-        'viewport — the `within viewport` half of the assertion is what failed, not visibility.',
-    )
-  } else if (interactionWait) {
-    parts.push(
-      `Nothing hides it and the engine agrees it is visible — but this wait was for ` +
-        `\`${wait.waitedFor}\`, which visibility does not decide.`,
-    )
   } else {
-    parts.push(
-      `Nothing hides it, the engine agrees it is visible, and it is ${probe.width}x${probe.height}px ` +
-        'RIGHT NOW — it reached the asserted state after the wait expired. A TIMING failure, not a ' +
-        'state failure.',
-    )
+    // From here on, `probe.checkVisibility` is either `true` (the engine
+    // actively agrees) or `null` (this engine implements no `checkVisibility`
+    // at all — see `askEngine` above; already excluded is `false`, handled
+    // above). #4457 note 1: the three branches below used to read
+    // `checkVisibility !== false` as "the engine agrees it is visible" — a
+    // DENY-list that silently folded "no opinion" into "agrees". With such
+    // an engine the walk's own facts (nothing hiding it, a real box) are the
+    // ONLY evidence, yet the message asserted corroboration it never
+    // obtained, and then — in the branch below with no other verdict to
+    // give — committed to "A TIMING failure, not a state failure" on the
+    // strength of that phantom agreement. Classified POSITIVELY instead:
+    // only `true` counts as agreement, so `null` today — and any value this
+    // scan has not anticipated tomorrow — reads as "no opinion", never as
+    // silent corroboration.
+    const engineAgrees = probe.checkVisibility === true
+
+    if (wait.waitedFor === 'displayed within viewport' && probe.inViewport === false) {
+      parts.push(
+        engineAgrees
+          ? 'Nothing hides it and the engine agrees it is visible, but its box does not intersect ' +
+              'the viewport — the `within viewport` half of the assertion is what failed, not ' +
+              'visibility.'
+          : 'Nothing hides it, but the engine has no opinion (checkVisibility unavailable), so the ' +
+              'visibility half rests on the walk alone; its box does not intersect the viewport — ' +
+              'the `within viewport` half of the assertion is what failed regardless.',
+      )
+    } else if (interactionWait) {
+      parts.push(
+        engineAgrees
+          ? `Nothing hides it and the engine agrees it is visible — but this wait was for ` +
+              `\`${wait.waitedFor}\`, which visibility does not decide.`
+          : `Nothing hides it, but the engine has no opinion (checkVisibility unavailable), so this ` +
+              `rests on the walk alone — and this wait was for \`${wait.waitedFor}\`, which ` +
+              'visibility does not decide either way.',
+      )
+    } else if (engineAgrees) {
+      parts.push(
+        `Nothing hides it, the engine agrees it is visible, and it is ${probe.width}x${probe.height}px ` +
+          'RIGHT NOW — it reached the asserted state after the wait expired. A TIMING failure, not a ' +
+          'state failure.',
+      )
+    } else {
+      // #4457 acceptance: the null branch must not print a verdict. With no
+      // `checkVisibility` there is no corroboration for "TIMING, not state" —
+      // only the walk's say-so, which the `checkVisibility === false` branch
+      // above already establishes can miss a real hiding cause. So this says
+      // NO VERDICT rather than picking one of the two readings for the
+      // reader.
+      parts.push(
+        `NO VERDICT: nothing this walk models hides it, and it is ${probe.width}x${probe.height}px ` +
+          'RIGHT NOW, but the engine has no opinion (checkVisibility unavailable) — this rests on ' +
+          'the walk alone, which cannot rule out an unmodeled rendering cause the way ' +
+          '`checkVisibility()` can. Reaching the asserted state late and an unmodeled rendering ' +
+          'cause are both still on the table, and nothing here decides between them.',
+      )
+    }
   }
 
   if (interactionWait) {
@@ -698,9 +780,6 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
 
 /** Labels already copied by `rescueAppLogs` in this process. See below. */
 const rescuedLogLabels = new Set<string>()
-
-/** Directory name for the session-level rescue; never a spec title. */
-const SESSION_LOG_LABEL = 'session'
 
 /**
  * Copy the APP's own log out of the sandbox before teardown destroys it
@@ -942,8 +1021,10 @@ export const config: WebdriverIO.Config = {
   //     permanent litter in `$TMPDIR`, the missing log costs one re-run.
   //   * `rescueAppLogs` is idempotent per label, so this call and every
   //     `afterTest` call coexist without duplicating or half-overwriting a
-  //     copy. This one uses its own label rather than a spec title, so it is
-  //     never the same directory as a per-test rescue.
+  //     copy. This one uses its own label rather than a spec title, and
+  //     `sanitizeForFilename` RESERVES that exact string (see its doc
+  //     comment) — so a per-test label can never sanitize to it and steal
+  //     this rescue's directory out from under it (#4457).
   // -------------------------------------------------------------------------
   afterSession: () => {
     killTauriDriver()

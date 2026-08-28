@@ -402,11 +402,26 @@ def run_cli_self_test(record) -> None:
         )
         baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
         code, out = _run_cli(guard, [str(clean)])
-        record(
-            "CLI: a clean tree with a satisfied baseline exits 0",
-            (code, out.strip()),
-            (0, ""),
-        )
+        # #4466 note 5: this used to assert `out.strip() == ""` -- byte-exact
+        # emptiness of the WHOLE subprocess's combined stdout+stderr. `main()`
+        # itself really is silent on a clean tree (see its own body: the
+        # success path returns before any `print`), but the assertion did not
+        # say that -- it said nothing this PROCESS runs may ever print
+        # anything, which also covers a stray interpreter DeprecationWarning
+        # or any output from `check-raw-tx.py` being `exec_module`-d at
+        # import time (line ~95), neither of which has anything to do with
+        # whether THIS guard found a violation. Asserting on the guard's own
+        # violation banner instead — present in every non-clean exit (see
+        # `main`'s failing branch below) — pins the actual contract under
+        # test without turning unrelated process noise into a red self-test.
+        if code == 0 and "Space-filter drift guard (#139)" not in out:
+            record("CLI: a clean tree with a satisfied baseline exits 0", True, True)
+        else:
+            record(
+                "CLI: a clean tree with a satisfied baseline exits 0",
+                (code, out.strip()),
+                "exit 0, no violation banner (stray interpreter/import noise is not a finding)",
+            )
 
         # --- direction 2: a RULE A finding exits non-zero -------------------
         drifted = src / "drifted.rs"

@@ -404,3 +404,71 @@ describe('explainVisibilityProbe — note 3: the engine outranks the walk', () =
     ).toContain('checkVisibility()=true')
   })
 })
+
+describe('explainVisibilityProbe — #4457 note 1: no opinion is not agreement', () => {
+  // The gap the review found: the test above (`reports the engine's answer
+  // verbatim...`) already drove `checkVisibility: null` through this
+  // function, but asserted only on the FACTS line ("checkVisibility()=
+  // unavailable"), never on the VERDICT sentence built beside it. That let a
+  // verdict built on `checkVisibility !== false` (a DENY-list: "not
+  // disagreement" read as "agreement") survive review even though the
+  // `false` case had its own dedicated test just above. These assert on the
+  // verdict itself.
+
+  it('does NOT print the timing verdict when the engine has no opinion — the acceptance for note 1', () => {
+    const message = explainVisibilityProbe(
+      { selector: '[data-testid="tag-item-wdio"]', waitedFor: 'displayed' },
+      presentProbe({ checkVisibility: null }),
+    )
+    expect(message).not.toContain('TIMING failure')
+    expect(message).not.toContain('the engine agrees')
+    expect(message).toContain('NO VERDICT')
+    expect(message).toContain('no opinion')
+  })
+
+  it('still prints the timing verdict when the engine actually agrees — the branch stays live', () => {
+    const message = explainVisibilityProbe(
+      { selector: '[data-testid="tag-item-wdio"]', waitedFor: 'displayed' },
+      presentProbe({ checkVisibility: true }),
+    )
+    expect(message).toContain('TIMING failure')
+    expect(message).toContain('the engine agrees')
+  })
+
+  it('does not claim agreement for the viewport verdict when the engine has no opinion', () => {
+    const message = explainVisibilityProbe(
+      { selector: '[data-testid="go"]', waitedFor: 'displayed within viewport' },
+      presentProbe({ inViewport: false, checkVisibility: null }),
+    )
+    expect(message).not.toContain('the engine agrees')
+    expect(message).toContain('no opinion')
+    expect(message).toContain('`within viewport` half')
+  })
+
+  it('does not claim agreement for a clickable/enabled wait when the engine has no opinion', () => {
+    const message = explainVisibilityProbe(
+      { selector: 'button*=Add Tag', waitedFor: 'clickable' },
+      presentProbe({ checkVisibility: null }),
+    )
+    expect(message).not.toContain('the engine agrees')
+    expect(message).toContain('no opinion')
+    expect(message).toContain('visibility does not decide')
+  })
+
+  it('never lets an unanticipated checkVisibility value read as agreement (classify positively)', () => {
+    // `VisibilityProbe['checkVisibility']` is typed `boolean | null`, so this
+    // reaches through the type system deliberately — the point of a POSITIVE
+    // classification (`=== true`) rather than a deny-list (`!== false`) is
+    // that it stays correct even for a value neither branch was written to
+    // expect, which `!== false` cannot promise.
+    const message = explainVisibilityProbe(
+      { selector: '[data-testid="tag-item-wdio"]', waitedFor: 'displayed' },
+      presentProbe({
+        checkVisibility: 'maybe' as unknown as VisibilityProbe['checkVisibility'],
+      }),
+    )
+    expect(message).not.toContain('the engine agrees')
+    expect(message).not.toContain('TIMING failure')
+    expect(message).toContain('NO VERDICT')
+  })
+})
