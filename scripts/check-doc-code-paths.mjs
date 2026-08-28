@@ -186,6 +186,31 @@ const GIT_ENV = gitEnv(REPO_ROOT, process.env)
 // invocation error before any scanning happens. Silently treating an
 // unreadable config as "no alias" would silently reopen the exact blind
 // spot #4482 reports, only one config edit away.
+//
+// The ASYMMETRY is deliberate and worth naming, because it resolves the same
+// tension the trailing-comma retry resolves the other way. Deleting
+// `tsconfig.app.json` entirely degrades quietly to "no alias configured";
+// REMOVING `compilerOptions.paths` from a file that still exists throws and
+// hard-blocks every commit. Both are legal edits for a project that stops
+// using aliases, and only the second is loud.
+//
+// That is the intended split, not an oversight: an absent file is the shape
+// every self-test fixture below has (throwaway repos with no frontend build
+// config at all), so it MUST be the quiet case. A file that exists but has
+// had its `paths` removed is far more likely to be a half-finished edit than
+// a deliberate retirement, and a guard whose entire value is a negative
+// claim should not answer "nothing is stale" while it has quietly stopped
+// being able to see the alias corpus. If aliases are ever genuinely
+// retired, deleting the entry here is a one-line, deliberate follow-up —
+// which is the correct amount of friction for that decision.
+// One more scoping caveat, called out because `prek.toml` was widened
+// specifically to route `tsconfig.app.json` edits into this hook: this reads
+// the WORKING TREE from plain disk at module scope, while `--cached` judges
+// citations against the INDEX. So a STAGED-only alias retarget is resolved
+// against the UNSTAGED config. Same convention as `BASELINE_FILE` above, and
+// the divergence window is one commit wide, but it is more load-bearing now
+// that a `tsconfig.app.json` edit is a trigger for this hook rather than
+// incidental to it.
 function loadPathAliasMap(repoRoot) {
   const tsconfigPath = join(repoRoot, 'tsconfig.app.json')
   if (!existsSync(tsconfigPath)) return new Map()
@@ -243,6 +268,17 @@ function loadPathAliasMap(repoRoot) {
   // config uses — so an entry in some other shape is skipped rather than
   // guessed at; nothing about #4482 requires modelling every `paths` shape
   // TypeScript allows, only the one this codebase actually declares.
+  //
+  // Two narrowings, stated because the sentence above covers only the KEY
+  // shape and a reader could take it for the whole story:
+  //
+  //   1. Only `values[0]` is read. TypeScript treats the array as an ORDERED
+  //      FALLBACK LIST and tries each in turn, so a config declaring
+  //      `["./src/*", "./generated/*"]` resolves through the second entry for
+  //      anything absent from the first. This guard sees only the first. The
+  //      effect is a citation reported unresolved that `tsc` would in fact
+  //      resolve — a FALSE POSITIVE, i.e. loud and fixable, not a miss.
+  //   2. Overlapping prefixes are not ranked here; see `ALIAS_PREFIXES`.
   const map = new Map()
   for (const [key, values] of Object.entries(paths)) {
     if (!key.endsWith('/*')) continue
@@ -259,10 +295,26 @@ function loadPathAliasMap(repoRoot) {
   return map
 }
 
+// #4482 follow-up — the alias prefixes, LONGEST FIRST, computed once.
+//
+// Two reasons this is not just `[...PATH_ALIAS_MAP.keys()]` at each use site:
+//
+//   1. ORDER IS CORRECTNESS, not cosmetics. TypeScript resolves against the
+//      LONGEST matching `paths` key; a `Map` iterates in INSERTION order. With
+//      overlapping entries (`"@/*"` plus `"@/lib/*"`) a first-match-wins loop
+//      would resolve `@/lib/foo` through whichever key happens to be declared
+//      first in `tsconfig.app.json` — silently, and differently from the
+//      compiler. This repo declares a single `@/*` today, so the bug is
+//      unreachable; it becomes reachable the moment a second entry is added,
+//      which is exactly when nobody would think to look here.
+//   2. It is otherwise rebuilt per candidate — ~1425 throwaway arrays per run
+//      on this repo's current corpus.
+let ALIAS_PREFIXES = []
 let PATH_ALIAS_MAP
 let PATH_ALIAS_MAP_ERROR = null
 try {
   PATH_ALIAS_MAP = loadPathAliasMap(REPO_ROOT)
+  ALIAS_PREFIXES = [...PATH_ALIAS_MAP.keys()].toSorted((a, b) => b.length - a.length)
 } catch (err) {
   PATH_ALIAS_MAP = new Map()
   PATH_ALIAS_MAP_ERROR = err
@@ -465,7 +517,7 @@ function isLocalPathCandidate(raw) {
   // the same anchored-prefix test the `src/…` form already relies on.
   const hasKnownPrefix =
     PATH_PREFIX_RE.test(`${cleaned}/`) ||
-    [...PATH_ALIAS_MAP.keys()].some((prefix) => cleaned.startsWith(prefix))
+    ALIAS_PREFIXES.some((prefix) => cleaned.startsWith(prefix))
   if (!hasKnownPrefix) return false
   // Skip references into gitignored build-output / cache paths.
   if (GITIGNORED_PREFIX_RE.test(cleaned)) return false
@@ -961,6 +1013,17 @@ function resolveTrackedPath(resolved, tracked, trackedDirs) {
   // still returned untouched, and for everything else the loop below can
   // only turn a would-be miss into a pass when `resolved + ext` is
   // genuinely tracked — never the reverse.
+  //
+  // The fallback is applied UNIFORMLY, so it rescues `src/…`-form citations
+  // too, not just alias ones. That is deliberate (one resolution rule, not
+  // two that can drift), but it makes one shape newly invisible that the
+  // paragraph above does not cover: an extensionless `src/x` citation naming
+  // a DELETED DIRECTORY now passes if an unrelated `src/x.ts` happens to
+  // exist. Measured empty on this repo today — no `src/…` candidate is
+  // rescued by the fallback at all, so nothing currently relies on it — and
+  // it fails in the quiet direction, which is why it is recorded here rather
+  // than special-cased. Narrowing the fallback to alias-form candidates only
+  // would close it, at the cost of the two-rules drift this avoids.
   if (RESOLVABLE_MODULE_EXTENSIONS.some((ext) => resolved.endsWith(ext))) return resolved
   for (const ext of RESOLVABLE_MODULE_EXTENSIONS) {
     if (tracked.has(resolved + ext)) return resolved + ext
@@ -976,9 +1039,11 @@ function resolveAgainstDoc(_docFile, ref) {
   // PRINTED and baseline-keyed — is deliberately left untouched: a
   // developer who wrote `@/lib/foo.ts` should see their own citation
   // quoted back, not a rewritten spelling they never typed.
-  for (const [aliasPrefix, targetPrefix] of PATH_ALIAS_MAP) {
+  // Longest prefix first (see `ALIAS_PREFIXES`), matching how TypeScript ranks
+  // overlapping `paths` keys — NOT `Map` insertion order.
+  for (const aliasPrefix of ALIAS_PREFIXES) {
     if (ref.startsWith(aliasPrefix)) {
-      return normalize(targetPrefix + ref.slice(aliasPrefix.length))
+      return normalize(PATH_ALIAS_MAP.get(aliasPrefix) + ref.slice(aliasPrefix.length))
     }
   }
   // Every non-alias candidate is already gated through `PATH_PREFIX_RE` so
@@ -2023,6 +2088,35 @@ function aliasCitationScenarios(root) {
       ellipsisPlaceholder.status === 0,
       `expected 0, got ${ellipsisPlaceholder.status}: ${ellipsisPlaceholder.stderr}`,
     )
+
+    // #4482 follow-up — OVERLAPPING alias prefixes resolve LONGEST-FIRST,
+    // the way TypeScript ranks `paths` keys, not in `Map` insertion order.
+    // `@/lib/foo.ts` must resolve through `@/lib/*` -> `other/*` (which
+    // exists) and NOT through the shorter, earlier-declared `@/*` ->
+    // `src/*` (where it does not). Insertion-order matching makes this arm
+    // red, so it discriminates the ranking specifically rather than merely
+    // re-testing that aliases work at all.
+    //
+    // This repo declares one alias today, so nothing here is reachable from
+    // the real tree. That is the point: the fixture is the only place the
+    // second entry exists, and without it the ordering could regress with
+    // no signal until someone adds an overlapping key for real.
+    writeTsconfig({ '@/*': ['./src/*'], '@/lib/*': ['./other/*'] })
+    mkdirSync(join(dir, 'other'), { recursive: true })
+    writeFileSync(join(dir, 'other', 'foo.ts'), 'export const FOO = 1\n')
+    writeFileSync(join(dir, 'README.md'), 'The helper lives in `@/lib/foo.ts` today.\n')
+    git('add', '-A')
+    const longestPrefix = run(['--worktree'])
+    record(
+      'OVERLAPPING alias prefixes resolve longest-first, not in declaration order',
+      longestPrefix.status === 0,
+      `expected 0 (resolved via @/lib/* -> other/), got ${longestPrefix.status}: ${longestPrefix.stderr}`,
+    )
+    // Restore the single-entry config and clear the citation so the
+    // remaining arms below run against the shape they were written for.
+    writeTsconfig({ '@/*': ['./src/*'] })
+    writeFileSync(join(dir, 'README.md'), 'Nothing interesting here.\n')
+    git('add', '-A')
 
     // The pre-existing `src/…` form, PROVEN UNCHANGED alongside the new
     // alias path — pinned here (in a repo that DOES declare an alias,
