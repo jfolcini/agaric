@@ -5538,3 +5538,180 @@ async fn head_exchange_identifies_the_peer_by_its_stated_id_4380() {
          cert-less path, where taking it verbatim would key bookkeeping on our own row"
     );
 }
+
+// ── #4451: the heads-derived fallback is gated like the stated id ────
+//
+// #4380 gated `sender_device_id` and left `heads_derived_id` beside it taking
+// `DeviceHead.device_id` verbatim off the wire. Both are unverified claims from
+// the same frame that end in the same places — a permanent `peer_refs.peer_id`
+// row, the device list, `SyncEvent::remote_device_id`, and `tracing` fields —
+// so the justification written for the new gate applied word for word to the
+// value next to it, which had none. `heads_derived_device_id` is now the single
+// definition, called by both the daemon (`server.rs`) and this core, so the two
+// interpreters cannot disagree about what a usable id is.
+
+/// The normaliser gates the fallback exactly as it gates the stated id, and an
+/// unusable first head yields "declined to identify itself" rather than the
+/// next head.
+#[test]
+fn heads_derived_device_id_gates_the_fallback_like_the_stated_id_4451() {
+    fn head(device_id: &str) -> DeviceHead {
+        DeviceHead {
+            device_id: device_id.to_owned(),
+            seq: 1,
+            hash: "h".into(),
+        }
+    }
+
+    // The accepted arm first: without it, a helper that refused everything
+    // would satisfy every refusal below while breaking legacy pairing outright.
+    assert_eq!(
+        heads_derived_device_id(&[head("HOST-4451"), head("MMMM-joiner")], "HOST-4451"),
+        "MMMM-joiner",
+        "the pre-#4380 rule is preserved: the FIRST non-self head, unchanged"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[head("HOST-4451")], "HOST-4451"),
+        "",
+        "a peer advertising only OUR head has not identified itself — `\"\"` is the \
+         value the callers already read as 'leave this session unbound'"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[], "HOST-4451"),
+        "",
+        "…and so has a peer with an empty op log (#778), which is legitimate"
+    );
+
+    // Each refusal is paired with the value it would have produced ungated, so
+    // the assertion is about the gate and not about the input being unusual.
+    let over_cap = "d".repeat(MAX_DEVICE_ID_CHARS + 1);
+    assert_eq!(
+        heads_derived_device_id(&[head(&over_cap)], "HOST-4451"),
+        "",
+        "#4451: an over-long head id must be REFUSED, not written to a `peer_refs` \
+         row `bind_endpoint_id` then refuses to re-point. This is the exact value \
+         `accept_stated_device_id` already refused one field away"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[head("JOIN\u{202E}4451")], "HOST-4451"),
+        "",
+        "a bidi override in a head id must be refused: this string reaches the device \
+         list, where it renders as a different device"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[head("JOIN\n2025-01-01 ERROR forged")], "HOST-4451"),
+        "",
+        "and a control character must be refused: the daemon logs this value as \
+         `peer_id = %…`, so a newline forges whole log lines — which the bug-report \
+         path then publishes into a public GitHub issue body (#4283)"
+    );
+
+    // Fail closed, do not search on. Which device a permanent bind names is not
+    // a thing to go looking for a passing candidate for.
+    assert_eq!(
+        heads_derived_device_id(&[head("BAD\u{202E}"), head("MMMM-joiner")], "HOST-4451"),
+        "",
+        "an unusable FIRST head must not fall through to the second: 'the first \
+         non-self head' is a statement about which device the peer is, and trying \
+         the next one answers a different question"
+    );
+
+    // The post-condition the name claims: the answer is NEVER our own id.
+    // `accept_stated_device_id` trims, so "not self" before normalisation and
+    // "not self" after are different questions — a head spelled with our id
+    // and surrounding whitespace passes the first and fails the second. Adding
+    // the normaliser without re-asking would let this helper return the
+    // caller's own id, which the pre-#4380 `find` could never do and which
+    // `server.rs` answers with `Rejection::Self_` — a refused session for a
+    // legacy peer, from a gate that was only supposed to tighten what gets
+    // written to a row.
+    assert_eq!(
+        heads_derived_device_id(&[head("  HOST-4451  ")], "HOST-4451"),
+        "",
+        "a head that is OUR id modulo whitespace must read as 'declined to \
+         identify itself', not as us: `accept_stated_device_id` trims, so the \
+         non-self test has to be asked again on the normalised value"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[head("  HOST-4451  "), head("MMMM-joiner")], "HOST-4451"),
+        "",
+        "…and that refusal fails closed like every other one — it does not go \
+         looking at the next head either"
+    );
+
+    // Parity, stated as an assertion rather than as a comment: whatever the
+    // stated id accepts, the fallback accepts, and vice versa. This is the
+    // finding — the two gates must not drift.
+    for candidate in [
+        "e3d48f0a-45a0-4c9e-9a4b-1f2e3d4c5b6a",
+        "MMMM-joiner",
+        &over_cap,
+        "JOIN\u{202E}4451",
+        "JOIN\u{0000}4451",
+        "   ",
+        "",
+    ] {
+        assert_eq!(
+            heads_derived_device_id(&[head(candidate)], "HOST-4451"),
+            accept_stated_device_id(candidate).unwrap_or_default(),
+            "#4451: the fallback and the stated id must agree on {candidate:?}"
+        );
+    }
+}
+
+/// The same, driven through the interpreter rather than the helper: a legacy
+/// peer that states no id and advertises a hostile head must not have that
+/// string become the session's `remote_device_id` (#4451).
+///
+/// The pair matters — the hostile head is refused AND a well-formed one beside
+/// it is still accepted — because a fix that simply stopped deriving an id from
+/// heads would satisfy the refusal on its own while breaking every peer that
+/// predates `sender_device_id`, which is the only reason the fallback exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn head_exchange_refuses_a_display_hostile_head_derived_id_4451() {
+    async fn identified_by_heads(first_head: &str) -> String {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(pool, "HOST-4451".into(), materializer.clone());
+        orch.handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: first_head.to_owned(),
+                seq: 1,
+                hash: "h".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            // The whole point: a peer too old to state an id, which is the only
+            // shape that reaches the fallback at all.
+            sender_device_id: None,
+        })
+        .await
+        .unwrap();
+        let id = orch.session().remote_device_id.clone();
+        materializer.shutdown();
+        id
+    }
+
+    assert_eq!(
+        identified_by_heads("MMMM-joiner").await,
+        "MMMM-joiner",
+        "control: a well-formed legacy peer must still be identified by its heads — \
+         the fallback is not being removed, only gated"
+    );
+    assert_eq!(
+        identified_by_heads("JOIN\u{202E}4451").await,
+        "",
+        "#4451: a display-hostile head id must not become the session's \
+         `remote_device_id`. It reaches `SyncEvent::remote_device_id`, the device \
+         list, and — through the daemon — a permanent `peer_refs.peer_id`"
+    );
+    assert_eq!(
+        identified_by_heads(&"d".repeat(MAX_DEVICE_ID_CHARS + 1)).await,
+        "",
+        "…and neither must an over-long one"
+    );
+}

@@ -124,6 +124,67 @@ pub fn accept_stated_device_id(id: &str) -> Option<String> {
     Some(trimmed.to_owned())
 }
 
+/// The pre-#4380 fallback identity: the first non-self device id in the peer's
+/// advertised `heads`, normalised by [`accept_stated_device_id`] (#4451).
+///
+/// `""` means *this peer declined to identify itself*, which is the value the
+/// callers already treat as "leave the session unbound" — a peer that has never
+/// authored an op legitimately produces it.
+///
+/// # Why it is normalised
+///
+/// #4380 gated the id a peer STATES for itself and left the heads-derived
+/// fallback sitting beside it taking `DeviceHead.device_id` verbatim off the
+/// wire, so the justification written for the new gate — *"untrusted wire text
+/// that ends up as a `peer_refs.peer_id`"* — applied word for word to the value
+/// next to it, which was not gated. That asymmetry is #4451. Both values arrive
+/// in the same frame, from the same peer, with the same amount of proof behind
+/// them (none), and both end up in the same places:
+///
+/// * a `peer_refs.peer_id` row, written by `bind_endpoint_id` — a bind that
+///   refuses to be re-pointed afterwards, so it is permanent;
+/// * the device list the user reads and acts on (`list_peer_refs`) and the
+///   `remote_device_id` on every `SyncEvent`, which is why the display-hostile
+///   scalars matter: an id carrying `U+202E` renders as a different device;
+/// * `tracing` fields (`peer_id = %…`) — and `is_control` is load-bearing
+///   there, because an id containing a newline forges whole log lines, and the
+///   bug-report path publishes ERROR/WARN lines from that log into a public
+///   GitHub issue body (#4283);
+/// * `audit_ingest_metrics`' per-peer maps, keyed by this string.
+///
+/// # Why a rejected head does not fall through to the next one
+///
+/// The rule being preserved is "the FIRST non-self head", and that is a
+/// statement about which device the peer is, not a search for one that passes.
+/// Trying the next head would answer a different question — and change which
+/// device a permanent bind names — so a first head that is not usable whole
+/// yields "declined to identify itself" instead, which the callers already
+/// handle by declining to bind. Same reasoning as
+/// [`accept_stated_device_id`]'s refusal to truncate.
+///
+/// # Why "non-self" is asked TWICE
+///
+/// `accept_stated_device_id` **trims**, so the two questions are not the same
+/// question: a head spelled `" <our id> "` is not equal to our id before
+/// normalisation and is equal to it after. Asking only the first — which is
+/// what the pre-#4451 `find` did, because there was no normalisation to
+/// change the answer — would let this helper return the caller's OWN id, a
+/// value the pre-#4380 code could never produce. `server.rs` reads that as
+/// "the peer is us" and answers `Rejection::Self_`, turning a legacy peer's
+/// odd head into a refused session; the FSM's stated-id arm has its own
+/// `.filter(|id| *id != self.device_id)` and would not. Re-asking after the
+/// normaliser keeps the post-condition the name claims — *the returned id is
+/// never `self_device_id`* — and keeps the two interpreters agreeing on it.
+#[must_use]
+pub fn heads_derived_device_id(heads: &[DeviceHead], self_device_id: &str) -> String {
+    heads
+        .iter()
+        .find(|h| h.device_id != self_device_id)
+        .and_then(|h| accept_stated_device_id(&h.device_id))
+        .filter(|id| id != self_device_id)
+        .unwrap_or_default()
+}
+
 /// Borrowed handle onto Unicode's General_Category property table, used only
 /// to test membership in `Cf` (Format) below. `new()` is `const` and the
 /// handle is `Copy` (a pointer into the data `icu_properties` bakes into the

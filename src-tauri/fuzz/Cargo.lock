@@ -66,6 +66,7 @@ dependencies = [
  "ciborium",
  "dirs 6.0.0",
  "futures-util",
+ "libc",
  "loro",
  "notify-rust",
  "rand 0.10.2",

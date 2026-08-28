@@ -68,6 +68,7 @@ dependencies = [
  "dirs 6.0.0",
  "futures-util",
  "insta",
+ "libc",
  "loro",
  "mdns-sd",
  "notify-rust",

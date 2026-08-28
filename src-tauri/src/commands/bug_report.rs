@@ -20,6 +20,20 @@
 //! — the feature's privacy story rests on unconditional redaction of that
 //! tail plus the explicit user-visible preview + confirmation checkbox +
 //! ZIP-on-disk flow.
+//!
+//! #4283 — and on both paths reading only the log directory's OWN regular
+//! files. Every read here goes through [`open_confined_log_file`], which opens
+//! with symlink resolution of the final component disabled and proves the
+//! result is a regular file from the open handle. Redaction is tuned for this
+//! application's log format; a file reached through a planted link is not that,
+//! and `recent_errors` is pasted into a public issue body. See that function
+//! for why the confinement of a log FILE is not a check-then-open race, and
+//! for the hard-link residual it deliberately leaves. Two parts are path checks
+//! rather than properties of an open, and so are mitigations with a race left
+//! in them rather than closed holes: the OTel *directory* guard in
+//! `read_logs_for_report_inner` (#4487), and the mtime ranking in
+//! `plain_log_outranks_dated`. Neither can exfiltrate — the open re-decides —
+//! but both can suppress. Each says so where it stands.
 
 use std::fs;
 use std::io::Read;
@@ -602,9 +616,15 @@ fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Ve
             if !is_within_log_retention(file_date, today) {
                 continue;
             }
-            let path = entry.path();
-            if path.is_file() {
-                days.push((file_date, path));
+            // #4283 — `entry.metadata()` is `lstat`, unlike the `Path::is_file`
+            // this used to call: a symlink is classified as a symlink here
+            // instead of as whatever it points at. Dropping it now, rather than
+            // relying on the open in `read_capped_file` to refuse it, keeps a
+            // planted link from influencing `plain_log_outranks_dated`'s mtime
+            // ranking — which reads `days` and would otherwise be comparing
+            // against the mtime of a file outside the log directory.
+            if entry.metadata().is_ok_and(|meta| meta.is_file()) {
+                days.push((file_date, entry.path()));
             }
         }
     }
@@ -631,8 +651,11 @@ fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Ve
     // dated files production is still writing, so it loses and can neither
     // be preferred over nor mixed into them. Only the inverse shape — a
     // plain file NEWER than every in-window dated file — changes behaviour.
+    // #4283 — `is_regular_file_no_follow`, not `Path::is_file`: this name is
+    // as plantable as any dated one, and it wins outright when it outranks the
+    // dated family, so a link here would be the whole of `recent_errors`.
     let plain_path = log_dir.join("agaric.log");
-    if plain_path.is_file() && plain_log_outranks_dated(&plain_path, &days) {
+    if is_regular_file_no_follow(&plain_path) && plain_log_outranks_dated(&plain_path, &days) {
         // Read it INSTEAD of the dated family rather than merging the two.
         // #4127's rule is that the families are never mixed, and an undated
         // file has no date key to order it by inside the chronological walk
@@ -699,10 +722,40 @@ fn recent_errors_from_log_dir_at(log_dir: &Path, today: chrono::NaiveDate) -> Ve
 /// - An unreadable mtime loses, on either side. Without a clock reading
 ///   there is no evidence against the default, and a dated file whose
 ///   metadata cannot be read is not evidence *for* the plain file.
+///
+/// # The ranking `stat` does not follow, and the residual that leaves
+///
+/// #4283 — both sides are read with `symlink_metadata`, not `fs::metadata`.
+/// Every candidate reaching here was classified by an `lstat` back at
+/// `read_dir` time (or, for the plain file, by [`is_regular_file_no_follow`]),
+/// so it is a proven regular file and the two calls return the same stamp for
+/// it: the non-following form costs nothing legitimate. What it buys is the
+/// window between those two syscalls. A following `stat` re-resolves the name,
+/// so a link swapped in during that window would rank by its TARGET's mtime —
+/// any file anywhere on the machine, freshly touched — and that is enough to
+/// decide which log family is read.
+///
+/// Stated plainly, because it is the same TOCTOU class as the OTel-directory
+/// residual (#4487) and was previously unmentioned: this narrows the window's
+/// value, it does not close the window. An attacker who still wins it gets a
+/// candidate stamped with the LINK's own mtime, which they also control (it is
+/// the moment they create the link), and the open that follows then refuses
+/// the link so that day yields nothing. So the residual is a SUPPRESSION one —
+/// steering which family is read, or emptying the entry that was picked, which
+/// is the harm `a_planted_symlink_cannot_suppress_the_live_plain_log_4283`
+/// pins. It is not an exfiltration one: ranking reads no bytes, and every byte
+/// is re-decided at the open by [`open_confined_log_file`] against the handle
+/// it actually got. The precondition is the same as the other residuals here —
+/// write access to the app's own log directory — and closing it needs
+/// `openat`-relative I/O this crate cannot spell (it denies `unsafe_code` and
+/// nothing in the dependency set exposes a safe one).
 fn plain_log_outranks_dated(plain_path: &Path, days: &[(chrono::NaiveDate, PathBuf)]) -> bool {
-    // `path`'s mtime, or `None` if the filesystem will not say.
+    // `path`'s OWN mtime, or `None` if the filesystem will not say. `lstat`,
+    // not `stat` — see the residual section above.
     fn mtime(path: &Path) -> Option<std::time::SystemTime> {
-        fs::metadata(path).and_then(|meta| meta.modified()).ok()
+        fs::symlink_metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
     }
 
     if days.is_empty() {
@@ -889,17 +942,237 @@ fn is_within_log_retention(file_date: chrono::NaiveDate, today: chrono::NaiveDat
     (0..=MAX_ROLLED_AGE_DAYS).contains(&age)
 }
 
-/// Read a file, capping the byte count at [`MAX_FILE_BYTES`]. If the file
+// ---------------------------------------------------------------------------
+// #4283 — containment: what the report is allowed to read
+// ---------------------------------------------------------------------------
+
+/// `true` iff `path` names a **regular file** without resolving a symlink at
+/// its final component (#4283).
+///
+/// `Path::is_file` — what every enumeration site here used to call — follows
+/// symlinks, so it answers "is the thing this name eventually resolves to a
+/// regular file", which is the wrong question when the name lives in a
+/// directory an attacker may be able to write to. `symlink_metadata` is
+/// `lstat`: a symlink reports `FileType::is_symlink()`, so `is_file()` is
+/// `false` for it whatever it points at.
+///
+/// This is a **filter**, not the gate. Nothing here is safe against a swap
+/// between the check and the open — [`open_confined_log_file`] is what
+/// actually confines the read, and it does so on the open handle rather than
+/// on the path. This exists so a link is dropped from the candidate set
+/// *before* it can influence anything the candidate set feeds (the mtime
+/// ranking in [`plain_log_outranks_dated`], the bundle's `skipped N older
+/// logs` accounting), not so the later open can trust it.
+fn is_regular_file_no_follow(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file())
+}
+
+/// Windows' `FILE_FLAG_OPEN_REPARSE_POINT` — open the reparse point itself
+/// rather than resolving it. The nearest thing Windows has to `O_NOFOLLOW`.
+///
+/// Hand-written where the unix flags deliberately are not (see the `libc`
+/// entry in `Cargo.toml`), because the two cases are not alike: `O_NOFOLLOW`
+/// has a different numeric value on every unix, so a literal is right on one
+/// target and silently wrong on the next, while the Win32
+/// `FILE_FLAG_*`/`FILE_ATTRIBUTE_*` values are one fixed ABI shared by every
+/// Windows target. Both match `windows-sys`' definitions
+/// (`FILE_FLAG_OPEN_REPARSE_POINT = 2097152`,
+/// `FILE_ATTRIBUTE_REPARSE_POINT = 1024`).
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+/// Windows' `FILE_ATTRIBUTE_REPARSE_POINT`. See the constant above for why
+/// this one is a literal and the unix flags are not.
+#[cfg(windows)]
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+// The no-follow open below is spelled with per-platform `custom_flags` and has
+// no portable fallback. On a target that is neither `unix` nor `windows` BOTH
+// `#[cfg]` arms in `open_confined_log_file` vanish, `options` carries nothing
+// but `read(true)`, and the function degrades to an ordinary `File::open` that
+// FOLLOWS symlinks with only the `fstat` behind it — a silent loss of the
+// #4283 property, not a compile failure. Made a build break here instead, which
+// is the same fail-loudly rule the rest of this section is built on. Every
+// target this app ships is one or the other (Android is `cfg(unix)`), so this
+// is latent today; porting to a third one means supplying its no-follow open,
+// not deleting this. The predicate is the exact complement of the two arms
+// below — keep the three in step if either arm's `cfg` ever changes.
+#[cfg(not(any(unix, windows)))]
+compile_error!(
+    "bug_report's log confinement (#4283) has no no-follow open for this \
+     target: `open_confined_log_file` would silently follow symlinks into \
+     files the bug report then publishes. Add a `custom_flags` arm for this \
+     platform (and widen the `cfg` above) before enabling the target."
+);
+
+/// Open `path` for reading with symlink resolution of the final component
+/// **disabled**, then prove from the open handle that what was opened is a
+/// regular file (#4283).
+///
+/// # What this confines, and why it is the whole of the confinement
+///
+/// There are exactly two caller shapes, and what each one gets out of this
+/// function is NOT the same guarantee. Spelled out because the sentence a
+/// later reader lifts the invariant from is this one:
+///
+/// 1. `log_dir.join(<single component>)` — the `agaric.log[.YYYY-MM-DD]`
+///    readers (`recent_errors_from_log_dir_at`, `read_logs_for_report_inner`).
+///    The component is either a name that came out of `read_dir(log_dir)` (a
+///    directory entry name can contain neither `/` nor a `..` traversal) or the
+///    literal `"agaric.log"`. For these, "the final component does not resolve
+///    through a symlink" and "the bytes read came from a regular file sitting
+///    directly inside `log_dir`" are the same statement, and no path arithmetic
+///    is needed to reach it.
+///
+/// 2. `log_dir.join(<subdir>).join(<single component>)` — the OTel reader in
+///    `read_logs_for_report_inner`, where `<subdir>` is one of the fixed
+///    `OTEL_SUBDIRS` literals and the component came out of
+///    `read_dir(log_dir/<subdir>)`. For these the guarantee is one directory
+///    weaker: the bytes came from a regular file sitting directly inside *the
+///    directory that was enumerated*, which is not by itself a statement about
+///    `log_dir`. That the enumerated directory IS `log_dir/<subdir>` is a
+///    separate guarantee and it is not this function's — it comes from the
+///    `lstat` on `<subdir>` at the enumeration site, which is a check-then-read
+///    pair rather than a property of the open, and is a mitigated residual
+///    rather than a closed hole (#4487).
+///
+/// So a new caller of shape 2 needs its own directory guard: nothing in here
+/// supplies one, and shape 1's "directly inside the log dir" conclusion is
+/// available only because that path has a single component.
+///
+/// That is deliberate. The alternative the issue floats — canonicalise the
+/// candidate and require it to be prefixed by the log dir — has a trap:
+/// compared against the *un*-canonicalised log dir it rejects every file in a
+/// legitimately symlinked log directory (a log dir moved onto another volume),
+/// which is exactly the "refusing links loses the logs the report is for"
+/// outcome #4283 declines to accept. Confining the final component sidesteps
+/// the comparison entirely: a symlinked `log_dir` is resolved on the way in
+/// and keeps working, while a symlink *inside* it does not.
+///
+/// # Why it is not racy
+///
+/// The check is not "`is_symlink()`, then open" — that is a TOCTOU pair, and
+/// the attacker who can plant the link is by construction the attacker who can
+/// swap it between the two syscalls. Here:
+///
+/// * `O_NOFOLLOW` is a property of the `open(2)` call itself. The kernel fails
+///   the open with `ELOOP` if the final component is a symlink at the instant
+///   it is resolved. There is no window between deciding and acting, because
+///   the decision *is* the action.
+/// * The regular-file proof is `fstat` on the returned descriptor
+///   (`File::metadata`), not `stat` on the path. It describes the exact inode
+///   the subsequent reads will come from — a swap after the open cannot
+///   retarget an already-open descriptor.
+/// * `read_capped_file` then sizes, seeks and reads that same descriptor, so
+///   the size the cap is computed from and the bytes returned are the same
+///   file too (the old code `stat`ed the path and then re-opened it).
+/// * `O_NONBLOCK` is there because opening first and classifying second means
+///   a FIFO planted under a log name would otherwise block the open until a
+///   writer appeared. With it the open returns immediately and the `fstat`
+///   below rejects it.
+///
+/// The no-follow half of that is per-platform (`O_NOFOLLOW` on unix,
+/// `FILE_FLAG_OPEN_REPARSE_POINT` on Windows) and there is no portable
+/// fallback, so the `compile_error!` above refuses to build a target that has
+/// neither arm rather than letting the open quietly become a following one.
+///
+/// # Positive classification
+///
+/// The accepted set is stated, not the refused one: a regular file, opened
+/// without traversing a link, directly inside the log directory, under a name
+/// the caller already matched against `agaric.log[.YYYY-MM-DD]`. Directories,
+/// symlinks, FIFOs, sockets, devices and anything else a filesystem can hold
+/// are refused by not being in that set rather than by being enumerated — the
+/// enumerated form fails open on whatever nobody thought of, which is how this
+/// class of bug survives.
+///
+/// # Residual, stated plainly
+///
+/// A **hard link** planted in the log directory under a valid log name still
+/// reads its target: a hard link is not a link at the filesystem level, it is
+/// a second name for the same inode, so neither `O_NOFOLLOW` nor `fstat` nor
+/// canonicalisation can distinguish it from the original file. Refusing
+/// `st_nlink > 1` would catch it and is deliberately not done — hard-linking
+/// backup tools (rsnapshot and friends) legitimately raise the link count of
+/// files they have snapshotted, so that rule would drop real logs on real
+/// machines, which is the harm #4283 weighs the fix against. The attacker it
+/// would stop must already be able to create a file inside the app's own data
+/// directory *and* on the same filesystem as the target.
+fn open_confined_log_file(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path)?;
+
+    // `fstat` on the descriptor, not `stat` on the name.
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "refusing to read a log entry that is not a regular file (#4283)",
+        ));
+    }
+    // Windows resolves the open to the reparse point itself under the flag
+    // above, and the `is_file()` test just made is NOT sufficient for it.
+    //
+    // `std`'s Windows `FileType` calls a reparse point a symlink only when its
+    // tag carries the name-surrogate bit (`sys::fs::windows::FileType::new`).
+    // Symlinks and junctions do; every other reparse tag — dedup, cloud-files
+    // placeholders, WCIFS, `AppExecLink` — does not, so `is_file()` answers
+    // `true` for those and the handle would be read as an ordinary log. The
+    // attribute bit is the question that has no such gap, and asking it is the
+    // same positive classification the rest of this function uses: an
+    // ordinary regular file, not "a file that is not one of the reparse kinds
+    // we thought of".
+    //
+    // The cost, since it is a real one: on a volume where a genuine
+    // `agaric.log` is itself a reparse point (Data Deduplication, a
+    // Files-On-Demand placeholder) this refuses a legitimate log and the
+    // report goes blind on that machine. Judged the right way round — the app
+    // writes its logs under its own data dir, which is not a synced or
+    // deduplicated location on a default install, and the failure is a missing
+    // log rather than a published secret.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "refusing to read a log entry that is a reparse point (#4283)",
+            ));
+        }
+    }
+    Ok(file)
+}
+
+/// Read a log file, capping the byte count at [`MAX_FILE_BYTES`]. If the file
 /// exceeds the cap, the tail is returned with a leading truncation marker so
 /// the last (most-recent) lines are preserved.
+///
+/// #4283 — the open goes through [`open_confined_log_file`], so this is also
+/// the single choke point at which "may the report read these bytes?" is
+/// answered. Every byte that reaches either the ZIP bundle or the
+/// `recent_errors` summary published into a public GitHub issue comes through
+/// here, and all of the size/seek/read work below is done on that one
+/// descriptor.
 fn read_capped_file(path: &Path) -> std::io::Result<String> {
-    let metadata = fs::metadata(path)?;
-    let total = metadata.len();
+    let mut file = open_confined_log_file(path)?;
+    let total = file.metadata()?.len();
     if total <= MAX_FILE_BYTES {
-        return fs::read_to_string(path);
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        return Ok(contents);
     }
 
-    let mut file = fs::File::open(path)?;
     use std::io::Seek;
     let skip = total - MAX_FILE_BYTES;
     file.seek(std::io::SeekFrom::Start(skip))?;
@@ -1568,14 +1841,20 @@ pub fn read_logs_for_report_inner(
             // Out-of-window or unrecognised filename — common, not noteworthy.
             continue;
         }
-        let path = entry.path();
-        if !path.is_file() {
+        // #4283 — `entry.metadata()` is `lstat` (`Path::is_file` follows), so a
+        // symlink planted under a valid log name is classified as a symlink
+        // rather than as its target. The bundle is uploaded by hand rather than
+        // pasted into an issue body, but it is uploaded to the same public
+        // issue, so it gets the same rule — and `read_capped_file`'s
+        // `O_NOFOLLOW` open backstops this one for both paths.
+        if !entry.metadata().is_ok_and(|meta| meta.is_file()) {
             tracing::warn!(
                 name = %name,
                 "skipping log entry — not a regular file (symlink/dir/socket?)",
             );
             continue;
         }
+        let path = entry.path();
         let contents = match read_capped_file(&path) {
             Ok(c) => c,
             Err(e) => {
@@ -1670,6 +1949,32 @@ pub fn read_logs_for_report_inner(
     // it without error.
     for subdir in OTEL_SUBDIRS {
         let dir = log_dir.join(subdir);
+        // #4283 — the same escape one level up. `newest_otel_file` already
+        // refuses a symlinked *file*, and `read_capped_file` refuses to follow
+        // one, but neither says anything about the DIRECTORY: `read_dir` on a
+        // symlinked `traces/` enumerates whatever it points at, and the file
+        // this then opens is a real regular file with a real name inside that
+        // other directory — so the newest file in, say, `~/.ssh` would be read
+        // and bundled with no link ever appearing in the path that is opened.
+        // The subdirs are created by this app under its own log dir, so
+        // requiring a real directory here costs nothing that exists.
+        //
+        // Stated plainly, because it is the one guard here that is NOT the
+        // race-free shape `open_confined_log_file` has: this is an `lstat` on
+        // a PATH gating a later `read_dir` on the same PATH, so an attacker
+        // who can swap `<log_dir>/traces` for a symlink between the two wins,
+        // and the per-file `O_NOFOLLOW` does not backstop it (the file the
+        // walk then opens is a real regular file with a real name — that is
+        // the whole shape of this escape). Closing the window needs
+        // `openat`-relative I/O, which this crate cannot spell: it denies
+        // `unsafe_code` and neither `std` nor any current dependency exposes a
+        // safe `openat`. The residual is bounded by the same precondition as
+        // the hard-link one — write access to the app's own log directory —
+        // and unlike the pre-fix behaviour it costs the attacker a race
+        // instead of nothing.
+        if !fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir()) {
+            continue;
+        }
         let Some(path) = newest_otel_file(&dir) else {
             // Absent/empty/unreadable subdir (tracing never enabled, or no
             // regular files yet) — not noteworthy, skip silently.
@@ -2618,6 +2923,544 @@ mod tests {
                 "{junk_name} must be rejected by the bundle selector as well"
             );
         }
+    }
+
+    // -- #4283: the report may only read the log dir's own regular files ---
+    //
+    // `recent_errors` is embedded in the body of a PUBLIC GitHub issue, and
+    // both selectors used to decide what to read with `Path::is_file`, which
+    // FOLLOWS symlinks. A link planted in the log directory under a valid log
+    // name therefore pulled a file from anywhere the app can read into that
+    // body. These fixtures plant exactly that link.
+    //
+    // Every assertion below is a PAIR — the planted secret is absent AND a
+    // legitimate log line is still present — because "the secret is absent"
+    // alone is satisfied by a great many things that are not the fix: a
+    // fixture whose paths never existed, a permission error, an empty file, or
+    // a change that broke log collection outright. Only the pair distinguishes
+    // "refused to follow the link" from "read nothing at all", and the second
+    // half is the one that fails if the fix over-reaches into the "refusing
+    // links loses the logs the report is for" outcome #4283 declines to accept.
+
+    /// The secret the fixtures plant OUTSIDE the log dir, shaped like a log
+    /// line so that nothing but the confinement can keep it out: it carries
+    /// the ` ERROR ` token `extract_recent_errors` selects on, so if the file
+    /// is read at all this line is what gets published.
+    #[cfg(unix)]
+    const SECRET_LINE_4283: &str =
+        "2025-03-10T00:00:00.000000Z ERROR agaric: M4283_EXFILTRATED_SECRET\n";
+
+    /// Write the out-of-log-dir "secret" and return its path. Placed under the
+    /// TempDir but OUTSIDE `log_dir`, so the only way to it is the link.
+    #[cfg(unix)]
+    fn plant_secret_4283(root: &Path) -> PathBuf {
+        let outside = root.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let secret = outside.join("private.txt");
+        fs::write(&secret, SECRET_LINE_4283).unwrap();
+        secret
+    }
+
+    /// A symlink wearing a valid DATED log name must not be read, and the real
+    /// dated file beside it must still be (#4283).
+    ///
+    /// Fails on pre-fix `main`: `path.is_file()` resolves the link to a
+    /// regular file, `read_capped_file` reads it, and `M4283_EXFILTRATED_SECRET`
+    /// lands in `recent_errors` — i.e. in the prefilled public issue body.
+    #[cfg(unix)]
+    #[test]
+    fn recent_errors_refuses_a_dated_symlink_out_of_the_log_dir_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        let today = d4216_today();
+
+        let secret = plant_secret_4283(dir.path());
+        // The link wears today's name — the newest day the walk reaches, so it
+        // is read first and its lines are the ones that survive the cap.
+        std::os::unix::fs::symlink(&secret, day_log_path(&log_dir, today)).unwrap();
+
+        // …and a real log day beside it, so "nothing was read" cannot pass.
+        write_day_log(
+            &log_dir,
+            day_before(today, 1),
+            "2025-03-09T00:00:00.000000Z ERROR agaric: M4283_LEGITIMATE_LOG\n",
+        );
+
+        // Fixture control: the link really does resolve to readable content.
+        // Without this, a typo'd target would make the absence assertion below
+        // pass for the wrong reason.
+        assert_eq!(
+            fs::read_to_string(day_log_path(&log_dir, today)).unwrap(),
+            SECRET_LINE_4283,
+            "fixture control: the planted link must resolve to the secret, so the \
+             absence assertion below is about the fix and not about a broken fixture"
+        );
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            !errors
+                .iter()
+                .any(|l| l.contains("M4283_EXFILTRATED_SECRET")),
+            "#4283: a symlink out of the log dir must not be read — its content is \
+             published into a public GitHub issue body. Got: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|l| l.contains("M4283_LEGITIMATE_LOG")),
+            "…and the real log beside it must still be read: a fix that stops \
+             collecting logs would satisfy the assertion above while being useless. \
+             Got: {errors:?}"
+        );
+        assert_eq!(
+            errors.len(),
+            1,
+            "exactly the one legitimate line, got: {errors:?}"
+        );
+    }
+
+    /// The same, for the undated `agaric.log` name (#4283).
+    ///
+    /// A separate guard: the plain name is not enumerated through `read_dir`,
+    /// it is probed by `log_dir.join("agaric.log")`, and when it outranks the
+    /// dated family it is read INSTEAD of it — so a link here is the whole of
+    /// `recent_errors`, not one day of it.
+    #[cfg(unix)]
+    #[test]
+    fn recent_errors_refuses_a_symlinked_plain_log_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        let today = d4216_today();
+
+        let secret = plant_secret_4283(dir.path());
+        let plain = log_dir.join("agaric.log");
+        std::os::unix::fs::symlink(&secret, &plain).unwrap();
+        // The link's target is the NEWEST thing here, which is what makes the
+        // plain-file branch win over the dated family (#4290 ranks by mtime).
+        set_mtime(&secret, t4290(9_000));
+
+        write_day_log(
+            &log_dir,
+            today,
+            "2025-03-10T00:00:00.000000Z ERROR agaric: M4283_LEGITIMATE_LOG\n",
+        );
+        set_mtime(&day_log_path(&log_dir, today), t4290(1_000));
+
+        assert_eq!(
+            fs::read_to_string(&plain).unwrap(),
+            SECRET_LINE_4283,
+            "fixture control: the planted link must resolve to the secret"
+        );
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            !errors
+                .iter()
+                .any(|l| l.contains("M4283_EXFILTRATED_SECRET")),
+            "#4283: a symlinked `agaric.log` must not be read, got: {errors:?}"
+        );
+        assert!(
+            errors.iter().any(|l| l.contains("M4283_LEGITIMATE_LOG")),
+            "…and refusing it must fall through to the dated family rather than \
+             returning nothing, got: {errors:?}"
+        );
+        assert_eq!(
+            errors.len(),
+            1,
+            "exactly the one legitimate line, got: {errors:?}"
+        );
+    }
+
+    /// A planted link must not be able to SUPPRESS the live log either (#4283).
+    ///
+    /// This is the assertion the enumeration filter alone answers, and the
+    /// reason that filter is not redundant with the `O_NOFOLLOW` open. A dated
+    /// entry that survives enumeration is fed to `plain_log_outranks_dated`;
+    /// point it at something freshly touched and the plain file, which is the
+    /// only one still being appended to, stops outranking the dated family; the
+    /// open then refuses the link and the walk yields nothing at all. The report
+    /// goes blind, and no symlink content is needed to do it.
+    ///
+    /// Read as a discriminator, this pins the ENUMERATION filter specifically:
+    /// the link never reaches the ranking at all, because `entry.metadata()` is
+    /// an `lstat` and drops it. The second, independent reason the same attack
+    /// now fails — the ranking's own `stat` no longer follows either — is
+    /// exercised on its own by
+    /// `ranking_a_swapped_in_link_reads_its_own_mtime_not_its_targets_4283`,
+    /// because an assertion that would pass for either reason cannot tell you
+    /// that both are alive.
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_cannot_suppress_the_live_plain_log_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        let today = d4216_today();
+
+        // The live log: the plain name, the file the app is appending to.
+        let plain = log_dir.join("agaric.log");
+        fs::write(
+            &plain,
+            "2025-03-10T00:00:00.000000Z ERROR agaric: M4283_LEGITIMATE_LOG\n",
+        )
+        .unwrap();
+        set_mtime(&plain, t4290(5_000));
+
+        // A link under a valid dated name, pointed at a file with a NEWER
+        // mtime than the live log.
+        let secret = plant_secret_4283(dir.path());
+        set_mtime(&secret, t4290(9_000));
+        std::os::unix::fs::symlink(&secret, day_log_path(&log_dir, today)).unwrap();
+
+        let errors = recent_errors_from_log_dir_at(&log_dir, today);
+
+        assert!(
+            errors.iter().any(|l| l.contains("M4283_LEGITIMATE_LOG")),
+            "#4283: a link in the log dir must not outrank — and so silence — the \
+             live plain log. Got: {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|l| l.contains("M4283_EXFILTRATED_SECRET")),
+            "…and the link's target must still not be read, got: {errors:?}"
+        );
+        assert_eq!(
+            errors.len(),
+            1,
+            "exactly the one legitimate line, got: {errors:?}"
+        );
+    }
+
+    /// The ranking `stat` must not follow a link either (#4283, review of #4488).
+    ///
+    /// The enumeration filter drops symlinks from `days` before ranking ever
+    /// sees them, so the state under test is reachable only by winning the
+    /// window between that `lstat` and the ranking — the residual documented on
+    /// [`plain_log_outranks_dated`]. No in-process fixture can drive
+    /// `recent_errors_from_log_dir_at` into it, so the ranking is called
+    /// DIRECTLY with the post-swap candidate set. That is the point of the
+    /// test: it isolates the layer the suppression test above cannot reach.
+    ///
+    /// Discriminating by construction: the link's TARGET is stamped newer than
+    /// the live plain log, while the link's OWN mtime is its creation time and
+    /// so older than both (the two real files are stamped into the future
+    /// because `std` cannot set a link's own timestamps). A following
+    /// `fs::metadata` therefore reads the target's stamp and demotes the live
+    /// log — the pre-fix behaviour, and the only way this assertion can go red.
+    #[cfg(unix)]
+    #[test]
+    fn ranking_a_swapped_in_link_reads_its_own_mtime_not_its_targets_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        let today = d4216_today();
+        let now = std::time::SystemTime::now();
+
+        // The live log, stamped ahead of the link's creation time.
+        let plain = log_dir.join("agaric.log");
+        fs::write(
+            &plain,
+            "2025-03-10T00:00:00.000000Z ERROR agaric: M4283_LEGITIMATE_LOG\n",
+        )
+        .unwrap();
+        set_mtime(&plain, now + std::time::Duration::from_secs(3_600));
+
+        // The link's target: newer still, so following the link wins the rank.
+        let secret = plant_secret_4283(dir.path());
+        set_mtime(&secret, now + std::time::Duration::from_secs(7_200));
+
+        let link = day_log_path(&log_dir, today);
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+        assert!(
+            plain_log_outranks_dated(&plain, &[(today, link)]),
+            "#4283: ranking a candidate must not resolve it — a link swapped in \
+             after enumeration must rank by its own mtime, not by the mtime of \
+             whatever it points at, or it can demote the live plain log"
+        );
+    }
+
+    /// The ZIP bundle takes the same rule (#4283).
+    ///
+    /// It is uploaded by hand rather than pasted into the issue body, but it is
+    /// uploaded to the same public issue; the issue's option 2 (fix only the
+    /// published path) is deliberately not what was done.
+    #[cfg(unix)]
+    #[test]
+    fn read_logs_bundle_refuses_a_symlink_out_of_the_log_dir_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        let secret = plant_secret_4283(dir.path());
+        // The bundle selector has no clock seam, so the fixture uses the real
+        // calendar: a link under yesterday's name, a real file under today's.
+        let yesterday = (chrono::Utc::now().date_naive() - chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        std::os::unix::fs::symlink(&secret, log_dir.join(format!("agaric.log.{yesterday}")))
+            .unwrap();
+        fs::write(
+            log_dir.join("agaric.log"),
+            "2025-03-10T00:00:00.000000Z ERROR agaric: M4283_LEGITIMATE_LOG\n",
+        )
+        .unwrap();
+
+        let out = read_logs_for_report_inner(&log_dir, false, None, None, &[]).unwrap();
+
+        let joined = out
+            .iter()
+            .map(|e| e.contents.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !joined.contains("M4283_EXFILTRATED_SECRET"),
+            "#4283: the bundle must not follow a symlink out of the log dir, got: {out:?}"
+        );
+        assert!(
+            joined.contains("M4283_LEGITIMATE_LOG"),
+            "…and must still bundle the real log beside it, got: {out:?}"
+        );
+        assert_eq!(
+            out.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["agaric.log"],
+            "exactly the one real file, got: {out:?}"
+        );
+    }
+
+    /// The OTel escape is one level up: a symlinked SUBDIR (#4283).
+    ///
+    /// Found while checking the rest of the bug-report payload for the same
+    /// exposure. `newest_otel_file` already refuses a symlinked *file* and the
+    /// open refuses to follow one — but neither says anything about the
+    /// directory. `read_dir` on a symlinked `traces/` enumerates whatever it
+    /// points at, and the winner is then a real regular file with a real name
+    /// inside that other directory, so no link ever appears in the path that is
+    /// opened and every file-level guard is satisfied.
+    #[cfg(unix)]
+    #[test]
+    fn otel_signals_are_not_collected_through_a_symlinked_subdir_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        // A directory outside the log dir holding a perfectly ordinary file.
+        let outside = dir.path().join("elsewhere");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(
+            outside.join("id_rsa"),
+            "name=secret\tvalue=M4283_EXFILTRATED_SECRET\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&outside, log_dir.join("traces")).unwrap();
+
+        // A REAL otel subdir beside it, so "collected nothing" cannot pass.
+        let metrics = log_dir.join("metrics");
+        fs::create_dir_all(&metrics).unwrap();
+        fs::write(
+            metrics.join("agaric-metrics.log"),
+            "name=create_block\tvalue=M4283_LEGITIMATE_LOG\n",
+        )
+        .unwrap();
+        fs::write(
+            log_dir.join("agaric.log"),
+            "2025-03-10T00:00:00.000000Z ERROR agaric: M4283_LEGITIMATE_LOG\n",
+        )
+        .unwrap();
+
+        let out = read_logs_for_report_inner(&log_dir, false, None, None, &[]).unwrap();
+
+        let names: Vec<&str> = out.iter().map(|e| e.name.as_str()).collect();
+        let joined = out
+            .iter()
+            .map(|e| e.contents.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !joined.contains("M4283_EXFILTRATED_SECRET"),
+            "#4283: a symlinked OTel subdir must not be enumerated, got: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with("traces/")),
+            "…not even as an entry NAME, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"metrics/agaric-metrics.log"),
+            "…while the real sibling subdir is still collected: a fix that stopped \
+             collecting OTel signals entirely would satisfy the assertions above. \
+             Got: {names:?}"
+        );
+        assert!(
+            joined.contains("M4283_LEGITIMATE_LOG"),
+            "…with its content, got: {out:?}"
+        );
+    }
+
+    /// The gate itself, both arms (#4283).
+    ///
+    /// `recent_errors_*` and `read_logs_*` each hold TWO guards over the same
+    /// symlink — the `lstat` enumeration filter and this open — so a test that
+    /// only drove them could not tell which one was load-bearing. This drives
+    /// the open directly.
+    ///
+    /// The accept arm is not decoration: a gate that refused everything would
+    /// satisfy every refusal arm here and break log collection entirely.
+    #[cfg(unix)]
+    #[test]
+    fn open_confined_log_file_refuses_links_and_non_files_but_opens_a_real_log_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        // Accept: an ordinary regular file directly inside the log dir.
+        let real = log_dir.join("agaric.log");
+        fs::write(&real, "M4283_LEGITIMATE_LOG\n").unwrap();
+        assert!(
+            open_confined_log_file(&real).is_ok(),
+            "a regular file inside the log dir is exactly what the report is for"
+        );
+        assert_eq!(
+            read_capped_file(&real).unwrap(),
+            "M4283_LEGITIMATE_LOG\n",
+            "…and its bytes must come back unchanged"
+        );
+
+        // Refuse: a symlink to a file outside the log dir.
+        let secret = plant_secret_4283(dir.path());
+        let link = log_dir.join("agaric.log.2025-03-10");
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+        assert!(
+            open_confined_log_file(&link).is_err(),
+            "O_NOFOLLOW must fail the open of a symlink rather than resolving it"
+        );
+        assert!(
+            read_capped_file(&link).is_err(),
+            "…so no caller can read through it either"
+        );
+
+        // Refuse: a symlink to a file INSIDE the log dir. Containment is about
+        // the entry being a real file, not about where the link happens to
+        // point — a link that resolves back inside is still a name the log
+        // appender did not create, and allowing it would mean the rule depends
+        // on a resolution step that the racy version is exactly the bug.
+        let inside_link = log_dir.join("agaric.log.2025-03-09");
+        std::os::unix::fs::symlink(&real, &inside_link).unwrap();
+        assert!(
+            open_confined_log_file(&inside_link).is_err(),
+            "a symlink is refused for being a symlink, not for where it points"
+        );
+
+        // Refuse: a directory wearing a log name.
+        let dir_named_like_a_log = log_dir.join("agaric.log.2025-03-08");
+        fs::create_dir_all(&dir_named_like_a_log).unwrap();
+        assert!(
+            open_confined_log_file(&dir_named_like_a_log).is_err(),
+            "the fstat on the open handle must refuse a directory"
+        );
+
+        // Refuse: a unix socket wearing a log name. Opening one is refused by
+        // the kernel outright, which is the point — the report's rule is
+        // "regular files only", and every other node type a filesystem can
+        // hold is outside the accepted set rather than on a list of refusals.
+        let socket_path = log_dir.join("agaric.log.2025-03-07");
+        let _socket = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        assert!(
+            open_confined_log_file(&socket_path).is_err(),
+            "a socket wearing a log name must not be opened as a log"
+        );
+
+        // Refuse: a FIFO wearing a log name — and, more to the point, refuse it
+        // WITHOUT HANGING. Opening first and classifying second is what makes
+        // `O_NONBLOCK` load-bearing: a blocking `open` on a FIFO waits for a
+        // writer that never comes, so a regression here shows up as this test
+        // never terminating rather than as a failed assertion. Shelled out
+        // because `libc::mkfifo` is an `unsafe` call and this crate denies
+        // `unsafe_code`; skipped if the platform has no `mkfifo` binary.
+        let fifo = log_dir.join("agaric.log.2025-03-06");
+        let made_fifo = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .is_ok_and(|s| s.success());
+        if made_fifo {
+            assert!(
+                open_confined_log_file(&fifo).is_err(),
+                "the fstat on the open handle must refuse a FIFO"
+            );
+        }
+    }
+
+    /// The enumeration filter's answer is never *inherited* by the read
+    /// (#4283).
+    ///
+    /// Both selectors classify an entry once at `read_dir` time and then read
+    /// it later through a path. That gap is where this bug class lives: the
+    /// attacker who can plant a link in the log directory can also swap one in
+    /// after the classification, and a reader that trusted the earlier answer
+    /// would follow it. So this takes the filter's answer while the entry
+    /// genuinely is a regular file, swaps a symlink in behind it, and requires
+    /// the read to refuse anyway — the classification that governs the bytes
+    /// has to be made at the open, on this file, not carried in from `days` or
+    /// from the `should_include_log_file` loop.
+    ///
+    /// # What this does NOT prove
+    ///
+    /// Stated so a later reader does not over-read it: this cannot distinguish
+    /// `O_NOFOLLOW` from an `lstat`-then-`open` pair *inside*
+    /// `open_confined_log_file`, because a swap landing between those two
+    /// syscalls is not something a test can schedule. Verified by mutation —
+    /// rewriting the gate into that racy shape keeps this test green, while
+    /// dropping `O_NOFOLLOW` altogether turns it red. The race-freedom argument
+    /// rests on `open(2)`'s semantics (see [`open_confined_log_file`]), which
+    /// is an argument about the syscall and not a claim any test here checks.
+    ///
+    /// The fixture control matters more than usual: the link is proven to
+    /// resolve to the secret *through the same path* first, so "refused" cannot
+    /// be a broken fixture, an absent file, or a permission error.
+    #[cfg(unix)]
+    #[test]
+    fn open_confined_log_file_does_not_inherit_the_enumeration_filters_answer_4283() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        let secret = plant_secret_4283(dir.path());
+        let path = day_log_path(&log_dir, d4216_today());
+        fs::write(
+            &path,
+            "2025-03-10T00:00:00.000000Z ERROR agaric: M4283_LEGITIMATE_LOG\n",
+        )
+        .unwrap();
+
+        // What the enumeration filter answers, taken FIRST — while the entry is
+        // genuinely a regular file, exactly as it is at `read_dir` time.
+        assert!(
+            is_regular_file_no_follow(&path),
+            "precondition: the filter sees a real regular file at this instant"
+        );
+
+        // …and now the swap the filter's answer is stale against.
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&secret, &path).unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            SECRET_LINE_4283,
+            "fixture control: after the swap the SAME path resolves to the secret, so \
+             the refusal below is the gate and not a missing file"
+        );
+
+        assert!(
+            open_confined_log_file(&path).is_err(),
+            "#4283: the open must refuse the swapped-in link. If this passes only \
+             because a check ran before it, the check is stale by construction — \
+             `O_NOFOLLOW` has to be what fails the open"
+        );
+        assert!(
+            read_capped_file(&path).is_err(),
+            "…and no caller can read through it"
+        );
     }
 
     /// #4216 — the early exit must drop only OLDER lines, never newer ones.
