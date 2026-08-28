@@ -72,8 +72,11 @@ describe('PopoverContent', () => {
   // keyboard-aware on its own — floating-ui measures the collision boundary
   // with `window.visualViewport` — which is why the popover does not (and must
   // not) also add the keyboard height as bottom `collisionPadding`; that would
-  // subtract it twice. The geometry itself is covered end-to-end in
-  // `e2e/formatting-toolbar-mobile.spec.ts`.
+  // subtract it twice. The HEIGHT CAP specifically is covered end-to-end in
+  // `e2e/formatting-toolbar-mobile.spec.ts` (it asserts the available-height
+  // variable). That spec does NOT cover `collisionPadding`'s 4px inset —
+  // nothing does; see the `collisionPadding` block below, which says so. The
+  // two statements are about different geometry, not in conflict.
   it('caps height to the collision-aware available height, falling back to the dynamic viewport', async () => {
     render(
       <Popover defaultOpen>
@@ -113,9 +116,8 @@ describe('PopoverContent', () => {
   // legacy API's identifier on purpose: `no-legacy-react-apis` is a text
   // scan, so spelling it out here would fail the hook on a comment.) That
   // is deliberately narrower than "the popover avoids the viewport edge by
-  // 4px"; it goes red the moment the default
-  // itself regresses (removed, or drifts from 4), which is what shipped
-  // untested at #4339.
+  // 4px"; it goes red the moment the default itself regresses (removed, or
+  // drifts from 4), which is what shipped untested at #4339.
   // Both direct-call tests assume `PopoverContent` returns exactly
   // Portal -> Content. If a wrapper element is ever inserted between them,
   // `portal.props.children` is undefined and the padding assertion dies with
@@ -135,6 +137,12 @@ describe('PopoverContent', () => {
     return portal.props.children as { props: { collisionPadding?: number } }
   }
 
+  // The `4` is restated here rather than imported. `EDGE_PADDING_PX` is not
+  // exported, and exporting it so this arm could assert against the source of
+  // truth would make the arm follow the constant instead of pinning it — a
+  // bump to 8 would then redden nothing. Restating it keeps this a deliberate
+  // change-detector: bumping the default is a decision that should have to
+  // touch its test, test title included.
   it('defaults collisionPadding to EDGE_PADDING_PX (4), not Radix default of 0', () => {
     const portal = PopoverContent({ children: 'Content' })
     expect(contentOf(portal).props.collisionPadding).toBe(4)
