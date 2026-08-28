@@ -2524,7 +2524,17 @@ const ARITH_PREFIX_RE = /^\$\(\(([^$()]*)\)\)/
 // #4431 review note 4, waved through by the very assertion that exists to
 // catch it. Refusing an adjacent-sign expression outright (falling to `NaN`,
 // which can never equal `cap + 1`) fails closed instead of guessing.
-const ARITH_GRAMMAR_RE = /^\s*[+-]?\s*\d+(?:\s*[+-]\s*\d+)*\s*$/
+//
+// Each integer literal is `0` or a `[1-9]`-led run (never a BARE `\d+`,
+// #4477-round-2 note 1): with a bare `\d+`, a literal with a leading zero
+// (e.g. `010`) is read by `Number()` below as DECIMAL 10, but `bash` reads
+// the very same literal as OCTAL 8 — a second silent divergence from the
+// shell this check exists to stand in for, on top of the adjacent-sign one
+// above. `$((PR_LIST_LIMIT - 010 + 11))` summed to `cap + 1` here while the
+// shell asked `gh` for a different count entirely. Refusing any leading zero
+// on a multi-digit literal falls it to `NaN` instead of guessing which base
+// was meant; a bare `0` is still one valid literal, not a "leading zero".
+const ARITH_GRAMMAR_RE = /^\s*[+-]?\s*(?:0|[1-9]\d*)(?:\s*[+-]\s*(?:0|[1-9]\d*))*\s*$/
 
 /**
  * Evaluate the workflow's `--pr-limit` fetch expression against the declared
@@ -2567,12 +2577,27 @@ function evaluatePrLimitExpr(expr, cap) {
         // bare `evaluated: NaN` with no explanation, the SAME readability
         // gap the hint below was originally added to close, one branch over.
         substituted !== null && !ARITH_GRAMMAR_RE.test(substituted)
-        ? 'arithmetic expansion, but the substituted expression ' +
-          `(${JSON.stringify(substituted)}) does not parse as ` +
-          '`<int> ( <+|-> <int> )*` — almost always two adjacent signs (e.g. `- -1`, `+ +1`). ' +
-          'This check refuses to guess how to combine them rather than risk the exact ' +
-          'truncation ambiguity it exists to catch (#4466 note 4) — write the single signed ' +
-          'integer literal the expression means.'
+        ? // #4477-round-2 note 2: a body naming some OTHER variable (e.g.
+          // `$((OTHER + 1))`) is untouched by the `PR_LIST_LIMIT` substitution
+          // above, so `substituted` still has a letter/underscore in it — a
+          // completely different defect from an adjacent-sign or leading-zero
+          // literal, and the two hints below must not be swapped: telling the
+          // author to fix "adjacent signs" in an expression with none of them
+          // is the same misattribution class note 3 (below) already fixes for
+          // trailing content, one branch over.
+          /[A-Za-z_]/.test(substituted)
+          ? 'arithmetic expansion, but the substituted expression ' +
+            `(${JSON.stringify(substituted)}) still contains a letter or underscore — an ` +
+            'unsubstituted variable, not an arithmetic-grammar defect. This check only knows ' +
+            'how to substitute `PR_LIST_LIMIT`; any other name must be written as a literal ' +
+            'signed integer.'
+          : 'arithmetic expansion, but the substituted expression ' +
+            `(${JSON.stringify(substituted)}) does not parse as ` +
+            '`<int> ( <+|-> <int> )*` — almost always two adjacent signs (e.g. `- -1`, `+ +1`) ' +
+            'or a leading zero on a multi-digit literal (e.g. `010`, decimal to this check but ' +
+            'octal to `bash`). This check refuses to guess how to combine or read them rather ' +
+            'than risk the exact truncation ambiguity it exists to catch (#4466 note 4) — write ' +
+            'the single signed decimal integer literal the expression means.'
         : null
       : !expr.startsWith('$((')
         ? 'not a `$(( ... ))` arithmetic expansion at all'
@@ -2636,6 +2661,49 @@ function runPrLimitExprSelfTest(ok, fail) {
       typeof r.rejectedBecause === 'string' &&
       /adjacent signs/.test(r.rejectedBecause) &&
       !/write the variable bare/.test(r.rejectedBecause),
+  )
+
+  // #4477-round-2 note 1: `010` is DECIMAL 10 to `Number()` but OCTAL 8 to
+  // `bash` -- the very divergence the adjacent-sign fix above closed one
+  // token over. Must fail closed (NaN), not silently agree with the wrong
+  // base. `$((PR_LIST_LIMIT - 010 + 11))` sums to `cap + 1` under the OLD
+  // (bare `\d+`) grammar, so this is a genuine counterexample if it passes.
+  check(
+    'evaluatePrLimitExpr: a leading zero on a multi-digit literal is refused (round-2 note 1)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT - 010 + 11))', 99),
+    (r) =>
+      r.arithBody !== null && Number.isNaN(r.evaluated) && typeof r.rejectedBecause === 'string',
+  )
+
+  // A bare `0` is one valid literal, not a "leading zero" -- must still
+  // evaluate cleanly (round-2 note 1 must not overcorrect into rejecting it).
+  check(
+    'evaluatePrLimitExpr: a bare `0` literal is still accepted (round-2 note 1)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT - 0))', 99),
+    (r) => r.evaluated === 99 && r.rejectedBecause === null,
+  )
+
+  // An ordinary multi-digit literal with no leading zero is unaffected by
+  // round-2 note 1's grammar tightening.
+  check(
+    'evaluatePrLimitExpr: an ordinary multi-digit literal is unaffected (round-2 note 1)',
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT + 100))', 99),
+    (r) => r.evaluated === 199 && r.rejectedBecause === null,
+  )
+
+  // #4477-round-2 note 2: a body naming a variable OTHER than PR_LIST_LIMIT
+  // is untouched by the substitution, so letters survive into `substituted`
+  // -- must be named as an unsubstituted variable, NOT blamed on adjacent
+  // signs (a defect this expression does not have).
+  check(
+    'evaluatePrLimitExpr: an unsubstituted variable is named as such, not blamed on signs (round-2 note 2)',
+    evaluatePrLimitExpr('$((OTHER + 1))', 99),
+    (r) =>
+      r.arithBody !== null &&
+      Number.isNaN(r.evaluated) &&
+      typeof r.rejectedBecause === 'string' &&
+      /unsubstituted variable/.test(r.rejectedBecause) &&
+      !/adjacent signs/.test(r.rejectedBecause),
   )
 
   // #4477 note 3: trailing garbage after a well-formed `$(( ... ))` must NOT

@@ -639,6 +639,21 @@ function resolvePyModule(repoRoot, scriptRepoDir, moduleName) {
  * (see its doc comment): an UNTERMINATED literal ends the walk rather than
  * blanking to EOF, and an escaped delimiter inside a literal is not modelled.
  *
+ * A THIRD, different-in-KIND gap (#4477-round-2 note 3): a `"""`/`'''`
+ * substring sitting inside an ORDINARY quoted string — e.g. `X = '"""'` — is
+ * not modelled either, and unlike the two conservatisms above, this one is
+ * NOT conservative: it FAILS OPEN. Pass 1 (`blankPyDocstrings`) leaves such a
+ * line visible (it does not open a statement, so a real `import` between two
+ * such literals is still found); this unconditional pass instead pairs the
+ * two embedded delimiters and blanks everything between them, taking that
+ * real import with it — a MISSED dependency edge, the opposite direction
+ * from every other gap in this file, which only ever risks reporting an edge
+ * that is not really there. Not currently reachable (no `.py` file anywhere
+ * under `scripts/` has this shape as of this writing); documented here,
+ * rather than modelled, because doing so properly needs a real
+ * string-literal lexer (quote-type and escape tracking), not a cheap regex
+ * tweak.
+ *
  * MUST run on `blankPyDocstrings`'s OUTPUT DIRECTLY — i.e. before
  * `stripLineComments`'s `#`-comment-LINE filter, not after it as an earlier
  * version of this pass did (#4477 note 4). That filter drops a whole line

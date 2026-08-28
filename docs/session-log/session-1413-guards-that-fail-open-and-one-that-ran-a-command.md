@@ -164,6 +164,40 @@ artifact directory name and is pinned by literal in committed assertions, so cha
 not a drive-by. Documented at both the sanitizer and the test, with the concrete collision
 spelled out, so whoever needs it has the analysis rather than a surprise.
 
+## The trade, tested against its own standard
+
+The batch's own argument was that replacing a general evaluator with a restricted one is
+sound only if the restricted one still decides every input the general one decided
+correctly. Review found a counterexample to that claim inside the batch: leading-zero
+literals. JavaScript reads `010` as decimal ten; `bash` reads it as octal eight. So an
+expression like `$((PR_LIST_LIMIT - 010 + 11))` summed to exactly `cap + 1` here and
+passed, while the shell that actually runs it asks for a different number.
+
+Contrived, unreachable from anything this repo writes, and still worth closing — because it
+is the one shape the argument said to check for, and the argument was made in this batch's
+own commit message. The grammar now demands `0` or a non-zero-leading digit run, so such an
+expression falls to `NaN` and fails closed. Falsifying it produced a live counterexample
+rather than a hypothetical: with the old grammar restored, the evaluator returned exactly
+the cap-plus-one it should have refused.
+
+A second, smaller instance of the same class: the rejection hint blamed adjacent signs for
+any grammar failure, so `$((OTHER + 1))` — an unsubstituted variable — was told to look for
+a defect it did not have. It now checks whether a letter survived substitution and names
+that instead.
+
+## Fail-open, said plainly
+
+The third note was another gap in the Python triple-quote pass: a triple-quote *substring*
+sitting inside an ordinary quoted string can be paired with another and blank real code
+between them. A grep confirmed no file in the tree has that shape today, so it is latent.
+
+Closing it properly needs a real string-literal lexer — quote type and escape tracking —
+rather than a regex adjustment, so it is documented instead. What matters is *how*: the
+function already declares two conservatisms, and both fail closed. This one fails **open**,
+and the comment says so in those words rather than listing it beside them as though the
+three were equivalent. A known gap recorded as if it were the same kind as its neighbours
+is worse than one not recorded at all, because it borrows their reassurance.
+
 ## What shipped
 
 - #4466 — five guard fixes, including the shell removal and the grammar that replaced the
