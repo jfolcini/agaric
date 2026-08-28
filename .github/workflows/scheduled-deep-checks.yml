@@ -1454,13 +1454,40 @@ jobs:
         with:
           tool: cargo-fuzz
 
+      - name: Restore the accumulated fuzz corpus (#4496)
+        # Coverage-guided fuzzing only reaches depth if the corpus ACCUMULATES.
+        # Before this, `src-tauri/fuzz/corpus/` was uploaded as an artifact and
+        # never restored — `Swatinem/rust-cache` above covers `~/.cargo` and
+        # `target/`, not the corpus — so every weekly run restarted all five
+        # targets from the seeds committed to git (8 files over 2 targets at the
+        # time; the other three had no corpus directory at all). Each run then
+        # re-explored the same shallow frontier that `-max_total_time` reaches
+        # from cold, indefinitely, and reported `ok` for doing so.
+        #
+        # `restore`/`save` are split (rather than one `actions/cache`) so the
+        # minimisation step below runs BETWEEN them: the save must store the
+        # cmin'd corpus, and a combined action saves at post-job, after that
+        # step has already run but from the un-minimised directory state it
+        # captured. The run-scoped key never hits on read — `restore-keys`
+        # takes the most recent prefix match — which is what makes each run
+        # write a fresh entry instead of being stuck on the first one saved.
+        id: corpus-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+
       - name: Fuzz each parser target (smoke length)
         working-directory: src-tauri/fuzz
         # `-max_total_time` keeps each target to a smoke budget so the weekly
         # lane stays bounded; a crash exits non-zero and the artifact upload
-        # below preserves the reproducer. Seeds come from the checked-in
-        # corpora under fuzz/corpus/<target>/. The dispatch input rides via
-        # `env:` (not inline `${{ }}`) per zizmor template-injection.
+        # below preserves the reproducer. The starting corpus is the checked-in
+        # seeds under fuzz/corpus/<target>/ UNIONED with whatever the restore
+        # step above recovered from previous runs (#4496) — the seeds are the
+        # floor on a cache miss, not the whole input set. The dispatch input
+        # rides via `env:` (not inline `${{ }}`) per zizmor template-injection.
         env:
           FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds || '120' }}
           # cargo-fuzz builds with `-Zsanitizer=address`, which rustc rejects
@@ -1548,6 +1575,62 @@ jobs:
           done
           # Aggregate: any non-ok target fails the job. Never silently green.
           exit "$overall"
+
+      - name: Minimise the corpus, then persist it (#4496)
+        # `if: always()` — a crash in ONE target still leaves the other four
+        # with a run's worth of new coverage, and discarding that because the
+        # lane went red would make a single crashing target permanently reset
+        # every sibling's corpus.
+        #
+        # `cargo fuzz cmin` keeps a minimal input set covering the same edges,
+        # so the cache stays proportional to REACHED COVERAGE rather than to
+        # the number of runs. Without it the corpus only grows, and a corpus
+        # that outgrows the cache entry limit stops being restored at all —
+        # which would silently return this lane to the cold-start behaviour
+        # this step exists to end.
+        #
+        # Failures here are non-fatal (`|| true`, per target): cmin is an
+        # optimisation, and a corpus that failed to minimise is still a corpus
+        # worth saving. The fuzz step above owns the lane's pass/fail verdict.
+        if: always()
+        working-directory: src-tauri/fuzz
+        env:
+          RUSTFLAGS: "-C target-feature=-crt-static"
+        run: |
+          set -uo pipefail
+          # Read the target list the fuzz step already wrote, rather than
+          # hardcoding a THIRD copy of it. There are two today — the `[[bin]]`
+          # entries in `src-tauri/fuzz/Cargo.toml` and the `targets=(...)` array
+          # above — and #2945 is what a copy going stale costs: two targets were
+          # added to the manifest and not to the workflow, so they were built
+          # and never fuzzed for three months while the lane stayed green.
+          manifest="${GITHUB_WORKSPACE}/fuzz-status/targets.txt"
+          if [ ! -f "$manifest" ]; then
+            # The fuzz step died before writing it (runner loss, job timeout).
+            # Save what is on disk unminimised rather than guessing a list.
+            echo "no target manifest at $manifest — skipping cmin"
+            exit 0
+          fi
+          while read -r target; do
+            [ -n "$target" ] || continue
+            before=$(find "corpus/$target" -type f 2>/dev/null | wc -l)
+            cargo +nightly fuzz cmin "$target" \
+              --target x86_64-unknown-linux-gnu >/dev/null 2>&1 || true
+            after=$(find "corpus/$target" -type f 2>/dev/null | wc -l)
+            echo "cmin $target: $before -> $after inputs"
+          done < "$manifest"
+
+      - name: Save the minimised fuzz corpus (#4496)
+        # Keyed on `github.run_id`, so every run writes a NEW entry that the
+        # next run's `restore-keys: fuzz-corpus-` prefix match then picks up.
+        # A content-independent constant key would be written once and never
+        # updated (GitHub's cache is immutable per key), freezing the corpus at
+        # whatever the first run produced.
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
 
       - name: Upload fuzz artifacts (crashes / corpus)
         if: always()

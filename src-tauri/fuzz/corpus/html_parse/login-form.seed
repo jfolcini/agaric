@@ -1,0 +1,3 @@
+<html><head><title>Sign in</title></head><body>
+<form action="/login"><input type="password" name="pw"></form>
+</body></html>
