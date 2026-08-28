@@ -238,11 +238,21 @@ export function runStartedAt(run, workflow) {
 /**
  * Filters, times and sorts one workflow's `schedule`-event runs newest-first —
  * the exact selection `classifyWorkflow` and `newestCompletedRunId` (#4400)
- * must never disagree about, since the latter names the run the former's
- * `result` string describes. Kept as one function for that reason: two
- * independent copies of "which run is newest" are two copies that can drift,
- * which is the same class of scanner-desync `stripComments`'s docstring
- * warns about, just between functions instead of within one.
+ * share. Kept as one function for that reason: two independent copies of
+ * "which run is newest" are two copies that can drift, which is the same
+ * class of scanner-desync `stripComments`'s docstring warns about, just
+ * between functions instead of within one.
+ *
+ * Sharing the selection does NOT mean `newestCompletedRunId`'s return value
+ * always names the run `classifyWorkflow`'s `result` string describes —
+ * correction, #4456 review of #4440: that was claimed here before and it is
+ * only true for a `result` of `failure (…)`. For every other verdict —
+ * `stale` above all — the newest COMPLETED run (if there is even one) can be
+ * an older, unrelated, successful run that has nothing to do with the
+ * reported status: `stale` is decided from `considered[0]`, which may not
+ * even be completed. `buildResults` (below) is written around exactly that
+ * gap: it forwards `newestCompletedRunId`'s id only for `failure (…)`, and
+ * leaves `stale` to be identified a different way entirely (see its doc).
  *
  * That is also why the corrupt-payload refusal lives HERE rather than in each
  * caller (#4440 review): `classifyWorkflow` threw on a non-array while
@@ -312,13 +322,24 @@ export function classifyWorkflow({ runs, nowMs, workflow, maxAgeHours, excludeRu
  * completed).
  *
  * This is the identity `file-scheduled-failures.mjs`'s consecutive-failure
- * counter keys on (see its `advanceStreaks`): the watchdog polls DAILY but
- * most of the workflows it watches run WEEKLY, so "the same completed run
- * observed again" and "a genuinely new completed run" must be distinguishable
- * from something sturdier than "the poll happened" — a null here is the
- * explicit "no run to point at", which that counter must hold on rather than
- * either advance or reset from, exactly like `--skipped-ok`'s `carriedOverJobs`
- * treats "it did not run" as neither a failure nor a recovery.
+ * counter keys on (see its `advanceStreaks`) for a GENUINE `failure (…)`
+ * verdict: the watchdog polls DAILY but most of the workflows it watches run
+ * WEEKLY, so "the same completed run observed again" and "a genuinely new
+ * completed run" must be distinguishable from something sturdier than "the
+ * poll happened" — a null here is the explicit "no run to point at", which
+ * that counter must hold on rather than either advance or reset from, exactly
+ * like `--skipped-ok`'s `carriedOverJobs` treats "it did not run" as neither a
+ * failure nor a recovery.
+ *
+ * #4456 — `buildResults` deliberately does NOT forward this function's return
+ * value at all when the verdict is `stale`, even though this function would
+ * happily return a real, non-null id for it (the last completed run before
+ * the schedule died). That id would be the WRONG identity for a dead cron:
+ * it never changes, so keying the streak on it holds the lane at count 1
+ * forever — the single failure mode this watchdog exists to catch, exempted
+ * from ever escalating. See `buildResults`'s doc for what a `stale` lane is
+ * identified by instead. This function's contract is unchanged; only one of
+ * its two callers stopped trusting its answer for one specific verdict.
  *
  * Which is exactly why a corrupt payload must NOT come back as null here: a
  * null is a positive claim that there is no run to point at, and the counter
@@ -333,7 +354,90 @@ export function newestCompletedRunId({ runs, workflow, excludeRunId }) {
   return completed?.databaseId ?? null
 }
 
-/** Classifies every watched workflow into the `${{ toJSON(needs) }}` shape. */
+/**
+ * #4456 — whether a `classifyWorkflow` verdict's lane should carry
+ * `newestCompletedRunId`'s answer as its `runId`.
+ *
+ * An ALLOW-LIST over the verdicts `classifyWorkflow` actually mints, not a
+ * deny-list on `stale (`, and the difference is the whole bug this ticket is
+ * about. A deny-list answers "carry the frozen id" for every string it has
+ * never heard of, so the next verdict anyone adds — a `schedule-disabled (…)`,
+ * a reworded `stale`, anything — is born with #4456's exemption already in it:
+ * a lane whose identity never changes, held at count 1, escalating never, and
+ * looking exactly like a healthy lane while it does. That is this watchdog's
+ * one failure mode (silence) reintroduced by omission, which is how it got
+ * here the first time.
+ *
+ * Classified positively, an unrecognised verdict instead falls through to NO
+ * `runId`, so `advanceStreaks` counts it per watchdog poll and it escalates
+ * LOUDLY. That is the right default for a watchdog specifically: a new state
+ * nobody has reasoned about yet is worth three days of polls and one comment,
+ * whereas the silent direction costs an unbounded number of unreported weeks.
+ * Keep this in sync with `classifyWorkflow`'s returns — the self-test pins
+ * every one of them, plus an unknown string, so drift fails closed here.
+ */
+export function carriesRunId(result) {
+  return (
+    result === 'success' ||
+    result.startsWith('failure (') ||
+    result.startsWith('never-ran (') ||
+    result.startsWith('no-completed-run (')
+  )
+}
+
+/**
+ * Classifies every watched workflow into the `${{ toJSON(needs) }}` shape.
+ *
+ * #4456 — `stale` deliberately gets NO `runId` key at all, never the newest
+ * completed run's id. That id is the wrong identity for it: `stale` means the
+ * watched workflow's SCHEDULE has stopped firing, so the newest completed run
+ * (if there is even one) is frozen wherever it last was — often an old,
+ * successful run with nothing to do with why the workflow is unhealthy now.
+ * Handing that frozen id to `advanceStreaks` as `runId` made a dead cron
+ * compare "equal to last time" on every single poll, forever: the counter
+ * held at 1 and the worst failure mode this watchdog exists to catch — a
+ * schedule that has stopped running at all — was structurally exempt from
+ * ever escalating (jfolcini, review of #4440).
+ *
+ * Omitting the key (rather than writing an explicit `null`, which is
+ * `never-ran`'s and `no-completed-run`'s "identity unknowable, HOLD" — see
+ * `advanceStreaks`) makes `parseNeeds` never set `runId` on that lane, so
+ * `advanceStreaks` falls back to `fallbackRunId`: THIS watchdog RUN's own
+ * identity. That is exactly the mechanism the deep-checks profile already
+ * relies on for every one of its own lanes ("one invocation of this script
+ * already IS one real occurrence" — see `advanceStreaks`'s doc), applied here
+ * for the same reason: a watchdog poll that observes "still not running" IS a
+ * new, real, distinct observation of the dead cron, even though the cron
+ * itself has produced nothing new to point at. A `stale` lane on a weekly
+ * cadence (`periodHours: 168`, `escalationThreshold` 3) now escalates after
+ * three DISTINCT daily polls that observe it still stale, instead of never.
+ *
+ * `never-ran` and `no-completed-run` keep the pre-#4456 null-hold behaviour
+ * on purpose (`newestCompletedRunId` already answers `null` for both, so no
+ * special case is needed for them here), and `carriesRunId` above says so
+ * POSITIVELY rather than by exclusion — see its doc for why the shape of that
+ * test is load-bearing.
+ *
+ * `no-completed-run` really is short-lived: `classifyWorkflow` reaches it only
+ * when `considered[0]` is INSIDE the freshness window and merely
+ * queued/in-progress, so the next poll either sees it complete (a real id,
+ * adopted) or sees it age past `maxAgeHours` and reclassify as `stale`, at
+ * which point THIS escalation path takes over.
+ *
+ * `never-ran` is NOT short-lived, and this is a stated RESIDUAL rather than a
+ * claim that it resolves (review of #4456 — an earlier draft of this comment
+ * asserted it "resolves into `stale` once `maxAgeHours` elapses", which is
+ * false: `classifyWorkflow` returns `never-ran` from `considered.length === 0`
+ * and reaches the `stale` branch only via `considered[0]`, so a workflow that
+ * has never produced ONE `schedule` run — a cron that has never fired, a
+ * schedule GitHub never enabled — stays `never-ran` for as long as that holds,
+ * verified by classifying an empty run list at +1d/+30d/+365d). Such a lane
+ * still gets exactly one first-failure comment and is then held at count 1
+ * forever, i.e. the #4456 exemption survives in that one state. It is left
+ * alone here deliberately: the null-hold for `never-ran` is the rule the #4440
+ * review widened ON PURPOSE (see `advanceStreaks`'s identity-less-prior doc),
+ * and reversing it is a second design decision, not a consequence of this one.
+ */
 export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WATCHED }) {
   const out = {}
   for (const entry of watched) {
@@ -342,22 +446,24 @@ export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WA
       throw new Error(`${entry.workflow}: no run list was fetched — health is UNKNOWN, not green`)
     }
     const excl = entry.selfExcluded ? excludeRunId : undefined
-    out[entry.workflow] = {
-      result: classifyWorkflow({
-        runs,
-        nowMs,
-        workflow: entry.workflow,
-        maxAgeHours: entry.maxAgeHours,
-        excludeRunId: excl,
-      }),
-      // #4400 — carried through so `file-scheduled-failures.mjs` can key its
-      // consecutive-failure counter on the actual watched run's identity
-      // (`runId`) and pick the right escalation threshold for its cadence
-      // (`periodHours`), rather than on how often THIS script happens to be
-      // invoked.
-      runId: newestCompletedRunId({ runs, workflow: entry.workflow, excludeRunId: excl }),
-      periodHours: entry.periodHours,
+    const result = classifyWorkflow({
+      runs,
+      nowMs,
+      workflow: entry.workflow,
+      maxAgeHours: entry.maxAgeHours,
+      excludeRunId: excl,
+    })
+    const entryOut = { result, periodHours: entry.periodHours }
+    // #4400 / #4456 — carried through so `file-scheduled-failures.mjs` can key
+    // its consecutive-failure counter on the actual watched run's identity
+    // and pick the right escalation threshold for its cadence — but only for
+    // the verdicts `carriesRunId` names, which `stale` is deliberately not
+    // one of: that key is left off entirely so the filer's own poll identity
+    // takes over instead of a frozen run id.
+    if (carriesRunId(result)) {
+      entryOut.runId = newestCompletedRunId({ runs, workflow: entry.workflow, excludeRunId: excl })
     }
+    out[entry.workflow] = entryOut
   }
   return out
 }
@@ -1263,16 +1369,34 @@ function selfTestGhFailureModes({ check }) {
     // has to coerce before comparing. A fixture that quietly used strings
     // here (or a future change that stringified `databaseId` on the way out)
     // would make the consumer's round trip look type-stable when production
-    // is not. Pinned positively: every entry is a NUMBER or an explicit
-    // `null`, never anything else.
-    const runIds = Object.values(written).map((v) => v.runId)
+    // is not. Pinned positively: every NON-STALE entry is a NUMBER, never
+    // anything else.
+    //
+    // #4456 — the `stale` entry (`codeql.yml`) must have NO `runId` key at
+    // all, not an explicit `null`. Checked by PRESENCE, not by value: a
+    // `some(number) && every(null-or-number)` shape (the pre-#4456 form of
+    // this assertion) stays green even if a regression quietly starts
+    // writing `runId: null` back onto a `stale` entry — `null` is still
+    // "null, not a number" either way, so that shape can never tell "omitted"
+    // and "explicit null" apart, and the one bug this rewrite exists to catch
+    // is exactly a `stale` entry regaining an identity that never changes.
+    const nonStale = Object.entries(written).filter(([, v]) => !v.result.startsWith('stale ('))
+    const staleEntries = Object.entries(written).filter(([, v]) => v.result.startsWith('stale ('))
     check(
-      // `some` already implies non-empty, so an "at least one" guard would be
-      // the useless length check oxlint's `no-useless-length-check` rejects.
-      runIds.some((r) => typeof r === 'number') &&
-        runIds.every((r) => r === null || typeof r === 'number'),
-      '`runId` is written as a NUMBER (`gh`’s `databaseId`) or an explicit null — the type the filer must coerce',
-      JSON.stringify(runIds.map((r) => `${typeof r}:${r}`)),
+      staleEntries.length === 1 &&
+        staleEntries[0][0] === 'codeql.yml' &&
+        !('runId' in staleEntries[0][1]) &&
+        // `some` already implies non-empty, so an "at least one" guard would
+        // be the useless length check oxlint's `no-useless-length-check`
+        // rejects.
+        nonStale.some(([, v]) => typeof v.runId === 'number') &&
+        nonStale.every(([, v]) => typeof v.runId === 'number'),
+      '`runId` is a NUMBER for every non-`stale` entry, and OMITTED ENTIRELY (not `null`) for the `stale` one (#4456)',
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(written).map(([k, v]) => [k, 'runId' in v ? typeof v.runId : 'ABSENT']),
+        ),
+      ),
     )
     // #4400, latent-hazard guard — the filer encodes one tracked lane per
     // marker line as `job|count|runId` and splits on `|`. A watched workflow
@@ -1291,6 +1415,99 @@ function selfTestGhFailureModes({ check }) {
   }
 }
 
+/**
+ * #4456 — `buildResults`' runId-omission rule, pinned directly against every
+ * classification it distinguishes, rather than only through the single
+ * `codeql.yml` fixture inside `selfTestGhFailureModes`'s happy path above.
+ *
+ * The defect this exists for: `stale` used to carry `newestCompletedRunId`'s
+ * answer just like every other verdict, and that answer is a REAL, NON-NULL,
+ * NEVER-CHANGING id whenever the dead workflow had ever completed a run
+ * before its schedule died. `advanceStreaks` then read "same id as last time"
+ * on every single poll, forever, and the counter held at 1 — the worst
+ * failure mode this watchdog exists to catch was structurally exempt from
+ * ever escalating (jfolcini, review of #4440). The fix is a targeted
+ * OMISSION, not a value change, so this test checks presence of the `runId`
+ * key, not merely what it holds once present.
+ */
+function selfTestStaleRunIdOmission({ check }) {
+  const now = Date.parse('2026-07-31T19:37:00Z')
+  const run = (agoHours, status, conclusion, databaseId = 1) => ({
+    databaseId,
+    status,
+    conclusion,
+    createdAt: ISO(now - agoHours * HOUR_MS),
+  })
+  const watched = [{ workflow: 'w.yml', periodHours: 168, maxAgeHours: 40 }]
+  const classify = (runsByWorkflow) =>
+    buildResults({ runsByWorkflow, nowMs: now, watched })['w.yml']
+
+  const stale = classify({ 'w.yml': [run(55.6, 'completed', 'success')] })
+  check(
+    stale.result.startsWith('stale (') && !('runId' in stale),
+    '#4456: a `stale` verdict OMITS `runId` entirely — not the frozen completed run id, and not an explicit `null`',
+    JSON.stringify(stale),
+  )
+
+  const neverRan = classify({ 'w.yml': [] })
+  check(
+    neverRan.result.startsWith('never-ran (') && 'runId' in neverRan && neverRan.runId === null,
+    'a `never-ran` verdict still writes an explicit `null` — unchanged by #4456 (its identity-less-prior adoption path in `advanceStreaks` already covers it)',
+    JSON.stringify(neverRan),
+  )
+
+  const noCompleted = classify({ 'w.yml': [run(0.2, 'queued', null, 9)] })
+  check(
+    noCompleted.result.startsWith('no-completed-run (') &&
+      'runId' in noCompleted &&
+      noCompleted.runId === null,
+    'a `no-completed-run` verdict still writes an explicit `null` — unchanged by #4456',
+    JSON.stringify(noCompleted),
+  )
+
+  const failure = classify({ 'w.yml': [run(2, 'completed', 'failure', 555)] })
+  check(
+    failure.result.startsWith('failure (') && failure.runId === 555,
+    'a genuine `failure` verdict still carries the real completed run id, unchanged by #4456',
+    JSON.stringify(failure),
+  )
+
+  const success = classify({ 'w.yml': [run(2, 'completed', 'success', 777)] })
+  check(
+    success.result === 'success' && success.runId === 777,
+    'a `success` verdict still carries a real run id too — harmless, since a healthy lane is never in `currentFailing`',
+    JSON.stringify(success),
+  )
+
+  // The five above are every verdict `classifyWorkflow` mints today. This one
+  // is the SIXTH case — the one nobody has written yet — and it is the whole
+  // reason `carriesRunId` is an allow-list. Asserted through the predicate
+  // itself rather than through `buildResults`, because there is no fixture
+  // that makes `classifyWorkflow` return an unknown string: the point is what
+  // happens the day someone adds one.
+  check(
+    carriesRunId('success') &&
+      carriesRunId('failure (x)') &&
+      carriesRunId('never-ran (x)') &&
+      carriesRunId('no-completed-run (x)') &&
+      !carriesRunId('stale (x)') &&
+      !carriesRunId('schedule-disabled (a verdict that does not exist yet)') &&
+      !carriesRunId('stale: reworded'),
+    '#4456: `carriesRunId` is an ALLOW-LIST — an unrecognised verdict omits `runId` and escalates on polls, rather than silently inheriting the frozen-id exemption',
+    JSON.stringify(
+      [
+        'success',
+        'failure (x)',
+        'never-ran (x)',
+        'no-completed-run (x)',
+        'stale (x)',
+        'schedule-disabled (?)',
+        'stale: reworded',
+      ].map((r) => `${r}=${carriesRunId(r)}`),
+    ),
+  )
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok  - ${name}`)
@@ -1305,6 +1522,7 @@ function runSelfTest() {
   selfTestWindows({ check })
   selfTestGhInvocation({ check })
   selfTestGhFailureModes({ check })
+  selfTestStaleRunIdOmission({ check })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)

@@ -140,6 +140,22 @@ jobs:
             # GitHub's runs API about the whole repo, so its data is the same
             # from any ref — but a dispatch is still a smoke test, not the
             # cycle's answer.
+            #
+            # #4481 review note 5 — this is also why a `stale` lane's streak
+            # (keyed on the watchdog's own run URL, since a dead cron has no
+            # completed run to name — see `buildResults` in
+            # `check-workflow-liveness.mjs`) can never be advanced by manual
+            # dispatches: `--dry-run` still COMPUTES the escalation against
+            # the real persisted state (it reads the tracking issue, derives
+            # this run's own URL, advances the in-memory streak) and prints
+            # it, but returns before any `gh issue create/edit/comment` call
+            # — see `main`'s `if (args.dryRun) { ...; return }`. Three manual
+            # dispatches in one afternoon each compute and discard their own
+            # answer; none of them is ever written back, so none of them can
+            # contribute an observation to the count the NEXT scheduled run
+            # reads. The scenario the review flagged (three dispatches
+            # escalating a stale lane the same day) needs a write path this
+            # step never takes; unreachable as wired, not merely unlikely.
             extra+=(--dry-run)
           fi
           node scripts/file-scheduled-failures.mjs "${extra[@]}"
