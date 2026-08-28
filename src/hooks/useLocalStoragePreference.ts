@@ -191,10 +191,22 @@ export function useLocalStoragePreference<T>(
   const warnedReadRef = useRef(false)
   // Last failed write (header §3): kept so the calling instance still
   // reflects the user's choice for the session when storage is unavailable.
-  // Ref + tick so `setPreference` reads it synchronously without a stale
-  // closure; cleared by the next successful write.
+  //
+  // #4406 — held in BOTH a ref and state, deliberately, because the two reads
+  // have different requirements:
+  //   - `setPreference` needs it SYNCHRONOUSLY, within the same tick as a
+  //     previous failed write, to feed a functional updater's `prev`. Two
+  //     `setPreference` calls in one event handler must compose, and the state
+  //     value would still be the pre-update one on the second call. That is
+  //     the ref's job, and it is read only from the callback — never in render.
+  //   - The value this hook RETURNS is rendering output, so it comes from
+  //     state. Reading `failedWriteRef.current` here instead (as this did
+  //     before) is a render-phase ref read: `react/refs` flags it, and under
+  //     the React Compiler a memoized caller could hold the pre-failure value
+  //     because the ref mutation is invisible to the cache's dependencies.
+  // The two are written together in `setPreference` and never diverge.
   const failedWriteRef = useRef<{ key: string; value: T } | null>(null)
-  const [, bumpFailedWrite] = useState(0)
+  const [failedWrite, setFailedWrite] = useState<{ key: string; value: T } | null>(null)
 
   const getSnapshot = useCallback((): T => {
     let raw: string | null
@@ -281,10 +293,13 @@ export function useLocalStoragePreference<T>(
         // for the session; no broadcast — nothing persisted for others.
         logger.warn(opts.source, 'Failed to write localStorage preference', { key }, err)
         failedWriteRef.current = { key, value }
-        bumpFailedWrite((n) => n + 1)
+        setFailedWrite({ key, value })
         return
       }
-      failedWriteRef.current = null
+      if (failedWriteRef.current !== null) {
+        failedWriteRef.current = null
+        setFailedWrite(null)
+      }
       // Prime the cache with the exact value the caller set, so this
       // instance's snapshot keeps the caller's reference (not a re-parsed
       // copy), then tell everyone else.
@@ -294,7 +309,7 @@ export function useLocalStoragePreference<T>(
     [key, getSnapshot],
   )
 
-  const failed = failedWriteRef.current
-  const value = failed !== null && failed.key === key ? failed.value : stored
+  // Rendering output, so read from state (see the `failedWriteRef` note above).
+  const value = failedWrite !== null && failedWrite.key === key ? failedWrite.value : stored
   return [value, setPreference]
 }

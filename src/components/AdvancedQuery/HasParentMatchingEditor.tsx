@@ -122,9 +122,9 @@ export function HasParentMatchingEditor({
   // `renderBuilder` never calls them synchronously (it never does in
   // practice — they're event handlers), so it conservatively flags the ref
   // as reachable from render.
-  // Left open: `nextId` is a monotonic id counter and there is no
-  // non-ref way to keep one across renders without triggering a re-render
-  // on every id mint.
+  // Suppressed at the call site rather than restructured: `nextId` is a
+  // monotonic id counter and there is no non-ref way to keep one across
+  // renders without triggering a re-render on every id mint.
   return (
     <div className="flex flex-col gap-2" data-testid="has-parent-matching-editor">
       <span className="px-1 text-xs font-medium">
@@ -133,6 +133,7 @@ export function HasParentMatchingEditor({
       <span className="px-1 text-xs text-muted-foreground">
         {t('pageBrowser.filter.hasParentMatchingHint')}
       </span>
+      {/* oxlint-disable-next-line react/refs -- `renderBuilder` receives `handleAddLeaf`/`handleAddGroup`, event handlers that mint ids from a ref; oxlint cannot prove the render prop never calls them synchronously — see the note above and #4406 */}
       {renderBuilder({
         node: tree,
         path: [],

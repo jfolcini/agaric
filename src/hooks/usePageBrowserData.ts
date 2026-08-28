@@ -264,13 +264,15 @@ export function usePageBrowserData({
   // Moving the write to an effect would empty the cache exactly when a
   // malformed response needs it read back on THIS render. `pages` itself,
   // and the returned object below, carry the same finding downstream by
-  // construction. Left open rather than restructured.
+  // construction, so each site carries its own #4406 disable.
   const lastGoodPagesRef = useRef<(BlockRow | PageWithMetadataRow)[]>([])
   const pages = useMemo<(BlockRow | PageWithMetadataRow)[]>(() => {
     const raw = data?.pages
     if (raw == null) return []
+    // oxlint-disable-next-line react/refs -- `lastGoodPagesRef` is a `useMemo` cache written and read inside the same render (frontend.md § Latest-value mirrors' "different hazard" bucket); an effect write would empty it exactly when a malformed response needs it read back on THIS render — the read-back on a malformed page; see #4406
     if (raw.some((p) => p == null)) return lastGoodPagesRef.current
     const flat = raw.flatMap((p) => p.items)
+    // oxlint-disable-next-line react/refs -- `lastGoodPagesRef` is a `useMemo` cache written and read inside the same render (frontend.md § Latest-value mirrors' "different hazard" bucket); an effect write would empty it exactly when a malformed response needs it read back on THIS render — the write of the last good flat page set; see #4406
     lastGoodPagesRef.current = flat
     return flat
   }, [data])
@@ -484,6 +486,7 @@ export function usePageBrowserData({
     confirmDialog: deleteConfirmDialog,
   } = usePageDelete(setPagesForDelete, reload)
 
+  // oxlint-disable-next-line react/refs -- `pages` is derived from the same-render `lastGoodPagesRef` memo cache above and carries its finding by construction; see #4406
   return {
     pages,
     loading,

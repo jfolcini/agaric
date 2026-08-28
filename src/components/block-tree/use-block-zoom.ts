@@ -229,6 +229,7 @@ export function useBlockZoom(
         skipUntilDepth.pop()
       }
       if (skipUntilDepth.length > 0) continue
+      // oxlint-disable-next-line react/refs -- `rebaseCacheRef` is a `useMemo` rebase cache built and consumed within the same run (frontend.md § Latest-value mirrors' "different hazard" bucket); a commit-time write would leave it empty exactly when it is read (the per-block hit test); see the invariant note above and #4406
       const cached = prevRebased.get(block.id)
       const rebased =
         cached !== undefined && cached.src === block && cached.depthOffset === depthOffset
@@ -238,6 +239,7 @@ export function useBlockZoom(
       result.push(rebased)
       if (collapsedIds.has(block.id)) skipUntilDepth.push(block.depth)
     }
+    // oxlint-disable-next-line react/refs -- `rebaseCacheRef` is a `useMemo` rebase cache built and consumed within the same run (frontend.md § Latest-value mirrors' "different hazard" bucket); a commit-time write would leave it empty exactly when it is read (the idempotent publish of this run's cache); see the invariant note above and #4406
     rebaseCacheRef.current = nextRebased
     return viewScope(result)
   }, [zoomedBlockId, blocks, collapseVisible, collapsedIds])

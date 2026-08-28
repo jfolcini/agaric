@@ -277,8 +277,9 @@ executably, including the stale-by-one behaviour of the passive variant, so the
 premise fails loudly if React ever changes it.
 
 Sites where neither fits — a ref written *and read* during the same render, e.g.
-a `useMemo` cache — keep their inline write and their finding. They are a
-different hazard and need restructuring, not a mirror change.
+a `useMemo` cache — keep their inline write. They are a different hazard and
+need restructuring, not a mirror change; each carries a reviewed per-site
+`react/refs` disable instead (see "The rule is at `error`" below).
 
 ### The hazard: a `react/refs` fix can switch the React Compiler on (#4469)
 
@@ -365,6 +366,80 @@ code and only the production build the e2e harness serves exercises the memoised
 path. This is the harness, not a coverage gap someone can close by adding a
 test. **`react(refs)` and `react(set-state-in-effect)` sweeps must therefore be
 validated by the mobile e2e (`e2e/mobile-editor.spec.ts`), not by vitest alone**,
-and the remaining findings cannot be treated as mechanical. See #4469 for the
+and a sweep's findings cannot be treated as mechanical. See #4469 for the
 full bisect and the compiled-output diff, and #4398 for the pattern this
 qualifies.
+
+### The rule is at `error`, and every remaining site is suppressed (#4406)
+
+`react/refs` sits at `error` in `.oxlintrc.json`, so the next violation fails
+the build instead of joining a pile nobody reads. It got there by review, not by
+rewriting. In a `.tsx`/`.jsx` file that is the argument given above: silencing
+the rule leaves the function uncompiled and is behaviour-preserving, while the
+rewrite it prescribes is not. **In a plain `.ts` file that argument does not
+apply at all** — babel never runs there, so neither the suppression nor the
+rewrite has a memoisation consequence, and the case for suppressing has to be
+made from the site's own semantics. Most of the sites below are `.ts`, so read
+each reason on its own terms rather than assuming #4469 covers it. Every site
+that still trips the rule carries an explicit
+
+```js
+// oxlint-disable-next-line react/refs -- <reason>; see #4406
+```
+
+**Per-line only.** Never a file- or block-level `oxlint-disable`, which would
+also cover code written later, and never an `ignorePatterns` entry. The prek
+`oxlint` hook runs with `--report-unused-disable-directives-severity=error`, so
+a directive that stops applying is itself a failure and the set cannot rot into
+blanket cover. One block-level pair predates this and survives:
+`src/__tests__/mocks/ui-select.tsx` wraps a whole function body, for the reason
+its own comment records (the taint covers four sites including the `return`, so
+per-line directives cannot express it). It is a test mock, and it is the only
+one — treat it as the exception that has to argue for itself, not as precedent.
+
+A directive without a reason is worse than a warning, because it is permanent
+and silent — so each one names what the rule flagged and why the code is
+nonetheless correct. Five buckets were accepted:
+
+- **A ref written *and* read within the same render** (the `useMemo` cache case
+  above): `src/components/block-tree/use-block-zoom.ts`,
+  `src/hooks/usePageBrowserData.ts`, `src/hooks/useUnlinkedReferences.ts`.
+- **A ref written during render whose read is deferred to commit** — the write
+  cannot wait, because the consumer runs before this component's own effects:
+  `src/editor/use-editor-event-dispatch.ts` (the per-render staging slot,
+  published into the backing refs by a post-commit `useLayoutEffect`) and
+  `src/hooks/useLazyRovingEditor.ts`'s `liveHandleRef` (read by a DESCENDANT's
+  layout effect, which runs before this hook's would).
+- **React's documented lazy-ref-init idiom** (`if (!ref.current) ref.current =
+  new Thing()`), including the widening that re-inits on a key change:
+  `src/stores/page-blocks.ts`, `src/hooks/usePrimaryFocus.tsx`, and
+  `src/components/editor/BlockListRenderer.tsx`'s `dragStoreRef`.
+- **A ref handed to a consumer that defers the mutation or the read** — a TipTap
+  `.configure` closure, a ref-callback registration, an event handler passed
+  through a render prop: `src/editor/use-roving-editor.ts`,
+  `src/components/editor/BlockContextMenu.tsx`,
+  `src/components/AdvancedQuery/HasParentMatchingEditor.tsx`,
+  `src/components/PageBrowser/AddFilterPopover.tsx`,
+  `src/hooks/useLazyRovingEditor.ts`.
+- **A ref chosen deliberately so a value does not force a re-render**:
+  `src/components/journal/DaySection.tsx`'s measured placeholder height.
+
+`src/components/editor/BlockListRenderer.tsx` is deliberately NOT in the first
+bucket. Its two comparison caches (`prevMarkerRef`, `prevCollapsedRef`) are read
+during render but written from effects — #4012 item 3 moved those writes out of
+render precisely so a discarded render could not publish a triple the tree never
+committed — so only the read is suppressed, and it can only ever see committed
+state. Its render-phase `dragStore.applyState(...)` is a separate #1267 case,
+documented at that site: the store is external and idempotent, and rows
+rendering in the same pass must read it.
+
+Anything outside these buckets is a real finding: fix it, and prove the fix with
+the e2e, not with vitest. `src/hooks/useLocalStoragePreference.ts` was one. Its
+returned value read `failedWriteRef.current` during render, so the hook's
+rendering output depended on a mutation React does not track: any consumer that
+skips a re-render holds the pre-failure value, and the read is unsafe under
+concurrent rendering regardless of the compiler (it is a `.ts` file, so the
+compiler is not the mechanism here). The render-facing read now comes from
+state, and the ref keeps only its synchronous job feeding the functional
+updater's `prev` inside `setPreference` — where the state value would still be
+the pre-update one for a second call in the same tick.

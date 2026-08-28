@@ -258,8 +258,14 @@ export function useUnlinkedReferences(
   // mirrors: moving the write into an effect would leave the very render
   // that needs the carried count reading a stale (pre-write) value one
   // commit late, defeating the whole point of the carry (see the #3733/#3738
-  // notes above). oxlint's react(refs) finding on it is deliberately left
-  // open rather than restructured or suppressed.
+  // notes above). #4406 promoted react(refs) to `error`; the reads and writes
+  // below carry an explicit per-site disable rather than a restructuring,
+  // because any restructuring that satisfies the rule here destroys the carry.
+  // NOTE the #4469 compiler argument is deliberately NOT invoked here:
+  // `vite.config.ts` runs babel over `.tsx`/`.jsx` only, so this `.ts` file is
+  // never seen by the React Compiler and its findings carry no memoisation
+  // consequence either way (docs/architecture/frontend.md § The hazard says so
+  // explicitly). The justification is the carry's semantics, nothing else.
   const carriedRef = useRef<{
     identity: string
     total: number
@@ -267,15 +273,19 @@ export function useUnlinkedReferences(
     truncated: boolean
   } | null>(null)
   if (lastPage) {
+    // oxlint-disable-next-line react/refs -- `carriedRef` is written and read within this same render (docs/architecture/frontend.md § Latest-value mirrors' "different hazard" bucket, not a mirror candidate); an effect write would leave this very render reading a pre-write value one commit late; see #4406
     carriedRef.current = {
       identity: countIdentity,
       total: lastPage.total_count,
       filtered: lastPage.filtered_count,
       truncated: lastPage.truncated,
     }
+    // oxlint-disable-next-line react/refs -- `carriedRef` is written and read within this same render (docs/architecture/frontend.md § Latest-value mirrors' "different hazard" bucket, not a mirror candidate); an effect write would leave this very render reading a pre-write value one commit late — this is the `else if` guard, reached only when `lastPage` is absent, so it reads the carry an EARLIER render wrote; see #4406
   } else if (carriedRef.current && carriedRef.current.identity !== countIdentity) {
+    // oxlint-disable-next-line react/refs -- `carriedRef` is written and read within this same render (docs/architecture/frontend.md § Latest-value mirrors' "different hazard" bucket, not a mirror candidate); an effect write would leave this very render reading a pre-write value one commit late — clearing a carry whose identity no longer matches; see #4406
     carriedRef.current = null
   }
+  // oxlint-disable-next-line react/refs -- `carriedRef` is written and read within this same render (docs/architecture/frontend.md § Latest-value mirrors' "different hazard" bucket, not a mirror candidate); an effect write would leave this very render reading a pre-write value one commit late — the read the whole carry exists for; see #4406
   const carried = carriedRef.current?.identity === countIdentity ? carriedRef.current : null
 
   const totalCount = lastPage?.total_count ?? carried?.total ?? 0
@@ -294,6 +304,7 @@ export function useUnlinkedReferences(
     void refetch()
   }, [refetch])
 
+  // oxlint-disable-next-line react/refs -- the returned counts are derived from the same-render `carriedRef` read above and carry its finding by construction; see #4406
   return {
     groups,
     totalCount,

@@ -158,7 +158,9 @@ export function BlockListRenderer({
     value: ListMarkerValue
   } | null>(null)
   const listMarkerValue = useMemo<ListMarkerValue>(() => {
+    // oxlint-disable-next-line react/refs -- `prevMarkerRef` is read during render on purpose (#3277 context-identity reuse); the WRITE is confined to the `useLayoutEffect` below, so this can only ever read a triple the tree actually committed; see #4406
     const prev = prevMarkerRef.current
+    // oxlint-disable-next-line react/refs -- same same-render read of the committed `prevMarkerRef` triple as the line above — the reuse gate #3277 exists for; see #4406
     if (prev && prev.listStyles === listStyles && ordinalsEqual(prev.ordinals, ordinals)) {
       return prev.value
     }
@@ -194,6 +196,7 @@ export function BlockListRenderer({
   // memoized rows alone.
   useLayoutEffect(() => {
     prevMarkerRef.current = { listStyles, ordinals, value: listMarkerValue }
+    // oxlint-disable-next-line react/refs -- `listMarkerValue` in this dep array is the memo above, which reads `prevMarkerRef` during render; the effect is what keeps that read safe; see #4406
   }, [listStyles, ordinals, listMarkerValue])
 
   // #1267 — publish the per-move DnD state to a ref-backed external store with
@@ -205,6 +208,7 @@ export function BlockListRenderer({
   // over-row notifies just the affected rows (old over-row, new over-row,
   // active row) and leaves the rest memoized. Mirrors the #1067 viewport store.
   const dragStoreRef = useRef<DragStateStore | undefined>(undefined)
+  // oxlint-disable-next-line react/refs -- React's documented lazy-ref-init idiom for the per-move DnD store (#1267); constructing `DragStateStore` in a `useState` initialiser would not change when it is read; see #4406
   if (!dragStoreRef.current) dragStoreRef.current = new DragStateStore()
   const dragStore = dragStoreRef.current
 
@@ -214,6 +218,7 @@ export function BlockListRenderer({
   // way avoids a mount-time idle→drag race: a single layout-effect publish can
   // fire before `useSyncExternalStore`'s subscription is registered, losing the
   // first notify. `applyState` is idempotent for unchanged inputs.
+  // oxlint-disable-next-line react/refs -- publishing the drag snapshot DURING render is deliberate (#1267): rows rendering in this same pass must read it, and `applyState` is idempotent — see the note above and #4406
   dragStore.applyState({ projected, activeId, overId, dropAfter })
   useLayoutEffect(() => {
     dragStore.notifyPending()
@@ -230,6 +235,7 @@ export function BlockListRenderer({
   // Children of those parents get a CSS enter animation.
   const prevCollapsedRef = useRef(collapsedIds)
   const animatingBlockIds = useMemo(() => {
+    // oxlint-disable-next-line react/refs -- `prevCollapsedRef` is read same-render (compared against the current `collapsedIds` to detect just-expanded parents) but written only from the effect below, never during render; see #4406 and frontend.md's ref-directive buckets
     const prev = prevCollapsedRef.current
     if (prev === collapsedIds) return new Set<string>()
 
@@ -313,7 +319,9 @@ export function BlockListRenderer({
   )
 
   return (
+    // oxlint-disable-next-line react/refs -- `listMarkerValue` is the memo above that reads `prevMarkerRef` during render; publishing it is the point of #3277; see #4406
     <ListMarkerProvider value={listMarkerValue}>
+      {/* oxlint-disable-next-line react/refs -- `dragStore` is the lazily-initialised `dragStoreRef.current` (#1267); publishing it as a stable context value is the point; see #4406 */}
       <DragStateContext.Provider value={dragStore}>
         <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
           {visibleItems.length === 0 && !loading ? (

@@ -621,11 +621,12 @@ export function PageBlockStoreProvider({
   // re-init when `pageId` changes rather than only on first render. Every
   // downstream use of `store` in this component is tainted by the same read
   // and shares this same finding; oxlint's react(refs) rule has no special
-  // case for the documented pattern. Left open rather than restructured —
-  // replacing it with the state-adjustment-during-render idiom would add an
-  // extra discarded render on every `pageId` change to a hot per-page-mount
-  // path, for a rule that is warn-level today.
+  // case for the documented pattern, so each tainted site carries its own
+  // #4406 disable rather than a restructuring: replacing this with the
+  // state-adjustment-during-render idiom would add an extra discarded render
+  // on every `pageId` change to a hot per-page-mount path.
   const storeRef = useRef<{ store: StoreApi<PageBlockState>; pageId: string } | null>(null)
+  // oxlint-disable-next-line react/refs -- React's documented lazy-ref-init idiom (`if (!ref.current) ref.current = new Thing()`), widened to re-init when `pageId` changes; see the note above and #4406
   if (!storeRef.current || storeRef.current.pageId !== pageId) {
     storeRef.current = { store: createPageBlockStore(pageId), pageId }
   }
@@ -644,8 +645,10 @@ export function PageBlockStoreProvider({
   useEffect(() => {
     registerPageStore(pageId, store)
     return () => unregisterPageStore(pageId, store)
+    // oxlint-disable-next-line react/refs -- `store` is the lazily-initialised `storeRef.current.store` above, so the dep array inherits that render read; the value is stable for a given `pageId`; see #4406
   }, [pageId, store])
 
+  // oxlint-disable-next-line react/refs -- the context value IS the lazily-initialised `storeRef.current.store`; there is no non-render read that could publish it; see #4406
   return createElement(PageBlockContext.Provider, { value: store }, children)
 }
 

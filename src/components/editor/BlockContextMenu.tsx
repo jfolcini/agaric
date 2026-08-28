@@ -957,8 +957,10 @@ export function BlockContextMenu({
   // el }`) that only writes `.current` when React attaches the DOM node —
   // never during render. Handing the ref object itself down to a consumer so
   // it can register into it later is the intended, safe use of a ref; oxlint
-  // flags the hand-off itself because its analysis is flow-insensitive and
-  // can't see that the actual mutation is deferred. Left open.
+  // flags the hand-off itself because it counts passing the ref object along
+  // as an access and is conservative about where a handed-off ref ends up, so
+  // it cannot model that the mutation is deferred to attach time. The hand-off
+  // carries a #4406 disable instead.
 
   const menu = (
     <div
@@ -974,6 +976,7 @@ export function BlockContextMenu({
       onKeyDown={handleKeyDown}
       data-editor-portal=""
     >
+      {/* oxlint-disable-next-line react/refs -- `itemRefs` is handed down and turned into a ref CALLBACK that only writes `.current` when React attaches the node, never during render — see the note above and #4406 */}
       {groups.map((group, groupIdx) => {
         // #1003/#1109 — a disclosure's child options (marked `indented`) are
         // wrapped in their own labelled `role="group"` (linked to the toggle via

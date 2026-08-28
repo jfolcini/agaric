@@ -107,6 +107,7 @@ export function useEditorEventDispatch(): EditorEventDispatch {
   // Reset each render so a handler that stops being registered falls back to
   // its default (matching the previous explicit-assignment behaviour).
   const staged = useRef<Partial<EditorEventHandlers>>({})
+  // oxlint-disable-next-line react/refs -- deliberate render-phase reset so a handler that stops being registered falls back to its default. `.on()` writes into this slot DURING render too (BlockTree calls `dispatch.on(...)` in its component body) — that is the design, not an oversight: nothing reads `staged.current` until the post-commit `useLayoutEffect` below publishes it into `refs.current`, so a render React abandons leaves behind only a staging slot the next render overwrites. The `refs.current` reads are event-time. See the note above and #4406
   staged.current = {}
 
   const on = useCallback(

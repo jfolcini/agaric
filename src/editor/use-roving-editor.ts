@@ -799,19 +799,24 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // #1434 — markdown `![alt](url)` image (inline atom, broken-image fallback).
       Image,
       PriorityShortcuts,
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       Placeholder.configure({ placeholder: () => placeholderRef.current }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       TagRef.configure({
         resolveName: (id: string) => resolveTagNameRef.current(id),
         onClick: (id: string) => onTagClickRef.current?.(id),
       }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       BlockLink.configure({
         resolveTitle: (id: string) => resolveBlockTitleRef.current(id),
         onNavigate: (id: string) => onNavigateRef.current?.(id),
       }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       BlockRef.configure({
         resolveContent: (id: string) => resolveBlockTitleRef.current(id),
         onNavigate: (id: string) => onNavigateRef.current?.(id),
       }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       AtTagPicker.configure({
         items: (query: string) => searchTagsRef.current(query),
         onCreate: (name: string) => {
@@ -820,6 +825,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
           return fn(name)
         },
       }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       BlockLinkPicker.configure({
         items: (query: string) => searchPagesRef.current(query),
         onCreate: (label: string) => {
@@ -828,13 +834,16 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
           return fn(label)
         },
       }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       BlockRefPicker.configure({
         items: (query: string) => searchBlockRefsRef.current(query),
       }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       SlashCommand.configure({
         items: (query: string) => searchSlashCommandsRef.current(query),
         onCommand: (item: PickerItem) => onSlashCommandRef.current?.(item),
       }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       PropertyPicker.configure({
         items: (query: string) => searchPropertyKeysRef.current(query),
         onSelect: (item: PickerItem) => onPropertySelectRef.current?.(item),
@@ -849,9 +858,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // `{{` embed-query picker — discoverable entry to the visual query
       // builder. Reuses the slash-command dispatch (`query` id →
       // openQueryBuilder); hands off to QueryHint once the user types.
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       QueryPicker.configure({
         onCommand: (item: PickerItem) => onSlashCommandRef.current?.(item),
       }),
+      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
       CheckboxInputRule.configure({
         onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
       }),
