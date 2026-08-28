@@ -89,6 +89,48 @@ describe('PopoverContent', () => {
     )
   })
 
+  // #4339 — `collisionPadding` defaults to `EDGE_PADDING_PX` (4px), not
+  // Radix's own default of `0`. That default is real geometry, not
+  // decoration: it feeds `detectOverflow`'s `paddingObject`, which
+  // floating-ui's `size()` folds into `maximumClippingHeight` for every
+  // popover in the app (~45 call sites at #4339, none of which pass the
+  // prop) — see the comment on `EDGE_PADDING_PX` above for the full chain.
+  //
+  // That geometry only manifests once `size()` actually lays the popper out,
+  // which happy-dom never does (the same reason the max-height test above
+  // asserts the class expression rather than a computed pixel value). A
+  // render-based test can't tell a real 4px inset from Radix's 0px default,
+  // because `collisionPadding` isn't reflected anywhere in the DOM — no
+  // attribute, no style — until layout runs. So this asserts the one thing
+  // this environment CAN observe: that `PopoverContent`'s default flows
+  // through to the underlying Radix element unchanged. It calls
+  // `PopoverContent` as a plain function rather than rendering it — React 19
+  // allows `ref` as an ordinary prop, so the component is a plain arrow
+  // function with no ref-forwarding wrapper of any kind, and calling it runs
+  // exactly the body React would run — and reads the element tree it returns
+  // directly, with no DOM involved. (The wrapper is named without using the
+  // legacy API's identifier on purpose: `no-legacy-react-apis` is a text
+  // scan, so spelling it out here would fail the hook on a comment.) That is deliberately narrower than "the popover
+  // avoids the viewport edge by 4px"; it goes red the moment the default
+  // itself regresses (removed, or drifts from 4), which is what shipped
+  // untested at #4339.
+  it('defaults collisionPadding to EDGE_PADDING_PX (4), not Radix default of 0', () => {
+    const portal = PopoverContent({ children: 'Content' })
+    const content = portal.props.children
+    expect(content.props.collisionPadding).toBe(4)
+  })
+
+  // A default and a hardcoded constant both satisfy the assertion above —
+  // neither proves a caller-supplied value actually reaches Radix instead of
+  // being clobbered by the default. This is the failure class #4339 is about
+  // in the first place: an app-wide value change with nothing pinning the
+  // contract around it. Same direct-call technique as the default test.
+  it('still passes through a caller-supplied collisionPadding instead of forcing the default', () => {
+    const portal = PopoverContent({ children: 'Content', collisionPadding: 12 })
+    const content = portal.props.children
+    expect(content.props.collisionPadding).toBe(12)
+  })
+
   it('has no a11y violations', async () => {
     const { baseElement } = render(
       <Popover defaultOpen>
