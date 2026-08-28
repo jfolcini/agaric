@@ -231,12 +231,13 @@ function findFunctionBodyStart(src: string, functionName: string): number | null
 
   // #4484 — was a second hand-rolled quote/comment-aware paren-depth loop
   // here, near-verbatim to `matchBracket` above except for counting only
-  // parens. `matchBracket`'s own docstring already argues that counting all
-  // bracket kinds on one depth counter is safe for well-formed TypeScript,
-  // which is exactly this case — a default value, type annotation, or
-  // comment containing `(`, `)`, or a quote character (e.g.
-  // `blockId, // the block we don't own`) can't miscount it either way. One
-  // copy cannot drift from itself.
+  // parens. Delegating gives that up for nothing: `findMatchingBracket`
+  // counts only the OPENER'S OWN kind — here `(` and `)`, ignoring any
+  // `{`/`[` nested in between — which is exactly what the loop it replaces
+  // did, and it skips comment and string/template/regex contents on top of
+  // that. So a default value, type annotation, or comment containing `(`,
+  // `)`, or a quote character (e.g. `blockId, // the block we don't own`)
+  // can't miscount it either way. One copy cannot drift from itself.
   const parenClose = matchBracket(src, parenStart)
   if (parenClose === -1) return null
   const parenEnd = parenClose - 1

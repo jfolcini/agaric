@@ -2772,9 +2772,16 @@ function runPrLimitExprSelfTest(ok, fail) {
   // fail-open divergence the issue describes. Must now fail CLOSED (NaN),
   // with a grammar-defect hint, not the unsubstituted-variable one (there is
   // no letter in this expression).
+  //
+  // The separator is spelled `\u00A0` rather than pasted in raw on purpose:
+  // as a literal character this arm is byte-for-byte indistinguishable from
+  // its ordinary-space control below in any diff, review, or editor, so the
+  // one thing it exists to test would be invisible — and any
+  // whitespace-normalising edit would silently collapse the two into the
+  // same assertion.
   check(
     'evaluatePrLimitExpr: a non-ASCII space (NBSP) separator is rejected, not summed (note 2)',
-    evaluatePrLimitExpr('$((PR_LIST_LIMIT + 1))', 99),
+    evaluatePrLimitExpr('$((PR_LIST_LIMIT\u00A0+\u00A01))', 99),
     (r) =>
       r.arithBody !== null &&
       Number.isNaN(r.evaluated) &&

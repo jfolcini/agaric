@@ -215,6 +215,17 @@ function loadPathAliasMap(repoRoot) {
     // trailing comma was evidently not the problem, so the ORIGINAL error
     // is what gets reported rather than a second one describing a string
     // this guard synthesised.
+    //
+    // The regex is a blunt instrument, not a structural edit: it deletes
+    // EVERY comma followed by whitespace and a `}` or `]` anywhere in the
+    // document, string values included, so a path value like
+    // `["./src/*,]"` would be rewritten too. That is tolerable only
+    // because of where it sits — reachable exclusively on a document
+    // `JSON.parse` has already rejected, and `compilerOptions.paths` values
+    // in practice are glob strings with no such sequence in them. A
+    // rescue that mangles a string and still fails to parse reports the
+    // ORIGINAL error above; one that mangles a string and DOES parse would
+    // have to have been unparseable to begin with.
     try {
       parsed = JSON.parse(stripComments(raw).replace(/,(?=\s*[}\]])/g, ''))
     } catch {
@@ -929,16 +940,28 @@ function extractPartiallyRootedCitations(text) {
 // step keeps this the SAME resolution mechanism for both forms rather than
 // a parallel one bolted on for aliases only.
 //
-// Deliberately narrow: only fires when `resolved` carries NO extension at
-// all (a bare module path, `src/lib/priority-levels`) — a candidate that
-// already ends in some `.xyz` extension is either already resolved above,
-// or genuinely wrong, and appending a second extension on top of it would
-// paper over exactly the kind of drift this guard exists to catch.
+// Deliberately narrow: only fires when `resolved` does not ALREADY end in
+// one of these extensions (a bare module path, `src/lib/priority-levels`) —
+// a candidate that already spells `.ts`/`.tsx`/… is either already resolved
+// above, or genuinely wrong, and appending a second extension on top of it
+// would paper over exactly the kind of drift this guard exists to catch.
 const RESOLVABLE_MODULE_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.cjs', '.js', '.jsx']
 
 function resolveTrackedPath(resolved, tracked, trackedDirs) {
   if (tracked.has(resolved) || trackedDirs.has(resolved)) return resolved
-  if (/\.[A-Za-z0-9]+$/.test(resolved)) return resolved
+  // "Already carries an extension" is MEMBERSHIP in the set above, not
+  // "ends in any dotted segment". The `/\.[A-Za-z0-9]+$/` test this
+  // replaces read a dotted BASENAME as an extension, so
+  // `@/components/graph/GraphView.helpers` — the idiomatic import-specifier
+  // spelling this whole fallback exists to support — never reached the
+  // fallback at all and was a hard miss, even though
+  // `src/components/graph/GraphView.helpers.ts` is tracked (it forced
+  // `src/lib/graph-types.ts` to spell the `.ts` out as a workaround).
+  // Direction is unchanged: a candidate ending in a resolvable extension is
+  // still returned untouched, and for everything else the loop below can
+  // only turn a would-be miss into a pass when `resolved + ext` is
+  // genuinely tracked — never the reverse.
+  if (RESOLVABLE_MODULE_EXTENSIONS.some((ext) => resolved.endsWith(ext))) return resolved
   for (const ext of RESOLVABLE_MODULE_EXTENSIONS) {
     if (tracked.has(resolved + ext)) return resolved + ext
   }
@@ -1944,6 +1967,46 @@ function aliasCitationScenarios(root) {
       'an extensionless DEAD alias citation is still red — the fallback does not fail open',
       extensionlessDead.status === 1 && /@\/nowhere/.test(extensionlessDead.stderr),
       `expected 1 naming @/nowhere, got ${extensionlessDead.status}: ${extensionlessDead.stderr}`,
+    )
+
+    // A DOTTED BASENAME, the shape the original `/\.[A-Za-z0-9]+$/` gate
+    // could not see: `GraphView.helpers` looks extensioned to a "any
+    // trailing dotted segment" test, so the extensionless fallback was
+    // never even reached and the citation was a hard miss despite
+    // `GraphView.helpers.ts` being tracked (`resolveTrackedPath`'s header).
+    // Fixture mirrors the real file that exposed it,
+    // `src/components/graph/GraphView.helpers.ts`.
+    mkdirSync(join(dir, 'src', 'graph'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'graph', 'GraphView.helpers.ts'), 'export const H = 1\n')
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The layout maths lives in `@/graph/GraphView.helpers` today.\n',
+    )
+    git('add', '-A')
+    const dottedBasename = run(['--worktree'])
+    record(
+      'an extensionless citation of a DOTTED-BASENAME module resolves (GraphView.helpers)',
+      dottedBasename.status === 0,
+      `expected 0, got ${dottedBasename.status}: ${dottedBasename.stderr}`,
+    )
+
+    // Both directions, on the SAME dotted-basename shape: widening the
+    // gate must not degenerate into "resolve anything with a dot in it".
+    // A dotted-basename citation naming a module that exists under NO
+    // resolvable extension is still red — the arm above alone would pass
+    // just as well against a `resolveTrackedPath` that returned tracked
+    // for everything.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The layout maths lives in `@/graph/GraphView.missing` today.\n',
+    )
+    git('add', '-A')
+    const dottedBasenameDead = run(['--worktree'])
+    record(
+      'a DOTTED-BASENAME citation of a module that does not exist is still red',
+      dottedBasenameDead.status === 1 &&
+        /@\/graph\/GraphView\.missing/.test(dottedBasenameDead.stderr),
+      `expected 1 naming @/graph/GraphView.missing, got ${dottedBasenameDead.status}: ${dottedBasenameDead.stderr}`,
     )
 
     // #4482 — `@/…` using the single Unicode ELLIPSIS GLYPH (U+2026, not

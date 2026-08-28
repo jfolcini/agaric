@@ -60,6 +60,20 @@ vi.mock('react', async (importOriginal) => {
   }
 })
 
+// Attached to every `failedWriteSetterSpies.size` assertion below. That
+// count is not a property of the hook under test — it is the mock's
+// `initial === null` heuristic asserting it still identifies exactly one
+// slot. Without this, a future `useState(null)` ANYWHERE in the rendered
+// tree fails these tests with "expected 2 to be 1", pointing at spy
+// bookkeeping instead of at the change that actually broke it.
+const ONE_NULL_SLOT =
+  "the `vi.mock('react')` above identifies the `failedWrite` setter purely by " +
+  '`initial === null`, so it expects exactly ONE `useState(null)` in the rendered tree. ' +
+  'A count other than 1 means that assumption broke, not the hook: either something new ' +
+  'under <Harness> now calls `useState(null)`, or `useLocalStoragePreference` stopped ' +
+  'doing so. Retarget the heuristic (identify the slot by something other than its ' +
+  'initializer) — do not relax the count.'
+
 interface HarnessProps<T> {
   storageKey: string
   defaultValue: T
@@ -645,7 +659,7 @@ describe('useLocalStoragePreference', () => {
           }}
         />,
       )
-      expect(failedWriteSetterSpies.size).toBe(1)
+      expect(failedWriteSetterSpies.size, ONE_NULL_SLOT).toBe(1)
       const failedWriteSetterSpy = [...failedWriteSetterSpies.values()][0]
       expect(failedWriteSetterSpy).toHaveBeenCalledTimes(0)
 
@@ -682,7 +696,7 @@ describe('useLocalStoragePreference', () => {
       // the SAME spy fires on both the failure-set and the success-clear, so
       // a 0-calls assertion elsewhere is actually discriminating something
       // rather than passing because the spy never fires at all.
-      expect(failedWriteSetterSpies.size).toBe(1)
+      expect(failedWriteSetterSpies.size, ONE_NULL_SLOT).toBe(1)
       const failedWriteSetterSpy = [...failedWriteSetterSpies.values()][0]
 
       const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {

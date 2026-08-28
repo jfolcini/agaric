@@ -124,6 +124,14 @@ without a matching non-zero control discriminates nothing; it passes identically
 works, the spy is wired to the wrong setter, or the mock never installed. A positive control now
 pins the same spy firing twice with specific arguments in the failure case.
 
+One item in this batch is not coverage at all and is easy to mistake for scope creep, because it
+lives in #4490's comment thread rather than its body: #4489 aligned `package.json`'s `lint` script
+with the prek hook by adding `--report-unused-disable-directives-severity=error` and left
+`lint:fix` bare, so the two scripts disagreed about what counts as an error and a developer running
+the fixing one stopped seeing the errors the checking one reports. The thread asked for the
+one-word fix explicitly, and it is made here; it changes the exit contract of `npm run lint:fix`
+and `just lint-fix`, and nothing else.
+
 ## What review actually changed
 
 Worth recording because the adversarial pass is expensive and its value is easy to assume rather
@@ -141,7 +149,7 @@ arm the issue insisted must not regress.
 
 Whole frontend suite: **792 files, 18144 passed**, 1 expected fail, 37 skipped. `tsc -b` clean.
 `oxfmt --check` clean across all 12 changed files. Guard self-tests all exit 0, including
-`check-doc-code-paths.mjs` at 148 assertions (up from 146), `check-hook-deps.mjs`,
+`check-doc-code-paths.mjs` at 150 assertions (up from 146), `check-hook-deps.mjs`,
 `check-session-log-pr-collision.mjs`, `scripts/lib/js-scanner.mjs` and
 `check-main-module-detection.mjs` across 74 scanned scripts. Each guard was also run against the
 real tree, not only its fixtures.
