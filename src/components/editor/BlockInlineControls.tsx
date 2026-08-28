@@ -671,7 +671,26 @@ export const BlockMetadataRow = React.memo(
     if (!hasContent) return null
 
     return (
-      <div className="block-metadata-row flex items-center flex-wrap gap-1 mt-0.5">
+      // `px-3` is NOT decoration — it is what makes this row line up with the
+      // block's text, which is the whole point of it sitting here (see the
+      // content-column comment in `SortableBlock.tsx`: "left-aligned with the
+      // text", user feedback 2026-06-20). The row and the text are siblings in
+      // one flex column, so they share a left EDGE, but the text is inset from
+      // that edge by its own horizontal padding and the row was not — leaving
+      // the chips ~12px left of the first character.
+      //
+      // The inset is `px-3` in BOTH render paths, so one value matches both and
+      // the alignment cannot shift when a block gains or loses focus:
+      //   - unfocused: `block-static` in `StaticBlock.tsx` (`px-3 py-1`)
+      //   - focused:   `.ProseMirror` in `index.css` (`@apply px-3 py-1`)
+      // `px-3` rather than `pl-3` so the chips also wrap against the same right
+      // boundary the text wraps against.
+      //
+      // That makes three copies of one value, the third of which is in CSS and
+      // cannot import a shared constant. `SortableBlock.metadata-row-alignment`
+      // pins the relationship rather than the literal, so changing the inset in
+      // one place fails loudly instead of drifting.
+      <div className="block-metadata-row flex items-center flex-wrap gap-1 mt-0.5 px-3">
         {priority && (
           <PriorityBadge
             blockId={blockId}
