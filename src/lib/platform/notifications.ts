@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger'
  * Ensure the OS notification permission is granted.
  *
  * On Android 13+ a runtime `POST_NOTIFICATIONS` grant is required before
- * `commands.notifyTask` (`@/lib/bindings` — the `@/lib/tauri/notifications`
+ * `commands.notifyTask` (`@/lib/bindings` — the lib/tauri/notifications
  * wrapper it used to be reached through was a dead wrapper, removed in
  * #4410) can surface anything; on desktop the capability grant is sufficient
  * and this resolves `true`

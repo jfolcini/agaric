@@ -654,6 +654,23 @@ function resolvePyModule(repoRoot, scriptRepoDir, moduleName) {
  * string-literal lexer (quote-type and escape tracking), not a cheap regex
  * tweak.
  *
+ * A FOURTH gap, the MIRROR of the ordering fix below (#4486 note 1): a
+ * genuine whole-line `#` comment that happens to contain a `"""` or `'''`
+ * delimiter — e.g. `# see the """example""" above` — is exactly the text
+ * `stripHashCommentLines` exists to remove, but this pass runs BEFORE that
+ * filter (the ordering below is load-bearing for the reason given there), so
+ * it still sees the delimiter and reads it as an OPENING one. It then pairs
+ * that with whatever `"""`/`'''` occurs next in the file and blanks every
+ * real statement in between — a genuine `import` sitting right after the
+ * comment included. Also FAILS OPEN, same class and same direction as the
+ * THIRD gap just above, and closing it needs the identical real
+ * string-literal lexer, not a regex tweak: telling "delimiter inside a
+ * comment" from "delimiter opening a real triple-quoted literal" is exactly
+ * the distinction a lexer makes and a regex cannot. Not currently reachable
+ * (no `.py` file anywhere under `scripts/` has a `#`-comment line spelling a
+ * triple-quote delimiter as of this writing); documented here, rather than
+ * modelled, for the same reason as the third gap.
+ *
  * MUST run on `blankPyDocstrings`'s OUTPUT DIRECTLY — i.e. before
  * `stripLineComments`'s `#`-comment-LINE filter, not after it as an earlier
  * version of this pass did (#4477 note 4). That filter drops a whole line

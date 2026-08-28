@@ -3,6 +3,15 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+// #4484 — delegate bracket-matching to the repo's sanctioned shared JS/TS
+// scanner (`scripts/lib/js-scanner.mjs`, #3991) instead of hand-rolling a
+// quote/comment/escape-aware state machine locally; see `matchBracket`'s own
+// docstring below. No type declarations exist for this `.mjs` script — same
+// as the existing `src/__tests__/check-bare-icon-buttons.test.ts` and its
+// siblings, which already import guard scripts this way.
+// @ts-expect-error — no type declarations for the .mjs script.
+import { findMatchingBracket } from '../../../../scripts/lib/js-scanner.mjs'
+
 /**
  * Guards PR #4471's non-blocking review note 3: the `'use no memo'`
  * directive that opts `SelectionBubbleMenu` out of React Compiler
@@ -55,6 +64,24 @@ import { describe, expect, it } from 'vitest'
  * default value and an escaped quote inside one, each in both a parameter
  * list (the paren-matching loop) and a string-literal return type
  * (`matchBracket`).
+ *
+ * A fourth review (#4484) found the two hardened scanners were themselves
+ * the defect generator: `matchBracket` and the parameter-list loop above
+ * were near-verbatim duplicates — same quote state machine, same escape
+ * handling, same two comment branches — and every one of the last two
+ * rounds fixed exactly one copy and left its sibling to be caught by a
+ * reviewer rather than a test. They are now one function: `matchBracket`
+ * delegates to `scripts/lib/js-scanner.mjs`'s `findMatchingBracket` (the
+ * shared, self-tested JS/TS scanner every JS-side guard in this repo is
+ * built to delegate lexing to, #3991 — "the sanctioned implementation, do
+ * not hand-roll a fourth"), and the parameter-list skip calls it directly
+ * instead of hand-rolling a second copy. That review also found
+ * `skipTrivia`'s block-comment branch reachable by no fixture (closed
+ * below) and three gaps in `findFunctionBodyStart`'s and
+ * `isDirectiveInPrologue`'s known-limits documentation (a type-parameter
+ * list containing a paren, a composite return type, and a raw-text-only
+ * directive match) — recorded where each function already enumerates its
+ * other limits.
  */
 
 const COMPONENT_PATH = join(__dirname, '../SelectionBubbleMenu.tsx')
@@ -83,60 +110,61 @@ function skipTrivia(src: string, start: number): number {
 
 /**
  * Given `src[openIdx]` is one of `{`, `[`, or `(`, return the index just past
- * its matching close (bracket-depth, quote, and comment aware — any open
- * bracket type increments the same counter a matching close decrements,
- * which is enough for well-formed TS even when the group nests a different
- * bracket kind inside it). Returns -1 if the group is never closed.
+ * its matching close. Returns -1 if the group is never closed by an ordinary
+ * (un)balanced bracket count.
+ *
+ * A thin return-convention adapter over `findMatchingBracket` from the
+ * repo's shared JS/TS scanner (`scripts/lib/js-scanner.mjs`, #3991): that
+ * function returns the index OF the closing bracket itself, one less than
+ * what `findFunctionBodyStart` below needs at both of its call sites, so
+ * this just adds one.
+ *
+ * Does NOT catch `ScanError`: `findMatchingBracket` throws it (uncaught,
+ * propagating straight through this adapter and through
+ * `findFunctionBodyStart`) rather than returning -1 when the scanned range
+ * holds an unterminated string or template literal — a different failure
+ * mode than the old hand-rolled loop it replaced, which just returned -1 for
+ * that case too, quietly. Left uncaught deliberately: `ScanError`'s own
+ * contract (`scripts/lib/js-scanner.mjs`) says a caller must turn it into a
+ * loud guard failure, never a silent -1, and this file's whole point is
+ * fail-loud over silent-pass. No fixture in this file reaches this path (the
+ * live component and every fixture here are well-formed), so it is
+ * documented rather than exercised in the ordinary suite; see the dedicated
+ * regression test below.
+ *
+ * #4484 replaced what used to be two independent hand-rolled
+ * quote/comment/escape state machines here — this function, and
+ * `findFunctionBodyStart`'s parameter-list loop — with this one adapter.
+ * They were near-verbatim duplicates (same quote handling, same two comment
+ * branches, same escape handling), and the file's own review history shows
+ * why that is a defect generator rather than tidiness debt: #4475's second
+ * review round added comment-awareness to the parameter-list loop and not
+ * to this function, and its third round added escape-awareness to one of
+ * them and not the other (see the file header). A hand-rolled copy can
+ * drift from its sibling with nothing to catch it; a three-line adapter
+ * over an already self-tested shared implementation cannot drift from
+ * itself. Delegating also CLOSES, rather than merely documents, a limit the
+ * old hand-rolled version had: it treated a template literal's backtick as
+ * an opaque quote, so a bracket inside a `${…}` interpolation was skipped
+ * instead of counted; the shared tokenizer models template interpolations
+ * as real code.
  */
 function matchBracket(src: string, openIdx: number): number {
-  let depth = 0
-  let quote: string | null = null
-  for (let k = openIdx; k < src.length; k++) {
-    const c = src[k]
-    if (quote) {
-      if (c === '\\') {
-        k++
-        continue
-      }
-      if (c === quote) quote = null
-      continue
-    }
-    // A comment inside the group is not string content: an apostrophe in
-    // `/* the node we don't own */` must not latch `quote` and start
-    // swallowing every real closing bracket looking for a `'` that could be
-    // found anywhere later in the source (#4475 note 2 — the same fix as
-    // the parameter-list loop below, applied here too).
-    if (c === '/' && src[k + 1] === '/') {
-      const nl = src.indexOf('\n', k)
-      k = nl === -1 ? src.length : nl
-      continue
-    }
-    if (c === '/' && src[k + 1] === '*') {
-      const end = src.indexOf('*/', k + 2)
-      k = end === -1 ? src.length : end + 1
-      continue
-    }
-    if (c === '"' || c === "'" || c === '`') {
-      quote = c
-      continue
-    }
-    if (c === '{' || c === '[' || c === '(') depth++
-    else if (c === '}' || c === ']' || c === ')') {
-      depth--
-      if (depth === 0) return k + 1
-    }
-  }
-  return -1
+  const closeIdx = findMatchingBracket(src, openIdx)
+  return closeIdx === -1 ? -1 : closeIdx + 1
 }
 
 /**
  * Locate the index just after the opening `{` of `function <name>(...) {`'s
- * body: skip the parameter list (paren-depth + quote/comment aware, so a
- * default value, type annotation, or comment containing `(`, `)`, or a
- * quote character can't miscount it), skip an optional return type
- * annotation, and return the position right after the body's own opening
- * brace. Returns null if `functionName` isn't found as a function
- * declaration in `src`.
+ * body: skip the parameter list, skip an optional return type annotation,
+ * and return the position right after the body's own opening brace. Returns
+ * null if `functionName` isn't found as a function declaration in `src`.
+ *
+ * The parameter list is skipped by finding `(`'s match with `matchBracket`
+ * (the same helper used below for the return-type group, and — since
+ * #4484 — bracket-depth, quote, comment, AND template-literal aware) rather
+ * than a second hand-rolled loop: a default value, type annotation, or
+ * comment containing `(`, `)`, or a quote character can't miscount it.
  *
  * Known limit, deliberately not closed (#4475 note 1): the return-type skip
  * below only covers a brace-free type (`React.ReactElement`) or one whose
@@ -151,6 +179,25 @@ function matchBracket(src: string, openIdx: number): number {
  * a second, angle-bracket-aware scan, disproportionate for a guard that
  * reads one known file. Revisit if this ever needs to model a
  * generic-wrapped return type.
+ *
+ * Known limit, deliberately not closed (#4484): a COMPOSITE return type
+ * whose first token opens a bracket and then continues past its close —
+ * `): { a: X } | null {`, `): [A, B] & C {` — fails differently from the
+ * generic-wrapped case just above. `matchBracket` correctly closes the
+ * type's own group, but the token right past it is `|` or `&` rather than
+ * `{`, so the `if (src[after] === '{') bodyBrace = after` branch below
+ * doesn't fire and `bodyBrace` is left on the type's own opening brace.
+ * That character IS `{`, so the `src[bodyBrace] !== '{'` fallback never
+ * runs either — the function returns a position inside the TYPE, not the
+ * body. Same loud-failure property as the case above (a misread body reads
+ * the wrong text and fails an assertion rather than passing silently), so
+ * this is a docstring completeness point, not a defect.
+ *
+ * Known limit, deliberately not closed (#4484): `parenStart` below assumes
+ * the first `(` after the function name opens the parameter list. A type
+ * parameter list containing a paren ahead of the real one —
+ * `function SelectionBubbleMenu<T extends (x: A) => B>(props)` — makes this
+ * scan the type parameter's own group instead of the real parameter list.
  */
 function findFunctionBodyStart(src: string, functionName: string): number | null {
   const marker = `function ${functionName}`
@@ -182,48 +229,17 @@ function findFunctionBodyStart(src: string, functionName: string): number | null
   const parenStart = src.indexOf('(', fnStart + marker.length)
   if (parenStart === -1) return null
 
-  let depth = 0
-  let quote: string | null = null
-  let parenEnd = -1
-  for (let j = parenStart; j < src.length; j++) {
-    const c = src[j]
-    if (quote) {
-      if (c === '\\') {
-        j++
-        continue
-      }
-      if (c === quote) quote = null
-      continue
-    }
-    // A comment inside the parameter list is not string content: an
-    // apostrophe in `blockId, // the block we don't own` must not latch
-    // `quote` and start swallowing every real `)` looking for a closing `'`
-    // that — with this file's own trailing directive strings around — can
-    // be found anywhere later in the source, well past the real one.
-    if (c === '/' && src[j + 1] === '/') {
-      const nl = src.indexOf('\n', j)
-      j = nl === -1 ? src.length : nl
-      continue
-    }
-    if (c === '/' && src[j + 1] === '*') {
-      const end = src.indexOf('*/', j + 2)
-      j = end === -1 ? src.length : end + 1
-      continue
-    }
-    if (c === '"' || c === "'" || c === '`') {
-      quote = c
-      continue
-    }
-    if (c === '(') depth++
-    else if (c === ')') {
-      depth--
-      if (depth === 0) {
-        parenEnd = j
-        break
-      }
-    }
-  }
-  if (parenEnd === -1) return null
+  // #4484 — was a second hand-rolled quote/comment-aware paren-depth loop
+  // here, near-verbatim to `matchBracket` above except for counting only
+  // parens. `matchBracket`'s own docstring already argues that counting all
+  // bracket kinds on one depth counter is safe for well-formed TypeScript,
+  // which is exactly this case — a default value, type annotation, or
+  // comment containing `(`, `)`, or a quote character (e.g.
+  // `blockId, // the block we don't own`) can't miscount it either way. One
+  // copy cannot drift from itself.
+  const parenClose = matchBracket(src, parenStart)
+  if (parenClose === -1) return null
+  const parenEnd = parenClose - 1
 
   // The parameter list may be followed by a return type annotation before
   // the body's own `{` (`): React.ReactElement {`, or an inline object
@@ -268,11 +284,23 @@ function findFunctionBodyStart(src: string, functionName: string): number | null
  * prior name): the directive need not be first, only somewhere in the
  * prologue, and a name asserting otherwise is the exact misreading this
  * guard exists to correct (#4475 note 4).
+ *
+ * Known limit, deliberately not closed (#4484): a prologue entry is
+ * accepted the moment its raw literal text equals `directiveText`, without
+ * confirming the literal is a COMPLETE expression statement — a body
+ * opening with `'use no memo' + x` (a real binary expression, not a
+ * directive) would report true. The converse direction fails closed (a
+ * genuine directive is never missed), so this is a caveat on the positive
+ * case, not a defect worth a statement-boundary check.
  */
 function isDirectiveInPrologue(src: string, functionName: string, directiveText: string): boolean {
   const bodyStart = findFunctionBodyStart(src, functionName)
   if (bodyStart === null) {
-    throw new Error(`Could not find \`function ${functionName}(...) { ... }\` in the given source`)
+    throw new Error(
+      `Could not find \`function ${functionName}(...) { ... }\` in the given source — only ` +
+        `\`function <name>\` declarations are recognised, not e.g. a ` +
+        `\`const ${functionName} = (...) => { ... }\` arrow-function form`,
+    )
   }
   let i = skipTrivia(src, bodyStart)
   for (;;) {
@@ -432,6 +460,44 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
       }
     `
     expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(false)
+  })
+
+  it('does not let a block comment between the body brace and the directive stop the prologue scan (#4484)', () => {
+    // The live component and every other fixture in this file put a `//`
+    // line comment (if any) between the body's opening brace and the
+    // directive, so `skipTrivia`'s block-comment branch had no fixture
+    // reaching it through this call site.
+    const source = `
+      function ${COMPONENT_NAME}({ editor }: Props) {
+        /* a block comment before the directive */
+        '${DIRECTIVE}'
+        const ok = 1
+        return ok
+      }
+    `
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+  })
+
+  it('fails loud (throws) rather than silently misreading the prologue when the parameter list holds an unterminated string (#4484)', () => {
+    // `matchBracket` delegates to `findMatchingBracket` (#4484), which throws
+    // `ScanError` on an unterminated string/template literal in the scanned
+    // range instead of returning -1 the way the old hand-rolled loop here
+    // did. Nothing in this file's other fixtures reaches that path — they are
+    // all well-formed — so this pins the one thing that matters about it:
+    // an unclosed string still reddens this guard loudly, it does not make
+    // `isDirectiveInPrologue` return a wrong boolean silently.
+    const source = `
+      function ${COMPONENT_NAME}({ editor = 'never closes
+        return editor
+      }
+    `
+    // Asserts the SPECIFIC error, not just "throws something": if a future
+    // change caught `ScanError` here and mapped it back to -1 (matching the
+    // old loop's quiet behaviour), `findFunctionBodyStart` would return null
+    // and this would still throw — but the generic, misleading "Could not
+    // find `function ... { ... }`" message instead of one naming what
+    // actually went wrong.
+    expect(() => isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toThrow(/unterminated/)
   })
 
   it('resolves correctly when the sibling-prefix, return-type, and comment fixes all apply together', () => {

@@ -30,12 +30,17 @@ function Harness({
 }): React.ReactElement {
   // #4406 — destructure before use: reading `containerRef` off the hook
   // result during render (`roving.containerRef`) is a ref access as far as
-  // `react(refs)` is concerned, and once `roving` is tainted every later
-  // read of it is flagged too — which is why the handler props draw
-  // findings here as well. Destructuring at the hook call is not an access;
-  // the rule is property-aware, not a blanket "syntax-only" ban on member
-  // expressions (a component that reads only `roving.onKeyDown` draws no
-  // finding at all).
+  // `react(refs)` is concerned. Destructuring at the hook call is not an
+  // access; the rule is property-aware, not a blanket "syntax-only" ban on
+  // member expressions. Verified directly (#4484), since this claim had no
+  // citation or fixture: running `oxlint` against an isolated
+  // `const roving = useRovingTabindex()` fixture flags `roving.containerRef`,
+  // `roving.onKeyDown`, AND `roving.onFocus` together — which is why the
+  // handler props draw findings here as well, once destructuring is
+  // reverted — while a sibling fixture reading only `roving.onKeyDown` (no
+  // ref-typed property read on that binding) draws no `react(refs)` finding
+  // at all. Not a committed regression test — a one-off check, recorded so
+  // the next reader can reproduce it rather than take the claim on faith.
   //
   // The destructuring is not inert everywhere — it can un-bail the React
   // Compiler and enable memoisation (#4469; see SelectionBubbleMenu.tsx for
