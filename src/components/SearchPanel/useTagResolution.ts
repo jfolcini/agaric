@@ -27,8 +27,10 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { listTagsByPrefix, paginationLimit } from '@/lib/tauri'
+import { paginationLimit } from '@/lib/tauri'
 
 export interface TagResolution {
   /** Ids for the names that resolved. One entry per resolved input name. */
@@ -83,7 +85,10 @@ export function useTagResolution(
     let cancelled = false
     Promise.all(
       names.map((name) =>
-        listTagsByPrefix({ prefix: name, limit: paginationLimit(20) }).catch(() => []),
+        commands
+          .listTagsByPrefix(name, paginationLimit(20))
+          .then(unwrap)
+          .catch(() => []),
       ),
     )
       .then((batches) => {

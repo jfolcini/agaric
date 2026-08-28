@@ -21,11 +21,20 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/tauri')>()
+// `listTagsByPrefix` retired its `@/lib/tauri` wrapper (#4411); the hook now
+// calls `commands.listTagsByPrefix` from `@/lib/bindings` directly and
+// unwraps the `Result` envelope, so the mock intercepts THAT and resolves
+// the `{ status: 'ok', data }` shape.
+const mockedListTags = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    listTagsByPrefix: vi.fn(),
+    commands: {
+      ...actual.commands,
+      listTagsByPrefix: (...args: unknown[]) =>
+        mockedListTags(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 
@@ -34,9 +43,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { useTagResolution } from '@/components/SearchPanel/useTagResolution'
-import { listTagsByPrefix, type TagCacheRow } from '@/lib/tauri'
-
-const mockedListTags = vi.mocked(listTagsByPrefix)
+import type { TagCacheRow } from '@/lib/bindings'
 
 const NO_NAMES: string[] = []
 const WIP: string[] = ['wip']
@@ -124,7 +131,7 @@ describe('useTagResolution', () => {
   })
 
   it('reports a partial outcome: resolved ids AND hasUnresolved together', async () => {
-    mockedListTags.mockImplementation(async ({ prefix }) => (prefix === 'wip' ? [wipTag] : []))
+    mockedListTags.mockImplementation(async (prefix: string) => (prefix === 'wip' ? [wipTag] : []))
 
     const { result } = renderHook(() => useTagResolution(WIP_AND_TYPO, 'SPACE_A'))
 
@@ -196,7 +203,7 @@ describe('useTagResolution', () => {
       expect(mockedListTags).toHaveBeenCalled()
     })
 
-    const prefixes = mockedListTags.mock.calls.map((c) => c[0]?.prefix)
+    const prefixes = mockedListTags.mock.calls.map((c) => c[0])
     expect(prefixes).not.toContain('foo')
     expect(prefixes.every((p) => p === 'Foo')).toBe(true)
   })

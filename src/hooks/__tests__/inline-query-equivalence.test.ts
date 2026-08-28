@@ -17,12 +17,13 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { dispatchQuery, fetchRichInlineQuery } from '@/hooks/useQueryExecution'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import {
   resolveLegacyQueryToFilterExpr,
   type InlineQueryResolveDeps,
 } from '@/lib/inline-query-resolve'
 import { parseQueryExpression } from '@/lib/query-utils'
-import { listTagsByPrefix } from '@/lib/tauri'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   blockTagRefs,
@@ -131,7 +132,8 @@ beforeEach(() => {
 })
 
 const deps: InlineQueryResolveDeps = {
-  resolveTagPrefix: async (prefix) => (await listTagsByPrefix({ prefix })).map((t) => t.tag_id),
+  resolveTagPrefix: async (prefix) =>
+    unwrap(await commands.listTagsByPrefix(prefix, null)).map((t) => t.tag_id),
 }
 
 async function legacyIds(expr: string): Promise<string[]> {

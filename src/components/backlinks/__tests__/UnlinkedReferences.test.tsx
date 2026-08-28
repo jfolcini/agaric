@@ -40,12 +40,18 @@ import { t } from '@/lib/i18n'
 // longer exists on `@/lib/tauri` (dead wrapper, #4410) — the hoisted mock
 // below backs the `commands.*` surface only, and is used directly (not via
 // `vi.mocked(...)` on a `@/lib/tauri` import) for the assertion further down.
-const { mockListPropertyKeys } = vi.hoisted(() => ({ mockListPropertyKeys: vi.fn() }))
+// `listTagsByPrefix` retired its `@/lib/tauri` wrapper too (#4411) — the
+// component now calls `commands.listTagsByPrefix` directly and unwraps the
+// `Result` envelope, so its mock backs the `commands.*` surface and resolves
+// the `{ status: 'ok', data }` shape.
+const { mockListPropertyKeys, mockListTagsByPrefix } = vi.hoisted(() => ({
+  mockListPropertyKeys: vi.fn(),
+  mockListTagsByPrefix: vi.fn(),
+}))
 
 vi.mock('@/lib/tauri', () => ({
   listUnlinkedReferences: vi.fn(),
   editBlock: vi.fn(),
-  listTagsByPrefix: vi.fn(),
   // `handleLinkIt` now reads aliases via `getPageAliases` so
   // alias-only mentions can be rewritten. Default mock returns no
   // aliases so the legacy title-only test paths stay unaffected;
@@ -58,7 +64,12 @@ vi.mock('@/lib/bindings', async () => {
   const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
   return {
     ...actual,
-    commands: { ...actual.commands, listPropertyKeys: mockListPropertyKeys },
+    commands: {
+      ...actual.commands,
+      listPropertyKeys: mockListPropertyKeys,
+      listTagsByPrefix: (...args: unknown[]) =>
+        mockListTagsByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 
@@ -140,11 +151,11 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import { editBlock, getPageAliases, listTagsByPrefix, listUnlinkedReferences } from '@/lib/tauri'
+import { editBlock, getPageAliases, listUnlinkedReferences } from '@/lib/tauri'
 
 const mockedListUnlinked = vi.mocked(listUnlinkedReferences)
 const mockedEditBlock = vi.mocked(editBlock)
-const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
+const mockedListTagsByPrefix = mockListTagsByPrefix
 const mockedListPropertyKeys = mockListPropertyKeys
 const mockedGetPageAliases = vi.mocked(getPageAliases)
 
@@ -1098,7 +1109,7 @@ describe('UnlinkedReferences', () => {
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
     await waitFor(() => {
-      expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: '' })
+      expect(mockedListTagsByPrefix).toHaveBeenCalledWith('', null)
       expect(mockedListPropertyKeys).toHaveBeenCalled() // no-args by contract
     })
   })
@@ -1460,7 +1471,7 @@ describe('UnlinkedReferences', () => {
 
     // Wait until the mount-once effect has fired the IPC call.
     await waitFor(() => {
-      expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: '' })
+      expect(mockedListTagsByPrefix).toHaveBeenCalledWith('', null)
     })
 
     // Unmount before the promise settles — cleanup sets cancelled=true.

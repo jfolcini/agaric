@@ -33,22 +33,16 @@ import type { BacklinkFilterBuilderProps } from '@/components/BacklinkFilterBuil
 import { BacklinkFilterBuilder } from '@/components/BacklinkFilterBuilder'
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
 import type { BacklinkFilter } from '@/lib/tauri'
-import { listTagsByPrefix } from '@/lib/tauri'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
-// `HasTagFilterForm` now calls `commands.listTagsByPrefix` from
-// `@/lib/bindings` (positional `(prefix, limit)`) and unwraps the `Result`
-// envelope. The same spy backs both the (still-wrapped) `@/lib/tauri` surface
-// and the `commands.*` surface so the `vi.mocked(...)` assertions keep
-// working; it resolves the `{ status: 'ok', data }` shape.
+// `HasTagFilterForm` calls `commands.listTagsByPrefix` from `@/lib/bindings`
+// directly (positional `(prefix, limit)`; the `@/lib/tauri` wrapper was
+// retired, #4411) and unwraps the `Result` envelope — resolve the
+// `{ status: 'ok', data }` shape.
 const { mockListTagsByPrefix } = vi.hoisted(() => ({
   mockListTagsByPrefix: vi.fn().mockResolvedValue({ status: 'ok', data: [] }),
-}))
-
-vi.mock('@/lib/tauri', () => ({
-  listTagsByPrefix: mockListTagsByPrefix,
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -1305,7 +1299,7 @@ describe('BacklinkFilterBuilder', () => {
 
     it('calls listTagsByPrefix on search query change', async () => {
       const user = userEvent.setup()
-      vi.mocked(listTagsByPrefix).mockResolvedValue({
+      mockListTagsByPrefix.mockResolvedValue({
         status: 'ok',
         data: [{ tag_id: '01TAG_PROJ', name: 'Project', usage_count: 5, updated_at: '' }],
       } as never)
@@ -1324,7 +1318,7 @@ describe('BacklinkFilterBuilder', () => {
       // Wait for the debounced IPC call
       await waitFor(() => {
         // `commands.listTagsByPrefix` is positional: (prefix, limit).
-        expect(listTagsByPrefix).toHaveBeenCalledWith('proj', 50)
+        expect(mockListTagsByPrefix).toHaveBeenCalledWith('proj', 50)
       })
     })
 
@@ -1340,7 +1334,7 @@ describe('BacklinkFilterBuilder', () => {
     //      path can satisfy the old popover-unmount waitFor without
     //      `handleSelect` having fired, hiding the missed click.
     function preseedTagSearchMock(): void {
-      vi.mocked(listTagsByPrefix).mockResolvedValue({
+      mockListTagsByPrefix.mockResolvedValue({
         status: 'ok',
         data: tagsData.map((t) => ({
           tag_id: t.id,
@@ -1362,7 +1356,7 @@ describe('BacklinkFilterBuilder', () => {
 
       await user.click(screen.getByRole('button', { name: 'Project' }))
       await waitFor(() => {
-        expect(listTagsByPrefix).toHaveBeenCalled()
+        expect(mockListTagsByPrefix).toHaveBeenCalled()
       })
       await user.click(screen.getByRole('option', { name: 'Review' }))
 
@@ -1382,7 +1376,7 @@ describe('BacklinkFilterBuilder', () => {
 
       await user.click(screen.getByRole('button', { name: 'Project' }))
       await waitFor(() => {
-        expect(listTagsByPrefix).toHaveBeenCalled()
+        expect(mockListTagsByPrefix).toHaveBeenCalled()
       })
       await user.click(screen.getByRole('option', { name: 'Review' }))
 

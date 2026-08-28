@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { mapBackendState } from '@/hooks/useSyncEvents'
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { PeerRef } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
+import { startSync } from '@/lib/ipc-helpers'
 import { notify } from '@/lib/notify'
 import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
 // #3715 — moved down to `lib` when the pairing mutation queue became its
 // second caller; a lib module may not import a hook (tier layering).
 import { runWithTimeout } from '@/lib/promise-timeout'
-import type { PeerRef } from '@/lib/tauri'
-import { flushAllDrafts, listPeerRefs, startSync } from '@/lib/tauri'
 import type { PeerInfo } from '@/stores/sync'
 import { useSyncStore } from '@/stores/sync'
 
@@ -281,7 +283,7 @@ export function useSyncTrigger() {
       let hadFailure = false
 
       try {
-        const peers = await listPeerRefs()
+        const peers = unwrap(await commands.listPeerRefs())
         // #1076: reflect the authoritative backend peer list into the store
         // so `StatusPanel`'s Sync panel and `AppSidebar`'s status dot (both
         // gated on `useSyncStore.peers`) become correct. Runs for the empty
@@ -419,7 +421,10 @@ export function useSyncTrigger() {
       } else {
         // hidden — best-effort flush; failures are non-fatal here (boot
         // recovery re-flushes any orphans on next launch).
-        void flushAllDrafts().catch(() => {})
+        void commands
+          .flushAllDrafts()
+          .then(unwrap)
+          .catch(() => {})
       }
     }
 

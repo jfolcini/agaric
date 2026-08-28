@@ -95,11 +95,11 @@ vi.mock('@/components/editor/StaticBlock', () => ({
   ),
 }))
 
-// Mock Tauri draft functions. EditableBlock itself still calls the
-// `@/lib/tauri` wrappers (`saveDraft`/`deleteDraft` on the programmatic-unmount
-// path), while its child `useDraftAutosave` now calls `commands.*` from
-// `@/lib/bindings` and unwraps the `Result` envelope — so the same spies back
-// both module surfaces and resolve the `{ status: 'ok', data }` shape.
+// Mock Tauri draft functions. EditableBlock's programmatic-unmount path
+// (`saveDraft`/`deleteDraft`) and its child `useDraftAutosave` both call
+// `commands.*` from `@/lib/bindings` directly (the `@/lib/tauri` wrappers were
+// retired, #4411) and unwrap the `Result` envelope — so the same spies back
+// the `commands.*` mock below and resolve the `{ status: 'ok', data }` shape.
 const mockSaveDraft = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 const mockDeleteDraft = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 const mockFlushDraft = vi.fn().mockResolvedValue({ status: 'ok', data: null })
@@ -118,9 +118,6 @@ vi.mock('@/lib/tauri', async () => {
   const actual = await vi.importActual('@/lib/tauri')
   return {
     ...actual,
-    saveDraft: (...args: unknown[]) => mockSaveDraft(...args),
-    deleteDraft: (...args: unknown[]) => mockDeleteDraft(...args),
-    flushDraft: (...args: unknown[]) => mockFlushDraft(...args),
     addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
   }
 })

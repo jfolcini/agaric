@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
@@ -15,7 +17,7 @@ import { notify } from '@/lib/notify'
 // fetching this chunk on every boot.
 import { isOnboardingDone, markOnboardingDone } from '@/lib/onboarding'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
-import { createBlock, createPageInSpace, listAllPagesInSpace, listBlocks } from '@/lib/tauri'
+import { createBlock, listAllPagesInSpace, listBlocks } from '@/lib/tauri'
 import { useBootStore } from '@/stores/boot'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -89,7 +91,7 @@ async function ensureSamplePage(
   if (existing) {
     pageId = existing.id
   } else {
-    pageId = await createPageInSpace({ content: title, spaceId })
+    pageId = unwrap(await commands.createPageInSpace(null, title, spaceId))
     // #4338 — only on the CREATE branch: the reuse branch found the page in
     // `existingPages`, so any warm cache filled after that page was created
     // already has it. Usually there is no warm cache here at all (first

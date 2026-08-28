@@ -50,7 +50,6 @@ const { mockListPropertyKeys, mockListTagsByPrefix } = vi.hoisted(() => ({
 vi.mock('@/lib/tauri', () => ({
   listUnlinkedReferences: vi.fn(),
   editBlock: vi.fn(),
-  listTagsByPrefix: mockListTagsByPrefix,
   listPropertyKeys: mockListPropertyKeys,
   getPageAliases: vi.fn(),
   paginationLimit: (n: number) => n,

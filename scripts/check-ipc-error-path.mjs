@@ -205,6 +205,13 @@ function callsIpc(src) {
   // Match `from '@/lib/tauri'` (single or double quotes).
   if (/from\s+['"]@\/lib\/tauri['"]/.test(withoutTypeImports)) return true
 
+  // Match `from '@/lib/ipc-helpers'` — the migration floor (#4413):
+  // `readAttachment`, `startSync`, `importMarkdown`,
+  // `restoreAllDeletedInSpace` / `purgeAllDeletedInSpace` all reject exactly
+  // like the wrapper layer they moved out of, and need the same
+  // error-path coverage.
+  if (/from\s+['"]@\/lib\/ipc-helpers['"]/.test(withoutTypeImports)) return true
+
   // Match a plugin-shim submodule import (`from '@/lib/platform/<domain>'`),
   // the layer split out of `@/lib/tauri/{system,notifications}` in #3202.
   // The `/<domain>` segment is REQUIRED so the bare `@/lib/platform` barrel
@@ -423,6 +430,12 @@ function runSelfTest() {
       "import { enableAutostart } from '@/lib/platform/autostart'\nexport const C = () => enableAutostart()\n"
     const PLATFORM_BARREL_SRC =
       "import { isMac } from '@/lib/platform'\nexport const C = () => (isMac() ? 'a' : 'b')\n"
+    // #4413: a runtime import from the migration floor (`@/lib/ipc-helpers`)
+    // is an IPC call site and must be treated exactly like `@/lib/tauri` —
+    // this is the branch that keeps `GatedImage.tsx` / `DeviceManagement.tsx`
+    // in scope after their migration off the deleted `@/lib/tauri` wrappers.
+    const IPC_HELPERS_SRC =
+      "import { readAttachment } from '@/lib/ipc-helpers'\nexport const C = () => readAttachment()\n"
     const COVERED_TEST = "it('rejects', () => { foo.mockRejectedValueOnce(new Error('x')) })\n"
     const NO_REJECT_TEST = "it('renders', () => { render(<C />) })\n"
 
@@ -450,6 +463,9 @@ function runSelfTest() {
     fs.writeFileSync(path.join(testsDir, 'PlatformShim.test.tsx'), COVERED_TEST)
     // 10. Bare platform barrel (sync capability detection), no test → ignored.
     fs.writeFileSync(path.join(componentsDir, 'PlatformBarrel.tsx'), PLATFORM_BARREL_SRC)
+    // 11. Runtime `@/lib/ipc-helpers` import, covered test → checked (#4413).
+    fs.writeFileSync(path.join(componentsDir, 'IpcHelpersIpc.tsx'), IPC_HELPERS_SRC)
+    fs.writeFileSync(path.join(testsDir, 'IpcHelpersIpc.test.tsx'), COVERED_TEST)
 
     const allowlist = { 'src/components/sub/Allowed.tsx': 'covered via Parent.test.tsx' }
 
@@ -489,6 +505,14 @@ function runSelfTest() {
     if (!r.missingTest.includes('src/components/PlatformBarrel.tsx'))
       ok('bare platform barrel import is ignored')
     else fail('bare platform barrel import is ignored', 'PlatformBarrel.tsx was flagged')
+
+    if (r.checked.includes('IpcHelpersIpc.tsx'))
+      ok('runtime @/lib/ipc-helpers import is IPC (#4413)')
+    else
+      fail(
+        'runtime @/lib/ipc-helpers import is IPC (#4413)',
+        `checked=${JSON.stringify(r.checked)}`,
+      )
 
     if (r.staleAllowlist.length === 0) ok('matched allowlist entry is not stale')
     else fail('matched allowlist entry is not stale', JSON.stringify(r.staleAllowlist))

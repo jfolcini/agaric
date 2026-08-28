@@ -19,8 +19,12 @@ import { useSpaceStore } from '@/stores/space'
 
 const mockListAllPagesInSpace = vi.fn()
 const mockListAllTagsInSpace = vi.fn()
-const mockCreatePageInSpace = vi.fn()
 const mockCreateBlock = vi.fn()
+// `createPageInSpace` retired its `@/lib/tauri` wrapper (#4411) — the
+// resolver now calls `commands.createPageInSpace` directly and unwraps the
+// `Result` envelope, so its mock backs the `commands.*` surface below and
+// resolves the `{ status: 'ok', data }` shape.
+const mockCreatePageInSpace = vi.hoisted(() => vi.fn())
 
 // The stores imported above pull additional names from `./tauri` at module
 // load; stub the ones they bind so the mocked module satisfies every importer.
@@ -31,9 +35,20 @@ vi.mock('@/lib/tauri', () => ({
   listBlocksLimit: vi.fn(),
   listAllPagesInSpace: (...args: unknown[]) => mockListAllPagesInSpace(...args),
   listAllTagsInSpace: (...args: unknown[]) => mockListAllTagsInSpace(...args),
-  createPageInSpace: (...args: unknown[]) => mockCreatePageInSpace(...args),
   createBlock: (...args: unknown[]) => mockCreateBlock(...args),
 }))
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      createPageInSpace: (...args: unknown[]) =>
+        mockCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 const SPACE = '01HZ0SPACE0000000000000000'
 const EXISTING_PAGE = '01HZ0PAGE00000000000000001'
@@ -67,7 +82,8 @@ describe('buildImportRefInternalizers — success paths (behavior pin)', () => {
     const { page } = buildOrThrow()
 
     await expect(page('Fresh Page')).resolves.toBe('01HZ0CREATEDPAGE0000000000')
-    expect(mockCreatePageInSpace).toHaveBeenCalledWith({ content: 'Fresh Page', spaceId: SPACE })
+    // `commands.createPageInSpace` is positional: (parentId, content, spaceId).
+    expect(mockCreatePageInSpace).toHaveBeenCalledWith(null, 'Fresh Page', SPACE)
   })
 
   // #4338 — the picker's `pagesListRef` / `tagsListRef` live in React refs

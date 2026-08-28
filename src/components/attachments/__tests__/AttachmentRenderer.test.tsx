@@ -18,13 +18,24 @@ vi.mock('@tauri-apps/api/core', () => ({
 // resolves its plain return value directly, the `@/lib/bindings` path wraps
 // it in the `{status:'ok', data}` envelope that `unwrap` expects.
 const mockSetProperty = vi.fn().mockResolvedValue({})
+// `readAttachment` moved to `@/lib/ipc-helpers` (#4413, the migration floor —
+// the sanctioned raw-invoke seam). `vi.hoisted` so the `vi.mock` factory
+// below (itself hoisted to the top of the file) can reference it.
+const mockedReadAttachment = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/tauri', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...mod,
-    readAttachment: vi.fn(),
     setProperty: (...args: unknown[]) => mockSetProperty(...args),
+  }
+})
+
+vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/lib/ipc-helpers')>()
+  return {
+    ...mod,
+    readAttachment: mockedReadAttachment,
   }
 })
 
@@ -41,9 +52,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 })
 
 import { AttachmentRenderer } from '@/components/attachments/AttachmentRenderer'
-import { readAttachment } from '@/lib/tauri'
 
-const mockedReadAttachment = vi.mocked(readAttachment)
 const mockedSetProperty = mockSetProperty
 
 function makeAttachment(

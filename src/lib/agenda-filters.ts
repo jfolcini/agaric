@@ -14,18 +14,15 @@
  * round-trip with cursor-paginated, correctness-preserving output.
  */
 
+import { unwrap } from '@/lib/app-error'
 import type { PageResponse } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { formatDate, getDateRangeForFilter } from '@/lib/date-utils'
 import type { AgendaFilter } from '@/lib/filter-dimension-metadata'
 import { paginationLimit, type SafeLimit } from '@/lib/safe-limit'
 import type { BlockRow, FilteredBlocksPropertyFilter, FilteredBlocksTagFilter } from '@/lib/tauri'
-import {
-  filteredBlocksQuery,
-  listTagsByPrefix,
-  listUndatedTasks,
-  queryByProperty,
-} from '@/lib/tauri'
+import { filteredBlocksQuery, listUndatedTasks, queryByProperty } from '@/lib/tauri'
 
 /**
  * Per-page limit for agenda queries — pinned to `PageRequest::new`'s
@@ -586,7 +583,7 @@ async function resolveTagFilters(
 
   const tagIds: string[] = []
   for (const value of tagValues) {
-    const candidates = await listTagsByPrefix({ prefix: value, limit: PAGINATION_LIMIT })
+    const candidates = unwrap(await commands.listTagsByPrefix(value, PAGINATION_LIMIT))
     const match = candidates.find((t) => t.name.toLowerCase() === value.toLowerCase())
     if (match) tagIds.push(match.tag_id)
   }

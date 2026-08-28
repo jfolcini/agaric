@@ -1,18 +1,14 @@
-import { invoke } from '@tauri-apps/api/core'
-
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import type { AttachmentRow } from '@/lib/bindings'
 
-export interface AttachmentRow {
-  id: string
-  block_id: string
-  filename: string
-  mime_type: string
-  size_bytes: number
-  fs_path: string
-  /** Epoch-ms (attachments.created_at is INTEGER since migration 0081). */
-  created_at: number
-}
+/**
+ * The generated wire shape (#4414). This module used to hand-declare a
+ * duplicate that drifted from it — missing `content_hash` and typing
+ * `id`/`block_id` as bare `string` instead of `BlockId`. Re-export instead of
+ * redeclaring so `tsc` is the only thing that can let this drift again.
+ */
+export type { AttachmentRow } from '@/lib/bindings'
 
 /**
  * Add an attachment by passing the file's raw bytes over IPC.
@@ -36,30 +32,9 @@ export async function addAttachmentWithBytes(params: {
   )
 }
 
-/**
- * Read an attachment's raw bytes by ID.
- *
- * #2654: the `read_attachment` Tauri command returns a raw-byte
- * `tauri::ipc::Response`, so `invoke` resolves an `ArrayBuffer` with zero JSON
- * encoding — no multi-MB `number[]` parse on the main thread. Because a
- * raw-response command cannot carry a `specta::Type`, it has no generated
- * `commands.*` binding; this is the sanctioned raw-`invoke` seam (tauri.ts is
- * exempt from the no-raw-invoke guard). A backend error rejects the promise
- * with the serialized `AppError`, matching every other wrapper's throw shape.
- */
-export async function readAttachment(attachmentId: string): Promise<Uint8Array> {
-  const buffer = await invoke<ArrayBuffer>('read_attachment', { attachmentId })
-  return new Uint8Array(buffer)
-}
-
-/**
- * Read an attachment's metadata row (filename, mime, …) by ID (#1490).
- * Used by the graph export to resolve an inline-image `attachment:<id>` ref to
- * a portable `assets/<filename>` path. Metadata-only: does not read the file.
- */
-export async function readAttachmentMeta(attachmentId: string): Promise<AttachmentRow> {
-  return unwrap(await commands.readAttachmentMeta(attachmentId))
-}
+// `readAttachment` (sanctioned raw invoke) moved to `@/lib/ipc-helpers`
+// (#4413, the migration floor). `readAttachmentMeta` retired its wrapper
+// (#4411, PURE passthrough) — call `commands.readAttachmentMeta` directly.
 
 // ---------------------------------------------------------------------------
 // Markdown import (#660)

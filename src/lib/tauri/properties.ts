@@ -5,19 +5,13 @@ import type {
   DeletePropertyResponse,
   PageResponse,
   PropertyDefinition,
+  PropertyRow,
   WithOps,
 } from '@/lib/bindings'
 import type { SafeLimit } from '@/lib/safe-limit'
 
-export interface PropertyRow {
-  key: string
-  value_text: string | null
-  value_num: number | null
-  value_date: string | null
-  value_ref: string | null
-  /** native boolean property storage; SQLite represents it as 0/1/null. */
-  value_bool: number | null
-}
+/** The generated wire shape (#4414) — re-exported, not redeclared. */
+export type { PropertyRow } from '@/lib/bindings'
 
 /** Set (upsert) a property on a block. Exactly one value field must be non-null. */
 export async function setProperty(params: {

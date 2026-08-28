@@ -181,6 +181,8 @@ A second round (#3391) closed nine further shapes an adversarial reviewer constr
 
 New code should call the generated `commands.*` surface. The remaining reason a wrapper exists is Tauri 2's explicit-null-vs-undefined contract (Tauri rejects `undefined` over the wire, so the wrapper coerces) plus a few ergonomics helpers (`unwrap`, `retryOnPoolBusy` — both now live in `src/lib/app-error.ts` and are re-exported for compatibility). A `no-raw-invoke` prek hook keeps bare `invoke()` out of app code either way.
 
+A handful of wrapper functions carry real logic the generated binding can't express on its own — `Channel<T>` progress plumbing (`importMarkdown`, `startSync`), a client-side abort bridge (`cancelledError`/`withAbort`), a chunked cursor-drain (`restoreAllDeletedInSpace`/`purgeAllDeletedInSpace`), and the one sanctioned raw-`invoke` seam (`readAttachment`, whose raw-response command can't carry a `specta::Type`). These live in `src/lib/ipc-helpers.ts` (#4413) rather than `src/lib/tauri/`, so the directory whose entire purpose is deletion doesn't end up permanently un-deletable. `scripts/tauri-sanctioned-symbols.json` — read by the same `tauri-import-baseline` guard — tracks any wrapper symbol that must stay in `src/lib/tauri/` for a similar reason; it is currently empty.
+
 ## Component inventory
 
 The full inventory lives in [`docs/UI-MAP.md`](../UI-MAP.md). The architecture-relevant fact is the layering:

@@ -1,22 +1,23 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
 import { decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { queryClient } from '@/lib/query-client'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
+import { toSpaceScope } from '@/lib/space-scope'
 import type { BlockRow, FilterExpr, FilteredBlocksPropertyFilter } from '@/lib/tauri'
 import {
   batchResolve,
   filteredBlocksQuery,
   listBlocks,
   listBlocksLimit,
-  listTagsByPrefix,
   paginationLimit,
   queryByProperty,
-  queryByTags,
   runAdvancedQuery,
 } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
@@ -64,14 +65,18 @@ export async function fetchTagQuery(
   spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   const tagExpr = params['expr'] ?? ''
-  const resp = await queryByTags({
-    tagIds: [],
-    prefixes: tagExpr ? [tagExpr] : [],
-    mode: 'or',
-    cursor: pageCursor,
-    limit: paginationLimit(PAGE_SIZE),
-    spaceId: spaceId ?? null,
-  })
+  const resp = unwrap(
+    await commands.queryByTags(
+      [],
+      tagExpr ? [tagExpr] : [],
+      'or',
+      null,
+      pageCursor ?? null,
+      paginationLimit(PAGE_SIZE),
+      toSpaceScope(spaceId ?? null),
+      null,
+    ),
+  )
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
 
@@ -250,7 +255,8 @@ export async function resolveInlineQuery(
   }
   const parsed = parseQueryExpression(expression)
   const resolved = await resolveLegacyQueryToFilterExpr(parsed, {
-    resolveTagPrefix: async (prefix) => (await listTagsByPrefix({ prefix })).map((t) => t.tag_id),
+    resolveTagPrefix: async (prefix) =>
+      unwrap(await commands.listTagsByPrefix(prefix, null)).map((t) => t.tag_id),
   })
   if (resolved.filterExpr != null) {
     return await fetchRichInlineQuery(resolved.filterExpr, pageCursor, spaceId)

@@ -39,9 +39,12 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import type { FilterToken } from '@/lib/search-query'
-import { listTagsByPrefix, paginationLimit, type TagCacheRow } from '@/lib/tauri'
+import { paginationLimit } from '@/lib/tauri'
 
 /**
  * #718 — a path glob cannot contain a literal `"` (mirrors
@@ -132,7 +135,7 @@ export function FilterHelperPopover({
       const seq = ++requestSeq.current
       setTagLoading(true)
       try {
-        const tags = await listTagsByPrefix({ prefix: q, limit: paginationLimit(20) })
+        const tags = unwrap(await commands.listTagsByPrefix(q, paginationLimit(20)))
         // Drop superseded responses (FE-A20).
         if (seq !== requestSeq.current) return
         setTagSuggestions(tags)

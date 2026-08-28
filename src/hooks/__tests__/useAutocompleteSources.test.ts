@@ -18,7 +18,7 @@ import type { PropertyDefinition, TagCacheRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { getPathHistory } from '@/lib/path-history'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
-import { getPropertyDef, listTagsByPrefix } from '@/lib/tauri'
+import { getPropertyDef } from '@/lib/tauri'
 
 // The propKey source resolves through `propertyKeysQueryFn`
 // (`@/lib/property-keys-cache`), which calls `commands.listPropertyKeys` from
@@ -29,14 +29,16 @@ import { getPropertyDef, listTagsByPrefix } from '@/lib/tauri'
 // `listPropertyValues` no longer exist on `@/lib/tauri` (dead wrappers,
 // #4410) — the hoisted mocks below back the `commands.*` surface only, and
 // are used directly (not via `vi.mocked(...)` on a `@/lib/tauri` import) for
-// the assertions further down.
-const { mockListPropertyKeys, mockListPropertyValues } = vi.hoisted(() => ({
+// the assertions further down. `listTagsByPrefix` retired its `@/lib/tauri`
+// wrapper too (#4411) — its mock resolves the `{ status: 'ok', data }`
+// envelope the real `unwrap` at the call site expects.
+const { mockListPropertyKeys, mockListPropertyValues, mockListTagsByPrefix } = vi.hoisted(() => ({
   mockListPropertyKeys: vi.fn(),
   mockListPropertyValues: vi.fn(),
+  mockListTagsByPrefix: vi.fn(),
 }))
 
 vi.mock('@/lib/tauri', () => ({
-  listTagsByPrefix: vi.fn(),
   getPropertyDef: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
@@ -49,6 +51,8 @@ vi.mock('@/lib/bindings', async () => {
       ...actual.commands,
       listPropertyKeys: mockListPropertyKeys,
       listPropertyValues: mockListPropertyValues,
+      listTagsByPrefix: (...args: unknown[]) =>
+        mockListTagsByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -72,7 +76,6 @@ import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority
 import { _resetPropertyValuesCacheForTest } from '@/lib/property-values-cache'
 import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
 
-const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
 const mockedListPropertyKeys = mockListPropertyKeys
 const mockedListPropertyValues = mockListPropertyValues
 const mockedGetPropertyDef = vi.mocked(getPropertyDef)
@@ -98,7 +101,7 @@ beforeEach(() => {
   _resetPropertyValuesCacheForTest()
   __resetPriorityLevelsForTests()
   mockedGetPathHistory.mockReturnValue([])
-  mockedListTagsByPrefix.mockResolvedValue([])
+  mockListTagsByPrefix.mockResolvedValue([])
   mockedListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] } as never)
   mockedListPropertyValues.mockResolvedValue({ status: 'ok', data: [] } as never)
   mockedGetPropertyDef.mockResolvedValue(null)
@@ -195,25 +198,26 @@ describe('useAutocompleteSources', () => {
   })
 
   it('tag anchor: debounces IPC by 150ms and maps rows to items', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([tag('project-x'), tag('project-y')])
+    mockListTagsByPrefix.mockResolvedValueOnce([tag('project-x'), tag('project-y')])
     const anchor: AutocompleteAnchor = { active: 'tag', query: 'pro', anchor: 0 }
     const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
 
     // Before debounce flushes: IPC not yet called, loading true.
-    expect(mockedListTagsByPrefix).not.toHaveBeenCalled()
+    expect(mockListTagsByPrefix).not.toHaveBeenCalled()
     expect(result.current.loading).toBe(true)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(150)
     })
 
-    expect(mockedListTagsByPrefix).toHaveBeenCalledWith({ prefix: 'pro', limit: 20 })
+    // `commands.listTagsByPrefix` is positional: (prefix, limit).
+    expect(mockListTagsByPrefix).toHaveBeenCalledWith('pro', 20)
     expect(result.current.items).toEqual([{ value: 'project-x' }, { value: 'project-y' }])
     expect(result.current.loading).toBe(false)
   })
 
   it('tag anchor: keeps previous items visible while a new request is in flight', async () => {
-    mockedListTagsByPrefix.mockResolvedValueOnce([tag('alpha'), tag('apple')])
+    mockListTagsByPrefix.mockResolvedValueOnce([tag('alpha'), tag('apple')])
     const anchor1: AutocompleteAnchor = { active: 'tag', query: 'a', anchor: 0 }
     const { result, rerender } = renderHook(
       ({ a }: { a: AutocompleteAnchor }) => useAutocompleteSources({ anchor: a, spaceId: 'S1' }),
@@ -228,7 +232,7 @@ describe('useAutocompleteSources', () => {
     // Second query — schedule a slower resolution so we can inspect the
     // in-flight state with the previous items still visible.
     let resolveSecond: (rows: TagCacheRow[]) => void = () => {}
-    mockedListTagsByPrefix.mockReturnValueOnce(
+    mockListTagsByPrefix.mockReturnValueOnce(
       new Promise<TagCacheRow[]>((res) => {
         resolveSecond = res
       }),
@@ -254,7 +258,7 @@ describe('useAutocompleteSources', () => {
 
   it('tag anchor: stale response does NOT clobber a newer batch', async () => {
     let resolveSlow: (rows: TagCacheRow[]) => void = () => {}
-    mockedListTagsByPrefix.mockReturnValueOnce(
+    mockListTagsByPrefix.mockReturnValueOnce(
       new Promise<TagCacheRow[]>((res) => {
         resolveSlow = res
       }),
@@ -269,7 +273,7 @@ describe('useAutocompleteSources', () => {
       await vi.advanceTimersByTimeAsync(150)
     })
     // Slow request now in-flight; second query supersedes it.
-    mockedListTagsByPrefix.mockResolvedValueOnce([tag('beta')])
+    mockListTagsByPrefix.mockResolvedValueOnce([tag('beta')])
     rerender({ a: { active: 'tag', query: 'b', anchor: 0 } })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(150)
@@ -315,7 +319,7 @@ describe('useAutocompleteSources', () => {
 
   it('tag IPC rejection logs via logger.warn and does not throw', async () => {
     const warnSpy = vi.spyOn(logger, 'warn')
-    mockedListTagsByPrefix.mockRejectedValueOnce(new Error('ipc-boom'))
+    mockListTagsByPrefix.mockRejectedValueOnce(new Error('ipc-boom'))
     const anchor: AutocompleteAnchor = { active: 'tag', query: 'x', anchor: 0 }
     const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
 
