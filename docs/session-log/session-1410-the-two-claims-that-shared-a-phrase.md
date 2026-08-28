@@ -67,12 +67,16 @@ silently — a statement placed above it deactivates it, the compiler still repo
 `CompileSuccess`, oxlint and tsc stay green, and the sole symptom is a 15-second Playwright
 timeout with an unrelated-looking message.
 
-The new test scans the component source and asserts the directive is the first non-trivia
-content of the function body. There is no parser available to do this properly: this
-repo's `typescript` is v7, the Go port, and `Object.keys(require('typescript'))` from Node
-returns `['version', 'versionMajorMinor']` — no compiler API. `@babel/parser` is only a
-transitive dependency. So it is a hand-rolled brace/quote-aware scanner, matching the
-convention the repo already uses for its other source-reading guards.
+The new test scans the component source and, as first written here, asserts the directive
+is the first non-trivia content of the function body. That rule turns out to be stricter
+than the compiler's own — "The guard needed a guard" below finds it a misreading of the
+requirement and loosens it to accept the directive anywhere in the leading directive
+prologue, which is the rule the code asserts by the end of this log. There is no parser
+available to do this properly: this repo's `typescript` is v7, the Go port, and
+`Object.keys(require('typescript'))` from Node returns `['version', 'versionMajorMinor']`
+— no compiler API. `@babel/parser` is only a transitive dependency. So it is a hand-rolled
+brace/quote-aware scanner, matching the convention the repo already uses for its other
+source-reading guards.
 
 Review found a real bug in it. `findFunctionBodyStart` located the declaration with a bare
 `indexOf('function SelectionBubbleMenu')`, which also matches

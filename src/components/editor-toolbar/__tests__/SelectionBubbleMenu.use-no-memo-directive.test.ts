@@ -45,6 +45,16 @@ import { describe, expect, it } from 'vitest'
  * `Promise<{ node: X }>`) is recorded as a known limit on
  * `findFunctionBodyStart` rather than closed, since no such signature exists
  * in this file's source today.
+ *
+ * A third review found those very hardening fixes unpinned: `matchBracket`'s
+ * quote and backslash-escape handling, and the identical handling in the
+ * parameter-list loop, were reachable by no fixture — the live component's
+ * return type is brace-free so `matchBracket` never runs on it, the fixtures
+ * that do reach it contain no quote character, and none put a string literal
+ * in a parameter list (note 1). Four fixtures below close that: a bracketed
+ * default value and an escaped quote inside one, each in both a parameter
+ * list (the paren-matching loop) and a string-literal return type
+ * (`matchBracket`).
  */
 
 const COMPONENT_PATH = join(__dirname, '../SelectionBubbleMenu.tsx')
@@ -436,6 +446,48 @@ describe(`SelectionBubbleMenu — '${DIRECTIVE}' directive position (#4469, #447
       ): { node: React.ReactElement } {
         '${DIRECTIVE}'
         return { node: null }
+      }
+    `
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+  })
+
+  it('does not let a bracket character inside a quoted default value in the parameter list miscount the parameter-list depth (#4475 third-review note 1)', () => {
+    const source = `
+      function ${COMPONENT_NAME}(sep = '(', flag) {
+        '${DIRECTIVE}'
+        const ok = 1
+        return ok
+      }
+    `
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+  })
+
+  it('does not let an escaped quote inside a quoted default value in the parameter list end the string early (#4475 third-review note 1)', () => {
+    const source = `
+      function ${COMPONENT_NAME}(sep = 'a\\'(b)', flag) {
+        '${DIRECTIVE}'
+        const ok = 1
+        return ok
+      }
+    `
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+  })
+
+  it('does not let a bracket character inside a quoted string-literal return type miscount the group `matchBracket` scans (#4475 third-review note 1)', () => {
+    const source = `
+      function ${COMPONENT_NAME}(props: Props): { closer: '}' } {
+        '${DIRECTIVE}'
+        return { closer: '}' }
+      }
+    `
+    expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
+  })
+
+  it('does not let an escaped quote inside a quoted string-literal return type end the string early in `matchBracket` (#4475 third-review note 1)', () => {
+    const source = `
+      function ${COMPONENT_NAME}(props: Props): { closer: 'a\\'(b)' } {
+        '${DIRECTIVE}'
+        return { closer: 'a\\'(b)' }
       }
     `
     expect(isDirectiveInPrologue(source, COMPONENT_NAME, DIRECTIVE)).toBe(true)
