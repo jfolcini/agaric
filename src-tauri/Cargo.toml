@@ -371,6 +371,16 @@ wiremock = "0.6"
 # them any longer, so the `[target.'cfg(target_os = "android")'.dependencies]`
 # table was dropped here.
 
+# #4283 — `O_NOFOLLOW` / `O_NONBLOCK` for the bug-report log reader
+# (commands/bug_report.rs). `OpenOptionsExt::custom_flags` takes raw `open(2)`
+# flags and std exposes no constants for them; the values differ per target
+# (Linux `O_NOFOLLOW` is 0x20000, macOS 0x100), so hand-writing them would be a
+# silently-wrong-on-one-platform hazard in a security gate. Not a new crate in
+# the build: libc is already resolved in this workspace's dependency graph via
+# tokio/rustix and pulls in nothing else.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Linux OS notifications are dispatched via notify-rust directly (see
 # commands/notifier.rs): tauri-plugin-notification fires notify-rust's
 # blocking show() on the tokio async runtime and discards the Result, which

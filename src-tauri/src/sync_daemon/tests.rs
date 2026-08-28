@@ -12182,3 +12182,87 @@ async fn a_legacy_joiner_with_one_head_still_binds_under_it_4380() {
         "…and that bind closes the window, exactly as it did before (#1519)"
     );
 }
+
+// ── #4451: the heads-derived fallback is gated like the stated id ────
+
+/// A head id carrying `U+202E` RIGHT-TO-LEFT OVERRIDE — the shape
+/// `accept_stated_device_id` already refused one field away, on the value a
+/// peer states for itself.
+const HOSTILE_HEAD_4451: &str = "JOIN\u{202E}4451";
+
+/// A pre-#4380 peer whose only head is an id the stated-id gate would refuse
+/// must not be bound under it (#4451).
+///
+/// # Why this is a daemon test and not only an FSM one
+///
+/// The FSM and `server.rs` each derive this id, and the FSM's answer is what the
+/// daemon binds on — so pinning one arm proves nothing about the other. This is
+/// the arm where the consequence lives: `bind_endpoint_id` validates only
+/// `peer_id.is_empty()`, so pre-fix the hostile string became a real
+/// `peer_refs.peer_id` row, permanently (the bind refuses to be re-pointed
+/// afterwards) and visibly — `list_peer_refs` is the device list.
+///
+/// # What makes each assertion discriminating
+///
+/// The well-formed arm runs FIRST and through the same driver, so "nothing was
+/// bound" cannot pass by the driver being broken, and a fix that simply refused
+/// every legacy joiner — closing the compatibility path #4380 deliberately kept
+/// — fails on it. `a_legacy_joiner_with_one_head_still_binds_under_it_4380`
+/// makes the same point from the other direction; this test carries its own copy
+/// so the pair cannot be split by an edit to either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_legacy_joiners_unusable_head_is_not_bound_4451() {
+    fn bound_ids(out: &LegacyBindRun4380) -> Vec<&str> {
+        out.rows
+            .iter()
+            .filter(|r| r.endpoint_id.as_deref() == Some(out.joiner_key.as_str()))
+            .map(|r| r.peer_id.as_str())
+            .collect()
+    }
+
+    // The control, first: a well-formed single head still binds. Without it,
+    // every assertion below is satisfied by a responder that binds nothing at
+    // all — and binding nothing at all is a regression, not a fix.
+    let ok = drive_legacy_pairing_bind_4380(vec![fake_head(JOINER_DEV_4380)]).await;
+    assert_eq!(
+        bound_ids(&ok),
+        vec![JOINER_DEV_4380],
+        "control: a usable legacy head must still bind, or the gate below is just \
+         a broken compatibility path wearing a fix's clothes"
+    );
+
+    // A display-hostile head: refused, so nothing is bound and no row is born.
+    let hostile = drive_legacy_pairing_bind_4380(vec![fake_head(HOSTILE_HEAD_4451)]).await;
+    assert!(
+        bound_ids(&hostile).is_empty(),
+        "#4451: a head id the stated-id gate would refuse must not be bound either. \
+         The bind is permanent — `bind_endpoint_id` refuses to re-point a key \
+         afterwards. It bound {:?}",
+        bound_ids(&hostile)
+    );
+    assert!(
+        !hostile.rows.iter().any(|r| r.peer_id == HOSTILE_HEAD_4451),
+        "…and no `peer_refs` row may be born under it at all: this string is what \
+         `list_peer_refs` renders in the device list, where a bidi override makes \
+         one device read as another. Rows: {:?}",
+        hostile.rows.iter().map(|r| &r.peer_id).collect::<Vec<_>>()
+    );
+    assert!(
+        hostile.host_still_pending,
+        "…and the window stays open, exactly as it does for the ambiguous-heads \
+         refusal (#4380): a refusal must leave the pair recoverable through the \
+         host's own initiator pass, not dead"
+    );
+
+    // An over-long head: the other half of what `accept_stated_device_id`
+    // enforces, so the two gates are pinned as agreeing on both of its rules
+    // rather than only on the one that is easy to spell.
+    let over_cap = "d".repeat(agaric_sync::sync_protocol::MAX_DEVICE_ID_CHARS + 1);
+    let long = drive_legacy_pairing_bind_4380(vec![fake_head(&over_cap)]).await;
+    assert!(
+        bound_ids(&long).is_empty(),
+        "#4451: an over-long head id must be REFUSED, not written whole to a row \
+         every peer-facing query keys on. It bound {:?}",
+        bound_ids(&long)
+    );
+}

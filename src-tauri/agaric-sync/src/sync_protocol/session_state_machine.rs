@@ -781,12 +781,15 @@ impl SyncOrchestrator {
                         .as_deref()
                         .and_then(crate::sync_protocol::accept_stated_device_id)
                         .filter(|id| *id != self.device_id)
+                        // #4451: the fallback takes the same normaliser as the
+                        // stated id above — it is the same untrusted wire text
+                        // reaching the same `peer_refs.peer_id`, device list,
+                        // and log lines. Shared with `server.rs` so the daemon
+                        // and this interpreter cannot disagree about what a
+                        // usable id is; `""` still means "declined to identify
+                        // itself" and leaves the session unbound.
                         .unwrap_or_else(|| {
-                            heads
-                                .iter()
-                                .find(|h| h.device_id != self.device_id)
-                                .map(|h| h.device_id.clone())
-                                .unwrap_or_default()
+                            crate::sync_protocol::heads_derived_device_id(&heads, &self.device_id)
                         }),
                 };
 

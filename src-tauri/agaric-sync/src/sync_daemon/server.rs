@@ -563,11 +563,15 @@ async fn handle_incoming_sync_inner(
     // entry is *the lowest-sorting device id in the peer's op log*. In a three-device
     // vault that is the joiner's own id about half the time, and the TOFU bind below
     // used to make the coin flip permanent.
-    let heads_derived_id = heads
-        .iter()
-        .find(|h| h.device_id != device_id)
-        .map(|h| h.device_id.clone())
-        .unwrap_or_default();
+    //
+    // #4451: and it goes through the SAME normaliser as the stated id.
+    // `accept_stated_device_id` was applied above and not here, so the value
+    // that reaches `bind_endpoint_id` — which validates only `is_empty()` —
+    // could still be arbitrarily long or display-hostile wire text, on a row
+    // that is permanent and in a device list the user acts on. One function,
+    // called from both interpreters (this one and the FSM's), so the two
+    // cannot drift on what counts as a usable id.
+    let heads_derived_id = crate::sync_protocol::heads_derived_device_id(&heads, &device_id);
     // #4380: whether the heads ALONE identify the joiner, for the peers too old to
     // state an id. They do not once the peer holds more than one foreign frontier:
     // picking one is picking by sort order, and there is nothing in the frame that
