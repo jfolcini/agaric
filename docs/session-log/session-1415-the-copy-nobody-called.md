@@ -59,7 +59,7 @@ only `src/…`-form paths. The alias form escapes the guard entirely.
 
 Confirmed by rewriting the citation into `src/` form — the guard flagged it immediately —
 and then rewording to avoid a live path. So the doc-citation guard has a blind spot exactly
-where this codebase's own import convention lives. Filed rather than fixed here.
+where this codebase's own import convention lives. Filed rather than fixed here, as #4482.
 
 ## What a drift guard has to survive
 

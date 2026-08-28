@@ -282,7 +282,27 @@ function runSelfTest() {
       path.join(testDir, 'Bad.test.tsx'),
       "it('x', () => invoke('mcp_set_enabled'))\n",
     )
-    // 8. #3993: a string literal containing `/*` (`'./fixtures/**'`) sits
+    // 8. #4413: `src/lib/ipc-helpers.ts` is exempted by an exact FILE match
+    //    in EXEMPT_FILES, not a directory prefix. A sibling file under
+    //    `src/lib/` must still be flagged — a regression that generalised
+    //    the exemption to an `src/lib/` directory prefix would wrongly
+    //    wave this through too.
+    fs.writeFileSync(
+      path.join(libDir, 'sibling-of-ipc-helpers.ts'),
+      "export const f = () => invoke('list_blocks')\n",
+    )
+    // 9. #4413: a file under a same-named `src/lib/ipc-helpers/` *directory*
+    //    must also still be flagged — proving the exemption is file-exact
+    //    rather than a directory-prefix match on the module's own name (the
+    //    narrower generalisation a future edit could make when moving
+    //    `src/lib/ipc-helpers.ts` from EXEMPT_FILES to an EXEMPT_DIR_PREFIXES
+    //    entry).
+    fs.mkdirSync(path.join(libDir, 'ipc-helpers'), { recursive: true })
+    fs.writeFileSync(
+      path.join(libDir, 'ipc-helpers', 'nested.ts'),
+      "export const f = () => invoke('list_blocks')\n",
+    )
+    // 10. #3993: a string literal containing `/*` (`'./fixtures/**'`) sits
     //    above a real invoke() call, and a real JSDoc block comment closes
     //    later in the file. The byte-identical private `stripComments` this
     //    guard used to carry is not string-aware: it reads the `/*` inside
@@ -294,7 +314,7 @@ function runSelfTest() {
       path.join(compDir, 'FakeCommentOpener.tsx'),
       "const GLOB = './fixtures/**'\nexport async function load() {\n  return await invoke('listBlocks')\n}\n/** any JSDoc block below it */\n",
     )
-    // 9. #3993: a file with an unterminated string literal cannot be lexed
+    // 11. #3993: a file with an unterminated string literal cannot be lexed
     //    unambiguously. The shared scanner fails CLOSED (throws
     //    `ScanError`), and this guard must surface that as a scanError — a
     //    FAILURE the human sees — not silently drop the file from both
@@ -327,6 +347,24 @@ function runSelfTest() {
 
     if (!violations.some((v) => v.file.includes('__tests__'))) ok('test file is ignored')
     else fail('test file is ignored', 'a __tests__ file was flagged')
+
+    if (hit('lib/sibling-of-ipc-helpers.ts'))
+      ok('a sibling file under src/lib/ is flagged, not swept in by ipc-helpers.ts (#4413)')
+    else
+      fail(
+        'a sibling file under src/lib/ is flagged, not swept in by ipc-helpers.ts',
+        JSON.stringify(violations),
+      )
+
+    if (hit('lib/ipc-helpers/nested.ts'))
+      ok(
+        'a file under a same-named src/lib/ipc-helpers/ directory is flagged — file-exact, not a directory prefix (#4413)',
+      )
+    else
+      fail(
+        'a file under a same-named src/lib/ipc-helpers/ directory is flagged',
+        JSON.stringify(violations),
+      )
 
     if (hit('components/FakeCommentOpener.tsx'))
       ok('a string containing `/*` above a real invoke() call is still flagged (#3993)')
