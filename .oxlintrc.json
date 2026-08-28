@@ -103,13 +103,14 @@
     // that no commit here has ever been checked against, which would block the
     // 1.78 -> 1.79 bump outright (#4373).
     //
-    // They are held at `warn`, deliberately NOT at `off` and NOT behind
+    // They were held at `warn`, deliberately NOT at `off` and NOT behind
     // file-level disables: the whole point of #4377 is that at least one of
     // these findings (use-block-zoom.ts, ref mutated inside useMemo) was
     // independently flagged by a human reviewer on #4370 before this bump
     // existed, so the signal has already proven itself. `warn` keeps every
-    // finding printed on every run while the burn-down triages them bucket by
-    // bucket; #4377 carries the per-rule counts and the triage state.
+    // finding of a still-burning-down rule printed on every run while the
+    // triage works through them bucket by bucket; #4377 carries the triage
+    // state.
     //
     // Ratchet: when a rule's count reaches zero, promote its line here to
     // `error` (the `correctness` category default it would fall back to on
@@ -117,18 +118,41 @@
     // readable and survives a category retune). This is the same warn ->
     // burn-down -> error ratchet #188 ran for the biome -> oxc migration.
     //
-    // #4409 drove six of the eight to zero and promoted them below. Only
-    // `react/refs` and `react/set-state-in-effect` are still burning down
-    // (#4406 / #4407); they must stay at `warn` until their counts reach
-    // zero, and `npm run lint` deliberately carries no `--max-warnings` so
-    // those two keep printing without failing the build.
+    // #4409 drove six of the eight to zero and promoted them below; #4406
+    // then did the same for `react/refs`. Only `react/set-state-in-effect`
+    // is still burning down (#4407); it must stay at `warn` until its count
+    // reaches zero, and `npm run lint` deliberately carries no
+    // `--max-warnings` so it keeps printing without failing the build.
+    //
+    // `react/refs` was NOT burned down by rewriting every site. #4469 proved
+    // the pattern #4398 prescribed for it — destructuring a hook's return so
+    // the ref read is a plain binding — flips a component from
+    // React-Compiler-BAILOUT to React-Compiler-MEMOIZED, which is a runtime
+    // behaviour change and broke `SelectionBubbleMenu` outright. Suppressing
+    // the rule, by contrast, leaves the function uncompiled and so preserves
+    // behaviour. That argument is `.tsx`/`.jsx`-only — `vite.config.ts` runs
+    // babel over those extensions alone, so a finding in a plain `.ts` file is
+    // never seen by the compiler and neither form has a memoisation
+    // consequence there; those sites are suppressed on their own semantics,
+    // stated per site. The accepted patterns (a ref written and read within
+    // the same render, a render-phase write whose read is deferred to commit,
+    // the documented lazy-ref-init idiom, a ref handed to a consumer that
+    // defers the mutation, a deliberate re-render avoidance) therefore
+    // carry an explicit per-site
+    // `oxlint-disable-next-line react/refs -- <reason>; see #4406` instead.
+    // `error` is what keeps a NEW unreviewed site from landing; the disables
+    // are what record that the existing ones were reviewed. Never silence one
+    // with a file- or block-level disable — that would also cover code written
+    // later — and note the prek `oxlint` hook runs with
+    // `--report-unused-disable-directives-severity=error`, so a directive that
+    // stops applying fails too.
     //
     // NOTE: these rule names do not exist in oxlint <= 1.78, and oxlint
     // rejects the ENTIRE config file on an unknown rule name ("Rule 'refs' not
     // found in plugin 'react'"), so this block and the oxlint bump in
     // package.json must stay in the same commit. Do not land one without the
     // other.
-    "react/refs": "warn",
+    "react/refs": "error",
     "react/set-state-in-effect": "warn",
     "react/immutability": "error",
     "react/globals": "error",

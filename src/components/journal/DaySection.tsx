@@ -448,6 +448,7 @@ function DaySectionInner({
             ref={lazyRef}
             data-testid="day-section-lazy-placeholder"
             data-date={entry.dateStr}
+            // oxlint-disable-next-line react/refs -- `measuredHeightRef` holds the last measured height purely to size the lazy placeholder; mirroring it into state would re-render every day section on every measurement, which is exactly what the lazy mount exists to avoid; see #4406
             style={{ minHeight: measuredHeightRef.current ?? LAZY_PLACEHOLDER_MIN_HEIGHT }}
             aria-hidden="true"
           />

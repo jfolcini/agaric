@@ -23,6 +23,20 @@
  *     ...buttons...
  *   </div>
  *
+ * CAUTION (#4469) — that destructuring is not inert. It gives the React
+ * Compiler provable bindings, so a `.tsx` component that would otherwise BAIL
+ * OUT starts caching its JSX element and rebuilds it only when a dependency
+ * changes IDENTITY. All three values here are identity-stable by construction,
+ * so if every OTHER dependency of that element is stable too — above all a
+ * mutation-behind-a-stable-reference prop such as a TipTap `editor` — the
+ * cached element is returned forever and the subtree stops updating. That is
+ * what broke `SelectionBubbleMenu`, which now destructures but carries a
+ * `'use no memo'` directive to opt back out of the compiler. `vite.config.ts`
+ * disables the compiler under Vitest, so only the e2e production build can see
+ * this class of break: prove the destructured form with
+ * `e2e/mobile-editor.spec.ts`, not the unit suite. See
+ * docs/architecture/frontend.md § The hazard.
+ *
  * Behaviour:
  *  - Exactly one enabled button carries `tabindex="0"`; the rest carry `-1`.
  *  - ArrowRight / ArrowLeft move to the next / previous *enabled* button,

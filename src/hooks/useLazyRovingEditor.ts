@@ -93,8 +93,9 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
   // Buffers for interactions that happen before the live editor is ready.
   const pendingMountRef = useRef<PendingMount | null>(null)
   const pendingOnUpdateRef = useRef<(() => void) | null>(null)
-  // #4377 — deliberately still a render-phase write, and the `react/refs`
-  // finding on it is deliberately still open. `liveHandleRef` is read by
+  // #4377 — deliberately still a render-phase write; the `react/refs`
+  // finding on it is suppressed at the site (#4406), not restructured.
+  // `liveHandleRef` is read by
   // `handleReady` below, which `RovingEditorHost` (a DESCENDANT) calls from its
   // own `useLayoutEffect`. React runs descendants' layout effects before their
   // ancestors', so mirroring this from a layout effect here would still be one
@@ -104,6 +105,7 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
   // enough; fixing this one means restructuring the adopt handshake, not moving
   // the write.
   const liveHandleRef = useRef<RovingEditorHandle | null>(null)
+  // oxlint-disable-next-line react/refs -- deliberately a render-phase write: `liveHandleRef` is read by `handleReady`, which a DESCENDANT calls from its own layout effect, so a layout-effect mirror here would still be one commit late — see the note above and #4406
   liveHandleRef.current = liveHandle
 
   const requestLoad = useCallback(() => setShouldLoad(true), [])
@@ -185,6 +187,7 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
     ? createElement(
         Suspense,
         { fallback: null },
+        // oxlint-disable-next-line react/refs -- `handleReady` is handed to a lazily-mounted child that calls it from an effect, so the `liveHandleRef` read it closes over is deferred past this render; see #4406
         createElement(LazyRovingEditorHost, { options, onReady: handleReady }),
       )
     : null

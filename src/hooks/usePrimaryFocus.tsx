@@ -73,6 +73,7 @@ export function PrimaryFocusProvider({ children }: ProviderProps): ReactElement 
   }
 
   return (
+    // oxlint-disable-next-line react/refs -- React's documented lazy-ref-init idiom: `registryRef.current` is built once (provider-lifetime) and published as a stable context value, never re-read for rendering output; see #4406
     <PrimaryFocusContext.Provider value={registryRef.current}>
       {children}
     </PrimaryFocusContext.Provider>

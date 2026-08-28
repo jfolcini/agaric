@@ -564,15 +564,21 @@ export function AddFilterPopover({
           />
         )}
 
-        {/* #4406 — `renderHasParentEditor` is an opaque render-prop invoked
-            during render; its actual implementation (FilterGroup.tsx) mounts
-            `HasParentMatchingEditor`, which itself carries an open
-            react(refs) finding of the same "ref-touching callback reachable
-            from a call made during render" shape (see the comment there).
-            oxlint can't see through the render-prop boundary to know the
-            callbacks below don't touch a ref themselves, so it flags the
-            call site conservatively. Left open. */}
+        {/* #4406 — the finding here is LOCAL, not inherited through the
+            render-prop boundary. `onApply` calls `emit`, `emit` calls `close`,
+            and `close` reads `triggerRef.current` to restore focus to the
+            trigger. So oxlint sees an object literal built during render whose
+            callbacks do reach a ref, and it cannot prove they are only invoked
+            later. Measured, not assumed: delete the `triggerRef.current
+            ?.focus()` in `close` and this finding disappears with the render
+            prop untouched; strip only the directive and it returns.
+            It is safe because both callbacks are event handlers — the ref read
+            runs when the user applies or dismisses, never during this render.
+            (`HasParentMatchingEditor`, which `FilterGroup.tsx` mounts through
+            this prop, carries its own same-shaped finding for its own reason —
+            that is a parallel, not the cause of this one.) */}
         {editor === 'hasParent' &&
+          // oxlint-disable-next-line react/refs -- `onApply` reaches `triggerRef.current` through `emit` → `close`, so these callbacks genuinely touch a ref; they are event handlers, invoked on user action and never during this render — see the note above and #4406
           renderHasParentEditor?.({
             onBack: () => setEditor(null),
             onApply: (matcher) => emit({ type: 'HasParentMatching', matcher }),
