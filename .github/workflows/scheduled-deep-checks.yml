@@ -1464,13 +1464,21 @@ jobs:
         # re-explored the same shallow frontier that `-max_total_time` reaches
         # from cold, indefinitely, and reported `ok` for doing so.
         #
-        # `restore`/`save` are split (rather than one `actions/cache`) so the
-        # minimisation step below runs BETWEEN them: the save must store the
-        # cmin'd corpus, and a combined action saves at post-job, after that
-        # step has already run but from the un-minimised directory state it
-        # captured. The run-scoped key never hits on read — `restore-keys`
-        # takes the most recent prefix match — which is what makes each run
-        # write a fresh entry instead of being stuck on the first one saved.
+        # `restore`/`save` are split rather than using one `actions/cache`.
+        # NOT because a combined action would miss the minimisation — it would
+        # not: its post step re-globs and tars `path` from disk at post-job
+        # time, so cmin's result WOULD be captured (the action carries only the
+        # key and the exact-hit flag forward in state, never file contents).
+        # An earlier revision of this comment claimed otherwise; it was wrong,
+        # and the reasons that actually hold are:
+        #   * the save point is explicit and ordered — it happens HERE, before
+        #     the artifact upload below, not in an implicit post-job step whose
+        #     position relative to other post steps is not ours to choose;
+        #   * there is no exact-hit save-skip to reason about (a combined
+        #     action declines to save when the primary key hit on read).
+        # The run-scoped key never hits on read — `restore-keys` takes the most
+        # recent prefix match — which is what makes each run write a fresh
+        # entry instead of being stuck on the first one saved.
         id: corpus-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -1478,6 +1486,22 @@ jobs:
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-
+
+      - name: Report whether this run started warm or cold (#4496)
+        # Whether the restore HIT is the single most useful fact in this lane's
+        # log, and it is exactly what was invisible before this change: a silent
+        # cache miss looks identical to a working lane that simply found
+        # nothing. `cache-matched-key` names the entry this run inherited.
+        env:
+          MATCHED: ${{ steps.corpus-cache.outputs.cache-matched-key }}
+        run: |
+          if [ -n "$MATCHED" ]; then
+            echo "corpus restored from cache entry: $MATCHED (warm start)"
+          else
+            echo "NO corpus cache entry matched — starting from the committed seeds only (cold start)."
+            echo "Expected on the first run after this landed; on any later run it means the save side is not working."
+          fi
+          find src-tauri/fuzz/corpus -type f 2>/dev/null | wc -l | xargs echo "corpus files on disk before fuzzing:"
 
       - name: Fuzz each parser target (smoke length)
         working-directory: src-tauri/fuzz
@@ -1592,7 +1616,16 @@ jobs:
         # Failures here are non-fatal (`|| true`, per target): cmin is an
         # optimisation, and a corpus that failed to minimise is still a corpus
         # worth saving. The fuzz step above owns the lane's pass/fail verdict.
-        if: always()
+        #
+        # `!cancelled()` rather than `always()`: cmin replaces `corpus/<target>`
+        # in place once its merge succeeds, so a cancellation or runner loss
+        # landing inside that swap leaves the directory absent — and `always()`
+        # would then let the save step below store THAT as the newest
+        # `fuzz-corpus-*` entry for the next run to inherit. It self-heals (the
+        # committed seeds are the floor) but it silently discards a target's
+        # accumulated corpus, which is the exact failure this change exists to
+        # end. Genuine pass and fail both still run.
+        if: ${{ !cancelled() }}
         working-directory: src-tauri/fuzz
         env:
           RUSTFLAGS: "-C target-feature=-crt-static"
@@ -1614,8 +1647,13 @@ jobs:
           while read -r target; do
             [ -n "$target" ] || continue
             before=$(find "corpus/$target" -type f 2>/dev/null | wc -l)
+            # `< /dev/null`: this loop's stdin IS the manifest (`done < ...`).
+            # cargo-fuzz nulls the fuzz binary's own stdin so this is fine
+            # today, but a child that ever read stdin would swallow the
+            # remaining target lines and cmin only the first — and the
+            # redirect below would hide that completely.
             cargo +nightly fuzz cmin "$target" \
-              --target x86_64-unknown-linux-gnu >/dev/null 2>&1 || true
+              --target x86_64-unknown-linux-gnu </dev/null >/dev/null 2>&1 || true
             after=$(find "corpus/$target" -type f 2>/dev/null | wc -l)
             echo "cmin $target: $before -> $after inputs"
           done < "$manifest"
@@ -1626,7 +1664,19 @@ jobs:
         # A content-independent constant key would be written once and never
         # updated (GitHub's cache is immutable per key), freezing the corpus at
         # whatever the first run produced.
-        if: always()
+        #
+        # Gated on `main` for the same reason the `Swatinem/rust-cache` step
+        # above carries `save-if: github.ref == 'refs/heads/main'`. Nothing
+        # prunes these entries — each run writes one and they age out only via
+        # the repo-wide 10 GB LRU, shared with the rust-cache and npm entries —
+        # so a `workflow_dispatch` run on a feature branch should not spend that
+        # budget. Cache scoping already keeps such an entry out of main's
+        # restores, so this is quota and consistency, not correctness. The
+        # scheduled run this lane exists for is on `main` and still saves.
+        #
+        # `!cancelled()` for the reason given on the step above: a cancellation
+        # mid-cmin must not have its truncated corpus saved as the newest entry.
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: src-tauri/fuzz/corpus

@@ -28,13 +28,19 @@ The near-miss in the diagnosis is worth recording: the job *does* carry a cache
 cached" until you check what that action's paths actually are — `~/.cargo` and `target/`.
 A cache that exists is not a cache of the thing you care about.
 
-## Three steps, and why it is not one
+## Three steps, and a justification that was wrong
 
-`actions/cache` restore-and-save in a single step would have been shorter and wrong. The
-combined action saves at post-job, from the directory state it captured, so a minimisation
-pass running before it has no effect on what gets stored. Split into
-`cache/restore` → fuzz → `cargo fuzz cmin` → `cache/save`, the saved corpus is the
-minimised one.
+The first version of this split carried a confident, false reason: that a combined
+`actions/cache` "saves from the directory state it captured", so minimisation running
+before its post step would not reach the stored copy. That is not how the action works —
+its post step re-globs and tars `path` from disk at post-job time, and only the key and
+exact-hit flag are carried forward in state. cmin's result *would* have been captured.
+
+The review caught it, and it is the more useful half of this log: a wrong mechanism
+written confidently into a comment outlives the person who wrote it, and the next
+maintainer inherits it as fact. The split survived; the reasoning for it was replaced with
+reasons that hold — an explicit save point ordered before the artifact upload rather than
+an implicit post-job step, and no exact-hit save-skip to reason about.
 
 `cmin` is not cosmetic. Without it the corpus only grows, and a corpus that outgrows the
 cache entry limit silently stops being restored — which returns the lane to the exact
@@ -85,6 +91,22 @@ enumerates all five targets from a real `targets.txt`; the missing-manifest bran
 rather than looping over nothing. `prek` passes on the workflow, zizmor included.
 
 What cannot be checked here is the thing the issue actually asks for — that the corpus
-**grows across two consecutive scheduled runs**. That is the acceptance criterion, it is
-observable in the `fuzz-artifacts` file counts on two successive Mondays, and it is
-deliberately not something this session can claim.
+**grows across two consecutive scheduled runs**. That is deliberately not something this
+session can claim.
+
+The criterion also needed correcting, and the review is what corrected it. Reading it off
+the `fuzz-artifacts` **file counts** is wrong: the artifact is uploaded after cmin, and
+cmin legitimately shrinks the count while preserving coverage — most visibly on the first
+run, which minimises the committed seeds. Two successive Mondays can show a flat or
+falling count on a lane working exactly as intended.
+
+The evidence to read instead, both now emitted by this lane:
+
+- the `cmin <target>: <before> -> <after>` lines — a rising `after` across runs is
+  accumulation, and a `before` that never exceeds the seed count is a restore that is not
+  happening;
+- the warm/cold line from the restore step, which names the cache entry inherited, or says
+  plainly that none matched.
+
+A criterion that can read as failure on a healthy lane is worse than no criterion, because
+it gets checked once and believed.
