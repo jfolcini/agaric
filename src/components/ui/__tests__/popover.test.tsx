@@ -93,8 +93,9 @@ describe('PopoverContent', () => {
   // Radix's own default of `0`. That default is real geometry, not
   // decoration: it feeds `detectOverflow`'s `paddingObject`, which
   // floating-ui's `size()` folds into `maximumClippingHeight` for every
-  // popover in the app (~45 call sites at #4339, none of which pass the
-  // prop) — see the comment on `EDGE_PADDING_PX` above for the full chain.
+  // popover in the app (31 production call sites, none of which pass the
+  // prop; #4339 estimated ~45, but 31 is the measured figure) — see the
+  // comment on `EDGE_PADDING_PX` in `../popover.tsx` for the full chain.
   //
   // That geometry only manifests once `size()` actually lays the popper out,
   // which happy-dom never does (the same reason the max-height test above
@@ -110,14 +111,33 @@ describe('PopoverContent', () => {
   // exactly the body React would run — and reads the element tree it returns
   // directly, with no DOM involved. (The wrapper is named without using the
   // legacy API's identifier on purpose: `no-legacy-react-apis` is a text
-  // scan, so spelling it out here would fail the hook on a comment.) That is deliberately narrower than "the popover
-  // avoids the viewport edge by 4px"; it goes red the moment the default
+  // scan, so spelling it out here would fail the hook on a comment.) That
+  // is deliberately narrower than "the popover avoids the viewport edge by
+  // 4px"; it goes red the moment the default
   // itself regresses (removed, or drifts from 4), which is what shipped
   // untested at #4339.
+  // Both direct-call tests assume `PopoverContent` returns exactly
+  // Portal -> Content. If a wrapper element is ever inserted between them,
+  // `portal.props.children` is undefined and the padding assertion dies with
+  // a TypeError naming neither the padding nor the shape change. Assert the
+  // shape first so the failure says which of the two actually broke.
+  const contentOf = (portal: { props: { children?: { props?: object } } }) => {
+    const props = portal.props.children?.props
+    // Checking that `collisionPadding` is PRESENT, not merely that `props`
+    // exists: an inserted wrapper element has props of its own, so a
+    // `toBeDefined()` on `props` passes and the real assertion then fails as
+    // an opaque "expected undefined to be 4". Keying on the prop under test
+    // is what makes a shape change say so.
+    expect(
+      props && 'collisionPadding' in props,
+      'PopoverContent no longer returns Portal -> Content carrying collisionPadding; retarget these direct-call tests rather than relaxing them',
+    ).toBe(true)
+    return portal.props.children as { props: { collisionPadding?: number } }
+  }
+
   it('defaults collisionPadding to EDGE_PADDING_PX (4), not Radix default of 0', () => {
     const portal = PopoverContent({ children: 'Content' })
-    const content = portal.props.children
-    expect(content.props.collisionPadding).toBe(4)
+    expect(contentOf(portal).props.collisionPadding).toBe(4)
   })
 
   // A default and a hardcoded constant both satisfy the assertion above —
@@ -127,8 +147,7 @@ describe('PopoverContent', () => {
   // contract around it. Same direct-call technique as the default test.
   it('still passes through a caller-supplied collisionPadding instead of forcing the default', () => {
     const portal = PopoverContent({ children: 'Content', collisionPadding: 12 })
-    const content = portal.props.children
-    expect(content.props.collisionPadding).toBe(12)
+    expect(contentOf(portal).props.collisionPadding).toBe(12)
   })
 
   it('has no a11y violations', async () => {

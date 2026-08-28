@@ -61,9 +61,12 @@ The **pre-existing "no-op re-render" test passed for a reason unrelated to what 
 cover**. It recreates the block array each render, but the memo's dependency is a joined
 *string*, so the callback never re-invoked at all — the test could not have failed even with the
 reuse logic deleted. This was settled with an instrumented compute counter rather than by
-reading: zero invocations on a no-op rerender, exactly one on a reorder. The replacement test
-reorders so the signature genuinely changes while content stays equal, and asserts reference
-identity.
+reading: zero invocations on a no-op rerender, exactly one on a reorder. The new test reorders
+so the signature genuinely changes while content stays equal, and asserts reference identity.
+
+It **supplements** rather than replaces: the old test is still there, annotated with what it
+actually covers. Calling it a replacement would have been the tidier sentence and the false one
+— the diff has no deletions at all.
 
 The second is the session's real find, below.
 
