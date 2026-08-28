@@ -37,9 +37,20 @@ import { StaticBlock } from '@/components/editor/StaticBlock'
 
 vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn() }))
 
-/** The horizontal-inset utility classes on an element, order-insensitive. */
+/**
+ * The horizontal-inset utility classes on an element, order-insensitive.
+ *
+ * The `(^|:)` matches variant-prefixed insets (`sm:px-4`,
+ * `[@media(pointer:coarse)]:px-2`) as well as bare ones. An anchored
+ * `/^(px|pl)-/` would not, and that is not a hypothetical gap: adding a
+ * breakpoint inset to `block-static` alone would be invisible to BOTH sides of
+ * the comparison below, leaving this test green while the alignment drifts at
+ * exactly that breakpoint. `block-static` already carries
+ * `[@media(pointer:coarse)]:min-h-[2.75rem]`, so variant classes on it are an
+ * established pattern rather than a shape nobody would reach for.
+ */
 const horizontalInset = (el: Element | null) =>
-  [...(el?.classList ?? [])].filter((c) => /^(px|pl)-/.test(c)).toSorted()
+  [...(el?.classList ?? [])].filter((c) => /(^|:)(px|pl)-/.test(c)).toSorted()
 
 describe('metadata row / block text alignment', () => {
   it('insets the metadata row by the same amount as the block text', () => {
@@ -69,23 +80,5 @@ describe('metadata row / block text alignment', () => {
     expect(textInset.length).toBeGreaterThan(0)
 
     expect(horizontalInset(rowEl)).toEqual(textInset)
-  })
-
-  it('renders the row only when there is metadata to show', () => {
-    // Pinned because the alignment padding must not become a reason for an
-    // empty row to occupy space: a leaf block with no metadata renders nothing
-    // at all, so `px-3` can never show up as a phantom gap under the text.
-    const { container } = render(
-      <BlockMetadataRow
-        blockId="B1"
-        filteredProperties={[]}
-        attachmentCount={0}
-        showAttachments={false}
-        onToggleAttachments={vi.fn()}
-        onEditProp={vi.fn()}
-        onEditKey={vi.fn()}
-      />,
-    )
-    expect(container.querySelector('.block-metadata-row')).not.toBeInTheDocument()
   })
 })

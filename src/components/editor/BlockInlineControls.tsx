@@ -687,9 +687,11 @@ export const BlockMetadataRow = React.memo(
       // boundary the text wraps against.
       //
       // That makes three copies of one value, the third of which is in CSS and
-      // cannot import a shared constant. `SortableBlock.metadata-row-alignment`
-      // pins the relationship rather than the literal, so changing the inset in
-      // one place fails loudly instead of drifting.
+      // cannot import a shared constant.
+      // `editor/__tests__/metadata-row-text-alignment.test.tsx` (describe:
+      // "metadata row / block text alignment") pins the relationship rather
+      // than the literal, so changing the inset in one place fails loudly
+      // instead of drifting.
       <div className="block-metadata-row flex items-center flex-wrap gap-1 mt-0.5 px-3">
         {priority && (
           <PriorityBadge
