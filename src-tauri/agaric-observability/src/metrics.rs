@@ -140,9 +140,13 @@ pub fn register_instruments(meter_provider: &SdkMeterProvider, counters: Materia
     let _sql_only_fallback = meter
         .u64_observable_counter("agaric.materializer.sql_only_fallback")
         .with_description(
-            "Cumulative count of materializer apply handlers that fell back to \
-             the SQL-only projection path (engine uninit / space unresolved). \
-             Nonzero in production signals an unexpected fallback (#1057).",
+            "Cumulative count of SQL-only fallbacks (space unresolved / engine \
+             missing target). Two recorder classes, separable by the `op` field \
+             on the target=materializer::sql_only_fallback debug lines: an \
+             in-transaction apply handler that fell back to the SQL-only \
+             projection, and a post-commit engine fan-out that skipped a cohort \
+             member absent from its space's engine (#4472). Nonzero in \
+             production signals an unexpected fallback (#1057).",
         )
         .with_callback(move |observer| {
             observer.observe(sql_only_fallback(), &[]);

@@ -1,14 +1,16 @@
 //! #2031 observability hook for the post-commit descendant fan-out.
 //!
 //! After the apply tx commits,
-//! [`super::apply::dispatch_restore_descendants`] and
-//! [`super::apply::dispatch_delete_descendants`] fan the descendant
-//! cohort out to the per-space Loro engine. Each helper **absorbs every
-//! failure with `warn`/`trace` + early-return** rather than persisting an
+//! [`super::apply::dispatch_restore_descendants`],
+//! [`super::apply::dispatch_delete_descendants`] and — since #4390 —
+//! [`super::apply::dispatch_unswept_cohort`] fan the descendant cohort out
+//! to the per-space Loro engine. Each helper **absorbs every failure with
+//! `warn`/`trace` + early-return** rather than persisting an
 //! exhausted-retry row (like `fg_apply_dropped` does) — a malformed root
-//! payload, a `resolve_block_space` error, or a missing space leaves SQL
-//! deleted/restored while the engine stays divergent until the next full
-//! boot replay reconciles it.
+//! payload, a `resolve_block_space` error, or a missing space (for the
+//! un-sweep fan-out, a `resolve_soft_deleted_block_space` that answered
+//! `None`) leaves SQL deleted/restored/re-derived while the engine stays
+//! divergent until the next full boot replay reconciles it.
 //!
 //! That skip was previously invisible (only a log line). This module
 //! makes it *observable* without changing any control flow: a

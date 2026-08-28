@@ -420,9 +420,23 @@ where
 /// it survives a soft-delete — mirroring the LOCAL purge path's
 /// `capture_purge_engine_fanout` (`commands/blocks/crud.rs`).
 ///
-/// Returns `Ok(None)` only when the block is absent or genuinely carries a
-/// NULL `space_id` (pre-spaces data); the caller then legitimately falls
-/// back to the SQL-only cascade.
+/// Returns `Ok(None)` in THREE cases, not two — this reads `blocks.space_id`
+/// ALONE, with none of [`resolve_block_space`]'s `COALESCE(b.space_id,
+/// p.space_id)` fallback to the owning page:
+///
+/// 1. the `blocks` row is absent entirely (`fetch_optional` misses);
+/// 2. the row genuinely carries a NULL `space_id` — pre-spaces data;
+/// 3. the row's own `space_id` column has NOT been propagated yet **while its
+///    page IS spaced**. On the COALESCE axis alone `resolve_block_space` would
+///    answer for such a block and this resolver does not — but that is not a
+///    reason to reach for it here: it also filters `deleted_at IS NULL`, and
+///    every caller of THIS resolver targets an already-tombstoned block, which
+///    is the whole reason this function exists.
+///
+/// Case 3 is neither absence nor pre-spaces data, and stating only the first
+/// two has already misled readers at both call sites (#4473). In every case the
+/// caller legitimately falls back to the SQL-only cascade, and the skip is
+/// metered so it stays observable rather than silent.
 ///
 /// A runtime query (not the `query!` macro) is used deliberately so this
 /// addition needs no `.sqlx` cache regeneration — matching the SQL cascade
