@@ -518,19 +518,38 @@ export function escalationThreshold(periodHours) {
  * one.
  *
  * Per lane, `runId` (from the needs payload — see `parseNeeds`) means:
- *   - `undefined` (the caller's payload never had the key — the deep-checks
- *     reporter's `toJSON(needs)` never does): falls back to `fallbackRunId`,
- *     this script INVOCATION's own identity. Correct there specifically
- *     because that reporter runs from inside the very workflow it watches —
- *     one invocation of this script already IS one real occurrence, so
- *     "new invocation" and "new run" already coincide and nothing is lost by
- *     treating them as the same signal.
+ *   - `undefined` (the key is simply absent from the lane's entry): falls
+ *     back to `fallbackRunId`, this script INVOCATION's own identity. Two
+ *     callers land here, for two different reasons that both resolve to the
+ *     same fallback:
+ *       - the deep-checks reporter's `toJSON(needs)` never has a `runId` key
+ *         for ANY lane — correct there specifically because that reporter
+ *         runs from inside the very workflow it watches, so one invocation
+ *         of this script already IS one real occurrence, and "new
+ *         invocation" and "new run" already coincide;
+ *       - `buildResults` (`check-workflow-liveness.mjs`) omits the key
+ *         deliberately, and ONLY, for a `stale` verdict (#4456) — the
+ *         watched workflow's own schedule has stopped firing, so there is no
+ *         run left to name, and this script's own poll becomes the
+ *         distinguishing occurrence instead: three DIFFERENT `fallbackRunId`
+ *         values are three distinct daily polls that still observe the lane
+ *         stale, standing in for the three distinct runs a genuinely failing
+ *         weekly lane would need to escalate.
  *   - `null` (the key IS present but the caller could not name a run — e.g.
- *     `newestCompletedRunId` reporting `never-ran`/`stale`/no completed run
- *     at all): the identity is unknowable, so the counter HOLDS — it neither
- *     advances nor resets. Falling back to the invocation id here would
- *     advance once per DAILY tick against a workflow that has simply never
- *     run, which is the bug relocated rather than fixed.
+ *     `newestCompletedRunId` reporting `never-ran`/`no-completed-run`): the
+ *     identity is unknowable, so the counter HOLDS — it neither advances nor
+ *     resets. Falling back to the invocation id here would advance once per
+ *     DAILY tick against a workflow that has simply never run, which is the
+ *     bug relocated rather than fixed. `stale` used to be identified by
+ *     `newestCompletedRunId`'s answer too (usually a real, frozen, NON-null
+ *     id — the last completed run before the schedule died); #4456 moved it
+ *     to the key-absent branch above instead of leaving it here — the
+ *     omission is pinned directly by `check-workflow-liveness.mjs`'s
+ *     `selfTestStaleRunIdOmission` ("OMITS `runId` entirely — not the frozen
+ *     completed run id, and not an explicit `null`"), and the escalation this
+ *     enables end to end by this file's own `selfTestDeadCronStaleEscalates`
+ *     below. A `null` hold would have been just as wrong for a dead cron as
+ *     the frozen id it replaced — see `buildResults`' own comment.
  *   - anything else: a real, comparable identity (a run's numeric database
  *     id from `check-workflow-liveness.mjs`, or this script's own run URL).
  *
