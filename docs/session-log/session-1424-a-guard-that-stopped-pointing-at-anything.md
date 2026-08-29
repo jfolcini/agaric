@@ -818,3 +818,44 @@ the body now states the runtime-computed case count and presents the mutant tabl
 representative rather than exhaustive.
 
 Thirty-two cases.
+
+## Rounds twenty-two and twenty-three — the guard's own state file
+
+Two rounds, and between them the sharpest finding in the whole change.
+
+**Deleting the baseline disabled the ratchet entirely, silently.** `read_baseline()` returns
+`{}` for a missing file. So one `rm src-tauri/space-filter-baseline.txt` and every rule still
+passes: nothing can dangle (no entries to dangle), nothing is unscanned (no entries to be
+unscanned), and `baseline.get(rel, 0)` reads 0 for every file in the tree, so no count can be
+below its record. prek does not pass deleted paths, so the deletion does not even select the
+hook. The guard's entire state, gone, and the guard reporting success — this change's own
+subject in its purest available form, reachable in one command, and it survived twenty-two
+rounds of review of a file *about* that failure mode.
+
+What makes it instructive is why it hid. Every check I added asks a question about an entry.
+No check asked whether there were any entries at all. Twelve rules over the contents of a
+container, none over the container. The remedy needed its own hint too, and the hint is the
+interesting half: `--update-baseline` is the *wrong* move here, because it would write a fresh
+baseline from the current tree and bless whatever had been removed since the real one was last
+correct. So the finding says `git checkout --`, and direction 21 asserts that separately from
+asserting the finding — because prescribing a plausible, destructive remedy is worse than the
+finding it answers.
+
+Round twenty-two was the same shape one layer over: `--update-baseline` had no `unscanned` arm,
+so an entry naming a `DENY_FILES` path fell through to the delta comparison, where its
+recomputed count reads 0 while the file plainly still exists — and `in_place` announced *"a
+guard was removed IN PLACE"*. Nothing had been removed. Fifth instance of the mislabelling,
+and the first on the re-anchor side rather than the reporting side.
+
+Also: a baseline entry that is under a root and exists but is not a `.rs` file satisfied both
+unscanned predicates and was still never opened, since the walk globs `*.rs`. Third way to be
+unscanned. And five fixture `unlink()`s sat outside `finally` while eight others did not — in
+a file whose directions carry comments arguing that exact point.
+
+**The denominator went stale a third time.** I rewrote the test plan to say 32 cases and added
+direction 20 in the same commit. The body has now stopped quoting the number at all: the suite
+computes and prints it, CI is the authority, and a figure maintained by hand in prose is the
+thing this change exists to argue against. Writing "it cannot drift from this number silently"
+and then drifting from it three commits later is a tidy demonstration of why.
+
+Thirty-six cases.
