@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 23 cases pass |
+| control (restored) | 24 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 23 cases pass (was 10).
+- `--self-test`: 24 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -562,3 +562,41 @@ Two notes stay open and are recorded rather than fixed: the Rust `DENY_FILES` en
 deny a same-named file under `src-tauri/src/` (latent, silent), and the Rust↔Python root pairing
 remains hand-duplicated — the one coupling direction 11 mechanized on the `prek.toml` side and
 left unmechanized here.
+
+## Review round fourteen — the guard did not catch its own headline evidence
+
+The most consequential finding of the fourteen, and it went unnoticed by me across all of them:
+**a count that EXCEEDS its baseline was silent.**
+
+This change leads with `backlink/grouped.rs` going 3 → 5 — two canonical guards added while the
+file was unwatched, and the argument that a later removal would restore the stale 3 and pass. The
+guard as written up to this round would not have caught that. The rot it was built to expose is a
+class it still permitted, and re-anchoring is the only thing that would ever have surfaced it.
+
+The same silence hides a hand-lowered baseline. Editing `5 foo.rs` down to `3` while `foo.rs`
+still carries five passes everything: the entry resolves so `dangling` is silent, it is present
+so `unbaselined` is silent, and `cnt < base` is false by construction. Reproduced before fixing —
+exit 0.
+
+One rule closes both, and it is the rule already applied to a brand-new file twenty lines above:
+a file whose count exceeds its record needs re-anchoring. Verified against the actual historical
+state — with `grouped.rs`'s baseline set back to 3, the guard now names it and exits 1.
+
+**And a claim in the PR body was false.** It said forcing the whole-tree walk means "a hand-lowered
+count cannot hide behind an unrelated `.rs` edit". It cannot hide behind an edit — it does not
+need to, being undetectable outright. The review also noted direction 9 does not falsify that
+claim: its fixture drops the source file to 0 as well, so `cnt < base` fires for an unrelated
+reason. A case passing for the wrong reason, in the suite whose first lesson was to assert on the
+finding rather than the exit code.
+
+Also fixed: the `CRATE_ROOTS` sandbox loop lacked the absolute-path assert its `DENY_FILES`
+sibling gained last round — same precondition, same `Path.__truediv__` reasoning, one of two
+loops guarded; the docstring claimed "a pure move nets to zero and is allowed" while the code
+refuses a *partial* move (indistinguishable from an in-place deletion by counts alone), and now
+says so including that `--allow-reductions` is run-wide; and the hook's `files:` regex now
+includes the guard script itself, which matters more than it did since the script gained
+`CRATE_ROOTS`.
+
+**Committed but deliberately not pushed.** The standing rule adopted last round holds: twelve
+heads produced zero completed `validate-all` runs because each push cancelled the previous one.
+This round waits for `21deb76`'s run to reach a verdict.

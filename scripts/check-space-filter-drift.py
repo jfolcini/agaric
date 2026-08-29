@@ -72,8 +72,12 @@ third-party deps.
 
 `--update-baseline` re-anchors. It REFUSES (exit 1, writing nothing) when a
 canonical guard would leave the baseline — either a net loss across the tree,
-or a removal in place from a file that still exists. A pure move nets to zero
-and is allowed. To record a genuine removal, add `--allow-reductions`.
+or a drop in a file that still exists. A WHOLE-file move (the old file gone or
+emptied, an equal gain elsewhere) nets to zero and is allowed without a flag.
+A PARTIAL move — relocating one query out of a file that keeps the rest — is
+refused, because by counts alone it is indistinguishable from deleting one in
+place; `--allow-reductions` records it, and note that the flag is run-wide, so
+it also suppresses any unintended deletion in the same invocation.
 """
 
 from __future__ import annotations
@@ -539,6 +543,10 @@ def _build_cli_sandbox(root: Path) -> Path:
     # "exits non-zero" half for the wrong reason. (`src-tauri/src` needs no
     # separate mkdir: it is itself a CRATE_ROOTS entry.)
     for rel in CRATE_ROOTS:
+        # Same precondition as the DENY_FILES loop below, for the same
+        # `Path.__truediv__` reason: an absolute entry would create these
+        # directories outside the TemporaryDirectory.
+        assert not PurePosixPath(rel).is_absolute(), rel
         (root / rel).mkdir(parents=True, exist_ok=True)
     # Same reason, for the deny half: a sandbox missing these would report a
     # dangling deny entry on every case and drown out what each is asserting.
@@ -1023,6 +1031,33 @@ def run_cli_self_test(record) -> None:
                 "non-zero exit naming keep.rs as an in-place removal",
             )
 
+        # --- #3255 direction 15: a count ABOVE its baseline is a finding -----
+        # The other half of this guard's failure mode, and the one that
+        # produced its own headline evidence: `backlink/grouped.rs` gained two
+        # canonical guards while unwatched and kept a baseline of 3. Unfixed,
+        # that recurs — the extra guards are unratcheted and a later removal
+        # restores the old number and passes. The same rule catches a
+        # hand-LOWERED baseline, which nothing else can see: the entry
+        # resolves, it is present, and `cnt < base` is false by construction.
+        gained = src / "gained.rs"
+        gained.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n'
+            'let b = "WHERE (?2 IS NULL OR b.space_id = ?2)";\n'
+            'let c = "WHERE (?3 IS NULL OR b.space_id = ?3)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("1 src-tauri/src/gained.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(gained)])
+        gained.unlink()
+        if code != 0 and "unratcheted" in out and "gained.rs" in out:
+            record("CLI: a count above its baseline is a finding (#3255)", True, True)
+        else:
+            record(
+                "CLI: a count above its baseline is a finding (#3255)",
+                (code, out.strip()),
+                "non-zero exit naming gained.rs as carrying unratcheted guards",
+            )
+
 
 def run_self_test() -> int:
     """Assert scan_text/parse_baseline's exit-relevant behavior.
@@ -1321,6 +1356,31 @@ def main(argv: list[str]) -> int:
                 f"{rel}: {cnt} canonical space-filter fragment(s) but NO "
                 f"baseline entry — an entry was deleted (retiring the removal "
                 f"net for this file), or the file is new and needs anchoring."
+            )
+        if cnt > base and rel in baseline:
+            # #3255 review: a count that EXCEEDS its baseline was silent, and
+            # that silence is the other half of this guard's own failure mode.
+            # Two ways in, one rule out:
+            #
+            #   * a file GAINS a canonical guard and keeps its stale-low
+            #     baseline — which is exactly the `backlink/grouped.rs` 3 -> 5
+            #     rot this change was written to expose. Unfixed, that rot
+            #     recurs unchanged: the added guards are unratcheted, and a
+            #     later removal restores the old number and passes.
+            #   * the baseline is HAND-LOWERED while the file is untouched
+            #     (`5 foo.rs` edited to `3`). Nothing else sees it — the entry
+            #     resolves so `dangling` is silent, it is present so
+            #     `unbaselined` is silent, and `cnt < base` is false by
+            #     construction.
+            #
+            # It is also what the `unbaselined` rule above already does for a
+            # brand-new file, for the same reason. A file whose count exceeds
+            # its record is a file whose record needs re-anchoring.
+            unbaselined.append(
+                f"{rel}: {cnt} canonical space-filter fragment(s) but the "
+                f"baseline records {base} — guards were added without "
+                f"re-anchoring, or the baseline was lowered by hand. Either "
+                f"way the extra {cnt - base} are unratcheted."
             )
         if cnt < base:
             removal_violations.append(
