@@ -158,3 +158,41 @@ bodies, which made git pair the delete and the add as `R100` and route the whole
 branch it was written to test.
 
 Closes #4527.
+
+## Round 4 — the through-prek test would have gone red on every non-docs PR
+
+Review found the Case 21 harness broken in exactly the way this guard is about, one layer further
+out. The nested `prek run` was invoked bare, and the **outer** prek exports `SKIP` to every hook it
+runs — with `session-log-numbering` in that list precisely when a PR touches no Markdown
+(`_validate.yml`'s `skips+=(… session-log-numbering)`, and `verify-ci-equivalent.sh`'s
+`skip_items`). The self-test hook is in *no* skip list and its `files` regex always matches, so it
+runs on every PR. On a Rust-only or TS-only PR the inner run would have inherited the bypass,
+printed nothing, and reddened both assertions.
+
+This PR's own CI could not catch it: the branch adds a session log, so `docs=true` and the hook is
+not in `SKIP`. The failure would have landed on the next PR touching no Markdown — which is most of
+them. An assertion green over a channel whose state differs in the runs that matter, which is the
+sentence this log already contains about something else.
+
+Reproduced rather than accepted. With `SKIP=markdownlint,md-link-targets,session-log-numbering` in
+the environment, the pre-fix self-test exits 2 with both arms red; post-fix it exits 0. The fix is
+`env -u SKIP -u PRE_COMMIT -u PREK` on both nested invocations — the siblings go too, because this
+is the repo's first nested `prek run` and nothing established what an inner run should inherit.
+
+### The diagnostic was confidently wrong, and the first ratchet for it did not work
+
+Pre-fix, both arms failed with *"prek swallowed it — is `verbose = true` still on the hook?"* —
+which would have sent the next reader to inspect a flag that was fine. So the arm gained a branch
+that names an inherited bypass instead.
+
+The first version of that branch grepped for `skipped`, on the assumption that is what prek says.
+It is not. Measured, prek prints `did not match any hooks` and `No hooks found after filtering with
+the given selectors`, and the word `skipped` never appears — so the ratchet looked right, ran, and
+detected nothing. It was only caught by running the mutation and reading the message it produced,
+which is the second time in this session a guard-for-a-guard was written against imagined output.
+
+Verified in both directions: with the fix reverted and `SKIP` set, the arm now reports *"the NESTED
+prek run was SKIPPED — it inherited a bypass (SKIP=) from the outer run; that is not 'prek swallowed
+the output'."*
+
+Self-test 29 assertions, green, and green again under a hostile `SKIP`.

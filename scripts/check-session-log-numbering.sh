@@ -1193,9 +1193,30 @@ if [ "${1:-}" = "--self-test" ]; then
 
     st_write "$d" 1281 mine
     git -C "$d" add -A
-    (cd "$d" && prek run session-log-numbering --hook-stage pre-commit) \
+    # `env -u SKIP -u PRE_COMMIT -u PREK`: the OUTER prek exports SKIP to every
+    # hook it runs, and `session-log-numbering` is in that list precisely when
+    # a PR touches no Markdown (_validate.yml's `skips+=(... session-log-numbering)`
+    # and verify-ci-equivalent.sh's `skip_items`). This self-test hook is in NO
+    # skip list and its `files` regex always matches, so it runs on every PR —
+    # meaning a nested bare `prek run` would inherit the bypass, print nothing,
+    # and redden BOTH assertions below on every non-docs PR. This PR's own CI
+    # does not catch that, because it adds a session log and so sets docs=true.
+    # Found in review of #4535; it is the same shape as the defect this guard is
+    # about, one layer out — an assertion green over a channel whose state
+    # differs in the runs that matter. The sibling variables go too: this is the
+    # repo's first nested `prek run`, so an inner run inherits nothing that
+    # describes the outer one.
+    (cd "$d" && env -u SKIP -u PRE_COMMIT -u PREK prek run session-log-numbering --hook-stage pre-commit) \
       >"$ST_ROOT/out.txt" 2>&1 || true
-    if grep -q 'checking 1 staged addition/rename' "$ST_ROOT/out.txt"; then
+    # Match what prek ACTUALLY prints when a selector is filtered away — measured,
+    # not guessed: with SKIP inherited it says "did not match any hooks" and
+    # "No hooks found after filtering", never the word "skipped". A grep for
+    # "skipped" here looked right and detected nothing.
+    if grep -qiE 'did not match any hooks|no hooks found after filtering|skipped' "$ST_ROOT/out.txt"; then
+      st_bad "the per-run count line reaches the terminal through prek (#4535 BLOCKING)" \
+        "the NESTED prek run was SKIPPED — it inherited a bypass (SKIP=) from the outer run; \
+that is not 'prek swallowed the output'. output: $(tr '\n' '|' <"$ST_ROOT/out.txt")"
+    elif grep -q 'checking 1 staged addition/rename' "$ST_ROOT/out.txt"; then
       st_ok "the per-run count line reaches the terminal through prek (#4535 BLOCKING)"
     else
       st_bad "the per-run count line reaches the terminal through prek (#4535 BLOCKING)" \
@@ -1206,7 +1227,7 @@ if [ "${1:-}" = "--self-test" ]; then
     # of verify-ci-equivalent.sh uses, where nothing is staged.
     git -C "$d" reset -q
     rm -f "$d/docs/session-log/session-1281-mine.md"
-    (cd "$d" && prek run session-log-numbering --all-files --hook-stage pre-commit) \
+    (cd "$d" && env -u SKIP -u PRE_COMMIT -u PREK prek run session-log-numbering --all-files --hook-stage pre-commit) \
       >"$ST_ROOT/out.txt" 2>&1 || true
     if grep -q '0 additions/renames staged' "$ST_ROOT/out.txt"; then
       st_ok "the empty-selection line reaches the terminal through prek (#4535 BLOCKING)"
