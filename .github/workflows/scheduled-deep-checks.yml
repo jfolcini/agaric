@@ -1658,9 +1658,12 @@ jobs:
           # Auto-enrolment has one quiet edge: a `[[bin]]` added without a
           # `corpus/<target>/` directory is fuzzed from libFuzzer's single empty
           # input, every week, and nothing about that reads as wrong.
-          # `cargo fuzz run` creates the directory and cmin's `|| true` covers
-          # the missing-dir case, so the lane stays green while that target
-          # explores from cold forever — which is the exact behaviour #4496
+          # `cargo fuzz run` creates the directory, and cmin's `find ... || true`
+          # on the input COUNT tolerates it being absent beforehand (not cmin's
+          # own exit status, which #4496 changed from `|| true` to `|| rc=$?`
+          # precisely so a broken cmin stops being silent) — so the lane stays
+          # green while that target explores from cold forever, which is the
+          # exact behaviour #4496
           # exists to end, reintroduced one target at a time. Not fatal (an
           # unseeded target still fuzzes, and a first run legitimately has
           # none), so this warns rather than fails.

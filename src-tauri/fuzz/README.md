@@ -29,13 +29,19 @@ To see the targets, read `Cargo.toml`, or run:
 
 ```sh
 cd src-tauri/fuzz
-cargo metadata --format-version 1 --no-deps \
+cargo +nightly metadata --format-version 1 --no-deps \
   | jq -r '.packages[] | select(.name == "agaric-fuzz")
            | .targets[] | select(.kind | index("bin")) | .name'
 ```
 
 That is the same command the weekly lane uses to build its target list, so what
-it prints is exactly what gets fuzzed.
+it prints is exactly what gets fuzzed — including the `+nightly`, which is
+load-bearing in CI and merely harmless here. A bare `cargo` resolves through the
+repo-root `rust-toolchain.toml` to 1.95.0 plus its mandatory clippy and rustfmt
+components; the fuzz job installs only nightly, so in the lane that would pull a
+whole toolchain over the network to read a manifest. In a dev checkout you
+probably have 1.95.0 already and would not notice, which is exactly why the
+command is written the same way in both places.
 
 Each target's own file header states the surface it drives, where that input
 comes from, and why it is worth fuzzing — which is the part worth writing down,
