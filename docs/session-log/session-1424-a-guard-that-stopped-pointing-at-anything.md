@@ -731,3 +731,46 @@ swallowed by the `-`-prefix filter, so an operator recovering from the reduction
 dropped the other flag got exit 0 from a scan that re-anchored nothing.
 
 Twenty-seven cases.
+
+## Rounds nineteen and twenty — two weak fixtures in a row, on one defect
+
+The review said: now that the roots are `.resolve()`d, a `CRATE_ROOTS` entry symlinked OUT of
+the repository makes `relative_to(REPO_ROOT)` raise an uncaught `ValueError` in
+`all_source_files()` — a traceback where a guard owes a diagnosis.
+
+I reported the root as a finding, falsified against a fixture whose symlink target was
+**empty**, saw `(0, '')`, and wrote a commit message asserting the review's premise was wrong:
+no traceback, just silence. That was a conclusion drawn from one fixture. Put a `.rs` file at
+the far end and the walk reaches `relative_to` and dies exactly as described. Both behaviours
+are real; the empty case is simply blind to the one being reported.
+
+Then the test failed the same way. Direction 7b invoked the guard with a **targeted path**,
+which takes its files from argv and never calls `all_source_files()` — so the case passed
+against a build that still crashed on real content. I only found that because the mutant
+passed when it should have failed, which is the one thing a falsification run is for.
+
+Two fixtures too weak in a row, on a single defect, in a change about checks that stopped
+checking. The pattern in both: I chose a fixture that could not exercise the path I was
+claiming to fix, then read the resulting green as evidence. An empty directory and a targeted
+invocation are each perfectly reasonable-looking test inputs; neither reaches the code under
+test. "It passed" and "it would have failed had I broken it" are different claims, and only
+the second one is worth anything.
+
+The fix ended up in two halves that answer different questions: `_assert_paths_exist` reports
+the root, so the failure is visible; `crate_root_paths()` excludes it from the walk, so the
+failure is a diagnosis rather than a traceback. Excluding without reporting would have been
+the silent narrowing this whole change exists to end.
+
+Round twenty then found three more variants of *the check is present and protects nothing*:
+
+* A baseline entry naming a real file outside every `CRATE_ROOTS` entry — resolves, so the
+  dangling check is happy; never walked, so its count is compared against nothing. Raised as
+  "in-scope-ness" in four separate reviews and deferred to #4501 every time. It is three lines.
+* A dangling `DENY_FILES` entry only warned under `--update-baseline`. Once the entry goes
+  stale the file it excluded stops being excluded, so the rebuild writes it a baseline entry —
+  enrolling `SPACE_FILTER_CANONICAL` into the baseline defined against it. The mutant prints
+  the whole failure in one line: exit 0, `clean.rs: 0 -> 1`, `Wrote …baseline.txt`.
+* The two sandbox preconditions guarding a destructive `mkdir`/`unlink` were `assert`, which
+  `python3 -O` strips. A precondition that vanishes under an interpreter flag is not one.
+
+Thirty cases.
