@@ -1484,6 +1484,16 @@ jobs:
         with:
           path: src-tauri/fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+          # KNOWN MARGIN (not fixed here): GitHub evicts cache entries not
+          # ACCESSED for 7 days. This lane runs Mondays 04:17 UTC and saves
+          # ~20-35 min into the job, so save-to-next-restore is about 6d23h30m
+          # — roughly half an hour of headroom. A scheduled run delayed past
+          # that (they are routinely delayed under load) evicts the corpus and
+          # resets to the committed seeds. The warm/cold step below is what
+          # makes that visible rather than silent; making accumulation robust
+          # rather than marginal needs a mid-week touch or a second scheduled
+          # restore, which is a follow-up rather than part of this change.
+          #
           # Restore is deliberately NOT branch-gated while save is: Actions
           # cache scoping lets any branch read the default branch's entries, so
           # a `workflow_dispatch` run on a feature branch starts from main's
@@ -1620,9 +1630,15 @@ jobs:
         # which would silently return this lane to the cold-start behaviour
         # this step exists to end.
         #
-        # Failures here are non-fatal (`|| true`, per target): cmin is an
-        # optimisation, and a corpus that failed to minimise is still a corpus
-        # worth saving. The fuzz step above owns the lane's pass/fail verdict.
+        # Failures here are non-fatal (captured per target as `|| rc=$?`, then
+        # reported as a `::warning::` — NOT `|| true`, which is the mechanism
+        # this step replaced precisely because it discarded the exit status):
+        # cmin is an optimisation, and a corpus that failed to minimise is
+        # still a corpus worth saving. cargo-fuzz's `exec_cmin` swaps the
+        # directory only `if status.success()` (it merges into a temp dir, then
+        # `fs::rename`s the old corpus away and the minimised one into place),
+        # so a failed cmin leaves that target's corpus intact rather than
+        # emptied. The fuzz step above owns the lane's pass/fail verdict.
         #
         # Two conditions, guarding two different ways the corpus lineage gets
         # silently reset to the committed seeds.
@@ -1655,6 +1671,16 @@ jobs:
         env:
           RUSTFLAGS: "-C target-feature=-crt-static"
         run: |
+          # `set -uo pipefail` does NOT clear the `-e` that GitHub's default
+          # `bash -e {0}` already set, so every `find | wc -l` below carries
+          # `|| true`: `find` exits 1 on a missing directory, `pipefail`
+          # propagates that, and the assignment's non-zero status would trip
+          # `-e`, aborting the loop before the remaining targets are minimised.
+          # Unreachable today (all five targets have committed seed dirs), but
+          # reachable the moment a sixth is added without seeds and its build
+          # fails — `cargo fuzz run` builds before it creates `corpus/<target>`.
+          # That is the exact fail-fast shape #3169 removed from the fuzz loop
+          # 200 lines above; not reintroducing it here.
           set -uo pipefail
           # Read the target list the fuzz step already wrote, rather than
           # hardcoding a THIRD copy of it. There are two today — the `[[bin]]`
@@ -1671,7 +1697,7 @@ jobs:
           fi
           while read -r target; do
             [ -n "$target" ] || continue
-            before=$(find "corpus/$target" -type f 2>/dev/null | wc -l)
+            before=$(find "corpus/$target" -type f 2>/dev/null | wc -l || true)
             # `< /dev/null`: this loop's stdin IS the manifest (`done < ...`).
             # cargo-fuzz nulls the fuzz binary's own stdin so this is fine
             # today, but a child that ever read stdin would swallow the
@@ -1679,9 +1705,14 @@ jobs:
             # redirect below would hide that completely.
             log="$RUNNER_TEMP/cmin-$target.log"
             rc=0
+            # `-rss_limit_mb=4096` mirrors the fuzz step: without it the merge
+            # inherits libFuzzer's 2048 MB default, which is the most likely
+            # way cmin starts failing as the corpus grows — i.e. exactly when
+            # minimisation matters most.
             cargo +nightly fuzz cmin "$target" \
-              --target x86_64-unknown-linux-gnu </dev/null >"$log" 2>&1 || rc=$?
-            after=$(find "corpus/$target" -type f 2>/dev/null | wc -l)
+              --target x86_64-unknown-linux-gnu </dev/null \
+              -- -rss_limit_mb=4096 >"$log" 2>&1 || rc=$?
+            after=$(find "corpus/$target" -type f 2>/dev/null | wc -l || true)
             echo "cmin $target: $before -> $after inputs"
             # Non-fatal, but never SILENT. `>/dev/null 2>&1 || true`
             # discarded the exit status too, so a permanently broken

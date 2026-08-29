@@ -46,10 +46,24 @@ an implicit post-job step, and no exact-hit save-skip to reason about.
 cache entry limit silently stops being restored — which returns the lane to the exact
 cold-start behaviour this change exists to end, with nothing announcing that it had.
 
-The key is `fuzz-corpus-${{ github.run_id }}` with `restore-keys: fuzz-corpus-`. The
-run-scoped key never hits on read; the prefix falls back to the most recent entry. A
-constant key would look simpler and freeze the corpus at whatever the first run saved,
-because GitHub cache entries are immutable per key.
+That rationale rests on cmin *replacing* the corpus rather than merging alongside it, and
+review rightly flagged that as an unverified premise — if cmin left the originals in place
+the corpus would still grow monotonically and the size guard would not exist. Checked
+against cargo-fuzz's `exec_cmin` rather than assumed: it merges into a temp dir with
+`-merge=1`, and then, **only** `if status.success()`, does
+`fs::rename(&corpus, tmp/"old")` followed by `fs::rename(tmp/"corpus", corpus)`. So the
+directory is replaced, a failed cmin leaves the corpus intact rather than emptied, and the
+two-rename swap is precisely why a cancellation landing between them can leave the
+directory absent — which is what the `!cancelled()` gate exists for.
+
+The key is `fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}` with
+`restore-keys: fuzz-corpus-`. The run-scoped key never hits on read; the prefix falls back
+to the most recent entry. A constant key would look simpler and freeze the corpus at
+whatever the first run saved, because GitHub cache entries are immutable per key. The
+`run_attempt` half arrived later, from review: `run_id` alone is stable across attempts,
+so re-running the job from the Actions UI hit the already-reserved key and
+`actions/cache/save` warned and continued — green, while that attempt's corpus was
+dropped.
 
 Both trailing steps are gated `!cancelled() && steps.corpus-cache.outcome == 'success'`.
 A crash in one target still leaves the other four with a run's worth of coverage, so a red
