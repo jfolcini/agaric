@@ -1484,19 +1484,31 @@ jobs:
         # recent prefix match — which is what makes each run write a fresh
         # entry instead of being stuck on the first one saved.
         id: corpus-cache
-        # `continue-on-error` because this step must not be able to STOP the
-        # fuzzing. `actions/cache/restore` calls `core.setFailed` on a cache
-        # SERVICE error (a plain miss is a success), and without this the failed
-        # restore would skip the fuzz step outright — no fuzzing, no
-        # `fuzz-status` artifact, and `file-fuzz-findings` seeing no results at
-        # all. Before this change the lane fuzzed from the committed seeds
-        # regardless of any cache; it still must.
+        # `continue-on-error` so this step cannot STOP the fuzzing: before this
+        # change the lane fuzzed from the committed seeds regardless of any
+        # cache, and it still must.
         #
-        # This does NOT weaken the two gates below: `continue-on-error` changes
-        # the step's `conclusion` to success while leaving `outcome` as
-        # `failure`, and both gates read `outcome` — so a cache-service failure
-        # still correctly suppresses cmin and the save rather than publishing a
-        # seeds-only corpus.
+        # It buys less than an earlier revision of this comment claimed, and the
+        # difference matters. Checked against `@actions/cache`'s `restoreCache`
+        # (actions/toolkit, packages/cache/src/cache.ts): only a
+        # `ValidationError` (over-long key, bad path) is re-thrown; EVERY other
+        # failure — a cache service outage included — is logged via
+        # `core.error`/`core.warning` and the function returns `undefined`. So:
+        #
+        #   * `continue-on-error` matters only for the ValidationError path;
+        #   * a service outage leaves this step `outcome: success` with an EMPTY
+        #     `cache-matched-key`, i.e. indistinguishable from a genuine cold
+        #     start, so the `outcome == 'success'` gates below do NOT catch it.
+        #
+        # KNOWN RESIDUAL HOLE (#4504): on such a run the lane fuzzes from seeds
+        # only and then publishes a seeds-only entry as the newest
+        # `fuzz-corpus-*`, resetting the lineage — the thing those gates exist
+        # to prevent. It self-heals the following week and is still strictly
+        # better than the pre-change every-run-cold behaviour, which is why it
+        # is not fixed here. It is NOT closable by a content check either: a
+        # genuine cold start and an outage both end with the seeds plus
+        # whatever this run found, so nothing inside the job can separate them
+        # without querying the cache API.
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -1532,18 +1544,21 @@ jobs:
           MATCHED: ${{ steps.corpus-cache.outputs.cache-matched-key }}
           RESTORE_OUTCOME: ${{ steps.corpus-cache.outcome }}
         run: |
-          # Three states, not two. `continue-on-error` on the restore means a
-          # cache-SERVICE failure also lands here, and reporting that as a cold
-          # start would misread "the cache is down" as "the cache is empty" —
-          # the second is expected once, the first is not.
+          # The `!= success` branch fires only for a ValidationError, because
+          # `restoreCache` swallows every other failure (see the restore step).
+          # An empty `$MATCHED` therefore means EITHER a genuine cold start OR a
+          # cache-service outage, and nothing here can tell them apart — so the
+          # message below says so instead of asserting the cheerful reading.
           if [ "$RESTORE_OUTCOME" != "success" ]; then
             echo "::warning::corpus restore FAILED (outcome=$RESTORE_OUTCOME) — fuzzing from the committed seeds only."
             echo "cmin and the save are gated on this outcome, so this run will NOT publish a corpus entry."
           elif [ -n "$MATCHED" ]; then
             echo "corpus restored from cache entry: $MATCHED (warm start)"
           else
-            echo "NO corpus cache entry matched — starting from the committed seeds only (cold start)."
-            echo "Expected on the first run after this landed; on any later run it means the save side is not working."
+            echo "::warning::NO corpus cache entry matched — fuzzing from the committed seeds only."
+            echo "EITHER a genuine cold start OR a cache-service outage: restoreCache swallows the latter"
+            echo "and returns empty, so they are indistinguishable here (#4504). Expected exactly once, just"
+            echo "after this landed; on any later run suspect the save side or an evicted entry."
           fi
           find src-tauri/fuzz/corpus -type f 2>/dev/null | wc -l | xargs echo "corpus files on disk before fuzzing:"
 
@@ -1781,7 +1796,7 @@ jobs:
             # and let the save step stand down; the previous entry then stays
             # newest and the next run recovers on its own.
             if [ "$before" -gt 0 ] && [ "$after" -eq 0 ]; then
-              echo "::warning::cmin collapsed $target from $before inputs to 0 — refusing to publish this corpus"
+              echo "::warning::cmin collapsed $target from $before inputs to 0 — standing down the save for ALL five targets this run (the flag is run-wide), so the previous cache entry stays newest"
               collapsed=1
             fi
           done < "$manifest"
