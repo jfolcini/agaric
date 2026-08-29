@@ -183,8 +183,7 @@ export function indexOfFolded(haystack: string, needle: string): number {
  * guarantee about its interior.
  *
  * That gap is reachable whenever a folded index lands inside a
- * reordered run; mixing planes additionally corrupts the *length*, on
- * top of the offset.  A BMP-only example shows the offset corruption
+ * reordered run.  A BMP-only example shows the offset corruption
  * alone, with no plane-mixing involved: for haystack
  * `"A" U+0653 U+0655 "Z"` searched for `U+0653`, the whole-string fold
  * is `"a" U+0655 U+0653 "z"` (ccc 220 before ccc 230), so `foldedIdx`

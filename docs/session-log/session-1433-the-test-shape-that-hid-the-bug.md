@@ -84,17 +84,35 @@ Mixing planes additionally corrupts the *length*, on top of the offset: for hays
 reaches buffer length 1 having consumed only `"A"`. Running it returns `{start: 1, length: 3}`
 where the correct span is `{start: 2, length: 2}`.
 
-Pre-existing and left unfixed — but the docblock now states the guarantee at the strength it has
-instead of one notch above it, and this pass corrected an under-claim in that same paragraph: the
-first draft called the residual reachable "when a run mixes planes", which is only true of the
-length corruption. The offset corruption alone needs nothing more exotic than two ordinary Arabic
-combining diacritics with reversed combining classes — it is not confined to the esoteric input
-the mixed-plane case needs. Verified by executing the function on both inputs rather than by
+Pre-existing, and left unfixed rather than fenced off with a narrower claim than it can support.
+The docblock's first draft called the residual reachable only "when a run mixes planes", which
+is true of the length corruption but not the offset one: the offset corruption alone needs
+nothing more exotic than two ordinary Arabic combining diacritics with reversed combining
+classes, run rather than traced, because this file's history is that a plausible trace was wrong
+about combining classes:
+
+```
+haystack code points:            [ '41', '653', '655', '5a' ]
+whole-string fold code points:   [ '61', '655', '653', '7a' ]
+findFoldedMatch result:          {"start":2,"length":1}
+spanned substring code points:   [ '655' ]
+```
+
+Right length, wrong character: `{start: 2, length: 1}` spans U+0655 where the correct span is
+`{start: 1, length: 1}`. Verified by executing the function on both inputs rather than by
 reasoning about combining classes, which is just as well: the classes quoted in the note that
 raised the mixed-plane case had U+1D167 *above* U+302A, which would mean no swap at all, and NFKD
-demonstrably swaps them. Right conclusion, inverted premise — the sort of pair that only running
-it separates. The BMP case now has its own pinning test, so this residual will not silently
-regress into "no test at all", the way the mixed-plane one did until this paragraph existed.
+demonstrably swaps them — right conclusion, inverted premise, the sort of pair that only running
+it separates.
+
+The guarantee is now stated as "reachable whenever a folded index lands inside a reordered run;
+mixing planes additionally corrupts the length" rather than the first draft's narrower claim, and
+the BMP case has its own pinning test — a documented residual with no test is how the
+mixed-plane one drifted unpinned in the first place, and a later review pass found this same
+under-claim still standing before this paragraph was consolidated to close it for good. That
+later pass also retired a second stale claim sitting beside it: "no Search surface here is known
+to produce such a run" was written with the musical-notation/ideographic-tone-mark pair in mind,
+but ordinary Arabic diacritics are not exotic.
 
 ## Two claims from the issue that measurement narrowed
 
@@ -163,62 +181,26 @@ form, so there is nothing to confuse it with and no silent weakening available.
 ## Verification
 
 69 tests in the fold suite (68 plus a pinning test for the BMP reordering residual, added in a
-review-response pass); 278 across it and the two consumer suites. `tsc -b`, `oxlint` and
-`oxfmt --check` clean on the changed files.
+review-response pass); 278 across it and the two consumer suites (69 + 189 + 20). `tsc -b`,
+`oxlint` and `oxfmt --check` clean on the changed files.
 
 Correction, made by actually re-running the suites rather than trusting the number already
 written down: this section originally said "68 tests in the fold suite; 276 across it and the two
 consumer suites." The fold-suite figure was right at the time; the combined total was not —
-measured at 277, not 276. Neither figure had been re-run before being written, which is exactly
-the failure mode this session is about.
+measured at 277, not 276, established by restoring the committed file content, running, and
+`cmp`-ing back. Neither figure had been re-run before being written, which is exactly the failure
+mode this session is about, and precisely the kind of number nobody was going to re-run, sitting
+in a paragraph whose subject is that unrun claims rot.
 
 The 11-of-16-fold-suite / 13-red-in-all falsification above was re-run against a copied backup in
-that same review-response pass and reproduced exactly: removing the collapse reddens the same 11
-fold-suite tests plus both consumer tests, 13 in all, out of the current 278.
+that same review-response pass, and again in a later one, and reproduced exactly both times:
+removing the collapse reddens the same 11 fold-suite tests plus both consumer tests, 13 in all,
+out of the current 278 — that count was accurate from the start.
 
 Every mutation was made against a copied backup and every restore proven byte-identical with
 `cmp`: the collapse removed, the collapse moved to immediately after NFKD, each of the three
-input constants normalised to the wrong sigma, and — in the review-response pass — the collapse
-removed again to recheck the falsification count.
-
-## Round 2 — an under-claim, in the log about over-claiming
-
-Review found the residual stated too narrowly, which is the exact defect this whole change set is
-about. The docblock said the reordering gap is "reachable when a run mixes planes". Mixing planes is
-what corrupts the **length**; a wrong **offset** is reachable entirely within the BMP, using the
-example the same paragraph already cited two paragraphs earlier.
-
-Run rather than traced, because this file's history is that a plausible trace was wrong about
-combining classes:
-
-```
-haystack code points:            [ '41', '653', '655', '5a' ]
-whole-string fold code points:   [ '61', '655', '653', '7a' ]
-findFoldedMatch result:          {"start":2,"length":1}
-spanned substring code points:   [ '655' ]
-```
-
-Right length, wrong character: `{start: 2, length: 1}` spans U+0655 where the correct span is
-`{start: 1, length: 1}`. The guarantee is now stated as "reachable whenever a folded index lands
-inside a reordered run; mixing planes additionally corrupts the length", and the BMP case has a
-test, because a documented residual with no test is how the last one drifted.
-
-The same edit retired a second claim that had gone stale beside it: "no Search surface here is
-known to produce such a run" was written with the musical-notation/ideographic-tone-mark pair in
-mind. Ordinary Arabic diacritics are not exotic.
-
-## Two counts, one of which was wrong when written
-
-**69** tests in the fold suite now (68 plus the BMP pin); **278** across it and the two consumer
-suites.
-
-The "276" above was wrong at the time it was written — the true figure then was **277** (68 + 189 +
-20), established by restoring the committed file content, running, and `cmp`-ing back. A small
-error, and precisely the kind this document keeps arguing about: it was a number nobody was going to
-re-run, sitting in a paragraph whose subject is that unrun claims rot.
-
-The "11 of 16 red" falsification was re-run against a copy and reproduces exactly: 11 fold-suite
-failures plus one in each consumer suite, 13 in all. That one was accurate.
+input constants normalised to the wrong sigma, and — across the two review-response passes — the
+collapse removed twice more to recheck the falsification count.
 
 ## The parity claim, made true rather than softened
 

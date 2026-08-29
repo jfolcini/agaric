@@ -45,6 +45,14 @@ const ODOS_MID = `οδο${SIGMA_MID}`
 // to a literal ς, in any position, with no help from Final_Sigma.
 const MATH_BOLD_SIGMA_FINAL = '\u{1D6D3}'
 
+// Two Arabic combining marks used below to pin the canonical-reordering
+// residual. Written as escapes for the same reason as the sigmas above —
+// more so, even: both are non-spacing marks that render as a bare glyph
+// above the base letter, which makes them *harder* to tell apart by eye
+// than Σ / σ / ς, not easier.
+const ARABIC_MADDAH_ABOVE = '\u0653' // ARABIC MADDAH ABOVE, ccc 230
+const ARABIC_HAMZA_BELOW = '\u0655' // ARABIC HAMZA BELOW, ccc 220
+
 describe('foldForSearch', () => {
   describe('ASCII fast path', () => {
     it('lowercases ASCII letters', () => {
@@ -570,19 +578,25 @@ describe('findFoldedMatch (PAGES-FOLD-MARK)', () => {
   })
 
   it('reordering residual: a folded index inside a reordered BMP mark run lands on the wrong character (documented, not fixed)', () => {
+    // Tamper-detector for the two constants above, same rationale as the
+    // sigma one: both marks render as a bare glyph over the base letter,
+    // so a silent substitution of one for the other would not be visible
+    // by eye, and this is what makes that edit visible instead.
+    expect(ARABIC_MADDAH_ABOVE.codePointAt(0)).toBe(0x0653)
+    expect(ARABIC_HAMZA_BELOW.codePointAt(0)).toBe(0x0655)
     // Pins the docblock's "reachable whenever a folded index lands inside
     // a reordered run" residual at its true (BMP-only) breadth — no
     // plane-mixing needed. U+0653 (ccc 230) and U+0655 (ccc 220) are
     // canonically reordered by NFKD in the whole-string fold but not by
     // this function's per-code-point walk, which only tracks length.
-    const haystack = `A${'ٓ'}${'ٕ'}Z`
-    expect(foldForSearch(haystack)).toBe(`a${'ٕ'}${'ٓ'}z`)
-    const match = findFoldedMatch(haystack, 'ٓ')
+    const haystack = `A${ARABIC_MADDAH_ABOVE}${ARABIC_HAMZA_BELOW}Z`
+    expect(foldForSearch(haystack)).toBe(`a${ARABIC_HAMZA_BELOW}${ARABIC_MADDAH_ABOVE}z`)
+    const match = findFoldedMatch(haystack, ARABIC_MADDAH_ABOVE)
     if (match === null) throw new Error('expected match')
     // Documented-wrong: right length, wrong character. A fix would make
     // this {start: 1, length: 1}, spanning U+0653 itself.
     expect(match).toEqual({ start: 2, length: 1 })
-    expect(haystack.slice(match.start, match.start + match.length)).toBe('ٕ')
+    expect(haystack.slice(match.start, match.start + match.length)).toBe(ARABIC_HAMZA_BELOW)
   })
 
   it('indexOfFolded stays consistent with findFoldedMatch.start', () => {
