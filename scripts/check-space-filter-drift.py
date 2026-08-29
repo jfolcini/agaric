@@ -452,6 +452,26 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[tuple[str, str]]:
         for rel in CRATE_ROOTS
         if not (REPO_ROOT / rel).is_dir()
     )
+    # A root that exists but resolves OUTSIDE the repo. Once the roots became
+    # `.resolve()`d (so `_is_under` compares like with like), a symlinked root
+    # pointing out of the tree would satisfy `_is_under` and then make
+    # `relative_to(REPO_ROOT)` raise an uncaught ValueError — a traceback
+    # where a guard owes a diagnostic. Reported rather than filtered out,
+    # because dropping it is the silent narrowing this whole change exists to
+    # end: a root that cannot be expressed relative to the repo is a broken
+    # declaration, not an absent one.
+    out.extend(
+        (
+            "root",
+            f"{rel}: CRATE_ROOTS names a path that resolves OUTSIDE the "
+            f"repository ({(REPO_ROOT / rel).resolve()}) — a symlink out of "
+            f"the tree. Scanned paths must be expressible relative to the "
+            f"repo root.",
+        )
+        for rel in CRATE_ROOTS
+        if (REPO_ROOT / rel).is_dir()
+        and not _is_under((REPO_ROOT / rel).resolve(), REPO_ROOT)
+    )
     return out
 
 
@@ -464,12 +484,25 @@ def crate_root_paths() -> list[Path]:
     component beneath `src-tauri/` — the same silent-narrowing shape this
     guard exists to end, and today survivable only by accident (the
     empty-target fallback would walk the whole tree anyway).
+
+    A root that resolves OUTSIDE the repo is excluded from the walk. That is
+    not the silent narrowing this guard exists to end: `_assert_paths_exist`
+    reports it as a `root` finding, so the run fails and names it. Walking it
+    anyway is not an option — every file found there raises `ValueError` from
+    `relative_to(REPO_ROOT)` in `all_source_files`, an uncaught traceback
+    instead of a diagnosis. Verified against a fixture: with a `.rs` file at
+    the far end of the symlink, the pre-fix code dies in `all_source_files`.
     """
-    return [
-        (REPO_ROOT / r).resolve()
-        for r in CRATE_ROOTS
-        if (REPO_ROOT / r).is_dir()
-    ]
+    out = []
+    for r in CRATE_ROOTS:
+        p = REPO_ROOT / r
+        if not p.is_dir():
+            continue
+        rp = p.resolve()
+        if not _is_under(rp, REPO_ROOT):
+            continue
+        out.append(rp)
+    return out
 
 
 def all_source_files() -> list[Path]:
@@ -642,8 +675,15 @@ def run_cli_self_test(record) -> None:
     fragment in it rather than an empty one, so "exits 0" cannot be satisfied
     by a scan that sees nothing at all.
     """
-    with tempfile.TemporaryDirectory(prefix="space-filter-drift-cli-") as tmp:
+    # A SECOND tempdir, deliberately a sibling of the sandbox rather than a
+    # child: direction 7b needs a symlink target that is genuinely outside the
+    # repo root the guard computes, which a path under `root` could not be.
+    with (
+        tempfile.TemporaryDirectory(prefix="space-filter-drift-cli-") as tmp,
+        tempfile.TemporaryDirectory(prefix="space-filter-drift-out-") as tmp2,
+    ):
         root = Path(tmp)
+        tmp_outside = Path(tmp2)
         guard = _build_cli_sandbox(root)
         src = root / "src-tauri" / "src"
         baseline_path = root / "src-tauri" / "space-filter-baseline.txt"
@@ -875,7 +915,7 @@ def run_cli_self_test(record) -> None:
         # reader had not run. A case that checks only the finding cannot see
         # which banner or hint carried it.
         if (
-            "a declared CRATE_ROOTS directory does not exist" in out
+            "a declared CRATE_ROOTS directory is missing or unusable" in out
             and "Fix the LIST, not the" in out
             and "no longer describes this tree" not in out
         ):
@@ -886,6 +926,54 @@ def run_cli_self_test(record) -> None:
                 out.strip(),
                 "the CRATE_ROOTS banner and ROOT_MISSING_HINT, not the "
                 "baseline ones",
+            )
+
+        # --- #3255 direction 7b: a root that resolves OUTSIDE the repo ------
+        # The roots became `.resolve()`d so `_is_under` compares like with
+        # like. That made a symlinked root pointing out of the tree satisfy
+        # `_is_under` and then blow up in `relative_to(REPO_ROOT)` — an
+        # uncaught ValueError traceback where a guard owes a diagnostic. It is
+        # reported, not filtered away: silently dropping a declared root is
+        # the narrowing this change exists to end.
+        outside = tmp_outside / "elsewhere"
+        outside.mkdir(parents=True, exist_ok=True)
+        # A `.rs` file at the far end is load-bearing. With the target EMPTY
+        # the walk finds nothing, never reaches `relative_to`, and the run
+        # merely exits 0 in silence — which is how an earlier revision of this
+        # case "passed" while `all_source_files()` still raised an uncaught
+        # ValueError on any real content. The fixture must carry a file for
+        # the case to pin the crash rather than only the reporting.
+        (outside / "leaf.rs").write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        engine_root = root / "src-tauri" / "agaric-engine" / "src"
+        try:
+            shutil.rmtree(engine_root)
+            engine_root.symlink_to(outside, target_is_directory=True)
+            # NO argv: the crash lives in `all_source_files()`, which only a
+            # whole-tree run reaches. A targeted invocation takes its paths
+            # from argv and never walks the roots, so it exits non-zero on the
+            # reporting alone and cannot tell the walk exclusion apart — which
+            # is exactly how the first version of this case passed against a
+            # build that still raised ValueError on real content.
+            code, out = _run_cli(guard, [])
+        finally:
+            if engine_root.is_symlink():
+                engine_root.unlink()
+            engine_root.mkdir(parents=True, exist_ok=True)
+        if (
+            code != 0
+            and "resolves OUTSIDE the repository" in out
+            and "Traceback" not in out
+            and "ValueError" not in out
+        ):
+            record("CLI: a root symlinked out of the tree is reported (#3255)", True, True)
+        else:
+            record(
+                "CLI: a root symlinked out of the tree is reported (#3255)",
+                (code, out.strip()[:300]),
+                "non-zero exit naming the root as resolving outside the repo",
             )
 
         # --- #3255 direction 8: a BASELINE-ONLY invocation still re-verifies -
@@ -1581,7 +1669,11 @@ def main(argv: list[str]) -> int:
     if dangling:
         parts.append("the baseline no longer describes this tree")
     if missing_roots:
-        parts.append("a declared CRATE_ROOTS directory does not exist")
+        # "missing or unusable", not "does not exist": the kind covers both a
+        # root that is absent and one that exists but resolves outside the
+        # repo. Saying "does not exist" over the second is the same
+        # mislabelling this banner was composed to prevent.
+        parts.append("a declared CRATE_ROOTS directory is missing or unusable")
     print(
         f"Space-filter drift guard (#139) — {'; '.join(parts)}:\n",
         file=sys.stderr,
