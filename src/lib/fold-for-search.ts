@@ -182,21 +182,33 @@ export function indexOfFolded(haystack: string, needle: string): number {
  * compares" is what makes the run's two endpoints line up; it is not a
  * guarantee about its interior.
  *
- * That gap is reachable when a run mixes planes.  For haystack
- * `"A" U+302A U+1D167 "Z"` searched for `U+1D167`, the whole-string
- * fold is `"a" U+1D167 U+302A "z"` (U+1D167 sorts first), so
- * `foldedIdx` is 1 — one UTF-16 unit in, i.e. *inside* U+1D167's
+ * That gap is reachable whenever a folded index lands inside a
+ * reordered run; mixing planes additionally corrupts the *length*, on
+ * top of the offset.  A BMP-only example shows the offset corruption
+ * alone, with no plane-mixing involved: for haystack
+ * `"A" U+0653 U+0655 "Z"` searched for `U+0653`, the whole-string fold
+ * is `"a" U+0655 U+0653 "z"` (ccc 220 before ccc 230), so `foldedIdx`
+ * is 2.  The walk answers `{start: 2, length: 1}`, spanning `U+0655`,
+ * where the correct span is `{start: 1, length: 1}` — right length,
+ * wrong character.  Verified by running this function.
+ *
+ * Mixing planes additionally corrupts the length, not just the offset.
+ * For haystack `"A" U+302A U+1D167 "Z"` searched for `U+1D167`, the
+ * whole-string fold is `"a" U+1D167 U+302A "z"` (U+1D167 sorts first),
+ * so `foldedIdx` is 1 — one UTF-16 unit in, i.e. *inside* U+1D167's
  * surrogate pair — while the walk first reaches buffer length 1 having
  * consumed only `"A"`.  It answers `{start: 1, length: 3}`, spanning
  * `U+302A U+1D167`, where the correct span is `{start: 2, length: 2}`.
  * Verified by running this function, not reasoned about.
  *
- * Pre-existing, and no Search surface here is known to produce such a
- * run — it takes a musical-notation combining mark adjacent to an
- * ideographic tone mark — so this is documented rather than fixed.  A
- * future context-sensitive rule that was NOT length-preserving would
- * corrupt spans outright, at the endpoints too, so keep new folds
- * context-free rather than relying on either coincidence.
+ * Pre-existing, and left unfixed rather than fenced off with a
+ * narrower claim than it can support.  The BMP case needs nothing more
+ * exotic than two ordinary Arabic combining diacritics with reversed
+ * combining classes — it is not confined to the esoteric input the
+ * mixed-plane case needs.  A future context-sensitive rule that was NOT
+ * length-preserving would corrupt spans outright, at the endpoints too,
+ * so keep new folds context-free rather than relying on either
+ * coincidence.
  *
  * Walking code *units* instead would split surrogate pairs: a
  * supplementary-plane compatibility character such as 𝐀 (U+1D400)

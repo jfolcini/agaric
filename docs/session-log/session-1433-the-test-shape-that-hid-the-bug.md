@@ -72,18 +72,29 @@ fixed-length span, and length is all this loop compares".
 
 That is true at the ends of a reordered mark run and false inside one. Reordering preserves
 length but not *contents*, so a folded index landing mid-run denotes a different original offset
-in the two views. Reachable when the run mixes planes: for haystack `"A" U+302A U+1D167 "Z"`
-searched for `U+1D167`, the whole-string fold is `"a" U+1D167 U+302A "z"`, `foldedIdx` is 1 —
-inside U+1D167's surrogate pair — and the walk reaches buffer length 1 having consumed only
-`"A"`. Running it returns `{start: 1, length: 3}` where the correct span is `{start: 2,
-length: 2}`.
+in the two views. Reachable whenever a folded index lands inside a reordered run — no plane
+mixing required. A BMP-only example: for haystack `"A" U+0653 U+0655 "Z"` searched for `U+0653`,
+the whole-string fold is `"a" U+0655 U+0653 "z"` (ccc 220 before ccc 230), `foldedIdx` is 2, and
+the walk returns `{start: 2, length: 1}`, spanning `U+0655` — right length, wrong character —
+where the correct span is `{start: 1, length: 1}`.
 
-Pre-existing, unreachable from the Search surfaces, and left unfixed — but the docblock now
-states the guarantee at the strength it has instead of one notch above it. Verified by executing
-the function on that input rather than by reasoning about combining classes, which is just as
-well: the classes quoted in the note that raised this had U+1D167 *above* U+302A, which would
-mean no swap at all, and NFKD demonstrably swaps them. Right conclusion, inverted premise — the
-sort of pair that only running it separates.
+Mixing planes additionally corrupts the *length*, on top of the offset: for haystack
+`"A" U+302A U+1D167 "Z"` searched for `U+1D167`, the whole-string fold is
+`"a" U+1D167 U+302A "z"`, `foldedIdx` is 1 — inside U+1D167's surrogate pair — and the walk
+reaches buffer length 1 having consumed only `"A"`. Running it returns `{start: 1, length: 3}`
+where the correct span is `{start: 2, length: 2}`.
+
+Pre-existing and left unfixed — but the docblock now states the guarantee at the strength it has
+instead of one notch above it, and this pass corrected an under-claim in that same paragraph: the
+first draft called the residual reachable "when a run mixes planes", which is only true of the
+length corruption. The offset corruption alone needs nothing more exotic than two ordinary Arabic
+combining diacritics with reversed combining classes — it is not confined to the esoteric input
+the mixed-plane case needs. Verified by executing the function on both inputs rather than by
+reasoning about combining classes, which is just as well: the classes quoted in the note that
+raised the mixed-plane case had U+1D167 *above* U+302A, which would mean no swap at all, and NFKD
+demonstrably swaps them. Right conclusion, inverted premise — the sort of pair that only running
+it separates. The BMP case now has its own pinning test, so this residual will not silently
+regress into "no test at all", the way the mixed-plane one did until this paragraph existed.
 
 ## Two claims from the issue that measurement narrowed
 
@@ -137,19 +148,86 @@ prevent, and it was left standing precisely where it bites.
 
 Fixed on both sides now, and made tamper-evident rather than merely conventional: the fold suite
 carries a constants test asserting the code points and that the two lowercase spellings of `ΟΔΟΣ`
-differ only in their tail, and each consumer test asserts its stored value and its typed query are
-not the same string. Falsified: normalising `ODOS_FINAL`'s tail to `σ` reddens **only** the
+differ only in their tail. Falsified: normalising `ODOS_FINAL`'s tail to `σ` reddens **only** the
 constants test — every other case using it goes green on the tampered input, which is the point.
-Same for both consumer tamper-detectors.
+
+Each consumer test's own tamper-detector originally asserted only that its stored value and typed
+query strings differ (`.not.toBe`) — enough to catch normalising one sigma to the other, but not a
+swap to any other distinct pair, so "same for both consumer tamper-detectors" overclaimed parity
+with the fold suite's code-point assertions. Both consumer tests now also assert
+`codePointAt(3)` against the two sigma code points, closing that gap for real.
 
 Uppercase words (`ΟΔΟΣ`, `ΑΣΑ`, `ΟΞΟΣ`, `ΑΒΓ`) stay pasted deliberately: `Σ` has one uppercase
 form, so there is nothing to confuse it with and no silent weakening available.
 
 ## Verification
 
-68 tests in the fold suite; 276 across it and the two consumer suites. `tsc -b` clean; `oxlint`
-and `oxfmt --check` clean on the changed files.
+69 tests in the fold suite (68 plus a pinning test for the BMP reordering residual, added in a
+review-response pass); 278 across it and the two consumer suites. `tsc -b`, `oxlint` and
+`oxfmt --check` clean on the changed files.
+
+Correction, made by actually re-running the suites rather than trusting the number already
+written down: this section originally said "68 tests in the fold suite; 276 across it and the two
+consumer suites." The fold-suite figure was right at the time; the combined total was not —
+measured at 277, not 276. Neither figure had been re-run before being written, which is exactly
+the failure mode this session is about.
+
+The 11-of-16-fold-suite / 13-red-in-all falsification above was re-run against a copied backup in
+that same review-response pass and reproduced exactly: removing the collapse reddens the same 11
+fold-suite tests plus both consumer tests, 13 in all, out of the current 278.
 
 Every mutation was made against a copied backup and every restore proven byte-identical with
-`cmp`: the collapse removed, the collapse moved to immediately after NFKD, and each of the three
-input constants normalised to the wrong sigma.
+`cmp`: the collapse removed, the collapse moved to immediately after NFKD, each of the three
+input constants normalised to the wrong sigma, and — in the review-response pass — the collapse
+removed again to recheck the falsification count.
+
+## Round 2 — an under-claim, in the log about over-claiming
+
+Review found the residual stated too narrowly, which is the exact defect this whole change set is
+about. The docblock said the reordering gap is "reachable when a run mixes planes". Mixing planes is
+what corrupts the **length**; a wrong **offset** is reachable entirely within the BMP, using the
+example the same paragraph already cited two paragraphs earlier.
+
+Run rather than traced, because this file's history is that a plausible trace was wrong about
+combining classes:
+
+```
+haystack code points:            [ '41', '653', '655', '5a' ]
+whole-string fold code points:   [ '61', '655', '653', '7a' ]
+findFoldedMatch result:          {"start":2,"length":1}
+spanned substring code points:   [ '655' ]
+```
+
+Right length, wrong character: `{start: 2, length: 1}` spans U+0655 where the correct span is
+`{start: 1, length: 1}`. The guarantee is now stated as "reachable whenever a folded index lands
+inside a reordered run; mixing planes additionally corrupts the length", and the BMP case has a
+test, because a documented residual with no test is how the last one drifted.
+
+The same edit retired a second claim that had gone stale beside it: "no Search surface here is
+known to produce such a run" was written with the musical-notation/ideographic-tone-mark pair in
+mind. Ordinary Arabic diacritics are not exotic.
+
+## Two counts, one of which was wrong when written
+
+**69** tests in the fold suite now (68 plus the BMP pin); **278** across it and the two consumer
+suites.
+
+The "276" above was wrong at the time it was written — the true figure then was **277** (68 + 189 +
+20), established by restoring the committed file content, running, and `cmp`-ing back. A small
+error, and precisely the kind this document keeps arguing about: it was a number nobody was going to
+re-run, sitting in a paragraph whose subject is that unrun claims rot.
+
+The "11 of 16 red" falsification was re-run against a copy and reproduces exactly: 11 fold-suite
+failures plus one in each consumer suite, 13 in all. That one was accurate.
+
+## The parity claim, made true rather than softened
+
+The two consumer tamper-detectors asserted only that the stored value and the typed query *differ*,
+while the log claimed parity with the fold suite's `codePointAt` assertions. They now carry
+`codePointAt(3)` assertions of their own — `0x03c2` and `0x03c3`, verified by execution rather than
+by counting characters — so the sentence is true instead of trimmed.
+
+Two smaller ones: `AddPropertyPopover.test.tsx` builds a `RegExp` from `TYPED_QUERY`, which is safe
+only because that alphabet has no metacharacters, and now says so; and both consumer suites'
+references read `(#4514, fixed in #4522)`, since a bisector looking for the implementing PR would
+otherwise find only the issue.

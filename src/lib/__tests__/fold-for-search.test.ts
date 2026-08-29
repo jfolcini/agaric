@@ -569,6 +569,22 @@ describe('findFoldedMatch (PAGES-FOLD-MARK)', () => {
     expect(findFoldedMatch(haystack, SIGMA_CAP)).toEqual({ start: 0, length: 1 })
   })
 
+  it('reordering residual: a folded index inside a reordered BMP mark run lands on the wrong character (documented, not fixed)', () => {
+    // Pins the docblock's "reachable whenever a folded index lands inside
+    // a reordered run" residual at its true (BMP-only) breadth — no
+    // plane-mixing needed. U+0653 (ccc 230) and U+0655 (ccc 220) are
+    // canonically reordered by NFKD in the whole-string fold but not by
+    // this function's per-code-point walk, which only tracks length.
+    const haystack = `A${'ٓ'}${'ٕ'}Z`
+    expect(foldForSearch(haystack)).toBe(`a${'ٕ'}${'ٓ'}z`)
+    const match = findFoldedMatch(haystack, 'ٓ')
+    if (match === null) throw new Error('expected match')
+    // Documented-wrong: right length, wrong character. A fix would make
+    // this {start: 1, length: 1}, spanning U+0653 itself.
+    expect(match).toEqual({ start: 2, length: 1 })
+    expect(haystack.slice(match.start, match.start + match.length)).toBe('ٕ')
+  })
+
   it('indexOfFolded stays consistent with findFoldedMatch.start', () => {
     // Spot-check the wrapper across the cases above.
     expect(indexOfFolded('Straße', 'strasse')).toBe(0)

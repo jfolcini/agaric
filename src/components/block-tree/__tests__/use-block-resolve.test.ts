@@ -410,24 +410,28 @@ describe('searchTags', () => {
     expect(createOption).toBeUndefined()
   })
 
-  // #4514 — the sigma-collapse fix in `foldForSearch` broadens this
-  // exact-match check, not just substring search: a tag stored with a
-  // word-final sigma (U+03C2, 'ς') now folds equal to a query typed with
-  // the regular sigma (U+03C3, 'σ'). Pin the user-visible consequence
-  // (the create-new-tag affordance stays suppressed), not just fold
-  // equality — a fold returning '' for both sides would also satisfy a
-  // bare equality assertion.
+  // #4514, fixed in #4522 — the sigma-collapse fix in `foldForSearch`
+  // broadens this exact-match check, not just substring search: a tag
+  // stored with a word-final sigma (U+03C2, 'ς') now folds equal to a
+  // query typed with the regular sigma (U+03C3, 'σ'). Pin the
+  // user-visible consequence (the create-new-tag affordance stays
+  // suppressed), not just fold equality — a fold returning '' for both
+  // sides would also satisfy a bare equality assertion.
   //
   // Both sigmas are written as escapes rather than pasted: the two glyphs
   // are indistinguishable at a glance, and if the stored name and the
   // query ended in the *same* sigma the assertion below would hold with
   // or without the fold — a tautology, not a test.
-  it('does NOT append "Create new tag" when the only difference is Greek final-sigma form (#4514)', async () => {
+  it('does NOT append "Create new tag" when the only difference is Greek final-sigma form (#4514, fixed in #4522)', async () => {
     const STORED_TAG = 'οδο\u03C2' // word-final sigma
     const TYPED_QUERY = 'οδο\u03C3' // regular sigma
     // Tamper-detector: normalising either escape to the other sigma makes
-    // the two words identical and the assertion below vacuous.
+    // the two words identical and the assertion below vacuous. Assert
+    // which code points, not just that the strings differ — otherwise a
+    // swap to any other distinct pair would also pass this check.
     expect(TYPED_QUERY).not.toBe(STORED_TAG)
+    expect(STORED_TAG.codePointAt(3)).toBe(0x03c2)
+    expect(TYPED_QUERY.codePointAt(3)).toBe(0x03c3)
     mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T25', name: STORED_TAG, usage_count: 1, updated_at: '2024-01-01' },
     ])
