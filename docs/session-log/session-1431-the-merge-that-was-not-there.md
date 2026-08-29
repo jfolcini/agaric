@@ -22,12 +22,22 @@ and idempotence do not apply here — they are properties of a join, and neither
 one. Writing them anyway would have meant inventing a merge to test, or restating a
 comparison as if it were one.
 
-What the comparisons *do* have is an order structure, and that turned out to be the more
-useful thing to pin. Both are dominance relations, so both should be reflexive, monotone in
-the local side, and — for the reachability gate — transitive. Transitivity is the one no
-example test gives you: it is what fails first when "absent" and "counter zero" stop
-meaning the same thing, and a gate that confused the two would still pass every
-two-vector example anyone would think to write.
+What the comparisons *do* have is an order structure, and that is what this file pins
+instead. Both are dominance relations, so both should be reflexive, monotone in the local
+side, and — for the reachability gate — transitive.
+
+**A claim about transitivity that an earlier draft of this log made, and the test file
+does not.** The draft said transitivity was "the one no example test gives you: what fails
+first when 'absent' and 'counter zero' stop meaning the same thing". Neither half survives
+scrutiny. Dominance *is* pointwise `>=`, so any gate agreeing with `model_reachable` is
+transitive automatically — `reachability_matches_model` subsumes it. And in loro "absent"
+and "counter zero" cannot come apart at all: `set_last` removes a peer's key rather than
+storing an end of `0`, and it is the only way into a `VersionVector`, so the distinction
+the sentence hinged on is not expressible. It was a hypothetical dressed as a motivation.
+
+The property is kept as documentation that executes — it states the order law in the file
+that depends on it — and the test file says so plainly. This paragraph exists because the
+two halves of one PR disagreed for a round, and the log was the half that was wrong.
 
 The correction is recorded in the test file's header rather than only here, because the
 next person to read #4498 will be reading it next to the code.
@@ -101,15 +111,39 @@ PROBE billed=129 cap250 -> 40 batches, cap270 -> 40 batches
 
 The real window is narrower than either account. A truncated cap changes the
 partition only where it still fits **two** records, so it needs a cap of at
-least twice the smallest record and at most 255. The hand-derived floor — every
-field at its strategy's shortest value — bills at 127, and `2 x 127 = 254`. So
-the window is a truncated cap of exactly 254 or 255. And over 20,000 sampled
-records the strategy never reached that floor:
+least twice the smallest record and at most 255.
+
+**And the floor took a third attempt to get right.** The version of this section
+that first replaced the 106 said 127, derived from a record with `parent_seqs:
+None`. Review caught that too: `None` serializes as `"parent_seqs":null`, and
+the strategy can also yield `Some("0")`, whose `"parent_seqs":"0"` is one byte
+shorter. The true floor is **126**, so the window is a truncated cap of 252
+through 255 rather than 254 or 255:
+
+```
+PROBE parent_seqs None -> 127, Some("0") -> 126
+PROBE true floor = 126
+PROBE window = caps 252 through 255
+PROBE cap 251 -> 40 batches
+PROBE cap 252 -> 20 batches
+PROBE cap 256 -> 40 batches
+```
+
+Three values for one number: 106 measured the *type's* floor when the quantity
+that matters is twice the *strategy's*; 127 measured the strategy's floor with
+the wrong `Option` arm; 126 is derived and probed. Each was tighter than the
+last and each was still an estimate dressed as a derivation until the probe ran.
+
+And over 20,000 sampled records the strategy never reached that floor:
 
 ```
 PROBE sampled_min=142 hand_min=127 two_of_hand_min=254
 PROBE u8 ceiling = 255; can two minimum records share a truncated batch? true
 ```
+
+(That run is quoted as it was, `hand_min=127` and all — it is the run whose
+`hand_min` the next round corrected to 126. The `sampled_min` is the part it was
+measuring and that number stands.)
 
 142-byte records need 284 to pair, which no `u8` can express. So the window is
 real and the random search does not reach it — which is why no mutation turned
@@ -125,19 +159,27 @@ has never failed proves nothing until you have seen it fail.
 
 `monotonicity_predicate_catches_a_truncating_cap` applies the predicate to a
 local copy of the production loop with the truncating cast added, over records
-at the exact 127-byte floor. A cap of 254 pairs them; 256 truncates to 0 and
+at the exact 126-byte floor. A cap of 252 pairs them; 256 truncates to 0 and
 cannot. Twenty batches becomes forty on a *larger* cap, which is precisely what
 the property forbids. The predicate has power; the generator is what does not
 reach the window.
 
 The lesson is not "check your arithmetic", though that too. It is that
-**"provably cannot" is a claim with a burden, and I met it with a number instead
-of a derivation.** 106 was a real measurement of a real thing — and it was the
-wrong thing, because the quantity that matters is twice the *generator's* floor,
-not once the *type's* floor. A reviewer checking the sentence found the error in
-one step. The version that would have survived scrutiny is the one that says
-what was measured and how it bounds the conclusion, which is what both the doc
-comment and this section now do.
+**"provably cannot" is a claim with a burden, and I met it three times with a
+number instead of a derivation.** 106 was a real measurement of a real thing —
+and it was the wrong thing, because the quantity that matters is twice the
+*generator's* floor, not once the *type's*. 127 was the right quantity measured
+against the wrong `Option` arm. 126 is the one that was probed rather than
+reasoned about, and it is the first that a reviewer could not immediately
+improve on.
+
+Each correction was smaller than the last, which is the tell: the first was a
+category error, the second an off-by-one, and both survived because I wrote a
+figure and moved on rather than running the three lines that would have settled
+it. The version that survives scrutiny is the one that says what was measured
+and how it bounds the conclusion — which is what the doc comment now does, and
+why it also records the two values it replaced, so the next person to touch that
+number knows it has a history of looking obvious and being wrong.
 
 ## What this does not do
 

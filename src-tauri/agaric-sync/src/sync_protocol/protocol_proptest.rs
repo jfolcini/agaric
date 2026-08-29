@@ -52,7 +52,7 @@
 //! | `check_reset_required`: comparison inverted | `matches_model`, `is_antitone_in_local`, `is_monotone_in_peer` |
 //! | `check_reset_required`: absent local space reads as covered | `matches_model`, `ignores_every_other_peer_id` |
 //! | `check_reset_required`: malformed peer vv decodes to empty | `surfaces_malformed_vvs` |
-//! | reachability: `>=` → `>` | `matches_model`, `is_reflexive`, `is_transitive`, `diagnostic_names_a_real_violator` |
+//! | reachability: `>=` → `>` | `matches_model`, `is_reflexive`, `diagnostic_names_a_real_violator`, and `is_transitive` at its PREMISES (a zero lift makes `a == b`, which a strict gate rejects) rather than at its conclusion |
 //! | reachability: absent local peer treated as reachable | `matches_model`, `is_monotone_in_local` |
 //! | reachability: diagnostic names `peer_id + 1` | `diagnostic_names_a_real_violator` |
 //! | batching: final partial batch dropped | `preserves_the_record_sequence`, `emits_no_empty_batch` |
@@ -67,8 +67,8 @@
 //! not unfalsified — `monotonicity_predicate_catches_a_truncating_cap` shows
 //! the predicate failing against a deliberately non-monotone control — but no
 //! mutation of the *production* pass reaches it, and its doc comment measures
-//! exactly why: the window is a truncated cap of 254 or 255, and the record
-//! strategy does not reach the 127-byte floor that window needs.
+//! exactly why: the window is a truncated cap of 252 through 255, and the
+//! record strategy does not reach the 126-byte floor that window needs.
 //!
 //! # Configuration
 //!
@@ -656,12 +656,21 @@ proptest! {
     /// (`cast_possible_truncation`, which this repo lints for). It can only
     /// change the partition where a `u8`-truncated cap still fits TWO records,
     /// i.e. at a cap of `2 x` the smallest record or above, with a ceiling of
-    /// 255. The smallest `OpTransfer` this strategy can produce bills at 127
-    /// bytes, so that window is exactly a truncated cap of 254 or 255 — and
-    /// over 20,000 sampled records the strategy never reached the floor
-    /// (smallest observed: 142 bytes, whose pair needs 284). So the random
-    /// search does not reach the window, which is why no mutation of the pass
-    /// turned this red.
+    /// 255. The smallest `OpTransfer` this strategy can produce bills at 126
+    /// bytes, so that window is a truncated cap of 252 through 255 — and over
+    /// 20,000 sampled records the strategy never reached the floor (smallest
+    /// observed: 142 bytes, whose pair needs 284). So the random search does
+    /// not reach the window, which is why no mutation of the pass turned this
+    /// red.
+    ///
+    /// That 126 is the *third* value this floor has been given, and the first
+    /// two were each wrong in an instructive way. 106 was the empty-`OpTransfer`
+    /// serialization — the TYPE's floor, when the quantity that matters is
+    /// twice the STRATEGY's. 127 was the strategy's floor computed with
+    /// `parent_seqs: None`, which serializes as `"parent_seqs":null` — but the
+    /// strategy can also yield `Some("0")`, and `"parent_seqs":"0"` is one byte
+    /// shorter. Derive it, do not estimate it; `tmp`-probe it against
+    /// `billed_bytes` if it ever needs re-deriving.
     ///
     /// It is kept as written. Widening the generator to hit a two-in-256 cap
     /// window would trade a reliable property for a flaky one; the control
@@ -690,6 +699,14 @@ proptest! {
 /// have something the monotonicity predicate can *fail* on — which is the only
 /// way to show the predicate is not vacuous, since the real function is (as far
 /// as this file can establish) correct.
+///
+/// **Nothing enforces that this stays a copy**, and that is the one way this
+/// control can rot: rewrite `batch_ops_for_wire` (`operations.rs`, `pub fn
+/// batch_ops_for_wire`) and this keeps exercising the old loop, keeps passing,
+/// and silently stops being a control for the property it backs. Re-sync it by
+/// hand whenever that loop changes shape. There is no clone-pin guard for Rust
+/// the way `scripts/check-mutation-harness-clones.mjs` does it for the JS
+/// harnesses, so this comment is the whole mechanism.
 fn batch_with_truncated_cap(records: Vec<OpTransfer>, max_bytes: usize) -> Vec<Vec<OpTransfer>> {
     #[allow(clippy::cast_possible_truncation)]
     let max_bytes = max_bytes as u8 as usize;
@@ -716,16 +733,20 @@ fn batch_with_truncated_cap(records: Vec<OpTransfer>, max_bytes: usize) -> Vec<V
 /// that never fails proves nothing until you have seen it fail.
 ///
 /// The predicate is applied to `batch_with_truncated_cap`, which is the real
-/// loop plus a truncating cast, over records at the strategy's exact 127-byte
-/// floor. A cap of 254 pairs them (2 x 127, and the split test is strictly
-/// greater-than); 256 truncates to 0 and cannot. Twenty batches becomes forty
-/// on a *larger* cap, which is precisely what the property forbids.
+/// loop plus a truncating cast, over records at the strategy's exact 126-byte
+/// floor (`parent_seqs: Some("0")` — one byte shorter than `None`). A cap of
+/// 252 pairs them (2 x 126, and the split test is strictly greater-than); 256
+/// truncates to 0 and cannot. Twenty batches becomes forty on a *larger* cap,
+/// which is precisely what the property forbids.
 #[test]
 fn monotonicity_predicate_catches_a_truncating_cap() {
     let floor = OpTransfer {
         device_id: "a".to_string(),
         seq: 0,
-        parent_seqs: None,
+        // `Some("0")`, not `None`: `"parent_seqs":"0"` is one byte shorter
+        // than `"parent_seqs":null`, and this record has to be the strategy's
+        // actual minimum for the window arithmetic above to be the real one.
+        parent_seqs: Some("0".to_string()),
         hash: "0000".to_string(),
         op_type: "edit_block".to_string(),
         payload: String::new(),
@@ -734,17 +755,17 @@ fn monotonicity_predicate_catches_a_truncating_cap() {
     };
     assert_eq!(
         billed_bytes(&floor),
-        127,
-        "the 127-byte floor is load-bearing for the window this control targets \
+        126,
+        "the 126-byte floor is load-bearing for the window this control targets \
          and for the doc comment above; if the wire shape changed, both need \
          re-deriving rather than this number nudging"
     );
 
     let records: Vec<OpTransfer> = std::iter::repeat_n(floor, 40).collect();
-    let small = batch_with_truncated_cap(records.clone(), 254).len();
+    let small = batch_with_truncated_cap(records.clone(), 252).len();
     let large = batch_with_truncated_cap(records, 256).len();
 
-    assert_eq!(small, 20, "a cap of 254 must pair 127-byte records");
+    assert_eq!(small, 20, "a cap of 252 must pair 126-byte records");
     assert_eq!(large, 40, "256 truncates to 0, so nothing pairs");
     assert!(
         large > small,
@@ -755,10 +776,9 @@ fn monotonicity_predicate_catches_a_truncating_cap() {
 
 /// Generator coverage: the batching properties above are only meaningful if the
 /// generated records and caps actually reach the regime where a batch holds
-/// **several** records. With a 127-byte floor per record — the figure derived
-/// in `batching_is_monotone_in_the_cap`, and not the 106-byte one an earlier
-/// revision of this file used, which measured the wrong thing — a cap range
-/// that sat below ~300 would
+/// **several** records. With a 126-byte floor per record — the figure derived
+/// in `batching_is_monotone_in_the_cap`, which is also where the two earlier
+/// wrong values for it are recorded — a cap range that sat below ~300 would
 /// make every batch a singleton and quietly turn three properties vacuous —
 /// they would all still pass.
 ///
