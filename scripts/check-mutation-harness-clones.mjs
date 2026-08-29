@@ -2,15 +2,23 @@
 // ─────────────────────────────────────────────────────────────────────
 // Mutation-harness source-pin guard (#3907).
 //
-// ONE WAY THIS CAN BREAK A BUILD, added by #4509 and worth knowing before it
+// THREE WAYS THIS CAN BREAK A BUILD, worth knowing before one of them
 // surprises you: any line in a harness whose comment OPENS with the
 // `mutation-harness-source-pin:` keyword is now required to be a well-formed
-// pin. So a prose comment that merely mentions the keyword — for instance
-// `// mutation-harness-source-pin: see the guard for the syntax` — is a hard
-// failure rather than being ignored. That is the intended trade: such a line
-// is genuinely indistinguishable from a pin with a typo in it, and treating
-// it as prose is what let a malformed marker vanish in the first place. Refer
-// to the marker without leading with the keyword.
+// pin. So each of the following is a hard failure rather than being ignored
+// (added by #4509 for the first, #4526 for the other two):
+//   - a prose comment that merely mentions the keyword — for instance
+//     `// mutation-harness-source-pin: see the guard for the syntax`;
+//   - the keyword spelled with the wrong letter case — `// MUTATION-HARNESS-
+//     SOURCE-PIN: ...` — even with an otherwise well-formed body;
+//   - a single-line block comment envelope — `/* mutation-harness-source-
+//     pin: ... */` or `/** mutation-harness-source-pin: ... */` opened and
+//     closed on one line — even with an otherwise well-formed body.
+// That is the intended trade in all three: each of these lines is genuinely
+// indistinguishable from a pin with a typo or an unsupported spelling in it,
+// and treating any of them as prose is what let a malformed marker vanish in
+// the first place. Refer to the marker without leading with the keyword, in
+// exactly this case, in a `//` line or a `*` JSDoc continuation line.
 //
 // `scripts/mutation-harnesses/*.harness.ts` each contain hand-copied
 // CLONES of a real function under test, plus hand-copied clones of the
@@ -160,11 +168,17 @@ const PIN_BODY_RE = /^(\S+?)#([A-Za-z_$][A-Za-z0-9_$]*)\s+sha256=([0-9a-f]{64})\
 // already failed on the same line — and the two differ only in the `i` flag
 // and none of `//`, `*`, `:` are letters — so a match here always means the
 // keyword's letter case is what's wrong, never the envelope shape. Only the
-// keyword is matched case-insensitively; the body afterward keeps requiring
-// an exact-case `sha256=` and lowercase hex even when merely being used for
-// the diagnostic, because loosening that too would risk this path someday
-// being asked to also validate a body, and a case-INSENSITIVE hash means
-// something different from the hex `sha256hex` produces.
+// keyword is matched case-insensitively; the body — captured here as a bare
+// `(.*)`, verbatim and unparsed — is never run through `PIN_BODY_RE` on this
+// path at all, deliberately (that is exactly what the `bothWrong` self-test
+// assertion below pins: a wrong-case keyword with an also-malformed body
+// still comes back as a single `wrong-case` diagnosis, not two). The intent
+// is that this path never grows a second, looser body validation of its
+// own: an exact-case `sha256=` and lowercase hex is what `PIN_BODY_RE`
+// requires, and a body-check added here "for the diagnostic" would risk
+// quietly becoming a second, case-insensitive idea of what a valid hash is
+// — a case-INSENSITIVE hash means something different from the hex
+// `sha256hex` produces.
 const PIN_PREFIX_CI_RE = /^\s*(?:\/\/|\*(?!\/))\s*(mutation-harness-source-pin):\s*(.*)$/i
 
 // A single-line `/* mutation-harness-source-pin: ... */` or
@@ -174,6 +188,15 @@ const PIN_PREFIX_CI_RE = /^\s*(?:\/\/|\*(?!\/))\s*(mutation-harness-source-pin):
 // each attempt with ONE diagnosis, not a combinatorial pile of them. This
 // envelope is never accepted as well-formed regardless of case or body —
 // see the comment above.
+//
+// Deliberately UNANCHORED at the end (no trailing `\s*$`): a line's `/*` at
+// column 0 (mod leading whitespace) is a real comment opener regardless of
+// what follows the closing `*/` on that same line — nothing precedes it to
+// make `/*` ambiguous, unlike the mid-line cases below. So
+// `/* mutation-harness-source-pin: ... */ const x = 1` is caught by this
+// same regex and reported with the same `block-comment` reason as the
+// no-trailing-content case; needing no tokenizer to see it is exactly what
+// distinguishes it from the two gaps that follow.
 //
 // Deliberately NOT covered by this regex (or by anything else in this
 // file), enumerated rather than left to be discovered by a future false
@@ -192,8 +215,10 @@ const PIN_PREFIX_CI_RE = /^\s*(?:\/\/|\*(?!\/))\s*(mutation-harness-source-pin):
 // and could be closed the same way; they are left for a future pass rather
 // than folded in here, in the same spirit #4509's own text used to defer
 // this issue's scope in the first place — not "impossible", just "a bigger
-// change than this one line regex covers, and not what was reported."
-const PIN_BLOCK_LINE_RE = /^\s*\/\*\*?\s*(mutation-harness-source-pin):\s*(.*?)\s*\*\/\s*$/i
+// change than this one line regex covers, and not what was reported." Unlike
+// the trailing-content case above, both of these genuinely need the
+// tokenizer, which is why they stay gaps while trailing content does not.
+const PIN_BLOCK_LINE_RE = /^\s*\/\*\*?\s*(mutation-harness-source-pin):\s*(.*?)\s*\*\//i
 
 /** Escape a string for safe interpolation into a `RegExp` source. */
 function escapeRegExp(s) {
@@ -709,7 +734,19 @@ function checkTree({ root, harnessDir }) {
           // line ending, because the hash is the part that looks like it
           // could be wrong. Name it when we can see it; the generic
           // message keeps the rest.
-          const trailing = /sha256=[0-9a-f]{64}(?<rest>.+)$/.exec(pin.raw)?.groups?.rest?.trim()
+          //
+          // The `(?![0-9a-fA-F])` lookahead matters: without it, an
+          // OVERLONG hash — `sha256=` followed by 65+ hex characters, one
+          // fixture-worthy character too many — matches `[0-9a-f]{64}` on
+          // its first 64 characters and reports the 65th as "trailing",
+          // which asserts the hash "is well-formed" about a hash that is
+          // one character too long. Requiring the character right after
+          // the 64-run to be non-hex means a longer hex run never counts
+          // as a valid hash plus trailing content in the first place — the
+          // hint only fires for genuine trailing content like a stray `*/`.
+          const trailing = /sha256=[0-9a-f]{64}(?![0-9a-fA-F])(?<rest>.+)$/
+            .exec(pin.raw)
+            ?.groups?.rest?.trim()
           const trailingHint = trailing
             ? ` The hash itself is well-formed; what breaks it is the trailing "${trailing}" — a marker must end at the hash.`
             : ''
@@ -1532,6 +1569,33 @@ export function target(a: number, b: string): number {
     )
   }
 
+  // A fourth shape, found in review: real code trailing AFTER the closing
+  // `*/` on the same line (`/* ... */ const x = 1`). Unlike the two gaps
+  // enumerated below, this needs no tokenizer — the line still starts with
+  // `/*` at column 0 (mod leading whitespace), which is unambiguously a
+  // real comment opener, exactly like the no-trailing-content case above.
+  // It must therefore be DETECTED, not left invisible to both this
+  // enumeration and the tests, the way it was before this regex dropped
+  // its end-of-line anchor.
+  const blockPinWithTrailingCode = findPins(
+    `/* mutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash} */ const x = 1\n`,
+  )
+  if (
+    blockPinWithTrailingCode.length === 1 &&
+    blockPinWithTrailingCode[0].malformed === true &&
+    blockPinWithTrailingCode[0].reason === 'block-comment' &&
+    blockPinWithTrailingCode[0].raw === `src/lib/x.ts#foo sha256=${validHash}`
+  ) {
+    ok(
+      'findPins detects a single-line block comment marker with real code trailing after it on the same line (needs no tokenizer, unlike the two gaps below)',
+    )
+  } else {
+    fail(
+      'findPins detects a single-line block comment marker with real code trailing after it on the same line (needs no tokenizer, unlike the two gaps below)',
+      JSON.stringify(blockPinWithTrailingCode),
+    )
+  }
+
   // A differently-cased keyword, in each of the two envelopes that
   // otherwise accept it.
   for (const [label, line] of [
@@ -2224,6 +2288,57 @@ export function target(a: number, b: string): number {
       fail(
         'issue repro: a well-formed pin alongside a differently-cased keyword FAILS, names the wrong-case line, pinCount stays 1',
         JSON.stringify(r),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 21 (PR #4538 review — the trailingHint had no self-test
+    // assertion at all): a malformed pin whose body is a well-formed
+    // 64-hex hash immediately followed by a `*/`-shaped tail — the shape
+    // the hint's own comment names as the motivating case (a JSDoc closed
+    // on the same line). The violation message must name the hash as
+    // well-formed and the tail as the trailing content.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${originalHash} */\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (
+      r.violations.length === 1 &&
+      r.violations[0].message.includes('The hash itself is well-formed') &&
+      r.violations[0].message.includes('trailing "*/"')
+    ) {
+      ok(
+        'a malformed pin whose valid-length hash is followed by a `*/`-shaped tail gets the trailing-content hint',
+      )
+    } else {
+      fail(
+        'a malformed pin whose valid-length hash is followed by a `*/`-shaped tail gets the trailing-content hint',
+        JSON.stringify(r.violations),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 22 (PR #4538 review — the mis-diagnosis this hint made): a
+    // 65-character (overlong) hash is NOT a well-formed hash with one
+    // trailing character — it is one hash, too long. Before the
+    // `(?![0-9a-fA-F])` lookahead, `[0-9a-f]{64}` matched the first 64 of
+    // the 65 hex characters and reported the 65th as "trailing", so the
+    // message asserted the hash "is well-formed" about a hash that was one
+    // character too long. It must not claim that.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${'a'.repeat(65)}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (r.violations.length === 1 && !r.violations[0].message.includes('well-formed')) {
+      ok(
+        'a 65-character (overlong) hash does NOT get told "the hash itself is well-formed" — it is not',
+      )
+    } else {
+      fail(
+        'a 65-character (overlong) hash does NOT get told "the hash itself is well-formed" — it is not',
+        JSON.stringify(r.violations),
       )
     }
     writeHarness(originalHash) // restore for subsequent cases

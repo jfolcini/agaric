@@ -72,8 +72,11 @@ before them, so they are in this PR instead:
 
 ## Verification
 
-Self-test **65 → 77** assertions, green. Real tree: `OK: 15 source-pin(s) across 5 harness file(s)
-all match their source`, unchanged.
+Self-test **65 → 77** assertions, green. On the real tree the guard passes with every marker
+well-formed, unchanged — deliberately not quoting the `OK: N source-pin(s) across M harness
+file(s)` count here. Session 1434 quoted it and review caught that it had already gone stale one
+merge later, as sibling PRs added harnesses; a log whose whole subject is a guard that must not
+misreport a count is the wrong place to carry one that drifts.
 
 Falsified against a copy, restore proven byte-identical with `cmp`: reverting the detection reddens
 **7** assertions — the new detection cases and both end-to-end repros, the latter reproducing the
