@@ -424,6 +424,27 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[tuple[str, str]]:
         for rel, cnt in sorted(baseline.items())
         if not (REPO_ROOT / rel).is_file()
     ]
+    # Existence is not enough: an entry can name a real file that no walk ever
+    # reaches. `src-tauri/benches/foo.rs` resolves, so the check above is
+    # satisfied; it is outside every CRATE_ROOTS entry, so Rule B never
+    # scans it and its count is never compared to anything. The entry looks
+    # like protection and is inert — the same "protects nothing" shape as a
+    # dangling entry, one notch smaller, and the one form of it a hand edit
+    # can still introduce (`--update-baseline` only ever writes paths it
+    # walked). Raised across four reviews as in-scope-ness; it is three lines
+    # here, so it stops being deferred.
+    out.extend(
+        (
+            "baseline",
+            f"{rel}: baseline entry is OUTSIDE every CRATE_ROOTS entry, so "
+            f"nothing ever scans it — the {cnt} fragment(s) it records are "
+            f"unenforced. Either the path is wrong, or the root belongs in "
+            f"CRATE_ROOTS (and in the hook's `files:` regex).",
+        )
+        for rel, cnt in sorted(baseline.items())
+        if (REPO_ROOT / rel).is_file()
+        and not any(rel.startswith(r) for r in CRATE_ROOTS)
+    )
     # Unconditional, deliberately. An earlier revision gated this half on
     # "the crate root this entry names is present in THIS tree", to stop the
     # CLI self-test's synthetic repo root (which had no `agaric-store/`) from
@@ -620,7 +641,14 @@ def _build_cli_sandbox(root: Path) -> Path:
         # Same precondition as the DENY_FILES loop below, for the same
         # `Path.__truediv__` reason: an absolute entry would create these
         # directories outside the TemporaryDirectory.
-        assert not PurePosixPath(rel).is_absolute(), rel
+        # `raise`, not `assert`: `python3 -O` strips asserts, and these
+        # guard a destructive `mkdir`/`unlink` against an absolute entry that
+        # `Path.__truediv__` would let escape the TemporaryDirectory. A
+        # precondition that disappears under an interpreter flag is not a
+        # precondition. The hook does not pass -O today; that is a reason it
+        # has not bitten, not a reason to rely on it.
+        if PurePosixPath(rel).is_absolute():
+            raise ValueError(f"sandbox path must be repo-relative: {rel}")
         (root / rel).mkdir(parents=True, exist_ok=True)
     # Same reason, for the deny half: a sandbox missing these would report a
     # dangling deny entry on every case and drown out what each is asserting.
@@ -630,7 +658,14 @@ def _build_cli_sandbox(root: Path) -> Path:
         # `unlink` — a real file outside this TemporaryDirectory. The constant
         # is relative today; this makes that a precondition rather than a
         # coincidence, because the operations here are destructive.
-        assert not PurePosixPath(rel).is_absolute(), rel
+        # `raise`, not `assert`: `python3 -O` strips asserts, and these
+        # guard a destructive `mkdir`/`unlink` against an absolute entry that
+        # `Path.__truediv__` would let escape the TemporaryDirectory. A
+        # precondition that disappears under an interpreter flag is not a
+        # precondition. The hook does not pass -O today; that is a reason it
+        # has not bitten, not a reason to rely on it.
+        if PurePosixPath(rel).is_absolute():
+            raise ValueError(f"sandbox path must be repo-relative: {rel}")
         stand_in = root / rel
         stand_in.parent.mkdir(parents=True, exist_ok=True)
         stand_in.write_text(
@@ -1269,6 +1304,69 @@ def run_cli_self_test(record) -> None:
                 (code, banner),
                 "a banner naming BOTH the unanchored and the dangling class",
             )
+        # --- #3255 direction 17: a baseline entry NOTHING ever scans --------
+        # Existence is not enough. An entry naming a real file outside every
+        # CRATE_ROOTS entry satisfies the dangling check and is never walked,
+        # so its count is compared against nothing: protection in appearance
+        # only. `--update-baseline` cannot produce it (it writes only paths it
+        # walked), but a hand edit can — which is how the baseline acquired
+        # every other defect this change fixes.
+        outside_rs = root / "src-tauri" / "benches" / "bench.rs"
+        outside_rs.parent.mkdir(parents=True, exist_ok=True)
+        outside_rs.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text(
+            "1 src-tauri/benches/bench.rs\n", encoding="utf-8"
+        )
+        try:
+            code, out = _run_cli(guard, [])
+        finally:
+            outside_rs.unlink()
+        if code != 0 and "OUTSIDE every CRATE_ROOTS entry" in out:
+            record(
+                "CLI: a baseline entry nothing scans is a finding (#3255)",
+                True,
+                True,
+            )
+        else:
+            record(
+                "CLI: a baseline entry nothing scans is a finding (#3255)",
+                (code, out.strip()[:200]),
+                "non-zero exit naming the entry as outside CRATE_ROOTS",
+            )
+
+        # --- #3255 direction 18: --update-baseline refuses a stale deny -----
+        # DENY_FILES names what must NEVER be policed. While an entry is stale
+        # the file it excluded is counted like any other, so a rebuild writes
+        # it a baseline entry — enrolling the canonical constant into the
+        # baseline defined against it. `root` already refuses; this is the
+        # same class of outcome, forbidden by the design rather than merely
+        # unwanted.
+        if DENY_FILES:
+            deny_stand_in = root / sorted(DENY_FILES)[0]
+            saved = deny_stand_in.read_text(encoding="utf-8")
+            baseline_path.write_text("", encoding="utf-8")
+            try:
+                deny_stand_in.unlink()
+                code, out = _run_cli(guard, ["--update-baseline"])
+            finally:
+                deny_stand_in.parent.mkdir(parents=True, exist_ok=True)
+                deny_stand_in.write_text(saved, encoding="utf-8")
+            if code != 0 and "Refusing to re-anchor: a DENY_FILES entry" in out:
+                record(
+                    "CLI: --update-baseline refuses a stale DENY entry (#3255)",
+                    True,
+                    True,
+                )
+            else:
+                record(
+                    "CLI: --update-baseline refuses a stale DENY entry (#3255)",
+                    (code, out.strip()[:200]),
+                    "non-zero exit refusing the re-anchor over the stale deny",
+                )
+
 
 
 def run_self_test() -> int:
@@ -1443,6 +1541,34 @@ def main(argv: list[str]) -> int:
                 print(f"  {v}", file=sys.stderr)
             print("", file=sys.stderr)
             print(ROOT_MISSING_HINT, file=sys.stderr)
+            return 1
+        # A dangling DENY_FILES entry gets the same treatment, for a sharper
+        # reason than the root case. DENY_FILES names the files that must
+        # NEVER be policed — today the one holding SPACE_FILTER_CANONICAL
+        # itself, where policing would be circular. If that file moves and the
+        # entry is left behind, the deny set no longer matches it, so
+        # `compute_baseline()` counts it like any other file and writes it an
+        # entry. The rebuild would enroll the canonical constant into the
+        # baseline that is defined against it. Warning and proceeding is not
+        # enough for an outcome the design forbids outright.
+        deny_findings = [m for kind, m in pre if kind == "deny"]
+        if deny_findings:
+            print(
+                "Refusing to re-anchor: a DENY_FILES entry names a path that "
+                "no longer exists.\n",
+                file=sys.stderr,
+            )
+            for v in deny_findings:
+                print(f"  {v}", file=sys.stderr)
+            print(
+                "\n  DENY_FILES marks files that must never be policed. While "
+                "an entry is stale the\n  file it was meant to exclude is "
+                "scanned like any other, so re-anchoring now would\n  write it "
+                "a baseline entry. Fix DENY_FILES in this script first — "
+                "`--update-baseline`\n  rebuilds only the baseline and will "
+                "not touch it — then re-run.",
+                file=sys.stderr,
+            )
             return 1
         for _kind, m in pre:
             print(f"  WARNING before re-anchor: {m}", file=sys.stderr)
