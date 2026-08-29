@@ -1968,7 +1968,7 @@ language = "system"
 # `exists()` for each: a defanged always-`False` answer reads every
 # baselined file as deleted and reports the whole baseline as drifted. This
 # union is the one case where "selected" and "effective" coincide.
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-space-filter-drift\.py|check-raw-tx\.py|lib/guard_file_source\.py)$'
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
 # #1188: the guard's detection regex must tolerate a turbofish between the

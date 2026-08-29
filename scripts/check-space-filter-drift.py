@@ -43,9 +43,10 @@ carry `b.space_id` reads):
     `?N IS NULL OR` stripped (degrading the canonical guard to a bare
     `b.space_id = ?N`) — which Rule A can't see, because a bare
     `b.space_id = ?` is *legitimate* at the many single-space query sites
-    (`commands/blocks/crud.rs`, `journal.rs`, `pages/listing.rs`,
-    `fts/filter_builder.rs`'s dynamic append, …) where the active space is
-    always known and no NULL short-circuit is wanted. The baseline lets the
+    (`src-tauri/src/commands/blocks/crud.rs`, `journal.rs`,
+    `pages/listing.rs`, `agaric-store/src/fts/filter_builder.rs`'s dynamic
+    append, …) where the active space is always known and no NULL
+    short-circuit is wanted. The baseline lets the
     guard fire on a removed canonical fragment without false-positiving on
     those intentional bare sites. When you legitimately add/remove a
     canonical site, re-anchor:
@@ -53,8 +54,8 @@ carry `b.space_id` reads):
 
 Explicit exceptions (NOT canonical-fragment sites, by design):
 
-  * `pagination/history.rs` — the op-log filter intersects on the op-log
-    payload's block id via a sub-select `... ol.block_id IN (SELECT id
+  * `agaric-store/src/pagination/history.rs` — the op-log filter intersects
+    on the op-log payload's block id via a sub-select `... ol.block_id IN (SELECT id
     FROM blocks WHERE space_id = ?7)`. The inner `space_id = ?7` carries
     NO `b.` alias, so the `b.space_id` regex never matches it; it
     contributes 0 to the canonical count and needs no allowlisting.
@@ -548,8 +549,9 @@ def _build_cli_sandbox(root: Path) -> Path:
     scripts_dir = root / "scripts"
     scripts_dir.mkdir(parents=True)
     real_scripts = REPO_ROOT / "scripts"
-    for entry in os.scandir(real_scripts):
-        os.symlink(entry.path, scripts_dir / entry.name)
+    with os.scandir(real_scripts) as entries:
+        for entry in entries:
+            os.symlink(entry.path, scripts_dir / entry.name)
     guard = scripts_dir / Path(__file__).name
     guard.unlink()
     shutil.copyfile(Path(__file__).resolve(), guard)
