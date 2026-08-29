@@ -27,6 +27,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
@@ -44,9 +45,40 @@ import { useUndoStore } from '@/stores/undo'
  * below, so a read taken here would be a fresh emit-time read of a value the
  * user may have changed in between. Callers capture it in the tick the
  * user's undo/redo gesture is handled. See `@/stores/page-rename`.
+ *
+ * #4534 — this is also where an undo/redo pays back the picker's name caches.
+ * Every EVICTING publisher on the bus owes a RESTORE signal to whatever can
+ * reverse it, and the reverse of a delete is not a rename: it puts rows BACK.
+ * The pairing is already explicit on the two other delete surfaces —
+ * `PageBrowserBatchToolbar.handleUndoTrash` and
+ * `usePageDeleteAction.handleUndo` both call `invalidateNameCaches()` next to
+ * their `restore_blocks_by_ids` — and #4524 added a third evicting publisher
+ * (`useBlockMultiSelect.handleBatchDelete`) whose only advertised escape
+ * hatch is the Ctrl+Z that lands HERE. Without this call the block tree's
+ * batch delete leaves the page restored in the DB and back in the tree, yet
+ * permanently missing from `[[` for the rest of the session — a page the user
+ * cannot link to but can see, which is the worse polarity of the same
+ * stale-cache class #4007 exists to close.
+ *
+ * Why a blanket invalidation and not a targeted re-add: the undo store is
+ * ref-addressed and reports only `reversed_op_type` — it cannot say WHICH
+ * pages (if any) came back, and a delete cascades to nested pages nobody
+ * named. That is exactly `usePageDeleteAction.handleUndo`'s reasoning: an
+ * EMPTY cache means "not fetched for this space yet", so re-adding the one id
+ * we could name would latch a partial list as the whole space. Drop both
+ * caches and let the next picker read re-fetch. Unconditional on purpose —
+ * `invalidated` needs no space to compare against (see the name-change-bus
+ * docblock), and every caller has already checked that an op was really
+ * reversed (`if (!result) return`), so a no-op Ctrl+Z costs nothing here.
+ *
+ * It runs BEFORE the title-refresh `try` below, not inside it: the cache drop
+ * is a correctness obligation of the undo, while the `getBlock` title refresh
+ * is documented best-effort and swallows its own failures. Ordering it after
+ * would silently make the obligation conditional on that best-effort IPC.
  */
 async function refreshAfterUndoRedo(pageId: string, spaceId: string | null): Promise<void> {
   await getPageStore(pageId)?.getState().load()
+  invalidateNameCaches()
   try {
     const pageBlock = unwrap(await commands.getBlock(pageId))
     if (pageBlock?.content) {

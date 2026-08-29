@@ -659,6 +659,12 @@ export function BlockTree({
   })
 
   // ── Multi-select hook ──────────────────────────────────────────────
+  // #4524 — `currentSpaceId` is read HERE, above the hook that consumes it,
+  // rather than at its old site next to `batchPropertiesInvalidationKey`
+  // further down (which still uses it). The batch delete needs the ORIGIN
+  // space to scope its `[[` name-cache eviction to, and it must be the value
+  // rendered when the user clicked, not a fresh read after the IPC settles.
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const {
     batchDeleteConfirm,
     batchInProgress,
@@ -671,6 +677,7 @@ export function BlockTree({
     clearSelected,
     rootParentId,
     pageStore,
+    currentSpaceId,
     t,
     handleTogglePriority,
   })
@@ -1292,7 +1299,6 @@ export function BlockTree({
   const { invalidationKey: propertyInvalidationKey } = useScopedBlockPropertyEvents({
     ownsBlock: ownsBlockForPropertyEvents,
   })
-  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const batchPropertiesInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}`
 
   if (loading) {

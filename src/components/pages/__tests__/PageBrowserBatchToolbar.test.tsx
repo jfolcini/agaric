@@ -30,13 +30,10 @@ import { axe } from 'vitest-axe'
 
 import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
-import {
-  NAME_CACHE_FANOUT_MAX_IDS,
-  PageBrowserBatchToolbar,
-} from '@/components/pages/PageBrowserBatchToolbar'
+import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
 import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
-import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { getStarredPages } from '@/lib/starred-pages'
 import { setPropertyBatch } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'

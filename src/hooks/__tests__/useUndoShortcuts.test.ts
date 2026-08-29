@@ -842,15 +842,23 @@ describe('refresh after undo/redo', () => {
     })
 
     await vi.waitFor(() => {
-      expect(events).toHaveLength(1)
+      expect(events).toHaveLength(2)
     })
-    expect(events[0]).toEqual({
-      kind: 'renamed',
-      entity: 'page',
-      id: 'PAGE_1',
-      name: 'Reverted Title',
-      spaceId: 'SPACE_TEST',
-    })
+    // #4534 — the unscoped `invalidated` leads: `refreshAfterUndoRedo` drops
+    // both picker caches before it attempts the best-effort title refresh
+    // (see its docblock). It is deliberately NOT space-scoped, so it is the
+    // 'renamed' event — the one this test is about — that still has to carry
+    // the space the undo was invoked in.
+    expect(events).toEqual([
+      { kind: 'invalidated' },
+      {
+        kind: 'renamed',
+        entity: 'page',
+        id: 'PAGE_1',
+        name: 'Reverted Title',
+        spaceId: 'SPACE_TEST',
+      },
+    ])
 
     unsubscribe()
     unmount()
@@ -884,6 +892,82 @@ describe('refresh after undo/redo', () => {
 
     expect(mockLoad).not.toHaveBeenCalled()
 
+    unmount()
+  })
+
+  // #4534 — the restore half of every eviction publisher's pair. A page
+  // deleted from the block tree's multi-select (or the Pages-view toolbar) is
+  // EVICTED from the `[[` picker's per-space name cache; Ctrl+Z puts it back
+  // in the DB and in the tree, and without this the cache never learns, so the
+  // page stays unlinkable for the rest of the session. The undo store is
+  // ref-addressed and reports only an op TYPE — it cannot name the rows a
+  // reversal restored, and a delete cascades to nested pages besides — so the
+  // honest signal is the unscoped drop, exactly as `usePageDeleteAction`'s
+  // own undo does. See `refreshAfterUndoRedo`'s docblock.
+  //
+  // `getBlock` REJECTS here on purpose. The invalidation must not sit inside
+  // the title-refresh `try`, whose failures are swallowed by contract: this is
+  // the arm that fails if a later edit moves it in there.
+  it('invalidates the picker name caches after an undo, even when the title refresh fails', async () => {
+    const events: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => events.push(change))
+    mockUndo.mockResolvedValueOnce({ type: 'undo' })
+    mockGetBlock.mockRejectedValueOnce(new Error('not found'))
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(events).toEqual([{ kind: 'invalidated' }])
+    })
+
+    unsubscribe()
+    unmount()
+  })
+
+  // Redo runs the same helper, and needs it for the same reason with the
+  // polarity flipped: redoing a create, or undoing a delete and then redoing
+  // it, moves rows the cache cannot enumerate either.
+  it('invalidates the picker name caches after a redo', async () => {
+    const events: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => events.push(change))
+    mockRedo.mockResolvedValueOnce({ type: 'redo' })
+    mockGetBlock.mockRejectedValueOnce(new Error('not found'))
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    await vi.waitFor(() => {
+      expect(events).toEqual([{ kind: 'invalidated' }])
+    })
+
+    unsubscribe()
+    unmount()
+  })
+
+  // NOT unconditional on the keystroke. A Ctrl+Z with nothing left to undo
+  // returns `null` before `refreshAfterUndoRedo` is reached, so it must not
+  // throw away a warm cache — the drop costs a full `list_all_pages_in_space`
+  // re-fetch on the next picker read, and the whole point of the cache is to
+  // avoid one per keystroke.
+  it('does not invalidate when the undo reversed nothing', async () => {
+    const events: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => events.push(change))
+    mockUndo.mockResolvedValueOnce(null)
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    // Drain microtasks: the .then() callback + the async function it wraps.
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(events).toEqual([])
+
+    unsubscribe()
     unmount()
   })
 
