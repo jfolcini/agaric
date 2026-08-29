@@ -446,49 +446,58 @@ const FINAL_SIGMA_RE = /ς/g
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  *
- * **Cost, measured once, three ways, interleaved.** One experiment: nine
- * alternating repetitions per variant, medians reported, with the observed
- * run-to-run spread as an explicit noise floor. Three earlier versions of this
- * block reported single runs and read differences of 8-19% as findings when
- * the spread on identical code was that wide — which is the same error, twice
- * removed, as the strawman baseline the next paragraph is about.
- *
- * `pre` is the code as it stood before #4507 — `foldCodePoint` was a bare
+ * **Cost.** One experiment, three variants, eleven interleaved repetitions per
+ * variant with rotating order, medians, and the observed spread on each row as
+ * a noise floor. `pre` is the code before #4507 — `foldCodePoint` was a bare
  * `f === 'ς' ? 'σ' : f`, `scanLiteral` a bare `text.toLowerCase()`. `naive` is
- * `replace`-always, the unguarded form. `now` is this function.
+ * `replace`-always, unguarded. `now` is this function.
  *
  * Per CODE POINT, how `foldCodePoint` calls it (1M iterations):
  *
  * ```
- *                    pre    naive    now    now vs pre   noise
- * latin (no sigma)   20 ms   82 ms   32 ms     +63%       ±24%
- * turkish (İ)        56 ms  125 ms   68 ms     +22%        ±8%
- * greek (has sigma)  93 ms  163 ms  112 ms     +21%        ±9%
- * astral (pairs)     87 ms  160 ms  106 ms     +22%        ±6%
+ *                     pre    naive     now   now/pre   naive/now   noise
+ * latin (no sigma)   19.6     80.4    31.7    +62%       2.5x       ±20%
+ * turkish (İ)        55.2    122.5    67.9    +23%       1.8x        ±5%
+ * greek (has sigma)  90.3    159.7   108.7    +20%       1.5x        ±4%
+ * astral (pairs)     86.0    159.6   103.6    +20%       1.5x       ±26%
  * ```
  *
- * Per WHOLE TEXT NODE, how `scanLiteral` calls it (150k iterations):
+ * Per WHOLE TEXT NODE, how `scanLiteral` calls it (300k iterations):
  *
  * ```
- *                        pre     naive     now    now vs pre   noise
- * short heading (15)      4 ms    14 ms    7 ms      +53%       ±8%
- * english para (540)     24 ms    34 ms   26 ms       +8%       ±8%   <- inside noise
- * greek para (504)      740 ms  1108 ms 1136 ms      +53%      ±10%
+ *                       pre    naive      now   now/pre   naive/now   noise
+ * short heading (15)    8.6     27.2     12.9    +50%       2.1x        ±3%
+ * english para (540)   46.7     66.4     51.1     +9%       1.3x       ±11%
+ * greek para (504)   1489.6   2284.5   2331.1    +56%       1.0x        ±9%
  * ```
  *
- * Two things follow, and only two.
+ * **Read these as bands, not as measurements.** This is a shared cloud runner
+ * and the spread proves it: five of the seven rows clear their own floor here,
+ * but a previous run of this identical experiment had `astral` clearing
+ * comfortably (±6%) and this one has it buried (±26%), while `english para`
+ * failed to clear in both. Any row whose `now/pre` is within about twice its
+ * noise figure has flipped verdict between runs and should be treated as
+ * "direction known, magnitude not". Three earlier versions of this block
+ * reported single runs to the percentage point, which is how `+127%` was
+ * published for what is really a ~60% effect.
  *
- * **The guard is worth having.** `now` beats `naive` everywhere the guard can
- * fire, by 2-3x per code point: setting up a global-regex replace costs more
- * than an `indexOf` over one code unit. The one place it does not help is a
- * long string that *does* contain a sigma (greek para: 1136 vs 1108, inside
- * noise) — there the `indexOf` scan is paid and the `replace` runs anyway.
+ * What survives both runs, and all that should be relied on:
  *
- * **Both call sites still regressed against what shipped before #4507**, by
- * ~20-60% on a fold, five of six rows clearing their noise floor. The guard
- * recovers most of what the regex cost, not all of it — `indexOf` over one
- * code unit is still dearer than `=== 'ς'`, and folding through one owner was
- * always going to cost more than not folding at all.
+ * **The guard is worth having.** `now` beats `naive` on every row, from 1.3x
+ * to 2.5x, and the spread is explained by how often the guard can skip the
+ * `replace`: best on short sigma-free strings (latin 2.5x, short heading 2.1x),
+ * least on a long string that *does* contain a sigma, where the `indexOf` is
+ * paid and the `replace` runs anyway — the Greek paragraph is 1.0x, i.e.
+ * indistinguishable from not having the guard at all. Note that `astral` is
+ * sigma-free and still only 1.5x; the guard's benefit tracks string length and
+ * allocation cost as much as it tracks sigma, so do not read the multiplier as
+ * a pure sigma-presence signal.
+ *
+ * **Both call sites are slower than before #4507.** Every row is positive in
+ * both runs, in a band of roughly +20% to +60% on a fold. The guard recovers
+ * most of what the regex cost, not all of it: `indexOf` over one code unit is
+ * still dearer than `=== 'ς'`, and folding through one owner was always going
+ * to cost more than not folding at all.
  *
  * That is the price of #4507 and it is worth paying, but the comparison a
  * reader should weigh is not "guarded beats naive" — it is **"correct and

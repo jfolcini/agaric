@@ -11,35 +11,48 @@ code* differed by up to 12.5%. It then labelled `+12%`, `+15%` and `+19%` rows
 `SLOWER`. Those numbers do not survive their own stated noise floor, and the
 disclosure was sitting four lines above them.
 
-Re-measured properly — one experiment, three variants, nine interleaved
+Re-measured properly — one experiment, three variants, eleven interleaved
 repetitions with rotating order, medians, spread reported per row:
 
 ```
-per CODE POINT (1M iters)      pre    naive    now    now vs pre   noise
-latin (no sigma)               20 ms   82 ms   32 ms     +63%       ±24%
-turkish (İ)                    56 ms  125 ms   68 ms     +22%        ±8%
-greek (has sigma)              93 ms  163 ms  112 ms     +21%        ±9%
-astral (pairs)                 87 ms  160 ms  106 ms     +22%        ±6%
+per CODE POINT (1M)     pre    naive     now   now/pre  naive/now  noise
+latin (no sigma)       19.6     80.4    31.7    +62%      2.5x     ±20%
+turkish (İ)            55.2    122.5    67.9    +23%      1.8x      ±5%
+greek (has sigma)      90.3    159.7   108.7    +20%      1.5x      ±4%
+astral (pairs)         86.0    159.6   103.6    +20%      1.5x     ±26%
 
-per WHOLE TEXT NODE (150k)      pre     naive     now   now vs pre   noise
-short heading (15)             4 ms    14 ms    7 ms      +53%       ±8%
-english para (540)            24 ms    34 ms   26 ms       +8%       ±8%  <- noise
-greek para (504)             740 ms  1108 ms 1136 ms      +53%      ±10%
+per TEXT NODE (300k)      pre    naive      now   now/pre  naive/now  noise
+short heading (15)        8.6     27.2     12.9    +50%      2.1x     ±3%
+english para (540)       46.7     66.4     51.1     +9%      1.3x    ±11%
+greek para (504)       1489.6   2284.5   2331.1    +56%      1.0x     ±9%
 ```
 
-The published `+127%` was really `+63%`. `+15%` and `+19%` were `+22%` and
-`+21%`. `+56%` was `+53%`. And `english paragraph +12% SLOWER` was `+8%`
-against a `±8%` floor — a row that should never have carried the label.
+The published `+127%` was really about `+62%`. `+15%` and `+19%` were about
+`+23%` and `+20%`. `+56%` was `+50%`. And `english paragraph +12% SLOWER` was
+`+9%` against a `±11%` floor — a row that should never have carried the label.
 
-The conclusion holds: both call sites regressed, five of six rows clear their
-noise. But every magnitude I published was wrong, in a block whose subject was
-publishing wrong magnitudes.
+## And the re-measurement needed a second pass of its own
 
-One thing the interleaved run showed that no single run could: on a long string
-that *does* contain a sigma, the guard does not help at all (1136 vs 1108,
-inside noise) — the `indexOf` is paid and the `replace` runs anyway. That is a
-real fact about where the guard earns its keep, and it was invisible in three
-rounds of single-run numbers.
+The first interleaved run reported nine repetitions and I wrote the block from
+it. Review then checked three claims against my own printed table and all three
+failed: "five of six rows" when the tables have seven; "2-3x" when the rows give
+1.5-2.6x; and a `4 ms -> 7 ms` row labelled `+53%` when those operands give
+`+75%` — the whole-millisecond display could not represent the ratio it carried.
+
+Re-run at eleven repetitions with decimals, and the more useful finding
+appeared: **row-level verdicts are not stable on this runner.** `astral` cleared
+its floor comfortably in the first run (±6%) and is buried in the second (±26%),
+on identical code. `english para` failed to clear in both.
+
+So the honest form is not a fourth table of per-row verdicts. It is: report the
+band, state that rows within about twice their noise figure have flipped
+between runs, and rely only on what survived both — that both call sites are
+slower, in a range of roughly +20% to +60%, and that the guard beats the naive
+form everywhere but degenerates to 1.0x on a long sigma-bearing string.
+
+Three rounds of this block were wrong because each reported a single noisy run
+to the percentage point. The fourth is right because it stopped reporting
+percentages as though they were measurements.
 
 ## Editing a log that was already merged
 
