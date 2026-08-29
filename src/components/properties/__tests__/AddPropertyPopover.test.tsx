@@ -148,15 +148,25 @@ describe('AddPropertyPopover', () => {
     expect(screen.queryByRole('button', { name: /create "cafe-visits"/i })).not.toBeInTheDocument()
   })
 
-  // #4522 — the sigma-collapse fix in `foldForSearch` broadens this
+  // #4514 — the sigma-collapse fix in `foldForSearch` broadens this
   // exact-match dedupe, not just substring search: a definition key
   // stored with a word-final sigma (U+03C2, 'ς') now folds equal to a
   // search typed with the regular sigma (U+03C3, 'σ'). Pin the
   // user-visible consequence (the "Create new" affordance stays
   // suppressed), not just fold equality.
-  it('does NOT show "Create new" suggestion when the only difference is Greek final-sigma form (#4522)', async () => {
+  //
+  // Both sigmas are written as escapes rather than pasted: the two glyphs
+  // are indistinguishable at a glance, and if the stored key and the
+  // typed search ended in the *same* sigma the assertions below would
+  // hold with or without the fold — a tautology, not a test.
+  it('does NOT show "Create new" suggestion when the only difference is Greek final-sigma form (#4514)', async () => {
+    const STORED_KEY = 'οδο\u03C2' // word-final sigma
+    const TYPED_QUERY = 'οδο\u03C3' // regular sigma
+    // Tamper-detector: normalising either escape to the other sigma makes
+    // the two words identical and the assertions below vacuous.
+    expect(TYPED_QUERY).not.toBe(STORED_KEY)
     const user = userEvent.setup()
-    const defs = [makeDef('οδος')]
+    const defs = [makeDef(STORED_KEY)]
     render(
       <AddPropertyPopover
         definitions={defs}
@@ -170,12 +180,14 @@ describe('AddPropertyPopover', () => {
 
     // Regular sigma (U+03C3) where the stored key ends in the
     // word-final form (U+03C2) — same word, different sigma glyph.
-    await user.type(screen.getByLabelText('Search definitions'), 'οδοσ')
+    await user.type(screen.getByLabelText('Search definitions'), TYPED_QUERY)
 
     await waitFor(() => {
-      expect(screen.getByText('οδος')).toBeInTheDocument()
+      expect(screen.getByText(STORED_KEY)).toBeInTheDocument()
     })
-    expect(screen.queryByRole('button', { name: /create "οδοσ"/i })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: new RegExp(`create "${TYPED_QUERY}"`, 'i') }),
+    ).not.toBeInTheDocument()
   })
 
   it('calls onAdd when a definition is clicked', async () => {

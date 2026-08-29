@@ -410,16 +410,26 @@ describe('searchTags', () => {
     expect(createOption).toBeUndefined()
   })
 
-  // #4522 — the sigma-collapse fix in `foldForSearch` broadens this
+  // #4514 — the sigma-collapse fix in `foldForSearch` broadens this
   // exact-match check, not just substring search: a tag stored with a
   // word-final sigma (U+03C2, 'ς') now folds equal to a query typed with
   // the regular sigma (U+03C3, 'σ'). Pin the user-visible consequence
   // (the create-new-tag affordance stays suppressed), not just fold
   // equality — a fold returning '' for both sides would also satisfy a
   // bare equality assertion.
-  it('does NOT append "Create new tag" when the only difference is Greek final-sigma form (#4522)', async () => {
+  //
+  // Both sigmas are written as escapes rather than pasted: the two glyphs
+  // are indistinguishable at a glance, and if the stored name and the
+  // query ended in the *same* sigma the assertion below would hold with
+  // or without the fold — a tautology, not a test.
+  it('does NOT append "Create new tag" when the only difference is Greek final-sigma form (#4514)', async () => {
+    const STORED_TAG = 'οδο\u03C2' // word-final sigma
+    const TYPED_QUERY = 'οδο\u03C3' // regular sigma
+    // Tamper-detector: normalising either escape to the other sigma makes
+    // the two words identical and the assertion below vacuous.
+    expect(TYPED_QUERY).not.toBe(STORED_TAG)
     mockedListAllTagsInSpace.mockResolvedValueOnce([
-      { tag_id: 'T25', name: 'οδος', usage_count: 1, updated_at: '2024-01-01' },
+      { tag_id: 'T25', name: STORED_TAG, usage_count: 1, updated_at: '2024-01-01' },
     ])
 
     const { result } = renderHook(() => useBlockResolve())
@@ -428,7 +438,7 @@ describe('searchTags', () => {
     await act(async () => {
       // Regular sigma (U+03C3) where the stored tag ends in the
       // word-final form (U+03C2) — same word, different sigma glyph.
-      items = await result.current.searchTags('οδοσ')
+      items = await result.current.searchTags(TYPED_QUERY)
     })
 
     const createOption = items.find((i) => i.isCreate)

@@ -30,6 +30,21 @@
  *     rule in step 3 that depends on a character's *surroundings*
  *     rather than only on the character itself.
  *
+ * Step 5 has exactly one ordering constraint: it must run **after step
+ * 3**. `toLowerCase` is what *creates* the `ς` the collapse removes, so
+ * a collapse placed ahead of it finds no `ς` in `ΟΔΟΣ` at all and the
+ * fold still ends in one. The `ΟΔΟΣ` case in the test suite pins that.
+ *
+ * It is *not* "last or nothing". NFKD can also produce a literal `ς`
+ * from a character that was never a plain final sigma — `U+1D6D3`
+ * MATHEMATICAL BOLD SMALL FINAL SIGMA decomposes straight to `ς`, in
+ * any position, with `toLowerCase` playing no part — and because the
+ * collapse matches on literal content rather than on "did `toLowerCase`
+ * just apply Final_Sigma?", *any* position after step 1 catches that,
+ * including one between steps 1 and 3. The `U+1D6D3` case in the test
+ * suite pins the behaviour; nothing pins the position beyond step 3,
+ * because nothing needs to.
+ *
  * The common case — both strings pure ASCII — fast-paths through
  * plain `.toLowerCase()` so the extra normalisation cost is only
  * paid on non-ASCII input.
@@ -155,17 +170,33 @@ export function indexOfFolded(haystack: string, needle: string): number {
  * code unit, so the two buffers still agreed in *length*, which is
  * all this loop compares.
  *
- * The "up to canonical reordering" residual: NFKD also reorders
- * adjacent combining marks by combining class outside the
- * U+0300..U+036F range this file strips (e.g. U+0653, ccc 230,
- * before U+0655, ccc 220, come out swapped by the whole-string fold),
- * and the per-code-point walk below does not perform that reordering.
- * It is harmless here for the same reason Final_Sigma no longer
- * bites: reordering only permutes code points within a fixed-length
- * span, and length is all this loop compares.  A future
- * context-sensitive rule that was NOT length-preserving would corrupt
- * the spans outright, so keep new folds context-free rather than
- * relying on the coincidence.
+ * The "up to canonical reordering" residual, stated to the precision it
+ * actually has: NFKD also reorders adjacent combining marks by combining
+ * class outside the U+0300..U+036F range this file strips (e.g. U+0653,
+ * ccc 230, before U+0655, ccc 220, come out swapped by the whole-string
+ * fold), and the per-code-point walk below does not perform that
+ * reordering.  Reordering is length-preserving, so the two agree on the
+ * length of a *completed* mark run — but they disagree on its
+ * *contents*, and therefore on which original offset a folded index
+ * landing **inside** the run denotes.  "Length is all this loop
+ * compares" is what makes the run's two endpoints line up; it is not a
+ * guarantee about its interior.
+ *
+ * That gap is reachable when a run mixes planes.  For haystack
+ * `"A" U+302A U+1D167 "Z"` searched for `U+1D167`, the whole-string
+ * fold is `"a" U+1D167 U+302A "z"` (U+1D167 sorts first), so
+ * `foldedIdx` is 1 — one UTF-16 unit in, i.e. *inside* U+1D167's
+ * surrogate pair — while the walk first reaches buffer length 1 having
+ * consumed only `"A"`.  It answers `{start: 1, length: 3}`, spanning
+ * `U+302A U+1D167`, where the correct span is `{start: 2, length: 2}`.
+ * Verified by running this function, not reasoned about.
+ *
+ * Pre-existing, and no Search surface here is known to produce such a
+ * run — it takes a musical-notation combining mark adjacent to an
+ * ideographic tone mark — so this is documented rather than fixed.  A
+ * future context-sensitive rule that was NOT length-preserving would
+ * corrupt spans outright, at the endpoints too, so keep new folds
+ * context-free rather than relying on either coincidence.
  *
  * Walking code *units* instead would split surrogate pairs: a
  * supplementary-plane compatibility character such as 𝐀 (U+1D400)

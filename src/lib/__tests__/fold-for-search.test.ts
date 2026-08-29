@@ -22,12 +22,28 @@ import {
 // ─────────────────────────────────────────────────────────────────────────
 // #4514 — the three Greek sigma forms, written as escapes because
 // Σ / σ / ς are easy to confuse by eye and the whole point of these cases
-// is *which* lowercase form comes out of the fold. Expectations below
-// use these constants rather than pasted literals for the same reason.
+// is *which* lowercase form comes out of the fold. Inputs matter as much
+// as expectations: normalise a lowercase input's final ς to σ and the
+// surrounding assertion degrades into a tautology that is green with or
+// without the collapse, so both sides use these constants.
+//
+// Uppercase words below (ΟΔΟΣ, ΑΣΑ, ΟΞΟΣ, ΑΒΓ) stay pasted: Σ has a single
+// uppercase form, so there is nothing to confuse it with and nothing a
+// silent substitution could weaken.
 // ─────────────────────────────────────────────────────────────────────────
 const SIGMA_CAP = '\u03A3' // Σ — capital
 const SIGMA_MID = '\u03C3' // σ — non-final lowercase (U+03C3)
 const SIGMA_FINAL = '\u03C2' // ς — word-final lowercase (U+03C2)
+
+// The two lowercase spellings of ΟΔΟΣ, differing only in their last
+// character. Every case using them turns on which sigma that is, so the
+// tail is always a constant and never a pasted glyph.
+const ODOS_FINAL = `οδο${SIGMA_FINAL}`
+const ODOS_MID = `οδο${SIGMA_MID}`
+
+// U+1D6D3 MATHEMATICAL BOLD SMALL FINAL SIGMA — NFKD-decomposes straight
+// to a literal ς, in any position, with no help from Final_Sigma.
+const MATH_BOLD_SIGMA_FINAL = '\u{1D6D3}'
 
 describe('foldForSearch', () => {
   describe('ASCII fast path', () => {
@@ -100,6 +116,27 @@ describe('foldForSearch', () => {
   // restore context-freedom.
   // ───────────────────────────────────────────────────────────────────
   describe('Greek final sigma', () => {
+    // Tamper-detector for the constants above. Every case in this
+    // describe block turns on which sigma an *input* carries, and the two
+    // lowercase glyphs are indistinguishable by eye: silently normalise
+    // SIGMA_FINAL (or ODOS_FINAL's last character) to σ and most of the
+    // assertions below become tautologies that hold with or without the
+    // collapse. This test is what makes that edit visible.
+    it('the sigma constants are the code points they claim to be', () => {
+      expect(SIGMA_CAP.codePointAt(0)).toBe(0x03a3)
+      expect(SIGMA_MID.codePointAt(0)).toBe(0x03c3)
+      expect(SIGMA_FINAL.codePointAt(0)).toBe(0x03c2)
+      expect(MATH_BOLD_SIGMA_FINAL.codePointAt(0)).toBe(0x1d6d3)
+      // The two ΟΔΟΣ spellings must differ, and differ only in their tail.
+      expect(ODOS_FINAL).not.toBe(ODOS_MID)
+      expect(ODOS_FINAL.slice(0, -1)).toBe(ODOS_MID.slice(0, -1))
+      expect(ODOS_FINAL.at(-1)).toBe(SIGMA_FINAL)
+      expect(ODOS_MID.at(-1)).toBe(SIGMA_MID)
+      // ...and ODOS_FINAL really is what Final_Sigma produces from ΟΔΟΣ,
+      // which is the whole reason the stored form ends in ς at all.
+      expect('ΟΔΟΣ'.toLowerCase()).toBe(ODOS_FINAL)
+    })
+
     it('folds every sigma form to σ in isolation', () => {
       expect(foldForSearch(SIGMA_CAP)).toBe(SIGMA_MID)
       expect(foldForSearch(SIGMA_MID)).toBe(SIGMA_MID)
@@ -110,8 +147,8 @@ describe('foldForSearch', () => {
       // Pin the exact folded value, not merely that two folds agree:
       // `fold(a) === fold(b)` is equally satisfied by a fold that returns
       // '' for every input.
-      expect(foldForSearch('ΟΔΟΣ')).toBe(`οδο${SIGMA_MID}`)
-      expect(foldForSearch('οδος')).toBe(`οδο${SIGMA_MID}`)
+      expect(foldForSearch('ΟΔΟΣ')).toBe(ODOS_MID)
+      expect(foldForSearch(ODOS_FINAL)).toBe(ODOS_MID)
       expect(foldForSearch('ΟΔΟΣ')).toHaveLength(4)
     })
 
@@ -123,6 +160,26 @@ describe('foldForSearch', () => {
 
     it('folds ΣΣ to two identical σ, not σ followed by ς', () => {
       expect(foldForSearch(`${SIGMA_CAP}${SIGMA_CAP}`)).toBe(`${SIGMA_MID}${SIGMA_MID}`)
+    })
+
+    it('collapses an NFKD-produced ς that Final_Sigma never touched (U+1D6D3)', () => {
+      // MATHEMATICAL BOLD SMALL FINAL SIGMA decomposes to a literal ς
+      // under NFKD, with `toLowerCase` playing no part — the
+      // decomposition is already lowercase, and it comes out ς in any
+      // position, not only word-finally. So the collapse earns its keep
+      // twice: it undoes Final_Sigma, and it normalises final sigmas
+      // that arrive as raw content. A rule phrased as "did `toLowerCase`
+      // just apply Final_Sigma?" would fix the first and miss this.
+      //
+      // This case does NOT pin the collapse's *position*: any position
+      // after `normalize('NFKD')` catches it. The position constraint —
+      // after `toLowerCase` — is pinned by the ΟΔΟΣ case above.
+      expect(MATH_BOLD_SIGMA_FINAL.normalize('NFKD')).toBe(SIGMA_FINAL) // premise
+      expect(foldForSearch(MATH_BOLD_SIGMA_FINAL)).toBe(SIGMA_MID)
+      // Non-final position: no Final_Sigma anywhere in the story.
+      expect(foldForSearch(`${MATH_BOLD_SIGMA_FINAL}α`)).toBe(`${SIGMA_MID}α`)
+      expect(matchesSearchFolded(MATH_BOLD_SIGMA_FINAL, SIGMA_CAP)).toBe(true)
+      expect(matchesSearchFolded(SIGMA_MID, MATH_BOLD_SIGMA_FINAL)).toBe(true)
     })
 
     it('does not collapse unrelated Greek letters onto sigma', () => {
@@ -214,9 +271,11 @@ describe('matchesSearchFolded', () => {
     })
 
     it('matches a whole word in either case, in either direction', () => {
-      expect(matchesSearchFolded('ΟΔΟΣ', 'οδος')).toBe(true)
-      expect(matchesSearchFolded('οδος', 'ΟΔΟΣ')).toBe(true)
-      expect(matchesSearchFolded('οδος', SIGMA_CAP)).toBe(true)
+      expect(matchesSearchFolded('ΟΔΟΣ', ODOS_FINAL)).toBe(true)
+      expect(matchesSearchFolded(ODOS_FINAL, 'ΟΔΟΣ')).toBe(true)
+      expect(matchesSearchFolded(ODOS_FINAL, SIGMA_CAP)).toBe(true)
+      // The consumer-facing case: stored word ends in ς, typed word in σ.
+      expect(matchesSearchFolded(ODOS_FINAL, ODOS_MID)).toBe(true)
     })
 
     it('mid-word sigma still matches (ΑΣΑ — regression guard)', () => {

@@ -34,15 +34,56 @@ Worth generalising: when a fold is context-sensitive, **any** test that re-folds
 isolation has destroyed the context that carries the bug. The re-slice looked like an
 implementation detail of iteration and was the whole experiment.
 
-## The collapse's position is necessary, not just sufficient
+## The collapse's position: one real constraint, and an argument that did not follow
 
 It reads as arbitrary that the collapse sits last — after NFKD, after `toLowerCase`, after
-`ß`→`ss`. It is not. NFKD can *produce* a literal `ς` from something that was never a plain
-final sigma: `U+1D6D3` MATHEMATICAL BOLD SMALL FINAL SIGMA decomposes straight to `ς`.
+`ß`→`ss`. One of those is a constraint; the rest is habit.
 
-Because the collapse matches on literal content rather than on "did `toLowerCase` just apply
-Final_Sigma", the last position catches that too. Any earlier position would miss it. This came
-out of review probing the ordering rather than accepting it, and it is now in the docblock.
+The constraint is **after `toLowerCase`**, and it comes from Final_Sigma: `toLowerCase` is what
+*creates* the `ς` the collapse removes. `ΟΔΟΣ` contains no final sigma until Final_Sigma puts
+one there, so a collapse placed ahead of `toLowerCase` matches nothing and the fold still ends
+in `ς`. Measured: moving the collapse between `.normalize('NFKD')` and `.toLowerCase()` reddens
+8 of the 68 fold-suite tests, all of them word-final cases.
+
+The first version of this note argued something stronger, and wrong. It observed — correctly —
+that NFKD can *produce* a literal `ς` from a character that was never a plain final sigma
+(`U+1D6D3` MATHEMATICAL BOLD SMALL FINAL SIGMA decomposes straight to `ς`, in any position, with
+`toLowerCase` playing no part), and concluded that the last position was necessary because "any
+earlier position would miss it". That does not follow. *Every* position after NFKD catches
+`U+1D6D3`, including one between NFKD and `toLowerCase`, which is earlier than last. Measured in
+the same run: with the collapse immediately after NFKD, `foldForSearch(U+1D6D3)` is still `σ`.
+The example supports "after step 1"; the conclusion drawn was "last".
+
+Compounding it, `U+1D6D3` had no test at all, so the argument was unpinned in both directions:
+the move above kept every case the docblock said the position existed to catch working, and
+nothing would have said so. It has a test now, and that test carries a note saying what it does
+*not* pin — the position — so the next reader does not re-derive the same overclaim from it.
+
+The generalisable bit: an ordering argument is a claim about what breaks at each *other*
+position, and each break has to be run. This one asserted a necessity from an example that was
+true and irrelevant to it.
+
+## The reordering residual, measured rather than waved at
+
+`findFoldedMatch` walks the haystack one code point at a time and compares the running buffer's
+*length* against offsets taken from the whole-string fold. The first draft of that safety
+argument said canonical reordering was harmless because it "only permutes code points within a
+fixed-length span, and length is all this loop compares".
+
+That is true at the ends of a reordered mark run and false inside one. Reordering preserves
+length but not *contents*, so a folded index landing mid-run denotes a different original offset
+in the two views. Reachable when the run mixes planes: for haystack `"A" U+302A U+1D167 "Z"`
+searched for `U+1D167`, the whole-string fold is `"a" U+1D167 U+302A "z"`, `foldedIdx` is 1 —
+inside U+1D167's surrogate pair — and the walk reaches buffer length 1 having consumed only
+`"A"`. Running it returns `{start: 1, length: 3}` where the correct span is `{start: 2,
+length: 2}`.
+
+Pre-existing, unreachable from the Search surfaces, and left unfixed — but the docblock now
+states the guarantee at the strength it has instead of one notch above it. Verified by executing
+the function on that input rather than by reasoning about combining classes, which is just as
+well: the classes quoted in the note that raised this had U+1D167 *above* U+302A, which would
+mean no swap at all, and NFKD demonstrably swaps them. Right conclusion, inverted premise — the
+sort of pair that only running it separates.
 
 ## Two claims from the issue that measurement narrowed
 
@@ -57,17 +98,21 @@ did work; `ΑΣΑ` searched for `ς` did not. The regression guard now pins both
 
 ## Four survivors, checked individually
 
-Removing the collapse reddened 10 of the 14 new tests. Four stayed green, and a survivor is
-either a genuine pre-existing guard or a test that discriminates nothing — the distinction is
-not visible from the count, so each was checked:
+Removing the collapse reddened 11 of the 16 new fold-suite tests, plus both consumer tests
+(13 red in all). Five stayed green, and a survivor is either a genuine pre-existing guard or a
+test that discriminates nothing — the distinction is not visible from the count, so each was
+checked:
 
 - the mid-word `ΑΣΑ` fold value: already correct pre-fix, pinned against an over-broad collapse;
 - "does not collapse unrelated Greek letters": a negative control, correctly unrelated to this
   mutation;
 - idempotence for a word-final sigma: a real but narrow property that this defect does not touch;
-- "does not match sigma against Greek text that has none": a negative control.
+- "does not match sigma against Greek text that has none": a negative control;
+- "the sigma constants are the code points they claim to be": by construction it cannot go red
+  for this mutation — it asserts on the test fixtures, not on `foldForSearch`. It is falsified
+  separately, by tampering with a constant (below).
 
-None vacuous. Reporting "10 of 14 went red" without that breakdown would have left four tests
+None vacuous. Reporting "11 of 16 went red" without that breakdown would have left five tests
 whose status was simply unknown.
 
 ## A third fold, deliberately left alone
@@ -79,12 +124,32 @@ one. Its docblock already names the Final_Sigma under-match as an accepted diver
 "fixing" it would break the thing it exists to imitate. Recorded here because a future sweep for
 this defect class will find it and needs to know it is intentional.
 
+## The escapes belonged on the inputs
+
+The convention was to write sigmas as escapes rather than pasted glyphs, because `σ` and `ς` are
+indistinguishable at a glance and which one comes out is the entire subject. The first round
+applied it to the *expectations* and left the **inputs** as pasted literals —
+`foldForSearch('οδος')`, a stored tag `name: 'οδος'`, `makeDef('οδος')` — which is exactly
+backwards. An expectation written with the wrong sigma fails loudly. An *input* written with the
+wrong sigma fails silently: normalise that final `ς` to `σ` and the surrounding assertion becomes
+a tautology, green with or without the collapse. That is the failure the convention exists to
+prevent, and it was left standing precisely where it bites.
+
+Fixed on both sides now, and made tamper-evident rather than merely conventional: the fold suite
+carries a constants test asserting the code points and that the two lowercase spellings of `ΟΔΟΣ`
+differ only in their tail, and each consumer test asserts its stored value and its typed query are
+not the same string. Falsified: normalising `ODOS_FINAL`'s tail to `σ` reddens **only** the
+constants test — every other case using it goes green on the tampered input, which is the point.
+Same for both consumer tamper-detectors.
+
+Uppercase words (`ΟΔΟΣ`, `ΑΣΑ`, `ΟΞΟΣ`, `ΑΒΓ`) stay pasted deliberately: `Σ` has one uppercase
+form, so there is nothing to confuse it with and no silent weakening available.
+
 ## Verification
 
-95 tests across the fold suite and its offset and filter consumers. `tsc -b` clean; `oxlint` and
-`oxfmt --check` clean on both changed files.
+68 tests in the fold suite; 276 across it and the two consumer suites. `tsc -b` clean; `oxlint`
+and `oxfmt --check` clean on the changed files.
 
-The fix was falsified against a copied backup with the restore proven byte-identical, and every
-sigma form in the tests is written as an escape (`Σ` / `σ` / `ς`) rather than a
-literal, because which lowercase form comes out is the entire subject and the three are
-confusable by eye.
+Every mutation was made against a copied backup and every restore proven byte-identical with
+`cmp`: the collapse removed, the collapse moved to immediately after NFKD, and each of the three
+input constants normalised to the wrong sigma.
