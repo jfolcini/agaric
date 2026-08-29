@@ -432,8 +432,12 @@ const FINAL_SIGMA_RE = /ς/g
  * lowercase mapping in the default (locale-free) case-mapping table, so once it
  * is collapsed, folding a string whole and folding it code point at a time
  * produce the same result for **every** input, `İ` U+0130 included: it folds to
- * `i` + U+0307 whole and per code point alike (probed, and the harness sweep
- * asserts it). `İ` is routed to the slow path by the
+ * `i` + U+0307 whole and per code point alike. What carries that as a universal
+ * claim is the deduction in the sentence above — Final_Sigma being the only
+ * context-sensitive mapping in the locale-free table — not the harness sweep,
+ * whose own comment scopes its result to the twelve contexts it varies. The
+ * sweep is corroboration over every scalar value in those contexts, `İ`
+ * included; it is not the proof. `İ` is routed to the slow path by the
  * `haystack.length === text.length` check because it changes LENGTH, which
  * breaks the offset mapping — not because the two folds disagree about it. An
  * earlier version of this sentence called it an exception to the distribution
@@ -442,66 +446,55 @@ const FINAL_SIGMA_RE = /ς/g
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  *
- * The `indexOf` guard is not premature: it was measured, both ways, because
- * this function is called from two places with very different string lengths
- * and the naive `replace`-always version loses badly at one of them.
+ * **Cost, measured once, three ways, interleaved.** One experiment: nine
+ * alternating repetitions per variant, medians reported, with the observed
+ * run-to-run spread as an explicit noise floor. Three earlier versions of this
+ * block reported single runs and read differences of 8-19% as findings when
+ * the spread on identical code was that wide — which is the same error, twice
+ * removed, as the strawman baseline the next paragraph is about.
  *
- * Per CODE POINT, which is how `foldCodePoint` calls it (3M iterations each,
- * node 22). What the guard buys against the naive form:
+ * `pre` is the code as it stood before #4507 — `foldCodePoint` was a bare
+ * `f === 'ς' ? 'σ' : f`, `scanLiteral` a bare `text.toLowerCase()`. `naive` is
+ * `replace`-always, the unguarded form. `now` is this function.
  *
- * ```
- * latin (no sigma)      replace-always 234 ms   guarded 115 ms   +103%
- * turkish (İ-bearing)   replace-always 368 ms   guarded 234 ms    +57%
- * greek (has sigma)     replace-always 488 ms   guarded 335 ms    +46%
- * astral (pairs)        replace-always 493 ms   guarded 328 ms    +50%
- * ```
- *
- * Faster even on Greek text, where the guard fails and the `replace` runs
- * anyway: setting up a global-regex replace costs more than an `indexOf` over
- * one code unit, so paying the `indexOf` on every code point still wins.
- *
- * **Neither column above is what the code was before #4507, so that table
- * cannot say whether anything got slower — and two earlier versions of this
- * block read as though it could.** `replace`-always is a strawman: it is the
- * shape argued against in review, never a shape that shipped. The real
- * baselines are per call site. `foldCodePoint` was a bare string equality,
- * `const f = ch.toLowerCase(); return f === 'ς' ? 'σ' : f`; `scanLiteral`
- * folded with a bare `text.toLowerCase()`. Both are cheaper than either column.
- * Against the code as it actually stood, per CODE POINT:
+ * Per CODE POINT, how `foldCodePoint` calls it (1M iterations):
  *
  * ```
- * latin (no sigma)      pre-#4507  50 ms   shipped 113 ms   +127% SLOWER
- * turkish (İ-bearing)   pre-#4507 181 ms   shipped 208 ms    +15% SLOWER
- * greek (has sigma)     pre-#4507 271 ms   shipped 323 ms    +19% SLOWER
+ *                    pre    naive    now    now vs pre   noise
+ * latin (no sigma)   20 ms   82 ms   32 ms     +63%       ±24%
+ * turkish (İ)        56 ms  125 ms   68 ms     +22%        ±8%
+ * greek (has sigma)  93 ms  163 ms  112 ms     +21%        ±9%
+ * astral (pairs)     87 ms  160 ms  106 ms     +22%        ±6%
  * ```
  *
- * (`shipped` here and `guarded` above are the SAME code, timed in two separate
- * runs — hence 113 vs 115, 208 vs 234, 323 vs 335. The gap is run-to-run noise
- * on a shared runner, not a third variant; only the within-table comparisons
- * mean anything.)
- *
- * So the slow path DID regress, by a constant factor, and the guard recovers
- * most of what the regex cost but not all of it — `indexOf` over one code unit
- * is still dearer than `=== 'ς'`. That is the price of one owner for the sigma
- * rule, and it is accepted deliberately rather than accidentally: a second copy
- * of the rule living in `foldCodePoint` is what #4507 was fixing. Both forms
- * agree over all 1,112,064 scalar values, 0 disagreements.
- *
- * And per WHOLE TEXT NODE, which is how `scanLiteral` calls it, against its
- * own real baseline of a bare `text.toLowerCase()`:
+ * Per WHOLE TEXT NODE, how `scanLiteral` calls it (150k iterations):
  *
  * ```
- * short heading, no sigma  (len 15)  pre-#4507   12 ms   shipped   19 ms   +56% SLOWER
- * english paragraph        (len 540) pre-#4507   47 ms   shipped   52 ms   +12% SLOWER
- * greek paragraph          (len 504) pre-#4507 1410 ms   shipped 2152 ms   +53% SLOWER
+ *                        pre     naive     now    now vs pre   noise
+ * short heading (15)      4 ms    14 ms    7 ms      +53%       ±8%
+ * english para (540)     24 ms    34 ms   26 ms       +8%       ±8%   <- inside noise
+ * greek para (504)      740 ms  1108 ms 1136 ms      +53%      ±10%
  * ```
  *
- * So **both** call sites regressed, not just the slow one. The guard makes the
- * sigma collapse as cheap as it can be; it cannot make it free, and folding
- * through one owner was always going to cost more than not folding at all.
- * That is the price of #4507 — the fast path was *wrong* before, and the
- * comparison a reader should care about is "correct and slower" against
- * "fast and silently missing matches".
+ * Two things follow, and only two.
+ *
+ * **The guard is worth having.** `now` beats `naive` everywhere the guard can
+ * fire, by 2-3x per code point: setting up a global-regex replace costs more
+ * than an `indexOf` over one code unit. The one place it does not help is a
+ * long string that *does* contain a sigma (greek para: 1136 vs 1108, inside
+ * noise) — there the `indexOf` scan is paid and the `replace` runs anyway.
+ *
+ * **Both call sites still regressed against what shipped before #4507**, by
+ * ~20-60% on a fold, five of six rows clearing their noise floor. The guard
+ * recovers most of what the regex cost, not all of it — `indexOf` over one
+ * code unit is still dearer than `=== 'ς'`, and folding through one owner was
+ * always going to cost more than not folding at all.
+ *
+ * That is the price of #4507 and it is worth paying, but the comparison a
+ * reader should weigh is not "guarded beats naive" — it is **"correct and
+ * ~20-60% slower on a fold" against "fast and silently missing every
+ * word-final sigma"**, which is what the fast path did before. Both forms
+ * agree over all 1,112,064 scalar values, 0 disagreements in every direction.
  *
  * The two call sites matter because the slow path is not the rare one it looks
  * like: `İ` U+0130 is ordinary Turkish orthography, so on Turkish content most
