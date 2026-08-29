@@ -59,16 +59,29 @@
  * own merits — same shape as the two suppressed sites in `use-block-zoom.ts`.
  *
  * `npx oxlint src/hooks/useListStyles.ts` nonetheless reports zero findings on
- * THIS file, and that is NOT evidence the rule considers this site exempt: an
- * unrelated disable directive in the file is eating the diagnostic first.
- * Filed as #4493, which carries the reproduction and the measurement — kept
- * there rather than restated here, because the moment #4493 is fixed a
- * detailed account of the current behaviour becomes a wrong one, and this is
- * the file least likely to be revisited when that happens.
+ * THIS file, and that is NOT evidence the rule considers this site exempt.
+ * The `oxlint-disable-next-line react-hooks/exhaustive-deps` at the bottom of
+ * `useListStyles` makes oxlint's React Compiler skip this entire hook, so
+ * every `react/*` rule goes silent for it — the two sites below included
+ * (oxlint prints four diagnostics for them, duplicating the read).
  *
- * #4493 also records the consequence for this file specifically: fixing it
- * must add the `react/refs` suppressions here in the SAME commit, since until
- * the masking is gone they report as unused and are themselves an error.
+ * #4493 measured and characterised that. It is not a directive-scope defect
+ * and it is not going away: oxlint ports `babel-plugin-react-compiler`'s own
+ * suppression bailout (oxc #24747), where an author-declared incomplete
+ * dependency array means the compiler must not trust its inference for that
+ * function. Nor can the suppressions be added here pre-emptively — while the
+ * bailout holds, a `react/refs` disable on the two lines below is reported
+ * UNUSED, which `--report-unused-disable-directives-severity=error` (both
+ * `npm run lint` and the prek `oxlint` hook) makes an error in its own right.
+ * That deadlock is permanent, not a transitional state, so this paragraph is
+ * not waiting to be rewritten.
+ *
+ * What #4493 did change: `.oxlintrc.json` runs `react/rule-suppression` at
+ * `warn`, so every run now NAMES this hook as unscanned instead of printing
+ * nothing about it. `src/__tests__/oxlint-react-compiler-suppression.test.ts`
+ * pins the bailout in both directions and will fail if an oxlint bump ever
+ * lifts it — at which point the `react/refs` suppressions must land here in
+ * the SAME commit, because they become reachable and required together.
  *
  * The operative rule, which does not depend on any of that: do not cite this
  * file's lint output as corroboration, in either direction. The safety

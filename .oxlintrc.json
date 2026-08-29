@@ -118,6 +118,12 @@
     // readable and survives a category retune). This is the same warn ->
     // burn-down -> error ratchet #188 ran for the biome -> oxc migration.
     //
+    // EXCEPTION: `react/rule-suppression` below does NOT follow this
+    // ratchet. Its count reaching zero is not the exit condition and
+    // promoting it to `error` is not a matter of burn-down completing --
+    // see its own comment (#4493) for why `error` there is unreachable by
+    // construction, not just not-yet-reached.
+    //
     // #4409 drove six of the eight to zero and promoted them below; #4406
     // then did the same for `react/refs`. Only `react/set-state-in-effect`
     // is still burning down (#4407); it must stay at `warn` until its count
@@ -154,6 +160,61 @@
     // other.
     "react/refs": "error",
     "react/set-state-in-effect": "warn",
+
+    // `react/rule-suppression` is not a rule about your code — it reports the
+    // places where oxlint DID NOT LINT, and it is the answer to #4493.
+    //
+    // oxlint ports `babel-plugin-react-compiler`'s suppression bailout
+    // verbatim (oxc #24747, and #25392 for the transform side): a disable
+    // directive naming `react-hooks/exhaustive-deps`,
+    // `react-hooks/rules-of-hooks`, `react/exhaustive-deps` or
+    // `react/rules-of-hooks` — in either the `oxlint-` or the `eslint-`
+    // spelling — makes the compiler SKIP the enclosing component or hook
+    // entirely, so every OTHER `react/*` rule listed above goes silent for
+    // that whole function, above the directive as well as below it. It is
+    // deliberate upstream (an author-declared incomplete dependency array
+    // means the compiler must not trust its own inference for that function),
+    // it is NOT a directive-scope defect, it is present and unchanged in
+    // oxlint 1.79.0 (checked #4493 against the installed
+    // node_modules/.bin/oxlint binary; a newer 1.80.0 also exists upstream
+    // but is not what this repo runs), and no key in this file switches it
+    // off. So it is not something a fix here removes; the only thing that can
+    // change is whether it is visible. NOTE: 1.79.0 is what package-lock.json
+    // resolves and what npm ci installs, not what package.json pins --
+    // package.json declares "oxlint": "^1.79.0", a caret range npm install
+    // can move within (to 1.80.x, say) without touching package.json at all.
+    //
+    // Measured on this tree (#4493), point-in-time as of 2026-08-29 at commit
+    // 01b5724f2 -- re-run the commands in the session log below rather than
+    // trusting these numbers on an older or newer tree: of 1858 lintable files
+    // (`oxlint -c .oxlintrc.json -f json .`'s `number_of_files`), 170 carry
+    // some disable directive in an actual comment (not merely matched by a
+    // naive grep, which also catches directive-shaped text sitting inside
+    // string/template-literal fixture data -- see the session log), and 31 of
+    // those carry a bailout-triggering one, at 38 sites
+    // (`react(rule-suppression)` diagnostic count from that same run).
+    // Unmasking those 38 sites and re-linting reveals 15 files hiding
+    // findings underneath them, understating `react/set-state-in-effect`
+    // (still burning down in #4407) by seven. Exact counts, the unmasking
+    // method, and the commands that produced all of this live in
+    // docs/session-log/session-1437-the-lint-that-was-not-run.md — kept in
+    // one place because re-measuring is a multi-step diff, not a one-line
+    // grep, and three copies of a number nobody re-derives is worse than one.
+    // Nothing re-runs this automatically; these are the numbers as measured,
+    // not a live invariant, so re-derive them before trusting them on a tree
+    // that has moved on.
+    //
+    // `error` is unreachable, and not by choice: all 38 sites would fail at
+    // once, and the findings underneath them cannot be suppressed in advance.
+    // A `react/refs` directive added to a bailed-out function is reported
+    // UNUSED — the finding it covers is not being produced — and both
+    // `npm run lint` and the prek `oxlint` hook run
+    // `--report-unused-disable-directives-severity=error`. `warn` is what
+    // ends the silence: every bailed-out function is named on every run, so
+    // "zero findings" can be told apart from "not scanned", which is the
+    // distinction #4493 exists to restore. Pinned in both directions by
+    // `src/__tests__/oxlint-react-compiler-suppression.test.ts`.
+    "react/rule-suppression": "warn",
     "react/immutability": "error",
     "react/globals": "error",
     "react/incompatible-library": "error",
