@@ -4,6 +4,7 @@ import type { StoreApi } from 'zustand'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { buildIndexById, getDragDescendants } from '@/lib/tree-utils'
 import type { PageBlockState } from '@/stores/page-blocks'
@@ -14,6 +15,20 @@ export interface UseBlockMultiSelectParams {
   clearSelected: () => void
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
+  /**
+   * #4524 — the ORIGIN space of everything this hook removes, for the `[[`
+   * picker's name-cache eviction in `handleBatchDelete`. A PROP, mirroring
+   * `PageBrowserBatchToolbar`'s `currentSpaceId`, rather than a
+   * `useSpaceStore.getState()` read taken at emit time: the space an event is
+   * labelled with must be the one that was live when the user acted, and a
+   * fresh read after the await would label the batch with whatever space the
+   * user switched to while the IPC was in flight — the "worse than no
+   * scoping" mislabelling `src/lib/name-change-bus.ts` warns about. Closing
+   * over the prop and listing it in the delete callback's dep array is what
+   * pins it (see the long note in `handleTrash`). `null` (space unhydrated)
+   * falls back to a full invalidation inside `notifyPagesRemoved`.
+   */
+  currentSpaceId: string | null
   t: TFunction
   /**
    * #1734 — single-block priority cycle, fanned out across the selection by
@@ -38,6 +53,7 @@ export function useBlockMultiSelect({
   clearSelected,
   rootParentId,
   pageStore,
+  currentSpaceId,
   t,
   handleTogglePriority,
 }: UseBlockMultiSelectParams): UseBlockMultiSelectReturn {
@@ -153,13 +169,11 @@ export function useBlockMultiSelect({
         // requested row is gone".
         //
         // #4480 added a sibling `affected_page_ids` field for callers that
-        // maintain the `[[` picker's per-space page cache. This surface does
-        // not: a block-tree multi-select operates on the content rows of one
-        // open page and publishes nothing to the name bus today (for roots or
-        // descendants), so there is no half-updated cache here to keep
-        // consistent. Wiring it up is a separate question from #4480, which
-        // is about the Pages-view batch toolbar.
-        const affected = unwrap(await commands.deleteBlocksByIds(ids)).deleted_count
+        // maintain the `[[` picker's per-space page cache. This surface is
+        // one of them (#4524) — see the fan-out below.
+        const { deleted_count: affected, affected_page_ids: cascadedPageIds } = unwrap(
+          await commands.deleteBlocksByIds(ids),
+        )
         // The selection itself was processed atomically. Count
         // successful "selected rows that are now deleted" by
         // re-reading the in-memory state shape: since the call
@@ -171,6 +185,49 @@ export function useBlockMultiSelect({
         // descendants we did not explicitly select), but keeping
         // the local makes the intent explicit.
         void affected
+        // #4524 — evict every PAGE this delete removed from the `[[` picker's
+        // per-space name cache, which is filled once per space from
+        // `list_all_pages_in_space` and has no other delete signal. Until now
+        // this surface published NOTHING — not the selected roots, not the
+        // cascaded descendants — so a page trashed from the block tree went on
+        // being offered under `[[` for the rest of the session. That is #4450's
+        // plain symptom on a surface #4450 never covered; the sibling
+        // `PageBrowserBatchToolbar.handleTrash` has published for the identical
+        // cache consequence since #4007, over the identical command. The policy
+        // (de-duplicate, budget the fan-out against what is actually emitted,
+        // fall back to a full invalidation with no active space) is
+        // `notifyPagesRemoved`, shared with that toolbar rather than copied.
+        //
+        // The cohort is the UNION of two halves, and BOTH are needed:
+        //
+        //  - `cascadedPageIds` — the backend's page membership of the cascade.
+        //    The recursive CTE walks `parent_id` with no page-boundary stop, so
+        //    deleting a block tombstones nested PAGES the user never selected.
+        //    Only the backend can see that set; re-deriving it here from
+        //    `getDragDescendants` is exactly how two arms drift apart, and it
+        //    would be wrong besides — the store holds only the loaded page's
+        //    rows, not the subtree of a nested page.
+        //  - the PAGE subset of `ids` — a selected id the backend SKIPPED
+        //    (missing, or soft-deleted by a concurrent write) is absent from
+        //    the reported cohort but was in the user's selection and is not a
+        //    live page either way.
+        //
+        // The PAGE SUBSET, not `ids` wholesale — and this is where the hook
+        // must NOT copy `handleTrash`. The toolbar's selection is pages by
+        // construction (it is the Pages view); a block-tree selection is
+        // mostly CONTENT rows, which the picker never offers. Publishing them
+        // would fire O(listeners x pages) of synchronous work per id that
+        // cannot match anything, and — worse — a routine 30-block content
+        // delete would exceed `NAME_CACHE_FANOUT_MAX_IDS` and wipe a warm
+        // cache to describe the removal of nothing. `block_type` is on the
+        // rows already in the store, so the filter costs one map lookup per
+        // selected id and is read BEFORE the splice below drops those rows.
+        const blocksById = pageStore.getState().blocksById
+        const removedPageIds = new Set<string>(cascadedPageIds)
+        for (const id of ids) {
+          if (blocksById.get(id)?.block_type === 'page') removedPageIds.add(id)
+        }
+        notifyPagesRemoved(removedPageIds, currentSpaceId)
         // #2653 — the backend soft-deletes every selected root AND its whole
         // subtree (recursive CTE), but the selection only ever holds the
         // explicitly-clicked ids (never their hidden/collapsed descendants).
@@ -223,7 +280,7 @@ export function useBlockMultiSelect({
       batchInProgressRef.current = false
       setBatchInProgress(false)
     }
-  }, [selectedBlockIds, clearSelected, rootParentId, t, pageStore])
+  }, [selectedBlockIds, clearSelected, rootParentId, t, pageStore, currentSpaceId])
 
   return {
     batchDeleteConfirm,

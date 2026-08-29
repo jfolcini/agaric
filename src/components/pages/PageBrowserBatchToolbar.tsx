@@ -51,7 +51,7 @@ import { useStarredPages } from '@/hooks/useStarredPages'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { invalidateNameCaches, notifyPageRemoved } from '@/lib/name-change-bus'
+import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import type { TagCacheRow } from '@/lib/tauri'
 import {
@@ -87,30 +87,6 @@ const DATE_KEYS: ReadonlySet<PropertyKey> = new Set(['due_date', 'scheduled_date
 
 // Sentinel Select value that maps to `null` (clear the property).
 const CLEAR_VALUE = '__clear__'
-
-/**
- * #4008 review note 3 — the batch trash's cap is `MAX_TRASH_BATCH_IDS`
- * (1000), and `notifyPageRemoved` is a synchronous fan-out: every mounted
- * `useBlockResolve` rebuilds its whole cached pages list with `filter` per
- * event, so the cost is `ids x mounted BlockTrees x pages in space` element
- * copies on the UI thread, with no yield in between. Above this many ids the
- * toolbar emits ONE `invalidateNameCaches()` instead, which is O(listeners)
- * and costs a single re-fetch on the next picker read.
- *
- * 25 is measured, not chosen for roundness. Timing the exact production shape
- * (N per-listener lists of `{id, title}` rows, one `filter` per listener per
- * id) on this machine's V8, for a 3,000-page space:
- *
- *   5 mounted trees:   25 ids 6.8ms | 50 ids 12.6ms | 100 ids 25.6ms | 1000 ids 159ms
- *   7 mounted trees:   25 ids 8.8ms | 50 ids 18.3ms | 100 ids 31.1ms
- *
- * 25 is the largest of the measured batch sizes that stays inside one 16.7ms
- * frame in BOTH configurations (8.8ms worst case, ~2x headroom); 50 already
- * misses a frame with 7 trees mounted, which the journal's week view reaches.
- * Below the threshold the per-id events still fire, so the common small delete
- * keeps its precise patch and pays no re-fetch.
- */
-export const NAME_CACHE_FANOUT_MAX_IDS = 25
 
 export function PageBrowserBatchToolbar({
   selectedIds,
@@ -277,13 +253,11 @@ export function PageBrowserBatchToolbar({
       // it is filled once per space and has no other delete signal.
       // #4008 review note 3 — one event per id is O(ids x listeners x pages)
       // synchronous work; above the measured threshold collapse it into a
-      // single invalidation (see `NAME_CACHE_FANOUT_MAX_IDS`).
-      //
-      // #4391 — no active space (`currentSpaceId == null`) also falls back to
-      // a full invalidation: there is no space to scope a per-id event to.
-      // Skipping would be equally correct — see the "When the caller has NO
-      // active space" section of `src/lib/name-change-bus.ts`, which settles
-      // that once instead of leaving each publisher its own precedent.
+      // single invalidation. #4391 — no active space (`currentSpaceId == null`)
+      // also falls back to a full invalidation: there is no space to scope a
+      // per-id event to. Both rules, and the de-duplication below, now live in
+      // `notifyPagesRemoved` (#4524) so the block tree's multi-select delete
+      // applies the same policy instead of a second copy of it.
       //
       // #4480 — the set to evict is NOT `ids`. The backend cascade walks
       // `parent_id` with no page-boundary stop, so selecting a page whose
@@ -301,12 +275,7 @@ export function PageBrowserBatchToolbar({
       // and so from `affected_page_ids`, but it was in the user's selection
       // and is not a live page either way. Keeping `ids` in the set preserves
       // the pre-#4480 eviction exactly and makes this change purely additive.
-      const removedPageIds = new Set<string>([...ids, ...cascadedPageIds])
-      if (currentSpaceId == null || removedPageIds.size > NAME_CACHE_FANOUT_MAX_IDS) {
-        invalidateNameCaches()
-      } else {
-        for (const id of removedPageIds) notifyPageRemoved(id, currentSpaceId)
-      }
+      notifyPagesRemoved(new Set<string>([...ids, ...cascadedPageIds]), currentSpaceId)
       onClearSelection()
       onMutated()
       notify.success(t('pageBrowser.batch.trashed', { count }), {
@@ -396,12 +365,8 @@ export function PageBrowserBatchToolbar({
       // The trash mirror is genuinely different, and the difference is not
       // taste: the delete cascade walks `parent_id` with no page-boundary
       // stop, so it really does sweep nested pages out. Hence the union in
-      // `handleTrash` and the plain `ids` loop here.
-      if (currentSpaceId == null || ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
-        invalidateNameCaches()
-      } else {
-        for (const id of ids) notifyPageRemoved(id, currentSpaceId)
-      }
+      // `handleTrash` and the plain `ids` cohort here.
+      notifyPagesRemoved(ids, currentSpaceId)
       closePickers()
       onClearSelection()
       onMutated()

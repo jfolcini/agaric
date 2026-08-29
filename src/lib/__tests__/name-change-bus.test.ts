@@ -14,9 +14,11 @@ import { describe, expect, it } from 'vitest'
 import type { NameChange } from '@/lib/name-change-bus'
 import {
   invalidateNameCaches,
+  NAME_CACHE_FANOUT_MAX_IDS,
   notifyPageAdded,
   notifyPageRemoved,
   notifyPageRenamed,
+  notifyPagesRemoved,
   notifyTagAdded,
   notifyTagRemoved,
   notifyTagRenamed,
@@ -123,5 +125,95 @@ describe('name-change bus (#4007)', () => {
     }
 
     expect(seen).toEqual(['a', 'c'])
+  })
+})
+
+/**
+ * #4524 — the shared bulk-removal publisher. Every rule here was previously
+ * an inline recipe in `PageBrowserBatchToolbar`, copied between its two
+ * handlers, and absent entirely from `useBlockMultiSelect` — the third
+ * surface running the same `delete_blocks_by_ids` command. The end-to-end
+ * behaviour lives with each caller; this pins the policy itself, once.
+ */
+describe('notifyPagesRemoved (#4524)', () => {
+  function record(): { changes: NameChange[]; unsubscribe: () => void } {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    return { changes, unsubscribe }
+  }
+
+  it('emits one scoped removal per id below the budget', () => {
+    const { changes, unsubscribe } = record()
+    try {
+      notifyPagesRemoved(['P1', 'P2'], 'SPACE_1')
+    } finally {
+      unsubscribe()
+    }
+    expect(changes).toEqual([
+      { kind: 'removed', entity: 'page', id: 'P1', spaceId: 'SPACE_1' },
+      { kind: 'removed', entity: 'page', id: 'P2', spaceId: 'SPACE_1' },
+    ] satisfies NameChange[])
+  })
+
+  // Callers union their own input list with a backend cohort that echoes it
+  // back, so duplicates are the NORMAL input shape, not an edge case. Each
+  // duplicate event costs O(listeners x pages) of synchronous work.
+  it('de-duplicates before emitting', () => {
+    const { changes, unsubscribe } = record()
+    try {
+      notifyPagesRemoved(['P1', 'P1', 'P2', 'P1'], 'SPACE_1')
+    } finally {
+      unsubscribe()
+    }
+    expect(changes.map((c) => (c.kind === 'removed' ? c.id : c.kind))).toEqual(['P1', 'P2'])
+  })
+
+  it(`collapses into one invalidation above ${NAME_CACHE_FANOUT_MAX_IDS} ids`, () => {
+    const ids = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS + 1 }, (_, i) => `P${i}`)
+    const { changes, unsubscribe } = record()
+    try {
+      notifyPagesRemoved(ids, 'SPACE_1')
+    } finally {
+      unsubscribe()
+    }
+    expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+  })
+
+  // The budget is checked AFTER de-duplication, because that is what is
+  // actually emitted. A duplicate-laden list one over the cap must still take
+  // the precise per-id branch.
+  it('measures the budget on the de-duplicated set, not the raw input length', () => {
+    const ids = Array.from({ length: NAME_CACHE_FANOUT_MAX_IDS }, (_, i) => `P${i}`)
+    const { changes, unsubscribe } = record()
+    try {
+      notifyPagesRemoved([...ids, 'P0'], 'SPACE_1')
+    } finally {
+      unsubscribe()
+    }
+    expect(changes).toHaveLength(NAME_CACHE_FANOUT_MAX_IDS)
+  })
+
+  it('falls back to one invalidation with no active space', () => {
+    const { changes, unsubscribe } = record()
+    try {
+      notifyPagesRemoved(['P1', 'P2'], null)
+    } finally {
+      unsubscribe()
+    }
+    expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+  })
+
+  // Load-bearing for the block tree, whose selections are usually pure
+  // content blocks: no page was removed, so there is nothing for the picker
+  // cache to be wrong about, and a null space must NOT turn that into a wipe.
+  it('publishes nothing for an empty cohort, with or without an active space', () => {
+    const { changes, unsubscribe } = record()
+    try {
+      notifyPagesRemoved([], 'SPACE_1')
+      notifyPagesRemoved(new Set<string>(), null)
+    } finally {
+      unsubscribe()
+    }
+    expect(changes).toEqual([])
   })
 })

@@ -9,7 +9,11 @@ import type { StoreApi } from 'zustand'
 import { makeBlock } from '@/__tests__/fixtures'
 import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import { useBlockMultiSelect } from '@/components/block-tree/use-block-multi-select'
+import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
+import type { NameChange } from '@/lib/name-change-bus'
+import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -33,6 +37,8 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockMultiSe
     clearSelected: vi.fn(),
     rootParentId: 'PAGE_1' as string | null,
     pageStore,
+    // #4524 — the ORIGIN space every name-cache eviction is scoped to.
+    currentSpaceId: 'SPACE_TEST' as string | null,
     t: vi.fn((key: string) => key) as unknown as TFunction,
     handleTogglePriority: vi.fn(),
     ...overrides,
@@ -699,5 +705,342 @@ describe('useBlockMultiSelect callback stability (#)', () => {
     // After the batch op completes, the callback returns to the original
     // identity because batchInProgress is removed from its deps array.
     expect(result.current.handleBatchSetTodo).toBe(beforeFn)
+  })
+})
+
+// #4524 — until now this hook published NOTHING to the name-change bus: not
+// the selected roots, not the descendants the backend cascade swept. The `[[`
+// picker's per-space page cache is filled once from `list_all_pages_in_space`
+// and has no other delete signal, so a page trashed from the block tree went
+// on being offered for the rest of the session — #4450's plain symptom on a
+// surface #4450 never covered, over the SAME `delete_blocks_by_ids` command
+// the Pages-view batch toolbar has published for since #4007.
+//
+// Read these alongside `PageBrowserBatchToolbar.test.tsx`'s
+// `batch trash — cascaded nested pages (#4480)` describe, whose shape they
+// follow. The one deliberate divergence is the page-subset filter: the
+// toolbar's selection is pages by construction, this one is mostly CONTENT
+// rows, and publishing those would both waste O(listeners x pages) per id and
+// let a routine 30-block content delete blow `NAME_CACHE_FANOUT_MAX_IDS` and
+// wipe a warm cache. `content-only selection publishes nothing` is that arm.
+describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)', () => {
+  /** Subscribe to the real bus for the duration of one test. */
+  function recordChanges(): { changes: NameChange[]; unsubscribe: () => void } {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    return { changes, unsubscribe }
+  }
+
+  /** Make `delete_blocks_by_ids` reply with an explicit page cohort. */
+  function replyWithCohort(cohort: string[]): void {
+    mockedInvoke.mockImplementation((cmd: string, args: unknown) => {
+      if (cmd === 'delete_blocks_by_ids') {
+        const ids = ((args as Record<string, unknown>)['blockIds'] as string[]) ?? []
+        return Promise.resolve({ deleted_count: ids.length, affected_page_ids: cohort })
+      }
+      return strictInvokeFallback(cmd)
+    })
+  }
+
+  beforeEach(() => {
+    useSpaceStore.setState({
+      currentSpaceId: 'SPACE_TEST',
+      availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+      isReady: true,
+    })
+  })
+
+  // THE over-eviction guard, and the reason it has to be an event count.
+  //
+  // A cache-level assertion cannot carry this weight: the harness's
+  // `list_all_pages_in_space` mock is static, so a wholesale
+  // `invalidateNameCaches()` self-heals on the next synchronous refetch and an
+  // "unrelated sibling still present" arm can never fail on its own. Counting
+  // the bus events is what distinguishes a NARROW eviction from a correct-
+  // looking wipe.
+  //
+  // The exact-equality assertion falsifies five distinct wrong versions:
+  //   * publishing nothing (today's code) → 0 events. The bug.
+  //   * evicting only the selected roots → 1 event, `P_NESTED` missing.
+  //   * `invalidateNameCaches()` whenever anything was deleted →
+  //     `[{kind:'invalidated'}]` — a warm cache thrown away on every delete.
+  //   * an ARRAY fan-out instead of a `Set` → 3 events, because
+  //     `affected_page_ids` echoes the selected root back.
+  //   * an event scoped to anything but the origin space → `spaceId` mismatch.
+  it('evicts the selected page roots AND the nested pages the cascade swept, and nothing else', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 }),
+        makeBlock({ id: 'C_KEEP', depth: 0 }),
+      ],
+    })
+    // The user selected P_ROOT only; the backend cascade also tombstoned its
+    // nested page child P_NESTED — a row this store never held — and reports
+    // both back.
+    replyWithCohort(['P_ROOT', 'P_NESTED'])
+    const params = makeDefaultParams({ selectedBlockIds: ['P_ROOT'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await act(async () => {
+        await result.current.handleBatchDelete()
+      })
+      expect(changes).toEqual([
+        { kind: 'removed', entity: 'page', id: 'P_ROOT', spaceId: 'SPACE_TEST' },
+        { kind: 'removed', entity: 'page', id: 'P_NESTED', spaceId: 'SPACE_TEST' },
+      ] satisfies NameChange[])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // #4391 — the event must carry the space the user ACTED in, which is the
+  // prop closed over when React handed the click its callback, NOT a fresh
+  // `useSpaceStore.getState()` read taken after the IPC settles. Those two
+  // diverge exactly when the user switches spaces mid-delete, and this drives
+  // them apart deliberately: the live store says SPACE_LIVE, the prop says
+  // SPACE_ORIGIN, and only the prop is right. A fresh read would tag the
+  // removal as belonging to a space those pages were never in — the "worse
+  // than no scoping" mislabelling the bus docblock warns about, and worse
+  // than publishing nothing, because the origin cache is then never touched.
+  it('scopes the event to the ORIGIN space prop, not the live space store', async () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_LIVE' })
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
+    })
+    replyWithCohort(['P_ROOT'])
+    const params = makeDefaultParams({
+      selectedBlockIds: ['P_ROOT'],
+      currentSpaceId: 'SPACE_ORIGIN',
+    })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await act(async () => {
+        await result.current.handleBatchDelete()
+      })
+      expect(changes).toEqual([
+        { kind: 'removed', entity: 'page', id: 'P_ROOT', spaceId: 'SPACE_ORIGIN' },
+      ] satisfies NameChange[])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // The block tree's divergence from `handleTrash`, and the reason this hook
+  // cannot simply union its raw `ids`. A block-tree selection is normally pure
+  // CONTENT rows, which the picker never offers: an event per content id is
+  // O(listeners x pages) of synchronous work that cannot match anything, and
+  // past the cap it would collapse into a full `invalidateNameCaches()` —
+  // wiping a warm cache to announce that no page was removed.
+  //
+  // NON-VACUOUS: `deleted_count` is 2, so the delete unambiguously happened
+  // and the store splice below proves the hook ran to completion. Zero events
+  // is a decision, not a no-op.
+  it('publishes nothing when the selection and the cascade contain no pages', async () => {
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'BLOCK_1' }), makeBlock({ id: 'BLOCK_2' })],
+    })
+    replyWithCohort([])
+    const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1', 'BLOCK_2'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await act(async () => {
+        await result.current.handleBatchDelete()
+      })
+      expect(changes).toEqual([])
+      // The delete really ran — the rows are gone from the store.
+      expect(pageStore.getState().blocks).toEqual([])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // Same shape as the toolbar's union test. An id the backend SKIPPED
+  // (missing, or soft-deleted by a concurrent write between selection and
+  // call) is absent from `affected_page_ids` by construction — but the store
+  // says it is a page and the user asked for it gone, so it must still be
+  // evicted.
+  it('still evicts a selected page id the backend left out of the cohort', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'P_LIVE', block_type: 'page', depth: 0 }),
+        makeBlock({ id: 'P_GONE', block_type: 'page', depth: 0 }),
+      ],
+    })
+    replyWithCohort(['P_LIVE'])
+    const params = makeDefaultParams({ selectedBlockIds: ['P_LIVE', 'P_GONE'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await act(async () => {
+        await result.current.handleBatchDelete()
+      })
+      expect(changes.map((c) => (c.kind === 'removed' ? c.id : c.kind))).toEqual([
+        'P_LIVE',
+        'P_GONE',
+      ])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // The `NAME_CACHE_FANOUT_MAX_IDS` budget is measured against what will
+  // ACTUALLY be emitted — the de-duplicated union — not against the selection.
+  //
+  // NON-TAUTOLOGY: 20 selected roots is comfortably under the cap of 25, so a
+  // budget checked on `ids.length` takes the per-id branch and fires 30
+  // synchronous events, the exact frame-budget overrun the cap was measured to
+  // prevent.
+  it('measures the fan-out budget against the union, not the selection', async () => {
+    const roots = Array.from({ length: 20 }, (_, i) => `ROOT_${i}`)
+    const nested = Array.from({ length: 10 }, (_, i) => `NESTED_${i}`)
+    expect(roots.length).toBeLessThanOrEqual(NAME_CACHE_FANOUT_MAX_IDS)
+    expect(roots.length + nested.length).toBeGreaterThan(NAME_CACHE_FANOUT_MAX_IDS)
+
+    pageStore.setState({
+      blocks: roots.map((id) => makeBlock({ id, block_type: 'page', depth: 0 })),
+    })
+    replyWithCohort([...roots, ...nested])
+    const params = makeDefaultParams({ selectedBlockIds: roots })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await act(async () => {
+        await result.current.handleBatchDelete()
+      })
+      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // #4391 — with no active space there is nothing to scope a per-id event to,
+  // so the conservative fallback fires. Paired with the content-only test
+  // above, which proves the fallback is NOT reached for an empty cohort: a
+  // null space plus nothing removed must still publish nothing.
+  it('falls back to one invalidation when there is no active space', async () => {
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
+    })
+    replyWithCohort(['P_ROOT'])
+    const params = makeDefaultParams({ selectedBlockIds: ['P_ROOT'], currentSpaceId: null })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await act(async () => {
+        await result.current.handleBatchDelete()
+      })
+      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('publishes nothing when there is no active space and no page was removed', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
+    replyWithCohort([])
+    const params = makeDefaultParams({ selectedBlockIds: ['BLOCK_1'], currentSpaceId: null })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await act(async () => {
+        await result.current.handleBatchDelete()
+      })
+      expect(changes).toEqual([])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('publishes nothing when the delete IPC fails', async () => {
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
+    })
+    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    const params = makeDefaultParams({ selectedBlockIds: ['P_ROOT'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await act(async () => {
+        await result.current.handleBatchDelete()
+      })
+      expect(changes).toEqual([])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // End-to-end against the picker cache itself, mirroring the toolbar's
+  // sibling test.
+  //
+  // `P_STAYS` present alongside `P_ROOT`/`P_NESTED` absent rules out the one
+  // alternative explanation that would make the ABSENT arms vacuous — "the
+  // cache was never populated" — which is why the `before` assertion checks
+  // all three ids are offered first.
+  //
+  // It does NOT prove the fix is narrow: a full-cache wipe self-heals here,
+  // because the list refetches synchronously from the static
+  // `list_all_pages_in_space` mock and brings everything back. Narrowness is
+  // pinned by the event-count tests above. Keep both.
+  it('a deleted page stops being offered by the [[ cache, with no space switch', async () => {
+    function pageRow(id: string, content: string) {
+      return {
+        id,
+        content,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      }
+    }
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return Promise.resolve([
+          pageRow('P_ROOT', 'Root Page'),
+          pageRow('P_NESTED', 'Nested Page'),
+          pageRow('P_STAYS', 'Stays Page'),
+        ])
+      }
+      if (cmd === 'delete_blocks_by_ids') {
+        // The user selected P_ROOT; the cascade also took its page child.
+        return Promise.resolve({ deleted_count: 2, affected_page_ids: ['P_ROOT', 'P_NESTED'] })
+      }
+      return strictInvokeFallback(cmd)
+    })
+
+    const { result: resolveResult } = renderHook(() => useBlockResolve())
+    const before = await resolveResult.current.searchPages('')
+    const idsBefore = before.filter((i) => !i.isCreate).map((i) => i.id)
+    // The cache is PROVEN warm before the delete — otherwise the absence
+    // assertions below would hold against an empty cache for free.
+    expect(idsBefore).toEqual(expect.arrayContaining(['P_ROOT', 'P_NESTED', 'P_STAYS']))
+
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
+    })
+    const params = makeDefaultParams({ selectedBlockIds: ['P_ROOT'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    // Still viewing SPACE_TEST throughout — no space switch.
+    const after = await resolveResult.current.searchPages('')
+    const idsAfter = after.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(idsAfter).not.toContain('P_ROOT')
+    // The cascaded half: the user never named this id, and it is not in this
+    // page store either — only `affected_page_ids` can reach it.
+    expect(idsAfter).not.toContain('P_NESTED')
+    expect(idsAfter).toContain('P_STAYS')
   })
 })

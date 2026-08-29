@@ -82,10 +82,10 @@
  *    `src/stores/page-rename.ts:87` and `src/components/TagList.tsx:156` do.
  *  - Fall back to {@link invalidateNameCaches}. Conservative, and what
  *    `src/components/TagList.tsx:197`, `src/components/TagList.tsx:236`,
- *    `src/hooks/usePageDeleteAction.tsx:195`,
- *    `src/components/pages/PageBrowserBatchToolbar.tsx:288` (`handleTrash`)
- *    and `src/components/pages/PageBrowserBatchToolbar.tsx:363`
- *    (`handleMoveToSpace`) do.
+ *    `src/hooks/usePageDeleteAction.tsx:195`, and — since #4524, through the
+ *    shared {@link notifyPagesRemoved} rather than a copy of the branch —
+ *    `PageBrowserBatchToolbar`'s `handleTrash` and `handleMoveToSpace` plus
+ *    `useBlockMultiSelect`'s `handleBatchDelete` do.
  *
  * They are equivalent because with no active space both name caches are
  * provably EMPTY: `useBlockResolve`'s space-switch subscriber clears both on
@@ -313,4 +313,80 @@ export function notifyTagRemoved(tagId: string, spaceId: string): void {
  */
 export function invalidateNameCaches(): void {
   emit({ kind: 'invalidated' })
+}
+
+/**
+ * #4008 review note 3 — the batch trash's cap is `MAX_TRASH_BATCH_IDS`
+ * (1000), and {@link notifyPageRemoved} is a synchronous fan-out: every
+ * mounted `useBlockResolve` rebuilds its whole cached pages list with `filter`
+ * per event, so the cost is `ids x mounted BlockTrees x pages in space`
+ * element copies on the UI thread, with no yield in between. Above this many
+ * ids a bulk publisher emits ONE {@link invalidateNameCaches} instead, which
+ * is O(listeners) and costs a single re-fetch on the next picker read.
+ *
+ * 25 is measured, not chosen for roundness. Timing the exact production shape
+ * (N per-listener lists of `{id, title}` rows, one `filter` per listener per
+ * id) on this machine's V8, for a 3,000-page space:
+ *
+ *   5 mounted trees:   25 ids 6.8ms | 50 ids 12.6ms | 100 ids 25.6ms | 1000 ids 159ms
+ *   7 mounted trees:   25 ids 8.8ms | 50 ids 18.3ms | 100 ids 31.1ms
+ *
+ * 25 is the largest of the measured batch sizes that stays inside one 16.7ms
+ * frame in BOTH configurations (8.8ms worst case, ~2x headroom); 50 already
+ * misses a frame with 7 trees mounted, which the journal's week view reaches.
+ * Below the threshold the per-id events still fire, so the common small delete
+ * keeps its precise patch and pays no re-fetch.
+ *
+ * #4524 — this lives here rather than in `PageBrowserBatchToolbar`, where it
+ * was defined until the second bulk publisher appeared. See
+ * {@link notifyPagesRemoved}.
+ */
+export const NAME_CACHE_FANOUT_MAX_IDS = 25
+
+/**
+ * Publish the removal of a COHORT of pages from `spaceId` — the one policy
+ * every bulk mutation surface must apply, in one place (#4524).
+ *
+ * Why this is a shared function and not a documented three-line recipe: it
+ * was the recipe, twice over in `PageBrowserBatchToolbar` (`handleTrash` and
+ * `handleMoveToSpace`), and `useBlockMultiSelect` — a third bulk surface
+ * running the SAME `delete_blocks_by_ids` command from the block tree —
+ * published nothing at all, for roots or for the cascaded cohort. Nothing
+ * about that omission was visible from either implementation: they are two
+ * files that happen to overlap in behaviour, so the asymmetry had no place to
+ * show up. A call to this function is a thing a reviewer can notice missing.
+ *
+ * The three decisions it settles, each of which a copy of the recipe could
+ * get individually wrong:
+ *
+ *  - **De-duplication.** `pageIds` is collapsed into a `Set` before both the
+ *    budget check and the fan-out. Callers union their own input list with a
+ *    backend-reported cohort that ECHOES it back (`affected_page_ids`
+ *    contains the selected roots), so an array-shaped fan-out would emit
+ *    every root twice, at O(listeners x pages) each.
+ *  - **The budget is measured on what will ACTUALLY be emitted** — the
+ *    de-duplicated cohort — not on the caller's selection. #4480 made the
+ *    emitted set larger than the selection, so 20 selected roots that cascade
+ *    to 30 pages must collapse to one invalidation, and a check against
+ *    `ids.length` would wave 30 synchronous events through under a cap of 25.
+ *  - **An EMPTY cohort publishes nothing.** Not an invalidation: no page was
+ *    removed, so there is nothing for the picker cache to be wrong about.
+ *    This is load-bearing for the block tree, whose selections are usually
+ *    pure CONTENT blocks — without it, a `spaceId == null` content-only
+ *    delete would drop a warm cache to describe a removal of nothing.
+ *
+ * `spaceId` is the space the pages are LEAVING, captured when the publisher
+ * decided to act (see the module docblock — for a move that is the ORIGIN,
+ * never the destination). `null` falls back to a full invalidation, the
+ * conservative half of the "When the caller has NO active space" section
+ * above; it is what both toolbar handlers already did.
+ */
+export function notifyPagesRemoved(pageIds: Iterable<string>, spaceId: string | null): void {
+  const unique = pageIds instanceof Set ? (pageIds as Set<string>) : new Set(pageIds)
+  if (unique.size === 0) return
+  if (spaceId == null || unique.size > NAME_CACHE_FANOUT_MAX_IDS) {
+    invalidateNameCaches()
+    return
+  }
+  for (const id of unique) notifyPageRemoved(id, spaceId)
 }
