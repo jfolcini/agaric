@@ -103,9 +103,9 @@ BASELINE_PATH = REPO_ROOT / "src-tauri" / "space-filter-baseline.txt"
 # is a #2621 member and is deliberately absent, as it holds telemetry only and
 # has never carried a `b.space_id` read; add it here AND to the hook's `files:`
 # regex in prek.toml if that ever changes. Order is presentational only:
-# membership is tested with `any(... startswith ...)` / `any(_is_under(...))`
-# and `all_source_files()` re-`sorted()`s its result, so nothing here depends
-# on it — and no prefix collision is possible anyway, since
+# argv membership is tested with `any(_is_under(...))`, deny membership with
+# set containment, and `all_source_files()` re-`sorted()`s its result, so
+# nothing here depends on it — and no prefix collision is possible anyway, since
 # `src-tauri/<member>/src/` is never prefixed by `src-tauri/src/`.
 #
 # KEEP IN STEP with the sibling Rust parity test's own walk roots in
@@ -358,6 +358,13 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[str]:
     un-excludes nothing and is the exact bug this guard shipped — the single
     entry named `space_filter_canonical.rs` relative to `src-tauri/src/` for
     two years after the file moved to `agaric-store`.
+
+    And CRATE_ROOTS, which is the half with the asymmetric handling worth
+    knowing about: `crate_root_paths()` `is_dir()`-filters a missing root
+    away, so the walk narrows silently. `main()` treats a root finding
+    differently from the other two under `--update-baseline` — it REFUSES
+    rather than warning, because re-anchoring against a narrowed walk deletes
+    every baseline entry under the missing root. See the refusal branch.
     """
     out = [
         f"{rel}: baseline names a file that does not exist "
@@ -707,20 +714,27 @@ def run_cli_self_test(record) -> None:
         # holds the canonical const), and testing just the first would ship a
         # second entry untested.
         deny_rels = sorted(DENY_FILES)
-        for rel in deny_rels:
-            (root / rel).unlink()
         baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
-        code, out = _run_cli(guard, [str(clean)]) if deny_rels else (1, "")
+        try:
+            for rel in deny_rels:
+                (root / rel).unlink()
+            code, out = _run_cli(guard, [str(clean)]) if deny_rels else (1, "")
+        finally:
+            # `finally`, not the next statement: the restore exists to stop a
+            # later case inheriting a standing dangling-deny finding, and an
+            # exception in `_run_cli` would hand that protection away exactly
+            # when the suite is already in trouble.
+            for rel in deny_rels:
+                (root / rel).write_text(
+                    "// sandbox stand-in for a DENY_FILES entry\n",
+                    encoding="utf-8",
+                )
         # RESTORE before recording. This case is the only one that removes a
         # sandbox fixture, and leaving it removed would hand every case
         # appended after it a standing dangling-deny finding — satisfying the
         # `code != 0` half unconditionally, which is precisely the pollution
         # `_build_cli_sandbox` materialises these files to prevent. Being last
         # today is not a defence; the next case appended is the one that pays.
-        for rel in deny_rels:
-            (root / rel).write_text(
-                "// sandbox stand-in for a DENY_FILES entry\n", encoding="utf-8"
-            )
         missing_named = all(
             f"{rel}: DENY_FILES names a file that does not exist" in out
             for rel in deny_rels
@@ -752,9 +766,11 @@ def run_cli_self_test(record) -> None:
         # satisfiable by either. Removing a root that holds no deny entry
         # leaves exactly one thing that can make this run non-zero.
         missing_root = root / "src-tauri" / "agaric-engine" / "src"
-        shutil.rmtree(missing_root)
-        code, out = _run_cli(guard, [str(clean)])
-        missing_root.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.rmtree(missing_root)
+            code, out = _run_cli(guard, [str(clean)])
+        finally:
+            missing_root.mkdir(parents=True, exist_ok=True)
         if code != 0 and "CRATE_ROOTS names a directory that does not exist" in out:
             record("CLI: a vanished CRATE_ROOTS entry exits non-zero (#3255)", True, True)
         else:
@@ -808,6 +824,60 @@ def run_cli_self_test(record) -> None:
                 "CLI: baseline + an unrelated .rs still scans all (#3255)",
                 (code, out.strip()),
                 "non-zero exit mentioning 'baseline expects 2' despite a non-empty target set",
+            )
+
+        # --- #3255 direction 10: a DELETED baseline line is caught ----------
+        # `baseline.get(rel, 0)` means an entry removed outright reads as 0, so
+        # the removal check can never fire for it and the dangling check has
+        # nothing left to find. Hand-editing a line out therefore retired the
+        # net for that file, silently — the guard's own subject, applied to the
+        # guard's own state file.
+        orphan = src / "orphan.rs"
+        orphan.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(orphan)])
+        orphan.unlink()
+        if code != 0 and "NO baseline entry" in out and "orphan.rs" in out:
+            record("CLI: a fragment-bearing file with no baseline entry fails", True, True)
+        else:
+            record(
+                "CLI: a fragment-bearing file with no baseline entry fails",
+                (code, out.strip()),
+                "non-zero exit naming orphan.rs as carrying fragments but unbaselined",
+            )
+
+        # --- #3255 direction 11: prek.toml's `files:` covers every root ------
+        # The six roots are hand-duplicated between CRATE_ROOTS here and the
+        # hook's `files:` regex in prek.toml, bound only by a comment in each.
+        # Widening one without the other is the #3255 failure reintroduced one
+        # level up — and the review called it the single most likely way this
+        # regresses. Cheap to test rather than to promise: pull the regex out
+        # of prek.toml and assert it accepts a probe path under every declared
+        # root.
+        prek = (REPO_ROOT / "prek.toml").read_text(encoding="utf-8")
+        block = prek.split('id = "check-space-filter-drift"', 1)
+        files_re = None
+        if len(block) > 1:
+            for line in block[1].splitlines():
+                if line.startswith("files = "):
+                    files_re = line.split("=", 1)[1].strip().strip("'\"")
+                    break
+        uncovered = []
+        if files_re:
+            compiled = re.compile(files_re)
+            for r in CRATE_ROOTS:
+                if not compiled.search(f"{r}probe.rs"):
+                    uncovered.append(r)
+        if files_re and not uncovered:
+            record("prek.toml `files:` covers every CRATE_ROOTS entry", True, True)
+        else:
+            record(
+                "prek.toml `files:` covers every CRATE_ROOTS entry",
+                uncovered if files_re else "could not parse files: from prek.toml",
+                "every CRATE_ROOTS entry matched by the hook's files: regex",
             )
 
 
@@ -1013,6 +1083,7 @@ def main(argv: list[str]) -> int:
 
     shape_violations: list[str] = []
     removal_violations: list[str] = []
+    unbaselined: list[str] = []
     # #3255: a baseline entry naming a file that no longer exists protects
     # nothing, and — this is the part that let the rot survive two years — it
     # cannot fail. The scan asks "is this file's count still >= its baseline?"
@@ -1031,6 +1102,21 @@ def main(argv: list[str]) -> int:
         cnt, viols = scan_file(p)
         shape_violations.extend(viols)
         base = baseline.get(rel, 0)
+        if cnt > 0 and rel not in baseline:
+            # #3255 review: `baseline.get(rel, 0)` means an entry DELETED
+            # outright reads as 0, so `cnt < base` can never fire for it —
+            # hand-editing a line out of the baseline silently retires the
+            # removal net for that file, which is the very net this guard is.
+            # The dangling check cannot see it either: there is no entry left
+            # to dangle. A file carrying canonical fragments must therefore
+            # carry a baseline entry. A genuinely NEW file trips this too,
+            # which is correct ratchet behaviour — re-anchor and the entry
+            # appears.
+            unbaselined.append(
+                f"{rel}: {cnt} canonical space-filter fragment(s) but NO "
+                f"baseline entry — an entry was deleted (retiring the removal "
+                f"net for this file), or the file is new and needs anchoring."
+            )
         if cnt < base:
             removal_violations.append(
                 f"{rel}: {cnt} canonical space-filter fragment(s), "
@@ -1039,14 +1125,19 @@ def main(argv: list[str]) -> int:
                 f"`b.space_id = ?N`."
             )
 
-    if not shape_violations and not removal_violations and not dangling:
+    if (
+        not shape_violations
+        and not removal_violations
+        and not dangling
+        and not unbaselined
+    ):
         return 0
 
     # Two headers, because a dangling-only run has nothing drifted in it and
     # saying so anyway sends the reader looking for a drift that is not there.
     # The hints below were already conditional; this line was the one that
     # was not.
-    if shape_violations or removal_violations:
+    if shape_violations or removal_violations or unbaselined:
         print(
             "Space-filter drift guard (#139) — the inlined "
             f"`{CANONICAL}` fragment drifted:\n",
@@ -1062,12 +1153,14 @@ def main(argv: list[str]) -> int:
         print(f"  {v}", file=sys.stderr)
     for v in removal_violations:
         print(f"  {v}", file=sys.stderr)
+    for v in unbaselined:
+        print(f"  {v}", file=sys.stderr)
     for v in dangling:
         print(f"  {v}", file=sys.stderr)
     print("", file=sys.stderr)
     if dangling:
         print(DANGLING_HINT, file=sys.stderr)
-    if shape_violations or removal_violations:
+    if shape_violations or removal_violations or unbaselined:
         print(HINT, file=sys.stderr)
     return 1
 

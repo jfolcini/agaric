@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 18 cases pass |
+| control (restored) | 20 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 18 cases pass (was 10).
+- `--self-test`: 20 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -335,3 +335,41 @@ The `_build_cli_sandbox` comment blocks were transposed relative to their loops,
 Four notes stay deferred and are unchanged across three rounds now: the parity test's narrower
 walk, in-scope-ness of baseline entries, unlisted crates carrying no enforcement, and the
 `prek.toml` pairing. All four are #4501.
+
+## Review round eight — and a convergence call I got wrong
+
+I told the reviewer I would treat the review as converged unless a round surfaced a defect in
+what was there rather than repeating the deferred set. The next round surfaced one, so the call
+was wrong and this is the record of it.
+
+**The removal net could itself be removed.** `base = baseline.get(rel, 0)` means an entry
+deleted *outright* reads as 0, so `cnt < base` can never fire for it — and the dangling check
+has nothing left to find, because there is no entry to dangle. Hand-editing a line out of the
+baseline therefore retired the net for that file, silently. That is this guard's own subject
+applied to the guard's own state file, and it survived seven rounds of review including mine.
+
+A file carrying canonical fragments must now carry a baseline entry. A genuinely new file trips
+it too, which is correct ratchet behaviour — re-anchor and the entry appears. Falsified: without
+the check the case yields `(0, '')`.
+
+**And the coupling I deferred three times is testable here after all.** The reviewer pointed out
+that the self-test already spawns the real CLI, so it can parse the `files:` line out of
+`prek.toml` and assert the regex accepts a probe path under every `CRATE_ROOTS` entry. That is
+not the general meta-guard — it is this guard checking its own pairing — and it closes what two
+separate rounds called the single most likely way this regresses. Falsified by narrowing the
+regex back: the case names exactly the four roots that would go unguarded.
+
+I deferred it three times on the grounds that it belonged to #4501. That was right about the
+general form and wrong about this instance, and the difference is that a self-test addition is
+not a new guard.
+
+Also fixed: a fourth stale mechanism comment (the `CRATE_ROOTS` note claimed membership is
+tested with `startswith`, which no longer exists), the `_assert_paths_exist` docstring omitting
+the roots half and its refuse-not-warn asymmetry, sandbox restores moved into `try`/`finally`
+so an exception in `_run_cli` cannot leak a fixture, and `check-space-filter-drift.py` added to
+`pr-merge-result-check.sh`'s `examine_probe_guards` — that "a guard that examined zero files is
+not a pass" protection gained a fourth subject the moment this guard grew a `CRATE_ROOTS` list,
+and `derive_crate_roots` parses it without special-casing.
+
+Four notes stay deferred, unchanged: the parity test's narrower walk, in-scope-ness of baseline
+entries, unlisted crates carrying no enforcement, and the general form of the pairing check.

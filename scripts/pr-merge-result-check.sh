@@ -1062,6 +1062,12 @@ run_merge_check() {
     check-raw-tx.py
     check-dynamic-sql.py
     check-table-ownership.py
+    # #3255: check-space-filter-drift gained a CRATE_ROOTS list when it was
+    # re-scoped to the member crates, so the "a guard that examined zero files
+    # is not a pass" protection above now has a fourth subject. It declares
+    # CRATE_ROOTS in the same shape the other three do, so `derive_crate_roots`
+    # reads it without special-casing.
+    check-space-filter-drift.py
   )
   local probe cnt examined_zero='' examined_unreadable=''
   for probe in "${examine_probe_guards[@]}"; do
