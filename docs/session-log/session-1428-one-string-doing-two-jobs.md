@@ -1,4 +1,4 @@
-# Session 1426 — one string doing two jobs
+# Session 1428 — one string doing two jobs
 
 #4238. The resolve-store block title was answering two questions at once — "what do I show the
 user" and "is this row resolved" — and those answers disagree for exactly one input: a row that
