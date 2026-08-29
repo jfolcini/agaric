@@ -450,7 +450,11 @@ const FINAL_SIGMA_RE = /ς/g
  * variant with rotating order, medians, and the observed spread on each row as
  * a noise floor. `pre` is the code before #4507 — `foldCodePoint` was a bare
  * `f === 'ς' ? 'σ' : f`, `scanLiteral` a bare `text.toLowerCase()`. `naive` is
- * `replace`-always, unguarded. `now` is this function.
+ * `replace`-always, unguarded — a shape argued against in review and **never
+ * one that shipped**, so the `naive/now` column sizes what the guard buys and
+ * is NOT a regression baseline. Reading it as one is exactly how three earlier
+ * versions of this block reported a regression as a win. `now` is this
+ * function.
  *
  * Per CODE POINT, how `foldCodePoint` calls it (1M iterations):
  *
