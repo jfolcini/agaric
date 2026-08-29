@@ -194,6 +194,16 @@ const GIT_ENV = gitEnv(REPO_ROOT, process.env)
 // hard-blocks every commit. Both are legal edits for a project that stops
 // using aliases, and only the second is loud.
 //
+// The same `map.size === 0` throw also fires for a `paths` that is left in
+// place and is legal TypeScript, yet unmodelled by the "prefix/*" shape
+// below: `"@/*": ["./*"]` yields target `*` (after stripping the leading
+// `./`), fails the `endsWith('/*')` test the loop below applies, is
+// skipped, and — being the only entry — leaves the map empty and hard-blocks
+// every commit exactly as a removed `paths` would. That is a THIRD legal
+// edit landing on the loud side of the split, not just the two named above
+// — worth knowing before treating "still has `compilerOptions.paths`" as
+// sufficient to rule this failure mode out.
+//
 // That is the intended split, not an oversight: an absent file is the shape
 // every self-test fixture below has (throwaway repos with no frontend build
 // config at all), so it MUST be the quiet case. A file that exists but has
@@ -289,7 +299,11 @@ function loadPathAliasMap(repoRoot) {
   }
   if (map.size === 0) {
     throw new Error(
-      `${tsconfigPath}'s compilerOptions.paths has no usable "prefix/*" entry to resolve @/-alias citations against`,
+      `${tsconfigPath}'s compilerOptions.paths has no entry this guard models ` +
+        `(it handles the "prefix/*" -> "target/*" shape only, which is what this repo declares). ` +
+        `Your config may be perfectly valid TypeScript and still land here — e.g. ` +
+        `"@/*": ["./*"], whose target is a bare "*". Add a modelled entry, or teach ` +
+        `loadPathAliasMap the shape you need; do not assume the config is malformed.`,
     )
   }
   return map
@@ -318,6 +332,26 @@ try {
 } catch (err) {
   PATH_ALIAS_MAP = new Map()
   PATH_ALIAS_MAP_ERROR = err
+}
+
+// #4492 follow-up — resolve an alias-form candidate (`@/lib/foo.ts`) to its
+// repo-rooted spelling (`src/lib/foo.ts`), longest-prefix-first (see
+// `ALIAS_PREFIXES`). Shared by `isLocalPathCandidate`'s gitignored-prefix
+// skip and `resolveAgainstDoc`'s existence check, so both gates see an
+// alias citation exactly as they see its `src/…` equivalent — a single
+// helper, not two copies that could drift the way `GITIGNORED_PREFIX_RE`
+// once did (it was applied to the un-resolved alias spelling, which its
+// leading `[a-zA-Z0-9_./-]*\/` group cannot match against a leading `@`).
+// A non-alias candidate is already gated through `PATH_PREFIX_RE` so it's
+// repo-rooted by construction; `normalize` just strips redundant `./` or
+// duplicate slashes.
+function resolveAliasForm(ref) {
+  for (const aliasPrefix of ALIAS_PREFIXES) {
+    if (ref.startsWith(aliasPrefix)) {
+      return normalize(PATH_ALIAS_MAP.get(aliasPrefix) + ref.slice(aliasPrefix.length))
+    }
+  }
+  return normalize(ref)
 }
 
 // #4126 shrink-only baseline of pre-existing (file, ref) misses — see the
@@ -519,8 +553,14 @@ function isLocalPathCandidate(raw) {
     PATH_PREFIX_RE.test(`${cleaned}/`) ||
     ALIAS_PREFIXES.some((prefix) => cleaned.startsWith(prefix))
   if (!hasKnownPrefix) return false
-  // Skip references into gitignored build-output / cache paths.
-  if (GITIGNORED_PREFIX_RE.test(cleaned)) return false
+  // Skip references into gitignored build-output / cache paths. Tested
+  // against the RESOLVED (repo-rooted) form via `resolveAliasForm`, not the
+  // raw `cleaned` spelling: an alias-form citation (`@/dist/x`) must hit
+  // this exact skip its `src/dist/x` equivalent gets, not a weaker one —
+  // `GITIGNORED_PREFIX_RE`'s leading `[a-zA-Z0-9_./-]*\/` group cannot match
+  // a leading `@`, so testing the un-resolved alias form would silently let
+  // `@/dist/x` through where `src/dist/x` is skipped.
+  if (GITIGNORED_PREFIX_RE.test(resolveAliasForm(cleaned))) return false
   return cleaned
 }
 
@@ -1039,17 +1079,12 @@ function resolveAgainstDoc(_docFile, ref) {
   // PRINTED and baseline-keyed — is deliberately left untouched: a
   // developer who wrote `@/lib/foo.ts` should see their own citation
   // quoted back, not a rewritten spelling they never typed.
-  // Longest prefix first (see `ALIAS_PREFIXES`), matching how TypeScript ranks
-  // overlapping `paths` keys — NOT `Map` insertion order.
-  for (const aliasPrefix of ALIAS_PREFIXES) {
-    if (ref.startsWith(aliasPrefix)) {
-      return normalize(PATH_ALIAS_MAP.get(aliasPrefix) + ref.slice(aliasPrefix.length))
-    }
-  }
-  // Every non-alias candidate is already gated through `PATH_PREFIX_RE` so
-  // it's repo-rooted by construction. Normalise to strip any redundant
-  // `./` or duplicate slashes.
-  return normalize(ref)
+  //
+  // Delegates to `resolveAliasForm` — the same helper `isLocalPathCandidate`
+  // uses for its gitignored-prefix skip (#4492 follow-up) — so both gates
+  // resolve an alias candidate identically instead of carrying two copies
+  // of the longest-prefix-first logic that could drift apart.
+  return resolveAliasForm(ref)
 }
 
 /**
@@ -1079,6 +1114,22 @@ function computeMisses() {
   }
   if (process.argv.includes('--print-source')) {
     console.log(`check-doc-code-paths: ${describeSource(chosen.source)} (${chosen.why})`)
+    // #4492 follow-up — `--print-source` is diagnostic, not the check
+    // itself: its whole job is to tell a caller what this guard is about to
+    // do before it does it, and "it is about to hard-fail on an unreadable
+    // `tsconfig.app.json`" is part of that. Report it here too, rather than
+    // leaving `--print-source` silent about the one thing that would make a
+    // real run exit 2. This still exits 0, not 2: `--print-source` never ran
+    // `computeMisses`'s scan and has nothing else to report as a failure, so
+    // making it fail here would conflate "here is the source" with "the
+    // check passed" — two different questions this flag has never answered.
+    // A caller who wants the loud failure runs the guard without the flag.
+    if (PATH_ALIAS_MAP_ERROR) {
+      process.stderr.write(
+        `check-doc-code-paths: warning: ${PATH_ALIAS_MAP_ERROR.message} ` +
+          `(a real run would exit 2 on this)\n`,
+      )
+    }
     return { exitCode: 0 }
   }
   // #4482 — a `tsconfig.app.json` that exists but could not be read as the
@@ -2156,9 +2207,68 @@ function aliasCitationScenarios(root) {
     const malformedConfig = run(['--worktree'])
     record(
       'a tsconfig.app.json with no usable paths entry fails CLOSED (exit 2), not open',
-      malformedConfig.status === 2 && /compilerOptions\.paths/.test(malformedConfig.stderr),
-      `expected 2 naming compilerOptions.paths, got ${malformedConfig.status}: ${malformedConfig.stderr}`,
+      // Matched on text unique to the MISSING-`paths` throw. A bare
+      // /compilerOptions\.paths/ would have been satisfied by the
+      // unmodelled-shape throw below too — both messages contain that
+      // substring — so this arm would have stayed green whichever fired, and
+      // the two failures would have been indistinguishable here.
+      malformedConfig.status === 2 &&
+        /cannot resolve @\/-alias citations/.test(malformedConfig.stderr),
+      `expected 2 naming the missing-paths failure, got ${malformedConfig.status}: ${malformedConfig.stderr}`,
     )
+
+    // The SAME broken config through `--print-source`, the flag whose whole
+    // job is to explain what a real run would do. Before #4492's follow-up
+    // the error gate sat AFTER this flag's early return, so `--print-source`
+    // stayed silent about the one thing that would make a real run exit 2 —
+    // the most misleading possible answer from a diagnostic.
+    //
+    // Two arms, because either alone is satisfiable by the wrong
+    // implementation: it must WARN (dropping the warning reddens the first)
+    // and it must still exit 0 (moving the hard gate back above the early
+    // return reddens the second). `--print-source` never runs the scan, so it
+    // has never answered "did the check pass" and must not start now.
+    const printSourceBroken = run(['--print-source'])
+    record(
+      '`--print-source` WARNS about a tsconfig.app.json it cannot read',
+      /compilerOptions\.paths/.test(printSourceBroken.stderr),
+      `expected stderr naming compilerOptions.paths, got: ${printSourceBroken.stderr}`,
+    )
+    record(
+      '`--print-source` still exits 0 on that config — diagnostic, not the check',
+      printSourceBroken.status === 0,
+      `expected 0, got ${printSourceBroken.status}: ${printSourceBroken.stderr}`,
+    )
+
+    // The THIRD legal edit that lands on the loud side of the split (see this
+    // file's header): `paths` is still present and is legal TypeScript, but
+    // its only entry is a shape `loadPathAliasMap` does not model — `"./*"`
+    // strips to the bare target `*`, fails the `endsWith('/*')` test, is
+    // skipped, and leaves the map empty. Until #4510's follow-up this case
+    // was prose in two comments and a message string with no arm behind it:
+    // the arm above wrote `{compilerOptions: {}}`, which throws the DIFFERENT
+    // error, and its old /compilerOptions\.paths/ matcher was satisfied by
+    // both messages — so nothing distinguished them and nothing reached this
+    // branch at all.
+    //
+    // Asserted on text unique to the unmodelled-shape throw, and asserted
+    // NEGATIVELY against the missing-`paths` one, because "exit 2 with a
+    // message mentioning compilerOptions.paths" is exactly what the other
+    // failure also produces. Without the negative half this arm would go
+    // green if the `map.size === 0` branch were deleted and the config fell
+    // through to a different error.
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `src/real.ts` today.\n')
+    writeTsconfig({ '@/*': ['./*'] })
+    git('add', '-A')
+    const unmodelledShape = run(['--worktree'])
+    record(
+      'a `paths` whose only entry is an UNMODELLED shape fails CLOSED (exit 2), naming the shape',
+      unmodelledShape.status === 2 &&
+        /has no entry this guard models/.test(unmodelledShape.stderr) &&
+        !/cannot resolve @\/-alias citations/.test(unmodelledShape.stderr),
+      `expected 2 naming the unmodelled-shape failure, got ${unmodelledShape.status}: ${unmodelledShape.stderr}`,
+    )
+
     writeTsconfig({ '@/*': ['./src/*'] })
     git('add', '-A')
 
@@ -2210,6 +2320,57 @@ function aliasCitationScenarios(root) {
       'no tsconfig.app.json at all reads as "no alias configured" (not an invocation error)',
       noTsconfigAtAll.status === 0,
       `expected 0, got ${noTsconfigAtAll.status}: ${noTsconfigAtAll.stderr}`,
+    )
+    writeTsconfig({ '@/*': ['./src/*'] })
+    git('add', '-A')
+
+    // #4492 follow-up — `GITIGNORED_PREFIX_RE` used to be tested against
+    // `cleaned` while it was STILL in alias form, and its optional leading
+    // group `[a-zA-Z0-9_./-]*\/` cannot match a leading `@`, so an
+    // alias-form citation into a gitignored prefix (`@/dist/x.ts`) bypassed
+    // the skip its `src/…` equivalent (`src/dist/x.ts`) already got — the
+    // two spellings diverging exactly where the rest of #4482 is careful to
+    // keep them identical. Neither side of `dist/x.ts` is ever written to
+    // disk or tracked, so BOTH forms citing it are proof the citation is
+    // being SKIPPED as build-output, not merely resolving by accident.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'Build output lands in `src/dist/x.ts`, regenerated on every build.\n',
+    )
+    git('add', '-A')
+    const gitignoredSrcForm = run(['--worktree'])
+    record(
+      'a `src/…` citation under a gitignored prefix (dist/) is skipped, not flagged as a miss',
+      gitignoredSrcForm.status === 0,
+      `expected 0, got ${gitignoredSrcForm.status}: ${gitignoredSrcForm.stderr}`,
+    )
+    writeFileSync(
+      join(dir, 'README.md'),
+      'Build output lands in `@/dist/x.ts`, regenerated on every build.\n',
+    )
+    git('add', '-A')
+    const gitignoredAliasForm = run(['--worktree'])
+    record(
+      'the SAME gitignored-prefix skip applies to the alias-form spelling (`@/dist/x.ts`)',
+      gitignoredAliasForm.status === 0,
+      `expected 0, got ${gitignoredAliasForm.status}: ${gitignoredAliasForm.stderr}`,
+    )
+    // CONTROL — the fix must not be satisfiable by widening the skip into
+    // "every alias citation is skipped": an alias-form citation that does
+    // NOT resolve under a gitignored prefix, naming a module that genuinely
+    // does not exist, must still be a hard miss reporting the alias
+    // spelling verbatim.
+    writeFileSync(
+      join(dir, 'README.md'),
+      'The pipeline lives in `@/nowhere/still-dead.ts` today.\n',
+    )
+    git('add', '-A')
+    const nonGitignoredAliasStillChecked = run(['--worktree'])
+    record(
+      'a non-gitignored dead alias citation is still red — the fix does not skip everything',
+      nonGitignoredAliasStillChecked.status === 1 &&
+        /`@\/nowhere\/still-dead\.ts`/.test(nonGitignoredAliasStillChecked.stderr),
+      `expected 1 naming @/nowhere/still-dead.ts verbatim, got ${nonGitignoredAliasStillChecked.status}: ${nonGitignoredAliasStillChecked.stderr}`,
     )
 
     return results

@@ -84,14 +84,17 @@ describe('preload', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
       title: 'Page One',
       deleted: false,
+      resolved: true,
     })
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_2'))).toEqual({
       title: 'Page Two',
       deleted: false,
+      resolved: true,
     })
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_1'))).toEqual({
       title: 'tag-one',
       deleted: false,
+      resolved: true,
     })
     expect(state._preloaded).toBe(true)
     // Should have called list_blocks twice (pagination)
@@ -132,14 +135,17 @@ describe('preload', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_0'))).toEqual({
       title: 'tag-0',
       deleted: false,
+      resolved: true,
     })
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_200'))).toEqual({
       title: 'tag-200',
       deleted: false,
+      resolved: true,
     })
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_249'))).toEqual({
       title: 'tag-249',
       deleted: false,
+      resolved: true,
     })
     // The space-scoped IPC must be forwarded the active spaceId.
     const tagCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_all_tags_in_space')
@@ -163,7 +169,7 @@ describe('preload', () => {
     await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const entry = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_NULL'))
-    expect(entry).toEqual({ title: 'Untitled', deleted: false })
+    expect(entry).toEqual({ title: 'Untitled', deleted: false, resolved: true })
   })
 
   it('marks deleted pages', async () => {
@@ -180,7 +186,7 @@ describe('preload', () => {
     await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const entry = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_DEL'))
-    expect(entry).toEqual({ title: 'Deleted Page', deleted: true })
+    expect(entry).toEqual({ title: 'Deleted Page', deleted: true, resolved: true })
   })
 
   it('does not set _preloaded on error so retry is possible', async () => {
@@ -299,6 +305,7 @@ describe('preload', () => {
     expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_2'))).toEqual({
       title: 'Page Two',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -367,11 +374,13 @@ describe('preload', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
       title: 'Page One',
       deleted: false,
+      resolved: true,
     })
     // Pre-existing entry (not returned by this fetch) survives the merge.
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PRE_EXISTING'))).toEqual({
       title: 'Pre-existing Page',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -398,11 +407,13 @@ describe('preload', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'NEW_PAGE'))).toEqual({
       title: 'DB Title',
       deleted: false,
+      resolved: true,
     })
     // Other fetched entries should still be present
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
       title: 'Page One',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -426,10 +437,12 @@ describe('preload', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
       title: 'Page One',
       deleted: false,
+      resolved: true,
     })
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'CREATED_DURING'))).toEqual({
       title: 'New Page',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -453,6 +466,7 @@ describe('preload', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_RENAMED'))).toEqual({
       title: 'New Title After Rename',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -477,6 +491,7 @@ describe('preload', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_EDITED'))).toEqual({
       title: 'Fresh Backend Title',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -501,6 +516,7 @@ describe('preload', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_SYNC'))).toEqual({
       title: 'Renamed Title After Sync',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -566,6 +582,7 @@ describe('preload in-flight coalescing (#753)', () => {
     expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
       title: 'One',
       deleted: false,
+      resolved: true,
     })
     expect(useResolveStore.getState()._preloaded).toBe(true)
   })
@@ -602,6 +619,7 @@ describe('preload in-flight coalescing (#753)', () => {
     expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
       title: 'Fresh',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -1113,6 +1131,7 @@ describe('set', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))).toEqual({
       title: 'My Page',
       deleted: false,
+      resolved: true,
     })
     // FE-H-21 — `set` bumps `version` synchronously (no microtask wait).
     expect(state.version).toBe(versionBefore + 1)
@@ -1123,7 +1142,7 @@ describe('set', () => {
     useResolveStore.getState().set('ID_1', 'Updated Title', true)
 
     const entry = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))
-    expect(entry).toEqual({ title: 'Updated Title', deleted: true })
+    expect(entry).toEqual({ title: 'Updated Title', deleted: true, resolved: true })
   })
 
   // Perf (#2267) — set() must mutate the cache Map in place (write the
@@ -1144,6 +1163,7 @@ describe('set', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))).toEqual({
       title: 'Second Title',
       deleted: true,
+      resolved: true,
     })
   })
 
@@ -1177,6 +1197,7 @@ describe('set', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))).toEqual({
       title: 'Renamed Page',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -1191,6 +1212,7 @@ describe('set', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))).toEqual({
       title: 'My Page',
       deleted: true,
+      resolved: true,
     })
   })
 
@@ -1206,6 +1228,7 @@ describe('set', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'NEW_ID'))).toEqual({
       title: 'Fresh',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -1239,9 +1262,21 @@ describe('batchSet', () => {
 
     const cache = useResolveStore.getState().cache
     expect(cache.size).toBe(3)
-    expect(cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({ title: 'Alpha', deleted: false })
-    expect(cache.get(keyFor(TEST_SPACE_ID, 'B'))).toEqual({ title: 'Beta', deleted: false })
-    expect(cache.get(keyFor(TEST_SPACE_ID, 'C'))).toEqual({ title: 'Charlie', deleted: true })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({
+      title: 'Alpha',
+      deleted: false,
+      resolved: true,
+    })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'B'))).toEqual({
+      title: 'Beta',
+      deleted: false,
+      resolved: true,
+    })
+    expect(cache.get(keyFor(TEST_SPACE_ID, 'C'))).toEqual({
+      title: 'Charlie',
+      deleted: true,
+      resolved: true,
+    })
   })
 
   // Perf (#2267) — batchSet() must mutate the cache Map in place (write
@@ -1264,10 +1299,12 @@ describe('batchSet', () => {
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({
       title: 'Alpha Renamed',
       deleted: false,
+      resolved: true,
     })
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'D'))).toEqual({
       title: 'Delta',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -1330,14 +1367,20 @@ describe('batchSet', () => {
 
     const state = useResolveStore.getState()
     expect(state.version).toBe(versionBefore + 1)
-    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({ title: 'Alpha', deleted: false })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({
+      title: 'Alpha',
+      deleted: false,
+      resolved: true,
+    })
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'B'))).toEqual({
       title: 'Beta Renamed',
       deleted: false,
+      resolved: true,
     })
     expect(state.cache.get(keyFor(TEST_SPACE_ID, 'C'))).toEqual({
       title: 'Charlie',
       deleted: true,
+      resolved: true,
     })
   })
 
@@ -1349,7 +1392,11 @@ describe('batchSet', () => {
 
     const state = useResolveStore.getState()
     expect(state.version).toBe(versionBefore + 1)
-    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({ title: 'Alpha', deleted: true })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({
+      title: 'Alpha',
+      deleted: true,
+      resolved: true,
+    })
   })
 })
 
@@ -1414,7 +1461,9 @@ describe('has', () => {
   it('is space-scoped — an entry from another space is not visible', () => {
     // Cache only holds an entry under OTHER_SPACE_ID.
     useResolveStore.setState({
-      cache: new Map([[keyFor(OTHER_SPACE_ID, 'FOREIGN'), { title: 'Foreign', deleted: false }]]),
+      cache: new Map([
+        [keyFor(OTHER_SPACE_ID, 'FOREIGN'), { title: 'Foreign', deleted: false, resolved: true }],
+      ]),
     })
 
     // Active space is TEST_SPACE_ID (beforeEach) — the foreign entry is hidden.
@@ -1455,10 +1504,12 @@ describe('cross-space cache scoping', () => {
     expect(cache.get(keyFor(TEST_SPACE_ID, 'SHARED_ULID'))).toEqual({
       title: 'A-side title',
       deleted: false,
+      resolved: true,
     })
     expect(cache.get(keyFor(OTHER_SPACE_ID, 'SHARED_ULID'))).toEqual({
       title: 'B-side title',
       deleted: false,
+      resolved: true,
     })
 
     // resolveTitle picks the active-space entry, never the other space's
@@ -1473,12 +1524,12 @@ describe('cross-space cache scoping', () => {
     // Pre-populate cache with entries from BOTH spaces. Use direct
     // setState to keep encoding under test (rather than relying on
     // `set` to round-trip through useSpaceStore).
-    const cache = new Map<string, { title: string; deleted: boolean }>([
-      [keyFor(TEST_SPACE_ID, 'A1'), { title: 'A page 1', deleted: false }],
-      [keyFor(TEST_SPACE_ID, 'A2'), { title: 'A page 2', deleted: false }],
-      [keyFor(OTHER_SPACE_ID, 'B1'), { title: 'B page 1', deleted: false }],
-      [keyFor(OTHER_SPACE_ID, 'B2'), { title: 'B page 2', deleted: true }],
-      [keyFor(GLOBAL_SPACE_ID, 'GLOBAL'), { title: 'global', deleted: false }],
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>([
+      [keyFor(TEST_SPACE_ID, 'A1'), { title: 'A page 1', deleted: false, resolved: true }],
+      [keyFor(TEST_SPACE_ID, 'A2'), { title: 'A page 2', deleted: false, resolved: true }],
+      [keyFor(OTHER_SPACE_ID, 'B1'), { title: 'B page 1', deleted: false, resolved: true }],
+      [keyFor(OTHER_SPACE_ID, 'B2'), { title: 'B page 2', deleted: true, resolved: true }],
+      [keyFor(GLOBAL_SPACE_ID, 'GLOBAL'), { title: 'global', deleted: false, resolved: true }],
     ])
     useResolveStore.setState({ cache, version: 1 })
 
@@ -1492,22 +1543,25 @@ describe('cross-space cache scoping', () => {
     expect(after.get(keyFor(OTHER_SPACE_ID, 'B1'))).toEqual({
       title: 'B page 1',
       deleted: false,
+      resolved: true,
     })
     expect(after.get(keyFor(OTHER_SPACE_ID, 'B2'))).toEqual({
       title: 'B page 2',
       deleted: true,
+      resolved: true,
     })
     expect(after.get(keyFor(GLOBAL_SPACE_ID, 'GLOBAL'))).toEqual({
       title: 'global',
       deleted: false,
+      resolved: true,
     })
     // version bumped so memoised consumers recompute
     expect(useResolveStore.getState().version).toBe(2)
   })
 
   it('clearAllForSpace on a space with no entries is a no-op (still bumps version)', () => {
-    const cache = new Map<string, { title: string; deleted: boolean }>([
-      [keyFor(TEST_SPACE_ID, 'A1'), { title: 'A1', deleted: false }],
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>([
+      [keyFor(TEST_SPACE_ID, 'A1'), { title: 'A1', deleted: false, resolved: true }],
     ])
     useResolveStore.setState({ cache, version: 5 })
 
@@ -1526,7 +1580,10 @@ describe('cross-space cache scoping', () => {
     // Cache only contains an entry under SPACE_OTHER.
     useResolveStore.setState({
       cache: new Map([
-        [keyFor(OTHER_SPACE_ID, 'FOREIGN_ULID'), { title: 'Foreign Page', deleted: false }],
+        [
+          keyFor(OTHER_SPACE_ID, 'FOREIGN_ULID'),
+          { title: 'Foreign Page', deleted: false, resolved: true },
+        ],
       ]),
     })
 
@@ -1537,14 +1594,132 @@ describe('cross-space cache scoping', () => {
 })
 
 // ---------------------------------------------------------------------------
+// the cache-miss signal (#4238)
+// ---------------------------------------------------------------------------
+/**
+ * #4238 — the signal that used to ride on the title's BYTES.
+ *
+ * `useBacklinkResolution` stored the `[[id…]]` broken-link shape as the title
+ * of a resolved-but-blank row purely so `resolveBlockDisplay` would keep
+ * treating it as a miss, which is what stopped that writer from normalising
+ * blank like its three siblings. The verdict now lives on
+ * `ResolveEntry.resolved`, and these pin that it is genuinely the FIELD that
+ * decides — not a string that happens to look like a miss, and not `deleted`.
+ */
+describe('resolved flag — the cache-miss signal, off the title string', () => {
+  it('resolveTitle ignores the stored title of an unresolved entry', () => {
+    // A title that is NOT the broken-link shape, on an entry flagged
+    // unresolved. Under the old design the bytes were the whole signal, so
+    // this row would have rendered "A Real Looking Title" and been treated as
+    // resolved everywhere. The flag has to win, or the separation is cosmetic.
+    useResolveStore
+      .getState()
+      .batchSet([
+        { id: 'MISSING_ULID', title: 'A Real Looking Title', deleted: true, resolved: false },
+      ])
+
+    expect(useResolveStore.getState().resolveTitle('MISSING_ULID')).toBe('[[MISSING_...]]')
+    expect(useResolveStore.getState().isResolved('MISSING_ULID')).toBe(false)
+    // `has` still says yes — that is its job, and it is why the two probes had
+    // to be separated: the entry exists precisely so the id is NOT re-fetched
+    // on every pass.
+    expect(useResolveStore.getState().has('MISSING_ULID')).toBe(true)
+  })
+
+  it('resolveTitle serves a BLANK resolved row its placeholder, not the miss label', () => {
+    // The input the two jobs disagreed on. It is resolved, so the stored
+    // presentational title wins — this is the cell four writers now agree on.
+    useResolveStore.getState().batchSet([{ id: 'BLANK_ULID', title: 'Untitled', deleted: false }])
+
+    expect(useResolveStore.getState().resolveTitle('BLANK_ULID')).toBe('Untitled')
+    expect(useResolveStore.getState().isResolved('BLANK_ULID')).toBe(true)
+  })
+
+  it('a soft-DELETED row is still resolved — which is why `deleted` could not carry the signal', () => {
+    // `batch_resolve` returns soft-deleted blocks WITH their real title, so
+    // `deleted: true` is an ordinary resolved state. Folding the two fields
+    // together would put every trashed block's chip back on `[[id…]]`.
+    useResolveStore.getState().set('TRASHED_ULID', 'Real Title', true)
+
+    expect(useResolveStore.getState().isResolved('TRASHED_ULID')).toBe(true)
+    expect(useResolveStore.getState().resolveTitle('TRASHED_ULID')).toBe('Real Title')
+    expect(useResolveStore.getState().resolveStatus('TRASHED_ULID')).toBe('deleted')
+  })
+
+  it('isResolved is false for an id that is not cached at all', () => {
+    expect(useResolveStore.getState().isResolved('NEVER_SEEN')).toBe(false)
+  })
+
+  it('resolveStatus reads an unresolved entry as deleted even when `deleted` is false (#4515)', () => {
+    // The shape no writer produces TODAY (the one sentinel writer sets
+    // `deleted: true` alongside `resolved: false`), which is exactly why it
+    // needs pinning: nothing else would notice if the flag stopped counting.
+    // Answering from `deleted` alone would render an ACTIVE chip carrying the
+    // `[[id…]]` label `resolveTitle` hands back for the same entry — live to
+    // look at, broken to click.
+    useResolveStore
+      .getState()
+      .batchSet([
+        { id: 'PARKED_ULID', title: 'A Real Looking Title', deleted: false, resolved: false },
+      ])
+
+    expect(useResolveStore.getState().resolveStatus('PARKED_ULID')).toBe('deleted')
+    // …and it really is the FLAG doing it, not a blanket 'deleted': the same
+    // `deleted: false` with the flag set reads active. Without this line the
+    // assertion above would survive `resolveStatus` returning 'deleted'
+    // unconditionally.
+    useResolveStore
+      .getState()
+      .batchSet([{ id: 'REAL_ULID', title: 'A Real Looking Title', deleted: false }])
+    expect(useResolveStore.getState().resolveStatus('REAL_ULID')).toBe('active')
+    // The two pre-existing behaviours the derivation must not disturb: a
+    // soft-deleted resolved row still reads deleted, and an ABSENT key still
+    // reads active (it means "not asked yet", not "broken").
+    useResolveStore.getState().set('TRASHED_TOO', 'Real Title', true)
+    expect(useResolveStore.getState().resolveStatus('TRASHED_TOO')).toBe('deleted')
+    expect(useResolveStore.getState().resolveStatus('NOT_ASKED_YET')).toBe('active')
+  })
+
+  it('flipping only `resolved` is a real change — batchSet must not diff it away', () => {
+    useResolveStore.getState().batchSet([{ id: 'FLIP_ULID', title: 'Same Bytes', deleted: true }])
+    const versionAfterFirst = useResolveStore.getState().version
+
+    // Same title, same deleted, different verdict. If the diff ignored
+    // `resolved` this would be dropped as a no-op and the entry would keep
+    // claiming to be resolved.
+    useResolveStore
+      .getState()
+      .batchSet([{ id: 'FLIP_ULID', title: 'Same Bytes', deleted: true, resolved: false }])
+
+    expect(useResolveStore.getState().version).toBe(versionAfterFirst + 1)
+    expect(useResolveStore.getState().isResolved('FLIP_ULID')).toBe(false)
+    expect(useResolveStore.getState().resolveTitle('FLIP_ULID')).toBe('[[FLIP_ULI...]]')
+  })
+
+  it('set() defaults `resolved` to true, and re-writing it stays a no-op', () => {
+    useResolveStore.getState().set('ECHO_ULID', 'Echoed Title', false)
+    expect(useResolveStore.getState().isResolved('ECHO_ULID')).toBe(true)
+
+    const versionAfterFirst = useResolveStore.getState().version
+    useResolveStore.getState().set('ECHO_ULID', 'Echoed Title', false)
+    // The #1073 no-op guard still holds with the extra field in the diff.
+    expect(useResolveStore.getState().version).toBe(versionAfterFirst)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // cache eviction
 // ---------------------------------------------------------------------------
 describe('cache eviction', () => {
   it('set() evicts oldest entries when cache exceeds MAX_CACHE_SIZE', () => {
     // Pre-fill cache with exactly 10,000 entries
-    const cache = new Map<string, { title: string; deleted: boolean }>()
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>()
     for (let i = 0; i < 10_000; i++) {
-      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), {
+        title: `T${i}`,
+        deleted: false,
+        resolved: true,
+      })
     }
     useResolveStore.setState({ cache })
 
@@ -1561,9 +1736,13 @@ describe('cache eviction', () => {
 
   it('batchSet() evicts when batch pushes cache over limit', () => {
     // Pre-fill cache to 9,998 entries
-    const cache = new Map<string, { title: string; deleted: boolean }>()
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>()
     for (let i = 0; i < 9_998; i++) {
-      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), {
+        title: `T${i}`,
+        deleted: false,
+        resolved: true,
+      })
     }
     useResolveStore.setState({ cache })
 
@@ -1588,9 +1767,13 @@ describe('cache eviction', () => {
     // Pin the eviction-from-both-writers invariant: flooding past
     // MAX_CACHE_SIZE via either writer must evict the oldest entries
     // in identical insertion order, with the cache capped at the limit.
-    const cache = new Map<string, { title: string; deleted: boolean }>()
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>()
     for (let i = 0; i < 10_000; i++) {
-      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), {
+        title: `T${i}`,
+        deleted: false,
+        resolved: true,
+      })
     }
     useResolveStore.setState({ cache })
 
@@ -1631,9 +1814,13 @@ describe('cache eviction', () => {
   // least-recently-used entry is the one that gets dropped.
   it('resolveTitle marks an entry as recently used so it survives eviction (#1640)', () => {
     // Fill the cache exactly to capacity. id-0 is the oldest by insertion.
-    const cache = new Map<string, { title: string; deleted: boolean }>()
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>()
     for (let i = 0; i < 10_000; i++) {
-      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), {
+        title: `T${i}`,
+        deleted: false,
+        resolved: true,
+      })
     }
     useResolveStore.setState({ cache })
 
@@ -1670,9 +1857,13 @@ describe('cache eviction', () => {
 
   // resolveStatus is the second read path; it must also refresh recency.
   it('resolveStatus marks an entry as recently used so it survives eviction (#1640)', () => {
-    const cache = new Map<string, { title: string; deleted: boolean }>()
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>()
     for (let i = 0; i < 10_000; i++) {
-      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), {
+        title: `T${i}`,
+        deleted: false,
+        resolved: true,
+      })
     }
     useResolveStore.setState({ cache })
 
@@ -1690,9 +1881,13 @@ describe('cache eviction', () => {
   // eviction can actually happen. Below capacity, repeated reads must NOT
   // reorder the Map's insertion order (the delete+re-set is a no-op).
   it('resolveTitle skips LRU touch bookkeeping while the cache is under capacity (#2200)', () => {
-    const cache = new Map<string, { title: string; deleted: boolean }>()
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>()
     for (let i = 0; i < 100; i++) {
-      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), {
+        title: `T${i}`,
+        deleted: false,
+        resolved: true,
+      })
     }
     useResolveStore.setState({ cache })
     expect(useResolveStore.getState().cache.size).toBeLessThan(10_000)
@@ -1712,9 +1907,13 @@ describe('cache eviction', () => {
 
   // Same gating, resolveStatus read path.
   it('resolveStatus skips LRU touch bookkeeping while the cache is under capacity (#2200)', () => {
-    const cache = new Map<string, { title: string; deleted: boolean }>()
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>()
     for (let i = 0; i < 100; i++) {
-      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), {
+        title: `T${i}`,
+        deleted: false,
+        resolved: true,
+      })
     }
     useResolveStore.setState({ cache })
 
@@ -1732,9 +1931,13 @@ describe('cache eviction', () => {
   // retroactively honored (documented trade-off, not a correctness bug:
   // nothing could have been evicted yet at the time of those reads).
   it('enforces the MAX_CACHE_SIZE bound after flooding past capacity from a partially-filled cache', () => {
-    const cache = new Map<string, { title: string; deleted: boolean }>()
+    const cache = new Map<string, { title: string; deleted: boolean; resolved: boolean }>()
     for (let i = 0; i < 9_999; i++) {
-      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), { title: `T${i}`, deleted: false })
+      cache.set(keyFor(TEST_SPACE_ID, `id-${i}`), {
+        title: `T${i}`,
+        deleted: false,
+        resolved: true,
+      })
     }
     useResolveStore.setState({ cache })
 

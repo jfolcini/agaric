@@ -45,10 +45,16 @@ beforeEach(() => {
   // Per-test overrides return specific counts to exercise the
   // affected-count branch in the toast logic.
   mockedInvoke.mockImplementation((cmd: string, args: unknown) => {
-    if (cmd === 'set_todo_state_batch' || cmd === 'delete_blocks_by_ids') {
-      const a = args as Record<string, unknown>
-      const ids = (a['blockIds'] as string[]) ?? []
+    const a = args as Record<string, unknown>
+    const ids = (a['blockIds'] as string[]) ?? []
+    if (cmd === 'set_todo_state_batch') {
       return Promise.resolve(ids.length)
+    }
+    // #4480 — `delete_blocks_by_ids` replies with a `BatchDeleteResponse`, not
+    // a bare count. These fixtures are content blocks, so the page cohort is
+    // empty.
+    if (cmd === 'delete_blocks_by_ids') {
+      return Promise.resolve({ deleted_count: ids.length, affected_page_ids: [] })
     }
     return strictInvokeFallback(cmd)
   })

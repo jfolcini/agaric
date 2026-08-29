@@ -767,7 +767,15 @@ export const blocksHandlers = {
     })
     // BFS from every root, soft-delete every reachable descendant whose
     // `deleted_at` is currently NULL.
+    //
+    // #4480 — the walk does NOT stop at a nested page, exactly as the backend
+    // cascade does not (`collect_subtree_ids_unbounded` filters on
+    // `deleted_at` and depth, never on `block_type`). The PAGE members of the
+    // cohort are collected as they are tombstoned so the reply can carry
+    // `affected_page_ids`; a mock that returned only the roots there would let
+    // the `[[` picker's stale-cache bug pass in the mock backend.
     let count = 0
+    const affectedPageIds: string[] = []
     const stack: string[] = [...liveRoots]
     const seen = new Set<string>()
     while (stack.length > 0) {
@@ -779,6 +787,7 @@ export const blocksHandlers = {
       if (!b || b['deleted_at']) continue
       b['deleted_at'] = now
       count++
+      if (b['block_type'] === 'page') affectedPageIds.push(id)
       for (const child of blocks.values()) {
         if (child['parent_id'] === id && !child['deleted_at'] && !seen.has(child['id'] as string)) {
           stack.push(child['id'] as string)
@@ -790,7 +799,8 @@ export const blocksHandlers = {
     for (const root of liveRoots) {
       pushOp('delete_block', { block_id: root })
     }
-    return count
+    // #4480 — `BatchDeleteResponse`, not a bare count.
+    return { deleted_count: count, affected_page_ids: affectedPageIds }
   },
 
   // #1775 — single-op cohort restore, mirroring the backend's

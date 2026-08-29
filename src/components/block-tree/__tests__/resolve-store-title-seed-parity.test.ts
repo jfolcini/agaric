@@ -252,8 +252,14 @@ function nextUlid(): string {
   return `01H${String(ulidCounter).padStart(23, '0')}`
 }
 
+function storedEntry(
+  id: string,
+): { title: string; deleted: boolean; resolved: boolean } | undefined {
+  return useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, id))
+}
+
 function storedTitle(id: string): string | undefined {
-  return useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, id))?.title
+  return storedEntry(id)?.title
 }
 
 async function waitForStored(id: string): Promise<string> {
@@ -276,12 +282,6 @@ interface Writer {
   /** Shapes this writer cannot be driven with, and why. */
   skip?: Partial<Record<BlockType, readonly string[]>>
   seed: (id: string, blockType: BlockType, content: string | null) => Promise<void>
-  /**
-   * The documented deviation from the matrix value, or `undefined` for the
-   * writers that have none. Returning a string asserts THAT instead — the
-   * gap is pinned, not skipped.
-   */
-  deviates?: (id: string, blockType: BlockType, content: string | null) => string | undefined
 }
 
 const WRITERS: readonly Writer[] = [
@@ -347,15 +347,13 @@ const WRITERS: readonly Writer[] = [
       renderHook(() => useBacklinkResolution(groups))
       await waitFor(() => expect(mockedBatchResolve).toHaveBeenCalled())
     },
-    // #4238 — the ONE cell that is deliberately off the invariant. A row the
-    // backend RETURNED but with a `null`/empty title keeps the broken-link
-    // shape, because `resolveBlockDisplay` pattern-matches exactly that shape
-    // as "nothing real is cached". Whitespace-only is NOT in the deviation:
-    // #4239 brought it back onto the invariant.
-    deviates: (id, blockType, content) => {
-      if (content !== null && content !== '') return undefined
-      return blockType === 'tag' ? `#${id.slice(0, 8)}...` : `[[${id.slice(0, 8)}...]]`
-    },
+    // #4238 — this writer used to carry a `deviates` hook here: a row the
+    // backend RETURNED with a `null`/empty title kept the `[[id…]]` (or
+    // `#id…`) broken-link shape, because `resolveBlockDisplay` pattern-matched
+    // exactly that shape as "nothing real is cached". The signal now lives on
+    // `ResolveEntry.resolved`, so there is no deviation left to declare and
+    // the escape hatch is gone with it — the matrix has no way to excuse a
+    // cell any more, which is the point.
   },
   {
     name: 'preload (runPreloadScan)',
@@ -451,10 +449,17 @@ describe('resolve-store title matrix — {every writer} × {content, page, tag} 
             const id = nextUlid()
             await writer.seed(id, blockType, shape.content)
             const stored = await waitForStored(id)
-            const expected =
-              writer.deviates?.(id, blockType, shape.content) ??
-              (blockType === 'content' ? shape.contentTitle : shape.namedTitle)
+            const expected = blockType === 'content' ? shape.contentTitle : shape.namedTitle
             expect(stored, `${writer.name}: ${shape.why}`).toBe(expected)
+            // #4238 — every writer in this matrix seeds from a row the backend
+            // RETURNED, so every one of them is a resolution. Pinned alongside
+            // the title because the two used to be the same field: a blank row
+            // said "unresolved" by writing an unrenderable title, and that is
+            // exactly what must not come back.
+            expect(
+              storedEntry(id)?.resolved,
+              `${writer.name}: a returned row is resolved, however blank`,
+            ).toBe(true)
           })
         }
       }
@@ -468,28 +473,64 @@ describe('resolve-store title matrix — {every writer} × {content, page, tag} 
  * `version`, because `batchSet` / `set` diff on value. This is the churn
  * #4228 was filed about, and it is what any future disagreement would break
  * even if both values looked "reasonable" in isolation.
+ *
+ * #4238 — this used to run over a hand-picked PAIR, chosen because neither
+ * carried the blank-cell deviation. It now runs over EVERY writer that can be
+ * handed the block type under test, blank shapes included, which is the
+ * acceptance the issue states: all four `content`-capable writers
+ * (`searchBlockRefs`, `fetchAndCacheLinks`, `handleNavigate`, the
+ * `useBacklinkResolution` seed) produce byte-identical titles for the same id.
+ *
+ * The set is DERIVED from `supports` rather than hand-listed, so a fifth
+ * writer joins this check by existing — the hand-picked pair is precisely how
+ * a drifted writer stayed outside the net three reviews running.
  */
-describe('cross-writer convergence — no version churn on a second seed', () => {
+describe('cross-writer convergence — every writer for a type agrees, byte for byte', () => {
   for (const blockType of BLOCK_TYPES) {
     for (const shape of SHAPES) {
-      it(`${blockType} × ${shape.name}: seeding twice via two writers bumps version once`, async () => {
+      // Ordered so the CACHE-GATED writer goes first. `useBacklinkResolution`
+      // resolves only ids the store does not already hold (`!store.has(id)`),
+      // so seeding it after any sibling makes it a silent no-op and the
+      // assertion vacuous — the exact shape of false green this file exists to
+      // avoid. It leads, and the other three are compared against what it
+      // wrote; which is also the right direction for #4238, since it is the
+      // writer that used to disagree.
+      const runnable = WRITERS.filter(
+        (w) => w.supports.includes(blockType) && !w.skip?.[blockType]?.includes(shape.name),
+      ).toSorted(
+        (a, b) =>
+          Number(b.name.startsWith('useBacklink')) - Number(a.name.startsWith('useBacklink')),
+      )
+      it(`${blockType} × ${shape.name}: ${runnable.length} writers, one version bump`, async () => {
         const id = nextUlid()
-        // Two writers that both accept all three block types, and neither of
-        // which carries the #4238 deviation.
-        const first = WRITERS.find((w) => w.name === 'searchBlockRefs') as Writer
-        const second = WRITERS.find((w) => w.name === 'fetchAndCacheLinks') as Writer
+        // Guard the guard: a convergence assertion over ONE writer is
+        // vacuously true, and for `content` the whole point is that there are
+        // four of them.
+        expect(runnable.length).toBeGreaterThanOrEqual(2)
+        if (blockType === 'content') expect(runnable.length).toBe(4)
 
+        const first = runnable[0] as Writer
         await first.seed(id, blockType, shape.content)
         const titleAfterFirst = await waitForStored(id)
+        // Pin the VALUE too, not just agreement: four writers can agree by all
+        // four being wrong in the same way, and a mutual-agreement assertion
+        // cannot tell those apart.
+        expect(titleAfterFirst).toBe(
+          blockType === 'content' ? shape.contentTitle : shape.namedTitle,
+        )
         const versionAfterFirst = useResolveStore.getState().version
 
-        await second.seed(id, blockType, shape.content)
-
-        expect(
-          useResolveStore.getState().version,
-          `${first.name} and ${second.name} disagree about ${blockType} × ${shape.name}`,
-        ).toBe(versionAfterFirst)
-        expect(storedTitle(id)).toBe(titleAfterFirst)
+        for (const writer of runnable.slice(1)) {
+          await writer.seed(id, blockType, shape.content)
+          expect(
+            storedTitle(id),
+            `${writer.name} disagrees with ${first.name} about ${blockType} × ${shape.name}`,
+          ).toBe(titleAfterFirst)
+          expect(
+            useResolveStore.getState().version,
+            `${writer.name} churned \`version\` re-writing ${blockType} × ${shape.name}`,
+          ).toBe(versionAfterFirst)
+        }
       })
     }
   }
@@ -571,7 +612,7 @@ const DECLARED_WRITERS: Record<
   'src/hooks/useBacklinkResolution.ts': {
     writes: 1,
     kind: 'seed',
-    note: 'storeTitle — matrix row, incl. the #4238 deviation',
+    note: 'storeTitle — matrix row; unconditionally gated since #4238 retired its blank-cell deviation',
   },
   'src/hooks/useBlockTags.ts': { writes: 1, kind: 'echo', note: 'tag just created' },
   'src/hooks/useJournalBlockCreation.ts': {

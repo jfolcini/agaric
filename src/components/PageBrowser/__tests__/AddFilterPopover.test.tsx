@@ -816,7 +816,9 @@ describe('AddFilterPopover', () => {
         return null
       })
       useResolveStore.setState({
-        cache: new Map([[`${SPACE}::PAGE_C`, { title: 'Hidden Gem', deleted: false }]]),
+        cache: new Map([
+          [`${SPACE}::PAGE_C`, { title: 'Hidden Gem', deleted: false, resolved: true }],
+        ]),
         version: 1,
       })
 

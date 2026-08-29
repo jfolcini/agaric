@@ -14,7 +14,7 @@ import { useEffect, useMemo } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import { resolveStoreTitle } from '@/lib/block-title'
+import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -78,7 +78,7 @@ export async function fetchAndCacheLinks(
     // K+M full-Map clones + K+M version bumps. batchSet diffs-once /
     // clones-once / bumps-once (#753) and, like `set`, writes under
     // activeSpaceId() and caps via evictOldest — behaviour is preserved.
-    const entries: Array<{ id: string; title: string; deleted: boolean }> = []
+    const entries: Array<{ id: string; title: string; deleted: boolean; resolved?: boolean }> = []
     for (const r of resolved) {
       // #4228/#4239 — one gate, `resolveStoreTitle`, shared with every other
       // seed writer (`@/lib/block-title`'s docblock enumerates them), so the
@@ -98,9 +98,17 @@ export async function fetchAndCacheLinks(
     // placeholder so the chip's resolveStatus hits and the broken-link
     // styling fires; without this, an unknown id falls through to the
     // 'active' default and the chip silently renders as live.
+    //
+    // #4238 — this is the ONE writer that stores `resolved: false`, and it is
+    // what the flag exists for: it is the only entry in the cache that stands
+    // for "nothing was returned" rather than "here is the row". Before #4238
+    // that distinction was carried by the `[[id…]]` bytes alone, which is why
+    // a resolved-but-BLANK row (a different thing entirely) had to imitate
+    // them. The label is still stored so any direct `.title` reader agrees
+    // with the resolvers, but it is `resolved` that consumers ask.
     for (const id of ids) {
       if (resolvedIds.has(id)) continue
-      entries.push({ id, title: `[[${id.slice(0, 8)}...]]`, deleted: true })
+      entries.push({ id, title: unresolvedBlockLabel(id), deleted: true, resolved: false })
     }
     store.batchSet(entries)
   } catch (err) {

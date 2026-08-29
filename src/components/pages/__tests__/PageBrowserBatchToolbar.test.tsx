@@ -57,6 +57,20 @@ const mockedToastError = vi.mocked(toast.error)
 
 const SELECTED = ['P1', 'P2', 'P3']
 
+/**
+ * #4480 — `delete_blocks_by_ids` replies with a `BatchDeleteResponse`, not a
+ * bare count. `cascadedPageIds` models the half the frontend cannot see: PAGE
+ * blocks the backend cascade tombstoned that the caller never selected (a
+ * selected page's nested page children). Defaults to the roots alone, which is
+ * the flat-selection case every pre-#4480 test was written against.
+ */
+function trashReply(rootIds: string[], cascadedPageIds: string[] = []) {
+  return {
+    deleted_count: rootIds.length + cascadedPageIds.length,
+    affected_page_ids: [...rootIds, ...cascadedPageIds],
+  }
+}
+
 const tagRows = [
   { tag_id: 'TAG_A', name: 'alpha', usage_count: 2, updated_at: '2025-01-01T00:00:00Z' },
   { tag_id: 'TAG_B', name: 'beta', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
@@ -128,7 +142,7 @@ describe('PageBrowserBatchToolbar', () => {
 
   it('Trash fires delete_blocks_by_ids and clears + refreshes once confirmed', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(3) // delete_blocks_by_ids → count
+    mockedInvoke.mockResolvedValueOnce(trashReply(SELECTED)) // delete_blocks_by_ids
     const { onClearSelection, onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-trash-btn'))
@@ -153,7 +167,7 @@ describe('PageBrowserBatchToolbar', () => {
   // list-accepting IPC `usePageDeleteAction` already uses.
   it('the success toast exposes an Undo that restores the trashed ids', async () => {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(3)
+    mockedInvoke.mockResolvedValueOnce(trashReply(SELECTED))
     const { onMutated } = renderToolbar()
 
     await user.click(screen.getByTestId('page-batch-trash-btn'))
@@ -554,9 +568,9 @@ describe('batch trash — name-cache fan-out (#4008 review note 3)', () => {
     return { changes, unsubscribe }
   }
 
-  async function confirmTrash(ids: string[]): Promise<void> {
+  async function confirmTrash(ids: string[], cascadedPageIds: string[] = []): Promise<void> {
     const user = userEvent.setup()
-    mockedInvoke.mockResolvedValueOnce(ids.length)
+    mockedInvoke.mockResolvedValueOnce(trashReply(ids, cascadedPageIds))
     renderToolbar({ selectedIds: ids })
     await user.click(screen.getByTestId('page-batch-trash-btn'))
     await user.click(
@@ -598,6 +612,208 @@ describe('batch trash — name-cache fan-out (#4008 review note 3)', () => {
     } finally {
       unsubscribe()
     }
+  })
+})
+
+// #4480 — the batch trash cascade walks `parent_id` with NO page-boundary
+// stop, so selecting a page whose children include PAGES trashes those
+// children too. Until #4480 `delete_blocks_by_ids` replied with a bare count,
+// so `handleTrash` could only evict the roots it had sent, and the `[[`
+// picker's per-space cache (filled from `list_all_pages_in_space`:
+// `block_type = 'page' AND deleted_at IS NULL AND space_id = ?`) went on
+// offering pages that were now in the trash — #4450's defect one level down.
+//
+// The fix is the backend reporting `affected_page_ids`, the PAGE membership of
+// the cohort it actually tombstoned, and `handleTrash` fanning out over the
+// UNION of that and its own input list.
+//
+// Note the asymmetry with the sibling move tests below, which is measured and
+// not a matter of taste: `move_blocks_to_space` does NOT drag nested pages
+// along (a page's `space_id` is authoritative, and the `space` projection's
+// `WHERE id = ? OR page_id = ?` fan-out cannot reach a page whose `page_id` is
+// its own id), so `handleMoveToSpace` evicting only its roots is correct.
+// Pinned backend-side by
+// `move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480`.
+describe('batch trash — cascaded nested pages (#4480)', () => {
+  /** Subscribe to the real bus for the duration of one test. */
+  function recordChanges(): { changes: NameChange[]; unsubscribe: () => void } {
+    const changes: NameChange[] = []
+    const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
+    return { changes, unsubscribe }
+  }
+
+  async function confirmTrash(ids: string[], cascadedPageIds: string[] = []): Promise<void> {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValueOnce(trashReply(ids, cascadedPageIds))
+    renderToolbar({ selectedIds: ids })
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ids })
+    })
+  }
+
+  // THE over-eviction guard, and the reason it has to be an event count.
+  //
+  // A cache-level assertion cannot carry this weight: the harness's
+  // `list_all_pages_in_space` mock is static, so a wholesale
+  // `invalidateNameCaches()` self-heals on the next synchronous refetch and an
+  // "unrelated sibling still present" arm can never fail on its own. Counting
+  // the bus events is what distinguishes a NARROW eviction from a correct-
+  // looking wipe.
+  //
+  // The exact-equality assertion falsifies four distinct wrong versions:
+  //   * `for (const id of ids)` (the pre-#4480 code) → 1 event, `P_NESTED`
+  //     missing. The bug.
+  //   * `invalidateNameCaches()` whenever the cascade touched anything →
+  //     `[{kind:'invalidated'}]`. The alternative #4480 rejects; it throws
+  //     away a warm cache on a routine delete.
+  //   * `[...ids, ...affected_page_ids]` fanned out as an ARRAY, not a Set →
+  //     3 events, because the backend echoes the roots back inside
+  //     `affected_page_ids`. Duplicate events are O(listeners x pages) of
+  //     wasted synchronous work each.
+  //   * an event scoped to anything but the origin → `spaceId` mismatch.
+  it('evicts the nested pages the cascade swept, and nothing else', async () => {
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      // The user selected P_ROOT only. The backend cascade also tombstoned
+      // P_NESTED (a page child) and reports both back.
+      await confirmTrash(['P_ROOT'], ['P_NESTED'])
+      await waitFor(() => {
+        expect(changes).toHaveLength(2)
+      })
+      expect(changes).toEqual([
+        { kind: 'removed', entity: 'page', id: 'P_ROOT', spaceId: 'SPACE_TEST' },
+        { kind: 'removed', entity: 'page', id: 'P_NESTED', spaceId: 'SPACE_TEST' },
+      ] satisfies NameChange[])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // The fan-out is the UNION of the selection and the reported cohort, not a
+  // replacement. An id the backend SKIPPED — missing, or soft-deleted by a
+  // concurrent write between selection and call — is absent from
+  // `affected_page_ids` by construction, and dropping it would be a silent
+  // regression of the pre-#4480 behaviour on a path no other test covers.
+  it('still evicts a selected id the backend skipped', async () => {
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      // P_GONE was selected but never made it into the cohort; the backend
+      // reports only P_LIVE.
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce({
+        deleted_count: 1,
+        affected_page_ids: ['P_LIVE'],
+      })
+      renderToolbar({ selectedIds: ['P_LIVE', 'P_GONE'] })
+      await user.click(screen.getByTestId('page-batch-trash-btn'))
+      await user.click(
+        await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+      )
+      await waitFor(() => {
+        expect(changes).toHaveLength(2)
+      })
+      expect(changes.map((c) => (c.kind === 'removed' ? c.id : c.kind))).toEqual([
+        'P_LIVE',
+        'P_GONE',
+      ])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // The `NAME_CACHE_FANOUT_MAX_IDS` budget exists because `notifyPageRemoved`
+  // is a synchronous O(ids x listeners x pages) fan-out. #4480 makes the
+  // emitted set larger than the selection, so the threshold must be measured
+  // against what will ACTUALLY be emitted.
+  //
+  // NON-TAUTOLOGY: 20 selected roots is comfortably under the cap of 25, so
+  // the pre-#4480 `ids.length > NAME_CACHE_FANOUT_MAX_IDS` test passes and the
+  // code takes the per-id branch — firing 30 synchronous events, the exact
+  // frame-budget overrun the cap was measured to prevent. Only a check against
+  // the union collapses this into one invalidation.
+  it('measures the fan-out budget against the union, not the selection', async () => {
+    const roots = Array.from({ length: 20 }, (_, i) => `ROOT_${i}`)
+    const nested = Array.from({ length: 10 }, (_, i) => `NESTED_${i}`)
+    expect(roots.length).toBeLessThanOrEqual(NAME_CACHE_FANOUT_MAX_IDS)
+    expect(roots.length + nested.length).toBeGreaterThan(NAME_CACHE_FANOUT_MAX_IDS)
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      await confirmTrash(roots, nested)
+      await waitFor(() => {
+        expect(changes).toHaveLength(1)
+      })
+      expect(changes).toEqual([{ kind: 'invalidated' } satisfies NameChange])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  // End-to-end against the picker cache itself, mirroring the #4450 sibling
+  // below. `P_STAYS` present alongside `P_NESTED` absent rules out the one
+  // alternative explanation that would make the ABSENT arm vacuous — "the
+  // cache was never populated" — which is why the `before` assertion checks
+  // all three ids are offered first.
+  //
+  // It does NOT prove the fix is narrow: a full-cache wipe self-heals here,
+  // because the list refetches synchronously from the static
+  // `list_all_pages_in_space` mock and brings everything back. Narrowness is
+  // pinned by the event-count test at the top of this describe. Keep both.
+  it('a cascaded nested page stops being offered by the [[ cache, with no space switch', async () => {
+    const user = userEvent.setup()
+    function pageRow(id: string, content: string) {
+      return {
+        id,
+        content,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      }
+    }
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return Promise.resolve([
+          pageRow('P_ROOT', 'Root Page'),
+          pageRow('P_NESTED', 'Nested Page'),
+          pageRow('P_STAYS', 'Stays Page'),
+        ])
+      }
+      if (cmd === 'delete_blocks_by_ids') {
+        // The user selected P_ROOT; the cascade also took its page child.
+        return Promise.resolve(trashReply(['P_ROOT'], ['P_NESTED']))
+      }
+      return strictInvokeFallback(cmd)
+    })
+
+    const { result: resolveResult } = renderHook(() => useBlockResolve())
+    const before = await resolveResult.current.searchPages('')
+    const idsBefore = before.filter((i) => !i.isCreate).map((i) => i.id)
+    // The cache is PROVEN warm before the trash — otherwise the absence
+    // assertions below would hold against an empty cache for free.
+    expect(idsBefore).toEqual(expect.arrayContaining(['P_ROOT', 'P_NESTED', 'P_STAYS']))
+
+    renderToolbar({ selectedIds: ['P_ROOT'] })
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['P_ROOT'] })
+    })
+
+    // Still viewing SPACE_TEST throughout — no space switch.
+    const after = await resolveResult.current.searchPages('')
+    const idsAfter = after.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(idsAfter).not.toContain('P_ROOT')
+    // The one #4480 is about: the caller never named this id, and before the
+    // fix it survived in the cache.
+    expect(idsAfter).not.toContain('P_NESTED')
+    expect(idsAfter).toContain('P_STAYS')
   })
 })
 

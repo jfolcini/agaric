@@ -8,12 +8,11 @@ import { logger } from '@/lib/logger'
  * wrapper it used to be reached through was a dead wrapper, removed in
  * #4410, so that module name is deliberately left as prose: there is no
  * live path left to cite) can surface anything; on desktop the capability
- * grant is sufficient
- * and this resolves `true`
- * without prompting. The `@tauri-apps/plugin-notification` JS API is
- * imported dynamically so this module stays usable (and testable) in plain
- * web / test contexts where the plugin is unavailable — a failed import
- * resolves `false` rather than throwing.
+ * grant is sufficient and this resolves `true` without prompting. The
+ * `@tauri-apps/plugin-notification` JS API is imported dynamically so this
+ * module stays usable (and testable) in plain web / test contexts where the
+ * plugin is unavailable — a failed import resolves `false` rather than
+ * throwing.
  *
  * @returns `true` if notifications may be shown, `false` if denied or the
  *   plugin is unavailable.

@@ -1885,7 +1885,7 @@ describe('PageHeader rich title rendering', () => {
   it('title with [[ULID]] renders without contentEditable in display mode', () => {
     setupTagMock([])
     useResolveStore.setState({
-      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
+      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false, resolved: true }]]),
       version: 1,
       _preloaded: false,
     })
@@ -1900,7 +1900,7 @@ describe('PageHeader rich title rendering', () => {
     const user = userEvent.setup()
     setupTagMock([])
     useResolveStore.setState({
-      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
+      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false, resolved: true }]]),
       version: 1,
       _preloaded: false,
     })
@@ -1921,7 +1921,7 @@ describe('PageHeader rich title rendering', () => {
   it('a11y: no violations with rich title display', async () => {
     setupTagMock([])
     useResolveStore.setState({
-      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
+      cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false, resolved: true }]]),
       version: 1,
       _preloaded: false,
     })
