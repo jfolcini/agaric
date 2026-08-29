@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 20 cases pass |
+| control (restored) | 21 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 20 cases pass (was 10).
+- `--self-test`: 21 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -462,3 +462,32 @@ five. Direction 11 pins `prek.toml` ↔ `CRATE_ROOTS` mechanically; **nothing pi
 In a change whose entire subject is a comment-bound list rotting, that is the one pairing still
 resting on a promise. It stays deferred because it is cross-language and genuinely belongs to the
 general mechanism — but it is deferred with the observation recorded, not waved off.
+
+## Review round eleven — and one note that was wrong
+
+Four fixes, and the substantive one is a consistency argument I should have made myself.
+
+**`--update-baseline` printed `<-- REDUCTION` and then exited 0.** The missing-root case already
+*refuses*; a reduction was merely reported. That asymmetry has no principle behind it — I had
+written on #4501 that "a ratchet that can be re-anchored downward without saying so is a ratchet
+in name", and then shipped a re-anchor path whose strongest signal was advisory. It now refuses,
+with `--allow-reductions` as the explicit opt-in for the legitimate case. The baseline is still
+rewritten first, deliberately, so the operator can read the diff the message points at; the
+non-zero exit is what stops the commit carrying it. Pinned in both directions and falsified.
+
+Also: the return annotation still said `list[str]` after round ten changed it to tuples;
+`BASELINE_PATH` was never `.resolve()`d while `baseline_touched` compares it against a resolved
+argv path, which would have silently disabled the force-whole-tree-walk under any symlinked
+component; and `CRATE_ROOTS` gained a line saying it is crate `src/` **deliberately**, since as
+written it read as "everywhere a fragment could live" — the reading that lets the list rot.
+
+**One note was wrong, and checking mattered.** The review said the hook-id split key
+`id = "check-space-filter-drift"` is a prefix of `id = "check-space-filter-drift-selftest"` and
+that the case only works because the drift hook is declared first. It is not: the key includes
+the closing quote, so it cannot match the `-selftest` id, and the file has exactly one
+occurrence. A round-ten review had verified this correctly. Two reviews disagreed and the tie
+was broken by running it, which is the only way it should have been broken.
+
+That is worth recording alongside the ten rounds of findings I accepted: the reviewer has been
+right about something real every single round, and was still wrong here. "Relayed claims are
+unverified until you verify them" cuts toward the reviewer as well as toward me.

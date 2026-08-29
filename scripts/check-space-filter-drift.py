@@ -83,7 +83,11 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BASELINE_PATH = REPO_ROOT / "src-tauri" / "space-filter-baseline.txt"
+# `.resolve()`: `baseline_touched` in `main()` compares this against a
+# resolved argv path, and an unresolved constant makes that comparison fail
+# silently the moment any component is a symlink — disabling the
+# force-whole-tree-walk exactly when the baseline is being edited. #3255.
+BASELINE_PATH = (REPO_ROOT / "src-tauri" / "space-filter-baseline.txt").resolve()
 
 # #3255: this guard used to scan only `src-tauri/src/`. The #2621 workspace
 # split moved `backlink/`, `pagination/` and `tag_query/` — 21 of the 31
@@ -121,6 +125,14 @@ BASELINE_PATH = REPO_ROOT / "src-tauri" / "space-filter-baseline.txt"
 # assert on. The per-file count baseline below is the only net for removal and
 # for degradation to a bare `b.space_id = ?N`, which is why its scope going
 # stale mattered even though the parity test stayed green throughout.
+# Each entry is a crate's `src/` and DELIBERATELY nothing else: `src-tauri/
+# tests/`, `src-tauri/benches/` and `src-tauri/fuzz/` are outside the walk.
+# No canonical fragment lives in them today (the one `benches/` mention is a
+# `?N` doc comment that cannot match GUARD_RE), and they are excluded because
+# they are not production read paths — not because fragments cannot appear
+# there. Read as "the production crate sources", not "everywhere a fragment
+# could live"; the latter is the reading that lets this list rot, which is the
+# whole subject of #3255.
 CRATE_ROOTS = [
     "src-tauri/agaric-store/src/",
     "src-tauri/agaric-engine/src/",
@@ -351,8 +363,11 @@ def _is_under(path: Path, root: Path) -> bool:
     return True
 
 
-def _assert_paths_exist(baseline: dict[str, int]) -> list[str]:
-    """Return one message per baseline entry whose file is gone (#3255).
+def _assert_paths_exist(baseline: dict[str, int]) -> list[tuple[str, str]]:
+    """Return `(kind, message)` per stale path (#3255).
+
+    `kind` is one of `baseline`, `deny`, `root` — see the note on the return
+    shape below for why the caller needs it typed rather than inferred.
 
     Also checks DENY_FILES: a deny entry that stops resolving silently
     un-excludes nothing and is the exact bug this guard shipped — the single
@@ -904,6 +919,32 @@ def run_cli_self_test(record) -> None:
                 "every CRATE_ROOTS entry matched by the hook's files: regex",
             )
 
+        # --- #3255 direction 12: --update-baseline REFUSES a reduction -------
+        # The re-anchor path rewrites the whole baseline, so its reduction
+        # report is the only thing standing between an operator and silently
+        # absorbing the removal this guard exists to catch. Printing it and
+        # exiting 0 left that advisory. Pinned in both directions: refuse by
+        # default, proceed under the explicit opt-in.
+        shrink = src / "shrink.rs"
+        shrink.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/shrink.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, ["--update-baseline"])
+        refused = code != 0 and "REFUSING" in out and "2 -> 0" in out
+        baseline_path.write_text("2 src-tauri/src/shrink.rs\n", encoding="utf-8")
+        code2, _ = _run_cli(guard, ["--update-baseline", "--allow-reductions"])
+        shrink.unlink()
+        if refused and code2 == 0:
+            record("CLI: --update-baseline refuses a reduction, opt-in allows", True, True)
+        else:
+            record(
+                "CLI: --update-baseline refuses a reduction, opt-in allows",
+                (code, code2, out.strip()),
+                "non-zero + REFUSING without the flag, exit 0 with --allow-reductions",
+            )
+
 
 def run_self_test() -> int:
     """Assert scan_text/parse_baseline's exit-relevant behavior.
@@ -1075,16 +1116,28 @@ def main(argv: list[str]) -> int:
             print(line, file=sys.stderr)
             if new_n < old_n:
                 drops.append(rel)
-        if drops:
+        if drops and "--allow-reductions" not in argv:
+            # REFUSE, not warn. The missing-root case above already refuses,
+            # and a reduction deserves the same treatment for the same reason:
+            # a ratchet that can be re-anchored downward without an explicit
+            # act is a ratchet in name. Printing the reduction and exiting 0
+            # left the strongest signal this path produces advisory, so a
+            # scripted or inattentive re-anchor still absorbed the drift the
+            # baseline exists to catch.
+            #
+            # The baseline HAS been rewritten at this point — deliberately, so
+            # the operator can read the diff the message points at — and the
+            # non-zero exit is what stops the commit that would carry it.
             print(
-                "\n  A canonical space-filter guard was REMOVED from the "
-                "file(s) marked above.\n"
-                "  If that was not the point of this re-anchor, you have just "
-                "absorbed the\n"
-                "  exact drift this baseline exists to catch — restore the "
-                "guard and re-run.",
+                "\n  REFUSING: a canonical space-filter guard was REMOVED "
+                "from the file(s) marked above.\n"
+                "  The baseline on disk now reflects that removal — read "
+                "`git diff` before keeping it.\n"
+                "  If the removal is intended, re-run with "
+                "`--allow-reductions` to record it.",
                 file=sys.stderr,
             )
+            return 1
         return 0
 
     baseline = read_baseline()
