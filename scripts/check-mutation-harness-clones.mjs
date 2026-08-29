@@ -2,6 +2,24 @@
 // ─────────────────────────────────────────────────────────────────────
 // Mutation-harness source-pin guard (#3907).
 //
+// THREE WAYS THIS CAN BREAK A BUILD, worth knowing before one of them
+// surprises you: any line in a harness whose comment OPENS with the
+// `mutation-harness-source-pin:` keyword is now required to be a well-formed
+// pin. So each of the following is a hard failure rather than being ignored
+// (added by #4509 for the first, #4526 for the other two):
+//   - a prose comment that merely mentions the keyword — for instance
+//     `// mutation-harness-source-pin: see the guard for the syntax`;
+//   - the keyword spelled with the wrong letter case — `// MUTATION-HARNESS-
+//     SOURCE-PIN: ...` — even with an otherwise well-formed body;
+//   - a single-line block comment envelope — `/* mutation-harness-source-
+//     pin: ... */` or `/** mutation-harness-source-pin: ... */` opened and
+//     closed on one line — even with an otherwise well-formed body.
+// That is the intended trade in all three: each of these lines is genuinely
+// indistinguishable from a pin with a typo or an unsupported spelling in it,
+// and treating any of them as prose is what let a malformed marker vanish in
+// the first place. Refer to the marker without leading with the keyword, in
+// exactly this case, in a `//` line or a `*` JSDoc continuation line.
+//
 // `scripts/mutation-harnesses/*.harness.ts` each contain hand-copied
 // CLONES of a real function under test, plus hand-copied clones of the
 // specific mutants they discriminate — necessary, because you cannot
@@ -129,6 +147,78 @@ const HARNESS_DIR = path.join(ROOT, 'scripts', 'mutation-harnesses')
 // shrinking the pin count.
 const PIN_PREFIX_RE = /^\s*(?:\/\/|\*(?!\/))\s*mutation-harness-source-pin:\s*(.*)$/
 const PIN_BODY_RE = /^(\S+?)#([A-Za-z_$][A-Za-z0-9_$]*)\s+sha256=([0-9a-f]{64})\s*$/
+
+// #4526 — `PIN_PREFIX_RE`'s prefix substring is byte-identical to the old
+// (pre-#4509) `PIN_RE`'s, and both shared the same blind spot: a line that a
+// human would obviously read as an ATTEMPTED marker, but that doesn't fit
+// one of the two envelopes above, matched neither regex and — like a
+// malformed body before #4509 — was silently dropped, indistinguishable
+// from an ordinary comment. Two more envelope regexes exist purely to
+// DETECT such an attempt so `findPins` can report it as its own kind of
+// malformed result; neither one ever produces a well-formed pin, even when
+// its body would otherwise satisfy `PIN_BODY_RE`. Accepting either as valid
+// would be a second, drift-prone parsing path for the canonical marker
+// syntax `PIN_BODY_RE` already defines — the issue this closes (#4526)
+// explicitly chose "tell the author" over "guess what they meant" for
+// exactly that reason.
+//
+// `PIN_PREFIX_CI_RE` is `PIN_PREFIX_RE` with the keyword matched
+// case-insensitively (and captured, to report what was actually written).
+// By the time `findPins` falls through to this regex, `PIN_PREFIX_RE` has
+// already failed on the same line — and the two differ only in the `i` flag
+// and none of `//`, `*`, `:` are letters — so a match here always means the
+// keyword's letter case is what's wrong, never the envelope shape. Only the
+// keyword is matched case-insensitively; the body — captured here as a bare
+// `(.*)`, verbatim and unparsed — is never run through `PIN_BODY_RE` on this
+// path at all, deliberately (that is exactly what the `bothWrong` self-test
+// assertion below pins: a wrong-case keyword with an also-malformed body
+// still comes back as a single `wrong-case` diagnosis, not two). The intent
+// is that this path never grows a second, looser body validation of its
+// own: an exact-case `sha256=` and lowercase hex is what `PIN_BODY_RE`
+// requires, and a body-check added here "for the diagnostic" would risk
+// quietly becoming a second, case-insensitive idea of what a valid hash is
+// — a case-INSENSITIVE hash means something different from the hex
+// `sha256hex` produces.
+const PIN_PREFIX_CI_RE = /^\s*(?:\/\/|\*(?!\/))\s*(mutation-harness-source-pin):\s*(.*)$/i
+
+// A single-line `/* mutation-harness-source-pin: ... */` or
+// `/** mutation-harness-source-pin: ... */` block comment — opened and
+// closed on the same line, keyword matched case-insensitively since a wrong
+// envelope and a wrong case are independent mistakes and this guard reports
+// each attempt with ONE diagnosis, not a combinatorial pile of them. This
+// envelope is never accepted as well-formed regardless of case or body —
+// see the comment above.
+//
+// Deliberately UNANCHORED at the end (no trailing `\s*$`): a line's `/*` at
+// column 0 (mod leading whitespace) is a real comment opener regardless of
+// what follows the closing `*/` on that same line — nothing precedes it to
+// make `/*` ambiguous, unlike the mid-line cases below. So
+// `/* mutation-harness-source-pin: ... */ const x = 1` is caught by this
+// same regex and reported with the same `block-comment` reason as the
+// no-trailing-content case; needing no tokenizer to see it is exactly what
+// distinguishes it from the two gaps that follow.
+//
+// Deliberately NOT covered by this regex (or by anything else in this
+// file), enumerated rather than left to be discovered by a future false
+// negative: (1) a trailing `// mutation-harness-source-pin: ...` comment
+// after real code on the same line (`const x = 1 // mutation-harness-...`),
+// and its mirror image, a marker starting right after a `*/` that closes a
+// preceding comment on the same line — both require knowing where a
+// comment BEGINS mid-line, which needs the real tokenizer's division-vs-
+// regex-vs-comment resolution (`scripts/lib/js-scanner.mjs`), not a line
+// regex: `//` and `/*` are not reliably comment openers when something
+// precedes them on the line. (2) A multi-line PLAIN `/* ... */` block (no
+// leading `*` per line) with the marker on an inner line — the issue named
+// "a single-line block comment" specifically, this is a different shape,
+// and it is not the "existing header doc comment" JSDoc case `PIN_PREFIX_RE`
+// already supports either. Both are the same class of gap this issue closes
+// and could be closed the same way; they are left for a future pass rather
+// than folded in here, in the same spirit #4509's own text used to defer
+// this issue's scope in the first place — not "impossible", just "a bigger
+// change than this one line regex covers, and not what was reported." Unlike
+// the trailing-content case above, both of these genuinely need the
+// tokenizer, which is why they stay gaps while trailing content does not.
+const PIN_BLOCK_LINE_RE = /^\s*\/\*\*?\s*(mutation-harness-source-pin):\s*(.*?)\s*\*\//i
 
 /** Escape a string for safe interpolation into a `RegExp` source. */
 function escapeRegExp(s) {
@@ -446,19 +536,30 @@ function nameAppearsInOtherForm(search, name) {
 // ─── pin discovery ──────────────────────────────────────────────────
 
 /**
- * Find every marker LINE in `harnessSrc` — both well-formed pins and
- * malformed ones (#4509). Returns one entry per line matching
- * `PIN_PREFIX_RE`:
+ * Find every marker LINE in `harnessSrc` — well-formed pins, malformed
+ * bodies (#4509), and, now, attempted markers in an envelope or keyword
+ * case this guard doesn't accept (#4526). Returns one entry per line
+ * matching `PIN_PREFIX_RE`, `PIN_BLOCK_LINE_RE`, or `PIN_PREFIX_CI_RE`:
  *   - well-formed: `{ lineNo, malformed: false, sourcePath, symbolName,
  *     expectedHash }`
- *   - malformed: `{ lineNo, malformed: true, raw }`, where `raw` is the
- *     text after `mutation-harness-source-pin:` verbatim (for the
- *     violation message) — the body didn't match `PIN_BODY_RE`, so there
- *     is no path/symbol/hash to trust.
- * A line that doesn't even match the prefix (no `mutation-harness-
- * source-pin:` keyword) is not a marker at all and is omitted, same as
- * before — this only widens what counts as "matches the prefix", not what
- * counts as "a marker line".
+ *   - malformed body (#4509): `{ lineNo, malformed: true, reason: 'body',
+ *     raw }`, where `raw` is the text after `mutation-harness-source-pin:`
+ *     verbatim — the body didn't match `PIN_BODY_RE`, so there is no
+ *     path/symbol/hash to trust.
+ *   - malformed envelope, a single-line block comment (#4526):
+ *     `{ lineNo, malformed: true, reason: 'block-comment', raw }`, `raw`
+ *     being the text between the keyword and the block comment's closer.
+ *   - malformed keyword case (#4526): `{ lineNo, malformed: true,
+ *     reason: 'wrong-case', raw, foundKeyword }`, `foundKeyword` the
+ *     verbatim (wrongly-cased) keyword text and `raw` the rest of the line.
+ * All three malformed shapes are reported, never silently dropped and
+ * never promoted to well-formed — a body that would otherwise satisfy
+ * `PIN_BODY_RE` is not parsed out of an envelope/case-malformed line, so
+ * there is exactly one path that produces a trusted `sourcePath`/
+ * `symbolName`/`expectedHash` triple.
+ * A line matching NONE of the three regexes is not an attempted marker at
+ * all (ordinary prose, possibly mentioning the keyword later in the line
+ * rather than opening with it) and is omitted, same as before.
  */
 function findPins(harnessSrc) {
   // String/template contents are blanked (comments kept) so a pin-shaped
@@ -471,17 +572,41 @@ function findPins(harnessSrc) {
     .map((line, idx) => ({ line, lineNo: idx + 1 }))
     .map(({ line, lineNo }) => {
       const prefixMatch = line.match(PIN_PREFIX_RE)
-      if (!prefixMatch) return null
-      const rest = prefixMatch[1]
-      const bodyMatch = rest.match(PIN_BODY_RE)
-      if (!bodyMatch) return { lineNo, malformed: true, raw: rest.trim() }
-      return {
-        lineNo,
-        malformed: false,
-        sourcePath: bodyMatch[1],
-        symbolName: bodyMatch[2],
-        expectedHash: bodyMatch[3],
+      if (prefixMatch) {
+        const rest = prefixMatch[1]
+        const bodyMatch = rest.match(PIN_BODY_RE)
+        if (!bodyMatch) return { lineNo, malformed: true, reason: 'body', raw: rest.trim() }
+        return {
+          lineNo,
+          malformed: false,
+          sourcePath: bodyMatch[1],
+          symbolName: bodyMatch[2],
+          expectedHash: bodyMatch[3],
+        }
       }
+
+      // #4526 — `PIN_PREFIX_RE` already failed on this line (checked
+      // above), so a match here is one of the two envelope/case gaps that
+      // regex cannot see: a single-line block comment, or a keyword whose
+      // letter case doesn't match exactly. Checked in this order only
+      // because the two are mutually exclusive by their opening token
+      // (`/*` vs `//`/`*`) — a line can't match both.
+      const blockMatch = line.match(PIN_BLOCK_LINE_RE)
+      if (blockMatch) {
+        return { lineNo, malformed: true, reason: 'block-comment', raw: blockMatch[2].trim() }
+      }
+      const ciMatch = line.match(PIN_PREFIX_CI_RE)
+      if (ciMatch) {
+        return {
+          lineNo,
+          malformed: true,
+          reason: 'wrong-case',
+          foundKeyword: ciMatch[1],
+          raw: ciMatch[2].trim(),
+        }
+      }
+
+      return null
     })
     .filter((x) => x !== null)
 }
@@ -566,22 +691,73 @@ function checkTree({ root, harnessDir }) {
       // missing `#symbolName`, a missing `sha256=`, or trailing garbage
       // after an otherwise-valid hash) is reported as a violation, named by
       // file and line, rather than silently excluded from `pinCount` the
-      // way "not a marker at all" is. This is NOT counted into `pinCount`:
-      // it was never verified against anything, and the `OK: N source-
-      // pin(s) ...` line below only ever prints once `violations` is empty
-      // — i.e. once every malformed marker here has been fixed or removed
-      // — so `pinCount` never advertises a malformed line as a verified pin.
+      // way "not a marker at all" is. #4526 adds two more `malformed`
+      // reasons — a single-line block-comment envelope, and a wrong-case
+      // keyword — that are reported the same way, for the same reason: an
+      // attempted marker this guard doesn't recognise used to be
+      // indistinguishable from "not a marker at all". None of the three
+      // are counted into `pinCount`: none were ever verified against
+      // anything, and the `OK: N source-pin(s) ...` line below only ever
+      // prints once `violations` is empty — i.e. once every malformed
+      // marker here has been fixed or removed — so `pinCount` never
+      // advertises a malformed line as a verified pin.
       if (pin.malformed) {
-        violations.push({
-          harness: relHarness,
-          message:
+        let message
+        if (pin.reason === 'block-comment') {
+          // #4526 — the envelope itself is the defect here, independent of
+          // whether `pin.raw` would otherwise satisfy `PIN_BODY_RE`; the
+          // message never claims the body is wrong, only that this shape
+          // is not one of the two this guard reads.
+          message =
+            `${relHarness}:${pin.lineNo} has a mutation-harness-source-pin marker written in a ` +
+            `single-line block comment (found "${pin.raw}" inside it). This envelope is never ` +
+            'accepted as a pin, well-formed body or not — the only recognised forms are a `// ' +
+            'mutation-harness-source-pin: ...` line comment, or a `*` continuation line inside a ' +
+            'multi-line `/** ... */` JSDoc block. A marker in an unsupported envelope used to be ' +
+            'silently invisible — indistinguishable from an ordinary comment — so the clone it was ' +
+            'meant to gate went unpinned with no signal anywhere; it now fails instead. Rewrite the ' +
+            'marker in a supported envelope rather than removing it.'
+        } else if (pin.reason === 'wrong-case') {
+          // #4526 — likewise, the keyword's case is the defect, independent
+          // of whether the rest of the line would otherwise parse.
+          message =
+            `${relHarness}:${pin.lineNo} has a mutation-harness-source-pin marker whose keyword is ` +
+            `not exactly lowercase (found "${pin.foundKeyword}:", followed by "${pin.raw}"). This ` +
+            'guard matches the keyword case-sensitively, so a differently-cased keyword used to be ' +
+            'silently invisible — indistinguishable from an ordinary comment — so the clone it was ' +
+            'meant to gate went unpinned with no signal anywhere; it now fails instead. Fix the ' +
+            'keyword\'s case to exactly "mutation-harness-source-pin:" rather than removing the line.'
+        } else {
+          // #4509 review — a shape-correct hash with something after it
+          // (most often a JSDoc `*/` closed on the same line) is the one
+          // malformed case where a reader will study the HASH and not the
+          // line ending, because the hash is the part that looks like it
+          // could be wrong. Name it when we can see it; the generic
+          // message keeps the rest.
+          //
+          // The `(?![0-9a-fA-F])` lookahead matters: without it, an
+          // OVERLONG hash — `sha256=` followed by 65+ hex characters, one
+          // fixture-worthy character too many — matches `[0-9a-f]{64}` on
+          // its first 64 characters and reports the 65th as "trailing",
+          // which asserts the hash "is well-formed" about a hash that is
+          // one character too long. Requiring the character right after
+          // the 64-run to be non-hex means a longer hex run never counts
+          // as a valid hash plus trailing content in the first place — the
+          // hint only fires for genuine trailing content like a stray `*/`.
+          const trailing = /sha256=[0-9a-f]{64}(?![0-9a-fA-F])(?<rest>.+)$/
+            .exec(pin.raw)
+            ?.groups?.rest?.trim()
+          const trailingHint = trailing
+            ? ` The hash itself is well-formed; what breaks it is the trailing "${trailing}" — a marker must end at the hash.`
+            : ''
+          message =
             `${relHarness}:${pin.lineNo} has a mutation-harness-source-pin marker that does not ` +
             `match the required shape "<repo-relative-path>#<symbolName> sha256=<64 lowercase hex ` +
             `chars>" (got "${pin.raw}"). A malformed marker used to be silently dropped — indistinguishable ` +
             'from an ordinary comment — so the clone it was meant to gate went unpinned with no ' +
-            'signal anywhere; it now fails instead. Fix the marker (or generate a correct pin) ' +
-            'rather than removing it.',
-        })
+            `signal anywhere; it now fails instead. Fix the marker (or generate a correct pin) rather than removing it.${trailingHint}`
+        }
+        violations.push({ harness: relHarness, message })
         continue
       }
       pinCount += 1
@@ -1348,6 +1524,221 @@ export function target(a: number, b: string): number {
     )
   }
 
+  // ── #4526: findPins() recognises two MORE attempted-marker envelopes ──
+  //
+  // `PIN_PREFIX_RE`'s prefix substring was byte-identical to the pre-#4509
+  // `PIN_RE`'s, and shared its blind spot one layer up: a line matching
+  // NEITHER envelope regex was — like a malformed body before #4509 —
+  // indistinguishable from an ordinary comment and silently dropped. These
+  // assertions call `findPins` directly, mirroring the #4509 block above.
+
+  const blockPin = findPins(
+    `/* mutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash} */\nexport {}\n`,
+  )
+  if (
+    blockPin.length === 1 &&
+    blockPin[0].malformed === true &&
+    blockPin[0].reason === 'block-comment' &&
+    blockPin[0].lineNo === 1 &&
+    blockPin[0].raw === `src/lib/x.ts#foo sha256=${validHash}`
+  ) {
+    ok(
+      'findPins reports a single-line /* ... */ block comment as a malformed block-comment envelope',
+    )
+  } else {
+    fail(
+      'findPins reports a single-line /* ... */ block comment as a malformed block-comment envelope',
+      JSON.stringify(blockPin),
+    )
+  }
+
+  // The `/** ... */` JSDoc-style spelling of the same single-line shape.
+  const jsdocBlockPin = findPins(
+    `/** mutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash} */\nexport {}\n`,
+  )
+  if (
+    jsdocBlockPin.length === 1 &&
+    jsdocBlockPin[0].malformed === true &&
+    jsdocBlockPin[0].reason === 'block-comment'
+  ) {
+    ok('findPins reports a single-line /** ... */ block comment the same way')
+  } else {
+    fail(
+      'findPins reports a single-line /** ... */ block comment the same way',
+      JSON.stringify(jsdocBlockPin),
+    )
+  }
+
+  // A fourth shape, found in review: real code trailing AFTER the closing
+  // `*/` on the same line (`/* ... */ const x = 1`). Unlike the two gaps
+  // enumerated below, this needs no tokenizer — the line still starts with
+  // `/*` at column 0 (mod leading whitespace), which is unambiguously a
+  // real comment opener, exactly like the no-trailing-content case above.
+  // It must therefore be DETECTED, not left invisible to both this
+  // enumeration and the tests, the way it was before this regex dropped
+  // its end-of-line anchor.
+  const blockPinWithTrailingCode = findPins(
+    `/* mutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash} */ const x = 1\n`,
+  )
+  if (
+    blockPinWithTrailingCode.length === 1 &&
+    blockPinWithTrailingCode[0].malformed === true &&
+    blockPinWithTrailingCode[0].reason === 'block-comment' &&
+    blockPinWithTrailingCode[0].raw === `src/lib/x.ts#foo sha256=${validHash}`
+  ) {
+    ok(
+      'findPins detects a single-line block comment marker with real code trailing after it on the same line (needs no tokenizer, unlike the two gaps below)',
+    )
+  } else {
+    fail(
+      'findPins detects a single-line block comment marker with real code trailing after it on the same line (needs no tokenizer, unlike the two gaps below)',
+      JSON.stringify(blockPinWithTrailingCode),
+    )
+  }
+
+  // A differently-cased keyword, in each of the two envelopes that
+  // otherwise accept it.
+  for (const [label, line] of [
+    ['a `//` line comment', `// MUTATION-HARNESS-SOURCE-PIN: src/lib/x.ts#foo sha256=${validHash}`],
+    [
+      'a `*` JSDoc continuation line',
+      ` * Mutation-Harness-Source-Pin: src/lib/x.ts#foo sha256=${validHash}`,
+    ],
+  ]) {
+    const found = findPins(`${line}\nexport {}\n`)
+    if (
+      found.length === 1 &&
+      found[0].malformed === true &&
+      found[0].reason === 'wrong-case' &&
+      found[0].raw === `src/lib/x.ts#foo sha256=${validHash}`
+    ) {
+      ok(
+        `findPins reports a differently-cased keyword in ${label} as a malformed wrong-case marker`,
+      )
+    } else {
+      fail(
+        `findPins reports a differently-cased keyword in ${label} as a malformed wrong-case marker`,
+        JSON.stringify(found),
+      )
+    }
+  }
+
+  // The two mistakes are independent: a wrong-case keyword TOGETHER with a
+  // body that is also malformed in the #4509 sense (a placeholder hash)
+  // still comes back as exactly one `wrong-case` diagnosis, not a crash and
+  // not a second, contradictory attempt to also validate the (irrelevant,
+  // since the envelope is already wrong) body.
+  const bothWrong = findPins(
+    '// MUTATION-HARNESS-SOURCE-PIN: src/lib/x.ts#foo sha256=PLACEHOLDER\nexport {}\n',
+  )
+  if (
+    bothWrong.length === 1 &&
+    bothWrong[0].malformed === true &&
+    bothWrong[0].reason === 'wrong-case'
+  ) {
+    ok(
+      'a wrong-case keyword together with an also-malformed body is still ONE wrong-case violation',
+    )
+  } else {
+    fail(
+      'a wrong-case keyword together with an also-malformed body is still ONE wrong-case violation',
+      JSON.stringify(bothWrong),
+    )
+  }
+
+  // ── #4526: template-string exclusion still holds for the NEW envelopes ──
+  //
+  // `blankStringsAndTemplates` blanks template-literal TEXT (not `${…}`
+  // code) before `findPins` ever splits into lines, same mechanism the
+  // existing "pin-shaped line inside a template literal" case below relies
+  // on for the canonical envelope. These two assertions prove that
+  // protection extends to the two new envelopes too, rather than being
+  // bypassed because the detection logic changed.
+  const blockPinInTemplate = findPins(
+    'export const sample = `\n' +
+      `/* mutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash} */\n` +
+      '`\n',
+  )
+  if (blockPinInTemplate.length === 0) {
+    ok(
+      'a block-comment-shaped marker living inside a template literal is not parsed as a real pin attempt',
+    )
+  } else {
+    fail(
+      'a block-comment-shaped marker living inside a template literal is not parsed as a real pin attempt',
+      JSON.stringify(blockPinInTemplate),
+    )
+  }
+
+  const wrongCaseInTemplate = findPins(
+    'export const sample = `\n' +
+      `// MUTATION-HARNESS-SOURCE-PIN: src/lib/x.ts#foo sha256=${validHash}\n` +
+      '`\n',
+  )
+  if (wrongCaseInTemplate.length === 0) {
+    ok(
+      'a wrong-case-keyword marker living inside a template literal is not parsed as a real pin attempt',
+    )
+  } else {
+    fail(
+      'a wrong-case-keyword marker living inside a template literal is not parsed as a real pin attempt',
+      JSON.stringify(wrongCaseInTemplate),
+    )
+  }
+
+  // ── #4526: envelopes deliberately left UNDETECTED ────────────────────
+  //
+  // Enumerated in `PIN_BLOCK_LINE_RE`'s own header comment as a considered
+  // choice, not an oversight: both require locating where a comment BEGINS
+  // mid-line, which a line regex cannot do reliably (a `//` or `/*` is not
+  // certainly a comment opener when something else precedes it on the
+  // line — that needs the real tokenizer's division-vs-regex-vs-comment
+  // resolution). These assertions pin the choice down as a choice: if
+  // either ever starts being detected, one of these should be updated
+  // deliberately, not silently start failing.
+
+  const trailingAfterCode = findPins(
+    `const x = 1 // mutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash}\n`,
+  )
+  if (trailingAfterCode.length === 0) {
+    ok(
+      'a trailing // marker after real code on the same line is NOT detected (deliberate — needs the real tokenizer, not a line regex)',
+    )
+  } else {
+    fail(
+      'a trailing // marker after real code on the same line is NOT detected (deliberate — needs the real tokenizer, not a line regex)',
+      JSON.stringify(trailingAfterCode),
+    )
+  }
+
+  const afterClosingStarSlash = findPins(
+    `/** doc */ // mutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash}\n`,
+  )
+  if (afterClosingStarSlash.length === 0) {
+    ok(
+      'a marker starting right after a same-line */ that closes a preceding comment is NOT detected (deliberate, same reason)',
+    )
+  } else {
+    fail(
+      'a marker starting right after a same-line */ that closes a preceding comment is NOT detected (deliberate, same reason)',
+      JSON.stringify(afterClosingStarSlash),
+    )
+  }
+
+  const multiLinePlainBlock = findPins(
+    `/*\nmutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash}\n*/\nexport {}\n`,
+  )
+  if (multiLinePlainBlock.length === 0) {
+    ok(
+      'a marker on an inner line of a multi-line PLAIN /* */ block (no leading `*`) is NOT detected (deliberate — a different shape than "single-line block comment")',
+    )
+  } else {
+    fail(
+      'a marker on an inner line of a multi-line PLAIN /* */ block (no leading `*`) is NOT detected (deliberate — a different shape than "single-line block comment")',
+      JSON.stringify(multiLinePlainBlock),
+    )
+  }
+
   // ── checkTree() end-to-end, on a synthetic filesystem ──────────────
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-harness-clones-selftest-'))
@@ -1840,6 +2231,114 @@ export function target(a: number, b: string): number {
       fail(
         'a malformed pin alongside a valid one FAILS, names only the bad line, and does not inflate pinCount',
         JSON.stringify(r),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 19 (#4526): the ISSUE'S OWN REPRO, end to end — a well-formed
+    // pin living alongside a single-line `/* ... */` block-comment marker.
+    // Before this fix this reported `violations: [], pinCount: 1`, exit 0,
+    // "OK" — the block-comment pin was invisible, not invalid, so the
+    // clone it named went unpinned with no signal anywhere. It must now
+    // FAIL, naming the second line, and `pinCount` must still be exactly 1
+    // (the well-formed pin only — the block-comment one was never
+    // verified against anything and must not inflate the trusted count).
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${originalHash}\n` +
+        `/* mutation-harness-source-pin: ${sourceRel}#example sha256=${originalHash} */\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (
+      r.violations.length === 1 &&
+      r.violations[0].message.includes(`${relHarnessPath}:2`) &&
+      r.violations[0].message.includes('block comment') &&
+      r.pinCount === 1
+    ) {
+      ok(
+        'issue repro: a well-formed pin alongside a single-line block-comment marker FAILS, names the block-comment line, pinCount stays 1',
+      )
+    } else {
+      fail(
+        'issue repro: a well-formed pin alongside a single-line block-comment marker FAILS, names the block-comment line, pinCount stays 1',
+        JSON.stringify(r),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 20 (#4526): the issue's second repro shape — a well-formed pin
+    // alongside a differently-cased keyword. Same pre-fix symptom
+    // (`violations: [], pinCount: 1`, exit 0), same required outcome.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${originalHash}\n` +
+        `// MUTATION-HARNESS-SOURCE-PIN: ${sourceRel}#example sha256=${originalHash}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (
+      r.violations.length === 1 &&
+      r.violations[0].message.includes(`${relHarnessPath}:2`) &&
+      r.violations[0].message.includes('not exactly lowercase') &&
+      r.pinCount === 1
+    ) {
+      ok(
+        'issue repro: a well-formed pin alongside a differently-cased keyword FAILS, names the wrong-case line, pinCount stays 1',
+      )
+    } else {
+      fail(
+        'issue repro: a well-formed pin alongside a differently-cased keyword FAILS, names the wrong-case line, pinCount stays 1',
+        JSON.stringify(r),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 21 (PR #4538 review — the trailingHint had no self-test
+    // assertion at all): a malformed pin whose body is a well-formed
+    // 64-hex hash immediately followed by a `*/`-shaped tail — the shape
+    // the hint's own comment names as the motivating case (a JSDoc closed
+    // on the same line). The violation message must name the hash as
+    // well-formed and the tail as the trailing content.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${originalHash} */\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (
+      r.violations.length === 1 &&
+      r.violations[0].message.includes('The hash itself is well-formed') &&
+      r.violations[0].message.includes('trailing "*/"')
+    ) {
+      ok(
+        'a malformed pin whose valid-length hash is followed by a `*/`-shaped tail gets the trailing-content hint',
+      )
+    } else {
+      fail(
+        'a malformed pin whose valid-length hash is followed by a `*/`-shaped tail gets the trailing-content hint',
+        JSON.stringify(r.violations),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 22 (PR #4538 review — the mis-diagnosis this hint made): a
+    // 65-character (overlong) hash is NOT a well-formed hash with one
+    // trailing character — it is one hash, too long. Before the
+    // `(?![0-9a-fA-F])` lookahead, `[0-9a-f]{64}` matched the first 64 of
+    // the 65 hex characters and reported the 65th as "trailing", so the
+    // message asserted the hash "is well-formed" about a hash that was one
+    // character too long. It must not claim that.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${'a'.repeat(65)}\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    if (r.violations.length === 1 && !r.violations[0].message.includes('well-formed')) {
+      ok(
+        'a 65-character (overlong) hash does NOT get told "the hash itself is well-formed" — it is not',
+      )
+    } else {
+      fail(
+        'a 65-character (overlong) hash does NOT get told "the hash itself is well-formed" — it is not',
+        JSON.stringify(r.violations),
       )
     }
     writeHarness(originalHash) // restore for subsequent cases
