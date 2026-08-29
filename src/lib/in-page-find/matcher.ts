@@ -459,8 +459,9 @@ const FINAL_SIGMA_RE = /ς/g
  * variant with rotating order, medians, and the observed spread on each row as
  * a noise floor. The `range` column is that spread: full peak-to-peak as a
  * percentage of the median, NOT a half-width — writing it `±`, as earlier
- * versions of this block did, overstates the band by about 2x. `pre` is the code before #4507 — `foldCodePoint` was a bare
- * `f === 'ς' ? 'σ' : f`, `scanLiteral` a bare `text.toLowerCase()`. `naive` is
+ * versions of this block did, overstates the band by about 2x. `pre` is the
+ * code before #4507 — `foldCodePoint` was a bare `f === 'ς' ? 'σ' : f`, and
+ * `scanLiteral` a bare `text.toLowerCase()`. `naive` is
  * `replace`-always, unguarded — a shape argued against in review and **never
  * one that shipped**, so the `naive/now` column sizes what the guard buys and
  * is NOT a regression baseline. Reading it as one is exactly how three earlier
@@ -492,22 +493,23 @@ const FINAL_SIGMA_RE = /ς/g
  * comfortably (range 6%) and this one has it buried (range 26%), while
  * `english para` failed to clear in both. Both have since flipped again: in a
  * later run every row cleared, `english para` included, at +11% against a 10%
- * floor. Six runs, and the only row never in doubt is `greek para`. Any row
+ * floor. Over six runs the only rows that have ever flipped are `astral` and
+ * `english para`; the other five have cleared every time. Any row
  * whose `now/pre` is within about twice its `range` figure should be treated
  * as "direction known, magnitude not" — the verdict column is a property of
  * the run, not of the code. Three earlier versions of this block
  * reported single runs to the percentage point, which is how `+127%` was
  * published for what is really a ~60% effect.
  *
- * What survives both runs, and all that should be relied on:
+ * What survives all six runs, and all that should be relied on:
  *
  * **The guard is worth having, but it is not free and not universal.** `now`
  * beats or matches `naive` on every row, up to 2.5x — except on the Greek
- * paragraph, where it is fractionally WORSE (naive 2284.5, now 2331.1, a ~2% loss the
- * `1.0x` column rounds away). That is the guard's worst case working exactly as
- * designed: on a long string that does contain a sigma, the `indexOf` scan is
- * paid and the `replace` runs anyway, so the guard buys nothing and costs one
- * pass.
+ * paragraph, where it is fractionally WORSE (naive 2284.5, now 2331.1, a ~2%
+ * loss the `1.0x` column rounds away). That is the guard's worst case working
+ * exactly as designed: on a long string that does contain a sigma, the
+ * `indexOf` scan is paid and the `replace` runs anyway, so the guard buys
+ * nothing and costs one pass.
  *
  * Everywhere else it pays: best on short sigma-free strings (latin 2.5x, short
  * heading 2.1x), less on longer ones. Note that `astral` is sigma-free and
@@ -515,9 +517,10 @@ const FINAL_SIGMA_RE = /ς/g
  * as much as it tracks sigma presence — do not read it as a sigma signal.
  *
  * **Both call sites are slower than before #4507.** Every row is positive in
- * both runs. Six of the seven span +20% to +62% on a fold; the seventh,
- * `english para`, is +9% and buried in its own noise, so it is evidence of
- * direction and nothing more. The guard recovers
+ * every run. Six of the seven span +20% to +62% on a fold; the seventh,
+ * `english para`, is +9% here and buried in its own noise — it has since
+ * cleared once, at +11% against a 10% floor, so it is evidence of direction
+ * and a magnitude no better than "small". The guard recovers
  * most of what the regex cost, not all of it: `indexOf` over one code unit is
  * still dearer than `=== 'ς'`, and folding through one owner was always going
  * to cost more than not folding at all.

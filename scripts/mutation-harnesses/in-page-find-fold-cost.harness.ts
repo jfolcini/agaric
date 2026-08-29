@@ -248,6 +248,17 @@ describe('#4507 — foldForMatch cost, per call site', () => {
     // The two structural claims the docblock makes. Asserted with generous
     // tolerance because the magnitudes are not stable here — only the
     // DIRECTION is, and that is all the docblock claims.
+    //
+    // Read the three thresholds below (0.95, 1.2, 1.5) as CALIBRATED, not
+    // derived: nothing in the code implies them. They are margins drawn wide
+    // around the runs published in this repo — latin 2.3-2.5x, greek para
+    // 0.98-1.00x, per-row deltas +9% to +66% (the `matcher.ts` docblock and
+    // `session-1451`; earlier runs exist only in transcripts, which is the
+    // gap this file was committed to close, so they are not cited here).
+    // This file is outside CI, so a failure here is a message to whoever ran
+    // it — "this machine does not behave like the ones these were drawn on",
+    // not "the shipped code is wrong". Check the printed table before
+    // believing either.
     for (const r of all) {
       expect(r.now, `${r.label}: shipped fold should not be FASTER than pre-#4507`).toBeGreaterThan(
         r.pre * 0.95,
