@@ -582,7 +582,8 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
     // Case_Ignorable code points to find the preceding cased letter, and
     // forwards the same way. So `'Α.Σ'` lowercases WHOLE to `'α.ς'` while
     // per-code-point folding gives `'α.σ'` — a discrepancy no adjacent-only
-    // context constructs. (Verified: `'Α.Σ'`, `'Α··Σ'`, `'ΆΣ'` and a
+    // context constructs. (Verified: a full stop, two middle dots, a
+    // combining acute and a soft hyphen as the separator all produce it.)
     // soft-hyphen separator all differ before the collapse.)
     //
     // It does not change the verdict — the ς collapse erases that discrepancy
@@ -599,6 +600,11 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
       ['', ' '],
       [' ', ' '],
       // Separated from the cased letter by Case_Ignorable characters, which is
+      // what Final_Sigma actually scans past. The combining acute and soft
+      // hyphen are written as ESCAPES deliberately: `\u0391\u0301` and the
+      // precomposed U+0386 render as the same glyph, and prose here once named
+      // the precomposed form — which is a single cased letter, i.e. an ADJACENT
+      // context that would not count toward this family at all.
       // what Final_Sigma actually scans past: a full stop, two middle dots, a
       // combining acute, and a soft hyphen.
       ['Α.', ''],
@@ -673,7 +679,8 @@ ${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
     // `toBe(5)`, not `> 0` — which was the loose form the paragraph above
     // argues against, used in the very assertion making the argument. 5 is
     // derived like the 6: of the six separated contexts, Final_Sigma fires in
-    // five (`['Α.','']`, `['Α··','']`, `['Ά','']`, `['Α\u00AD','']`,
+    // five — the four Case_Ignorable separators (`.`, `··`, U+0301 COMBINING
+    // ACUTE, U+00AD SOFT HYPHEN) and `['Α.',' ']` —
     // `['Α.',' ']`) and not in `['Α.','.Α']`, where a cased letter follows past
     // the ignorables and suppresses the rule.
     expect(controlDifferingSeparated).toBe(5)

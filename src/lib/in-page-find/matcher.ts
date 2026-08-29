@@ -229,6 +229,20 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
   // per-text-node scan. Skipped for `caseSensitive` queries, which never
   // reach the slow path. See the note in `scanLiteral` for why a
   // code-point fold, not `toLowerCase()`, is required here.
+  //
+  // #4507 note: this is now provably EQUAL to `needle` above. The distribution
+  // property that change establishes — whole-string folding and per-code-point
+  // folding agree once `ς` is collapsed — is exactly the statement that this
+  // loop and `query.toLowerCase()` cannot differ. The two needles, the dual
+  // plumbing through `scanLiteral`, and the DEV assertion there are therefore
+  // guarding a distinction that no longer exists.
+  //
+  // Kept deliberately, as defence in depth rather than by oversight. That
+  // property is EMPIRICAL — it holds because Final_Sigma is the only
+  // context-sensitive mapping in the locale-free case-mapping table, a fact
+  // about the host's Unicode tables and not a theorem. Collapsing the two
+  // needles would make the code correct only for as long as that stays true,
+  // and would delete the assertion that would notice if it ever did not.
   let foldedNeedle = ''
   if (!caseSensitive) {
     for (const ch of query) {
@@ -393,6 +407,17 @@ const FINAL_SIGMA_RE = /ς/g
  *
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
+ *
+ * On the second pass: this adds one `replace` scan over every text node on top
+ * of `toLowerCase()`, and it runs per text node per keystroke while find is
+ * open. An `s.indexOf('ς') === -1` short-circuit would skip it for the
+ * overwhelmingly common no-sigma document, and is deliberately NOT done here:
+ * it replaces one scan with two in that same common case, and no measurement
+ * says the branch pays for itself. This module is perf-shaped elsewhere
+ * (chunked walking, `REGEX_TIME_BUDGET_MS`) precisely because those costs were
+ * measured; adding an unmeasured one would be the odd item out. If find ever
+ * shows up in a profile, measure this against the `toLowerCase()` allocation
+ * above it before touching it — that allocation is the larger suspect.
  */
 function foldForMatch(s: string): string {
   return s.toLowerCase().replace(FINAL_SIGMA_RE, 'σ')
