@@ -71,21 +71,30 @@ fuzz step must not stop them — but neither condition is the obvious `always()`
 second one is the interesting half.
 
 `!cancelled()` is not enough on its own, because **it is true when an earlier step
-failed**, not only on a clean run. Ten steps precede the restore, several network-bound
-(the repo already carries #4163 because apt mirrors fail here). If one of them fails, the
-restore and fuzz steps are skipped — while these two, carrying their own `if:`, run
-anyway. cmin finds no manifest and exits 0, and the save then publishes a `corpus/`
-holding only what `git checkout` put there. Since `restore-keys` returns the most recently
-*created* prefix match, every later run inherits that seeds-only entry.
+failed**, not only on a clean run. At the time, ten steps preceded the restore, several
+network-bound (the repo already carries #4163 because apt mirrors fail here). If one of
+them failed, the restore and fuzz steps were skipped — while these two, carrying their own
+`if:`, ran anyway. cmin found no manifest and exited 0, and the save then published a
+`corpus/` holding only what `git checkout` put there. Since `restore-keys` returns the most
+recently *created* prefix match, every later run inherited that seeds-only entry.
 
 One flaky apt mirror would have permanently reset the corpus lineage, through a log that
 reads normally — the exact failure this change exists to end, reintroduced by the fix for
-it. Gating on `steps.corpus-cache.outcome == 'success'` closes it: `== 'success'` rather
-than `!= 'skipped'`, since the latter also passes when the restore ran and *failed*, and
-an absent step evaluates to `''`.
+it.
+
+A later round removed the cause rather than only the symptom: the restore now sits
+immediately after checkout, above every setup step, so nothing between can skip it. That
+also bought ~8 minutes of eviction margin, since what resets an entry's idle clock is the
+restore and not the save. The `outcome == 'success'` gate stayed anyway — it costs nothing
+and would catch the same shape if a step is ever inserted above it — but it is honest to
+say it is close to vacuous now, and the comment on it says so.
 
 This was a review catch, not a local one, and it is the second time on this change that
-the thing needing correction was a confident sentence rather than a line of code.
+the thing needing correction was a confident sentence rather than a line of code. It was
+not the last: moving the restore invalidated every claim about step ordering, and the
+grep-for-changed-values check that had caught the previous round did not cover claims that
+depend on structure rather than on a literal. Moving a step has a wider blast radius than
+editing a number.
 
 ## The list that was about to become a third copy
 

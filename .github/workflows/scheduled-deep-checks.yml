@@ -1473,13 +1473,14 @@ jobs:
           path: src-tauri/fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           # KNOWN MARGIN (not fixed here): GitHub evicts cache entries not
-          # ACCESSED for 7 days. This lane runs Mondays 04:17 UTC and saves
-          # ~25 min into the job while the restore runs ~8 min in, so
-          # save-to-next-restore is about 6d23h43m — roughly SEVENTEEN minutes
-          # of headroom, and `restore-keys` gives no cushion because the older
-          # entries were last accessed at the same clock time. A run delayed past
-          # that (they are routinely delayed under load) evicts the corpus and
-          # resets to the committed seeds. The warm/cold step below is what
+          # ACCESSED for 7 days. What resets an entry's idle clock is THIS step,
+          # not the save. The restore now runs within a minute of checkout and
+          # the save lands ~25 min into the job, so save-to-next-restore is
+          # about 6d23h35m — roughly TWENTY-FIVE minutes of headroom (it was
+          # ~17 before this step moved above the setup steps). `restore-keys`
+          # gives no cushion, because the older entries were last accessed at
+          # the same clock time. A run delayed past that (they are routinely
+          # delayed under load) evicts the corpus and resets to the seeds. The warm/cold step below is what
           # makes that visible rather than silent; making accumulation robust
           # rather than marginal needs a mid-week touch or a second scheduled
           # restore, which is a follow-up rather than part of this change.
@@ -1716,18 +1717,21 @@ jobs:
         # would then let the save step below store THAT as the newest
         # `fuzz-corpus-*` entry for the next run to inherit.
         #
-        # `steps.corpus-cache.outcome == 'success'` guards the COMMONER case and
-        # is why `!cancelled()` alone is not enough: it is true when an EARLIER
-        # STEP FAILED, not only on a clean run. Ten steps precede the restore —
-        # apt, the nightly toolchain, rust-cache, setup-node, `npm ci`, the
-        # externalBin placeholder, install-action — several network-bound (#4163
-        # exists because apt mirrors fail here). If one fails, the restore and
-        # fuzz steps are SKIPPED while these two, carrying their own `if:`, run
-        # anyway: cmin finds no manifest and exits 0, then the save publishes a
-        # `corpus/` holding only what `git checkout` put there. Since
-        # `restore-keys` returns the most recently CREATED prefix match, every
-        # later run would inherit that seeds-only entry — the cold start this
-        # change exists to end, arriving through a log that reads normally.
+        # `steps.corpus-cache.outcome == 'success'` is a DEFENCE IN DEPTH gate,
+        # and it is worth being honest that it is close to vacuous today: only
+        # `actions/checkout` precedes the restore now, so the failure it was
+        # written for cannot really occur.
+        #
+        # It was not vacuous when written. The restore then sat below ten setup
+        # steps — apt, the nightly toolchain, rust-cache, setup-node, `npm ci`,
+        # the externalBin placeholder, install-action — several network-bound
+        # (#4163 exists because apt mirrors fail here). A failure in any of them
+        # SKIPPED the restore while these two, carrying their own `if:`, ran
+        # anyway: cmin found no manifest, and the save published a `corpus/`
+        # holding only what `git checkout` put there, which every later run then
+        # inherited via `restore-keys`. Moving the restore above the setup steps
+        # is what removed that, and the gate is kept because it costs nothing
+        # and would catch the same shape if a step is ever inserted above it.
         #
         # `== 'success'`, not `!= 'skipped'`: the latter also passes when the
         # restore ran and FAILED (cache service unavailable), and an absent step
