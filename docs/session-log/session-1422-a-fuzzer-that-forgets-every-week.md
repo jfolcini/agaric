@@ -65,10 +65,18 @@ so re-running the job from the Actions UI hit the already-reserved key and
 `actions/cache/save` warned and continued — green, while that attempt's corpus was
 dropped.
 
-Both trailing steps are gated `!cancelled() && steps.corpus-cache.outcome == 'success'`.
-A crash in one target still leaves the other four with a run's worth of coverage, so a red
-fuzz step must not stop them — but neither condition is the obvious `always()`, and the
-second one is the interesting half.
+Both trailing steps are gated `!cancelled() && steps.corpus-cache.outcome == 'success'`,
+and the save carries two more: `steps.corpus-cmin.outputs.collapsed == '0'` and
+`github.ref == 'refs/heads/main'`. A crash in one target still leaves the other four with a
+run's worth of coverage, so a red fuzz step must not stop them — but none of these is the
+obvious `always()`, and the second one is the interesting half.
+
+Four more things arrived across later review rounds and belong in this list rather than
+only in the diff: `continue-on-error: true` on the restore, so a cache outage cannot stop
+the fuzzing; `timeout-minutes: 20` on cmin and `90` on the job, because a job timeout is a
+cancellation and would have surfaced as silent non-accumulation; `-rss_limit_mb=4096` on
+cmin to match the fuzz step; and the `collapsed` guard that refuses to publish a corpus a
+minimisation pass emptied.
 
 `!cancelled()` is not enough on its own, because **it is true when an earlier step
 failed**, not only on a clean run. At the time, ten steps preceded the restore, several
@@ -122,6 +130,14 @@ truncated head for `html_parse`. Each target also gets an `empty.seed`.
 
 These are the floor on a cache miss, not the working set. The point of the cache is that
 they stop being the whole story after the first run.
+
+Two housekeeping items came out of the same review. The `trailing-whitespace` and
+`end-of-file-fixer` hooks did not exclude the corpus, and had already appended a newline to
+the pre-existing `snapshot_decode/zstd-magic.seed` — a file whose entire content is meant to
+be the four zstd magic bytes. Both hooks now exclude the directory, `.gitattributes` marks
+it `-text` so a checkout cannot normalise line endings either, and the stray byte is gone.
+An earlier revision of this change described that damage and left it in place, which is
+half a fix.
 
 ## What is verified, and what cannot be
 
