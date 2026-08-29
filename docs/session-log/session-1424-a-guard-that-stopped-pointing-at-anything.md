@@ -373,3 +373,54 @@ and `derive_crate_roots` parses it without special-casing.
 
 Four notes stay deferred, unchanged: the parity test's narrower walk, in-scope-ness of baseline
 entries, unlisted crates carrying no enforcement, and the general form of the pairing check.
+
+## Review round nine — a fix that did nothing, and a fix I had to take back out
+
+The previous round's `examine_probe_guards` addition was **inert**, and the review caught it.
+`targets` there is built from `check-raw-tx.py`'s `CRATE_ROOTS` and forced non-empty by an
+earlier exit-3; this guard's roots are that same set plus `agaric-core/src`, so `count_examined`
+can only ever return a positive number for it. The zero-examined arm is unreachable. I had
+described the change in a commit message as giving that protection "a fourth subject", which was
+simply wrong.
+
+The review's suggested substantive fix was `RATCHET_GUARDS`, which actually *runs* the guard
+against the merged tree — and that is the right idea, because this guard carries a per-file
+count baseline and is therefore subject to the #3724 shape the overlap bot warned about on this
+very PR.
+
+**I tried it, and backed it out.** Three things surfaced, in order:
+
+1. Adding it required `RATCHET_PREREQS` entries the review had not reached and my own change
+   created: this guard `importlib`-loads `check-raw-tx.py`, whose top-level
+   `exec_module(guard_file_source)` runs as a side effect, so a missing copy of either kills it
+   at import — exit 1, read as "the guard FAILED on the merged tree", a content verdict from a
+   guard that never ran.
+2. `pr-merge-result-check.sh`'s own self-test then went red across seventeen assertions, all
+   exit 3: its fixtures do not seed the new guard.
+3. And seeding it is not the fix either. The fixtures are **synthetic repos** with crate roots
+   like `src-tauri/source` and `src-tauri/extra/src`. This guard's new roots check is
+   unconditional, so it would report every one of the six real roots missing and fail every
+   fixture merge.
+
+That third point is a genuine design question — how should a guard that asserts its own roots
+exist behave inside a deliberately synthetic fixture repo? — and the answer is not obvious.
+Weakening the roots check to accommodate fixtures would undo the round-four fix. So the whole
+`pr-merge-result-check.sh` change is reverted to `origin/main`, the inert entry included, and
+the work is recorded on #4501 as the follow-up it actually is.
+
+The lesson is the one the batch rules already state and I ignored for a round: the reviewer's
+suggestion was sound, and "the substantive change is one list entry" was still an estimate
+rather than a measurement. Its own self-test is what said otherwise, which is the system working.
+
+Kept from this round, in the guard itself:
+
+- Self-test direction 11 read `prek.toml` unguarded, so a renamed or absent file would abort the
+  entire suite with a traceback and discard the nineteen cases already recorded. The missing-file
+  case now routes into the clean `could not parse` branch that already existed.
+
+**A consistency challenge, answered with a measurement rather than an argument.** The review
+noted that this PR declines `always_run` for the deleted-file gap on a ~3.5s-per-commit budget,
+while the self-test hook *is* `always_run` on both pre-commit and pre-push and has grown from 3
+to 13 spawned subprocesses. Fair — and the right way to settle it is to measure: the full
+self-test runs in **0.57s**, six times cheaper than the walk it was compared against. The
+asymmetry holds on the numbers.

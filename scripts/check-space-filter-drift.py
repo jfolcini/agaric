@@ -857,7 +857,14 @@ def run_cli_self_test(record) -> None:
         # regresses. Cheap to test rather than to promise: pull the regex out
         # of prek.toml and assert it accepts a probe path under every declared
         # root.
-        prek = (REPO_ROOT / "prek.toml").read_text(encoding="utf-8")
+        # Guarded: an unguarded read aborts the WHOLE self-test with a
+        # traceback if prek.toml is renamed or absent, discarding every case
+        # already recorded. The `files_re is None` branch below already models
+        # the clean failure, so route the missing-file case into it.
+        try:
+            prek = (REPO_ROOT / "prek.toml").read_text(encoding="utf-8")
+        except OSError:
+            prek = ""
         block = prek.split('id = "check-space-filter-drift"', 1)
         files_re = None
         if len(block) > 1:
