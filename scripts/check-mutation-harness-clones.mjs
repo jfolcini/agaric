@@ -52,6 +52,17 @@
 // gap this guard exists to close; a new harness must declare what it
 // clones from day one, not leave it implicit.
 //
+// A marker line that IS present but MALFORMED — a placeholder hash
+// (`sha256=PLACEHOLDER`), a truncated or uppercase hash, a missing
+// `#symbolName`, a missing `sha256=`, or trailing garbage after an
+// otherwise-valid hash — also FAILS, naming the file and line (#4509).
+// Before this, a malformed marker was indistinguishable from an ordinary
+// comment and was silently excluded from the pin count: a harness with
+// eleven good pins and one typo'd one reported "OK: 11 source-pin(s)"
+// instead of failing, and the clone the typo'd pin was meant to gate went
+// unpinned with no signal anywhere — the one failure mode a drift guard
+// must not have.
+//
 // ─── Why the scanner lives in scripts/lib/js-scanner.mjs ────────────
 //
 // This file used to carry its own copy of `skipString`/`stripComments`/
@@ -98,8 +109,26 @@ const HARNESS_DIR = path.join(ROOT, 'scripts', 'mutation-harnesses')
 // Matches the marker either as a standalone `//` line or as a line inside a
 // `/** ... */` JSDoc block (leading ` * `), so a harness's existing header
 // doc comment can carry the pin without breaking out into a separate line.
-const PIN_RE =
-  /^\s*(?:\/\/|\*(?!\/))\s*mutation-harness-source-pin:\s*(\S+?)#([A-Za-z_$][A-Za-z0-9_$]*)\s+sha256=([0-9a-f]{64})\s*$/
+//
+// Split into a PREFIX and a BODY regex (#4509) rather than one all-or-
+// nothing pattern. The original single regex required the hash group to be
+// exactly `[0-9a-f]{64}`; a line that said `mutation-harness-source-pin:`
+// but had a malformed body — a placeholder (`sha256=PLACEHOLDER`), a
+// truncated or uppercase hash, a missing `#symbolName`, a missing `sha256=`
+// entirely, or trailing garbage after an otherwise-valid hash — simply
+// failed to match, and `findPins` (below) treated "did not match" as "not a
+// pin marker at all" and silently dropped the line. A typo made while
+// re-typing a hash therefore *disabled* that pin instead of failing the
+// build — the guard reported a smaller, wrong "N source-pin(s)" count and
+// exited 0. Recognising the marker on its PREFIX means every line that
+// *intends* to be a pin (starts with the marker keyword, in a real comment)
+// is found; the BODY regex then decides well-formed vs malformed, and
+// `findPins` reports the malformed shape as its own kind of result instead
+// of `null` (indistinguishable from "not a marker"), so `checkTree` can
+// raise a violation naming the file and line rather than silently
+// shrinking the pin count.
+const PIN_PREFIX_RE = /^\s*(?:\/\/|\*(?!\/))\s*mutation-harness-source-pin:\s*(.*)$/
+const PIN_BODY_RE = /^(\S+?)#([A-Za-z_$][A-Za-z0-9_$]*)\s+sha256=([0-9a-f]{64})\s*$/
 
 /** Escape a string for safe interpolation into a `RegExp` source. */
 function escapeRegExp(s) {
@@ -416,6 +445,21 @@ function nameAppearsInOtherForm(search, name) {
 
 // ─── pin discovery ──────────────────────────────────────────────────
 
+/**
+ * Find every marker LINE in `harnessSrc` — both well-formed pins and
+ * malformed ones (#4509). Returns one entry per line matching
+ * `PIN_PREFIX_RE`:
+ *   - well-formed: `{ lineNo, malformed: false, sourcePath, symbolName,
+ *     expectedHash }`
+ *   - malformed: `{ lineNo, malformed: true, raw }`, where `raw` is the
+ *     text after `mutation-harness-source-pin:` verbatim (for the
+ *     violation message) — the body didn't match `PIN_BODY_RE`, so there
+ *     is no path/symbol/hash to trust.
+ * A line that doesn't even match the prefix (no `mutation-harness-
+ * source-pin:` keyword) is not a marker at all and is omitted, same as
+ * before — this only widens what counts as "matches the prefix", not what
+ * counts as "a marker line".
+ */
 function findPins(harnessSrc) {
   // String/template contents are blanked (comments kept) so a pin-shaped
   // line living inside a template literal or string — data, not a real
@@ -426,8 +470,18 @@ function findPins(harnessSrc) {
     .split('\n')
     .map((line, idx) => ({ line, lineNo: idx + 1 }))
     .map(({ line, lineNo }) => {
-      const m = line.match(PIN_RE)
-      return m ? { lineNo, sourcePath: m[1], symbolName: m[2], expectedHash: m[3] } : null
+      const prefixMatch = line.match(PIN_PREFIX_RE)
+      if (!prefixMatch) return null
+      const rest = prefixMatch[1]
+      const bodyMatch = rest.match(PIN_BODY_RE)
+      if (!bodyMatch) return { lineNo, malformed: true, raw: rest.trim() }
+      return {
+        lineNo,
+        malformed: false,
+        sourcePath: bodyMatch[1],
+        symbolName: bodyMatch[2],
+        expectedHash: bodyMatch[3],
+      }
     })
     .filter((x) => x !== null)
 }
@@ -507,6 +561,29 @@ function checkTree({ root, harnessDir }) {
     }
 
     for (const pin of pins) {
+      // #4509 — a line that opens with the marker keyword but whose body
+      // doesn't parse (a placeholder hash, a truncated/uppercase hash, a
+      // missing `#symbolName`, a missing `sha256=`, or trailing garbage
+      // after an otherwise-valid hash) is reported as a violation, named by
+      // file and line, rather than silently excluded from `pinCount` the
+      // way "not a marker at all" is. This is NOT counted into `pinCount`:
+      // it was never verified against anything, and the `OK: N source-
+      // pin(s) ...` line below only ever prints once `violations` is empty
+      // — i.e. once every malformed marker here has been fixed or removed
+      // — so `pinCount` never advertises a malformed line as a verified pin.
+      if (pin.malformed) {
+        violations.push({
+          harness: relHarness,
+          message:
+            `${relHarness}:${pin.lineNo} has a mutation-harness-source-pin marker that does not ` +
+            `match the required shape "<repo-relative-path>#<symbolName> sha256=<64 lowercase hex ` +
+            `chars>" (got "${pin.raw}"). A malformed marker used to be silently dropped — indistinguishable ` +
+            'from an ordinary comment — so the clone it was meant to gate went unpinned with no ' +
+            'signal anywhere; it now fails instead. Fix the marker (or generate a correct pin) ' +
+            'rather than removing it.',
+        })
+        continue
+      }
       pinCount += 1
       const sourceFile = path.join(root, pin.sourcePath)
       const relToRoot = path.relative(root, sourceFile)
@@ -725,7 +802,12 @@ function runGuard() {
 // missing source file FAILS, a pin naming a function that no longer
 // exists in the source FAILS — plus, for #3950/#3953, that a regex
 // literal containing a brace no longer truncates the extraction and that
-// a `const` initializer can be pinned and gates on a real edit.
+// a `const` initializer can be pinned and gates on a real edit — plus,
+// for #4509, that several shapes of MALFORMED marker (placeholder hash,
+// truncated/overlong/uppercase hash, missing `#symbol`, missing
+// `sha256=`, trailing garbage) are reported as violations rather than
+// silently dropped from the pin count, while a well-formed marker of the
+// same shape still parses and passes (both arms).
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -1208,6 +1290,64 @@ export function target(a: number, b: string): number {
     fail('a real token change (a + 1 -> a + 2) changes the canonical hash', `${h1} vs ${h3}`)
   }
 
+  // ── #4509: findPins() reports a malformed marker, not `null` ───────
+  //
+  // Before this fix, `PIN_RE` was one all-or-nothing pattern: a line
+  // opening with the marker keyword but failing to match the strict
+  // `sha256=[0-9a-f]{64}` shape was rejected by the WHOLE regex, so
+  // `findPins` mapped it to `null` and filtered it out — identical to an
+  // ordinary comment that never mentioned the keyword at all. These
+  // assertions call `findPins` directly (fast, no filesystem) to pin the
+  // parsing boundary itself: every shape below must come back
+  // `{ malformed: true }`, never silently dropped. Enumerated from the
+  // issue's acceptance criteria (placeholder, short, uppercase hash) plus
+  // every other way the body regex's own anchors could be violated
+  // (missing `#symbol`, missing `sha256=`, and — the mirror image of
+  // "too short" — trailing garbage after an otherwise-valid hash, which
+  // the original regex's own `$` anchor already refused but which is
+  // worth pinning explicitly since it exercises the same anchor).
+  const validHash = 'a'.repeat(64)
+  for (const [label, rest] of [
+    ['a placeholder instead of a hash', 'src/lib/x.ts#foo sha256=PLACEHOLDER'],
+    ['a 63-character (truncated) hash', `src/lib/x.ts#foo sha256=${'a'.repeat(63)}`],
+    ['a 65-character (overlong) hash', `src/lib/x.ts#foo sha256=${'a'.repeat(65)}`],
+    ['an uppercase hash', `src/lib/x.ts#foo sha256=${'A'.repeat(64)}`],
+    ['a missing "#symbolName" separator', `src/lib/x.ts foo sha256=${validHash}`],
+    ['a missing "sha256=" prefix', `src/lib/x.ts#foo ${validHash}`],
+    [
+      'trailing garbage after an otherwise-valid hash',
+      `src/lib/x.ts#foo sha256=${validHash} extra`,
+    ],
+  ]) {
+    const found = findPins(`// mutation-harness-source-pin: ${rest}\nexport {}\n`)
+    if (found.length === 1 && found[0].malformed === true && found[0].lineNo === 1) {
+      ok(`findPins reports ${label} as malformed, not dropped`)
+    } else {
+      fail(`findPins reports ${label} as malformed, not dropped`, JSON.stringify(found))
+    }
+  }
+
+  // The other arm: a well-formed marker of the exact same shape must
+  // still parse as a normal pin — a fix that rejected everything would
+  // pass every case above while breaking every real harness in the repo.
+  const wellFormedFound = findPins(
+    `// mutation-harness-source-pin: src/lib/x.ts#foo sha256=${validHash}\nexport {}\n`,
+  )
+  if (
+    wellFormedFound.length === 1 &&
+    wellFormedFound[0].malformed === false &&
+    wellFormedFound[0].sourcePath === 'src/lib/x.ts' &&
+    wellFormedFound[0].symbolName === 'foo' &&
+    wellFormedFound[0].expectedHash === validHash
+  ) {
+    ok('findPins still parses a well-formed marker normally (both arms pinned)')
+  } else {
+    fail(
+      'findPins still parses a well-formed marker normally (both arms pinned)',
+      JSON.stringify(wellFormedFound),
+    )
+  }
+
   // ── checkTree() end-to-end, on a synthetic filesystem ──────────────
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-harness-clones-selftest-'))
@@ -1667,6 +1807,39 @@ export function target(a: number, b: string): number {
       fail(
         'a plain repo-relative pin keeps the short message (written path == resolved path)',
         JSON.stringify(r.violations),
+      )
+    }
+    writeHarness(originalHash) // restore for subsequent cases
+
+    // Case 18 (#4509): the issue's exact repro shape — a MALFORMED pin
+    // living ALONGSIDE an otherwise-valid one. Must FAIL, naming only the
+    // malformed line, and `pinCount` must count only the well-formed pin —
+    // the bug this closes was specifically that the malformed one vanished
+    // from the tally while the run still reported `OK`. Here the run
+    // doesn't report OK at all (it fails), so the trusted count is never
+    // printed short; asserting `pinCount === 1` pins that a regression
+    // re-counting the malformed line as a verified pin (as opposed to a
+    // violation) couldn't slip through unnoticed inside a still-failing run.
+    fs.writeFileSync(
+      harnessPath,
+      `// mutation-harness-source-pin: ${sourceRel}#example sha256=${originalHash}\n` +
+        `// mutation-harness-source-pin: ${sourceRel}#example sha256=PLACEHOLDER\nexport {}\n`,
+    )
+    r = checkTree({ root: tmp, harnessDir })
+    const relHarnessPath = path.relative(tmp, harnessPath).split(path.sep).join('/')
+    if (
+      r.violations.length === 1 &&
+      r.violations[0].message.includes(`${relHarnessPath}:2`) &&
+      r.violations[0].message.includes('PLACEHOLDER') &&
+      r.pinCount === 1
+    ) {
+      ok(
+        'a malformed pin alongside a valid one FAILS, names only the bad line, and does not inflate pinCount',
+      )
+    } else {
+      fail(
+        'a malformed pin alongside a valid one FAILS, names only the bad line, and does not inflate pinCount',
+        JSON.stringify(r),
       )
     }
     writeHarness(originalHash) // restore for subsequent cases
