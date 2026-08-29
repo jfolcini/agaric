@@ -236,6 +236,21 @@ DANGLING_HINT = (
     "       how the finding gets lost."
 )
 
+# An unanchored count is not a drifted bind index. `HINT` opens by describing
+# a mismatched `?N` and sends the reader hunting for one; there is none. This
+# is the same mislabelling the dangling-only banner was split to fix, so it
+# gets the same treatment rather than being folded into the drift arm.
+UNBASELINED_HINT = (
+    "    -> #139: these are real canonical guards that the baseline does not\n"
+    "       account for. Nothing drifted and nothing is wrong with the SQL —\n"
+    "       the ratchet simply does not cover them yet, so removing one later\n"
+    "       would not be caught. Anchor them:\n"
+    "         python3 scripts/check-space-filter-drift.py --update-baseline\n"
+    "       If instead a count went DOWN by hand while the file still carries\n"
+    "       the guards, that edit is what this is reporting: restore it rather\n"
+    "       than re-anchoring, or the removal net for that file is retired."
+)
+
 
 def strip_comments_keep_strings(text: str) -> str:
     """Blank `//` and `/* */` comments to spaces; KEEP string literals.
@@ -1058,6 +1073,19 @@ def run_cli_self_test(record) -> None:
                 "non-zero exit naming gained.rs as carrying unratcheted guards",
             )
 
+        # Same run, separate assertion, for the same reason direction 3 splits
+        # its banner off: an unanchored count is not drift either, and routing
+        # it through the drift banner is the mislabelling that split was made
+        # to prevent — reintroduced when this rule was wired in.
+        if "fragment drifted" not in out and "not anchored in the baseline" in out:
+            record("CLI: an unbaselined-only run does not claim a drift", True, True)
+        else:
+            record(
+                "CLI: an unbaselined-only run does not claim a drift",
+                out.strip(),
+                "the not-anchored banner, and no 'fragment drifted' claim",
+            )
+
 
 def run_self_test() -> int:
     """Assert scan_text/parse_baseline's exit-relevant behavior.
@@ -1398,14 +1426,22 @@ def main(argv: list[str]) -> int:
     ):
         return 0
 
-    # Two headers, because a dangling-only run has nothing drifted in it and
-    # saying so anyway sends the reader looking for a drift that is not there.
-    # The hints below were already conditional; this line was the one that
-    # was not.
-    if shape_violations or removal_violations or unbaselined:
+    # Three headers, one per finding class, because only shape/removal
+    # findings are actually drift. A dangling-only run has nothing drifted in
+    # it, and neither does an unbaselined-only one: the SQL is canonical, it
+    # is the baseline that does not cover it. Saying "drifted" over either
+    # sends the reader hunting for a mismatched `?N` that is not there. The
+    # hints are routed the same way for the same reason.
+    if shape_violations or removal_violations:
         print(
             "Space-filter drift guard (#139) — the inlined "
             f"`{CANONICAL}` fragment drifted:\n",
+            file=sys.stderr,
+        )
+    elif unbaselined:
+        print(
+            "Space-filter drift guard (#139) — canonical space-filter "
+            "guards are not anchored in the baseline:\n",
             file=sys.stderr,
         )
     else:
@@ -1425,7 +1461,9 @@ def main(argv: list[str]) -> int:
     print("", file=sys.stderr)
     if dangling:
         print(DANGLING_HINT, file=sys.stderr)
-    if shape_violations or removal_violations or unbaselined:
+    if unbaselined:
+        print(UNBASELINED_HINT, file=sys.stderr)
+    if shape_violations or removal_violations:
         print(HINT, file=sys.stderr)
     return 1
 
