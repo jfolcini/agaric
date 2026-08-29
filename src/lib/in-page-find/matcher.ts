@@ -489,12 +489,15 @@ const FINAL_SIGMA_RE = /ς/g
  *
  * **Read these as bands, not as measurements.** This is a shared cloud runner
  * and the spread proves it: five of the seven rows clear their own floor here,
- * but a previous run of this identical experiment had `astral` clearing
- * comfortably (range 6%) and this one has it buried (range 26%), while
- * `english para` failed to clear in both. Both have since flipped again: in a
- * later run every row cleared, `english para` included, at +11% against a 10%
- * floor. Over six runs the only rows that have ever flipped are `astral` and
- * `english para`; the other five have cleared every time. Any row
+ * but the table above has `astral` buried (+20% against a range of 26%) while
+ * the run recorded in `session-1451` has the same row clearing comfortably
+ * (+21% against 5%) — same code, same experiment, opposite verdict. `english
+ * para` failed to clear here and cleared there, at +11% against a 10% floor.
+ * Over six runs the only rows that have ever flipped are `astral` and `english
+ * para`; the other five have cleared every time. Three of those six are in the
+ * tree and can be diffed against your own — this table, `session-1447` and
+ * `session-1451`; the rest were run before the harness was committed, which is
+ * the gap committing it closes. Any row
  * whose `now/pre` is within about twice its `range` figure should be treated
  * as "direction known, magnitude not" — the verdict column is a property of
  * the run, not of the code. Three earlier versions of this block

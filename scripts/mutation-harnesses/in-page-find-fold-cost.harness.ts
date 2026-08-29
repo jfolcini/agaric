@@ -12,6 +12,13 @@
  *     scripts/mutation-harnesses/in-page-find-fold-cost.harness.ts \
  *     --disable-console-intercept
  *
+ * Budget about 130 s on a host matching the published figures — `greek para`
+ * alone is ~112 s of that (11 reps over three variants, plus a 200k-iteration
+ * warm-up against a 300k measured loop). The config allows 300 s, so a host
+ * roughly 2.3x slower FAILS ON TIMEOUT and prints no table. If that happens
+ * you have hit the budget, not a defect: drop `reps`, or lower the iteration
+ * counts, and re-read the spread column knowing both are now noisier.
+ *
  * # What it measures
  *
  * Three implementations, on the two call sites `foldForMatch` actually has:
@@ -260,9 +267,10 @@ describe('#4507 — foldForMatch cost, per call site', () => {
     // not "the shipped code is wrong". Check the printed table before
     // believing either.
     for (const r of all) {
-      expect(r.now, `${r.label}: shipped fold should not be FASTER than pre-#4507`).toBeGreaterThan(
-        r.pre * 0.95,
-      )
+      expect(
+        r.now,
+        `${r.label}: shipped fold should be within 5% of, or slower than, pre-#4507`,
+      ).toBeGreaterThan(r.pre * 0.95)
     }
     // The guard never costs more than a few percent, and pays substantially
     // where it can skip the replace. Greek corpora are the "cannot skip" case.
