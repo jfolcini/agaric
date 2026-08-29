@@ -39,7 +39,7 @@
  *   1. `searchBlockRefs`      `@/components/block-tree/use-block-resolve.ts`
  *   2. `fetchAndCacheLinks`   `@/components/block-tree/use-block-link-resolve.ts`
  *   3. `handleNavigate`       `@/components/block-tree/use-block-navigate-to-link.ts`
- *   4. `storeTitle`           `@/hooks/useBacklinkResolution.ts` (see the gap below)
+ *   4. `storeTitle`           `@/hooks/useBacklinkResolution.ts`
  *   5. `runPreloadScan`       `@/stores/resolve.ts` — pages + tags only
  *   6. `populatePageResolveCache` / the `searchTags` fill
  *                             `@/components/block-tree/use-block-resolve.ts` — pages / tags
@@ -57,30 +57,39 @@
  * `palette-commands.ts` — whose `'Untitled'` is the PERSISTED content, so it
  * must stay that untranslated literal to match what `preload` reads back).
  *
- * ## The one gap that is NOT closed (#4238)
+ * ## The blank cells, and where the cache-miss signal lives now (#4238)
  *
- * `useBacklinkResolution`'s `storeTitle` deliberately writes the `[[id…]]`
- * broken-link shape — NOT the Untitled placeholder — for a row the backend
- * returned with a `null`/empty title. `resolveBlockDisplay`
- * (`@/lib/query-result-utils.ts`) pattern-matches that exact shape as its
- * "nothing real is cached" signal, so replacing it with "Untitled" would
- * make a nameless row look resolved. Everything ELSE about that writer is
- * on the invariant (a whitespace-only page title now becomes "Untitled"
- * there like everywhere else); the residual divergence is TWO cells, not one,
- * and both are `title === null || title === ''`:
+ * Until #4238 the enumeration above had an exception: `useBacklinkResolution`
+ * wrote `[[<id>...]]` (or `#<id>...` for a tag) instead of "Untitled" for a
+ * row the backend RETURNED with a `null`/empty title. That was not sloppiness
+ * — the `[[id…]]` shape was a SIGNAL. `resolveBlockDisplay`
+ * (`@/lib/query-result-utils.ts`) pattern-matches it as "nothing real is
+ * cached", so normalising that one writer would have made a nameless row look
+ * resolved. The title was doing two jobs — *what to show the user* and
+ * *whether this row is resolved* — and the two disagree for exactly one
+ * input: a row that resolved successfully and is genuinely blank. One string
+ * cannot say both.
  *
- *   - a NON-TAG row keeps `[[<id>...]]` (the cache-miss signal above), where
- *     every other writer puts "Untitled";
- *   - a TAG row keeps `#<id>...`, where `fetchAndCacheLinks`, `preload`'s tag
- *     half and the `searchTags` fill all put "Untitled" under the same key.
+ * So the second job moved off the string. `ResolveEntry` (`@/stores/resolve`)
+ * now carries a `resolved` boolean alongside `deleted`, and the title is
+ * PURELY presentational: every seed writer above normalises unconditionally,
+ * blank included, so all four writers that can reach a `content` id
+ * (`searchBlockRefs`, `fetchAndCacheLinks`, `handleNavigate`, the
+ * `useBacklinkResolution` seed) produce byte-identical bytes for the same row.
  *
- * #4238 tracks both. The matrix's `deviates` hook pins each cell, so they are
- * tested — an earlier version of this paragraph said "exactly one cell" and
- * undercounted, which in a docblock whose whole point is an honest
- * enumeration is the one mistake that matters. Practical impact of the tag
- * cell is near zero (a blank tag name should not exist), but the count is the
- * count. The docblock this replaced claimed outright parity, which did not
- * hold at all; this paragraph is what actually holds.
+ * `resolved: false` is written by exactly one place — `fetchAndCacheLinks`'
+ * unreturned-target branch, for an id `batch_resolve` did not hand back at all
+ * (foreign-space or genuinely unknown). {@link unresolvedBlockLabel} /
+ * {@link unresolvedTagLabel} are what a surface shows for such an id, and the
+ * store's `resolveTitle` derives them from the FLAG rather than from whatever
+ * string is sitting in `title` — so a stored title can never again be mistaken
+ * for a resolution verdict.
+ *
+ * Why not reuse `deleted`? Because `deleted: true` is a legitimate state for a
+ * fully RESOLVED row (a soft-deleted block that `batch_resolve` returns with
+ * its real title), so folding the two together would put every trashed block's
+ * chip back on the `[[id…]]` label — the same two-meanings-in-one-field
+ * mistake, one field over.
  */
 
 import { t as translate } from '@/lib/i18n'
@@ -183,4 +192,36 @@ export function resolveStoreTitle(
   content: string | null,
 ): string {
   return blockType === 'content' ? normalizeBlockRefTitle(content) : untitledOr(content)
+}
+
+/**
+ * How much of a ULID the unresolved labels below show. 8 of 26 characters:
+ * enough to tell two broken chips apart in a bug report, short enough to sit
+ * inside a chip. The value is shared so the labels and
+ * `CACHE_MISS_FALLBACK_PATTERN` (`@/lib/query-result-utils`) cannot drift.
+ */
+const UNRESOLVED_ID_CHARS = 8
+
+/**
+ * The label a surface shows for a block id nothing is resolved for — either
+ * absent from the resolve cache entirely, or present with `resolved: false`
+ * (the `fetchAndCacheLinks` unreturned-target placeholder).
+ *
+ * #4238 — this is a DISPLAY label derived from the entry's `resolved` flag,
+ * not a value any seed writer stores as a row's title. That inversion is the
+ * whole point: before #4238 the same string was persisted as the title of a
+ * resolved-but-blank row, which is what made "is this resolved" unanswerable
+ * without guessing at bytes. Six copies of the `slice(0, 8)` literal used to
+ * be spelled out across the store, the two block-tree resolve hooks and the
+ * backlink hook; they are this function now, so a change of shape reaches
+ * every surface at once (and `resolveBlockDisplay`'s pattern, which must keep
+ * matching it, is documented against this).
+ */
+export function unresolvedBlockLabel(id: string): string {
+  return `[[${id.slice(0, UNRESOLVED_ID_CHARS)}...]]`
+}
+
+/** {@link unresolvedBlockLabel}'s tag-shaped sibling, for a `#[ULID]` target. */
+export function unresolvedTagLabel(id: string): string {
+  return `#${id.slice(0, UNRESOLVED_ID_CHARS)}...`
 }

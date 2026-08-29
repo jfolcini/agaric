@@ -6,21 +6,27 @@ import { truncateContent } from '@/lib/text-utils'
  * Detects the `[[ULID...]]` cache-miss fallback a `resolveBlockTitle` can
  * hand back for an id it has no real title for.
  *
- * It reaches this function two ways, and both have to keep producing this
- * exact shape or the content fallback below silently stops firing:
+ * Since #4238 there is exactly ONE producer of this shape, and it is a
+ * DISPLAY label derived from `ResolveEntry.resolved` (`@/stores/resolve`)
+ * rather than a string any writer stores as a row's title:
+ * `unresolvedBlockLabel` (`@/lib/block-title`), returned by
+ * `useBlockResolve`'s `resolveBlockTitle`
+ * (`@/components/block-tree/use-block-resolve.ts`),
+ * `useResolveStore.resolveTitle` (`@/stores/resolve.ts`) and
+ * `useBacklinkResolution.resolveBlockTitle` (`@/hooks/...`) for an id that is
+ * absent from the cache OR present with `resolved: false` — the
+ * `fetchAndCacheLinks` unreturned-target placeholder. The two are deliberately
+ * indistinguishable here: both mean "the backend never handed us this row".
  *
- *   - RETURNED by the resolver on a miss — `useBlockResolve`'s
- *     `resolveBlockTitle` (`@/components/block-tree/use-block-resolve.ts`),
- *     `useResolveStore.resolveTitle` (`@/stores/resolve.ts`), and
- *     `useBacklinkResolution.resolveBlockTitle` (`@/hooks/...`) each fall
- *     back to it when the composite key is absent from the cache.
- *   - STORED in the cache as a placeholder, so the resolver "hits" and
- *     returns it: `fetchAndCacheLinks`' unreturned-target branch
- *     (`@/components/block-tree/use-block-link-resolve.ts`) writes it for a
- *     foreign-space / unknown id, and `useBacklinkResolution`'s `storeTitle`
- *     writes it for a resolved-but-blank non-tag row — deliberately NOT
- *     routed through `normalizeBlockRefTitle`, which would turn it into
- *     "Untitled" and make a nameless row look resolved here.
+ * Before #4238 there was a second producer, and it is why this pattern was
+ * fragile: `useBacklinkResolution` STORED this shape as the title of a
+ * resolved-but-BLANK row, purely so that this test would keep firing for it.
+ * The title was therefore answering two questions at once, and blank was the
+ * input on which they disagreed — that row is resolved, it just has no name.
+ * It now stores "Untitled" like its three sibling writers, and reaches the
+ * fallback below through {@link isSyntheticTitle}'s placeholder arm instead.
+ * Keep this pattern in step with `unresolvedBlockLabel`'s shape (both are
+ * anchored on its 8-of-26-character id prefix); nothing else may emit it.
  */
 const CACHE_MISS_FALLBACK_PATTERN = /^\[\[[0-9A-Z]{1,12}\.{3}\]\]$/
 
@@ -79,9 +85,10 @@ function isSyntheticTitle(resolved: string): boolean {
  *
  * It is the cost of the store having ONE title rather than one per surface,
  * which is what #4228 bought. A row that wants more than the stored title
- * would have to re-read the block — a different design, tracked with the
- * rest of the title-ownership question in #4238. Stated here because the
- * budget in the line below is otherwise read as the row's, and it is not.
+ * would have to re-read the block — a different design, and still an open
+ * trade-off: #4238 settled who OWNS the title (and moved the cache-miss
+ * signal off it), not how wide it is. Stated here because the budget in the
+ * line below is otherwise read as the row's, and it is not.
  *
  * # A null-content page or tag renders the empty marker HERE only
  *
