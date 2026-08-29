@@ -18,6 +18,15 @@
 //! rising while the others keep climbing, it has saturated what a shared budget
 //! can reach and `parse_bibtex` should be split out.
 //!
+//! On seed whitespace: unlike `attachment_path_parse` and
+//! `pagination_cursor_decode`, where a stray trailing newline collapses a seed
+//! onto one rejection branch, it is INERT here — all three functions treat a
+//! trailing newline as ordinary whitespace between entries. So the committed
+//! seeds are inconsistent about it (most end in one, `csl-json-truncated.seed`
+//! does not, because truncation is its point) and that is fine. Said out loud
+//! because `fuzz/README.md` states that whitespace in a seed is content, which
+//! is true of this corpus as a whole and not of this target.
+//!
 //! Run: `cargo +nightly fuzz run bibliography_parse`.
 
 #![no_main]

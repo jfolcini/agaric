@@ -1396,8 +1396,14 @@ jobs:
     # previous figure had less headroom than its own comment implied:
     #
     #   setup (apt, toolchain, node, npm, install-action)   ~10 min
-    #   eight nightly ASan builds, COLD rust-cache          24-40 min
-    #   eight targets x 120s of fuzzing                     ~16 min
+    #   N nightly ASan builds, COLD rust-cache              24-40 min
+    #   N targets x 120s of fuzzing                         ~16 min
+    #
+    # where N is the derived target count, currently 8 — pinned ONCE, as
+    # `BUDGETED_TARGETS` in the fuzz step, which warns when the derivation
+    # outgrows it. The figures above are that N substituted in; they are not a
+    # second declaration of it, and re-deriving them for a different N is the
+    # work that warning exists to prompt.
     #   cmin, at its own step bound                         up to 30 min
     #   artifact uploads                                     ~2 min
     #                                                      ------------
@@ -1417,9 +1423,9 @@ jobs:
     #
     # Every term above scales with the target count, so re-check this alongside
     # any batch of new targets. The fuzz step warns when the derived count
-    # outgrows `BUDGETED_TARGETS`. #4497 took the count from five to eight, this
-    # bound from 90 to 110, and then to 130 once the build term was scaled
-    # honestly rather than assumed.
+    # #4497 took the count from five to its current value, this bound from 90 to
+    # 110, and then to 130 once the build term was scaled honestly rather than
+    # assumed.
     timeout-minutes: 130
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1804,8 +1810,10 @@ jobs:
         # bound makes it a loud, attributable failure instead.
         #
         # 30, raised from 20 by #4497: the merge re-executes every corpus input
-        # of every target, so the bound scales with the target count, and that
-        # count went from five to eight. Hitting this bound is a step failure
+        # of every target, so the bound scales with the target count, which
+        # #4497 raised from five (see `BUDGETED_TARGETS` in the fuzz step for
+        # the current figure — deliberately not restated here). Hitting this
+        # bound is a step failure
         # (loud) rather than a job timeout (a cancellation, hence silent
         # non-accumulation) — but the fuzz step above still owns the lane's
         # verdict, so a red cmin does not by itself mean a target crashed.
