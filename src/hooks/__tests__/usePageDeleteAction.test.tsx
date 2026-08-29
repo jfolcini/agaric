@@ -108,6 +108,7 @@ describe('usePageDeleteAction', () => {
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
       title: 'Cached title',
       deleted: true,
+      resolved: true,
     })
     expect(toast.success).toHaveBeenCalledWith(
       'Page deleted',
@@ -135,6 +136,7 @@ describe('usePageDeleteAction', () => {
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
       title: 'Visible title',
       deleted: true,
+      resolved: true,
     })
 
     act(() => {
@@ -148,6 +150,7 @@ describe('usePageDeleteAction', () => {
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
       title: 'Visible title',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -177,6 +180,7 @@ describe('usePageDeleteAction', () => {
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
       title: 'Still deleted',
       deleted: true,
+      resolved: true,
     })
   })
 
@@ -200,6 +204,7 @@ describe('usePageDeleteAction', () => {
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
       title: 'Original title',
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -231,6 +236,7 @@ describe('usePageDeleteAction', () => {
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
       title: 'Space A title',
       deleted: false,
+      resolved: true,
     })
   })
 

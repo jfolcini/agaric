@@ -475,11 +475,15 @@ describe('useBacklinkResolution', () => {
  *     value: `renderBlockLink` splits the stored title on `/`, so a capped
  *     path yields the wrong leaf — or a namespace segment as the page name.
  *
- * The blank arm matters just as much: a resolved-but-BLANK row must keep
- * the `[[id...]]` placeholder rather than being normalised into "Untitled",
- * because `resolveBlockDisplay` (`@/lib/query-result-utils`) pattern-matches
+ * The blank arm used to be the exception: a resolved-but-BLANK row kept the
+ * `[[id...]]` placeholder rather than being normalised into "Untitled",
+ * because `resolveBlockDisplay` (`@/lib/query-result-utils`) pattern-matched
  * exactly that shape to detect a cache miss and fall back to the block's own
- * content.
+ * content. #4238 moved that signal onto `ResolveEntry.resolved`, so the blank
+ * arm is now on the invariant like every other cell — see the retargeted
+ * tests below, which pin the parity AND the property the old shape was
+ * protecting (a genuinely unresolved target still reads as a miss), because
+ * only one of those two is what the old assertion was really about.
  */
 describe('useBacklinkResolution — stored title is normalised at the seed (#4228)', () => {
   /** A chip rendered through the real renderer, wired to the hook's resolvers. */
@@ -551,7 +555,29 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
     expect(useResolveStore.getState().cache.get(keyFor(null, ULID_A))?.title).toBe(expectedTitle)
   })
 
-  it('keeps the [[id...]] placeholder for a resolved-but-blank block so cache-miss detection still fires', async () => {
+  /**
+   * #4238 — RETARGETED, not deleted.
+   *
+   * This test used to be named "keeps the [[id...]] placeholder for a
+   * resolved-but-blank block so cache-miss detection still fires", and it was
+   * the symmetric arm #4228 left behind: it pinned that normalising a blank
+   * row into "Untitled" must NOT turn a resolved row into a permanent cache
+   * miss. Its two shape assertions (`resolveBlockTitle` and the stored title
+   * both being `[[id…]]`) are now false by design — the row stores "Untitled"
+   * like its three siblings — so they are replaced by the parity pin below.
+   *
+   * Its FIRST assertion, though, would have survived unchanged, and that is
+   * the trap: `resolveBlockDisplay` classes the "Untitled" placeholder as
+   * synthetic too (#4239), so the content fallback still fires and the
+   * assertion still passes — for an entirely different reason than the one it
+   * was written to check. Left as-is it would be a test that can no longer
+   * fail the way it claims to. It is kept here because a blank row swallowing
+   * the row's own content is still a real regression, but the property it used
+   * to guard — a GENUINELY unresolved target still reading as a miss — is now
+   * pinned by its own test below, against an id the backend never returned,
+   * which is the only input that can still exercise it.
+   */
+  it('stores the "Untitled" placeholder for a resolved-but-blank block, in parity with its three sibling writers', async () => {
     mockedBatchResolve.mockResolvedValue([
       { id: ULID_A, title: '', block_type: 'content', deleted: false },
     ])
@@ -563,22 +589,65 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
       expect(useResolveStore.getState().has(ULID_A)).toBe(true)
     })
 
-    // The load-bearing consequence, asserted through the real consumer rather
-    // than a copy of its private regex: `resolveBlockDisplay` must still see a
-    // cache miss and fall back to the block's own content. Normalising the
-    // blank row into "Untitled" would make it look resolved and swallow the
-    // content fallback — so this is asserted FIRST, ahead of the shape pins.
+    // The parity pin, against the literal — `searchBlockRefs`,
+    // `fetchAndCacheLinks` and `handleNavigate` all write exactly this for the
+    // same row (`resolve-store-title-seed-parity.test.ts` drives all four).
+    const entry = useResolveStore.getState().cache.get(keyFor(null, ULID_A))
+    expect(entry?.title).toBe('Untitled')
+    expect(result.current.resolveBlockTitle(ULID_A)).toBe('Untitled')
+    // …and the row is RESOLVED. This is the half that used to have nowhere to
+    // live: the backend returned it, it simply has no name.
+    expect(entry?.resolved).toBe(true)
+
+    // Still not swallowing the row's own content in a query result. True for a
+    // different reason than before #4238 (the placeholder is synthetic, rather
+    // than the stored title imitating a cache miss), so it is asserted but no
+    // longer carries the cache-miss property on its own — see the test below.
     const row = makeBlockRow({ content: 'the row own content' })
     expect(resolveBlockDisplay(row, new Map(), result.current.resolveBlockTitle).title).toBe(
       'the row own content',
     )
-
-    const fallback = `[[${ULID_A.slice(0, 8)}...]]`
-    expect(result.current.resolveBlockTitle(ULID_A)).toBe(fallback)
-    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_A))?.title).toBe(fallback)
   })
 
-  it('keeps the #id... placeholder for a resolved-but-blank tag', async () => {
+  /**
+   * #4238 — the property the retargeted test above can no longer exercise,
+   * moved onto the only input that still can: an id the backend did NOT
+   * return. The old blank row and this one used to be indistinguishable
+   * (both produced `[[id…]]`); that conflation is exactly what the issue
+   * removed, so the two now need two tests.
+   */
+  it('a genuinely unresolved target still reads as a cache miss on both surfaces', async () => {
+    // The backend returns NOTHING for the requested id — a foreign-space or
+    // purged target, which is the real cache miss.
+    mockedBatchResolve.mockResolvedValue([])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `[[${ULID_A}]]` }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(result.current.resolveBlockStatus(ULID_A)).toBe('deleted')
+    })
+
+    // The resolver hands back the broken-link label…
+    expect(result.current.resolveBlockTitle(ULID_A)).toBe(`[[${ULID_A.slice(0, 8)}...]]`)
+    // …and the real consumer still takes the content fallback, asserted
+    // through `resolveBlockDisplay` rather than a copy of its private regex.
+    const row = makeBlockRow({ content: 'the row own content' })
+    expect(resolveBlockDisplay(row, new Map(), result.current.resolveBlockTitle).title).toBe(
+      'the row own content',
+    )
+    // Nothing was written to the shared store for it (#2635) — the miss lives
+    // in the hook's local attempted-unresolved set.
+    expect(useResolveStore.getState().has(ULID_A)).toBe(false)
+  })
+
+  it('stores the "Untitled" placeholder for a resolved-but-blank tag too', async () => {
+    // #4238 — the second of the two cells that used to deviate. `#id…` here
+    // disagreed with `fetchAndCacheLinks`, `preload`'s tag half and the
+    // `searchTags` fill, all of which write "Untitled" under the same key.
     mockedBatchResolve.mockResolvedValue([
       { id: ULID_TAG, title: null, block_type: 'tag', deleted: false },
     ])
@@ -589,7 +658,29 @@ describe('useBacklinkResolution — stored title is normalised at the seed (#422
     await waitFor(() => {
       expect(useResolveStore.getState().has(ULID_TAG)).toBe(true)
     })
+    expect(useResolveStore.getState().cache.get(keyFor(null, ULID_TAG))?.title).toBe('Untitled')
+    expect(result.current.resolveTagName(ULID_TAG)).toBe('Untitled')
+  })
+
+  it('resolveTagName gives an UNRESOLVED cached id the tag-shaped label, not the block-shaped one', async () => {
+    // #4238 — the surface where `isResolved` and `has` genuinely differ, and
+    // the reason this hook reads the flag rather than the occupancy probe.
+    // `fetchAndCacheLinks` parks a `resolved: false` entry for a target the
+    // backend never returned; it is keyed by ULID with no mark class, so a
+    // `#[ULID]` chip can land on it. Under `has` the entry counts as a hit and
+    // falls through to `resolveTitle`, which hands back the BLOCK-shaped
+    // `[[id…]]` — the wrong shape on a surface that renders `#tag` chips.
+    useResolveStore
+      .getState()
+      .batchSet([{ id: ULID_TAG, title: 'parked label', deleted: true, resolved: false }])
+
+    const groups: BacklinkGroup[] = [makeGroup([{ id: 'B1', content: `#[${ULID_TAG}]` }])]
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    expect(useResolveStore.getState().has(ULID_TAG)).toBe(true)
     expect(result.current.resolveTagName(ULID_TAG)).toBe(`#${ULID_TAG.slice(0, 8)}...`)
+    // And the parked title never surfaces — the flag, not the bytes, decides.
+    expect(result.current.resolveTagName(ULID_TAG)).not.toBe('parked label')
   })
 
   it('leaves a short single-line title byte-identical (no gratuitous rewrite)', async () => {

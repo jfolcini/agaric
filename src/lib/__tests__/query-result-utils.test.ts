@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import { untitledOr } from '@/lib/block-title'
+import { unresolvedBlockLabel, untitledOr } from '@/lib/block-title'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
 
 // ---------------------------------------------------------------------------
@@ -81,6 +81,47 @@ describe('resolveBlockDisplay — the "Untitled" synthetic arm (#4228)', () => {
     const result = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
 
     expect(result.title).toBe('(empty)')
+  })
+})
+
+/**
+ * #4238 — the cache-miss arm, pinned against the SHARED label helper rather
+ * than a hand-typed `[[...]]` string.
+ *
+ * `CACHE_MISS_FALLBACK_PATTERN` is private to `query-result-utils`, while the
+ * only thing that now emits the shape is `unresolvedBlockLabel` over in
+ * `@/lib/block-title` — two modules that must agree with nothing but a
+ * comment holding them together. Before #4238 a resolved-but-blank row also
+ * emitted the shape, so the pattern had a second producer keeping it honest
+ * by accident; it does not any more, which makes this the test standing
+ * between the two.
+ */
+describe('resolveBlockDisplay — the cache-miss arm still fires (#4238)', () => {
+  const ULID = '01HAAAAA0000000000000000AA'
+
+  it('falls back to the block content for a genuinely unresolved target', () => {
+    const block = makeBlock({ id: ULID, parent_id: 'p1', page_id: 'p1', content: 'the real text' })
+    const pageTitles = new Map([['p1', 'My Page']])
+    // Exactly what every resolver hands back for an id that is absent from
+    // the cache, or present with `resolved: false`.
+    const resolveBlockTitle = vi.fn().mockReturnValue(unresolvedBlockLabel(ULID))
+
+    const result = resolveBlockDisplay(block, pageTitles, resolveBlockTitle)
+
+    expect(result.title).toBe('the real text')
+    expect(result.title).not.toBe(unresolvedBlockLabel(ULID))
+  })
+
+  it('does NOT treat a real title that merely contains brackets as a miss', () => {
+    // The counterweight: the pattern is anchored, so a block whose text opens
+    // with `[[` is still shown. A widened pattern would swallow it, and the
+    // test above alone would not notice.
+    const block = makeBlock({ id: ULID, parent_id: 'p1', page_id: 'p1', content: 'raw' })
+    const resolveBlockTitle = vi.fn().mockReturnValue('[[01HAAAAA...]] and then some')
+
+    const result = resolveBlockDisplay(block, new Map(), resolveBlockTitle)
+
+    expect(result.title).toBe('[[01HAAAAA...]] and then some')
   })
 })
 

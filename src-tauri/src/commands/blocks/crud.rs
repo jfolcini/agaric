@@ -762,8 +762,16 @@ pub async fn delete_block_inner(
 /// from the seed. The batch is best-effort across the surviving
 /// subset (mirrors `set_todo_state_batch_inner`'s lenient policy and
 /// matches multi-select-against-concurrent-delete reality). The
-/// returned count is the number of `blocks` rows whose `deleted_at`
-/// flipped from NULL to non-NULL.
+/// returned `deleted_count` is the number of `blocks` rows whose
+/// `deleted_at` flipped from NULL to non-NULL.
+///
+/// **Return shape (#4480)**: [`BatchDeleteResponse`] — `deleted_count` plus
+/// `affected_page_ids`, the `block_type = 'page'` members of the cohort this
+/// call tombstoned. The cascade walks `parent_id` WITHOUT a page-boundary
+/// stop, so a selected page's nested PAGE children are deleted alongside it;
+/// only this command knows their ids, and the `[[` picker's name cache needs
+/// them to stop offering rows that are now in the trash. See the type's own
+/// docs.
 ///
 /// **Op log shape**: one `DeleteBlock` op is appended per resolved
 /// ROOT (the inputs minus the misses), NOT per descendant — the
@@ -794,7 +802,7 @@ pub async fn delete_blocks_by_ids_inner(
     device_id: &str,
     materializer: &Materializer,
     block_ids: Vec<BlockId>,
-) -> Result<i64, AppError> {
+) -> Result<BatchDeleteResponse, AppError> {
     if block_ids.is_empty() {
         return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
@@ -835,7 +843,10 @@ pub async fn delete_blocks_by_ids_inner(
         // Every requested id is missing or already deleted. Commit the
         // (empty) tx so any reads it took settle, return zero.
         tx.commit_and_dispatch(materializer).await?;
-        return Ok(0);
+        return Ok(BatchDeleteResponse {
+            deleted_count: 0,
+            affected_page_ids: Vec::new(),
+        });
     }
 
     // Mirror — refuse the batch if any root is a non-empty
@@ -967,6 +978,27 @@ pub async fn delete_blocks_by_ids_inner(
     )
     .await?;
 
+    // #4480 — the PAGE subset of the cohort we just tombstoned, reported back
+    // so the caller can evict exactly those rows from the `[[` picker's
+    // per-space name cache. Read from the SAME `union_cohort_json` the UPDATE
+    // above consumed, so the reported set and the tombstoned set are the same
+    // list by construction and cannot drift.
+    //
+    // `block_type` is immutable for a live block, so it is immaterial whether
+    // this runs before or after the UPDATE; it sits after so the two
+    // statements read in cascade order. No `deleted_at` predicate: the cohort
+    // was captured pre-UPDATE from live rows and every one of them is now
+    // tombstoned, so filtering on `deleted_at IS NULL` here would return the
+    // empty set.
+    let affected_page_ids: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT id AS "id!: String" FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?1))
+             AND block_type = 'page'"#,
+        union_cohort_json,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
     // P-4 — sweep inherited tag rows for every root. Per-root call
     // (the helper takes a single seed); the SQL it emits is bounded
     // by the same depth-100 invariant.
@@ -1004,10 +1036,14 @@ pub async fn delete_blocks_by_ids_inner(
         .await;
     }
 
-    // Return the number of blocks the cascade soft-deleted (roots +
-    // descendants combined). Callers can compare against
-    // `block_ids.len()` to compute "skipped because missing".
-    Ok(deleted_rows.cast_signed())
+    // `deleted_count` is the number of blocks the cascade soft-deleted (roots
+    // + descendants combined) — callers can compare against `block_ids.len()`
+    // to compute "skipped because missing". `affected_page_ids` (#4480) is the
+    // page subset of that same cascade; see [`BatchDeleteResponse`].
+    Ok(BatchDeleteResponse {
+        deleted_count: deleted_rows.cast_signed(),
+        affected_page_ids,
+    })
 }
 
 /// Tauri command: batch-delete blocks by ids.
@@ -1015,14 +1051,16 @@ pub async fn delete_blocks_by_ids_inner(
 /// Delegates to [`delete_blocks_by_ids_inner`]. Single IMMEDIATE tx
 /// covers the whole batch — collapses the legacy N-IPC loop in
 /// `useBlockMultiSelect.handleBatchDelete` into one round-trip and
-/// one writer-lock window. Returns the number of blocks soft-deleted
-/// (roots + descendants combined).
+/// one writer-lock window. Returns a [`BatchDeleteResponse`]: the number of
+/// blocks soft-deleted (roots + descendants combined) plus the page ids inside
+/// that cascade (#4480 — the frontend cannot see the cascade, so it cannot
+/// evict the nested pages the cascade swept out of the `[[` picker's cache).
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_blocks_by_ids(
     ctx: State<'_, WriteCtx>,
     block_ids: Vec<BlockId>,
-) -> Result<i64, AppError> {
+) -> Result<BatchDeleteResponse, AppError> {
     delete_blocks_by_ids_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), block_ids)
         .await
         .map_err(sanitize_internal_error)
@@ -3372,7 +3410,8 @@ mod saturation_probe_tests {
         let (buf, guard) = capture();
         let n = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from_trusted(&root)])
             .await
-            .unwrap();
+            .unwrap()
+            .deleted_count;
         drop(guard);
         assert_eq!(n, 130, "the batch cascade must soft-delete all 130 nodes");
         let live: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at IS NULL")

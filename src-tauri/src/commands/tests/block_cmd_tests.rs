@@ -3081,7 +3081,8 @@ async fn delete_blocks_by_ids_space_refusal_aborts_whole_batch() {
     // abort's doing, not a trivial "nothing was ever deletable" pass.
     let control = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec!["DBI_DELME".into()])
         .await
-        .expect("the deletable block must delete cleanly when batched alone");
+        .expect("the deletable block must delete cleanly when batched alone")
+        .deleted_count;
     assert_eq!(control, 1, "control: exactly one block soft-deleted");
     let delme_deleted_after: Option<i64> =
         sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
@@ -6680,7 +6681,8 @@ async fn delete_blocks_by_ids_cascades_descendants() {
 
     let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![parent.id.clone()])
         .await
-        .unwrap();
+        .unwrap()
+        .deleted_count;
     assert_eq!(
         affected, 3,
         "parent + child + grandchild = 3 rows soft-deleted"
@@ -6698,6 +6700,151 @@ async fn delete_blocks_by_ids_cascades_descendants() {
             "block {id} must be soft-deleted by the cascade"
         );
     }
+}
+
+/// #4480 — the batch trash cascade DOES cross a nested-page boundary (unlike
+/// `move_blocks_to_space`, pinned not to further up this file), so the command
+/// must hand back the page ids it swept.
+///
+/// `collect_delete_cohort` walks `parent_id` via
+/// `collect_subtree_ids_unbounded(.., Active)`, whose recursive arm filters
+/// only on `deleted_at IS NULL` and depth — there is no `block_type != 'page'`
+/// stop. A selected page's nested PAGE children are therefore tombstoned along
+/// with it, and until #4480 the reply was a bare COUNT, so
+/// `PageBrowserBatchToolbar.handleTrash` could only evict the roots it had
+/// sent. The `[[` picker went on offering the cascaded nested pages — rows now
+/// sitting in the trash — for the rest of the session.
+///
+/// NON-TAUTOLOGY — what each assertion rules out:
+///   * `affected_page_ids` containing the CONTENT ids → the `block_type =
+///     'page'` filter is missing; content events would burn the frontend's
+///     `NAME_CACHE_FANOUT_MAX_IDS` budget on rows the picker cannot hold.
+///   * `affected_page_ids` containing `DBI4480_SIB` → the query is returning
+///     the space's pages rather than the COHORT's pages. The sibling is live
+///     and in the same space precisely so that mistake cannot pass.
+///   * `affected_page_ids` equal to the input list → the cascade half is
+///     missing; `DBI4480_KID` was never sent by the caller and is the whole
+///     point of the field.
+///   * the listing asserts prove the eviction is actually OWED: the two
+///     cascaded pages really do stop being offerable in the space, while the
+///     sibling really does remain.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_reports_cascaded_nested_pages_4480() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "DBI4480_SPACE").await;
+    insert_block(&pool, "DBI4480_PAGE", "page", "Parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "DBI4480_CONTENT",
+        "content",
+        "c",
+        Some("DBI4480_PAGE"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "DBI4480_KID",
+        "page",
+        "Kid",
+        Some("DBI4480_PAGE"),
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "DBI4480_KIDCONTENT",
+        "content",
+        "kc",
+        Some("DBI4480_KID"),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, "DBI4480_SIB", "page", "Sibling", None, Some(3)).await;
+
+    // Every page genuinely in the space, through the production path, so the
+    // listing assertions below are about the delete and not about a missing
+    // space stamp.
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![
+            "DBI4480_PAGE".into(),
+            "DBI4480_KID".into(),
+            "DBI4480_SIB".into(),
+        ],
+        "DBI4480_SPACE".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let baseline: Vec<String> = list_all_pages_in_space_inner(&pool, "DBI4480_SPACE", None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id.to_string())
+        .collect();
+    for id in ["DBI4480_PAGE", "DBI4480_KID", "DBI4480_SIB"] {
+        assert!(
+            baseline.contains(&id.to_string()),
+            "baseline: {id} must be offerable before the trash (got {baseline:?})"
+        );
+    }
+
+    // Trash ONLY the parent — what the toolbar sends when the user selects the
+    // parent row alone.
+    let resp = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec!["DBI4480_PAGE".into()])
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        resp.deleted_count, 4,
+        "the cascade crosses the nested-page boundary: parent + its content + \
+         the nested page + the nested page's content"
+    );
+
+    let mut pages = resp.affected_page_ids.clone();
+    pages.sort();
+    assert_eq!(
+        pages,
+        vec!["DBI4480_KID".to_string(), "DBI4480_PAGE".to_string()],
+        "affected_page_ids must be exactly the PAGE members of the cohort — \
+         the selected root AND the nested page the caller never sent, and \
+         neither content block nor the untouched sibling (got {:?})",
+        resp.affected_page_ids
+    );
+
+    // The eviction is genuinely owed: both reported pages have stopped being
+    // offerable, and the sibling has not.
+    let after: Vec<String> = list_all_pages_in_space_inner(&pool, "DBI4480_SPACE", None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id.to_string())
+        .collect();
+    for id in ["DBI4480_PAGE", "DBI4480_KID"] {
+        assert!(
+            !after.contains(&id.to_string()),
+            "{id} was tombstoned and must drop out of the space listing (got {after:?})"
+        );
+    }
+    assert!(
+        after.contains(&"DBI4480_SIB".to_string()),
+        "the untouched sibling must still be offerable (got {after:?})"
+    );
+    let sib_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind("DBI4480_SIB")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        sib_deleted.is_none(),
+        "the sibling must not be swept by another root's cascade"
+    );
 }
 
 /// #2201 item 2a: a single batch that mixes a PAGE root and a CONTENT
@@ -6766,7 +6913,8 @@ async fn delete_blocks_by_ids_mixed_block_types_delete_correctly() {
         vec![page_root.id.clone(), content_root.id.clone()],
     )
     .await
-    .unwrap();
+    .unwrap()
+    .deleted_count;
     assert_eq!(
         affected, 4,
         "page root + its child + content root + its child = 4 rows soft-deleted"
@@ -6859,7 +7007,8 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
 
     let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id, r2.id])
         .await
-        .unwrap();
+        .unwrap()
+        .deleted_count;
     assert_eq!(affected, 4, "2 roots + 2 children = 4 cascade rows");
 
     let post_max: i64 = sqlx::query_scalar!(
@@ -6917,12 +7066,14 @@ async fn delete_blocks_by_ids_skips_already_deleted() {
 
     let first = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.clone()])
         .await
-        .unwrap();
+        .unwrap()
+        .deleted_count;
     assert_eq!(first, 1, "first call soft-deletes the block");
 
     let second = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.clone()])
         .await
-        .unwrap();
+        .unwrap()
+        .deleted_count;
     assert_eq!(
         second, 0,
         "second call must skip the now-deleted block — zero affected"
@@ -6962,7 +7113,8 @@ async fn delete_blocks_by_ids_only_ghosts_returns_zero() {
     let affected =
         delete_blocks_by_ids_inner(&pool, DEV, &mat, vec!["GHOST1".into(), "GHOST2".into()])
             .await
-            .unwrap();
+            .unwrap()
+            .deleted_count;
     assert_eq!(affected, 0, "no live roots → zero affected");
 
     let post_max: i64 = sqlx::query_scalar!(
@@ -7002,7 +7154,8 @@ async fn delete_blocks_by_ids_partial_miss_commits_live_subset() {
     let affected =
         delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![live.id.clone(), "GHOST".into()])
             .await
-            .unwrap();
+            .unwrap()
+            .deleted_count;
     assert_eq!(affected, 1, "the live root is soft-deleted; ghost ignored");
 
     let deleted_at: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
@@ -7093,7 +7246,8 @@ async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
         vec![ancestor.id.clone(), descendant.id.clone()],
     )
     .await
-    .unwrap();
+    .unwrap()
+    .deleted_count;
     assert_eq!(
         affected, 2,
         "both selected rows are soft-deleted: ancestor and its descendant"
@@ -7133,7 +7287,8 @@ async fn delete_blocks_by_ids_normalises_lowercase_block_id() {
 
     let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec!["dbi_norm_01".into()])
         .await
-        .unwrap();
+        .unwrap()
+        .deleted_count;
     assert_eq!(
         affected, 1,
         "lowercase id must be normalised to uppercase before SQL membership probe"
@@ -7347,6 +7502,178 @@ async fn move_blocks_to_space_propagates_space_id_to_descendants_533() {
         child_b.as_deref(),
         Some("MBS6_SPACE_B"),
         "child space_id must rehome to B with its page (regression: was left stale at A)"
+    );
+}
+
+/// #4480 — the counterpart of the #533 test above, and the fact that decides
+/// what a batch move owes the `[[` picker's ORIGIN-space name cache.
+///
+/// #533 pins that a *content* descendant follows its page across
+/// `move_blocks_to_space`. A nested PAGE does not, and the picker offers
+/// PAGES. Two independent mechanisms say so and this test holds both to it:
+///
+///  * the synchronous fan-out is `project_set_property_to_sql`'s
+///    `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`, and a page
+///    block's `page_id` is its OWN id (the `page_id_self_for_pages` CHECK,
+///    migration 0073), so a nested page can never match its parent's fan-out;
+///  * the background reconciler agrees by construction —
+///    `cache::page_id::rebuild_space_ids` carries `WHERE block_type != 'page'`
+///    because a page's own `space_id` is authoritative and is never re-derived
+///    from an ancestor.
+///
+/// The frontend consequence, which is the whole point of pinning it: after a
+/// batch move of a page with page children, those children are STILL IN THE
+/// ORIGIN SPACE. The origin picker offering them is correct, not stale, and
+/// `PageBrowserBatchToolbar.handleMoveToSpace`'s roots-only eviction fan-out
+/// is therefore exactly right. This test is what stops the next reader from
+/// "fixing" it to evict descendants that never left.
+///
+/// NON-TAUTOLOGY — how a wrong implementation fails here. The assertions run
+/// against `list_all_pages_in_space_inner`, the very query that FILLS the
+/// picker cache, not against `blocks.space_id` alone:
+///   * a fan-out that DID drag nested pages along → `MBS7_KID` disappears from
+///     A's listing and appears in B's; both listing asserts fail.
+///   * a listing that returned every page regardless of space → the moved ROOT
+///     `MBS7_PAGE` would still be in A; that assert fails.
+///   * a listing that returned nothing → the `contains` asserts fail.
+/// The nested page's own CONTENT child is asserted too: it is behind the page
+/// boundary and must not be re-attributed either.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "MBS7_SPACE_A").await;
+    seed_space(&pool, "MBS7_SPACE_B").await;
+    // Parent page, a nested PAGE child under it, a CONTENT child of each, and
+    // an unrelated sibling page that never moves.
+    insert_block(&pool, "MBS7_PAGE", "page", "Parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "MBS7_CONTENT",
+        "content",
+        "c",
+        Some("MBS7_PAGE"),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, "MBS7_KID", "page", "Kid", Some("MBS7_PAGE"), Some(2)).await;
+    insert_block(
+        &pool,
+        "MBS7_KIDCONTENT",
+        "content",
+        "kc",
+        Some("MBS7_KID"),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, "MBS7_SIB", "page", "Sibling", None, Some(3)).await;
+
+    // Everything genuinely lands in ORIGIN space A first, through the
+    // production path — so the "still in A" assertions below cannot pass by
+    // the rows simply never having had a space.
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["MBS7_PAGE".into(), "MBS7_KID".into(), "MBS7_SIB".into()],
+        "MBS7_SPACE_A".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let baseline = list_all_pages_in_space_inner(&pool, "MBS7_SPACE_A", None)
+        .await
+        .unwrap();
+    let baseline: Vec<String> = baseline.into_iter().map(|r| r.id.to_string()).collect();
+    for id in ["MBS7_PAGE", "MBS7_KID", "MBS7_SIB"] {
+        assert!(
+            baseline.contains(&id.to_string()),
+            "baseline: {id} must be offered by space A's page listing before the move \
+             (got {baseline:?})"
+        );
+    }
+
+    // Batch-move ONLY the parent page — exactly what the Pages-view batch
+    // toolbar sends when the user selects the parent row.
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["MBS7_PAGE".into()],
+        "MBS7_SPACE_B".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let space_of = |id: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        space_of("MBS7_PAGE").await.as_deref(),
+        Some("MBS7_SPACE_B"),
+        "the selected root moves to B"
+    );
+    assert_eq!(
+        space_of("MBS7_CONTENT").await.as_deref(),
+        Some("MBS7_SPACE_B"),
+        "the root's CONTENT child follows it to B (#533)"
+    );
+    assert_eq!(
+        space_of("MBS7_KID").await.as_deref(),
+        Some("MBS7_SPACE_A"),
+        "a nested PAGE does NOT follow its parent: its own space_id is \
+         authoritative and stays in the ORIGIN space A"
+    );
+    assert_eq!(
+        space_of("MBS7_KIDCONTENT").await.as_deref(),
+        Some("MBS7_SPACE_A"),
+        "content behind the nested-page boundary stays with the nested page in A"
+    );
+
+    // The picker's own source of truth, which is what the frontend caches.
+    let after_a: Vec<String> = list_all_pages_in_space_inner(&pool, "MBS7_SPACE_A", None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id.to_string())
+        .collect();
+    assert!(
+        !after_a.contains(&"MBS7_PAGE".to_string()),
+        "the moved root must leave space A's listing (got {after_a:?})"
+    );
+    assert!(
+        after_a.contains(&"MBS7_KID".to_string()),
+        "the nested page is STILL offerable in the ORIGIN space — the origin \
+         [[ cache keeping it is correct, not stale (got {after_a:?})"
+    );
+    assert!(
+        after_a.contains(&"MBS7_SIB".to_string()),
+        "the untouched sibling is still offered in A (got {after_a:?})"
+    );
+
+    let after_b: Vec<String> = list_all_pages_in_space_inner(&pool, "MBS7_SPACE_B", None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id.to_string())
+        .collect();
+    assert!(
+        after_b.contains(&"MBS7_PAGE".to_string()),
+        "the moved root is offered by the DESTINATION space (got {after_b:?})"
+    );
+    assert!(
+        !after_b.contains(&"MBS7_KID".to_string()),
+        "the nested page must NOT appear in the destination space — it never \
+         moved (got {after_b:?})"
     );
 }
 

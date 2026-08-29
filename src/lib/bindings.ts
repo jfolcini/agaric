@@ -44,10 +44,12 @@ export const commands = {
 	 *  Delegates to [`delete_blocks_by_ids_inner`]. Single IMMEDIATE tx
 	 *  covers the whole batch — collapses the legacy N-IPC loop in
 	 *  `useBlockMultiSelect.handleBatchDelete` into one round-trip and
-	 *  one writer-lock window. Returns the number of blocks soft-deleted
-	 *  (roots + descendants combined).
+	 *  one writer-lock window. Returns a [`BatchDeleteResponse`]: the number of
+	 *  blocks soft-deleted (roots + descendants combined) plus the page ids inside
+	 *  that cascade (#4480 — the frontend cannot see the cascade, so it cannot
+	 *  evict the nested pages the cascade swept out of the `[[` picker's cache).
 	 */
-	deleteBlocksByIds: (blockIds: BlockId[]) => typedError<number, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
+	deleteBlocksByIds: (blockIds: BlockId[]) => typedError<BatchDeleteResponse, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
 	/**
 	 *  Tauri command: move N blocks to a target space (#81).
 	 *  Delegates to [`move_blocks_to_space_inner`]. Returns the number of
@@ -1724,6 +1726,50 @@ export type BacklinkQueryResponse = {
 
 /**  Tagged union of sort modes for backlink queries. */
 export type BacklinkSort = { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir };
+
+/**
+ *  Reply of the batch soft-delete [`delete_blocks_by_ids`].
+ * 
+ *  #4480 — this used to be a bare `i64` count. A count is enough to word a
+ *  toast, but not to invalidate anything: the cascade tombstones the whole
+ *  `parent_id` subtree of every root, and that walk does NOT stop at a nested
+ *  page boundary ([`agaric_store::block_descendants::collect_subtree_ids_unbounded`]
+ *  carries no `block_type` filter), so a selected page's PAGE children are
+ *  deleted too while the caller only ever knew about the roots it sent. The
+ *  `[[` picker's per-space name cache is filled once from
+ *  `list_all_pages_in_space` (`block_type = 'page' AND deleted_at IS NULL AND
+ *  space_id = ?`) and has no other delete signal, so those cascaded pages went
+ *  on being offered for the rest of the session — #4450's defect surviving one
+ *  level down.
+ * 
+ *  [`Self::affected_page_ids`] is the missing half: the command already
+ *  resolves the exact cohort it tombstones, so it reports the PAGE subset of
+ *  it rather than making the frontend re-derive a subtree walk it cannot see.
+ *  (Contrast [`DeleteResponse::descendants_affected`], which is a COUNT and
+ *  therefore cannot drive an eviction — the asymmetry #4480 identified is real
+ *  but is between "knows the cohort" and "reports the cohort", not between
+ *  delete and move.)
+ */
+export type BatchDeleteResponse = {
+	/**
+	 *  Number of `blocks` rows whose `deleted_at` flipped NULL → non-NULL
+	 *  (roots + cascaded descendants combined). The former return value.
+	 */
+	deleted_count: number,
+	/**
+	 *  Every `block_type = 'page'` id inside that cascade — the selected page
+	 *  roots plus any nested pages the cascade swept with them. Content blocks
+	 *  are deliberately excluded: the picker never offers them, so including
+	 *  them would only inflate the caller's fan-out budget (see
+	 *  `NAME_CACHE_FANOUT_MAX_IDS`) with events that cannot match anything.
+	 * 
+	 *  Ids the batch SKIPPED (missing / already soft-deleted at probe time)
+	 *  are absent — they were never in the cohort. A caller that wants the
+	 *  pre-#4480 "evict everything I asked for" behaviour must union this with
+	 *  its own input list; `handleTrash` does exactly that.
+	 */
+	affected_page_ids: string[],
+};
 
 /**
  *  #3864: durable, user-visible "the sync listener may be reachable from off

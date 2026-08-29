@@ -117,22 +117,64 @@ describe('PopoverContent', () => {
   // scan, so spelling it out here would fail the hook on a comment.) That
   // is deliberately narrower than "the popover avoids the viewport edge by
   // 4px"; it goes red the moment the default itself regresses (removed, or
-  // drifts from 4), which is what shipped untested at #4339.
+  // drifts from 4), which is what shipped untested at #4339. NOTHING covers
+  // that wider, real-browser claim: grepping `collisionPadding` and
+  // `data-side` across `e2e/` finds only comment mentions, and the one spec
+  // that touches this area (the height-cap test above,
+  // `e2e/formatting-toolbar-mobile.spec.ts`) asserts the available-height
+  // variable, not the 4px inset. Stated here, in full, rather than restated
+  // in `../popover.tsx`'s docblock too — that file's `EDGE_PADDING_PX`
+  // comment points back to this paragraph instead, so the claim has one
+  // home and cannot go stale in one copy while the other still reads as
+  // current.
+  // The direct-call technique is hook-fragile in a way the paragraph above
+  // does not say: it is justified against the REF-FORWARDING concern
+  // specifically (there is none to bypass), not against hooks in general.
+  // `PopoverContent` has none today, but if it ever gains a `useContext` or
+  // `useId`, calling it as a plain function outside a component render
+  // breaks the rules of hooks, and both direct-call tests below die with
+  // "Invalid hook call" rather than any assertion about `collisionPadding`.
   // Both direct-call tests assume `PopoverContent` returns exactly
   // Portal -> Content. If a wrapper element is ever inserted between them,
   // `portal.props.children` is undefined and the padding assertion dies with
   // a TypeError naming neither the padding nor the shape change. Assert the
   // shape first so the failure says which of the two actually broke.
-  const contentOf = (portal: { props: { children?: { props?: object } } }) => {
+  //
+  // #4494 review note 1 — the shape check and the `collisionPadding`-key
+  // check used to be ONE `expect`, both worded as "retarget these tests".
+  // That misattributes the case where the shape is still exactly
+  // Portal -> Content but `collisionPadding` itself is gone (the
+  // destructure default AND the `collisionPadding={collisionPadding}` JSX
+  // forward both deleted): the child element and its props object both
+  // exist, so this is not a test-shape problem at all, it's the #4339
+  // default (or its forwarding) regressing in `PopoverContent` — and a
+  // maintainer told to "retarget the tests" for that would be chasing the
+  // wrong file. Splitting into two `expect`s gives each failure its own,
+  // correctly-attributed message.
+  const contentOf = (portal: { props: { children?: { props?: Record<string, unknown> } } }) => {
     const props = portal.props.children?.props
+    // Shape check keys on `data-slot`, not mere props EXISTENCE: an
+    // inserted wrapper element (say, a `<div>` between Portal and Content)
+    // has a props object of its own too — `{ children: <Content .../> }` —
+    // so a bare `props !== undefined` check would sail straight through a
+    // broken shape and land on the `collisionPadding` check below holding
+    // the WRONG props object, misreporting a shape break as a removed
+    // default. `data-slot="popover-content"` is set unconditionally in the
+    // JSX below, independent of `collisionPadding`'s fate, so it reads back
+    // true exactly when the child under Portal really is `Content`.
+    expect(
+      props?.['data-slot'] === 'popover-content',
+      'PopoverContent no longer returns Portal -> Content; retarget these direct-call tests rather than relaxing them',
+    ).toBe(true)
     // Checking that `collisionPadding` is PRESENT, not merely that `props`
     // exists: an inserted wrapper element has props of its own, so a
     // `toBeDefined()` on `props` passes and the real assertion then fails as
     // an opaque "expected undefined to be 4". Keying on the prop under test
-    // is what makes a shape change say so.
+    // is what makes the removed-default case say so, distinctly from the
+    // shape check above.
     expect(
-      props && 'collisionPadding' in props,
-      'PopoverContent no longer returns Portal -> Content carrying collisionPadding; retarget these direct-call tests rather than relaxing them',
+      props !== undefined && 'collisionPadding' in props,
+      'PopoverContent returns Portal -> Content, but no longer forwards collisionPadding at all — the #4339 default (or its forwarding) regressed, not these tests',
     ).toBe(true)
     return portal.props.children as { props: { collisionPadding?: number } }
   }

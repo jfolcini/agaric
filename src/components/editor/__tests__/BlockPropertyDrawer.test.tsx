@@ -636,7 +636,9 @@ describe('BlockPropertyDrawer', () => {
     // `keyFor(null, id)`.
     const { useResolveStore, keyFor } = await import('@/stores/resolve')
     useResolveStore.setState({
-      cache: new Map([[keyFor(null, 'TARGET_PAGE'), { title: 'My Target Page', deleted: false }]]),
+      cache: new Map([
+        [keyFor(null, 'TARGET_PAGE'), { title: 'My Target Page', deleted: false, resolved: true }],
+      ]),
       version: 1,
     })
 

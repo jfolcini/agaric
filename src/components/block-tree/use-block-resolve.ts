@@ -18,7 +18,13 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { TagCacheRow } from '@/lib/bindings'
-import { blockFirstLineOr, resolveStoreTitle, untitledOr } from '@/lib/block-title'
+import {
+  blockFirstLineOr,
+  resolveStoreTitle,
+  unresolvedBlockLabel,
+  unresolvedTagLabel,
+  untitledOr,
+} from '@/lib/block-title'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { t as translate } from '@/lib/i18n'
@@ -1272,28 +1278,39 @@ export function useBlockResolve(): UseBlockResolveReturn {
   const resolveBlockTitle = useCallback((id: string): string => {
     const spaceId = useSpaceStore.getState().currentSpaceId
     const cached = cacheRef.current.get(keyFor(spaceId, id))
-    if (cached) return cached.title
-    return `[[${id.slice(0, 8)}...]]`
+    // #4238 — `cached.resolved`, not merely `cached`: an entry can be present
+    // and stand for "the backend returned nothing" (`fetchAndCacheLinks`'
+    // unreturned-target placeholder). Mirrors `useResolveStore.resolveTitle`,
+    // which reads the same entries.
+    if (cached?.resolved) return cached.title
+    return unresolvedBlockLabel(id)
   }, [])
 
   const resolveBlockStatus = useCallback((id: string): 'active' | 'deleted' => {
     const spaceId = useSpaceStore.getState().currentSpaceId
     const cached = cacheRef.current.get(keyFor(spaceId, id))
-    if (cached) return cached.deleted ? 'deleted' : 'active'
+    // #4515 — `!resolved` counts as deleted, mirroring
+    // `useResolveStore.resolveStatus` (these read the same entries), so a
+    // parked placeholder cannot render an ACTIVE chip carrying the unresolved
+    // label `resolveBlockTitle` returns for it. Inert today: the sole
+    // `resolved: false` writer also sets `deleted: true`.
+    if (cached) return cached.deleted || !cached.resolved ? 'deleted' : 'active'
     return 'active'
   }, [])
 
   const resolveTagName = useCallback((id: string): string => {
     const spaceId = useSpaceStore.getState().currentSpaceId
     const cached = cacheRef.current.get(keyFor(spaceId, id))
-    if (cached) return cached.title
-    return `#${id.slice(0, 8)}...`
+    // See `resolveBlockTitle` above — same verdict, tag-shaped label.
+    if (cached?.resolved) return cached.title
+    return unresolvedTagLabel(id)
   }, [])
 
   const resolveTagStatus = useCallback((id: string): 'active' | 'deleted' => {
     const spaceId = useSpaceStore.getState().currentSpaceId
     const cached = cacheRef.current.get(keyFor(spaceId, id))
-    if (cached) return cached.deleted ? 'deleted' : 'active'
+    // See `resolveBlockStatus` above — same verdict.
+    if (cached) return cached.deleted || !cached.resolved ? 'deleted' : 'active'
     return 'active'
   }, [])
 

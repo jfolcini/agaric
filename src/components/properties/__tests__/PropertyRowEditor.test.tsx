@@ -902,7 +902,10 @@ describe('PropertyRowEditor ref picker', () => {
     const { useResolveStore, keyFor } = await import('@/stores/resolve')
     useResolveStore.setState({
       cache: new Map([
-        [keyFor('SPACE_TEST', 'TARGET_PAGE'), { title: 'My Target', deleted: false }],
+        [
+          keyFor('SPACE_TEST', 'TARGET_PAGE'),
+          { title: 'My Target', deleted: false, resolved: true },
+        ],
       ]),
       version: 1,
     })
