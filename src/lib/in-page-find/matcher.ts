@@ -457,7 +457,9 @@ const FINAL_SIGMA_RE = /ς/g
  *
  * One experiment, three variants, eleven interleaved repetitions per
  * variant with rotating order, medians, and the observed spread on each row as
- * a noise floor. `pre` is the code before #4507 — `foldCodePoint` was a bare
+ * a noise floor. The `range` column is that spread: full peak-to-peak as a
+ * percentage of the median, NOT a half-width — writing it `±`, as earlier
+ * versions of this block did, overstates the band by about 2x. `pre` is the code before #4507 — `foldCodePoint` was a bare
  * `f === 'ς' ? 'σ' : f`, `scanLiteral` a bare `text.toLowerCase()`. `naive` is
  * `replace`-always, unguarded — a shape argued against in review and **never
  * one that shipped**, so the `naive/now` column sizes what the guard buys and
@@ -468,30 +470,32 @@ const FINAL_SIGMA_RE = /ς/g
  * Per CODE POINT, how `foldCodePoint` calls it (1M iterations):
  *
  * ```
- *                     pre    naive     now   now/pre   naive/now   noise
- * latin (no sigma)   19.6     80.4    31.7    +62%       2.5x       ±20%
- * turkish (İ)        55.2    122.5    67.9    +23%       1.8x        ±5%
- * greek (has sigma)  90.3    159.7   108.7    +20%       1.5x        ±4%
- * astral (pairs)     86.0    159.6   103.6    +20%       1.5x       ±26%
+ *                     pre    naive     now   now/pre   naive/now   range
+ * latin (no sigma)   19.6     80.4    31.7    +62%       2.5x        20%
+ * turkish (İ)        55.2    122.5    67.9    +23%       1.8x         5%
+ * greek (has sigma)  90.3    159.7   108.7    +20%       1.5x         4%
+ * astral (pairs)     86.0    159.6   103.6    +20%       1.5x        26%
  * ```
  *
  * Per WHOLE TEXT NODE, how `scanLiteral` calls it (300k iterations):
  *
  * ```
- *                       pre    naive      now   now/pre   naive/now   noise
- * short heading (15)    8.6     27.2     12.9    +50%       2.1x        ±3%
- * english para (540)   46.7     66.4     51.1     +9%       1.3x       ±11%
- * greek para (504)   1489.6   2284.5   2331.1    +56%       1.0x        ±9%
+ *                       pre    naive      now   now/pre   naive/now   range
+ * short heading (15)    8.6     27.2     12.9    +50%       2.1x         3%
+ * english para (540)   46.7     66.4     51.1     +9%       1.3x        11%
+ * greek para (504)   1489.6   2284.5   2331.1    +56%       1.0x         9%
  * ```
  *
  * **Read these as bands, not as measurements.** This is a shared cloud runner
  * and the spread proves it: five of the seven rows clear their own floor here,
  * but a previous run of this identical experiment had `astral` clearing
- * comfortably (±6%) and this one has it buried (±26%), while `english para`
- * failed to clear in both. Any row whose `now/pre` is within about twice its
- * noise figure has either flipped verdict between runs (`astral`) or failed to
- * clear in both (`english para`), and should be treated as "direction known,
- * magnitude not". Three earlier versions of this block
+ * comfortably (range 6%) and this one has it buried (range 26%), while
+ * `english para` failed to clear in both. Both have since flipped again: in a
+ * later run every row cleared, `english para` included, at +11% against a 10%
+ * floor. Six runs, and the only row never in doubt is `greek para`. Any row
+ * whose `now/pre` is within about twice its `range` figure should be treated
+ * as "direction known, magnitude not" — the verdict column is a property of
+ * the run, not of the code. Three earlier versions of this block
  * reported single runs to the percentage point, which is how `+127%` was
  * published for what is really a ~60% effect.
  *

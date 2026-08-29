@@ -9,7 +9,8 @@
  * it never gates CI and never flakes a lane.
  *
  *   npx vitest run --config scripts/mutation-harnesses/vitest.config.ts \
- *     scripts/mutation-harnesses/in-page-find-fold-cost.harness.ts
+ *     scripts/mutation-harnesses/in-page-find-fold-cost.harness.ts \
+ *     --disable-console-intercept
  *
  * # What it measures
  *
@@ -32,8 +33,9 @@
  * summaries. Interleaving with rotating order cancels drift; medians over
  * eleven repetitions cancel outliers; and the per-row spread is reported as an
  * explicit noise floor because row-level verdicts are NOT stable here — the
- * `astral` row cleared its floor at ±6% in one run and was buried at ±26% in
- * the next, on identical code.
+ * `astral` row cleared a floor of 6% in one run and was buried under one of
+ * 26% in the next, on identical code. (Those are full peak-to-peak ranges, not
+ * half-widths — see `spreadPct` below for why this file never writes them `±`.)
  *
  * So this prints a floor beside every row and marks which rows clear it. Treat
  * any row whose delta is within about twice its floor as "direction known,
@@ -63,7 +65,13 @@
  * here until this copy is re-synced — which is the point: a cost experiment
  * measuring a stale copy of the code would be worse than no experiment.
  *
+ * The `FINAL_SIGMA_RE` clone below is pinned separately (#3953). Both `naive`
+ * and `now` close over it, and a pattern-only edit in `matcher.ts` does not
+ * touch `foldForMatch`'s body — so without this second marker that edit would
+ * leave the function pin green while this file measured the old regex.
+ *
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldForMatch sha256=fd252bfb7c92699c2a335fcd43b637736d7d9e9812dd71c27ae662d22078998b
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#FINAL_SIGMA_RE sha256=b3551818575e60e5ae5b4b013000e0680855db365291f6058a1dade9e35b6d7e
  */
 
 import { describe, expect, it } from 'vitest'
@@ -110,7 +118,12 @@ function timeOnce(fn: (s: string) => string, inputs: string[], iterations: numbe
 
 const median = (xs: number[]): number => {
   const sorted = xs.toSorted((a, b) => a - b)
-  return sorted[sorted.length >> 1] ?? Number.NaN
+  const mid = sorted.length >> 1
+  if (sorted.length === 0) return Number.NaN
+  // `reps` is a parameter, so even-length input is reachable; taking the
+  // upper-middle element there would bias every figure upward.
+  if (sorted.length % 2 === 1) return sorted[mid] ?? Number.NaN
+  return ((sorted[mid - 1] ?? Number.NaN) + (sorted[mid] ?? Number.NaN)) / 2
 }
 
 /**
@@ -187,11 +200,16 @@ function assertTableIsSelfConsistent(rows: Row[]): void {
       Math.abs(fromOperands - deltaPct(r)),
       `${r.label}: printed now/pre does not follow from printed pre and now`,
     ).toBeLessThan(roundingSlackPct)
+    // Same argument as above, propagated through a ratio rather than a
+    // difference: the error is `0.05 * (1 + naive/now) / now`, so a flat 0.05
+    // bound false-fails once `now` drops to a few ms — reachable on a host
+    // four or five times quicker than this one.
     const guardFromOperands = Number(r.naive.toFixed(1)) / Number(r.now.toFixed(1))
+    const guardSlack = 0.01 + (0.05 * (1 + r.naive / r.now)) / r.now
     expect(
       Math.abs(guardFromOperands - guardX(r)),
       `${r.label}: printed naive/now does not follow from printed naive and now`,
-    ).toBeLessThan(0.05)
+    ).toBeLessThan(guardSlack)
   }
 }
 
