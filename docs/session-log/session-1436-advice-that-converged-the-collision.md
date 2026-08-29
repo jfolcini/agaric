@@ -76,3 +76,74 @@ One process note worth keeping: the shared session scratchpad is shared across t
 agents, and one of them overwrote a probe file mid-review. Backups were verified at each restore
 and nothing reached the worktree, but a private subdirectory is the safe default when several
 agents run at once.
+
+## Round 2 — the fix had the same shape as the bug it fixed
+
+Review rejected the first round, and the rejection is the most useful thing in this log: the
+ranked assignment **still converged**, deterministically, on a single board — the exact #4518
+outcome the change set out to remove.
+
+Rank was a *positional index inside each claimant's own window*, with no bookkeeping across
+ranks. That is safe only while every claimant shares a window. With merge-target max 1404 and
+two multi-entry PRs — #100 claiming `session-1423-a.md` and `session-1426-x.md`, #200 claiming
+`session-1423-b.md` and `session-1424-y.md`, 1425 free — the windows differ, and the two ranks
+land on the same number:
+
+```
+#100 (rank 1 of 2) -> session-1427
+#200 (rank 2 of 2) -> session-1427
+```
+
+Both claimants compute the same table from the same board, so the "board-conditional" qualifier
+round 1 had carefully added does not cover this at all. It describes a *race*; this is
+convergence with no race in it. A qualifier that narrows a claim to the cases you thought of is
+not the same as a claim that is true.
+
+The fix is to allocate **sequentially**: `nthFreeInWindow(origin, k, claims)` becomes
+`firstFreeInWindow(origin, claims, taken)`, with a `taken` set threaded across ranks. Distinctness
+then holds by construction rather than by every window happening to coincide. `suggestNextFree` is
+re-expressed in terms of the same helper so the two cannot drift apart later.
+
+The same rank-indexing also **skipped free numbers** — Case 33 asserted #4515 → 1452 with 1451
+free inside its own window. That expectation was encoded as correct, which is worth noting on its
+own: a test can pin a defect as intended behaviour, and then the test is the thing defending it.
+It moves to 1451, and a new case asserts positively that no free number in a claimant's own window
+is ever skipped, over three boards.
+
+### Two more branches nothing was watching
+
+**A stacked child could be a self-claimant with a row nowhere and a number nowhere.**
+`isSelfClaim` keys on `claim.prs` (every carrier), the assignment table on `claim.pr` (the folded
+representative). A PR stacked on another open PR, carrying only the parent's colliding file, is
+therefore refused *and* absent from the table — and because round 1 suppressed the
+next-free sentence whenever any collision existed, it received no number at all. The emitted
+"a PR reading this need only find its own #pr in the list" was false for precisely that reader.
+
+It does not get a table row: the number would be for a file it merely inherited and will rename
+again on rebase. It gets an explanation of why no row names it, and a free number for a log of its
+own.
+
+**A collision and a stale claim in the same run dropped the stale claim's number too**, because
+the suppression was gated globally rather than per finding. Gated per finding now. The old test
+covered only a *pure* stale claim — the one case where the global gate was already right.
+
+Both remedies read a new `remedySuggestion`: next free, excluding every number this run's
+collision tables already handed out. Without it the mixed run offered #101 the very number its own
+collision row named — #4518's convergence, one layer down, in the code fixing #4518.
+
+### Verification
+
+Self-test 123 → **131** assertions, green; real tree clean; `prek run
+session-log-pr-collision-selftest` passed.
+
+Four falsifications, each against a copy with the restore proven byte-identical:
+
+- restoring rank-indexing reddens **4** — the repro case reads `1427/1427`, and the no-waste case
+  reports `{pr:200, free:1425, got:1427}` and `{pr:4515, free:1451, got:1452}`. Its third board,
+  the shared-window one, correctly stays green, which is the point: that board could never have
+  caught this;
+- re-gating the stale sentence globally reddens **1**, the mixed run, whose output ends at "rebase
+  onto origin/main and renumber" with no number — the pure-stale case stays green, showing why the
+  old test could not catch it;
+- deleting the carrier advice reddens the stacked-child case only;
+- replacing `remedySuggestion` with the plain suggestion reddens **4**.
