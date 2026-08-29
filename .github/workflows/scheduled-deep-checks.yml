@@ -1480,6 +1480,20 @@ jobs:
         # recent prefix match — which is what makes each run write a fresh
         # entry instead of being stuck on the first one saved.
         id: corpus-cache
+        # `continue-on-error` because this step must not be able to STOP the
+        # fuzzing. `actions/cache/restore` calls `core.setFailed` on a cache
+        # SERVICE error (a plain miss is a success), and without this the failed
+        # restore would skip the fuzz step outright — no fuzzing, no
+        # `fuzz-status` artifact, and `file-fuzz-findings` seeing no results at
+        # all. Before this change the lane fuzzed from the committed seeds
+        # regardless of any cache; it still must.
+        #
+        # This does NOT weaken the two gates below: `continue-on-error` changes
+        # the step's `conclusion` to success while leaving `outcome` as
+        # `failure`, and both gates read `outcome` — so a cache-service failure
+        # still correctly suppresses cmin and the save rather than publishing a
+        # seeds-only corpus.
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: src-tauri/fuzz/corpus
@@ -1510,8 +1524,16 @@ jobs:
         # nothing. `cache-matched-key` names the entry this run inherited.
         env:
           MATCHED: ${{ steps.corpus-cache.outputs.cache-matched-key }}
+          RESTORE_OUTCOME: ${{ steps.corpus-cache.outcome }}
         run: |
-          if [ -n "$MATCHED" ]; then
+          # Three states, not two. `continue-on-error` on the restore means a
+          # cache-SERVICE failure also lands here, and reporting that as a cold
+          # start would misread "the cache is down" as "the cache is empty" —
+          # the second is expected once, the first is not.
+          if [ "$RESTORE_OUTCOME" != "success" ]; then
+            echo "::warning::corpus restore FAILED (outcome=$RESTORE_OUTCOME) — fuzzing from the committed seeds only."
+            echo "cmin and the save are gated on this outcome, so this run will NOT publish a corpus entry."
+          elif [ -n "$MATCHED" ]; then
             echo "corpus restored from cache entry: $MATCHED (warm start)"
           else
             echo "NO corpus cache entry matched — starting from the committed seeds only (cold start)."
@@ -1617,6 +1639,7 @@ jobs:
           exit "$overall"
 
       - name: Minimise the corpus, then persist it (#4496)
+        id: corpus-cmin
         # Condition is `!cancelled() && steps.corpus-cache.outcome == 'success'`
         # (spelled out below). A crash in ONE target still leaves the other four
         # with a run's worth of new coverage, and discarding that because the
@@ -1688,6 +1711,7 @@ jobs:
           # above — and #2945 is what a copy going stale costs: two targets were
           # added to the manifest and not to the workflow, so they were built
           # and never fuzzed for three months while the lane stayed green.
+          collapsed=0
           manifest="${GITHUB_WORKSPACE}/fuzz-status/targets.txt"
           if [ ! -f "$manifest" ]; then
             # The fuzz step died before writing it (runner loss, job timeout).
@@ -1726,7 +1750,18 @@ jobs:
               echo "::warning::cmin FAILED for $target (exit $rc) — corpus left un-minimised"
               tail -n 20 "$log" || true
             fi
+            # The one silent-reset path the two `if:` gates above cannot see: a
+            # cmin that exits 0 having collapsed a non-empty corpus to nothing.
+            # The save would publish that as the newest `fuzz-corpus-` entry and
+            # every later run would inherit it through `restore-keys`. Flag it
+            # and let the save step stand down; the previous entry then stays
+            # newest and the next run recovers on its own.
+            if [ "$before" -gt 0 ] && [ "$after" -eq 0 ]; then
+              echo "::warning::cmin collapsed $target from $before inputs to 0 — refusing to publish this corpus"
+              collapsed=1
+            fi
           done < "$manifest"
+          echo "collapsed=$collapsed" >> "$GITHUB_OUTPUT"
 
       - name: Save the minimised fuzz corpus (#4496)
         # Keyed on `github.run_id`, so every run writes a NEW entry that the
@@ -1748,7 +1783,10 @@ jobs:
         # reasons spelled out on the step above — a cancellation mid-cmin, and a
         # setup failure before the restore — either of which would otherwise
         # publish a truncated or seeds-only corpus as the newest entry.
-        if: ${{ !cancelled() && steps.corpus-cache.outcome == 'success' && github.ref == 'refs/heads/main' }}
+        # `steps.corpus-cmin.outputs.collapsed != '1'` is the third gate: see the
+        # collapse check in the step above. When cmin is skipped the output is
+        # `''`, which passes — correct, because this step is skipped then too.
+        if: ${{ !cancelled() && steps.corpus-cache.outcome == 'success' && steps.corpus-cmin.outputs.collapsed != '1' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: src-tauri/fuzz/corpus
