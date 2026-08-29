@@ -20,15 +20,14 @@ cargo-fuzz = true
 
 # cargo-machete scans a crate's `src/` for usage, but our targets live in
 # `fuzz_targets/*.rs` (non-standard [[bin]] paths it doesn't trace), so it
-# false-reports every dependency here as unused. The crate genuinely depends
-# on all four — the targets `use agaric_lib::{deeplink::parse_deep_link,
-# link_metadata::{parse_title, parse_description, parse_favicon,
-# detect_auth_required}}`, `use agaric_store::fts::{strip::strip_for_fts_with_maps,
-# sanitize_fts_query}` (#2945), `use agaric_sync::snapshot::decode_snapshot`
-# and `use agaric_engine::import::parse_logseq_markdown` (#2897 fallout) — and
-# the crate fails to build without them. Ignore the false positives.
+# false-reports every dependency here as unused. Every entry below is genuinely
+# used by at least one target — `agaric` by `deeplink_parse`/`html_parse`,
+# `agaric-store` by `fts_strip` (#2945) and `pagination_cursor_decode`,
+# `agaric-sync` by `snapshot_decode`, `agaric-engine` by `import_parse` and
+# `bibliography_parse`, `agaric-core` by `attachment_path_parse` — and the
+# crate fails to build without them. Ignore the false positives.
 [package.metadata.cargo-machete]
-ignored = ["agaric", "agaric-store", "agaric-sync", "agaric-engine"]
+ignored = ["agaric", "agaric-store", "agaric-sync", "agaric-engine", "agaric-core"]
 
 [dependencies]
 libfuzzer-sys = "0.4"
@@ -58,6 +57,14 @@ version = "0.1.0"
 # E4-import).
 [dependencies.agaric-engine]
 path = "../agaric-engine"
+version = "0.1.0"
+
+# #4497 — `attachment_path_parse` drives `agaric_core::attachment_path::
+# AttachmentFsPath::parse`, the validation boundary #2989 (path-traversal
+# filenames reaching `rename_attachment`) landed on. First use of this crate
+# from the fuzz workspace, hence the new entry and the machete addition above.
+[dependencies.agaric-core]
+path = "../agaric-core"
 version = "0.1.0"
 
 # Excludes the fuzz crate from the parent workspace; cargo-fuzz builds it
@@ -102,6 +109,32 @@ bench = false
 [[bin]]
 name = "html_parse"
 path = "fuzz_targets/html_parse.rs"
+test = false
+doc = false
+bench = false
+
+# #4497 — three parsers that take untrusted input and had no target. The
+# workflow's fuzz step derives its target list from these entries via
+# `cargo metadata`, so adding a [[bin]] here is all that enrols a target in the
+# weekly lane; there is no second list to keep in sync (there was, and #2945 is
+# what it cost when it went stale).
+[[bin]]
+name = "bibliography_parse"
+path = "fuzz_targets/bibliography_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "attachment_path_parse"
+path = "fuzz_targets/attachment_path_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pagination_cursor_decode"
+path = "fuzz_targets/pagination_cursor_decode.rs"
 test = false
 doc = false
 bench = false

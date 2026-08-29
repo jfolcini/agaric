@@ -1,0 +1,8 @@
+@article{knuth1984,
+  author  = {Knuth, Donald E.},
+  title   = {Literate Programming},
+  journal = {The Computer Journal},
+  year    = {1984},
+  volume  = {27},
+  pages   = {97--111},
+}

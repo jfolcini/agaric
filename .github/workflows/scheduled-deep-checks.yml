@@ -1392,13 +1392,15 @@ jobs:
   # ---------------------------------------------------------------------------
   fuzz:
     runs-on: ubuntu-24.04
-    # 90, not 60: the cmin step added in #4496 can take up to 20 minutes of the
-    # job on its own, on top of setup, five nightly ASan builds (15-25 min on a
-    # cold rust-cache) and ~10 min of fuzzing. A JOB timeout is a cancellation,
-    # which correctly skips the save — so an under-sized budget would surface as
-    # a corpus that silently stops accumulating, the failure #4496 exists to
-    # remove.
-    timeout-minutes: 90
+    # 110, not 60: the cmin step (#4496) can take up to 30 minutes of the job on
+    # its own, on top of setup, eight nightly ASan builds (20-35 min on a cold
+    # rust-cache) and ~16 min of fuzzing at the default 120s per target. A JOB
+    # timeout is a cancellation, which correctly skips the save — so an
+    # under-sized budget would surface as a corpus that silently stops
+    # accumulating, the failure #4496 exists to remove. Every number here scales
+    # with the target count, so raise this alongside any batch of new targets;
+    # #4497 took the count from five to eight and this from 90.
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1619,11 +1621,33 @@ jobs:
           # as "fine".
           RESULT_DIR="${GITHUB_WORKSPACE}/fuzz-status"
           mkdir -p "$RESULT_DIR"
-          # Keep this list in sync with the `[[bin]]` targets in
-          # src-tauri/fuzz/Cargo.toml — #2945 added `fts_strip`/`html_parse`
-          # there but not here, so for three months they were built and never
-          # fuzzed. All five are smoke-verified to build and run crash-free.
-          targets=(snapshot_decode deeplink_parse import_parse fts_strip html_parse)
+          # Derived from the `[[bin]]` entries in src-tauri/fuzz/Cargo.toml
+          # rather than restated here. This WAS a hand-maintained second copy of
+          # that list, and #2945 is what the copy cost when it went stale:
+          # `fts_strip` and `html_parse` were added to the manifest and not
+          # here, so for three months they were built and never fuzzed while
+          # this lane reported success. `--no-deps` reads the manifest only —
+          # no dependency resolution, no network, no build — and adding a
+          # [[bin]] is now the entire act of enrolling a target in this lane.
+          mapfile -t targets < <(
+            cargo metadata --format-version 1 --no-deps \
+              | jq -r '.packages[] | select(.name == "agaric-fuzz")
+                       | .targets[] | select(.kind | index("bin")) | .name' \
+              | sort
+          )
+          # Fail loud on an empty derivation. `mapfile` reading from a process
+          # substitution cannot see that producer's exit status — not with
+          # `set -e`, not with `pipefail` — so a jq filter that stops matching
+          # (a metadata schema change, a renamed package) would leave the loop
+          # below with nothing to iterate and the step exiting 0: a green fuzz
+          # lane that fuzzed nothing. That is the same silent-green this file
+          # already carries two other guards against; it does not need a third
+          # instance.
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "::error::no fuzz targets derived from src-tauri/fuzz/Cargo.toml"
+            exit 1
+          fi
+          echo "fuzzing ${#targets[@]} targets: ${targets[*]}"
           printf '%s\n' "${targets[@]}" > "$RESULT_DIR/targets.txt"
           for target in "${targets[@]}"; do
             echo not_run > "$RESULT_DIR/$target.status"
@@ -1687,10 +1711,17 @@ jobs:
         # so the symptom would be a corpus that silently stops accumulating:
         # the exact failure mode this change exists to remove. A step-level
         # bound makes it a loud, attributable failure instead.
-        timeout-minutes: 20
+        #
+        # 30, raised from 20 by #4497: the merge re-executes every corpus input
+        # of every target, so the bound scales with the target count, and that
+        # count went from five to eight. Hitting this bound is a step failure
+        # (loud) rather than a job timeout (a cancellation, hence silent
+        # non-accumulation) — but the fuzz step above still owns the lane's
+        # verdict, so a red cmin does not by itself mean a target crashed.
+        timeout-minutes: 30
         # Condition is `!cancelled() && steps.corpus-cache.outcome == 'success'`
-        # (spelled out below). A crash in ONE target still leaves the other four
-        # with a run's worth of new coverage, and discarding that because the
+        # (spelled out below). A crash in ONE target still leaves every OTHER
+        # target with a run's worth of new coverage, and discarding that because the
         # lane went red would make a single crashing target permanently reset
         # every sibling's corpus — so a failed FUZZ step must not stop this.
         #
@@ -1746,18 +1777,19 @@ jobs:
           # `|| true`: `find` exits 1 on a missing directory, `pipefail`
           # propagates that, and the assignment's non-zero status would trip
           # `-e`, aborting the loop before the remaining targets are minimised.
-          # Unreachable today (all five targets have committed seed dirs), but
-          # reachable the moment a sixth is added without seeds and its build
+          # Unreachable while every target has a committed seed dir, but
+          # reachable the moment one is added without seeds and its build
           # fails — `cargo fuzz run` builds before it creates `corpus/<target>`.
           # That is the exact fail-fast shape #3169 removed from the fuzz step's
           # own target loop; not reintroducing it here.
           set -uo pipefail
           # Read the target list the fuzz step already wrote, rather than
-          # hardcoding a THIRD copy of it. There are two today — the `[[bin]]`
-          # entries in `src-tauri/fuzz/Cargo.toml` and the `targets=(...)` array
-          # above — and #2945 is what a copy going stale costs: two targets were
-          # added to the manifest and not to the workflow, so they were built
-          # and never fuzzed for three months while the lane stayed green.
+          # restating it. The `[[bin]]` entries in `src-tauri/fuzz/Cargo.toml`
+          # are the single source; the step above derives its list from them and
+          # writes `targets.txt`, and this step consumes that. #2945 is what a
+          # second copy costs when it goes stale: two targets were added to the
+          # manifest and not to the workflow, so they were built and never
+          # fuzzed for three months while the lane stayed green.
           collapsed=0
           manifest="${GITHUB_WORKSPACE}/fuzz-status/targets.txt"
           if [ ! -f "$manifest" ]; then
@@ -1813,7 +1845,7 @@ jobs:
             # and let the save step stand down; the previous entry then stays
             # newest and the next run recovers on its own.
             if [ "$before" -gt 0 ] && [ "$after" -eq 0 ]; then
-              echo "::warning::cmin collapsed $target from $before inputs to 0 — standing down the save for ALL five targets this run (the flag is run-wide), so the previous cache entry stays newest"
+              echo "::warning::cmin collapsed $target from $before inputs to 0 — standing down the save for ALL targets this run (the flag is run-wide), so the previous cache entry stays newest"
               collapsed=1
             fi
           done < "$manifest"
