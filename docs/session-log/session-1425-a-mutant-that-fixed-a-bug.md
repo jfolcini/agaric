@@ -221,3 +221,52 @@ code" and "do not narrate the review in the source" pull in opposite directions
 and both are right. The test is whether a reader who has never seen the PR needs
 the sentence: they need *"compare, do not test emptiness, and here is why"*;
 they do not need *"an earlier revision of this comment said otherwise."*
+
+## A rare-case bound that is not rare
+
+A third review round found a factual error in the cost comment I wrote for
+`foldForMatch`, and it is the useful kind — a claim that reads as obviously
+fine until someone knows the domain.
+
+The comment justified `foldCodePoint`'s new per-code-point `replace` with:
+"only `İ`-bearing text nodes reach that path at all". True, and phrased as
+though that made the slow path rare. **`İ` U+0130 is ordinary Turkish
+orthography.** On Turkish content most text nodes take the slow path, on every
+keystroke while find is open. The bound is a constant factor either way — the
+accepted cost is not wrong — but "only text containing this one character"
+described a rare case in the reviewer's language and a common one in a user's.
+
+The same paragraph then rejected an `indexOf('ς') === -1` short-circuit as
+"replacing one scan with two". That reasoning is sound for the fast path, which
+folds whole text nodes. It is wrong for `foldCodePoint`, which is handed strings
+of one or two code points — there the `indexOf` is trivial and the avoided
+`replace` is the more expensive half. So the comment used a fast-path argument
+to decline a slow-path optimisation, in the same breath as understating how
+often the slow path runs.
+
+Both corrected. The short-circuit is still not applied, but for a narrower
+reason that survives the correction: no measurement says it pays, and this
+module is perf-shaped elsewhere (chunked walking, `REGEX_TIME_BUDGET_MS`)
+precisely because those costs *were* measured. The comment now names it as the
+first thing to try if find shows up in a profile on Turkish content.
+
+## What a sweep of 13 million cases is a fact about
+
+The second finding is about what the harness's control count means. The sweep
+varies the **code point under test** across all of Unicode while holding twelve
+contexts fixed. So it establishes two things: Sigma is context-sensitive in
+those twelve, and no other code point is. It never sweeps arbitrary code points
+as the *separator* preceding a Sigma, so `controlDiffering === 6` is a property
+of the chosen context set, not a general fact about Final_Sigma.
+
+This does not weaken the result the sweep exists for. `differing === 0` holds
+because the ς→σ collapse is applied *after* the fold, so no context can survive
+it — that argument is context-independent. It is the control that is
+set-relative, and the assertion comment now says so, with the instruction to
+re-derive 6 and 5 by hand when editing `contexts` rather than reading them off a
+run.
+
+The pattern across both findings is the same one this log opened with: a number
+that is correct, attached to a noun wider than it earned. "Six" is right about
+twelve contexts and says nothing about Unicode; "only İ-bearing nodes" is right
+about the branch and says nothing about how much text has an İ in it.

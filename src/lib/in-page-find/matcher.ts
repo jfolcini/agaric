@@ -432,22 +432,38 @@ const FINAL_SIGMA_RE = /ς/g
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  *
- * On cost, both call sites. On the FAST path this adds one `replace` scan over
- * every text node on top of `toLowerCase()`, once per text node per keystroke
- * while find is open. On the SLOW path `foldCodePoint` now runs a regex
- * `replace` per code point where it used to do one `f === 'ς'` comparison —
- * strictly more work in an inner loop, and the reason it is accepted is that
- * only `İ`-bearing text nodes reach that path at all, while a second copy of
- * the sigma rule living there would be reachable by every future edit.
+ * On cost, both call sites, and the two are not alike.
  *
- * An `s.indexOf('ς') === -1` short-circuit would skip the `replace` for the
- * overwhelmingly common no-sigma document, and is deliberately NOT done here:
- * it replaces one scan with two in that same common case, and no measurement
- * says the branch pays for itself. This module is perf-shaped elsewhere
- * (chunked walking, `REGEX_TIME_BUDGET_MS`) precisely because those costs were
- * measured; adding an unmeasured one would be the odd item out. If find ever
- * shows up in a profile, measure this against the `toLowerCase()` allocation
- * above it before touching it — that allocation is the larger suspect.
+ * On the FAST path this adds one `replace` scan over every text node on top of
+ * `toLowerCase()`, once per text node per keystroke while find is open.
+ *
+ * On the SLOW path `foldCodePoint` now runs a regex `replace` per code point
+ * where it used to do one `f === 'ς'` comparison — strictly more work in an
+ * inner loop. It is accepted because a second copy of the sigma rule living
+ * there would be reachable by every future edit, and one owner for the rule is
+ * worth a constant factor.
+ *
+ * **How often that path runs is easy to get wrong, and an earlier version of
+ * this comment did.** It said "only `İ`-bearing text nodes reach that path at
+ * all", in a tone implying that is rare. `İ` U+0130 is ordinary Turkish
+ * orthography — on Turkish content most text nodes take the slow path, on every
+ * keystroke while find is open. The bound is a constant factor either way, but
+ * it is not a rare-case bound.
+ *
+ * That also disposes of the reasoning the same comment used to reject an
+ * `indexOf('ς') === -1` short-circuit — "it replaces one scan with two". True
+ * of the fast path, which folds whole text nodes. Not true of `foldCodePoint`,
+ * which passes strings of one or two code points, where the avoided `replace`
+ * is the more expensive half. `const l = s.toLowerCase(); return
+ * l.indexOf('ς') === -1 ? l : l.replace(FINAL_SIGMA_RE, 'σ')` would keep the
+ * single-owner rule intact and is the shape to reach for.
+ *
+ * It is still not done here, for a narrower reason than the one it replaces:
+ * no measurement says it pays, and this module is perf-shaped elsewhere
+ * (chunked walking, `REGEX_TIME_BUDGET_MS`) precisely because those costs WERE
+ * measured. If find shows up in a profile on Turkish content, that
+ * short-circuit is the first thing to try — and measure it against the
+ * `toLowerCase()` allocation above it, which is the larger suspect.
  */
 function foldForMatch(s: string): string {
   return s.toLowerCase().replace(FINAL_SIGMA_RE, 'σ')

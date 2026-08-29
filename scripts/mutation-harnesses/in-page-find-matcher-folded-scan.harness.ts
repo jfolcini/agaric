@@ -672,6 +672,20 @@ ${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
     // and no following one — so 6 is derived, not a recorded observation, and a
     // change to the context set has to be a deliberate edit here rather than a
     // silently absorbed one.
+    //
+    // What 6 is a fact ABOUT, precisely: this context set, not Unicode. The
+    // sweep varies the CODE POINT under test while holding the twelve contexts
+    // fixed, so it establishes "Sigma is context-sensitive in these twelve" and
+    // "no other code point is, in these twelve". It never sweeps arbitrary code
+    // points as the SEPARATOR before a Sigma, so it is not a general statement
+    // about which separators trigger Final_Sigma.
+    //
+    // That does not weaken the result the sweep exists for. `differing === 0`
+    // holds because the ς→σ collapse neutralises Final_Sigma whatever the
+    // context — the collapse is applied after the fold, so no context can
+    // survive it. The control count is the part that is set-relative, and
+    // anyone editing `contexts` should expect to re-derive 6 and 5 by hand
+    // rather than to read them off a run.
     expect(controlDiffering).toBe(6)
     // And the separated family must contribute, or the six contexts that make
     // this sweep stronger than its first revision could be deleted with every
