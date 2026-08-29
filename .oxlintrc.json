@@ -118,6 +118,12 @@
     // readable and survives a category retune). This is the same warn ->
     // burn-down -> error ratchet #188 ran for the biome -> oxc migration.
     //
+    // EXCEPTION: `react/rule-suppression` below does NOT follow this
+    // ratchet. Its count reaching zero is not the exit condition and
+    // promoting it to `error` is not a matter of burn-down completing --
+    // see its own comment (#4493) for why `error` there is unreachable by
+    // construction, not just not-yet-reached.
+    //
     // #4409 drove six of the eight to zero and promoted them below; #4406
     // then did the same for `react/refs`. Only `react/set-state-in-effect`
     // is still burning down (#4407); it must stay at `warn` until its count
@@ -168,17 +174,24 @@
     // that whole function, above the directive as well as below it. It is
     // deliberate upstream (an author-declared incomplete dependency array
     // means the compiler must not trust its own inference for that function),
-    // it is NOT a directive-scope defect, it is unchanged in the latest
-    // release (1.80.0, checked #4493), and no key in this file switches it
+    // it is NOT a directive-scope defect, it is present and unchanged in the
+    // pinned oxlint 1.79.0 (checked #4493 against the installed
+    // node_modules/.bin/oxlint binary; a newer 1.80.0 also exists upstream
+    // but is not what this repo runs), and no key in this file switches it
     // off. So it is not something a fix here removes; the only thing that can
     // change is whether it is visible.
     //
-    // Measured on this tree (#4493), of 1858 lintable files: 172 carry some
-    // disable directive, 31 of those carry a bailout-triggering one at 38
-    // sites, and 15 of THOSE hide 41 findings — 33 `react/refs` (error above),
-    // 1 `react/static-components` (error above), and 7
-    // `react/set-state-in-effect`, which is the rule still burning down in
-    // #4407, so its remaining count is understated by seven.
+    // Measured on this tree (#4493): of 1858 lintable files
+    // (`oxlint -c .oxlintrc.json -f json .`'s `number_of_files`), 172 carry
+    // some disable directive, and 31 of those carry a bailout-triggering one,
+    // at 38 sites (`react(rule-suppression)` diagnostic count from that same
+    // run). Unmasking those 38 sites and re-linting reveals 15 files hiding
+    // findings underneath them, understating `react/set-state-in-effect`
+    // (still burning down in #4407) by seven. Exact counts, the unmasking
+    // method, and the commands that produced all of this live in
+    // docs/session-log/session-1437-the-lint-that-was-not-run.md — kept in
+    // one place because re-measuring is a multi-step diff, not a one-line
+    // grep, and three copies of a number nobody re-derives is worse than one.
     //
     // `error` is unreachable, and not by choice: all 38 sites would fail at
     // once, and the findings underneath them cannot be suppressed in advance.
