@@ -120,14 +120,16 @@
 //   * A new file whose number is ALREADY ON THE MERGE TARGET.
 //     `check-session-log-numbering.sh` check 1 owns this at the moment the
 //     file is committed, against `origin/main` as it stood THEN — and it
-//     never re-checks, because it only ever examines STAGED ADDITIONS. Once
-//     the adding commit is behind you, a sibling PR merging that number
-//     under your still-open PR is invisible to it forever; that is exactly
-//     the #3690 "two session-1281 files" shape, and the reason a green
-//     local guard is not evidence for an open PR. This guard re-checks it
-//     on every CI run against a base that is fresh at that moment, and
-//     reports it below as a STALE CLAIM. The two overlap deliberately at
-//     the addition commit; only this one covers everything after it.
+//     never re-checks, because it only ever examines the STAGED ADDITIONS
+//     of the commit in front of it (`--diff-filter=A`; a rename is invisible
+//     to it, since it carries no `R` handling). Once the adding commit is
+//     behind you, a sibling PR merging that number under your still-open PR
+//     is invisible to it forever; that is exactly the #3690 "two
+//     session-1281 files" shape, and the reason a green local guard is not
+//     evidence for an open PR. This guard re-checks it on every CI run
+//     against a base that is fresh at that moment, and reports it below as
+//     a STALE CLAIM. The two overlap deliberately at the addition commit;
+//     only this one covers everything after it.
 //   * Anything about a file that ALREADY EXISTS on the merge target — an
 //     inherited duplicate number, an edit, a deletion. NEITHER guard
 //     reports it. History is history.
@@ -550,6 +552,17 @@ function cannotVerify(reason) {
     collisions: [],
     staleClaims: [],
     suggestion: null,
+    // A refusal attributes its (empty) findings to nobody and offers no
+    // remedy: `selfPr` is what `reportFindings` reads to tell "the PR
+    // reading this has a row in that table" from "it does not" (#4531
+    // review note 1), and neither statement is available here.
+    carrierRemedy: null,
+    // A refusal allocated nothing, which is a different statement from
+    // "allocated numbers that happened to be distinct" — the empty array
+    // says so, and keeps the run-wide invariant checkable on every result
+    // shape rather than only the verified one.
+    allocated: [],
+    selfPr: null,
   }
 }
 
@@ -705,16 +718,230 @@ function describeClaim(claim) {
  * OUT of the origin (they are in nobody else's `HEAD`); they are only
  * skipped over inside the window.
  *
+ * This function does NOT allocate: it answers "what is next" and takes
+ * nothing off the table, so calling it twice returns the same number twice
+ * (#4531 review round 3). That is safe for its ONE remaining caller — the
+ * CLEAN path's closing sentence, printed only when this run reports no
+ * findings at all and therefore hands out nothing else. Every number offered
+ * to somebody to TAKE goes through `createRunAllocator` instead, which is
+ * the single place in this file that can hand the same number to two
+ * readers and so the single place that has to make sure it never does.
+ *
  * @param {Map<number, unknown>} claims
  * @param {number[]} mergedNums
  * @param {number[]} selfClaimedNums
  */
 function suggestNextFree(claims, mergedNums, selfClaimedNums = []) {
-  const origin = Math.max(0, ...mergedNums, ...selfClaimedNums)
+  return firstFreeInWindow(Math.max(0, ...mergedNums, ...selfClaimedNums), claims, new Set())
+}
+
+/**
+ * The numbers, among `claims`, that PR `pr` itself carries — the same rule
+ * `selfClaimedNums` (in `analyze`) applies to the PR running this check,
+ * generalized to ANY PR this run's `claims` map already has a row for.
+ * `suggestNextFree`'s origin needs exactly this set for whichever PR the
+ * suggestion is FOR: `check-session-log-numbering.sh` computes its own
+ * window over THAT PR's own `HEAD ∪ origin/main`, not over the board as a
+ * whole (see the doc comment above `suggestNextFree`).
+ *
+ * @param {number} pr
+ * @param {Map<number, {prs:number[]}[]>} claims
+ */
+function claimedNumbersOf(pr, claims) {
+  const nums = []
+  for (const [number, entries] of claims) {
+    if (entries.some((c) => c.prs.some((p) => Number(p) === Number(pr)))) nums.push(number)
+  }
+  return nums
+}
+
+/**
+ * The first number in `suggestNextFree`'s own `GAP_BOUND`-wide window that
+ * neither an open PR has claimed (`claims`) nor an earlier allocation in
+ * this same run has already handed out (`taken`). Past the end of the
+ * window this returns `null`, exactly as `suggestNextFree` does when every
+ * number in it is spoken for — never a number outside the window, which
+ * `check-session-log-numbering.sh` would reject on sight.
+ *
+ * This function is a pure LOOKUP and makes no distinctness claim of its own:
+ * it only skips what its caller passes in `taken`, so two calls with the
+ * same `taken` return the same number. Distinctness is a property of the
+ * ALLOCATOR that owns the set, not of this scan — see `createRunAllocator`,
+ * which is the only thing in this file that adds to one. Saying it here
+ * rather than "distinctness then holds by construction" is #4531 review
+ * note 3: the old wording was true within one `taken` set and silently
+ * false across two, which is exactly how a second set came to exist.
+ *
+ * A shared `taken` set is the whole of the fix for #4531's blocking finding.
+ * The previous shape was `nthFreeInWindow(origin, k, claims)` — the k-th
+ * free number in the window, with `k` the claimant's RANK — which is
+ * distinct-by-construction only while every claimant shares one window. It
+ * does not, and need not: `rankedCollisionAssignment` derives each
+ * claimant's origin from ITS OWN branch (a multi-entry PR carrying some
+ * other number above the merge target starts higher — case 33). Two
+ * differing windows made rank-indexing hand out the SAME number:
+ *
+ *   merge target max 1404; #100 claims 1423 and 1426, #200 claims 1423 and
+ *   1424, 1425 unclaimed. #100 (rank 0) has origin 1426 and window
+ *   1427..1436, so it takes 1427. #200 (rank 1) has origin 1424 and window
+ *   1425..1434: 1425 is free but is only the 0th free number, 1426 is
+ *   claimed, and 1427 is the 1st — so rank 1 lands on 1427 too. Both rows
+ *   rendered `→ session-1427`, deterministically, from the same board.
+ *
+ * The same arithmetic also WASTED free numbers without colliding: rank k
+ * skips the first k free numbers of its own window whether or not anybody
+ * else could ever want them (case 33 offered 1452 with 1451 free).
+ * Allocating SEQUENTIALLY through a shared `taken` set fixes both at once —
+ * distinctness stops depending on the windows lining up, and no free number
+ * is passed over unless something really did take it.
+ *
+ * @param {number} origin
+ * @param {Map<number, unknown>} claims
+ * @param {Set<number>} taken
+ */
+function firstFreeInWindow(origin, claims, taken) {
   for (let n = origin + 1; n <= origin + GAP_BOUND; n++) {
-    if (!claims.has(n)) return n
+    if (claims.has(n)) continue
+    if (taken.has(n)) continue
+    return n
   }
   return null
+}
+
+/**
+ * The origin of PR `pr`'s OWN suggestion window: the highest number either
+ * already on the merge target or carried by that PR's own branch. One
+ * definition, because every number this run offers anybody has to sit inside
+ * the window `check-session-log-numbering.sh` will compute for THAT branch —
+ * `max(HEAD ∪ origin/main)` — and three call sites deriving it separately is
+ * how the two of them drift apart.
+ *
+ * @param {number} pr
+ * @param {Map<number, {prs:number[]}[]>} claims
+ * @param {number[]} mergedNums
+ */
+function windowOriginOf(pr, claims, mergedNums) {
+  return Math.max(0, ...mergedNums, ...claimedNumbersOf(pr, claims))
+}
+
+/**
+ * THE allocator: one per run of `analyze`, threaded through every place this
+ * file produces a number for somebody to take. Its invariant is the whole
+ * point — a number this run has handed out anywhere is never handed out
+ * again, whatever finding, table, or remedy asks next.
+ *
+ * This exists because the same defect reached review three times, one level
+ * further out each round, and each round's fix scoped the cure to the
+ * instance in front of it:
+ *
+ *   1. #4518 — ONE number for a whole collision. Both colliding authors were
+ *      told "the next free number is N", both took N, and the guard fired
+ *      again on N. Fixed by giving each claimant its own number.
+ *   2. #4531 round 2 — per-claimant, but by RANK INDEX into each claimant's
+ *      own window, which is distinct only while the windows coincide. Two
+ *      differing windows produced one number. Fixed by a sequential `taken`
+ *      set inside `rankedCollisionAssignment`.
+ *   3. #4531 round 3 (this) — that set was created PER COLLISION, so it
+ *      reset between tables. Merge-target max 1404 with `{#100: 1423,
+ *      #200: 1423, #300: 1424, #400: 1424}`: table A hands #100 1425 and
+ *      #200 1426; table B starts from an empty set and hands #300 1425 and
+ *      #400 1426. #100 and #300 are told the same number, from the SAME
+ *      board, so every run computes it identically — deterministic
+ *      convergence, not the race the tables' "sees the SAME open-PR board"
+ *      qualifier covers. Worse, it is silent: each PR's report shows only
+ *      its own collision, so neither author can see the other was sent to
+ *      the same place. With `{#100: 1423 + 1424, #200: 1423, #300: 1424}`
+ *      the two converging rows land in ONE report, both reading 1425.
+ *
+ * The shape is identical every time: two things that must be distinct are
+ * allocated from independent, non-communicating scopes. So the scope is the
+ * RUN, once, and nothing else in this file owns a `taken` set — the collision
+ * tables, the stale-claim remedies and the row-less carrier's number all draw
+ * from this one. `analyze` allocates board-wide and in a fixed order (every
+ * collision's table, then every stale claim's per-file remedy, then every
+ * row-less carrier's own number) BEFORE the self/other split, so two PRs
+ * looking at the same board still compute the same allocation as each other
+ * — the property the tables' stability claim rests on.
+ *
+ * `take` returns `null`, and consumes nothing, when the window is exhausted:
+ * an honest "no number left" (see `firstFreeInWindow`), never a number
+ * outside the window `check-session-log-numbering.sh` would reject on sight.
+ *
+ * @param {Map<number, unknown>} claims
+ */
+function createRunAllocator(claims) {
+  /** @type {Set<number>} */
+  const taken = new Set()
+  return {
+    /** Every number handed out by this run so far, in allocation order. */
+    taken,
+    /** @param {number} origin */
+    take(origin) {
+      const number = firstFreeInWindow(origin, claims, taken)
+      if (number !== null) taken.add(number)
+      return number
+    },
+  }
+}
+
+/**
+ * Break a collision's tie the way #4518 asks for: `nextFreeSentence`'s
+ * single "next free number" is a pure function of (merge target, open-PR
+ * claims), so two colliding PRs run it against the same inputs and get
+ * the SAME answer — each renumbers to it, and the guard fires again on
+ * the identical collision one number higher. Neither author did anything
+ * wrong; the answer just was not allocator-safe.
+ *
+ * Here every claimant is ranked by PR number — stable, visible to every
+ * run that can see the collision at all (seeing every claimant's PR
+ * number is what it takes to report the collision in the first place),
+ * and therefore identical from whichever colliding branch computes it —
+ * and handed a free number from ITS OWN window, not a shared one. "Its
+ * own" matters: two claimants only share a window when their own branches
+ * carry the same numbers above the merge target, which is the common case
+ * (the colliding number IS that number for both) but not guaranteed — a
+ * claimant whose branch also carries some OTHER number above the target
+ * gets a window that starts higher, exactly as `suggestNextFree`'s own
+ * origin already treats the running PR (case 16b/18b/18c above). The PR
+ * actually running this check should read the entry naming ITS OWN
+ * number; the others are shown only so the reader can see the assignment
+ * is not one PR's private guess, and can tell whether it agrees with what
+ * a sibling PR's own run would compute.
+ *
+ * Allocation is SEQUENTIAL, through the RUN-WIDE allocator this function is
+ * handed, and NOT "the k-th free number in the window for rank k" (#4531
+ * blocking finding). Rank-indexing computes every row independently, so it
+ * is distinct-by-construction only while every claimant shares one window —
+ * and the whole point of the paragraph above is that they need not. With
+ * merge-target max 1404, `{#100: 1423 + 1426, #200: 1423 + 1424}` and 1425
+ * unclaimed, rank 0 took 1427 out of its 1427..1436 window and rank 1 took
+ * 1427 out of its 1425..1434 window (1425 was free but was only that
+ * window's 0th free number, and 1426 was claimed) — two rows, one number,
+ * deterministically, from a single board. Seeding each lookup with what the
+ * earlier ranks were actually handed makes distinctness a property of the
+ * allocation rather than of the windows lining up, and stops rank k
+ * skipping the first k free numbers of its own window for nobody's benefit.
+ *
+ * The allocator is a PARAMETER and never created here (#4531 review round
+ * 3). Owning one made this function's own rows distinct and said nothing
+ * about anybody else's: `analyze` calls it once PER COLLISION, so the set
+ * reset on every table and two tables on one board handed out the same
+ * number. See `createRunAllocator` for the reproduction and for why the
+ * scope has to be the RUN.
+ *
+ * @param {{claims:{pr:number, prs:number[], file:string}[]}} collision
+ * @param {Map<number, {prs:number[]}[]>} claims
+ * @param {number[]} mergedNums
+ * @param {ReturnType<typeof createRunAllocator>} alloc
+ */
+function rankedCollisionAssignment(collision, claims, mergedNums, alloc) {
+  const reps = [...new Set(collision.claims.map((c) => c.pr))]
+  return reps.map((pr, i) => ({
+    pr,
+    rank: i + 1,
+    total: reps.length,
+    number: alloc.take(windowOriginOf(pr, claims, mergedNums)),
+  }))
 }
 
 /**
@@ -852,6 +1079,98 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
   collisions.sort((a, b) => a.number - b.number)
   staleClaims.sort((a, b) => a.number - b.number)
 
+  // #4518: attach each collision's own DISTINCT per-claimant assignment
+  // now, while `claims`/`mergedNums` are in scope — `reportFindings` only
+  // sees `result`, so the tie-break has to travel on the finding object
+  // itself rather than being recomputed from data it does not have.
+  //
+  // Everything this run will offer anybody comes off ONE allocator (#4531
+  // review round 3 — see `createRunAllocator` for the three rounds of the
+  // same defect that made the scope the run rather than the finding). The
+  // order below is fixed and board-wide, computed BEFORE the self/other
+  // split, so it does not depend on which PR is running the check: every
+  // collision's table, then every stale claim's per-file remedy, then every
+  // row-less carrier's own number.
+  const mergedNumsArr = [...merged.byNumber.keys()]
+  const alloc = createRunAllocator(claims)
+
+  // #4531 review note 5: NEW objects, not `c.assignment = …` on the ones
+  // built above. Attaching in place made a function whose doc comment leads
+  // with "Pure" mutate its own intermediates — harmless while
+  // `selfCollisions` filtered the very same array, and exactly the kind of
+  // harmless-today that stops being obvious the moment somebody reuses one.
+  //
+  // Fields spelled out rather than spread (`oxc(no-map-spread)`), which also
+  // makes the shape a reader can see without chasing where `collisions` was
+  // built.
+  const rankedCollisions = collisions.map((c) => ({
+    number: c.number,
+    claims: c.claims,
+    assignment: rankedCollisionAssignment(c, claims, mergedNumsArr, alloc),
+  }))
+
+  // #4531 review round 4 note 2: a number that is BOTH a cross-PR collision
+  // AND a stale claim (case 13/21: two open PRs both add session-1000,
+  // already on the merge target) shares its `claims` array between the two
+  // findings, entry for entry — the collision row for PR #101's file IS the
+  // stale-claim entry for that same file. Looking up by `${number}:${pr}`
+  // is what `rankedCollisionAssignment` already assigned that PR for that
+  // number: one file, one number, reused by the second finding rather than
+  // handed a fresh one of its own.
+  const collisionNumberByPr = new Map(
+    rankedCollisions.flatMap((c) => c.assignment.map((a) => [`${c.number}:${a.pr}`, a.number])),
+  )
+
+  // #4531 review note 1: a PR holding TWO stale claims holds two FILES, and
+  // each needs its own number. The remedy was a single `remedySuggestion`
+  // computed once per run and printed inside the per-finding loop, so such a
+  // PR was told to renumber both files to the same one — self-contradictory
+  // inside a single report, and the same "allocate, don't reuse" defect as
+  // the tables. Allocated per claim ENTRY (one entry is one file), for every
+  // stale claim on the board rather than only this PR's, so the numbering is
+  // board-wide and self-independent like the tables above.
+  //
+  // A number this run already assigned that SAME (number, pr) via the
+  // collision table above is reused rather than allocated again (round 4
+  // note 2): without the reuse, case 13's own fixture told #101 to renumber
+  // its one file to two different numbers in one report — a table row and a
+  // stale-claim remedy disagreeing about the very file they both describe —
+  // and burned a second window slot doing it.
+  const remediedStaleClaims = staleClaims.map((s) => ({
+    number: s.number,
+    mergedPaths: s.mergedPaths,
+    claims: s.claims,
+    remedies: s.claims.map((cl) => {
+      const reused = collisionNumberByPr.get(`${s.number}:${cl.pr}`)
+      return {
+        pr: cl.pr,
+        prs: cl.prs,
+        file: cl.file,
+        number: reused ?? alloc.take(windowOriginOf(cl.pr, claims, mergedNumsArr)),
+      }
+    }),
+  }))
+
+  // #4531 review note 2: one number per row-less CARRIER, not one per
+  // collision it carries. A stacked child inheriting two of its parent's
+  // colliding session logs is short at most one number of its OWN (the
+  // inherited files are not its to renumber — see `carrierWithoutRowAdvice`),
+  // so it gets one, once, instead of the same paragraph and the same number
+  // repeated per finding. Board-wide and PR-ordered for the same reason as
+  // everything above it.
+  const carrierPrs = [
+    ...new Set(
+      rankedCollisions.flatMap((c) =>
+        c.claims
+          .flatMap((cl) => cl.prs)
+          .filter((p) => !c.assignment.some((a) => Number(a.pr) === Number(p))),
+      ),
+    ),
+  ].toSorted((a, b) => a - b)
+  const carrierRemedies = new Map(
+    carrierPrs.map((p) => [p, alloc.take(windowOriginOf(p, claims, mergedNumsArr))]),
+  )
+
   // #4431 review round 4, BLOCKING: a finding is only a FAILURE for the PR
   // running this check if that PR is one of the claimants. Before this
   // split, `main()` failed on `collisions.length + staleClaims.length > 0`
@@ -887,11 +1206,13 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
     .filter(([, entries]) => isSelfClaim(entries))
     .map(([number]) => number)
   const selfCollisions =
-    selfPr === null ? collisions : collisions.filter((c) => isSelfClaim(c.claims))
-  const otherCollisions = selfPr === null ? [] : collisions.filter((c) => !isSelfClaim(c.claims))
+    selfPr === null ? rankedCollisions : rankedCollisions.filter((c) => isSelfClaim(c.claims))
+  const otherCollisions =
+    selfPr === null ? [] : rankedCollisions.filter((c) => !isSelfClaim(c.claims))
   const selfStaleClaims =
-    selfPr === null ? staleClaims : staleClaims.filter((s) => isSelfClaim(s.claims))
-  const otherStaleClaims = selfPr === null ? [] : staleClaims.filter((s) => !isSelfClaim(s.claims))
+    selfPr === null ? remediedStaleClaims : remediedStaleClaims.filter((s) => isSelfClaim(s.claims))
+  const otherStaleClaims =
+    selfPr === null ? [] : remediedStaleClaims.filter((s) => !isSelfClaim(s.claims))
 
   const boardWarnings = [
     ...otherCollisions.map((c) => {
@@ -912,13 +1233,29 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
     }),
   ]
 
+  // There is deliberately no single run-wide `remedySuggestion` field any
+  // more (#4531 review round 3). One number reused by every remedy in a
+  // report is the defect, not the fix for it: each finding now carries the
+  // number IT was allocated (`staleClaims[].remedies[].number`,
+  // `carrierRemedy`), so nothing downstream can reuse one by accident. The
+  // only number left that is not an allocation is `suggestion`, and it is
+  // printed on the CLEAN path alone, where this run hands out nothing else.
+  //
+  // `allocated` is every number this run offered anybody, in allocation
+  // order — the run-wide distinctness invariant made observable, so the
+  // self-test can assert it directly rather than re-deriving it per finding
+  // and missing whichever site it forgot (which is how the last two rounds
+  // of this defect survived).
   return {
     verified: true,
     reason: null,
     warnings: [...warnings, ...boardWarnings],
     collisions: selfCollisions,
     staleClaims: selfStaleClaims,
-    suggestion: suggestNextFree(claims, [...merged.byNumber.keys()], selfClaimedNums),
+    suggestion: suggestNextFree(claims, mergedNumsArr, selfClaimedNums),
+    carrierRemedy: selfPr === null ? null : (carrierRemedies.get(Number(selfPr)) ?? null),
+    allocated: [...alloc.taken],
+    selfPr,
   }
 }
 
@@ -1052,18 +1389,47 @@ function main(argv) {
 
 /**
  * The remedy line, shared by every finding: a number the OTHER guard would
- * also accept, or an honest "none in the window" when parallel session-log
- * PRs have taken all of them (see `suggestNextFree`).
+ * also accept, or an honest "none in the window" when it is exhausted.
+ *
+ * The `null` case has TWO distinct causes, and this function is called from
+ * sites on both sides of that split (#4531 review round 4 note 3):
+ *
+ *   * the CLEAN path's closing sentence reads `result.suggestion` —
+ *     `suggestNextFree`'s own non-allocating query, which never consumes
+ *     from the run-wide `taken` set (see that function's doc comment). Its
+ *     `null` really does mean every number in the window is in `claims` —
+ *     an open PR has genuinely added a file naming it.
+ *   * the carrier's advice and the per-file stale-claim remedy both read a
+ *     number `alloc.take()` produced, which DOES draw from that shared set.
+ *     A run with roughly ten or more findings can exhaust the window with
+ *     numbers this run itself offered to OTHER findings above or below —
+ *     each to a real open PR, but as a SUGGESTED remedy, not evidence that
+ *     PR (or anybody else) has actually claimed that specific number, and
+ *     nothing requires it ever will. Telling that reader "every one is
+ *     already claimed by an open PR" names the wrong cause: the numbers are
+ *     genuinely free of any actual claim, just already spoken for by this
+ *     run's own bookkeeping. A guard that explains a refusal with the wrong
+ *     reason sends the reader to look for contention that is not there.
+ *
+ * `exhaustedByRunAllocator` selects which explanation applies; the two
+ * calls sourced from `alloc.take()` pass `true`, the CLEAN path's does not.
  *
  * @param {number|null} suggestion
+ * @param {{exhaustedByRunAllocator?: boolean}} [opts]
  */
-function nextFreeSentence(suggestion) {
+function nextFreeSentence(suggestion, { exhaustedByRunAllocator = false } = {}) {
   if (suggestion === null) {
-    return (
-      `no number in ${NUMBERING_GUARD}'s window (the ${GAP_BOUND} above the merge target's max) ` +
-      'is free — every one is already claimed by an open PR, so rebase onto the freshest ' +
-      'origin/main and re-derive it there rather than taking one from this run.'
-    )
+    return exhaustedByRunAllocator
+      ? `no number in ${NUMBERING_GUARD}'s window (the ${GAP_BOUND} above the merge target's ` +
+          'max) is left for THIS finding — not because every one is claimed by an open PR, but ' +
+          "because this run already offered every number in it as some OTHER finding's remedy " +
+          'earlier in this same report (a collision row, another stale claim, or another ' +
+          'carrier), whether or not that PR ever acts on it. Rebase onto the freshest ' +
+          'origin/main and re-derive it there, or move further up your own window, past this ' +
+          "run's own reservations rather than real contention."
+      : `no number in ${NUMBERING_GUARD}'s window (the ${GAP_BOUND} above the merge target's max) ` +
+          'is free — every one is already claimed by an open PR, so rebase onto the freshest ' +
+          'origin/main and re-derive it there rather than taking one from this run.'
   }
   return `the next free number as of THIS run is session-${suggestion}.`
 }
@@ -1088,15 +1454,141 @@ export function duplicatedNumberCount(result) {
 }
 
 /**
- * Print both finding kinds, each with the evidence for THAT kind — a
+ * The per-claimant remedy line for one collision (#4518): naming a SINGLE
+ * "next free number" here is exactly the bug, because every colliding
+ * claimant's run computes that same single answer and converges back onto
+ * an identical collision one number higher (`nextFreeSentence` is safe for
+ * the no-collision case this function is not used for; see the header on
+ * `rankedCollisionAssignment`). Each claimant is named with the DISTINCT
+ * number its own rank resolves to, so a PR reading this need only find its
+ * own `#pr` in the list.
+ *
+ * The denominator is stated rather than implied, and it is stated at FULL
+ * strength (#4518 review): the assignment is stable across runs that see
+ * the SAME board — not across runs, full stop. Both the rank (which
+ * claimants of this number exist) and the enumeration (which numbers in the
+ * window are already spoken for) are read off THIS run's `gh` snapshot, so
+ * a claim that appears or disappears between two claimants' runs can shift
+ * one table relative to the other and hand two of them the same number
+ * after all. Verified, not theorised: with the board `{#4506:1423,
+ * #4515:1423}` the two rows are 1424 and 1425, but if #4506's run also sees
+ * a third PR holding 1424, ITS rows become 1425/1426 — and #4506 reading
+ * 1425 lands exactly on what #4515's earlier run told #4515 to take. That
+ * is a race, not the deterministic convergence #4518 reported (where the
+ * SAME board produced the SAME answer for everyone, every round, forever),
+ * but it is the same outcome, so the line has to say so and has to name the
+ * way out: go FURTHER UP your own window rather than re-taking your row,
+ * which is exactly how the reported incident was actually broken.
+ *
+ * @param {{pr:number, rank:number, total:number, number:number|null}[]} assignment
+ */
+function renumberAdvice(assignment) {
+  const named = assignment.map((a) =>
+    a.number === null
+      ? `#${a.pr} (rank ${a.rank} of ${a.total}) — no free number left in its own window`
+      : `#${a.pr} (rank ${a.rank} of ${a.total}) → session-${a.number}`,
+  )
+  return (
+    // #4531 review note 3: "Each claimant takes a DISTINCT number" used to
+    // stop there, and was true of THIS table and nothing else — a second
+    // collision's table on the same board could hand one of its claimants a
+    // number this one already named. The scope is now the run, so say the
+    // run: the sentence has to be as wide as the guarantee and no wider,
+    // which is what the previous round was written to fix one level in.
+    '    Each claimant takes a DISTINCT number — distinct from every other row here, from ' +
+    'every row of any OTHER collision reported below, and from every number this run offers ' +
+    'further down, because one allocator hands out all of them. Ranked by PR number, so every ' +
+    `run of this check that sees the SAME open-PR board computes the same assignment: ${named.join(', ')}. ` +
+    "That board-conditional qualifier is the whole of the guarantee: this is THIS run's own " +
+    'view of the board, not a reservation. A PR that has not pushed yet, and a PR whose ' +
+    'changed-file list gh truncated at its 100-file cap, are both invisible here — either ' +
+    'can take one of these numbers before you push, and either APPEARING between two ' +
+    "claimants' runs shifts one table relative to the other, which can hand two of you the " +
+    'same number after all. So rebase onto the freshest origin/main and re-check there ' +
+    'rather than treating this as final — and if this fires AGAIN on the same PRs, the two ' +
+    'runs saw different boards: do NOT re-take your row. Move FURTHER UP your own window ' +
+    `instead (${NUMBERING_GUARD} accepts any free number in the ${GAP_BOUND} above your ` +
+    "branch's max), which is what actually breaks the tie."
+  )
+}
+
+/**
+ * The remedy for a claimant that OWNS this finding but has no ROW in
+ * `renumberAdvice`'s table (#4531 review note 1).
+ *
+ * The two keys disagree on purpose. Self-attribution reads `claim.prs` —
+ * EVERY open PR whose `gh`-reported file list carries the path — because a
+ * stacked child contains its parent's commits and would carry the duplicate
+ * into the merge result (see `analyze`'s `isSelfClaim`). The table reads
+ * `claim.pr`, the folded representative, because renumbering is a change to
+ * ONE file and only the PR that owns it can make it. So a child stacked on
+ * an open parent, carrying nothing but the parent's colliding session log,
+ * is a self-claimant with no row: it fails closed, correctly, and
+ * `renumberAdvice`'s "find your own #pr in the list" is false for it.
+ *
+ * It does not get a row of its own: the number in it would be for a file it
+ * merely inherited, and taking one would only rename that file a second
+ * time the moment the owner renumbers and the child rebases. What it gets
+ * is the explanation and a number that is genuinely free — `carrierRemedy`,
+ * allocated once for this PR out of the same run-wide allocator as every
+ * table above — for a session log of its own, if that is what it is
+ * actually short of.
+ *
+ * Printed ONCE per report, not once per collision (#4531 review note 2). A
+ * stacked child inheriting two of its parent's colliding session logs got
+ * this whole seven-line paragraph twice, naming the same number both times —
+ * and the number was the same because it was one run-wide value reused, the
+ * defect this round exists to remove. A PR is short of at most one session
+ * log OF ITS OWN however many inherited files it carries, so one paragraph
+ * and one number is also simply the right answer.
+ *
+ * @param {number|null} suggestion
+ */
+function carrierWithoutRowAdvice(suggestion) {
+  return (
+    '    THIS PR carries one or more of the files above but represents none of them, so no ' +
+    'row in those tables names it. The usual cause is a STACKED branch: your base is another ' +
+    'open PR, so its commits — and its session log — are in your changed-file list too, and a ' +
+    "table's rows belong to the PRs that OWN those files. Renumbering a file you merely " +
+    'inherited would only rename it a second time once the owner renumbers and you rebase, so ' +
+    'do not take a number for it. The finding is still yours, because the duplicate reaches ' +
+    'the merge result through you: wait for the owner to renumber, then rebase onto it (or ' +
+    'onto the freshest origin/main once it lands) and re-run this check. If it is a session ' +
+    'log of YOUR OWN that you still need a number for, this run answers that separately from ' +
+    // #4531 review note 4: `nextFreeSentence` returns a lowercase INDEPENDENT
+    // clause, so splicing it straight after a comma ("…need a number for,
+    // the next free number is session-1322.") was a comma splice, and worse
+    // in the `null` branch, where the clause is long enough to read as a
+    // second sentence that lost its full stop. A colon introduces it
+    // correctly and works for both branches without asking the sentence
+    // above to know which one it got.
+    // This PR's own number, like the stale-claim remedy below, comes from
+    // `alloc.take()` — the run-wide allocator — never from the non-consuming
+    // `suggestNextFree` the CLEAN path reads, so a `null` here is the
+    // run's-own-reservations cause, not "every number is claimed" (see
+    // `nextFreeSentence`).
+    `every row above: ${nextFreeSentence(suggestion, { exhaustedByRunAllocator: true })}`
+  )
+}
+
+/**
+ * Both finding kinds RENDERED, each with the evidence for THAT kind — a
  * cross-PR collision names the other PR, a stale claim names the file
  * already on the merge target. Split out of `main()` so the two stay
  * distinct in the log: they have different causes and different fixes, and
  * a reader who cannot tell which one fired cannot act on either.
  *
+ * Pure, and split out of `reportFindings` (which now only writes the joined
+ * result) so the self-test can assert on the LINES rather than only on a
+ * spawned process's stdout. #4531's blocking finding was a defect in what
+ * two readers are TOLD, and the only assertions that could see it went
+ * through `runProcessCasesIn`'s fixtures — a channel narrow enough that
+ * "every self-test board has exactly one collision" went unnoticed for two
+ * rounds. Rendering is now checkable in-process, for any board.
+ *
  * @param {ReturnType<typeof analyze>} result
  */
-function reportFindings(result) {
+export function findingLines(result) {
   const total = duplicatedNumberCount(result)
   const lines = [
     `::error::check-session-log-pr-collision: ${total} session-log number(s) would be duplicated in the merge result`,
@@ -1105,6 +1597,25 @@ function reportFindings(result) {
     const who = c.claims.map(describeClaim).join(' and ')
     lines.push(`  session-${c.number}: claimed by more than one open PR — ${who}`)
     lines.push('    One of these PRs must renumber; neither branch can see the other.')
+    lines.push(renumberAdvice(c.assignment))
+  }
+  // #4531 review note 1: the table's rows are the folded REPRESENTATIVES
+  // (`claim.pr`), while self-attribution keys on every CARRIER (`claim.prs`)
+  // — so a PR can own this finding and have no row in it. The advice line
+  // above tells such a reader to "find its own #pr in the list", and it is
+  // not there to be found; before this, the closing "next free number"
+  // sentence was suppressed for it too, leaving it with no number at all.
+  //
+  // #4531 review note 2: emitted after the loop, ONCE, rather than inside it
+  // once per collision. A stacked child inheriting two of its parent's
+  // colliding session logs got the identical paragraph and the identical
+  // number twice; it is short of at most one session log of its own however
+  // many it inherited, and `analyze` allocates exactly one for it.
+  if (
+    result.selfPr !== null &&
+    result.collisions.some((c) => !c.assignment.some((a) => Number(a.pr) === Number(result.selfPr)))
+  ) {
+    lines.push(carrierWithoutRowAdvice(result.carrierRemedy))
   }
   for (const s of result.staleClaims) {
     const who = s.claims.map(describeClaim).join(' and ')
@@ -1137,24 +1648,75 @@ function reportFindings(result) {
         'best-effort. If that is what this is, the number is NOT duplicated and renumbering ' +
         'is the wrong fix: re-run this job, and if it still fires, say so on the PR.',
     )
+    // #4518: the single shared "next free number" sentence is only unsafe
+    // where a collision's per-claimant table ALREADY answered the same
+    // question — printing both there would put the allocator-unsafe answer
+    // `renumberAdvice` exists to replace right next to the correct one, for
+    // a reader to grab by mistake. A stale claim has no such table (one
+    // open PR is enough to hold one), so it needs this sentence.
+    //
+    // #4531 review note 2: that made it a GLOBAL gate
+    // (`result.collisions.length === 0`), which is one finding's rule
+    // applied to another's output — a run carrying BOTH kinds dropped the
+    // number for the stale claim too, and the stale-claim author was left
+    // with "rebase and renumber" and nothing to renumber TO. Gated per
+    // finding instead: the sentence belongs to this stale claim and is
+    // printed with it.
+    //
+    // #4531 review round 3, note 1: one line PER FILE, each naming its own
+    // ALLOCATED number, not one `remedySuggestion` reused. Moving the
+    // sentence into this loop while the number stayed a single run-wide
+    // value made a two-stale-claim report actively self-contradictory — it
+    // told one author to renumber two different files to the same number.
+    // Every entry here is a distinct file that needs a distinct number, and
+    // `analyze` allocated one for each out of the run-wide allocator, so
+    // none of them can be a number a collision table above already handed
+    // out either. Rendered uniformly whether there is one entry or five:
+    // the single-entry shape is not special-cased, because a rendering
+    // branch only the rare board reaches is precisely the branch nobody
+    // writes a test for.
+    for (const remedy of s.remedies) {
+      // Each remedy number is `alloc.take()`'s (or reused from a collision
+      // row that already was), so a `null` here is the run's own
+      // reservations exhausting the window, not "every number is claimed
+      // by an open PR" (#4531 review round 4 note 3, `nextFreeSentence`).
+      lines.push(
+        `    #${remedy.pr} (\`${remedy.file}\`): ` +
+          `${nextFreeSentence(remedy.number, { exhaustedByRunAllocator: true })}`,
+      )
+    }
+    lines.push(
+      '    Rebase onto the freshest origin/main first, since another PR may claim it before ' +
+        'you push.',
+    )
   }
-  lines.push(`  ${nextFreeSentence(result.suggestion)}`)
-  lines.push(
-    '  Rebase onto the freshest origin/main first, since another PR may claim it before you push.',
-  )
-  // `emitErr` (a single `writeSync`), not `console.error` (#4431 review
-  // round 4 note 1): the CI step runs this guard under
-  // `2>&1 | tee collision.log`, and a write to a PIPE is ASYNCHRONOUS in
-  // node — the exact hazard `finish()`'s verdict line already guards against.
-  // `console.error` here is the same hazard one level up: `main()` calls
-  // `finish()` (which `process.exit`s) immediately after this function
-  // returns, so a long finding list queued as async pipe writes can be
-  // truncated while the SYNCHRONOUS verdict line still survives — a red job
-  // carrying `COLLISION` with none of the explanation for which numbers
-  // collided. Since #4452 item 3 the refusal, warning, OK and crash-handler
-  // paths go through the same helper, so this is no longer the one careful
-  // site among four careless siblings.
-  emitErr(lines.join('\n'))
+  return lines
+}
+
+/**
+ * Write what `findingLines` rendered, as ONE synchronous write.
+ *
+ * `emitErr` (a single `writeSync`), not `console.error` (#4431 review round
+ * 4 note 1): the CI step runs this guard under `2>&1 | tee collision.log`,
+ * and a write to a PIPE is ASYNCHRONOUS in node — the exact hazard
+ * `finish()`'s verdict line already guards against. `console.error` here is
+ * the same hazard one level up: `main()` calls `finish()` (which
+ * `process.exit`s) immediately after this function returns, so a long
+ * finding list queued as async pipe writes can be truncated while the
+ * SYNCHRONOUS verdict line still survives — a red job carrying `COLLISION`
+ * with none of the explanation for which numbers collided. Since #4452 item
+ * 3 the refusal, warning, OK and crash-handler paths go through the same
+ * helper, so this is no longer the one careful site among four careless
+ * siblings.
+ *
+ * The join stays HERE rather than in `findingLines` so there is still
+ * exactly one write for the whole report: splitting the rendering out must
+ * not become splitting the write up.
+ *
+ * @param {ReturnType<typeof analyze>} result
+ */
+function reportFindings(result) {
+  emitErr(findingLines(result).join('\n'))
 }
 
 /**
@@ -1535,6 +2097,40 @@ function runClaimSemanticsCases(ok, fail) {
     }),
     (r) => r.verified && duplicatedNumberCount(r) === 1,
   )
+
+  // Case 22 (#4531 review round 4 note 2): case 13/21's SAME fixture, but
+  // pinning what the two findings actually SAY about the one file each of
+  // them names — not just that both fire. `s.claims` and the collision's
+  // `c.claims` are the SAME entries, so before this fix the collision table
+  // told #101 to renumber `session-1000-mine.md` to one number while the
+  // stale-claim remedy, two paragraphs later in the SAME report, told it to
+  // renumber that identical file to a different one — reused/reissued, not
+  // a race between two runs. Falsify by reverting the `collisionNumberByPr`
+  // lookup in `analyze` (stale-claim remedies call `alloc.take()`
+  // unconditionally again): the two numbers for #101 diverge (1405 vs 1407)
+  // and `allocated` grows from 2 entries to 4.
+  check(
+    'a number that is both a collision and a stale claim gives each file ONE number, not two',
+    analyze({
+      prs: [
+        pr(101, [`${LOG_DIR}/session-1000-mine.md`]),
+        pr(102, [`${LOG_DIR}/session-1000-theirs.md`]),
+      ],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => {
+      if (!r.verified || r.collisions.length !== 1 || r.staleClaims.length !== 1) return false
+      const collisionByPr = new Map(r.collisions[0].assignment.map((a) => [a.pr, a.number]))
+      const remedyByPr = new Map(r.staleClaims[0].remedies.map((rem) => [rem.pr, rem.number]))
+      return (
+        collisionByPr.get(101) === remedyByPr.get(101) &&
+        collisionByPr.get(102) === remedyByPr.get(102) &&
+        new Set(r.allocated).size === 2 &&
+        r.allocated.length === 2
+      )
+    },
+  )
 }
 
 /**
@@ -1860,6 +2456,559 @@ function runSuggestionCases(ok, fail) {
       (v) => v.suggestion !== null && v.suggestion >= v.expected && v.suggestion <= v.maxAllowed,
     )
   }
+
+  // Case 30 (#4518): the collision's per-claimant assignment must not
+  // depend on WHICH claimant is running the check — recomputing it from
+  // #4515's own vantage has to reach the exact array #4506's vantage
+  // reached, element for element, or the two authors would read DIFFERENT
+  // tables for the identical collision and could still each take a number
+  // the other one's table also names. `analyze()` computes `assignment`
+  // before the self/other split (right after `collisions.sort` — see
+  // `analyze`), so this pins that it never varies with `selfPr`.
+  const twoWay = {
+    prs: [pr(4506, [`${LOG_DIR}/session-1423-a.md`]), pr(4515, [`${LOG_DIR}/session-1423-b.md`])],
+    mergedPaths: mergedLogs(1404),
+  }
+  const fromLower = analyze({ ...twoWay, selfPr: 4506 })
+  const fromHigher = analyze({ ...twoWay, selfPr: 4515 })
+  check(
+    '#4518: the collision assignment is identical from either colliding branch',
+    {
+      fromLower: fromLower.collisions[0]?.assignment,
+      fromHigher: fromHigher.collisions[0]?.assignment,
+    },
+    (v) =>
+      v.fromLower !== undefined && JSON.stringify(v.fromLower) === JSON.stringify(v.fromHigher),
+  )
+
+  // Case 31 (#4518, THE OBSERVED BUG): #4506 and #4515 both taking the SAME
+  // "next free number" is exactly what made them collide again — on 1426 —
+  // in the reported session. Ranked by PR number, the lower one (#4506)
+  // must land on a DIFFERENT number than the higher one (#4515): 1424 and
+  // 1425, the first two free numbers above the shared claim (origin 1423 —
+  // both PRs' own branch carries nothing else). Falsify by reverting
+  // `rankedCollisionAssignment` to hand every claimant
+  // `firstFreeInWindow(origin, claims, new Set())` (i.e. `suggestNextFree`'s
+  // own un-allocated answer, handed to everyone): this fails with both
+  // entries reading 1424.
+  check(
+    '#4518: two colliding PRs are assigned two DIFFERENT numbers, not the one shared answer',
+    fromLower.collisions[0]?.assignment,
+    (a) =>
+      Array.isArray(a) &&
+      a.length === 2 &&
+      a[0].pr === 4506 &&
+      a[1].pr === 4515 &&
+      a[0].number === 1424 &&
+      a[1].number === 1425,
+  )
+
+  // Case 32 (#4518): more colliding claimants than the window is wide —
+  // GAP_BOUND is 10, so an 11th claimant's rank falls past the end of it.
+  // That rank gets the same honest `null` `suggestNextFree` already uses
+  // when its own window is exhausted (Case 18), not a number outside the
+  // window `check-session-log-numbering.sh` would reject on sight.
+  const manyClaimants = Array.from({ length: 11 }, (_, i) =>
+    pr(500 + i, [`${LOG_DIR}/session-1423-${i}.md`]),
+  )
+  const exhausted = analyze({
+    prs: manyClaimants,
+    selfPr: 500,
+    mergedPaths: mergedLogs(1404),
+  })
+  check(
+    '#4518: a collision with more claimants than the window is wide leaves the last rank unassigned',
+    exhausted.collisions[0]?.assignment,
+    (a) =>
+      Array.isArray(a) &&
+      a.length === 11 &&
+      a.slice(0, 10).every((entry) => typeof entry.number === 'number') &&
+      a[10].number === null,
+  )
+
+  // Case 33 (#4518): a claimant whose branch ALSO carries an unrelated
+  // number above the shared claim gets a window that starts higher there —
+  // mirroring `suggestNextFree`'s own per-branch origin (case 16b/18b/18c)
+  // rather than a window shared by fiat. Its assigned number still differs
+  // from the other claimant's; it is just not adjacent, because it comes
+  // from a different (and, for ITS OWN branch, still valid) window.
+  //
+  // #4531 review: this expected 1452 under rank-indexing, which had rank 1
+  // skip the first free number of its OWN window (1451) because rank 1 asks
+  // for the window's SECOND free number — a number nobody else could ever
+  // have wanted, since the other claimant's window ends at 1433. Sequential
+  // allocation takes the first number actually available, so it is 1451.
+  // The waste was the benign face of the blocking defect below; the
+  // expectation moved with the fix rather than being re-baselined around it.
+  const divergentWindow = analyze({
+    prs: [
+      pr(4506, [`${LOG_DIR}/session-1423-a.md`]),
+      pr(4515, [`${LOG_DIR}/session-1423-b.md`, `${LOG_DIR}/session-1450-unrelated.md`]),
+    ],
+    selfPr: 4506,
+    mergedPaths: mergedLogs(1404),
+  })
+  check(
+    '#4518: a claimant with an extra own claim above the collision gets its OWN higher window',
+    divergentWindow.collisions[0]?.assignment,
+    (a) => Array.isArray(a) && a.length === 2 && a[0].number === 1424 && a[1].number === 1451,
+  )
+
+  // Case 34 (#4531, THE BLOCKING DEFECT): two claimants with DIFFERING
+  // windows must never be handed the same number. Rank-indexing computed
+  // every row independently — the k-th free number of rank k's own window —
+  // which is distinct-by-construction only while all claimants share a
+  // window, and case 33 above exists precisely because they need not.
+  //
+  // Verbatim reproduction, run against the pre-fix code and captured: merge
+  // target max 1404, #100 claims 1423 and 1426, #200 claims 1423 and 1424,
+  // 1425 unclaimed. #100 (rank 0) → origin 1426, window 1427..1436, 1427 is
+  // its 0th free number → 1427. #200 (rank 1) → origin 1424, window
+  // 1425..1434; 1425 is free but only the 0th, 1426 is claimed, 1427 is the
+  // 1st → 1427. Both rows rendered `→ session-1427`. Both claimants see the
+  // same board and compute the same table, so this is not the race the
+  // board-conditional qualifier covers — it is deterministic convergence,
+  // the exact shape #4518 was filed for, surviving inside #4518's own fix.
+  //
+  // Falsify by restoring rank-indexing (drop the `taken` set and hand rank
+  // `i` the i-th free number of its window): this goes red with both
+  // entries reading 1427, and case 33 goes red at 1452.
+  const differingWindows = analyze({
+    prs: [
+      pr(100, [`${LOG_DIR}/session-1423-a.md`, `${LOG_DIR}/session-1426-x.md`]),
+      pr(200, [`${LOG_DIR}/session-1423-b.md`, `${LOG_DIR}/session-1424-y.md`]),
+    ],
+    selfPr: 100,
+    mergedPaths: mergedLogs(1404),
+  })
+  check(
+    '#4531: two claimants with DIFFERING windows are never handed the same number',
+    differingWindows.collisions[0]?.assignment,
+    (a) =>
+      Array.isArray(a) &&
+      a.length === 2 &&
+      a[0].pr === 100 &&
+      a[1].pr === 200 &&
+      a[0].number === 1427 &&
+      a[1].number === 1425 &&
+      new Set(a.map((e) => e.number)).size === a.length,
+  )
+
+  // Case 35 (#4531, the wasted-number half — asserted POSITIVELY). "The
+  // numbers differ" is satisfied by an allocator that jumps arbitrarily far
+  // up each window, and rank-indexing did exactly that: rank k skipped the
+  // first k free numbers of its OWN window whether or not anything else
+  // could reach them (case 33 offered 1452 with 1451 free and unreachable
+  // from the other claimant's window, which ends at 1433). So this asserts
+  // the complement directly: for every row, every number strictly between
+  // its own window's start and the number it got was either claimed by an
+  // open PR or already handed to an earlier row. Nothing free is passed
+  // over — and a row that got `null` must have had NOTHING free left in its
+  // whole window.
+  const noWasteBoards = [
+    {
+      what: 'the differing-window repro',
+      merged: [1404],
+      prs: [
+        { n: 100, nums: [1423, 1426] },
+        { n: 200, nums: [1423, 1424] },
+      ],
+      rows: 2,
+    },
+    {
+      what: 'a claimant with an unrelated higher own claim',
+      merged: [1404],
+      prs: [
+        { n: 4506, nums: [1423] },
+        { n: 4515, nums: [1423, 1450] },
+      ],
+      rows: 2,
+    },
+    {
+      what: 'three claimants sharing one window',
+      merged: [1404],
+      prs: [
+        { n: 4506, nums: [1423] },
+        { n: 4515, nums: [1423] },
+        { n: 4520, nums: [1423] },
+      ],
+      rows: 3,
+    },
+    // #4531 review round 3: TWO INDEPENDENT COLLISIONS on one board — the
+    // shape no board in this suite had, which is why a `taken` set scoped to
+    // one collision survived two rounds of review. The no-waste walk below
+    // now carries its `taken` across every table exactly as the run-wide
+    // allocator does, so this board is a statement about the whole run and
+    // not about whichever table happened to be first.
+    {
+      what: 'two independent collisions on one board',
+      merged: [1404],
+      prs: [
+        { n: 100, nums: [1423] },
+        { n: 200, nums: [1423] },
+        { n: 300, nums: [1424] },
+        { n: 400, nums: [1424] },
+      ],
+      rows: 4,
+    },
+  ]
+  for (const board of noWasteBoards) {
+    const r = analyze({
+      prs: board.prs.map((p) =>
+        pr(
+          p.n,
+          p.nums.map((n) => `${LOG_DIR}/session-${n}-p${p.n}.md`),
+        ),
+      ),
+      // `null`, not `board.prs[0].n`: with a self PR the result's
+      // `collisions` are FILTERED to that PR's own, and on a two-collision
+      // board that hides the second table from this walk — the precise blind
+      // spot being closed. Allocation is board-wide and self-independent, so
+      // dropping the filter changes nothing but what is visible here.
+      selfPr: null,
+      mergedPaths: board.merged.map((n) => `${LOG_DIR}/session-${n}-merged.md`),
+    })
+    const claimed = new Set(board.prs.flatMap((p) => p.nums))
+    const ownNums = new Map(board.prs.map((p) => [p.n, p.nums]))
+    const assignment = r.collisions.flatMap((c) => c.assignment)
+    const taken = new Set()
+    const skipped = []
+    for (const a of assignment) {
+      const origin = Math.max(0, ...board.merged, ...(ownNums.get(a.pr) ?? []))
+      for (let n = origin + 1; n <= origin + GAP_BOUND; n++) {
+        if (a.number !== null && n >= a.number) break
+        if (!claimed.has(n) && !taken.has(n)) skipped.push({ pr: a.pr, free: n, got: a.number })
+      }
+      if (a.number !== null) taken.add(a.number)
+    }
+    check(
+      `#4531: no free number inside a claimant's own window is skipped (${board.what})`,
+      { assignment, skipped },
+      (v) =>
+        v.assignment.length === board.rows &&
+        v.skipped.length === 0 &&
+        new Set(v.assignment.map((e) => e.number)).size === v.assignment.length,
+    )
+  }
+
+  // Case 36 (#4531 review notes 1/2): the number a FINDING's own remedy
+  // offers must never be one this run's collision table already handed out.
+  // Both notes' fixes print `remedySuggestion` — the stale-claim sentence in
+  // a mixed run, and the row-less carrier's line — and the plain
+  // `suggestion` would have named #101's own collision row (1320) as the
+  // number to renumber a SECOND file to. Falsify by pointing either call
+  // site back at `result.suggestion`: this goes red.
+  const mixed = analyze({
+    prs: [
+      pr(101, [`${LOG_DIR}/session-1319-mine.md`, `${LOG_DIR}/session-1318-stale.md`]),
+      pr(102, [`${LOG_DIR}/session-1319-theirs.md`]),
+    ],
+    selfPr: 101,
+    mergedPaths: mergedLogs(1318),
+  })
+  check(
+    "#4531: a finding's remedy never names a number the collision table already assigned",
+    {
+      assigned: mixed.collisions[0]?.assignment.map((a) => a.number),
+      suggestion: mixed.suggestion,
+      // Round 3: `remedySuggestion` — one run-wide number every remedy
+      // reused — is GONE, and each stale claim now carries its own allocated
+      // number per file. Reading the old field here would have been
+      // `undefined`, which `includes()` cheerfully reports as "not
+      // assigned": the assertion would have gone on passing while measuring
+      // nothing at all.
+      remedies: mixed.staleClaims[0]?.remedies.map((rem) => rem.number),
+    },
+    (v) =>
+      Array.isArray(v.assigned) &&
+      Array.isArray(v.remedies) &&
+      v.remedies.length === 1 &&
+      v.assigned.includes(v.suggestion) &&
+      v.remedies.every((n) => typeof n === 'number' && !v.assigned.includes(n)),
+  )
+
+  // ── #4531 review round 3: the BLOCKING finding. Every board above has
+  // exactly ONE collision, which is why a `taken` set scoped to a single
+  // `rankedCollisionAssignment` call read as correct for two rounds. These
+  // boards have two.
+
+  // Case 37: two INDEPENDENT collisions. Verbatim reproduction against the
+  // pre-fix code, merge target max 1404, `{#100: 1423, #200: 1423, #300:
+  // 1424, #400: 1424}`:
+  //
+  //   session-1423 … #100 (rank 1 of 2) → session-1425, #200 (rank 2 of 2) → session-1426
+  //   session-1424 … #300 (rank 1 of 2) → session-1425, #400 (rank 2 of 2) → session-1426
+  //
+  // #100 and #300 were handed 1425, #200 and #400 both 1426. Both tables are
+  // computed board-wide before the self/other split, so every run computes
+  // them identically — deterministic convergence on a SINGLE board, not the
+  // race the "sees the SAME open-PR board" qualifier covers — and it was
+  // silent, because `selfCollisions` shows each PR only its own table.
+  // Falsify by moving the allocator back inside `rankedCollisionAssignment`
+  // (a fresh `new Set()` per call): this goes red with 1425 twice.
+  const twoCollisions = analyze({
+    prs: [
+      pr(100, [`${LOG_DIR}/session-1423-a.md`]),
+      pr(200, [`${LOG_DIR}/session-1423-b.md`]),
+      pr(300, [`${LOG_DIR}/session-1424-c.md`]),
+      pr(400, [`${LOG_DIR}/session-1424-d.md`]),
+    ],
+    selfPr: null,
+    mergedPaths: mergedLogs(1404),
+  })
+  check(
+    '#4531: two INDEPENDENT collisions on one board never share a number across their tables',
+    twoCollisions.collisions.map((c) => ({
+      number: c.number,
+      rows: c.assignment.map((a) => [a.pr, a.number]),
+    })),
+    (v) => {
+      const flat = v.flatMap((t) => t.rows.map(([, n]) => n))
+      return (
+        v.length === 2 &&
+        flat.length === 4 &&
+        flat.every((n) => typeof n === 'number') &&
+        new Set(flat).size === 4 &&
+        JSON.stringify(v) ===
+          JSON.stringify([
+            {
+              number: 1423,
+              rows: [
+                [100, 1425],
+                [200, 1426],
+              ],
+            },
+            {
+              number: 1424,
+              rows: [
+                [300, 1427],
+                [400, 1428],
+              ],
+            },
+          ])
+      )
+    },
+  )
+
+  // Case 38: the SAME-PR variant, which is visible inside one report. #100
+  // claims both colliding numbers, so both tables are its own findings and
+  // both rows naming it are rendered in a single message. Pre-fix, #100 was
+  // told to renumber two different files to session-1425 — in one message,
+  // to one author. Falsify the same way as case 37.
+  const samePrTwice = analyze({
+    prs: [
+      pr(100, [`${LOG_DIR}/session-1423-a.md`, `${LOG_DIR}/session-1424-b.md`]),
+      pr(200, [`${LOG_DIR}/session-1423-c.md`]),
+      pr(300, [`${LOG_DIR}/session-1424-d.md`]),
+    ],
+    selfPr: 100,
+    mergedPaths: mergedLogs(1404),
+  })
+  check(
+    '#4531: one PR colliding on TWO numbers is given two different numbers in its OWN report',
+    samePrTwice.collisions.map((c) => c.assignment.find((a) => a.pr === 100)?.number),
+    (v) => v.length === 2 && v[0] === 1425 && v[1] === 1427 && new Set(v).size === 2,
+  )
+
+  // Case 39: the RUN-WIDE invariant itself, over a board that exercises
+  // every allocation site at once — two collisions (tables), two stale
+  // claims (per-file remedies), and a stacked child carrying a colliding
+  // file it does not represent (the carrier's own number). `allocated` is
+  // every number this run offered anybody, in allocation order, so this
+  // asserts the property directly instead of re-deriving it per finding and
+  // missing whichever site was forgotten. That is the shape of the last two
+  // rounds: each fix was checked where it was made, and the number a
+  // DIFFERENT site handed out went unexamined.
+  const everySite = analyze({
+    prs: [
+      pr(100, [`${LOG_DIR}/session-1319-parent.md`, `${LOG_DIR}/session-1320-parent.md`]),
+      // The stacked child: carries both of its parent's colliding files and
+      // represents neither, so it has no row in either table.
+      pr(101, [
+        `${LOG_DIR}/session-1319-parent.md`,
+        `${LOG_DIR}/session-1320-parent.md`,
+        'src/lib/search.ts',
+      ]),
+      pr(102, [`${LOG_DIR}/session-1319-other.md`]),
+      pr(103, [`${LOG_DIR}/session-1320-other.md`]),
+      // Two STALE claims, both this PR's: 1317 and 1318 are already on the
+      // merge target below.
+      pr(104, [`${LOG_DIR}/session-1317-stale.md`, `${LOG_DIR}/session-1318-stale.md`]),
+    ],
+    selfPr: 101,
+    mergedPaths: mergedLogs(1317, 1318),
+  })
+  check(
+    '#4531: EVERY number one run hands out — tables, stale-claim remedies, carrier — is distinct',
+    {
+      allocated: everySite.allocated,
+      carrier: everySite.carrierRemedy,
+    },
+    (v) =>
+      Array.isArray(v.allocated) &&
+      // 2 tables x 2 rows + 2 stale-claim remedies + 1 carrier number.
+      v.allocated.length === 7 &&
+      v.allocated.every((n) => typeof n === 'number') &&
+      new Set(v.allocated).size === 7 &&
+      typeof v.carrier === 'number' &&
+      v.allocated.includes(v.carrier),
+  )
+
+  // Case 40 (#4531 review note 1): a PR holding TWO stale claims holds two
+  // FILES, and each needs its own number. `nextFreeSentence` moved inside
+  // the stale-claim loop in round 2 while `remedySuggestion` stayed a single
+  // run-wide value, so such a PR was told to renumber both files to
+  // session-1320 — verbatim, twice, in one message. Falsify by allocating
+  // the stale-claim remedies outside the `s.claims` map (one number per
+  // stale claim, or one for the run): this goes red with both entries equal.
+  const twoStale = analyze({
+    prs: [pr(101, [`${LOG_DIR}/session-1317-mine.md`, `${LOG_DIR}/session-1318-mine.md`])],
+    selfPr: 101,
+    mergedPaths: mergedLogs(1317, 1318),
+  })
+  check(
+    '#4531: two stale claims held by ONE PR are given two DIFFERENT numbers',
+    twoStale.staleClaims.map((s) => s.remedies.map((rem) => [rem.file, rem.number])),
+    (v) => {
+      const nums = v.flat().map(([, n]) => n)
+      return (
+        v.length === 2 &&
+        nums.length === 2 &&
+        nums.every((n) => typeof n === 'number') &&
+        new Set(nums).size === 2
+      )
+    },
+  )
+
+  // Case 41 (#4531 review note 2): the row-less carrier's paragraph is
+  // emitted ONCE per report, not once per collision it carries. The stacked
+  // child in case 39 carries TWO of its parent's colliding files; before
+  // this it got the same seven-line explanation, and the same number, twice.
+  // Asserted on the RENDERED lines — the channel the defect actually lives
+  // in — via `findingLines`, which is why the rendering was split out of
+  // `reportFindings`. Falsify by moving the `carrierWithoutRowAdvice` push
+  // back inside the collision loop: this goes red with a count of 2.
+  const carrierLines = findingLines(everySite)
+  check(
+    "#4531: the row-less carrier's advice is printed ONCE per report, not once per collision",
+    {
+      carrier: carrierLines.filter((l) => l.includes('but represents none of them')).length,
+      tables: carrierLines.filter((l) => l.includes('Each claimant takes a DISTINCT number'))
+        .length,
+    },
+    (v) => v.tables === 2 && v.carrier === 1,
+  )
+
+  // #4531 review note 4: `nextFreeSentence` returns a lowercase INDEPENDENT
+  // clause, and the carrier paragraph spliced it straight after a comma —
+  // "…that you still need a number for, the next free number as of THIS run
+  // is session-1322." A comma splice, and worse in the `null` branch, where
+  // the clause runs long enough to read as a second sentence that lost its
+  // full stop. Pinned POSITIVELY (the join that is correct), not as a
+  // deny-list of the two splices seen: the sentence can be rejoined wrongly
+  // in more ways than anybody enumerates, and only one way is right.
+  check(
+    '#4531: the carrier paragraph introduces its number rather than splicing it after a comma',
+    carrierLines.find((l) => l.includes('but represents none of them')) ?? '',
+    (l) =>
+      /you still need a number for, this run answers that separately from every row above: /.test(
+        l,
+      ),
+  )
+
+  // …and the same rendering, for the two stale claims of case 40: one line
+  // per FILE, each naming its own number. The pre-fix output printed the
+  // identical sentence twice. Two assertions, not one: "two lines" alone is
+  // satisfied by two identical lines, which is precisely the defect.
+  const staleLines = findingLines(twoStale).filter((l) =>
+    l.includes('the next free number as of THIS run is'),
+  )
+  check(
+    '#4531: a report with two stale claims renders two DIFFERENT next-free lines',
+    staleLines,
+    (v) => v.length === 2 && new Set(v).size === 2,
+  )
+
+  // Case 42 (#4531 review note 3): the emitted distinctness claim must be as
+  // wide as the guarantee and no wider. "Each claimant takes a DISTINCT
+  // number" was true of ONE table and was printed on a board where a second
+  // table had already handed one of its claimants the same number — an
+  // overclaim narrowed to the cases the author thought of, which is what the
+  // previous round was written to remove one level in. The scope is now the
+  // run, so the sentence has to say the run. Falsify by trimming it back to
+  // the bare "Each claimant takes a DISTINCT number, ranked by PR number":
+  // this goes red while case 37's numbers stay green, which is the point —
+  // the code and the sentence about it can drift apart in either direction.
+  check(
+    '#4531: the emitted distinctness claim names the RUN, not just this table',
+    carrierLines.filter((l) => l.includes('Each claimant takes a DISTINCT number')),
+    (v) =>
+      v.length === 2 &&
+      v.every(
+        (l) =>
+          /distinct from every other row here/.test(l) &&
+          /every row of any OTHER collision reported below/.test(l) &&
+          /every number this run offers further down/.test(l),
+      ),
+  )
+
+  // Case 43 (#4531 review note 5): `analyze`'s doc comment leads with
+  // "Pure", and it used to attach `c.assignment` by MUTATING the collision
+  // objects it had just built. Harmless while `selfCollisions` filtered the
+  // very same array — and unobservable from outside, which is exactly why it
+  // could sit under a comment claiming the opposite. What IS observable is
+  // the consequence that would matter if any state ever escaped: two calls
+  // on one payload must agree exactly, and neither may alter the payload.
+  // Falsify by hoisting the allocator to module scope, or by mutating `prs`:
+  // this goes red.
+  const purityPayload = [
+    pr(100, [`${LOG_DIR}/session-1423-a.md`]),
+    pr(200, [`${LOG_DIR}/session-1423-b.md`]),
+    pr(300, [`${LOG_DIR}/session-1424-c.md`]),
+  ]
+  const purityBefore = JSON.stringify(purityPayload)
+  const firstRun = analyze({ prs: purityPayload, selfPr: 100, mergedPaths: mergedLogs(1404) })
+  const secondRun = analyze({ prs: purityPayload, selfPr: 100, mergedPaths: mergedLogs(1404) })
+  check(
+    '#4531: analyze is pure — two runs on one payload agree, and the payload is untouched',
+    {
+      same: JSON.stringify(firstRun) === JSON.stringify(secondRun),
+      payloadUntouched: JSON.stringify(purityPayload) === purityBefore,
+      allocated: firstRun.allocated,
+    },
+    (v) => v.same && v.payloadUntouched && v.allocated.length > 0,
+  )
+
+  // Case 44 (#4531 review round 4 note 3): a window exhausted by THIS RUN'S
+  // OWN reservations must not be reported as "every number is already
+  // claimed by an open PR" — that is true of `suggestNextFree`'s non-
+  // allocating `null` (the CLEAN path), not of `alloc.take()`'s. Eleven PRs
+  // all naming the same ALREADY-MERGED number is both a collision (10 of the
+  // 11 exhaust the 10-wide window) and a stale claim, so the 11th claimant's
+  // stale-claim remedy renders `nextFreeSentence(null)` from the allocator
+  // side while none of `session-6`..`session-15` was ever claimed by any
+  // open PR — they were handed to the OTHER ten claimants' own remedies.
+  // Falsify by dropping `{ exhaustedByRunAllocator: true }` from either
+  // `nextFreeSentence` call site: this goes red on the wrong-cause sentence
+  // still being emitted.
+  const exhaustedByReservation = analyze({
+    prs: Array.from({ length: 11 }, (_, i) => pr(500 + i, [`${LOG_DIR}/session-5-claim-${i}.md`])),
+    selfPr: 500,
+    mergedPaths: [`${LOG_DIR}/session-5-old.md`],
+  })
+  const exhaustedLine = findingLines(exhaustedByReservation).find((l) =>
+    l.trimStart().startsWith('#510 ('),
+  )
+  check(
+    "#4531: a window exhausted by this run's OWN reservations names that cause, not open-PR claims",
+    { line: exhaustedLine },
+    (v) =>
+      typeof v.line === 'string' &&
+      v.line.includes(
+        "this run already offered every number in it as some OTHER finding's remedy",
+      ) &&
+      !v.line.includes('every one is already claimed by an open PR'),
+  )
 }
 
 /**
@@ -2318,6 +3467,29 @@ const PAYLOADS = {
   modification: jsonPrs(pr(SELF_PR, [MERGED_LOG]), pr(102, [MERGED_LOG, 'src/lib/search.ts'])),
   // One PR ADDING a new file whose number is already on the merge target.
   staleClaim: jsonPrs(pr(SELF_PR, [`${LOG_DIR}/session-1318-mine.md`])),
+  // #4531 review note 2: BOTH finding kinds in ONE run. This PR collides
+  // with #102 on session-1319 and separately holds a stale claim on
+  // session-1318 (already on the merge target). Under the old GLOBAL gate
+  // — suppress the "next free number" sentence whenever
+  // `result.collisions.length > 0` — the collision's table silenced the
+  // stale claim's only concrete remedy, leaving its author told to
+  // "renumber" with nothing to renumber to. Both findings are this PR's
+  // own, so it needs TWO numbers, and they must not be the same one.
+  collisionAndStaleClaim: jsonPrs(
+    pr(SELF_PR, [`${LOG_DIR}/session-1319-tooling.md`, `${LOG_DIR}/session-1318-mine.md`]),
+    pr(102, [`${LOG_DIR}/session-1319-pairing.md`]),
+  ),
+  // #4531 review note 1: a STACKED CHILD (`SELF_PR`, based on #100's branch,
+  // so #100's commits and its session log are in the child's own
+  // `gh`-reported file list) that carries NO session log of its own. #100
+  // and #102 collide on session-1319; the child is a self-claimant of that
+  // collision — `isSelfClaim` reads every carrier — but the assignment
+  // table's rows are the folded representatives, so no row names it.
+  stackedChildCarrier: jsonPrs(
+    pr(100, [`${LOG_DIR}/session-1319-parent.md`]),
+    pr(SELF_PR, [`${LOG_DIR}/session-1319-parent.md`, 'src/lib/search.ts']),
+    pr(102, [`${LOG_DIR}/session-1319-other.md`]),
+  ),
   // Absence discriminator fixtures: this PR adds the guard / does not / its
   // own file list is truncated / it is not in the payload at all.
   selfAddsGuard: jsonPrs(pr(SELF_PR, [GUARD_PATH_IN_PRS, 'prek.toml'])),
@@ -2394,6 +3566,12 @@ const TERMINAL_OUTPUT_FUNCTIONS = [
   { name: 'main', signature: 'function main(argv) {', mustEmit: true },
   { name: 'mainGuarded', signature: 'function mainGuarded(argv) {', mustEmit: true },
   { name: 'reportFindings', signature: 'function reportFindings(result) {', mustEmit: true },
+  // Not a terminal path — it RENDERS and returns. Listed anyway for the
+  // negative half: `reportFindings`'s one synchronous write is only the
+  // whole report while the half that builds it emits nothing of its own, and
+  // splitting the two (#4531 review round 3) is exactly the moment a stray
+  // `console.error` could appear in the part nobody was watching.
+  { name: 'findingLines', signature: 'function findingLines(result) {', mustEmit: false },
   { name: 'emitErr', signature: 'function emitErr(text) {', mustEmit: false },
   { name: 'emitOut', signature: 'function emitOut(text) {', mustEmit: false },
 ]
@@ -2870,6 +4048,54 @@ function runProcessCasesIn(dir, ok, fail) {
     runStep(dir, stepPath, guard),
     (r) => r.code === 1 && /claimed by more than one open PR/.test(r.out),
   )
+  // #4518, end to end: this fixture's collision is #101 (`SELF_PR`) and
+  // #102 both claiming session-1319, merge target max 1318 — so the shared
+  // origin is 1319 and the two ranked numbers are 1320 and 1321. The OLD
+  // single shared "next free number" sentence — the one both colliding
+  // authors were told to follow in the reported session, and did, and
+  // collided again one number higher — must be GONE now that a
+  // per-claimant table already answers the question; printing both would
+  // let a reader grab the wrong one. Falsify by reverting `reportFindings`
+  // to drop `renumberAdvice` and stop gating the closing
+  // `nextFreeSentence` line on `result.collisions.length === 0`: this pair
+  // goes red while every other check in this file stays green.
+  check(
+    'step: a real collision names a DISTINCT number for each colliding PR',
+    runGuard(dir, guard),
+    (r) =>
+      r.code === EXIT_COLLISION &&
+      /DISTINCT number/.test(r.out) &&
+      /#101 \(rank 1 of 2\) → session-1320/.test(r.out) &&
+      /#102 \(rank 2 of 2\) → session-1321/.test(r.out),
+  )
+  check(
+    'step: a real collision no longer offers the single shared "next free number" line',
+    runGuard(dir, guard),
+    (r) =>
+      r.code === EXIT_COLLISION && !/the next free number as of THIS run is session-/.test(r.out),
+  )
+  // #4518 review: the table's stability claim is conditional — it holds
+  // between runs that saw the SAME board, and a claim appearing between two
+  // claimants' runs can still hand them one number (demonstrated: with a
+  // third PR holding 1424 visible to only one of them, the two tables put
+  // #4506 and #4515 both on 1425). An unqualified "every run computes the
+  // same assignment" is the same overclaim that made the old single-number
+  // sentence dangerous, so BOTH the qualifier and the escape hatch out of a
+  // repeat firing — go further up your own window, which is how the
+  // reported incident was actually broken — are asserted here rather than
+  // left to survive on a comment. Falsify by restoring the unconditional
+  // wording in `renumberAdvice`: this goes red, nothing else does.
+  check(
+    'step: the assignment is offered as board-conditional, with a way out of a repeat firing',
+    runGuard(dir, guard),
+    (r) =>
+      r.code === EXIT_COLLISION &&
+      /sees the SAME open-PR board/.test(r.out) &&
+      /truncated at its 100-file cap/.test(r.out) &&
+      /has not pushed yet/.test(r.out) &&
+      /do NOT re-take your row/.test(r.out) &&
+      /Move FURTHER UP your own window/.test(r.out),
+  )
 
   // ── Outcome 2: a clean board. Exit 0 AND the CLEAN verdict.
   payload('clean')
@@ -2953,6 +4179,78 @@ function runProcessCasesIn(dir, ok, fail) {
     'step: a stale-claim finding also names the RENAME case, not only "renumber"',
     runStep(dir, stepPath, guard),
     (r) => r.code === 1 && /RENAME of a file already on the merge target/.test(r.out),
+  )
+  // #4518 review: the OTHER half of #4518's gate. Suppressing the shared
+  // "next free number" sentence whenever a collision fired is only correct
+  // because a per-claimant table replaced it THERE; a pure stale claim has
+  // no such table (one open PR is enough to hold one), so it must still be
+  // told a number. Nothing asserted that until now — replacing the gate
+  // with an always-false condition left the whole suite green while
+  // silently stripping the only remedy a stale-claim author gets. This
+  // fixture has no cross-PR collision, so the sentence has to survive here.
+  check(
+    'step: a PURE stale claim still gets the shared "next free number" sentence',
+    runGuard(dir, guard),
+    (r) =>
+      r.code === EXIT_COLLISION &&
+      !/DISTINCT number/.test(r.out) &&
+      /the next free number as of THIS run is session-/.test(r.out),
+  )
+
+  // ── Outcome 2d (#4531 review note 2): a collision AND a stale claim in
+  // the SAME run. The suppression above was gated GLOBALLY on
+  // `result.collisions.length === 0` — one finding's rule applied to
+  // another finding's output — so the moment a collision fired anywhere on
+  // the board, the stale-claim author lost the concrete number too and was
+  // left with "rebase and renumber" and nothing to renumber TO. The case
+  // above covers only a PURE stale claim, which is exactly why the global
+  // gate survived. Both findings here are #101's own, so it needs TWO
+  // numbers: 1320 from its collision row, and a DIFFERENT one for the stale
+  // file. Falsify by restoring the global gate: this goes red.
+  payload('collisionAndStaleClaim')
+  check(
+    'step: a collision and a stale claim in one run BOTH keep their own remedy',
+    runGuard(dir, guard),
+    (r) =>
+      r.code === EXIT_COLLISION &&
+      /#101 \(rank 1 of 2\) → session-1320/.test(r.out) &&
+      /#102 \(rank 2 of 2\) → session-1321/.test(r.out) &&
+      /already on the merge target as/.test(r.out) &&
+      /the next free number as of THIS run is session-1322/.test(r.out),
+  )
+  // …and the stale claim's number must not be one the collision table above
+  // already handed out — offering #101 the very 1320 its own collision row
+  // names would be #4518's convergence again, inside the fix for it.
+  check(
+    "step: the stale claim's number is not one the collision table already assigned",
+    runGuard(dir, guard),
+    (r) =>
+      r.code === EXIT_COLLISION &&
+      !/the next free number as of THIS run is session-1320\./.test(r.out) &&
+      !/the next free number as of THIS run is session-1321\./.test(r.out),
+  )
+
+  // ── Outcome 2e (#4531 review note 1): a STACKED CHILD that carries its
+  // parent's colliding session log and none of its own. `isSelfClaim` keys
+  // on every CARRIER, so the child owns the finding and exits 20; the
+  // assignment table keys on the folded REPRESENTATIVE, so no row names it;
+  // and the suppressed sentence left it with no number at all — while
+  // `renumberAdvice` told it to "find its own #pr in the list". It gets an
+  // explanation and a genuinely free number instead of a row, because a row
+  // would hand it a number for a file it merely inherited. Falsify by
+  // deleting the `carrierWithoutRowAdvice` call from `reportFindings`: this
+  // goes red while the "no shared sentence" assertion above stays green.
+  payload('stackedChildCarrier')
+  check(
+    'step: a stacked child that carries a colliding file but has no table row still gets an answer',
+    runGuard(dir, guard),
+    (r) =>
+      r.code === EXIT_COLLISION &&
+      /#100 \(rank 1 of 2\) → session-1320/.test(r.out) &&
+      /#102 \(rank 2 of 2\) → session-1321/.test(r.out) &&
+      !/#101 \(rank/.test(r.out) &&
+      /carries one or more of the files above but represents none of them/.test(r.out) &&
+      /the next free number as of THIS run is session-1322/.test(r.out),
   )
 
   // ── #4452 item 4: the FETCH step's `+1`, which no run of this self-test
