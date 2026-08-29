@@ -168,3 +168,124 @@ with the instruction to copy at the call site if that ever changes, rather than 
 against a caller that does not exist.
 
 86 tests green; `tsc -b` clean.
+
+## Round 3 — the eviction had no restore, and the obvious test was green over it
+
+Review found one blocking defect, and it was mine: this PR added a third **evicting** publisher and
+not its mirror. `handleBatchDelete` now drops pages from every mounted `pagesListRef`, marks the
+batch undoable two lines later, and raises a toast advertising Ctrl+Z as the escape hatch. Nothing
+on that undo path put the pages back.
+
+Traced the whole chain rather than trusting the report, and every link held:
+
+- Ctrl+Z → `performPageUndo` → `useUndoStore.undo()` → `refreshAfterUndoRedo`. The only bus event
+  emitted anywhere in that chain is a single `renamed` for the open page, via `renamePage`.
+- `applyPageNameChange`'s `renamed` arm is `if (!present) return list`, so a rename provably cannot
+  re-add a row that `removed` filtered out. The two events are not substitutes.
+- The lazy refill is gated purely on `source.length === 0`. A warm list with one row filtered out is
+  still "filled", so nothing refetches. The generation bump discards an in-flight fill; it never
+  clears the ref. The space-switch subscriber needs a real `currentSpaceId` transition, which an
+  undo is not.
+- `commands/history.rs` emits no Tauri event, so `useSyncEvents`' `invalidateNameCaches()` does not
+  fire for a local undo either. (Checked: the file contains no `.emit(` at all.)
+
+So the page came back in the DB and in the tree, and stayed missing from `[[` for the rest of the
+session. Stale-**absent** is the worse polarity of the class #4007 exists to close: the user can see
+a page they cannot link to, and unlike a stale name nothing on screen hints at why.
+
+### The general rule this is an instance of
+
+Every publisher that removes rows from a cache owes a restore signal to whatever can reverse it.
+The repo already treats them as a pair on both other delete surfaces — `handleUndoTrash` and
+`usePageDeleteAction.handleUndo` each call `invalidateNameCaches()` next to their restore, both with
+comments saying why. The reason it went missing here is the same reason #4524 existed at all: the
+pairing lives across two files that never mention each other, so "and this one owes a restore too"
+has no place in the code to show up. The fix goes in `refreshAfterUndoRedo`, which is the single
+choke point every undo route funnels through (`performPageUndo`, `performActivePageUndo`, the
+swipe-to-delete toast) and the redo branch as well.
+
+It is a blanket invalidation, not a targeted re-add, for the reason `usePageDeleteAction.handleUndo`
+already writes down: the undo store is ref-addressed and reports only an op *type*, so it cannot
+name the rows a reversal restored, and a delete cascades to nested pages besides. An empty cache
+means "not fetched for this space yet", so re-adding the one id we could name would latch a partial
+list as the whole space. It sits **before** the title-refresh `try`, not inside it — that block
+swallows its own failures by contract, and ordering the drop after `getBlock` would silently make a
+correctness obligation conditional on a best-effort IPC. It stays gated on an op actually having
+been reversed (`if (!result) return` upstream), so a Ctrl+Z with nothing left to undo does not throw
+away a warm cache.
+
+### The test trap — same shape as session 1433
+
+`searchPages` routes a query of 3+ characters to `searchPagesViaFts`, which asks the backend. The
+restored page is in the backend, so **a test that types three characters passes against the broken
+code**. Only the ≤2-character path — the picker's initial open, the `[[` just typed — reads the
+stale list, and only while that list is non-empty, because the refill is gated on emptiness. Delete
+every page in the fixture and even the short-query test passes over the live bug.
+
+That is session 1433's finding again with different machinery: the natural formulation of the
+acceptance case is satisfied through a second, healthy path and never touches the broken one. There
+it was a re-slice that destroyed the context carrying the bug; here it is a query length that
+routes around the cache entirely. Both look like incidental details of how you'd write the test.
+
+Both formulations are now in the suite, deliberately:
+
+- `offers an undone page again on the ≤2-char cache path` — the real guard. `P_STAYS` is load-bearing
+  twice over: it proves the cache was warm before the delete, and it keeps the list non-empty after
+  the eviction so the refill gate stays shut.
+- `would have found the undone page anyway once the query is long enough (FTS, not the cache)` — kept
+  as an executable warning, with a comment saying it is expected to be green either way. Verified,
+  not assumed: it passed in the falsification run with the fix disabled.
+
+One correction to the report's wording: the FTS path does not "self-heal" — `searchPagesViaFts`
+reads `pagesListRef` for its supplement but never fills it, and there is a standing `#4337 item 3`
+note saying so. The stale cache survives a long query untouched. What self-heals is the *result*,
+which is all it takes to make the test useless.
+
+### Verbatim RED
+
+Falsified against a copied backup, restore proven byte-identical with `cmp`:
+
+```
+FAIL  src/components/block-tree/__tests__/use-block-multi-select.test.ts > useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524) > offers an undone page again on the ≤2-char cache path
+AssertionError: expected [ 'P_STAYS' ] to include 'P_ROOT'
+```
+
+Three more went red with it in `useUndoShortcuts.test.ts` (the undo and redo invalidation arms, and
+the existing #4391 straddle test, whose event count is now two). The 3+-character test and the
+"reversed nothing" arm stayed green, as designed.
+
+### The other three notes
+
+**Declined — `HistoryPanel`'s restore is not the same shape.** It looked like the same missing
+invalidation, but that panel is `edit_block`-only: `getRestorableText` returns `null` for every other
+op type, and both the row filter and the handler gate on it. It can revert a page's *title text*; it
+cannot resurrect a deleted page. So the page it acts on is present in the cache by construction and
+the precise `renamed` event `renamePage` already emits is the correct signal — adding a blanket drop
+there would throw away a warm cache on every title revert to fix nothing. The `renamed` arm's bail on
+an absent id is the bus's general contract, not a defect of this surface.
+
+**Documented — the over-cap fallback clears the tag cache too.** Past
+`NAME_CACHE_FANOUT_MAX_IDS`, and on the null-space branch, `notifyPagesRemoved` emits `invalidated`,
+which is not entity-scoped: `applyTagNameChange` returns `[]` as well, so the `#` picker's
+`tagsListRef` goes with it for a delete that removed no tag. Consistent with the toolbar's policy
+since #4007, and the cost is a re-fetch rather than a wrong suggestion — but it is new on this
+surface and the hook's comment did not mention it. It now does, along with the point that on a block
+tree it is the page-subset filter, not the cap, that keeps an everyday content delete from reaching
+that branch at all.
+
+**Fixed — a type-narrowing hole in the new mid-flight-reload test.** `done` and `releaseFirst` were
+declared `T | null` and assigned only inside `act()` callbacks. TypeScript's control-flow analysis
+does not see an assignment made in a nested function, so at the use sites both were still narrowed to
+`null`: `await done` type-checked as `await null` and `releaseFirst?.(...)` as a no-op optional call.
+Right at runtime, unchecked at compile time — a refactor that stopped returning the promise would
+have sailed through `tsc`. Confirmed with a standalone probe (`Eq<typeof done, null>` compiles under
+the old shape; `Eq<typeof done, Promise<void>>` under the new one) rather than taking it on trust.
+Both are now non-nullable with same-shaped placeholders; the resolver's placeholder **throws** so a
+mock that is never invoked fails loudly, and an identity assertion after the `act` stops the promise
+placeholder from turning a never-assigned `done` into a vacuous `await`. Two pre-existing
+instances of the identical shape in the same file (the reentrancy-guard tests, which predate this
+PR) were fixed with it, so the file does not carry a comment explaining a hazard three of its own
+tests still have.
+
+`tsc -b` clean. 344 tests green across the six suites covering the bus, both delete callers, the
+undo path, `useBlockResolve` and `usePageDeleteAction`.

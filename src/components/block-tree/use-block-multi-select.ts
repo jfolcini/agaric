@@ -241,6 +241,22 @@ export function useBlockMultiSelect({
         // selected id. `blocksById` is the snapshot captured above, BEFORE
         // both the await and the splice below drop those rows — see the
         // review-note-2 comment at its capture site.
+        //
+        // What "wipe a warm cache" costs, spelled out because it is NEW on
+        // this surface (#4534 review note 3): past `NAME_CACHE_FANOUT_MAX_IDS`
+        // — and on the `spaceId == null` branch — `notifyPagesRemoved` falls
+        // back to `invalidateNameCaches()`, and that event is not page-scoped.
+        // `useBlockResolve` subscribes BOTH caches to it, so `applyTagNameChange`
+        // returns `[]` as well and the `#` picker's `tagsListRef` is dropped
+        // alongside `pagesListRef` — for a delete that removed no tag at all.
+        // The consequence is a re-fetch on the next `#` read, never a wrong
+        // suggestion, and it is the policy `PageBrowserBatchToolbar` has
+        // carried since #4007 (a big trash drops both caches too), so the
+        // block tree matching it is deliberate. It is written down here
+        // because this hook is the surface where the fallback is EASIEST to
+        // reach by accident: a block-tree selection is mostly content rows, so
+        // it is the page-subset filter above — not the cap — that keeps an
+        // everyday 30-block content delete from clearing the tag cache.
         const removedPageIds = new Set<string>(cascadedPageIds)
         for (const id of ids) {
           if (blocksById.get(id)?.block_type === 'page') removedPageIds.add(id)
