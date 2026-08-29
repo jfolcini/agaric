@@ -224,3 +224,123 @@ restore proven by `cmp`: putting the allocator back inside `rankedCollisionAssig
 one run-wide number across stale remedies reddens 3; moving the carrier advice back inside the loop
 reddens 1; narrowing the distinctness sentence reddens 1; and hoisting the allocator to module scope
 reddens **14**, which is the one that shows the per-run lifetime is load-bearing and not incidental.
+
+## Round 4 — a false claim, a reuse-not-reissue bug, a wrong-cause message, and a hole that closes on its own
+
+Four review notes on #4531. Three fixed here; the fourth recorded rather than fixed, because fixing
+it well would have meant touching the same allocator-keying this round already changed twice.
+
+### Note 1 — a parenthetical describing a state that has not merged
+
+The "which guard owns which case" header said `check-session-log-numbering.sh` "examines the
+staged additions and RENAMES of the commit in front of it (#4527 widened it from additions
+alone)". That is #4527's own fix, and #4527 has not merged — it exists only on the sibling branch
+`claude/session-log-numbering-renames`. Checked directly against `origin/main`:
+`scripts/check-session-log-numbering.sh:119` still reads
+`git diff --cached --name-only --diff-filter=A`, and the file has no rename handling anywhere. I
+had pulled the parenthetical in from that sibling branch's own commit message while it was fresh
+in mind, and it made the header describe a future state as the present one — the exact "read the
+pass as confirmation" trap this log's own title is about, aimed at a reader of the header instead
+of at me. Corrected to state plainly that a rename is invisible to check 1 today, with no forward
+reference.
+
+### Note 2 — one file, two numbers in one report
+
+`rankedCollisionAssignment` and the stale-claim remedy loop both allocate independently, and case
+13 (two open PRs both add an already-merged `session-1000`) is claimed by both findings at once —
+the SAME `claims` entries, read twice. Reproduced verbatim: PR #101's `session-1000-mine.md` was
+told `session-1405` by the collision table and `session-1407` by the stale-claim remedy two
+paragraphs later, in one report, about the one file. Not a race between two runs — one run,
+contradicting itself.
+
+Fixed by having the stale-claim remedy loop check a `${number}:${pr}` lookup built from the
+collision table's own assignment first, and reuse that number instead of calling `alloc.take()`
+again; it only falls through to a fresh allocation when this number was not also a collision. This
+also stops the second, wasted window slot the old code burned per file — `allocated` for case 13
+shrank from 4 entries to 2.
+
+Case 22 pins both halves: the collision row and the stale-claim remedy now agree on the number for
+each of #101 and #102, and `allocated` has exactly 2 distinct entries. Falsifying by reverting the
+lookup reproduces the original 1405-vs-1407 divergence exactly.
+
+### Note 3 — `nextFreeSentence(null)` names the wrong cause when the run's own bookkeeping is what emptied the window
+
+`nextFreeSentence` is called from three sites with two different meanings of "null": the CLEAN
+path's `result.suggestion` (a pure, non-consuming query — `null` there really does mean every
+number in the window is an open PR's actual claim) and the carrier/stale-claim remedies, whose
+number comes from `alloc.take()` against the RUN-WIDE `taken` set. Past roughly ten allocations on
+one board, the run-wide set alone can fill the 10-wide window with numbers no open PR has claimed
+at all — they were only ever offered to OTHER findings' remedies on the same board — and the old
+message ("every one is already claimed by an open PR") named the wrong cause for that case.
+
+Reproduced with eleven open PRs all naming one already-merged number: it is simultaneously an
+11-way collision (exhausting the window across ranks 1–10) and a stale claim, so the 11th
+claimant's stale-claim remedy hits `nextFreeSentence(null)` while `session-6`..`session-15` were
+never claimed by anyone — they were handed to the other ten claimants as remedies.
+
+`nextFreeSentence` now takes an `exhaustedByRunAllocator` flag, set at the two `alloc.take()`-fed
+call sites (the carrier's advice, the stale-claim remedy) and left unset at the CLEAN path's. The
+`null` message forks accordingly: the allocator-fed one says plainly that the window was emptied by
+this run's own reservations to other findings, not by real contention, and that moving further up
+the window (rather than rebasing to escape other PRs) is what actually helps here.
+
+Case 44 pins the wrong-cause line is gone and the right-cause line is present on the exhaustion
+fixture above; falsifying by dropping the flag from either call site reproduces the old sentence
+verbatim.
+
+### Note 4 — recorded, not fixed: `reps` dedupe can hand two files one number, and #4527 is the interaction
+
+`rankedCollisionAssignment` dedupes `collision.claims` by `pr`
+(`const reps = [...new Set(collision.claims.map((c) => c.pr))]`) before assigning one number per
+representative. If a single PR carries TWO DIFFERENT files at one colliding number, `reps` folds
+them to one row and one number — reproduced verbatim: PR #100 with `session-1423-a1.md` and
+`session-1423-a2.md`, colliding with PR #200's `session-1423-b.md`, renders
+
+    #100 (rank 1 of 2) → session-1424, #200 (rank 2 of 2) → session-1425
+
+for BOTH of #100's files. Acting on that advice literally — renumbering both to session-1424 —
+would recreate an intra-branch duplicate, the very defect `check-session-log-numbering.sh` check 1
+exists to catch.
+
+**Why it is mostly unreachable today.** For a single PR/branch to carry two files at the identical
+number, check 1 has to have missed one of the two additions. It checks every staged file against
+`HEAD` (updated as it iterates, even within one commit), so two plain `git add`s of session-log
+files at the same number are caught locally before either can reach `gh pr list`. The one way past
+it, today, is a same-branch RENAME: `check-session-log-numbering.sh` (`origin/main`, confirmed
+above) selects only `--diff-filter=A`, so `git mv some-file.md docs/session-log/session-1423-a2.md`
+onto an already-taken number is invisible to check 1 — the PR ends up with two files at one number,
+locally, with the guard reporting nothing wrong, purely because the second one arrived as a rename
+rather than an add. That is exactly the interaction: **#4527 is the fix that closes this specific
+hole.** Its `staged_targets` selector widens to `--diff-filter=ACR`, resolving a rename to its
+destination path and running it through check 1 — so once #4527 merges, this same-branch rename
+path is caught locally, before push, in every case where the destination number is already taken
+in `HEAD`. #4527 is already implemented (branch `claude/session-log-numbering-renames`, commit
+`1b04abc95`) but not yet merged into `origin/main` at the time of this note.
+
+**Why I recorded this instead of fixing `reps`.** A correct fix has to key everything this round
+already keyed on `${number}:${pr}` — `collisionNumberByPr` (Note 2's own fix, this round) and the
+carrier-detection lookup — down to `${number}:${pr}:${file}` instead, AND extend `renumberAdvice`'s
+rendering to disambiguate which of a PR's several files a given row's number belongs to (today's
+"#100 (rank 1 of 2) → session-1424" names no file at all, and can't while `reps` is deduped by PR).
+That is a second pass over the same allocator-keying machinery this round already touched twice
+(Notes 2 and 3), on a path that requires bypassing a local guard to reach at all, and that same path
+closes on its own once #4527 lands — after which a single PR arriving at `check-session-log-pr-
+collision.mjs` with two files at one number would require a GitHub-web-UI edit or a disabled hook,
+not an ordinary `git mv`. Given the imminent close and the shared blast radius with two fixes just
+made this round, I judged it not cheap enough to do safely in the same pass, and left it as this
+note instead of filing a tracked issue for a hole that is already scheduled to close.
+
+### Verification
+
+Self-test **143 → 145** (Note 2's case 22, Note 3's case 44), green; `check-session-log-numbering.sh
+--self-test` unaffected and still green (no numbering-guard file was touched — Note 1's fix and Note
+4's record are both descriptive, not code, and Notes 2/3 are scoped to
+`check-session-log-pr-collision.mjs`). `oxfmt`/`oxlint` clean on the changed file. Real-tree run
+(`node scripts/check-session-log-pr-collision.mjs`, no CI-supplied `--prs`) still refuses cleanly —
+exit 2, `SESSION_LOG_PR_COLLISION_VERDICT=UNVERIFIED`, `--prs is required` — which is the correct
+fail-closed shape for a local invocation with no board to check, not a finding either way.
+
+Two falsifications this round, each against a copy with the restore proven by `cmp`: reverting the
+`collisionNumberByPr` reuse in the stale-claim loop reproduces the exact 1405/1407 divergence from
+Note 2 and reddens case 22; dropping `exhaustedByRunAllocator: true` from either `nextFreeSentence`
+call site reproduces the exact wrong-cause sentence from Note 3 and reddens case 44.

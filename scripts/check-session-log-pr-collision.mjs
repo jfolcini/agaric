@@ -121,15 +121,15 @@
 //     `check-session-log-numbering.sh` check 1 owns this at the moment the
 //     file is committed, against `origin/main` as it stood THEN — and it
 //     never re-checks, because it only ever examines the STAGED ADDITIONS
-//     and RENAMES of the commit in front of it (#4527 widened it from
-//     additions alone; the substantive point is unchanged). Once
-//     the adding commit is behind you, a sibling PR merging that number
-//     under your still-open PR is invisible to it forever; that is exactly
-//     the #3690 "two session-1281 files" shape, and the reason a green
-//     local guard is not evidence for an open PR. This guard re-checks it
-//     on every CI run against a base that is fresh at that moment, and
-//     reports it below as a STALE CLAIM. The two overlap deliberately at
-//     the addition commit; only this one covers everything after it.
+//     of the commit in front of it (`--diff-filter=A`; a rename is invisible
+//     to it, since it carries no `R` handling). Once the adding commit is
+//     behind you, a sibling PR merging that number under your still-open PR
+//     is invisible to it forever; that is exactly the #3690 "two
+//     session-1281 files" shape, and the reason a green local guard is not
+//     evidence for an open PR. This guard re-checks it on every CI run
+//     against a base that is fresh at that moment, and reports it below as
+//     a STALE CLAIM. The two overlap deliberately at the addition commit;
+//     only this one covers everything after it.
 //   * Anything about a file that ALREADY EXISTS on the merge target — an
 //     inherited duplicate number, an edit, a deletion. NEITHER guard
 //     reports it. History is history.
@@ -1109,6 +1109,18 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
     assignment: rankedCollisionAssignment(c, claims, mergedNumsArr, alloc),
   }))
 
+  // #4531 review round 4 note 2: a number that is BOTH a cross-PR collision
+  // AND a stale claim (case 13/21: two open PRs both add session-1000,
+  // already on the merge target) shares its `claims` array between the two
+  // findings, entry for entry — the collision row for PR #101's file IS the
+  // stale-claim entry for that same file. Looking up by `${number}:${pr}`
+  // is what `rankedCollisionAssignment` already assigned that PR for that
+  // number: one file, one number, reused by the second finding rather than
+  // handed a fresh one of its own.
+  const collisionNumberByPr = new Map(
+    rankedCollisions.flatMap((c) => c.assignment.map((a) => [`${c.number}:${a.pr}`, a.number])),
+  )
+
   // #4531 review note 1: a PR holding TWO stale claims holds two FILES, and
   // each needs its own number. The remedy was a single `remedySuggestion`
   // computed once per run and printed inside the per-finding loop, so such a
@@ -1117,16 +1129,26 @@ export function analyze({ prs, selfPr = null, mergedPaths = [], prLimit = null }
   // the tables. Allocated per claim ENTRY (one entry is one file), for every
   // stale claim on the board rather than only this PR's, so the numbering is
   // board-wide and self-independent like the tables above.
+  //
+  // A number this run already assigned that SAME (number, pr) via the
+  // collision table above is reused rather than allocated again (round 4
+  // note 2): without the reuse, case 13's own fixture told #101 to renumber
+  // its one file to two different numbers in one report — a table row and a
+  // stale-claim remedy disagreeing about the very file they both describe —
+  // and burned a second window slot doing it.
   const remediedStaleClaims = staleClaims.map((s) => ({
     number: s.number,
     mergedPaths: s.mergedPaths,
     claims: s.claims,
-    remedies: s.claims.map((cl) => ({
-      pr: cl.pr,
-      prs: cl.prs,
-      file: cl.file,
-      number: alloc.take(windowOriginOf(cl.pr, claims, mergedNumsArr)),
-    })),
+    remedies: s.claims.map((cl) => {
+      const reused = collisionNumberByPr.get(`${s.number}:${cl.pr}`)
+      return {
+        pr: cl.pr,
+        prs: cl.prs,
+        file: cl.file,
+        number: reused ?? alloc.take(windowOriginOf(cl.pr, claims, mergedNumsArr)),
+      }
+    }),
   }))
 
   // #4531 review note 2: one number per row-less CARRIER, not one per
@@ -1367,18 +1389,47 @@ function main(argv) {
 
 /**
  * The remedy line, shared by every finding: a number the OTHER guard would
- * also accept, or an honest "none in the window" when parallel session-log
- * PRs have taken all of them (see `suggestNextFree`).
+ * also accept, or an honest "none in the window" when it is exhausted.
+ *
+ * The `null` case has TWO distinct causes, and this function is called from
+ * sites on both sides of that split (#4531 review round 4 note 3):
+ *
+ *   * the CLEAN path's closing sentence reads `result.suggestion` —
+ *     `suggestNextFree`'s own non-allocating query, which never consumes
+ *     from the run-wide `taken` set (see that function's doc comment). Its
+ *     `null` really does mean every number in the window is in `claims` —
+ *     an open PR has genuinely added a file naming it.
+ *   * the carrier's advice and the per-file stale-claim remedy both read a
+ *     number `alloc.take()` produced, which DOES draw from that shared set.
+ *     A run with roughly ten or more findings can exhaust the window with
+ *     numbers this run itself offered to OTHER findings above or below —
+ *     each to a real open PR, but as a SUGGESTED remedy, not evidence that
+ *     PR (or anybody else) has actually claimed that specific number, and
+ *     nothing requires it ever will. Telling that reader "every one is
+ *     already claimed by an open PR" names the wrong cause: the numbers are
+ *     genuinely free of any actual claim, just already spoken for by this
+ *     run's own bookkeeping. A guard that explains a refusal with the wrong
+ *     reason sends the reader to look for contention that is not there.
+ *
+ * `exhaustedByRunAllocator` selects which explanation applies; the two
+ * calls sourced from `alloc.take()` pass `true`, the CLEAN path's does not.
  *
  * @param {number|null} suggestion
+ * @param {{exhaustedByRunAllocator?: boolean}} [opts]
  */
-function nextFreeSentence(suggestion) {
+function nextFreeSentence(suggestion, { exhaustedByRunAllocator = false } = {}) {
   if (suggestion === null) {
-    return (
-      `no number in ${NUMBERING_GUARD}'s window (the ${GAP_BOUND} above the merge target's max) ` +
-      'is free — every one is already claimed by an open PR, so rebase onto the freshest ' +
-      'origin/main and re-derive it there rather than taking one from this run.'
-    )
+    return exhaustedByRunAllocator
+      ? `no number in ${NUMBERING_GUARD}'s window (the ${GAP_BOUND} above the merge target's ` +
+          'max) is left for THIS finding — not because every one is claimed by an open PR, but ' +
+          "because this run already offered every number in it as some OTHER finding's remedy " +
+          'earlier in this same report (a collision row, another stale claim, or another ' +
+          'carrier), whether or not that PR ever acts on it. Rebase onto the freshest ' +
+          'origin/main and re-derive it there, or move further up your own window, past this ' +
+          "run's own reservations rather than real contention."
+      : `no number in ${NUMBERING_GUARD}'s window (the ${GAP_BOUND} above the merge target's max) ` +
+          'is free — every one is already claimed by an open PR, so rebase onto the freshest ' +
+          'origin/main and re-derive it there rather than taking one from this run.'
   }
   return `the next free number as of THIS run is session-${suggestion}.`
 }
@@ -1511,7 +1562,12 @@ function carrierWithoutRowAdvice(suggestion) {
     // second sentence that lost its full stop. A colon introduces it
     // correctly and works for both branches without asking the sentence
     // above to know which one it got.
-    `every row above: ${nextFreeSentence(suggestion)}`
+    // This PR's own number, like the stale-claim remedy below, comes from
+    // `alloc.take()` — the run-wide allocator — never from the non-consuming
+    // `suggestNextFree` the CLEAN path reads, so a `null` here is the
+    // run's-own-reservations cause, not "every number is claimed" (see
+    // `nextFreeSentence`).
+    `every row above: ${nextFreeSentence(suggestion, { exhaustedByRunAllocator: true })}`
   )
 }
 
@@ -1620,7 +1676,14 @@ export function findingLines(result) {
     // branch only the rare board reaches is precisely the branch nobody
     // writes a test for.
     for (const remedy of s.remedies) {
-      lines.push(`    #${remedy.pr} (\`${remedy.file}\`): ${nextFreeSentence(remedy.number)}`)
+      // Each remedy number is `alloc.take()`'s (or reused from a collision
+      // row that already was), so a `null` here is the run's own
+      // reservations exhausting the window, not "every number is claimed
+      // by an open PR" (#4531 review round 4 note 3, `nextFreeSentence`).
+      lines.push(
+        `    #${remedy.pr} (\`${remedy.file}\`): ` +
+          `${nextFreeSentence(remedy.number, { exhaustedByRunAllocator: true })}`,
+      )
     }
     lines.push(
       '    Rebase onto the freshest origin/main first, since another PR may claim it before ' +
@@ -2033,6 +2096,40 @@ function runClaimSemanticsCases(ok, fail) {
       mergedPaths: BASE,
     }),
     (r) => r.verified && duplicatedNumberCount(r) === 1,
+  )
+
+  // Case 22 (#4531 review round 4 note 2): case 13/21's SAME fixture, but
+  // pinning what the two findings actually SAY about the one file each of
+  // them names — not just that both fire. `s.claims` and the collision's
+  // `c.claims` are the SAME entries, so before this fix the collision table
+  // told #101 to renumber `session-1000-mine.md` to one number while the
+  // stale-claim remedy, two paragraphs later in the SAME report, told it to
+  // renumber that identical file to a different one — reused/reissued, not
+  // a race between two runs. Falsify by reverting the `collisionNumberByPr`
+  // lookup in `analyze` (stale-claim remedies call `alloc.take()`
+  // unconditionally again): the two numbers for #101 diverge (1405 vs 1407)
+  // and `allocated` grows from 2 entries to 4.
+  check(
+    'a number that is both a collision and a stale claim gives each file ONE number, not two',
+    analyze({
+      prs: [
+        pr(101, [`${LOG_DIR}/session-1000-mine.md`]),
+        pr(102, [`${LOG_DIR}/session-1000-theirs.md`]),
+      ],
+      selfPr: 101,
+      mergedPaths: BASE,
+    }),
+    (r) => {
+      if (!r.verified || r.collisions.length !== 1 || r.staleClaims.length !== 1) return false
+      const collisionByPr = new Map(r.collisions[0].assignment.map((a) => [a.pr, a.number]))
+      const remedyByPr = new Map(r.staleClaims[0].remedies.map((rem) => [rem.pr, rem.number]))
+      return (
+        collisionByPr.get(101) === remedyByPr.get(101) &&
+        collisionByPr.get(102) === remedyByPr.get(102) &&
+        new Set(r.allocated).size === 2 &&
+        r.allocated.length === 2
+      )
+    },
   )
 }
 
@@ -2880,6 +2977,37 @@ function runSuggestionCases(ok, fail) {
       allocated: firstRun.allocated,
     },
     (v) => v.same && v.payloadUntouched && v.allocated.length > 0,
+  )
+
+  // Case 44 (#4531 review round 4 note 3): a window exhausted by THIS RUN'S
+  // OWN reservations must not be reported as "every number is already
+  // claimed by an open PR" — that is true of `suggestNextFree`'s non-
+  // allocating `null` (the CLEAN path), not of `alloc.take()`'s. Eleven PRs
+  // all naming the same ALREADY-MERGED number is both a collision (10 of the
+  // 11 exhaust the 10-wide window) and a stale claim, so the 11th claimant's
+  // stale-claim remedy renders `nextFreeSentence(null)` from the allocator
+  // side while none of `session-6`..`session-15` was ever claimed by any
+  // open PR — they were handed to the OTHER ten claimants' own remedies.
+  // Falsify by dropping `{ exhaustedByRunAllocator: true }` from either
+  // `nextFreeSentence` call site: this goes red on the wrong-cause sentence
+  // still being emitted.
+  const exhaustedByReservation = analyze({
+    prs: Array.from({ length: 11 }, (_, i) => pr(500 + i, [`${LOG_DIR}/session-5-claim-${i}.md`])),
+    selfPr: 500,
+    mergedPaths: [`${LOG_DIR}/session-5-old.md`],
+  })
+  const exhaustedLine = findingLines(exhaustedByReservation).find((l) =>
+    l.trimStart().startsWith('#510 ('),
+  )
+  check(
+    "#4531: a window exhausted by this run's OWN reservations names that cause, not open-PR claims",
+    { line: exhaustedLine },
+    (v) =>
+      typeof v.line === 'string' &&
+      v.line.includes(
+        "this run already offered every number in it as some OTHER finding's remedy",
+      ) &&
+      !v.line.includes('every one is already claimed by an open PR'),
   )
 }
 
