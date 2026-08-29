@@ -22,10 +22,17 @@
  * that folding a string whole and folding it code point at a time agree once
  * `ς` is collapsed onto `σ`. That premise is what makes the fast/slow path
  * choice at the `haystack.length === text.length` branch in
- * `src/lib/in-page-find/matcher.ts` a pure optimisation, and therefore what makes the
- * `271:7 -> false` / `271:40 -> {}` mutants equivalent rather than merely
- * untested. It was NOT true before #4507, which is why those two survived as a
- * live bug rather than as an accepted gap.
+ * `src/lib/in-page-find/matcher.ts` a pure optimisation, and therefore what
+ * makes that branch's `[ConditionalExpression] -> false` and its
+ * `[BlockStatement] -> {}` twin — both meaning "always take the slow path" —
+ * equivalent rather than merely untested. It was NOT true before #4507, which
+ * is why those two survived as a live bug rather than as an accepted gap.
+ *
+ * Named by construct, not by `line:col`. The report that raised them said
+ * `271:7` / `271:40`; the branch is already elsewhere, moved by this very
+ * change. That is the same lesson the ledger in `matcher.test.ts` now opens
+ * with, and it would be a poor showing for this file to restate the numbers
+ * the same commit invalidates.
  *
  * SCOPE — apart from that, this harness covers only `scanLiteralFolded`'s
  * index-guard equivalence claims (section D). It does NOT attempt the module's other
@@ -53,7 +60,8 @@
  * literal and update the pin.
  *
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldCodePoint sha256=27068332538b97f803845a294d3dacb5ce60f4eb05522dca904c8f7ae18da0b3
- * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldForMatch sha256=197b6462a7d33cb2178d0d5693ce1454dc3279a115c4551b563a90886c547912
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldForMatch sha256=c2648cd2ebf1e3e33218b9f648810cef264a48d8a3cc7560e3735e747c64ef16
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#FINAL_SIGMA_RE sha256=b3551818575e60e5ae5b4b013000e0680855db365291f6058a1dade9e35b6d7e
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#scanLiteralFolded sha256=e368c19ed972375248269fbaac7ac3446f23cdffe793eb02cf4349b9c9bc3baa
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#isWordCodePoint sha256=1187f44517fcbf5a2ffd1e10a8518fc0e20e2b458faa3e784a488fb074ebaf7c
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#WORD_RE sha256=a51922e9c0787f4eb305db8a68ebbc7e91f2ebb388fa091a7261e9ff2830ba26
@@ -112,7 +120,10 @@ function foldCodePoint(ch: string): string {
 }
 
 // Clone of `foldForMatch` (#4507), which `foldCodePoint` now delegates to.
-// Pinned below alongside it.
+// INLINES the `FINAL_SIGMA_RE` pattern rather than referencing a constant, the
+// same way `isWordCodePoint` above inlines `WORD_RE` — so the clone stays
+// byte-faithful to what that constant currently is, and a change to the regex
+// ALONE fires the gate (both are pinned below).
 function foldForMatch(s: string): string {
   return s.toLowerCase().replace(/ς/g, 'σ')
 }
@@ -432,7 +443,11 @@ function randomString(rand: () => number, maxLen: number): string {
 }
 
 /** Fold `s` the same code-point-by-code-point way `compileQuery` folds a needle. */
-function foldWhole(s: string): string {
+// Renamed from `foldWhole` (#4507): it folds one code point at a time and
+// concatenates, which is the OPPOSITE of folding a string whole — precisely
+// the distinction the second sweep below turns on, so the misleading name
+// could not stay once both foldings appear in one file.
+function foldPerCodePoint(s: string): string {
   let out = ''
   for (const ch of s) out += foldCodePoint(ch)
   return out
@@ -468,7 +483,7 @@ function runSweep(): SweepResult {
   for (let i = 0; i < CASES; i++) {
     const text = randomString(rand, 12)
     const needleRaw = randomString(rand, 4)
-    const foldedNeedle = foldWhole(needleRaw)
+    const foldedNeedle = foldPerCodePoint(needleRaw)
     const wholeWord = rand() < 0.5
     if (foldedNeedle.length === 0) continue
 
@@ -542,13 +557,6 @@ describe('scanLiteralFolded equivalence-ledger sweep (#3804 harness for matcher.
 // empirical claim about the host's Unicode tables, not a deduction, so it is
 // swept here rather than asserted in a comment.
 
-/** Fold a string by concatenating the per-code-point fold, as the slow path does. */
-function foldPerCodePoint(s: string): string {
-  let out = ''
-  for (const ch of s) out += foldCodePoint(ch)
-  return out
-}
-
 /** The pre-#4507 fold, with no sigma collapse — the validation control. */
 function foldWithoutSigmaCollapse(s: string): string {
   return s.toLowerCase()
@@ -567,13 +575,38 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
     // Final_Sigma's actual trigger: a preceding cased letter with no following
     // one. A bare `Σ` does NOT trigger it, which is why the empty context
     // alone would prove nothing.
+    // Two families, and the second exists because the first is not enough.
+    //
+    // ADJACENT contexts alone would UNDER-test this. Final_Sigma does not look
+    // only at the immediately preceding character: it skips backwards over
+    // Case_Ignorable code points to find the preceding cased letter, and
+    // forwards the same way. So `'Α.Σ'` lowercases WHOLE to `'α.ς'` while
+    // per-code-point folding gives `'α.σ'` — a discrepancy no adjacent-only
+    // context constructs. (Verified: `'Α.Σ'`, `'Α··Σ'`, `'ΆΣ'` and a
+    // soft-hyphen separator all differ before the collapse.)
+    //
+    // It does not change the verdict — the ς collapse erases that discrepancy
+    // exactly as it erases the adjacent one — but a sweep that reports "0
+    // differing" while structurally unable to build the harder case is a
+    // number that reads as stronger than it is, which is the failure this
+    // whole file exists to avoid.
     const contexts: Array<[string, string]> = [
+      // Adjacent.
       ['', ''],
       ['Α', ''],
       ['', 'Α'],
       ['Α', 'Α'],
       ['', ' '],
       [' ', ' '],
+      // Separated from the cased letter by Case_Ignorable characters, which is
+      // what Final_Sigma actually scans past: a full stop, two middle dots, a
+      // combining acute, and a soft hyphen.
+      ['Α.', ''],
+      ['Α··', ''],
+      ['Α\u0301', ''],
+      ['Α\u00AD', ''],
+      ['Α.', '.Α'],
+      ['Α.', ' '],
     ]
 
     let checked = 0
@@ -619,5 +652,11 @@ ${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
     // The claim under test.
     expect(examples).toEqual([])
     expect(differing).toBe(0)
-  })
+    // Explicit timeout: this sweep is ~13M cases, roughly 60x the largest
+    // other harness here, and `vitest.config.ts` sets a 20s default that a
+    // slower machine would blow through. Harnesses sit outside the vitest
+    // `include` globs so this can never redden CI — but a harness that cannot
+    // be run by its own documented command is not a re-runnable proof, which
+    // is the entire point of committing it (#3804).
+  }, 300_000)
 })

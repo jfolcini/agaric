@@ -87,11 +87,24 @@ attached.
 That proof is an empirical claim, not a deduction: it needs `foldForMatch` to distribute
 over code points, which holds because Final_Sigma is the only context-sensitive mapping in
 the locale-free case-mapping table. Swept exhaustively rather than asserted — every code
-point in six contexts chosen to cover Final_Sigma's actual trigger (a preceding cased
-letter, no following one), 6,672,384 cases, **0 differing**. The pre-fix fold as control
-differs on exactly **1**, `ΑΣ`, which is precisely where the rule says it must and nowhere
-else. A bare `Σ` does not trigger Final_Sigma, so an empty-context-only sweep would have
-proven nothing.
+point in twelve contexts, 13,344,768 cases, **0 differing**, with the pre-fix fold as a
+control that differs on 6 of them. A bare `Σ` does not trigger Final_Sigma at all, so an
+empty-context-only sweep would have proven nothing.
+
+The context set took two passes, and the second is the interesting one. The first version
+used six **adjacent** contexts — the cased letter immediately before or after — and
+reported 0 differing over 6,672,384 cases. Review pointed out that this could not detect
+what it claimed to: Final_Sigma scans *past* Case_Ignorable characters to find the
+preceding cased letter, so `'Α.Σ'` folds whole to `'α.ς'` and per-code-point to `'α.σ'`,
+and no adjacent-only context constructs that. Checked, and true — a full stop, two middle
+dots, a combining acute and a soft hyphen all produce the discrepancy.
+
+It did not change the verdict: the ς collapse erases the separated case exactly as it
+erases the adjacent one. It changed what the number was worth. Six separated contexts were
+added; the control now fires 6 times instead of 1, which is the measure of what the first
+sweep could not see. A sweep reporting "0 differing" while structurally unable to build the
+harder case is a number that reads stronger than it is — the same failure as a test whose
+comment claims a kill it never makes, one section up.
 
 The sweep is committed into the existing harness rather than run once and described, which
 is the standard #3804 set for this file.
@@ -139,5 +152,5 @@ match`**. Its marker regex requires `sha256=([0-9a-f]{64})`, so a malformed pin 
 fail — it stops being recognised as a pin at all and is skipped silently.
 
 A typo in a pin therefore disables that pin rather than breaking the build, which is the
-one failure mode a drift guard must not have. Filed separately; not fixed here, where it
+one failure mode a drift guard must not have. Filed as #4509; not fixed here, where it
 would be unrelated to the diff.

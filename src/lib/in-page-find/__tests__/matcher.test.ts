@@ -1492,9 +1492,15 @@ describe('runWalker', () => {
  *      empirical claim about the host's Unicode tables rather than a deduction
  *      — Final_Sigma is the only context-sensitive mapping in the locale-free
  *      case-mapping table, so collapsing ς removes the only discrepancy.
- *      Swept exhaustively and committed: every code point in six contexts,
- *      6,672,384 cases, 0 differing, with the pre-#4507 fold as a control that
- *      differs on exactly the one case theory predicts (`ΑΣ`). See
+ *      Swept exhaustively and committed: every code point in twelve contexts,
+ *      13,344,768 cases, 0 differing, with the pre-#4507 fold as a control that
+ *      differs on 6 of them. Six of the twelve are ADJACENT contexts and six
+ *      separate the cased letter by Case_Ignorable characters, because
+ *      Final_Sigma scans PAST those to find it: `'Α.Σ'` folds whole to `'α.ς'`
+ *      and per-code-point to `'α.σ'`, which no adjacent-only context can
+ *      construct. An earlier revision swept the six adjacent contexts alone and
+ *      reported 0 differing over 6,672,384 cases — true, and weaker than it
+ *      read, since it was structurally unable to build the harder case. See
  *      `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`.
  *      `→ true` (always fast) stays KILLED (5 tests) — that direction really
  *      does break the İ offset mapping.

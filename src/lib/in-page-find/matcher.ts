@@ -392,8 +392,20 @@ function foldCodePoint(ch: string): string {
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  */
 function foldForMatch(s: string): string {
-  return s.toLowerCase().replace(/ς/g, 'σ')
+  return s.toLowerCase().replace(FINAL_SIGMA_RE, 'σ')
 }
+
+/**
+ * Hoisted out of `foldForMatch` so the pattern is compiled once rather than on
+ * every call — this runs once per text node per keystroke while a find is open.
+ *
+ * Sharing one `/g` regex across calls is safe **here specifically**:
+ * `String.prototype.replace` sets `lastIndex` to 0 before scanning and again
+ * after, so no state carries between calls. It would NOT be safe to share this
+ * with an `exec` or `test` call site, both of which advance `lastIndex` and
+ * leave it advanced.
+ */
+const FINAL_SIGMA_RE = /ς/g
 
 /**
  * Slow literal path for haystacks whose lowercase fold changes length.
