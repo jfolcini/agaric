@@ -2207,8 +2207,14 @@ function aliasCitationScenarios(root) {
     const malformedConfig = run(['--worktree'])
     record(
       'a tsconfig.app.json with no usable paths entry fails CLOSED (exit 2), not open',
-      malformedConfig.status === 2 && /compilerOptions\.paths/.test(malformedConfig.stderr),
-      `expected 2 naming compilerOptions.paths, got ${malformedConfig.status}: ${malformedConfig.stderr}`,
+      // Matched on text unique to the MISSING-`paths` throw. A bare
+      // /compilerOptions\.paths/ would have been satisfied by the
+      // unmodelled-shape throw below too — both messages contain that
+      // substring — so this arm would have stayed green whichever fired, and
+      // the two failures would have been indistinguishable here.
+      malformedConfig.status === 2 &&
+        /cannot resolve @\/-alias citations/.test(malformedConfig.stderr),
+      `expected 2 naming the missing-paths failure, got ${malformedConfig.status}: ${malformedConfig.stderr}`,
     )
 
     // The SAME broken config through `--print-source`, the flag whose whole
@@ -2232,6 +2238,35 @@ function aliasCitationScenarios(root) {
       '`--print-source` still exits 0 on that config — diagnostic, not the check',
       printSourceBroken.status === 0,
       `expected 0, got ${printSourceBroken.status}: ${printSourceBroken.stderr}`,
+    )
+
+    // The THIRD legal edit that lands on the loud side of the split (see this
+    // file's header): `paths` is still present and is legal TypeScript, but
+    // its only entry is a shape `loadPathAliasMap` does not model — `"./*"`
+    // strips to the bare target `*`, fails the `endsWith('/*')` test, is
+    // skipped, and leaves the map empty. Until #4510's follow-up this case
+    // was prose in two comments and a message string with no arm behind it:
+    // the arm above wrote `{compilerOptions: {}}`, which throws the DIFFERENT
+    // error, and its old /compilerOptions\.paths/ matcher was satisfied by
+    // both messages — so nothing distinguished them and nothing reached this
+    // branch at all.
+    //
+    // Asserted on text unique to the unmodelled-shape throw, and asserted
+    // NEGATIVELY against the missing-`paths` one, because "exit 2 with a
+    // message mentioning compilerOptions.paths" is exactly what the other
+    // failure also produces. Without the negative half this arm would go
+    // green if the `map.size === 0` branch were deleted and the config fell
+    // through to a different error.
+    writeFileSync(join(dir, 'README.md'), 'The pipeline lives in `src/real.ts` today.\n')
+    writeTsconfig({ '@/*': ['./*'] })
+    git('add', '-A')
+    const unmodelledShape = run(['--worktree'])
+    record(
+      'a `paths` whose only entry is an UNMODELLED shape fails CLOSED (exit 2), naming the shape',
+      unmodelledShape.status === 2 &&
+        /has no entry this guard models/.test(unmodelledShape.stderr) &&
+        !/cannot resolve @\/-alias citations/.test(unmodelledShape.stderr),
+      `expected 2 naming the unmodelled-shape failure, got ${unmodelledShape.status}: ${unmodelledShape.stderr}`,
     )
 
     writeTsconfig({ '@/*': ['./src/*'] })

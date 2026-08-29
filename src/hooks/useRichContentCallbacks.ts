@@ -50,7 +50,11 @@ export function useRichContentCallbacks(): RichContentCallbacks {
   const resolveBlockStatus = useCallback((id: string): 'active' | 'deleted' => {
     const spaceId = useSpaceStore.getState().currentSpaceId
     const cached = cacheRef.current.get(keyFor(spaceId, id))
-    if (cached) return cached.deleted ? 'deleted' : 'active'
+    // #4515 — `!resolved` counts as deleted, mirroring
+    // `useResolveStore.resolveStatus` (this reads the same entries): an entry
+    // the backend never returned is a broken target, not a live chip. Inert
+    // today — the sole `resolved: false` writer also sets `deleted: true`.
+    if (cached) return cached.deleted || !cached.resolved ? 'deleted' : 'active'
     return 'active'
   }, [])
 
@@ -64,7 +68,8 @@ export function useRichContentCallbacks(): RichContentCallbacks {
   const resolveTagStatus = useCallback((id: string): 'active' | 'deleted' => {
     const spaceId = useSpaceStore.getState().currentSpaceId
     const cached = cacheRef.current.get(keyFor(spaceId, id))
-    if (cached) return cached.deleted ? 'deleted' : 'active'
+    // See `resolveBlockStatus` above — same verdict.
+    if (cached) return cached.deleted || !cached.resolved ? 'deleted' : 'active'
     return 'active'
   }, [])
 
