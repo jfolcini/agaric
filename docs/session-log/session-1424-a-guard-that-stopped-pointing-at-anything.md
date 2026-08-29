@@ -424,3 +424,41 @@ while the self-test hook *is* `always_run` on both pre-commit and pre-push and h
 to 13 spawned subprocesses. Fair — and the right way to settle it is to measure: the full
 self-test runs in **0.57s**, six times cheaper than the walk it was compared against. The
 asymmetry holds on the numbers.
+
+## Review round ten — a false pass inside the false-pass check
+
+Three fixes, and the first is the one that stings.
+
+**Direction 11 could report coverage this guard does not have.** The `files:` parser scans
+forward from the hook id for the first line starting with `files = ` and never stopped at the
+next `[[repos.hooks]]`. If this hook ever loses its own `files` line, the first one found
+belongs to a *later* hook, and the case validates that regex instead — a green result asserting
+a coupling that no longer exists. A false pass, inside the check added one round earlier
+specifically to prevent false passes. Bounded to the hook's own block; falsified by deleting the
+`files` line, where the case now reports `could not parse` rather than passing.
+
+**Control flow was keyed off diagnosis wording.** `--update-baseline` routes a ROOT finding into
+its refusal branch and the other two into a warning, and it selected them by substring-matching
+`"CRATE_ROOTS"` against the rendered message — so a baseline path containing that literal would
+be misrouted into the refusal. `_assert_paths_exist` now returns `(kind, message)` pairs.
+Falsified with a `CRATE_ROOTS_decoy.rs` baseline entry: it lands in the warning branch, where it
+belongs.
+
+**`--update-baseline` now prints its per-file deltas and marks reductions.** It regenerates the
+whole file, so re-anchoring to absorb one intended change absorbs every other change in the same
+pass — including a count reduction, which is the removal this guard exists to catch.
+`DANGLING_HINT` told the operator to read `git diff`; nothing made them. Demonstrated by
+removing a real guard from `pagination/links.rs`:
+
+```
+  src-tauri/agaric-store/src/pagination/links.rs: 1 -> 0  <-- REDUCTION
+
+  A canonical space-filter guard was REMOVED from the file(s) marked above.
+```
+
+Three notes stay on #4501, and one of them is now the sharpest thing left: the Python guard walks
+six roots and the Rust parity test walks two, bound only by the comments each gained in round
+five. Direction 11 pins `prek.toml` ↔ `CRATE_ROOTS` mechanically; **nothing pins Rust ↔ Python**.
+In a change whose entire subject is a comment-bound list rotting, that is the one pairing still
+resting on a promise. It stays deferred because it is cross-language and genuinely belongs to the
+general mechanism — but it is deferred with the observation recorded, not waved off.

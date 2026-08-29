@@ -366,9 +366,18 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[str]:
     rather than warning, because re-anchoring against a narrowed walk deletes
     every baseline entry under the missing root. See the refusal branch.
     """
-    out = [
-        f"{rel}: baseline names a file that does not exist "
-        f"(expected {cnt} canonical fragment(s))"
+    # (kind, message) rather than bare strings: `main()` routes the ROOT kind
+    # into `--update-baseline`'s refusal branch and the other two into a
+    # warning, and selecting that by substring-matching "CRATE_ROOTS" against
+    # the rendered text couples control flow to diagnosis wording — a baseline
+    # path containing the literal would be misrouted. Unlikely, and free to
+    # remove.
+    out: list[tuple[str, str]] = [
+        (
+            "baseline",
+            f"{rel}: baseline names a file that does not exist "
+            f"(expected {cnt} canonical fragment(s))",
+        )
         for rel, cnt in sorted(baseline.items())
         if not (REPO_ROOT / rel).is_file()
     ]
@@ -384,7 +393,7 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[str]:
     # so the self-test models a real checkout and this half can be both
     # unconditional and directly tested (see `run_cli_self_test` direction 6).
     out.extend(
-        f"{rel}: DENY_FILES names a file that does not exist"
+        ("deny", f"{rel}: DENY_FILES names a file that does not exist")
         for rel in sorted(DENY_FILES)
         if not (REPO_ROOT / rel).is_file()
     )
@@ -396,7 +405,7 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[str]:
     # them indirectly. The sandbox materialises every root for the same reason
     # it materialises DENY_FILES.
     out.extend(
-        f"{rel}: CRATE_ROOTS names a directory that does not exist"
+        ("root", f"{rel}: CRATE_ROOTS names a directory that does not exist")
         for rel in CRATE_ROOTS
         if not (REPO_ROOT / rel).is_dir()
     )
@@ -865,10 +874,18 @@ def run_cli_self_test(record) -> None:
             prek = (REPO_ROOT / "prek.toml").read_text(encoding="utf-8")
         except OSError:
             prek = ""
+        # Bound the search to THIS hook's own block. Scanning forward without
+        # stopping at the next `[[repos.hooks]]` means that if this hook ever
+        # loses its `files` line, the first one found belongs to a LATER hook
+        # and the case validates that regex instead — reporting coverage this
+        # guard does not have. A false pass inside the check added to prevent
+        # false passes.
         block = prek.split('id = "check-space-filter-drift"', 1)
         files_re = None
         if len(block) > 1:
             for line in block[1].splitlines():
+                if line.lstrip().startswith("[[repos.hooks]]"):
+                    break
                 if line.startswith("files = "):
                     files_re = line.split("=", 1)[1].strip().strip("'\"")
                     break
@@ -1023,7 +1040,7 @@ def main(argv: list[str]) -> int:
         # right move, and a warning printed above a completed rebuild is read
         # after the damage is written.
         pre = _assert_paths_exist(read_baseline())
-        root_findings = [v for v in pre if "CRATE_ROOTS" in v]
+        root_findings = [m for kind, m in pre if kind == "root"]
         if root_findings:
             print(
                 "Refusing to re-anchor: a declared CRATE_ROOTS entry is "
@@ -1035,10 +1052,39 @@ def main(argv: list[str]) -> int:
             print("", file=sys.stderr)
             print(ROOT_MISSING_HINT, file=sys.stderr)
             return 1
-        for v in pre:
-            print(f"  WARNING before re-anchor: {v}", file=sys.stderr)
-        write_baseline(compute_baseline())
+        for _kind, m in pre:
+            print(f"  WARNING before re-anchor: {m}", file=sys.stderr)
+        # Print the per-file deltas. `--update-baseline` regenerates the WHOLE
+        # file, so re-anchoring to absorb one intended change (a new file, a
+        # moved one) silently absorbs every other change in the same pass —
+        # including a count REDUCTION, which is the removal this guard exists
+        # to catch. DANGLING_HINT tells the operator to read `git diff`;
+        # nothing made them. Showing the reductions unprompted, and marking
+        # them, is what makes that unmissable rather than advisory.
+        before = read_baseline()
+        after = compute_baseline()
+        write_baseline(after)
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
+        drops = []
+        for rel in sorted(set(before) | set(after)):
+            old_n, new_n = before.get(rel, 0), after.get(rel, 0)
+            if old_n == new_n:
+                continue
+            mark = "  <-- REDUCTION" if new_n < old_n else ""
+            line = f"  {rel}: {old_n} -> {new_n}{mark}"
+            print(line, file=sys.stderr)
+            if new_n < old_n:
+                drops.append(rel)
+        if drops:
+            print(
+                "\n  A canonical space-filter guard was REMOVED from the "
+                "file(s) marked above.\n"
+                "  If that was not the point of this re-anchor, you have just "
+                "absorbed the\n"
+                "  exact drift this baseline exists to catch — restore the "
+                "guard and re-run.",
+                file=sys.stderr,
+            )
         return 0
 
     baseline = read_baseline()
@@ -1102,7 +1148,7 @@ def main(argv: list[str]) -> int:
     # cheap structural answer. This is that check, and it is deliberately
     # unconditional — it runs on a targeted prek invocation too, because the
     # rot is a property of the baseline, not of the files in any one commit.
-    dangling = _assert_paths_exist(baseline)
+    dangling = [m for _kind, m in _assert_paths_exist(baseline)]
 
     for p in targets:
         rel = p.relative_to(REPO_ROOT).as_posix()
