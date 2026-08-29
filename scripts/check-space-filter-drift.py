@@ -216,6 +216,16 @@ ROOT_MISSING_HINT = (
     "       same commit, then re-anchor."
 )
 
+UNSCANNED_HINT = (
+    "    -> #3255: this entry names a file that EXISTS but that no walk ever\n"
+    "       reaches, so its count is compared against nothing. It is not a\n"
+    "       stale path — do not `--update-baseline` to clear it; that path\n"
+    "       refuses, because the file's count reads as 0 while the file is\n"
+    "       still present. Fix the ENTRY: correct the path, add its root to\n"
+    "       CRATE_ROOTS (and to the hook's `files:` regex in prek.toml), or\n"
+    "       delete the entry if the file is deliberately denied."
+)
+
 DANGLING_HINT = (
     "    -> #3255: the baseline, DENY_FILES, or CRATE_ROOTS names a path that\n"
     "       no longer exists.\n"
@@ -433,9 +443,21 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[tuple[str, str]]:
     # can still introduce (`--update-baseline` only ever writes paths it
     # walked). Raised across four reviews as in-scope-ness; it is three lines
     # here, so it stops being deferred.
+    # Its own `kind`, not "baseline". The file EXISTS by construction here,
+    # so DANGLING_HINT's opening line ("names a path that no longer exists")
+    # would be false, and the `--update-baseline` it prescribes then refuses
+    # via the in_place arm. That is the mislabelling rounds 15-17 split out
+    # for `root` and `unbaselined`, and I reintroduced it on a fourth kind in
+    # the very commit that added this check.
+    #
+    # Two ways an entry ends up unscanned, same consequence:
+    #   * outside every CRATE_ROOTS entry — no walk reaches it;
+    #   * named in DENY_FILES — every walk explicitly drops it.
+    # The second passes both structural checks (it exists, it is under a
+    # root) and is still never compared to anything.
     out.extend(
         (
-            "baseline",
+            "unscanned",
             f"{rel}: baseline entry is OUTSIDE every CRATE_ROOTS entry, so "
             f"nothing ever scans it — the {cnt} fragment(s) it records are "
             f"unenforced. Either the path is wrong, or the root belongs in "
@@ -444,6 +466,16 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[tuple[str, str]]:
         for rel, cnt in sorted(baseline.items())
         if (REPO_ROOT / rel).is_file()
         and not any(rel.startswith(r) for r in CRATE_ROOTS)
+    )
+    out.extend(
+        (
+            "unscanned",
+            f"{rel}: baseline entry names a DENY_FILES path, which every "
+            f"walk drops — the {cnt} fragment(s) it records are unenforced. "
+            f"A denied file must not carry a baseline entry at all.",
+        )
+        for rel, cnt in sorted(baseline.items())
+        if (REPO_ROOT / rel).is_file() and rel in DENY_FILES
     )
     # Unconditional, deliberately. An earlier revision gated this half on
     # "the crate root this entry names is present in THIS tree", to stop the
@@ -647,8 +679,14 @@ def _build_cli_sandbox(root: Path) -> Path:
         # precondition that disappears under an interpreter flag is not a
         # precondition. The hook does not pass -O today; that is a reason it
         # has not bitten, not a reason to rely on it.
-        if PurePosixPath(rel).is_absolute():
-            raise ValueError(f"sandbox path must be repo-relative: {rel}")
+        # `..` escapes the TemporaryDirectory exactly as an absolute path
+        # does — `root / "../x"` resolves outside — and these guard a
+        # destructive mkdir/write_text/unlink. Checking only is_absolute()
+        # covered one of the two ways out.
+        if PurePosixPath(rel).is_absolute() or ".." in PurePosixPath(rel).parts:
+            raise ValueError(
+                f"sandbox path must be repo-relative with no '..': {rel}"
+            )
         (root / rel).mkdir(parents=True, exist_ok=True)
     # Same reason, for the deny half: a sandbox missing these would report a
     # dangling deny entry on every case and drown out what each is asserting.
@@ -664,8 +702,14 @@ def _build_cli_sandbox(root: Path) -> Path:
         # precondition that disappears under an interpreter flag is not a
         # precondition. The hook does not pass -O today; that is a reason it
         # has not bitten, not a reason to rely on it.
-        if PurePosixPath(rel).is_absolute():
-            raise ValueError(f"sandbox path must be repo-relative: {rel}")
+        # `..` escapes the TemporaryDirectory exactly as an absolute path
+        # does — `root / "../x"` resolves outside — and these guard a
+        # destructive mkdir/write_text/unlink. Checking only is_absolute()
+        # covered one of the two ways out.
+        if PurePosixPath(rel).is_absolute() or ".." in PurePosixPath(rel).parts:
+            raise ValueError(
+                f"sandbox path must be repo-relative with no '..': {rel}"
+            )
         stand_in = root / rel
         stand_in.parent.mkdir(parents=True, exist_ok=True)
         stand_in.write_text(
@@ -1347,6 +1391,12 @@ def run_cli_self_test(record) -> None:
         if DENY_FILES:
             deny_stand_in = root / sorted(DENY_FILES)[0]
             saved = deny_stand_in.read_text(encoding="utf-8")
+            # The BASELINE is fixture state too, and this case both empties it
+            # and lets `--update-baseline` rewrite it. Restoring only the deny
+            # stand-in is precisely the hazard direction 6's comment rejects —
+            # "being last today is not a defence; the next case appended is the
+            # one that pays". Captured and restored with it.
+            saved_baseline = baseline_path.read_text(encoding="utf-8")
             baseline_path.write_text("", encoding="utf-8")
             try:
                 deny_stand_in.unlink()
@@ -1354,6 +1404,7 @@ def run_cli_self_test(record) -> None:
             finally:
                 deny_stand_in.parent.mkdir(parents=True, exist_ok=True)
                 deny_stand_in.write_text(saved, encoding="utf-8")
+                baseline_path.write_text(saved_baseline, encoding="utf-8")
             if code != 0 and "Refusing to re-anchor: a DENY_FILES entry" in out:
                 record(
                     "CLI: --update-baseline refuses a stale DENY entry (#3255)",
@@ -1365,6 +1416,49 @@ def run_cli_self_test(record) -> None:
                     "CLI: --update-baseline refuses a stale DENY entry (#3255)",
                     (code, out.strip()[:200]),
                     "non-zero exit refusing the re-anchor over the stale deny",
+                )
+
+        # --- #3255 direction 19: a baseline entry for a DENIED file ---------
+        # The other way an entry goes unscanned, and the one that passes both
+        # structural checks: the file exists AND sits under a crate root, so
+        # nothing above objects — yet every walk drops it by DENY_FILES, so
+        # its count is never compared to anything. Same "protects nothing"
+        # shape as direction 17, reached from the opposite side.
+        if DENY_FILES:
+            denied_rel = sorted(DENY_FILES)[0]
+            baseline_path.write_text(f"1 {denied_rel}\n", encoding="utf-8")
+            code, out = _run_cli(guard, [])
+            if code != 0 and "names a DENY_FILES path" in out:
+                record(
+                    "CLI: a baseline entry for a denied file is a finding (#3255)",
+                    True,
+                    True,
+                )
+            else:
+                record(
+                    "CLI: a baseline entry for a denied file is a finding (#3255)",
+                    (code, out.strip()[:200]),
+                    "non-zero exit naming the entry as a DENY_FILES path",
+                )
+            # The unscanned finding must NOT be described as a stale path, and
+            # must not prescribe --update-baseline: the file exists, so that
+            # command refuses via in_place. Separate assertion on the same run,
+            # the pattern directions 3, 7 and 15 each needed.
+            if (
+                "names a file nothing scans" in out
+                and "do not `--update-baseline`" in out
+                and "no longer describes this tree" not in out
+            ):
+                record(
+                    "CLI: an unscanned entry gets its own banner and hint",
+                    True,
+                    True,
+                )
+            else:
+                record(
+                    "CLI: an unscanned entry gets its own banner and hint",
+                    out.strip()[:300],
+                    "the unscanned banner and UNSCANNED_HINT, not the dangling ones",
                 )
 
 
@@ -1712,7 +1806,10 @@ def main(argv: list[str]) -> int:
     # two kinds; this is the third.
     _found = _assert_paths_exist(baseline)
     missing_roots = [m for kind, m in _found if kind == "root"]
-    dangling = [m for kind, m in _found if kind != "root"]
+    unscanned = [m for kind, m in _found if kind == "unscanned"]
+    dangling = [
+        m for kind, m in _found if kind not in ("root", "unscanned")
+    ]
 
     for p in targets:
         rel = p.relative_to(REPO_ROOT).as_posix()
@@ -1772,6 +1869,7 @@ def main(argv: list[str]) -> int:
         and not removal_violations
         and not dangling
         and not missing_roots
+        and not unscanned
         and not unbaselined
     ):
         return 0
@@ -1800,6 +1898,8 @@ def main(argv: list[str]) -> int:
         # repo. Saying "does not exist" over the second is the same
         # mislabelling this banner was composed to prevent.
         parts.append("a declared CRATE_ROOTS directory is missing or unusable")
+    if unscanned:
+        parts.append("a baseline entry names a file nothing scans")
     print(
         f"Space-filter drift guard (#139) — {'; '.join(parts)}:\n",
         file=sys.stderr,
@@ -1814,11 +1914,15 @@ def main(argv: list[str]) -> int:
         print(f"  {v}", file=sys.stderr)
     for v in missing_roots:
         print(f"  {v}", file=sys.stderr)
+    for v in unscanned:
+        print(f"  {v}", file=sys.stderr)
     print("", file=sys.stderr)
     if dangling:
         print(DANGLING_HINT, file=sys.stderr)
     if missing_roots:
         print(ROOT_MISSING_HINT, file=sys.stderr)
+    if unscanned:
+        print(UNSCANNED_HINT, file=sys.stderr)
     if unbaselined:
         print(UNBASELINED_HINT, file=sys.stderr)
     if shape_violations or removal_violations:
