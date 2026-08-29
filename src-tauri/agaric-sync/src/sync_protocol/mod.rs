@@ -30,6 +30,14 @@ mod operations;
 mod session_state_machine;
 pub mod types;
 
+// #4498 — property tests for the crate's pure decision functions (the two
+// version-vector comparisons, the wire-batch partition, the persisted-bookmark
+// codec). Kept in one file rather than four `mod tests` blocks because every
+// property scores against the same generated model, and the model is the part
+// worth reading once.
+#[cfg(test)]
+mod protocol_proptest;
+
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the original public API surface
 // ---------------------------------------------------------------------------
