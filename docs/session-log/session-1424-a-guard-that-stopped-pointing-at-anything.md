@@ -774,3 +774,47 @@ Round twenty then found three more variants of *the check is present and protect
   `python3 -O` strips. A precondition that vanishes under an interpreter flag is not one.
 
 Thirty cases.
+
+## Round twenty-one — the fourth time, on a kind I had just created
+
+The check added last round — a baseline entry naming a real file outside every `CRATE_ROOTS`
+entry — went out tagged `kind == "baseline"`. So it fell into `dangling` and drew
+`DANGLING_HINT`, whose first line is "names a path that no longer exists". That is false by
+construction: the arm requires `is_file()`. And the hint prescribes `--update-baseline`, which
+then refuses, because the file exists while its count reads 0.
+
+Rounds fifteen, sixteen and seventeen each split this exact mislabelling out — for
+`unbaselined`, for the mixed case, for `root`. I then reintroduced it on a fourth kind, in the
+same commit that created the kind. Four rounds, one defect, and the fourth instance was mine
+from ten minutes earlier.
+
+What makes it recur is not carelessness about the message. It is that adding a finding class
+means touching five places — the check, the banner clause, the print loop, the hint routing,
+the early return — and only the first two are obvious. The other three are easy to leave
+consistent-looking and wrong. `kind` exists precisely so those are mechanical, and each time
+the failure has been not using it.
+
+The generalisable defence is the one directions 3, 7 and 15 already encode and 17 did not: a
+case that asserts on the finding must **separately** assert on the banner and hint carrying it.
+The finding text was correct every single time. It was always the wrapper that was wrong, and a
+test that reads only the finding cannot see the wrapper at all. Direction 19 now does both.
+
+Three more, all real:
+
+* The same "protects nothing" shape reached from the other side — a baseline entry naming a
+  `DENY_FILES` path. It passes *both* structural checks: the file exists, and it sits under a
+  crate root. Every walk drops it anyway, so its count is compared against nothing.
+* Direction 18 emptied the baseline, let `--update-baseline` rewrite it, and restored only the
+  deny stand-in. That is verbatim the hazard direction 6's own comment rejects — "being last
+  today is not a defence; the next case appended is the one that pays" — and direction 19 is
+  the case that would have paid. I wrote both the warning and the violation.
+* The preconditions hardened from `assert` to `raise` last round tested only `is_absolute()`.
+  A relative entry containing `..` escapes the TemporaryDirectory identically, in front of the
+  same destructive `mkdir`/`write_text`/`unlink`.
+
+The PR body's "25 cases" was stale against 32. Rather than keep hand-maintaining a mutant
+tally that goes stale every round — a denominator problem, in the change about denominators —
+the body now states the runtime-computed case count and presents the mutant table as
+representative rather than exhaustive.
+
+Thirty-two cases.
