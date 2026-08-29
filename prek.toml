@@ -2215,7 +2215,7 @@ language = "system"
 # (prek.toml, hook id `check-raw-tx`): this one lists six, adding
 # `agaric-core/src` and the baseline file itself, and it must stay in step
 # with CRATE_ROOTS in the guard rather than with its sibling hook.
-files = '^src-tauri/(src|agaric-core/src|agaric-store/src|agaric-engine/src|agaric-sync/src|diagnostics/src)/.*\.rs$|^src-tauri/space-filter-baseline\.txt$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
+files = '^src-tauri/(src|agaric-core/src|agaric-store/src|agaric-engine/src|agaric-sync/src|diagnostics/src)/.*\.rs$|^src-tauri/space-filter-baseline\.txt$|^scripts/(check-space-filter-drift\.py|check-raw-tx\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
 # Self-test the space-filter drift guard's own exit behavior (a canonical
