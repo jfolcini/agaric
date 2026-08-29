@@ -1331,8 +1331,13 @@ describe('runWalker', () => {
  * — #3804 refreshed section D's `301` to `430`, and the 2026-08-17 report
  * arrived with all of section A drifted by ~124 lines — so treat these numbers
  * as provenance, never as identity. What identifies a mutant is the CONSTRUCT
- * named alongside it; find it with grep. The 2026-08-17 pass mapped all 25
- * findings back onto this ledger that way, and every one matched by construct:
+ * named alongside it; find it with grep.
+ *
+ * The 2026-08-17 pass mapped all 25 findings back onto this ledger that way and
+ * every one landed. Seventeen matched constructs already recorded here — the
+ * table below, whose 14 rows cover them because a single construct can carry
+ * more than one mutant (see SUB-MUTANT AMBIGUITY, following). The remaining
+ * eight were newly triaged and are in section F.
  *
  *   err instanceof Error ? ... : ''        A (was 193:81)
  *   while (from <= haystack.length)        C (was 251:10, reported 320:10)

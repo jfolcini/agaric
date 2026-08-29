@@ -584,7 +584,6 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
     // per-code-point folding gives `'α.σ'` — a discrepancy no adjacent-only
     // context constructs. (Verified: a full stop, two middle dots, a
     // combining acute and a soft hyphen as the separator all produce it.)
-    // soft-hyphen separator all differ before the collapse.)
     //
     // It does not change the verdict — the ς collapse erases that discrepancy
     // exactly as it erases the adjacent one — but a sweep that reports "0
@@ -605,8 +604,10 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
       // precomposed U+0386 render as the same glyph, and prose here once named
       // the precomposed form — which is a single cased letter, i.e. an ADJACENT
       // context that would not count toward this family at all.
-      // what Final_Sigma actually scans past: a full stop, two middle dots, a
-      // combining acute, and a soft hyphen.
+      //
+      // Four separators across six contexts: a full stop, two middle dots,
+      // U+0301 COMBINING ACUTE and U+00AD SOFT HYPHEN. The full stop appears in
+      // three of them, varying what FOLLOWS the sigma.
       ['Α.', ''],
       ['Α··', ''],
       ['Α\u0301', ''],
@@ -659,7 +660,7 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
   (code point, context) cases checked:            ${checked}
   differing with the sigma collapse (expect 0):   ${differing}
   differing WITHOUT it — control (expect 6):      ${controlDiffering}
-    of those, in SEPARATED contexts (expect 5): ${controlDifferingSeparated}
+  of those, in SEPARATED contexts (expect 5):     ${controlDifferingSeparated}
 ${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
 `)
 
@@ -679,13 +680,16 @@ ${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
     // `toBe(5)`, not `> 0` — which was the loose form the paragraph above
     // argues against, used in the very assertion making the argument. 5 is
     // derived like the 6: of the six separated contexts, Final_Sigma fires in
-    // five — the four Case_Ignorable separators (`.`, `··`, U+0301 COMBINING
-    // ACUTE, U+00AD SOFT HYPHEN) and `['Α.',' ']` —
-    // `['Α.',' ']`) and not in `['Α.','.Α']`, where a cased letter follows past
-    // the ignorables and suppresses the rule.
+    // five and is suppressed in one. The five are the four distinct
+    // Case_Ignorable separators (`.`, `··`, U+0301 COMBINING ACUTE, U+00AD SOFT
+    // HYPHEN) plus the trailing-space variant of the full stop. The sixth,
+    // `['Α.','.Α']`, does not fire: a cased letter follows past the ignorables
+    // and suppresses the rule.
     expect(controlDifferingSeparated).toBe(5)
     expect(contexts.length).toBe(12)
-    expect(checked).toBe(12 * (0x110000 - 2048))
+    // Derived from `contexts.length`, not a repeated literal — the line above
+    // is what pins that number, and restating it here would let the two drift.
+    expect(checked).toBe(contexts.length * (0x110000 - 2048))
     // The claim under test.
     expect(examples).toEqual([])
     expect(differing).toBe(0)

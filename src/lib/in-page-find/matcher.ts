@@ -386,8 +386,11 @@ function foldCodePoint(ch: string): string {
 const FINAL_SIGMA_RE = /ς/g
 
 /**
- * The case fold both literal paths use: `toLowerCase()`, then the ς/σ
- * collapse `foldCodePoint` documents above.
+ * The case fold both literal paths use: `toLowerCase()`, then a collapse of the
+ * two Greek sigma forms — word-final `ς` (U+03C2) onto `σ` (U+03C3).
+ *
+ * This function owns that rule. `foldCodePoint` above delegates here rather
+ * than carrying its own copy.
  *
  * #4507 — the collapse used to live only in `foldCodePoint`, i.e. only on the
  * slow (length-changing) path, which `İ` U+0130 is the sole trigger for. The
@@ -408,9 +411,13 @@ const FINAL_SIGMA_RE = /ς/g
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  *
- * On the second pass: this adds one `replace` scan over every text node on top
- * of `toLowerCase()`, and it runs per text node per keystroke while find is
- * open. An `s.indexOf('ς') === -1` short-circuit would skip it for the
+ * On cost, both call sites. On the FAST path this adds one `replace` scan over
+ * every text node on top of `toLowerCase()`, once per text node per keystroke
+ * while find is open. On the SLOW path `foldCodePoint` now runs a regex
+ * `replace` per code point where it used to do one `f === 'ς'` comparison —
+ * strictly more work in an inner loop, and the reason it is accepted is that
+ * only `İ`-bearing text nodes reach that path at all, while a second copy of
+ * the sigma rule living there would be reachable by every future edit. An `s.indexOf('ς') === -1` short-circuit would skip it for the
  * overwhelmingly common no-sigma document, and is deliberately NOT done here:
  * it replaces one scan with two in that same common case, and no measurement
  * says the branch pays for itself. This module is perf-shaped elsewhere
