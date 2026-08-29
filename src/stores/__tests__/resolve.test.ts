@@ -1650,6 +1650,36 @@ describe('resolved flag — the cache-miss signal, off the title string', () => 
     expect(useResolveStore.getState().isResolved('NEVER_SEEN')).toBe(false)
   })
 
+  it('resolveStatus reads an unresolved entry as deleted even when `deleted` is false (#4515)', () => {
+    // The shape no writer produces TODAY (the one sentinel writer sets
+    // `deleted: true` alongside `resolved: false`), which is exactly why it
+    // needs pinning: nothing else would notice if the flag stopped counting.
+    // Answering from `deleted` alone would render an ACTIVE chip carrying the
+    // `[[id…]]` label `resolveTitle` hands back for the same entry — live to
+    // look at, broken to click.
+    useResolveStore
+      .getState()
+      .batchSet([
+        { id: 'PARKED_ULID', title: 'A Real Looking Title', deleted: false, resolved: false },
+      ])
+
+    expect(useResolveStore.getState().resolveStatus('PARKED_ULID')).toBe('deleted')
+    // …and it really is the FLAG doing it, not a blanket 'deleted': the same
+    // `deleted: false` with the flag set reads active. Without this line the
+    // assertion above would survive `resolveStatus` returning 'deleted'
+    // unconditionally.
+    useResolveStore
+      .getState()
+      .batchSet([{ id: 'REAL_ULID', title: 'A Real Looking Title', deleted: false }])
+    expect(useResolveStore.getState().resolveStatus('REAL_ULID')).toBe('active')
+    // The two pre-existing behaviours the derivation must not disturb: a
+    // soft-deleted resolved row still reads deleted, and an ABSENT key still
+    // reads active (it means "not asked yet", not "broken").
+    useResolveStore.getState().set('TRASHED_TOO', 'Real Title', true)
+    expect(useResolveStore.getState().resolveStatus('TRASHED_TOO')).toBe('deleted')
+    expect(useResolveStore.getState().resolveStatus('NOT_ASKED_YET')).toBe('active')
+  })
+
   it('flipping only `resolved` is a real change — batchSet must not diff it away', () => {
     useResolveStore.getState().batchSet([{ id: 'FLIP_ULID', title: 'Same Bytes', deleted: true }])
     const versionAfterFirst = useResolveStore.getState().version

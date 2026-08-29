@@ -31,13 +31,21 @@
  *      user agent, next to `ignoreReactNodeViewChrome` answering the same
  *      mutation correctly — the falsifiable proof that the override is
  *      load-bearing for the one node view that reaches it.
+ *   5. React MARK views are ratcheted separately (#4516 review note 1). Marks
+ *      are the one class (1)–(4) do not cover, and the more dangerous one: a
+ *      mark has no `isLeaf`/`isAtom`, so `MarkView.ignoreMutation` has no guard
+ *      (2) to reach, and `ReactMarkView` builds its content host
+ *      unconditionally, so guard (1) never fires either. `REACT_MARK_VIEWS` is
+ *      empty because `src/` has none — the tests fail the moment one appears.
  *
  * Version note: the snippet #4353 quotes is `MarkView`'s copy of the method.
  * `NodeView`'s (the one React node views run, `@tiptap/core@3.30.2`
  * upstream NodeView.ts, not a path in this repo) carries guard (2) as well,
  * which `MarkView`'s does not —
  * so the blast radius is smaller than the issue assumed. Everything here reads
- * the real `NodeView.prototype`, not a transcription of it.
+ * the real `NodeView.prototype` / `MarkView.prototype`, not a transcription of
+ * either; the difference between them is asserted differentially, by handing
+ * ONE `this` to both.
  *
  * The behaviour on a real mobile UA, with the editor genuinely focused, is
  * covered by `e2e/mobile-editor.spec.ts`; this file covers the structure that
@@ -48,7 +56,7 @@ import { readFileSync } from 'node:fs'
 import { readdirSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
-import { getSchema, NodeView } from '@tiptap/core'
+import { getSchema, MarkView, NodeView } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
@@ -137,13 +145,32 @@ function sourceFiles(dir: string): string[] {
   return out
 }
 
+/** One scanned source file: its repo-relative path and its text. */
+interface SourceFile {
+  file: string
+  src: string
+}
+
 /**
- * Slice the argument list of the `ReactNodeViewRenderer(` call starting at
- * `openParen`, by balancing parentheses. Used to ask whether the call passes an
+ * Every non-test `.ts`/`.tsx` source under `src/`, read once and shared by all
+ * the scanners below so the corpus they judge is provably the same one.
+ */
+function readSources(): SourceFile[] {
+  return sourceFiles(SRC)
+    .filter((file) => !file.includes('__tests__'))
+    .map((file) => ({
+      file: relative(REPO_ROOT, file).replaceAll('\\', '/'),
+      src: readFileSync(file, 'utf8'),
+    }))
+}
+
+/**
+ * Slice the argument list of the `<renderer>(` call starting at `openParen`, by
+ * balancing parentheses. Used to ask whether the call passes an
  * `ignoreMutation` option without depending on how the object literal is
  * formatted.
  */
-function callArguments(src: string, openParen: number): string {
+function callArguments(src: string, openParen: number, renderer: string): string {
   let depth = 0
   for (let i = openParen; i < src.length; i++) {
     const ch = src[i]
@@ -153,7 +180,7 @@ function callArguments(src: string, openParen: number): string {
       if (depth === 0) return src.slice(openParen + 1, i)
     }
   }
-  throw new Error('unbalanced parentheses after ReactNodeViewRenderer(')
+  throw new Error(`unbalanced parentheses after ${renderer}(`)
 }
 
 interface CallSite {
@@ -163,7 +190,8 @@ interface CallSite {
 }
 
 /**
- * Every `ReactNodeViewRenderer(Component…)` call under `src/`, excluding tests.
+ * Every `<renderer>(Component…)` call in `files` — `ReactNodeViewRenderer` for
+ * the node-view table, `ReactMarkViewRenderer` for the mark-view one.
  *
  * This is a text scan, not a resolved-symbol search: Serena/tsserver cannot index
  * `node_modules`, so there is no reference search on the declaration to lean on.
@@ -175,23 +203,21 @@ interface CallSite {
  * with the whole table still green. A `tiptapReact.ReactNodeViewRenderer(X)`
  * member call IS matched here, because the regex anchors on the identifier and
  * the `(` rather than on the import.
+ *
+ * Parameterised over both the renderer name and the corpus so the mark-view
+ * ratchet runs the SAME scanner, and so both can be pointed at a synthetic
+ * source to prove they are capable of finding anything at all.
  */
-function findCallSites(): CallSite[] {
+function findCallSites(renderer: string, files: SourceFile[]): CallSite[] {
   const sites: CallSite[] = []
-  for (const file of sourceFiles(SRC)) {
-    if (file.includes('__tests__')) continue
-    const src = readFileSync(file, 'utf8')
-    const re = /ReactNodeViewRenderer\s*(?:<[^>]*>)?\s*\(/g
+  for (const { file, src } of files) {
+    const re = new RegExp(String.raw`${renderer}\s*(?:<[^>]*>)?\s*\(`, 'g')
     let m: RegExpExecArray | null
     while ((m = re.exec(src)) !== null) {
       const openParen = m.index + m[0].length - 1
-      const args = callArguments(src, openParen)
+      const args = callArguments(src, openParen, renderer)
       const component = (args.match(/^\s*([A-Za-z_$][\w$]*)/)?.[1] ?? '').trim()
-      sites.push({
-        component,
-        file: relative(REPO_ROOT, file).replaceAll('\\', '/'),
-        args,
-      })
+      sites.push({ component, file, args })
     }
   }
   return sites
@@ -202,7 +228,7 @@ function findCallSites(): CallSite[] {
  * `matchAll`, which is the classic way a scan like this quietly stops finding
  * things after the first file.
  */
-const identifier = (): RegExp => /\bReactNodeViewRenderer\b/g
+const identifier = (name: string): RegExp => new RegExp(String.raw`\b${name}\b`, 'g')
 
 /**
  * True when `index` falls on a line that has already entered a comment — a jsdoc
@@ -220,8 +246,8 @@ interface IdentifierEscape {
 }
 
 /**
- * Occurrences of the identifier `ReactNodeViewRenderer` in `src/` that are
- * neither a call nor a plain, UNALIASED named-import specifier.
+ * Occurrences of the identifier `renderer` in `files` that are neither a call
+ * nor a plain, UNALIASED named-import specifier.
  *
  * This is the half of the ratchet that makes the call-site scan trustworthy.
  * The scan can only recognise the literal spelling `ReactNodeViewRenderer(`, so
@@ -246,21 +272,18 @@ interface IdentifierEscape {
  * calling the renderer at all. Those are deliberate evasions rather than the
  * ordinary way a node view gets added, and the e2e specs remain the backstop.
  */
-function findIdentifierEscapes(): IdentifierEscape[] {
+function findIdentifierEscapes(renderer: string, files: SourceFile[]): IdentifierEscape[] {
   const escapes: IdentifierEscape[] = []
-  for (const file of sourceFiles(SRC)) {
-    if (file.includes('__tests__')) continue
-    const src = readFileSync(file, 'utf8')
-
+  for (const { file, src } of files) {
     // Indices of the two shapes that are allowed to mention the identifier.
     const allowed = new Set<number>()
-    for (const call of src.matchAll(/ReactNodeViewRenderer\s*(?:<[^>]*>)?\s*\(/g)) {
+    for (const call of src.matchAll(new RegExp(String.raw`${renderer}\s*(?:<[^>]*>)?\s*\(`, 'g'))) {
       allowed.add(call.index)
     }
     for (const clause of src.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}/g)) {
       const body = clause[1] ?? ''
       const bodyStart = clause.index + clause[0].indexOf('{') + 1
-      for (const spec of body.matchAll(identifier())) {
+      for (const spec of body.matchAll(identifier(renderer))) {
         // `ReactNodeViewRenderer as R` is deliberately NOT allowed: the alias is
         // a spelling the call-site scan cannot see.
         if (/^\s*as\b/.test(body.slice(spec.index + spec[0].length))) continue
@@ -268,10 +291,10 @@ function findIdentifierEscapes(): IdentifierEscape[] {
       }
     }
 
-    for (const use of src.matchAll(identifier())) {
+    for (const use of src.matchAll(identifier(renderer))) {
       if (allowed.has(use.index) || isInComment(src, use.index)) continue
       escapes.push({
-        file: relative(REPO_ROOT, file).replaceAll('\\', '/'),
+        file,
         context: src.slice(Math.max(0, use.index - 60), use.index + 60).replaceAll('\n', ' '),
       })
     }
@@ -289,8 +312,10 @@ const schema = getSchema([
   CodeBlockWithShortcut,
 ])
 
+const SOURCES = readSources()
+
 describe('#4353 — every React node view call site is classified', () => {
-  const sites = findCallSites()
+  const sites = findCallSites('ReactNodeViewRenderer', SOURCES)
 
   it('finds the call sites at all (a zero-length scan would pass every check below)', () => {
     expect(sites.length).toBeGreaterThan(0)
@@ -299,7 +324,7 @@ describe('#4353 — every React node view call site is classified', () => {
   it('reaches `ReactNodeViewRenderer` only by calling it — no alias, no captured reference', () => {
     // Without this, the scan above is defeated by one `as` in an import and the
     // rest of this suite stays green around an unclassified node view.
-    expect(findIdentifierEscapes()).toEqual([])
+    expect(findIdentifierEscapes('ReactNodeViewRenderer', SOURCES)).toEqual([])
   })
 
   it('enumerates exactly the call sites recorded in REACT_NODE_VIEWS', () => {
@@ -556,5 +581,239 @@ describe('ignoreReactNodeViewChrome', () => {
 
     expect(ignoreReactNodeViewChrome({ mutation: chromeChildListMutation(insideText) })).toBe(false)
     expect(ignoreReactNodeViewChrome({ mutation: chromeChildListMutation(outsideText) })).toBe(true)
+  })
+})
+
+// --- React MARK views: the class the node-view ratchet above does NOT cover --
+
+/**
+ * #4516 review note 1 — the enumeration above ratchets `ReactNodeViewRenderer`
+ * only, and a React MARK view is the one class its "cannot be added without
+ * landing in the table" property misses.
+ *
+ * Marks are not merely an untested corner of the same mechanism, they are the
+ * WORSE case. `MarkView.prototype.ignoreMutation` (asserted below, not
+ * transcribed) carries guard (1) but has no guard (2) at all — a mark has no
+ * `isLeaf`/`isAtom` to check — and `@tiptap/react`'s `ReactMarkView` builds its
+ * `contentDOMElement` unconditionally, so guard (1) never fires either. Every
+ * React mark view therefore reaches the mobile branch. Where three of the four
+ * node views are protected by the schema, NO mark view is: the override is the
+ * only thing between one and the freeze.
+ *
+ * `src/` has zero mark views today, so this table is empty on purpose. It is a
+ * ratchet, not a record: the tests below fail the moment a mark view appears
+ * anywhere in `src/` — by `ReactMarkViewRenderer` or by a bare `addMarkView` —
+ * and cannot be made green except by classifying it here.
+ */
+interface MarkViewEntry {
+  file: string
+  /** The mark type name, as declared by the extension mounting this view. */
+  mark: string
+  /**
+   * The attribute selector that identifies THIS mark view's ProseMirror content
+   * hole, for whatever `ignoreMutation` it passes.
+   *
+   * Required because the obvious move — reusing `ignoreReactNodeViewChrome` —
+   * is wrong here and quietly so: that helper matches
+   * `[data-node-view-content-react]`, tiptap stamps a React mark view's content
+   * host with `data-mark-view-content`, and `closest()` finding nothing is the
+   * helper's "React chrome, ignore it" answer. It would swallow every real edit
+   * inside the mark. Pinned by the last test in this file.
+   */
+  contentHostSelector: string
+  why: string
+}
+
+const REACT_MARK_VIEWS: Record<string, MarkViewEntry> = {}
+
+/** The node-view content host `ignoreReactNodeViewChrome` recognises. */
+const NODE_VIEW_CONTENT_HOST = '[data-node-view-content-react]'
+
+/**
+ * Files under `src/` that declare an `addMarkView`, the extension hook every
+ * mark view — React-rendered or hand-built — has to go through to be mounted.
+ *
+ * Scanned in addition to `ReactMarkViewRenderer` because the renderer is only
+ * the common way to build one: `addMarkView: () => new SomeMarkView(...)` never
+ * mentions the identifier and would slip past the call-site scan entirely.
+ *
+ * What stays open, and is accepted, mirrors the node-view scan: reaching the
+ * hook without writing its name, or a mark view mounted from outside `src/`.
+ */
+function findAddMarkViewSites(files: SourceFile[]): string[] {
+  const hits: string[] = []
+  for (const { file, src } of files) {
+    for (const use of src.matchAll(/\baddMarkView\b/g)) {
+      if (isInComment(src, use.index)) continue
+      hits.push(file)
+    }
+  }
+  return [...new Set(hits)].toSorted()
+}
+
+/**
+ * A synthetic mark view, used ONLY to prove the scanners above are capable of
+ * finding one. Every real-corpus assertion in this section compares against an
+ * empty table, and an empty expectation is satisfied by a scanner that has
+ * quietly stopped working — the exact failure `finds the call sites at all`
+ * guards against for node views. This fixture is fed through the SAME
+ * functions the real corpus goes through.
+ */
+const MARK_VIEW_PROBE: SourceFile = {
+  file: 'src/editor/extensions/__probe__.ts',
+  src: [
+    `import { ReactMarkViewRenderer } from '@tiptap/react'`,
+    `export const Probe = Mark.create({`,
+    `  addMarkView() {`,
+    `    return ReactMarkViewRenderer(ProbeMarkView)`,
+    `  },`,
+    `})`,
+  ].join('\n'),
+}
+
+describe('#4516 follow-up — every React MARK view is classified', () => {
+  const sites = findCallSites('ReactMarkViewRenderer', SOURCES)
+
+  it('the scanners can actually see a mark view (an empty table makes every check below vacuous otherwise)', () => {
+    const probeSites = findCallSites('ReactMarkViewRenderer', [MARK_VIEW_PROBE])
+    expect(probeSites.map((s) => s.component)).toEqual(['ProbeMarkView'])
+    expect(probeSites[0]?.file).toBe(MARK_VIEW_PROBE.file)
+    expect(findAddMarkViewSites([MARK_VIEW_PROBE])).toEqual([MARK_VIEW_PROBE.file])
+    // …and the escape scan, on the shape that defeats the call-site scan.
+    const aliased: SourceFile = {
+      file: MARK_VIEW_PROBE.file,
+      src: `import { ReactMarkViewRenderer as R } from '@tiptap/react'\nconst v = R(ProbeMarkView)\n`,
+    }
+    expect(findIdentifierEscapes('ReactMarkViewRenderer', [aliased])).not.toEqual([])
+    // The probe is a string, not a file: it must not be in the real corpus.
+    expect(SOURCES.some((s) => s.file === MARK_VIEW_PROBE.file)).toBe(false)
+  })
+
+  it('enumerates exactly the mark views recorded in REACT_MARK_VIEWS', () => {
+    const found = [...new Set(sites.map((s) => s.component))].toSorted()
+    expect(found).toEqual(Object.keys(REACT_MARK_VIEWS).toSorted())
+  })
+
+  it('records each mark view call site in the file it actually lives in', () => {
+    for (const site of sites) {
+      expect(REACT_MARK_VIEWS[site.component]?.file).toBe(site.file)
+    }
+  })
+
+  it('reaches `ReactMarkViewRenderer` only by calling it — no alias, no captured reference', () => {
+    expect(findIdentifierEscapes('ReactMarkViewRenderer', SOURCES)).toEqual([])
+  })
+
+  it('declares `addMarkView` only in files the table names', () => {
+    const declared = [...new Set(Object.values(REACT_MARK_VIEWS).map((e) => e.file))].toSorted()
+    expect(findAddMarkViewSites(SOURCES)).toEqual(declared)
+  })
+
+  it('passes `ignoreMutation` at EVERY mark view call site — none of them is protected by the schema', () => {
+    for (const site of sites) {
+      const entry = REACT_MARK_VIEWS[site.component]
+      expect(entry, `unclassified mark view call site: ${site.component}`).toBeDefined()
+      // Unconditional, unlike the node-view assertion: there is no leaf/atom
+      // escape for a mark, so an override is the only protection there is.
+      expect(site.args.includes('ignoreMutation'), site.component).toBe(true)
+    }
+  })
+
+  it('reuses `ignoreReactNodeViewChrome` only where the content host is the node-view one', () => {
+    for (const site of sites) {
+      const entry = REACT_MARK_VIEWS[site.component]
+      if (entry === undefined) continue
+      if (entry.contentHostSelector === NODE_VIEW_CONTENT_HOST) continue
+      expect(
+        site.args,
+        `${site.component} pastes a helper that cannot see its content hole`,
+      ).not.toContain('ignoreReactNodeViewChrome')
+    }
+  })
+})
+
+/** A React MARK view's DOM: tiptap stamps the content host `data-mark-view-content`. */
+function buildMarkViewDom(): { dom: HTMLElement; contentHost: HTMLElement; chrome: HTMLElement } {
+  const dom = document.createElement('span')
+  const contentHost = document.createElement('span')
+  contentHost.setAttribute('data-mark-view-content', '')
+  const chrome = document.createElement('span')
+  dom.append(contentHost, chrome)
+  return { dom, contentHost, chrome }
+}
+
+interface MarkIgnoreMutationSelf {
+  dom: HTMLElement | null
+  contentDOM: HTMLElement | null
+  /**
+   * Present only so the differential test below can hand `MarkView` the very
+   * `this` a `NodeView` would refuse on — a real mark view has no `node`.
+   */
+  node?: { isLeaf: boolean; isAtom: boolean }
+  options: { ignoreMutation: ((props: { mutation: ViewMutationRecord }) => boolean) | null }
+  editor: { isFocused: boolean }
+}
+
+/** tiptap's real `MarkView` default, invoked against a hand-built `this`. */
+const defaultMarkIgnoreMutation = MarkView.prototype.ignoreMutation as unknown as (
+  this: MarkIgnoreMutationSelf,
+  mutation: ViewMutationRecord,
+) => boolean
+
+describe('#4516 follow-up — @tiptap/core MarkView.ignoreMutation (vendored contract)', () => {
+  it('has NO leaf/atom guard: the same `this` a NodeView ignores, a MarkView does not', () => {
+    useMobileUserAgent()
+    const { dom, contentHost, chrome } = buildMarkViewDom()
+    // One object, handed to both prototypes. `isLeaf`/`isAtom` are set to the
+    // values that make NodeView bail at guard (2); MarkView has no such guard
+    // to reach, which is the whole claim — asserted differentially against the
+    // real vendored functions rather than transcribed from the source.
+    const self: MarkIgnoreMutationSelf = {
+      dom,
+      contentDOM: contentHost,
+      node: { isLeaf: true, isAtom: true },
+      options: { ignoreMutation: null },
+      editor: { isFocused: true },
+    }
+    const mutation = chromeChildListMutation(chrome)
+
+    expect(defaultIgnoreMutation.call(self as unknown as IgnoreMutationSelf, mutation)).toBe(true)
+    // `false` = "re-read / re-parse this". That is the freeze, on a mark view
+    // that the node-view table would have classified as protected.
+    expect(defaultMarkIgnoreMutation.call(self, mutation)).toBe(false)
+  })
+
+  it('consults options.ignoreMutation, so an override is the only protection a mark view has', () => {
+    useMobileUserAgent()
+    const { dom, contentHost, chrome } = buildMarkViewDom()
+    const override = vi.fn(() => true)
+    const self: MarkIgnoreMutationSelf = {
+      dom,
+      contentDOM: contentHost,
+      options: { ignoreMutation: override },
+      editor: { isFocused: true },
+    }
+
+    expect(defaultMarkIgnoreMutation.call(self, chromeChildListMutation(chrome))).toBe(true)
+    expect(override).toHaveBeenCalledTimes(1)
+  })
+
+  it('`ignoreReactNodeViewChrome` is NOT a drop-in: it swallows a real edit inside a mark content hole', () => {
+    const { contentHost } = buildMarkViewDom()
+    const inner = document.createElement('span')
+    contentHost.append(inner)
+    const mutation = chromeChildListMutation(inner)
+
+    // The correct answer for a content edit is `false` (prosemirror must read
+    // it) — which is exactly what the helper returns for the NODE view shape.
+    // Here `closest('[data-node-view-content-react]')` finds nothing, the
+    // helper reads that as "React chrome", and answers `true`: ignore it.
+    // Pasting it onto a mark view therefore does not merely fail to protect,
+    // it drops the mark's edits. Hence `MarkViewEntry.contentHostSelector`.
+    expect(ignoreReactNodeViewChrome({ mutation })).toBe(true)
+    const nodeShaped = buildNodeViewDom()
+    const nodeInner = document.createElement('span')
+    nodeShaped.contentHost.append(nodeInner)
+    expect(ignoreReactNodeViewChrome({ mutation: chromeChildListMutation(nodeInner) })).toBe(false)
   })
 })
