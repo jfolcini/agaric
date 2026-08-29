@@ -1655,6 +1655,20 @@ jobs:
             exit 1
           fi
           echo "fuzzing ${#targets[@]} targets: ${targets[*]}"
+          # Auto-enrolment has one quiet edge: a `[[bin]]` added without a
+          # `corpus/<target>/` directory is fuzzed from libFuzzer's single empty
+          # input, every week, and nothing about that reads as wrong.
+          # `cargo fuzz run` creates the directory and cmin's `|| true` covers
+          # the missing-dir case, so the lane stays green while that target
+          # explores from cold forever — which is the exact behaviour #4496
+          # exists to end, reintroduced one target at a time. Not fatal (an
+          # unseeded target still fuzzes, and a first run legitimately has
+          # none), so this warns rather than fails.
+          for target in "${targets[@]}"; do
+            if [ -z "$(find "corpus/$target" -type f -print -quit 2>/dev/null || true)" ]; then
+              echo "::warning::fuzz target '$target' has no seed corpus at corpus/$target/ — it starts from libFuzzer's empty input on every cache miss. Add seeds that reach distinct branches."
+            fi
+          done
           # Enrolling a target is now a one-line `[[bin]]` edit that never opens
           # this file — which trades list drift (#2945) for BUDGET drift, and
           # budget drift fails silently in the worse direction: overrunning the

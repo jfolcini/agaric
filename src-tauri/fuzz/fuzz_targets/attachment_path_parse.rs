@@ -23,12 +23,35 @@ fuzz_target!(|data: &[u8]| {
     // rejected belongs in the unit tests, where the expected answer is known.
     if let Ok(s) = std::str::from_utf8(data) {
         if let Ok(parsed) = AttachmentFsPath::parse(s) {
-            // Round-trip whatever was accepted: `Display`/`AsRef<str>` are how
-            // callers get the value back out, so a parse that succeeds and then
-            // panics on read would be a live defect this target should catch.
-            let rendered = parsed.to_string();
-            let _ = rendered.as_str();
-            let _: &str = parsed.as_ref();
+            // IDEMPOTENCE, not a round-trip. An earlier version of this target
+            // read the value back out through `Display` / `AsRef<str>` and
+            // asserted nothing; both impls just hand back the inner `String`,
+            // so there was no input for which they could fail. It cost nothing
+            // and caught nothing.
+            //
+            // The property worth fuzzing is that parsing is a FIXED POINT:
+            // re-parsing an accepted path must succeed and yield the same
+            // value. That is a real assertion over the canonicalisation this
+            // parser performs — the trailing dot/space fold, the `\` -> `/`
+            // rewrite, the dropped `.` segments — any of which could produce a
+            // string the parser then treats differently.
+            //
+            // It is also load-bearing rather than aspirational:
+            // `AttachmentFsPath::for_storage_id` decides whether an id is
+            // mintable with `matches!(Self::parse(&candidate), Ok(ref parsed)
+            // if parsed.as_str() == candidate)`, so a path that is accepted but
+            // not a fixed point routes an id down the digest fallback instead
+            // of minting the readable name — silently, and differently on
+            // either side of a sync.
+            let reparsed = AttachmentFsPath::parse(parsed.as_str())
+                .expect("an accepted attachment path must re-parse");
+            assert_eq!(
+                reparsed, parsed,
+                "parse is not a fixed point: {:?} -> {:?} -> {:?}",
+                s,
+                parsed.as_str(),
+                reparsed.as_str()
+            );
         }
     }
 });
