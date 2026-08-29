@@ -1688,8 +1688,18 @@ jobs:
           # unseeded target still fuzzes, and a first run legitimately has
           # none), so this warns rather than fails.
           for target in "${targets[@]}"; do
-            if [ -z "$(find "corpus/$target" -type f -print -quit 2>/dev/null || true)" ]; then
-              seedless_msg="fuzz target '$target' has no seed corpus at corpus/$target/ — it starts from libFuzzer's empty input on every cache miss. Add seeds that reach distinct branches."
+            # `git ls-files`, NOT `find`: the question is whether this target
+            # has COMMITTED seeds, and the working tree cannot answer it here.
+            # The restore step (#4496) extracts the accumulated corpus into
+            # `corpus/` ~160 lines above this one, so after a seedless target's
+            # first run its directory is non-empty on every subsequent run and a
+            # `find` would go quiet — precisely when the warning still applies,
+            # since the committed floor is still empty and the next cache miss
+            # still starts that target from libFuzzer's empty input. A guard
+            # that fires only on the one run where the target is new AND the
+            # cache also missed is barely a guard.
+            if [ -z "$(git ls-files "corpus/$target" | head -n 1)" ]; then
+              seedless_msg="fuzz target '$target' has no COMMITTED seed corpus at corpus/$target/ — on a cache miss it starts from libFuzzer's empty input. Add seeds that reach distinct branches."
               echo "::warning::$seedless_msg"
               # To the run summary as well, for the same reason the budget
               # warning below does it: this fires on a GREEN run — a target

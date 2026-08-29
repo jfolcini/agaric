@@ -61,6 +61,14 @@ drift from it.
    `cargo generate-lockfile` or a bare `cargo update`, both of which lift the
    deliberate holds (see AGENTS.md).
 
+   Note this one is spelled **without** `+nightly`, unlike the listing command
+   above, and the difference is deliberate. Listing only reads the manifest, so
+   the toolchain is irrelevant and `+nightly` is there purely to stop CI pulling
+   a second toolchain. Regenerating the lockfile *resolves dependencies*, and
+   the committed lock was produced by the pinned stable toolchain — running that
+   under nightly risks a resolver or lockfile-format difference landing in the
+   diff alongside the entry you meant to add.
+
 Nothing else. The workflow picks the target up from the manifest.
 
 The one thing the workflow still sizes by hand is its **time budget** — the

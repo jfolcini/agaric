@@ -31,7 +31,13 @@ useless target acquires tenure.
 One thing did fall out of reading it: `unwrap_or_default()` turns a corrupt persisted VV
 into an empty one, and `src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs:1507` uses the result
 as a sync `floor`.
-That is a behaviour question, not a fuzzing one, and it is not this change's to answer.
+That is a behaviour question, not a fuzzing one, and it is not this change's to answer —
+filed as #4512, and narrowed twice since. First when a review suggested the empty floor
+could cause a missed delta: it cannot, an absent floor ships MORE data, never less, and
+the call site says so deliberately. Then when another pointed out the function's own
+docblock already states the fallback is intentional. What survives is only that the decode
+error is discarded without a log, so a corrupt row is indistinguishable at runtime from a
+peer that has never synced.
 
 ## The three that landed
 
@@ -171,7 +177,10 @@ session's.
 
 Two budgets were raised with the target count rather than after a timeout proved them
 short: cmin from 20 to 30 minutes (the merge re-executes every corpus input of every
-target, so it scales with the count) and the job from 90 to 110. A cmin timeout is a loud
+target, so it scales with the count) and the job from 90 to 110 — then to 130, once
+review showed the build term had been scaled by assumption rather than arithmetic
+(five builds at 15-25 min do not become eight at 20-35; linear gives 24-40, putting
+the cold-cache worst case at ~98 of 110). A cmin timeout is a loud
 step failure; a *job* timeout is a cancellation, which correctly skips the save and would
 therefore surface as a corpus that silently stopped accumulating — the exact failure #4496
 exists to remove, reintroduced by growing the lane it protects.
