@@ -71,3 +71,53 @@ line rather than asserted.
 
 Falsified by removing the new entry from `WATCHED` in a copy: `assertWatchedSetMatchesDisk` throws
 naming the file, restored `cmp`-identical.
+
+## Addendum — the APPROVED review's non-blocking notes
+
+Five notes, all addressed.
+
+**A second stale list, in the file the PR itself edited.** The watchdog's own last-resort
+notice (the by-hand workflow-name list) was updated for #4504; ten lines up in the same
+header, a hand-copied cron-offset list was not — the identical staleness class this PR set out
+to close, reproduced in its own diff. Rather than fix-and-perpetuate a second copy, the header
+now points at `WATCHED`'s own `why` fields instead of repeating the list, and says why: two
+hand-maintained copies of the same facts is the defect, not any one stale entry, and a
+regex-based cross-check guard over free-form English prose would itself be the kind of brittle
+text scanner this file's own `stripComments` doc already warns against. Removing the second copy
+is stronger than policing it.
+
+**A derivation that didn't cover its own newest entry.** `check-workflow-liveness.mjs`'s
+`maxAgeHours: 200` docstring explained the Monday/Tuesday weekly lanes but not Thu 16:17
+(`fuzz-corpus-refresh.yml`), whose tick-to-cron offset (3h20m) is smaller than this repo's
+measured weekly-cron lag (3.15h–6.25h) — unlike the other lanes' 13–15h offsets. Re-derived
+independently rather than copying the review's number: worst-case age ≈ 168h + 3h20m − 3.15h ≈
+**168.2h**, ~31.8h of headroom under 200h. That is lower than the review's own ~170.5h estimate;
+both land comfortably under 200h with headroom in the same range as the Monday/Tuesday lanes'
+~33h, so the conclusion (200h needs no change) holds either way — the discrepancy is reported
+rather than silently resolved. The `selfTestWindows` bound that hardcoded the old "167h" figure
+was bumped to 168.2h to match, and mutation-tested (widening it to 300h reds 5 assertions;
+restored `cmp`-identical).
+
+**The first alert is not a failure.** `fuzz-corpus-refresh.yml` had zero scheduled runs on
+merge, so the watchdog's first tick reports it `never-ran` — and `never-ran` is documented as
+NOT short-lived, holding for up to ~7 days until the Thursday cron actually fires. The watchdog's
+own header calls out its one-day version of this as expected; the same sentence is now in this
+workflow's header too, so the first alert isn't read as a real break.
+
+**An asymmetric failure guarded only by a comment.** The keep-alive cache key
+(`fuzz-corpus-keepalive-…`) sat inside the fuzz lane's own `fuzz-corpus-` namespace. Verified
+first: `scheduled-deep-checks.yml`'s fuzz-lane restore step reads `restore-keys: | fuzz-corpus-`
+— a prefix match — so the old key name would in fact have collided the day someone swapped
+`actions/cache/restore` for `actions/cache` (a one-word "simplification"). Renamed to
+`keepalive-fuzz-corpus-…`, which does not start with `fuzz-corpus-` and so cannot be picked up
+by that restore-keys fallback under any future write path.
+
+**`actions/checkout` on a restore-only job.** Checked whether anything else in the job needs it:
+the cache-restore step's `path:` is just a string the action extracts into, and the only other
+step reads env vars. Nothing is load-bearing, so the checkout step was removed, with a comment
+recording why.
+
+Verification: `check-workflow-liveness.mjs --self-test` (76 checks) and
+`file-scheduled-failures.mjs --self-test` both green, exit 0, read unpiped; both edited workflow
+files parse as YAML. The `selfTestWindows` change was falsified against a copy (mutated bound →
+RED, exit 2; restored `cmp`-identical).

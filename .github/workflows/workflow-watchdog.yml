@@ -36,10 +36,17 @@
 # ─── Independence, and the residual ──────────────────────────────────────────
 #
 # * Separate workflow, separate cron (19:37 UTC daily), offset from every
-#   watched cron: 02:43/04:17/06:00 Mon, 06:00 Tue, 12:00 daily. Nothing here
-#   `needs:` a watched workflow, downloads its artifacts, or shares code with
-#   it. A watched workflow that is invalid, disabled, starved of runners, or
-#   cancelled before its own reporter is scheduled is still reported.
+#   watched cron. The current list of watched crons is NOT repeated here —
+#   see the `why` field on each `WATCHED` entry in
+#   `scripts/check-workflow-liveness.mjs`, which is the one place that list
+#   is allowed to live: a hand-copied second list in this header (02:43/04:17/
+#   06:00 Mon, 06:00 Tue, 12:00 daily) already went stale once, missing the
+#   Thu 16:17 `fuzz-corpus-refresh.yml` slot #4504 added to `WATCHED` — the
+#   exact staleness class this workflow exists to catch, just in its own
+#   header. Nothing here `needs:` a watched workflow, downloads its
+#   artifacts, or shares code with it. A watched workflow that is invalid,
+#   disabled, starved of runners, or cancelled before its own reporter is
+#   scheduled is still reported.
 # * No `concurrency:` group, deliberately. Any concurrency control is a way for
 #   this run to be CANCELLED by a later trigger, and a cancelled watchdog is a
 #   silent watchdog. The job is one Node process and two `gh` calls per watched

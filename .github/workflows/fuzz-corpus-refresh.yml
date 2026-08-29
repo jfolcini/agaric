@@ -57,6 +57,20 @@
 # mitigation, not a guarantee, which is why #4504's acceptance criterion is a
 # month of observed warm/cold lines on the fuzz lane itself, not a claim made
 # here.
+#
+# ─── Expected on merge: a first alert that is not a failure ─────────────────
+#
+# `scripts/check-workflow-liveness.mjs` treats a `never-ran` verdict as NOT
+# short-lived (see its own doc) — it holds until this workflow's cron
+# actually fires, not until the watchdog's next tick. On merge this workflow
+# has zero scheduled runs, so `workflow-watchdog.yml`'s daily tick will
+# report it `never-ran` and hold a tracking-issue lane open for up to ~7
+# days, until the first Thursday 16:17 UTC run exists.
+# `workflow-watchdog.yml`'s own header calls out its one-day version of this
+# same thing (day-one self-watch) as expected, not a bug; this is the same
+# story, just stretched to a week because this cron is weekly rather than
+# daily. That first alert is the notification path proving it works, not a
+# real failure.
 # =============================================================================
 
 name: Fuzz corpus keep-alive
@@ -76,11 +90,12 @@ jobs:
     # One `actions/cache/restore` call. Seconds of real work; 10 min bounds a
     # wedged cache-service call rather than budgeting anything else.
     timeout-minutes: 10
+    # No `actions/checkout`: the only step below is a cache restore, and
+    # `actions/cache/restore` extracts into `path:` itself — it does not need
+    # the path (or anything else in the repo) to already exist. Nothing later
+    # in this job reads repo content either, so there is nothing for a
+    # checkout to provide here.
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
       - name: Restore the fuzz corpus cache (#4504)
         id: corpus-cache
         # `continue-on-error`: this job has exactly one job to do, and a
@@ -98,7 +113,24 @@ jobs:
           # so, refreshes ITS access timestamp. Never writes: there is no
           # matching `cache/save` step in this workflow, on purpose — this
           # job's only effect is the access, not a new entry.
-          key: fuzz-corpus-keepalive-${{ github.run_id }}-${{ github.run_attempt }}
+          #
+          # Deliberately prefixed `keepalive-fuzz-corpus-`, NOT
+          # `fuzz-corpus-keepalive-` (review of #4529): the fuzz lane's own
+          # restore step (`scheduled-deep-checks.yml`) resolves `restore-keys:
+          # fuzz-corpus-` — a PREFIX match — to the newest key that STARTS
+          # WITH `fuzz-corpus-`. This job never saves, so today the key value
+          # never becomes a real entry and the distinction is inert. But
+          # `fuzz-corpus-keepalive-…` would itself start with `fuzz-corpus-`,
+          # so the day someone "simplifies" the restore-only step below into
+          # `actions/cache` (a one-word change that looks harmless), the
+          # empty/seeds-only entry it publishes would become the newest
+          # `fuzz-corpus-*` match and get inherited by the fuzz lane on its
+          # next restore — silently resetting the exact corpus lineage this
+          # workflow exists to protect. `keepalive-fuzz-corpus-…` does not
+          # start with `fuzz-corpus-`, so it falls outside that prefix and
+          # cannot be picked up by the fuzz lane no matter what this job's
+          # write path becomes later.
+          key: keepalive-fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             fuzz-corpus-
 
