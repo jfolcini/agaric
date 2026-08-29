@@ -203,8 +203,11 @@ mod tests {
     /// in test A).
     #[test]
     fn space_filter_production_sites_match_canonical() {
-        // Files excluded from the parity walk. Paths are relative to
-        // `src-tauri/src/`. Each entry must document why.
+        // Files excluded from the parity walk. Paths are relative to the
+        // walk root each file was collected under (see `collect_rs_files`
+        // below) — NOT to `src-tauri/src/`, which is what this comment
+        // claimed until #3255 and was already false for the one entry it
+        // holds. Each entry must document why.
         const DENY_FILES: &[&str] = &[
             // This module holds SPACE_FILTER_CANONICAL itself plus the
             // hand-written single-line `alternate` in test A — both are
@@ -217,6 +220,18 @@ mod tests {
         // crate (`../src`: pagination / fts / commands); this module (the
         // canonical const) moved into the store. Walk BOTH crates' `src/` so
         // the drift guard keeps full coverage across the split.
+        //
+        // #3255 — KEEP IN STEP WITH `scripts/check-space-filter-drift.py`.
+        // That hook is this test's pre-commit mirror and now walks SIX crate
+        // roots (its `CRATE_ROOTS`); this test walks two. The hook is a
+        // superset, so nothing is unguarded today — the other four crates
+        // hold no `b.space_id` read. But the two lists can now drift apart
+        // independently, and a canonical fragment landing in `agaric-engine`
+        // or `agaric-sync` would be shape-checked by the hook and NOT by
+        // `cargo test`. Divergence between these two is the exact failure
+        // #3255 repaired one level down; if you widen either list, widen the
+        // other (and the hook's `files:` regex in prek.toml) or record why
+        // not.
         let store_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let app_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src");
         let mut sites = collect_rs_files(&store_src, &store_src);

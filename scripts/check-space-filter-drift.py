@@ -10,19 +10,24 @@ the canonical guard fragment
 (the same bind index `?N` on BOTH sides — once for the NULL short-circuit,
 once for the equality). The fragment is copy-pasted at ~30 production call
 sites across `pagination/`, `backlink/`, `tag_query/`, and `commands/`
-(see `grep -rn "IS NULL OR b.space_id" src-tauri/src`). The maintainer
+(see `grep -rn "IS NULL OR b.space_id" src-tauri`). The maintainer
 deferred the `build.rs` / `include_str!` consolidation that would let the
 fragment live in one place (blocked on sqlx#3388 — `sqlx::query!` rejects
 non-`LitStr` first arguments), so the copies stay inlined. This hook is the
 cheap drift-guard adopted in their place: it catches the exact
 inlined-fragment foot-gun (a hand-edit that mangles one copy) at low cost.
 
-The companion `src-tauri/src/space_filter_canonical.rs` parity *test*
-pins the same canonical string and walks `src/**/*.rs` at test time; this
-hook is the pre-commit-stage mirror so a drift is caught before the commit
-lands (and without needing a Rust rebuild). Both enforce the same shape.
+The companion `src-tauri/agaric-store/src/space_filter_canonical.rs` parity *test*
+pins the same canonical string and walks BOTH that crate's `src/` and the
+app crate's (`../src`) at test time; this hook is the pre-commit-stage mirror
+so a drift is caught before the commit lands (and without needing a Rust
+rebuild). Both enforce the same SHAPE — but only this hook's per-file
+baseline can catch a guard that is REMOVED outright, which is why its scope
+is load-bearing and not merely a faster copy of the test.
 
-Two complementary rules over each `.rs` file under `src-tauri/src/`:
+Two complementary rules over each `.rs` file under any scanned crate
+root (see CRATE_ROOTS — the app crate plus the #2621 member crates that
+carry `b.space_id` reads):
 
   RULE A — shape conformance. Every occurrence of the *guarded* shape
     `( ?A IS NULL OR b.space_id = ?B )` must be canonical: `A == B`
@@ -38,9 +43,10 @@ Two complementary rules over each `.rs` file under `src-tauri/src/`:
     `?N IS NULL OR` stripped (degrading the canonical guard to a bare
     `b.space_id = ?N`) — which Rule A can't see, because a bare
     `b.space_id = ?` is *legitimate* at the many single-space query sites
-    (`commands/blocks/crud.rs`, `journal.rs`, `pages/listing.rs`,
-    `fts/filter_builder.rs`'s dynamic append, …) where the active space is
-    always known and no NULL short-circuit is wanted. The baseline lets the
+    (`src-tauri/src/commands/blocks/crud.rs`, `journal.rs`,
+    `pages/listing.rs`, `agaric-store/src/fts/filter_builder.rs`'s dynamic
+    append, …) where the active space is always known and no NULL
+    short-circuit is wanted. The baseline lets the
     guard fire on a removed canonical fragment without false-positiving on
     those intentional bare sites. When you legitimately add/remove a
     canonical site, re-anchor:
@@ -48,8 +54,8 @@ Two complementary rules over each `.rs` file under `src-tauri/src/`:
 
 Explicit exceptions (NOT canonical-fragment sites, by design):
 
-  * `pagination/history.rs` — the op-log filter intersects on the op-log
-    payload's block id via a sub-select `... ol.block_id IN (SELECT id
+  * `agaric-store/src/pagination/history.rs` — the op-log filter intersects
+    on the op-log payload's block id via a sub-select `... ol.block_id IN (SELECT id
     FROM blocks WHERE space_id = ?7)`. The inner `space_id = ?7` carries
     NO `b.` alias, so the `b.space_id` regex never matches it; it
     contributes 0 to the canonical count and needs no allowlisting.
@@ -62,8 +68,18 @@ Invocation: prek passes the changed files as argv (hook id
 
     python3 scripts/check-space-filter-drift.py
 
-(no args = scan every `src-tauri/src/**/*.rs`). Stdlib only — no
+(no args = scan every `*.rs` under CRATE_ROOTS). Stdlib only — no
 third-party deps.
+
+`--update-baseline` re-anchors. It REFUSES (exit 1, writing nothing) when a
+canonical guard would leave the baseline — either a net loss across the tree,
+or a drop in a file that still exists. A WHOLE-file move — the old file GONE,
+an equal gain elsewhere — nets to zero and is allowed without a flag. Every
+other shape that loses a guard from a file still present is refused, including
+an emptied-but-present shim and a PARTIAL move (relocating one query out of a
+file that keeps the rest), because by counts alone neither is distinguishable
+from deleting one in place; `--allow-reductions` records it, and note that the flag is run-wide, so
+it also suppresses any unintended deletion in the same invocation.
 """
 
 from __future__ import annotations
@@ -75,11 +91,67 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC_ROOT = REPO_ROOT / "src-tauri" / "src"
-BASELINE_PATH = REPO_ROOT / "src-tauri" / "space-filter-baseline.txt"
+# `.resolve()`: `baseline_touched` in `main()` compares this against a
+# resolved argv path, and an unresolved constant makes that comparison fail
+# silently the moment any component is a symlink — disabling the
+# force-whole-tree-walk exactly when the baseline is being edited. #3255.
+BASELINE_PATH = (REPO_ROOT / "src-tauri" / "space-filter-baseline.txt").resolve()
+
+# #3255: this guard used to scan only `src-tauri/src/`. The #2621 workspace
+# split moved `backlink/`, `pagination/` and `tag_query/` — 21 of the 31
+# canonical sites, and 11 of the 15 files the baseline names — down into
+# `agaric-store`, where nothing scanned them and nothing noticed: the guard
+# matched what was left, reported success, and the removal net it exists to
+# provide was silently gone for two thirds of its subjects. The re-anchor
+# that came with this fix shows the drift concretely: `backlink/grouped.rs`
+# went 3 -> 5, i.e. two canonical guards were added while unwatched, and a
+# later removal of either would have restored the stale baseline's 3 and
+# passed.
+#
+# Ported for the same reason as `check-raw-tx.py`'s CRATE_ROOTS (#3110) and
+# `check-table-ownership.py`'s, but NOT a copy of either: this list is a
+# superset, adding `agaric-core/src` and (unlike check-raw-tx) keeping
+# `diagnostics/src`. It is also not the whole workspace — `agaric-observability`
+# is a #2621 member and is deliberately absent, as it holds telemetry only and
+# has never carried a `b.space_id` read; add it here AND to the hook's `files:`
+# regex in prek.toml if that ever changes. Order is presentational only:
+# argv membership is tested with `any(_is_under(...))`, deny membership with
+# set containment, and `all_source_files()` re-`sorted()`s its result, so
+# nothing here depends on it — and no prefix collision is possible anyway, since
+# `src-tauri/<member>/src/` is never prefixed by `src-tauri/src/`.
+#
+# KEEP IN STEP with the sibling Rust parity test's own walk roots in
+# `agaric-store/src/space_filter_canonical.rs` (it walks two: that crate's
+# `src/` and the app's `../src`). This list is a superset, so nothing is
+# unguarded — but the two can drift apart independently, which is this
+# guard's own subject. Widening one without the other is a silent gap.
+#
+# Note the DIVISION OF LABOUR with that same test: that test walks both trees and
+# catches a DRIFTED fragment (mismatched bind index), because a drifted
+# fragment still matches the canonical regex. It structurally cannot catch a
+# REMOVED one — a deleted guard matches nothing and there is nothing left to
+# assert on. The per-file count baseline below is the only net for removal and
+# for degradation to a bare `b.space_id = ?N`, which is why its scope going
+# stale mattered even though the parity test stayed green throughout.
+# Each entry is a crate's `src/` and DELIBERATELY nothing else: `src-tauri/
+# tests/`, `src-tauri/benches/` and `src-tauri/fuzz/` are outside the walk.
+# No canonical fragment lives in them today (the one `benches/` mention is a
+# `?N` doc comment that cannot match GUARD_RE), and they are excluded because
+# they are not production read paths — not because fragments cannot appear
+# there. Read as "the production crate sources", not "everywhere a fragment
+# could live"; the latter is the reading that lets this list rot, which is the
+# whole subject of #3255.
+CRATE_ROOTS = [
+    "src-tauri/agaric-store/src/",
+    "src-tauri/agaric-engine/src/",
+    "src-tauri/agaric-sync/src/",
+    "src-tauri/agaric-core/src/",
+    "src-tauri/diagnostics/src/",
+    "src-tauri/src/",
+]
 
 # Reuse the battle-tested comment-stripper from the raw-tx guard so a
 # `(?N IS NULL OR b.space_id = ?N)` mention inside a `//` or `/* */`
@@ -94,11 +166,16 @@ assert _spec and _spec.loader
 _crt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_crt)
 
-# Files excluded from the scan entirely. Paths relative to src-tauri/src/.
+# Files excluded from the scan entirely. Paths are REPO-ROOT-relative (#3255):
+# they used to be relative to `src-tauri/src/`, which silently stopped
+# resolving when the only entry moved crates in #2621 — a dangling deny entry
+# that excluded nothing, against a walk that no longer reached the file
+# anyway. Repo-root-relative paths are checkable, and `_assert_paths_exist`
+# below now checks them.
 DENY_FILES = {
     # Holds SPACE_FILTER_CANONICAL + the hand-written `alternate` parity
     # string; canonical by construction, policing it here is circular.
-    "space_filter_canonical.rs",
+    "src-tauri/agaric-store/src/space_filter_canonical.rs",
 }
 
 # The canonical guarded space-filter shape, dot-all so multi-line raw-string
@@ -123,8 +200,77 @@ HINT = (
     "       single-space query) and you removed a real canonical copy —\n"
     "       re-anchor the baseline:\n"
     "         python3 scripts/check-space-filter-drift.py --update-baseline\n"
-    "       Keep `src-tauri/src/space_filter_canonical.rs::SPACE_FILTER_CANONICAL`\n"
+    "       Keep `src-tauri/agaric-store/src/space_filter_canonical.rs"
+    "::SPACE_FILTER_CANONICAL`\n"
     "       in sync."
+)
+
+ROOT_MISSING_HINT = (
+    "    -> #3255: a CRATE_ROOTS entry in scripts/check-space-filter-drift.py\n"
+    "       names a directory that does not exist. Fix the LIST, not the\n"
+    "       baseline: `--update-baseline` walks the surviving roots only, so\n"
+    "       re-anchoring here would delete every baseline entry under the\n"
+    "       missing root and report success. If the crate was genuinely\n"
+    "       retired, remove its root from CRATE_ROOTS and from the\n"
+    "       check-space-filter-drift hook's `files:` regex in prek.toml in the\n"
+    "       same commit, then re-anchor."
+)
+
+UNSCANNED_HINT = (
+    "    -> #3255: this entry names a file that EXISTS but that no walk ever\n"
+    "       reaches, so its count is compared against nothing. It is not a\n"
+    "       stale path — do not `--update-baseline` to clear it; that path\n"
+    "       refuses, because the file's count reads as 0 while the file is\n"
+    "       still present. Fix the ENTRY: correct the path, add its root to\n"
+    "       CRATE_ROOTS (and to the hook's `files:` regex in prek.toml), or\n"
+    "       delete the entry if the file is deliberately denied."
+)
+
+MISSING_BASELINE_HINT = (
+    "    -> #3255: the baseline file itself is gone. This is not a stale\n"
+    "       entry and `--update-baseline` is the WRONG first move — it would\n"
+    "       happily write a fresh file from the current tree, silently\n"
+    "       blessing whatever guards have been removed since the real\n"
+    "       baseline was last correct. Restore it:\n"
+    "         git checkout -- src-tauri/space-filter-baseline.txt\n"
+    "       Only re-anchor from scratch if the deletion was deliberate."
+)
+
+DANGLING_HINT = (
+    "    -> #3255: the baseline, DENY_FILES, or CRATE_ROOTS names a path that\n"
+    "       no longer exists.\n"
+    "       A CRATE_ROOTS entry is fixed by editing the list in this script\n"
+    "       (see the refusal message from --update-baseline for why\n"
+    "       re-anchoring is the wrong remedy there).\n"
+    "       A DENY_FILES entry is fixed by EDITING THIS SCRIPT's DENY_FILES\n"
+    "       set — `--update-baseline` rebuilds only the baseline and will\n"
+    "       not touch it, so re-running it on a dangling deny entry changes\n"
+    "       nothing and reports the same message again.\n"
+    "       For a BASELINE entry: if the code MOVED, re-anchor — a move nets\n"
+    "       to zero across the tree and is allowed. If a guard was genuinely\n"
+    "       DELETED the re-anchor refuses, and recording that needs an\n"
+    "       explicit `--allow-reductions`:\n"
+    "         python3 scripts/check-space-filter-drift.py --update-baseline\n"
+    "         git diff src-tauri/space-filter-baseline.txt\n"
+    "       Read the per-file deltas it prints either way: a count that\n"
+    "       vanishes without a corresponding deletion in the source is the\n"
+    "       removal this guard exists to catch, and re-anchoring past it is\n"
+    "       how the finding gets lost."
+)
+
+# An unanchored count is not a drifted bind index. `HINT` opens by describing
+# a mismatched `?N` and sends the reader hunting for one; there is none. This
+# is the same mislabelling the dangling-only banner was split to fix, so it
+# gets the same treatment rather than being folded into the drift arm.
+UNBASELINED_HINT = (
+    "    -> #139: these are real canonical guards that the baseline does not\n"
+    "       account for. Nothing drifted and nothing is wrong with the SQL —\n"
+    "       the ratchet simply does not cover them yet, so removing one later\n"
+    "       would not be caught. Anchor them:\n"
+    "         python3 scripts/check-space-filter-drift.py --update-baseline\n"
+    "       If instead a count went DOWN by hand while the file still carries\n"
+    "       the guards, that edit is what this is reporting: restore it rather\n"
+    "       than re-anchoring, or the removal net for that file is retired."
 )
 
 
@@ -219,10 +365,10 @@ def line_of(text: str, offset: int) -> int:
 def scan_text(rel: str, raw: str) -> tuple[int, list[str]]:
     """Return (canonical_count, rule_A_violations) for `raw` source text.
 
-    `rel` is the display path (relative to `src-tauri/src/`) used in
-    violation messages. Pure function — no filesystem access — so the
-    self-test can drive it directly against synthetic fixtures without
-    writing real files under SRC_ROOT.
+    `rel` is the display path (repo-root-relative, #3255) used in violation
+    messages. Pure function — no filesystem access — so the self-test can
+    drive it directly against synthetic fixtures without writing real files
+    under a crate root.
 
     `canonical_count` counts only well-formed canonical guarded fragments
     (matching bind indices, `b.space_id` column). A drifted guard match is
@@ -240,7 +386,7 @@ def scan_text(rel: str, raw: str) -> tuple[int, list[str]]:
             ln = line_of(text, m.start())
             frag = re.sub(r"[\s\\]+", " ", m.group(0)).strip()
             violations.append(
-                f"src-tauri/src/{rel}:{ln}: mismatched bind index "
+                f"{rel}:{ln}: mismatched bind index "
                 f"(?{a or '?'} … ?{b or '?'}) in `{frag}`"
             )
     return count, violations
@@ -252,17 +398,225 @@ def scan_file(path: Path) -> tuple[int, list[str]]:
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return 0, []
-    rel = path.relative_to(SRC_ROOT).as_posix()
+    rel = path.relative_to(REPO_ROOT).as_posix()
     return scan_text(rel, raw)
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    """True when `path` lies inside `root` (no exception-as-control-flow)."""
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _assert_paths_exist(baseline: dict[str, int]) -> list[tuple[str, str]]:
+    """Return `(kind, message)` per stale path (#3255).
+
+    `kind` is one of `baseline`, `deny`, `root` — see the note on the return
+    shape below for why the caller needs it typed rather than inferred.
+
+    Also checks DENY_FILES: a deny entry that stops resolving silently
+    un-excludes nothing and is the exact bug this guard shipped — the single
+    entry named `space_filter_canonical.rs` relative to `src-tauri/src/` for
+    two years after the file moved to `agaric-store`.
+
+    And CRATE_ROOTS, which is the half with the asymmetric handling worth
+    knowing about: `crate_root_paths()` `is_dir()`-filters a missing root
+    away, so the walk narrows silently. `main()` treats a root finding
+    differently from the other two under `--update-baseline` — it REFUSES
+    rather than warning, because re-anchoring against a narrowed walk deletes
+    every baseline entry under the missing root. See the refusal branch.
+    """
+    # (kind, message) rather than bare strings: `main()` routes the ROOT kind
+    # into `--update-baseline`'s refusal branch and the other two into a
+    # warning, and selecting that by substring-matching "CRATE_ROOTS" against
+    # the rendered text couples control flow to diagnosis wording — a baseline
+    # path containing the literal would be misrouted. Unlikely, and free to
+    # remove.
+    # The baseline file itself. `read_baseline()` returns {} when it is
+    # absent, so deleting it degrades the whole removal ratchet to nothing
+    # while every rule above still "passes": no entry can dangle, none can be
+    # unscanned, and `baseline.get(rel, 0)` reads 0 for every file. prek does
+    # not pass deleted paths, so the deletion does not even select the hook.
+    # That is this change's own subject in its purest form — the guard's state
+    # gone, and the guard reporting success — so it is a finding of its own
+    # kind rather than an empty dict flowing silently into every other rule.
+    out: list[tuple[str, str]] = []
+    if not BASELINE_PATH.is_file():
+        out.append(
+            (
+                "missing_baseline",
+                f"{BASELINE_PATH.relative_to(REPO_ROOT).as_posix()}: the "
+                f"baseline file does not exist. Every removal check reads an "
+                f"empty baseline and passes; the ratchet is not weakened, it "
+                f"is absent. Restore it from git, or re-anchor deliberately "
+                f"with --update-baseline.",
+            )
+        )
+    out += [
+        (
+            "baseline",
+            f"{rel}: baseline names a file that does not exist "
+            f"(expected {cnt} canonical fragment(s))",
+        )
+        for rel, cnt in sorted(baseline.items())
+        if not (REPO_ROOT / rel).is_file()
+    ]
+    # Existence is not enough: an entry can name a real file that no walk ever
+    # reaches. `src-tauri/benches/foo.rs` resolves, so the check above is
+    # satisfied; it is outside every CRATE_ROOTS entry, so Rule B never
+    # scans it and its count is never compared to anything. The entry looks
+    # like protection and is inert — the same "protects nothing" shape as a
+    # dangling entry, one notch smaller, and the one form of it a hand edit
+    # can still introduce (`--update-baseline` only ever writes paths it
+    # walked). Raised across four reviews as in-scope-ness; it is three lines
+    # here, so it stops being deferred.
+    # Its own `kind`, not "baseline". The file EXISTS by construction here,
+    # so DANGLING_HINT's opening line ("names a path that no longer exists")
+    # would be false, and the `--update-baseline` it prescribes then refuses
+    # via the in_place arm. That is the mislabelling rounds 15-17 split out
+    # for `root` and `unbaselined`, and I reintroduced it on a fourth kind in
+    # the very commit that added this check.
+    #
+    # Two ways an entry ends up unscanned, same consequence:
+    #   * outside every CRATE_ROOTS entry — no walk reaches it;
+    #   * named in DENY_FILES — every walk explicitly drops it.
+    # The second passes both structural checks (it exists, it is under a
+    # root) and is still never compared to anything.
+    out.extend(
+        (
+            "unscanned",
+            f"{rel}: baseline entry is OUTSIDE every CRATE_ROOTS entry, so "
+            f"nothing ever scans it — the {cnt} fragment(s) it records are "
+            f"unenforced. Either the path is wrong, or the root belongs in "
+            f"CRATE_ROOTS (and in the hook's `files:` regex).",
+        )
+        for rel, cnt in sorted(baseline.items())
+        if (REPO_ROOT / rel).is_file()
+        and not any(rel.startswith(r) for r in CRATE_ROOTS)
+    )
+    # Third way to be unscanned, and the one both walks agree on: the entry is
+    # under a root and exists, but is not a `.rs` file at all.
+    # `all_source_files()` globs `*.rs` and the argv filter drops any other
+    # suffix, so `2 src-tauri/src/foo.toml` satisfies every predicate above
+    # and is still never opened.
+    out.extend(
+        (
+            "unscanned",
+            f"{rel}: baseline entry is not a `.rs` file, so neither the walk "
+            f"nor the targeted filter ever opens it — the {cnt} fragment(s) "
+            f"it records are unenforced.",
+        )
+        for rel, cnt in sorted(baseline.items())
+        if (REPO_ROOT / rel).is_file()
+        and any(rel.startswith(r) for r in CRATE_ROOTS)
+        and not rel.endswith(".rs")
+    )
+    out.extend(
+        (
+            "unscanned",
+            f"{rel}: baseline entry names a DENY_FILES path, which every "
+            f"walk drops — the {cnt} fragment(s) it records are unenforced. "
+            f"A denied file must not carry a baseline entry at all.",
+        )
+        for rel, cnt in sorted(baseline.items())
+        if (REPO_ROOT / rel).is_file() and rel in DENY_FILES
+    )
+    # Unconditional, deliberately. An earlier revision gated this half on
+    # "the crate root this entry names is present in THIS tree", to stop the
+    # CLI self-test's synthetic repo root (which had no `agaric-store/`) from
+    # tripping it. That gate made the check inapplicable to exactly the
+    # mistakes most likely to be made — a misspelled crate segment, or a crate
+    # renamed or retired wholesale — because a deny entry naming a crate root
+    # that does not exist read as "not applicable" rather than "dangling", so
+    # no run could ever flag it. The sandbox was the thing that was wrong, not
+    # the check: `_build_cli_sandbox` now materialises every DENY_FILES path,
+    # so the self-test models a real checkout and this half can be both
+    # unconditional and directly tested (see `run_cli_self_test` direction 6).
+    out.extend(
+        ("deny", f"{rel}: DENY_FILES names a file that does not exist")
+        for rel in sorted(DENY_FILES)
+        if not (REPO_ROOT / rel).is_file()
+    )
+    # And the roots themselves. `crate_root_paths()` filters CRATE_ROOTS
+    # through `is_dir()` and silently drops what is missing, so a renamed or
+    # misspelled crate segment narrows the walk with no signal at all — this
+    # guard's own subject, one level up. Four of the six roots carry no
+    # baseline entries, so a dangling-baseline finding would not catch it for
+    # them indirectly. The sandbox materialises every root for the same reason
+    # it materialises DENY_FILES.
+    out.extend(
+        ("root", f"{rel}: CRATE_ROOTS names a directory that does not exist")
+        for rel in CRATE_ROOTS
+        if not (REPO_ROOT / rel).is_dir()
+    )
+    # A root that exists but resolves OUTSIDE the repo. Once the roots became
+    # `.resolve()`d (so `_is_under` compares like with like), a symlinked root
+    # pointing out of the tree would satisfy `_is_under` and then make
+    # `relative_to(REPO_ROOT)` raise an uncaught ValueError — a traceback
+    # where a guard owes a diagnostic. Reported rather than filtered out,
+    # because dropping it is the silent narrowing this whole change exists to
+    # end: a root that cannot be expressed relative to the repo is a broken
+    # declaration, not an absent one.
+    out.extend(
+        (
+            "root",
+            f"{rel}: CRATE_ROOTS names a path that resolves OUTSIDE the "
+            f"repository ({(REPO_ROOT / rel).resolve()}) — a symlink out of "
+            f"the tree. Scanned paths must be expressible relative to the "
+            f"repo root.",
+        )
+        for rel in CRATE_ROOTS
+        if (REPO_ROOT / rel).is_dir()
+        and not _is_under((REPO_ROOT / rel).resolve(), REPO_ROOT)
+    )
+    return out
+
+
+def crate_root_paths() -> list[Path]:
+    """The CRATE_ROOTS that exist in this checkout.
+
+    `.resolve()`d because `_is_under()` tests these against argv paths that
+    are themselves resolved. Comparing a resolved path to an unresolved root
+    would silently drop matching files from `targets` under any symlinked
+    component beneath `src-tauri/` — the same silent-narrowing shape this
+    guard exists to end, and today survivable only by accident (the
+    empty-target fallback would walk the whole tree anyway).
+
+    A root that resolves OUTSIDE the repo is excluded from the walk. That is
+    not the silent narrowing this guard exists to end: `_assert_paths_exist`
+    reports it as a `root` finding, so the run fails and names it. Walking it
+    anyway is not an option — every file found there raises `ValueError` from
+    `relative_to(REPO_ROOT)` in `all_source_files`, an uncaught traceback
+    instead of a diagnosis. Verified against a fixture: with a `.rs` file at
+    the far end of the symlink, the pre-fix code dies in `all_source_files`.
+    """
+    out = []
+    for r in CRATE_ROOTS:
+        p = REPO_ROOT / r
+        if not p.is_dir():
+            continue
+        rp = p.resolve()
+        if not _is_under(rp, REPO_ROOT):
+            continue
+        out.append(rp)
+    return out
 
 
 def all_source_files() -> list[Path]:
     out: list[Path] = []
-    for p in sorted(SRC_ROOT.rglob("*.rs")):
-        if p.relative_to(SRC_ROOT).as_posix() in DENY_FILES:
-            continue
-        out.append(p)
-    return out
+    for root in crate_root_paths():
+        for p in root.rglob("*.rs"):
+            if p.relative_to(REPO_ROOT).as_posix() in DENY_FILES:
+                continue
+            out.append(p)
+    # `sorted` is load-bearing: without it the walk emits files grouped by
+    # CRATE_ROOTS declaration order, which is presentational order, not path
+    # order. No dedup is needed — no root is a prefix of another (see the
+    # CRATE_ROOTS comment), so a file cannot be reached twice.
+    return sorted(out)
 
 
 def compute_baseline() -> dict[str, int]:
@@ -281,11 +635,22 @@ def write_baseline(baseline: dict[str, int]) -> None:
         "# inlined `(?N IS NULL OR b.space_id = ?N)` guard fragment.",
         "# Generated by: python3 scripts/check-space-filter-drift.py "
         "--update-baseline",
-        "# The check-space-filter-drift prek hook fails when a file's count "
-        "DROPS BELOW",
-        "# its baseline (a canonical guard was removed / degraded to a bare "
-        "`b.space_id = ?`),",
-        "# or when any guarded fragment has mismatched bind indices.",
+        "# The check-space-filter-drift prek hook fails when:",
+        "#   * a file's count DROPS BELOW its baseline (a canonical guard was "
+        "removed, or",
+        "#     degraded to a bare `b.space_id = ?`);",
+        "#   * a file's count RISES ABOVE its baseline (guards added without "
+        "re-anchoring,",
+        "#     or an entry lowered by hand — either way the extra are "
+        "unratcheted);",
+        "#   * a file carries canonical fragments but has NO entry here (a "
+        "line deleted",
+        "#     outright would otherwise read as 0 and retire the net for that "
+        "file);",
+        "#   * any entry here, any DENY_FILES entry, or any CRATE_ROOTS "
+        "directory names a",
+        "#     path that no longer exists;",
+        "#   * any guarded fragment has mismatched bind indices.",
         "# Format: <count> <path-relative-to-repo-root>",
         "",
     ]
@@ -322,7 +687,7 @@ def _build_cli_sandbox(root: Path) -> Path:
     """Lay out a throw-away repo `root` that this guard can be RUN inside.
 
     `REPO_ROOT` is derived from `Path(__file__).resolve().parent.parent`, and
-    `main()` only ever scans files under `<REPO_ROOT>/src-tauri/src` — so the
+    `main()` only ever scans files under `<REPO_ROOT>`'s CRATE_ROOTS — so the
     only way to drive the real CLI over a fixture is to give it a repo root of
     its own. `root/scripts/` gets a SYMLINK per entry of the real
     `scripts/` directory (so every sibling this guard imports now, or imports
@@ -340,12 +705,63 @@ def _build_cli_sandbox(root: Path) -> Path:
     scripts_dir = root / "scripts"
     scripts_dir.mkdir(parents=True)
     real_scripts = REPO_ROOT / "scripts"
-    for entry in os.scandir(real_scripts):
-        os.symlink(entry.path, scripts_dir / entry.name)
+    with os.scandir(real_scripts) as entries:
+        for entry in entries:
+            os.symlink(entry.path, scripts_dir / entry.name)
     guard = scripts_dir / Path(__file__).name
     guard.unlink()
     shutil.copyfile(Path(__file__).resolve(), guard)
-    (root / "src-tauri" / "src").mkdir(parents=True)
+    # Materialise every CRATE_ROOTS directory. The roots half of
+    # `_assert_paths_exist` is unconditional, so a sandbox missing them would
+    # report every root dangling on EVERY case below — satisfying each case's
+    # "exits non-zero" half for the wrong reason. (`src-tauri/src` needs no
+    # separate mkdir: it is itself a CRATE_ROOTS entry.)
+    for rel in CRATE_ROOTS:
+        # Same precondition as the DENY_FILES loop below, for the same
+        # `Path.__truediv__` reason: an absolute entry would create these
+        # directories outside the TemporaryDirectory.
+        # `raise`, not `assert`: `python3 -O` strips asserts, and these
+        # guard a destructive `mkdir`/`unlink` against an absolute entry that
+        # `Path.__truediv__` would let escape the TemporaryDirectory. A
+        # precondition that disappears under an interpreter flag is not a
+        # precondition. The hook does not pass -O today; that is a reason it
+        # has not bitten, not a reason to rely on it.
+        # `..` escapes the TemporaryDirectory exactly as an absolute path
+        # does — `root / "../x"` resolves outside — and these guard a
+        # destructive mkdir/write_text/unlink. Checking only is_absolute()
+        # covered one of the two ways out.
+        if PurePosixPath(rel).is_absolute() or ".." in PurePosixPath(rel).parts:
+            raise ValueError(
+                f"sandbox path must be repo-relative with no '..': {rel}"
+            )
+        (root / rel).mkdir(parents=True, exist_ok=True)
+    # Same reason, for the deny half: a sandbox missing these would report a
+    # dangling deny entry on every case and drown out what each is asserting.
+    for rel in DENY_FILES:
+        # `Path.__truediv__` DISCARDS the left operand when the right is
+        # absolute, so an absolute DENY_FILES entry would place — and later
+        # `unlink` — a real file outside this TemporaryDirectory. The constant
+        # is relative today; this makes that a precondition rather than a
+        # coincidence, because the operations here are destructive.
+        # `raise`, not `assert`: `python3 -O` strips asserts, and these
+        # guard a destructive `mkdir`/`unlink` against an absolute entry that
+        # `Path.__truediv__` would let escape the TemporaryDirectory. A
+        # precondition that disappears under an interpreter flag is not a
+        # precondition. The hook does not pass -O today; that is a reason it
+        # has not bitten, not a reason to rely on it.
+        # `..` escapes the TemporaryDirectory exactly as an absolute path
+        # does — `root / "../x"` resolves outside — and these guard a
+        # destructive mkdir/write_text/unlink. Checking only is_absolute()
+        # covered one of the two ways out.
+        if PurePosixPath(rel).is_absolute() or ".." in PurePosixPath(rel).parts:
+            raise ValueError(
+                f"sandbox path must be repo-relative with no '..': {rel}"
+            )
+        stand_in = root / rel
+        stand_in.parent.mkdir(parents=True, exist_ok=True)
+        stand_in.write_text(
+            "// sandbox stand-in for a DENY_FILES entry\n", encoding="utf-8"
+        )
     return guard
 
 
@@ -385,8 +801,15 @@ def run_cli_self_test(record) -> None:
     fragment in it rather than an empty one, so "exits 0" cannot be satisfied
     by a scan that sees nothing at all.
     """
-    with tempfile.TemporaryDirectory(prefix="space-filter-drift-cli-") as tmp:
+    # A SECOND tempdir, deliberately a sibling of the sandbox rather than a
+    # child: direction 7b needs a symlink target that is genuinely outside the
+    # repo root the guard computes, which a path under `root` could not be.
+    with (
+        tempfile.TemporaryDirectory(prefix="space-filter-drift-cli-") as tmp,
+        tempfile.TemporaryDirectory(prefix="space-filter-drift-out-") as tmp2,
+    ):
         root = Path(tmp)
+        tmp_outside = Path(tmp2)
         guard = _build_cli_sandbox(root)
         src = root / "src-tauri" / "src"
         baseline_path = root / "src-tauri" / "space-filter-baseline.txt"
@@ -429,7 +852,16 @@ def run_cli_self_test(record) -> None:
             'let sql = "SELECT id FROM blocks b WHERE (?2 IS NULL OR b.space_id = ?3)";\n',
             encoding="utf-8",
         )
-        code, out = _run_cli(guard, [str(drifted)])
+        try:
+            code, out = _run_cli(guard, [str(drifted)])
+        finally:
+            # Removed here, not left lying: once `--update-baseline` refuses
+            # on an outstanding shape violation (a later direction), a drifted
+            # fixture surviving into the re-anchor cases makes THEM fail for a
+            # reason that has nothing to do with what they assert. The
+            # pollution the earlier comments called a latent hazard is now
+            # load-bearing.
+            drifted.unlink()
         if code != 0 and "mismatched bind index" in out:
             record("CLI: a Rule-A shape drift exits non-zero and says why", True, True)
         else:
@@ -458,6 +890,809 @@ def run_cli_self_test(record) -> None:
                 (code, out.strip()),
                 "non-zero exit mentioning 'baseline expects 2'",
             )
+
+        # --- #3255 direction 3: a DANGLING baseline entry exits non-zero ----
+        # The case that lets every other case pass while the guard protects
+        # nothing. A baseline entry whose file is gone is never scanned, so
+        # Rule B never asks about it and the run is green — which is exactly
+        # how 11 of 15 entries survived the #2621 move unnoticed. Note the
+        # invocation is TARGETED (a single unrelated file), because that is
+        # how prek calls the hook: the check has to be a property of the
+        # baseline, not of the files in the commit, or it stays invisible.
+        baseline_path.write_text(
+            "1 src-tauri/src/clean.rs\n1 src-tauri/src/gone.rs\n", encoding="utf-8"
+        )
+        code, out = _run_cli(guard, [str(clean)])
+        if code != 0 and "does not exist" in out and "gone.rs" in out:
+            record("CLI: a dangling baseline entry exits non-zero (#3255)", True, True)
+        else:
+            record(
+                "CLI: a dangling baseline entry exits non-zero (#3255)",
+                (code, out.strip()),
+                "non-zero exit naming gone.rs as not existing",
+            )
+
+        # The banner must not claim a DRIFT when the only finding is a
+        # dangling entry — nothing drifted, and saying so sends the reader
+        # hunting for a mangled fragment that does not exist. Same run as
+        # above; a separate assertion because the exit code and the diagnosis
+        # are different things and a regression can spoil either alone.
+        if "fragment drifted" not in out and "no longer describes this tree" in out:
+            record("CLI: a dangling-only run does not claim a drift", True, True)
+        else:
+            record(
+                "CLI: a dangling-only run does not claim a drift",
+                out.strip(),
+                "the baseline-describes banner, and no 'fragment drifted' claim",
+            )
+
+        # --- #3255 direction 4: a MEMBER-CRATE file is actually scanned -----
+        # Falsifies the widening itself. Against the pre-#3255 guard this file
+        # is outside SRC_ROOT, so the targeted invocation skips it silently and
+        # the run exits 0 — the bug, reproduced.
+        store_src = root / "src-tauri" / "agaric-store" / "src"
+        store_src.mkdir(parents=True, exist_ok=True)
+        sub = store_src / "sub_drift.rs"
+        sub.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE (?2 IS NULL OR b.space_id = ?5)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(sub)])
+        if code != 0 and "mismatched bind index" in out and "agaric-store" in out:
+            record("CLI: a member-crate file is scanned (#3255)", True, True)
+        else:
+            record(
+                "CLI: a member-crate file is scanned (#3255)",
+                (code, out.strip()),
+                "non-zero exit naming the agaric-store path",
+            )
+
+        # --- #3255 direction 5: the bare (whole-tree) walk reaches members ---
+        # Direction 4 pins the argv path; this pins `all_source_files()`. They
+        # are different code paths and a regression can drop either alone.
+        try:
+            code, out = _run_cli(guard, [])
+        finally:
+            # Last use of the member-crate drift fixture (direction 4 needs it
+            # too, which is why it is not removed there). Same reason as
+            # `drifted.rs` above.
+            sub.unlink()
+        if code != 0 and "sub_drift.rs" in out:
+            record("CLI: the bare walk reaches member crates (#3255)", True, True)
+        else:
+            record(
+                "CLI: the bare walk reaches member crates (#3255)",
+                (code, out.strip()),
+                "non-zero exit naming sub_drift.rs from a no-args run",
+            )
+
+        # --- #3255 direction 6: a DANGLING DENY_FILES entry exits non-zero --
+        # The deny half of `_assert_paths_exist` had no case of its own:
+        # deleting that half outright left this suite's output BYTE-IDENTICAL
+        # to the control's — the same falsification this function's docstring
+        # invokes to justify existing, reproduced inside the check #3255 adds.
+        # Removing the sandbox stand-in makes the deny entry dangle without
+        # touching any baseline, so the two halves of `_assert_paths_exist`
+        # are pinned independently.
+        # Every entry, not `sorted(DENY_FILES)[0]`: indexing crashes with an
+        # opaque IndexError if DENY_FILES is ever emptied (a legitimate config
+        # change — the sole entry exists only because `space_filter_canonical.rs`
+        # holds the canonical const), and testing just the first would ship a
+        # second entry untested.
+        deny_rels = sorted(DENY_FILES)
+        baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
+        try:
+            for rel in deny_rels:
+                (root / rel).unlink()
+            code, out = _run_cli(guard, [str(clean)]) if deny_rels else (1, "")
+        finally:
+            # `finally`, not the next statement: the restore exists to stop a
+            # later case inheriting a standing dangling-deny finding, and an
+            # exception in `_run_cli` would hand that protection away exactly
+            # when the suite is already in trouble.
+            for rel in deny_rels:
+                (root / rel).write_text(
+                    "// sandbox stand-in for a DENY_FILES entry\n",
+                    encoding="utf-8",
+                )
+        # RESTORE before recording. This case is the only one that removes a
+        # sandbox fixture, and leaving it removed would hand every case
+        # appended after it a standing dangling-deny finding — satisfying the
+        # `code != 0` half unconditionally, which is precisely the pollution
+        # `_build_cli_sandbox` materialises these files to prevent. Being last
+        # today is not a defence; the next case appended is the one that pays.
+        missing_named = all(
+            f"{rel}: DENY_FILES names a file that does not exist" in out
+            for rel in deny_rels
+        )
+        if not deny_rels:
+            record(
+                "CLI: a dangling DENY_FILES entry exits non-zero (#3255)",
+                "skipped: DENY_FILES is empty",
+                "skipped: DENY_FILES is empty",
+            )
+        elif code != 0 and missing_named:
+            record("CLI: a dangling DENY_FILES entry exits non-zero (#3255)", True, True)
+        else:
+            record(
+                "CLI: a dangling DENY_FILES entry exits non-zero (#3255)",
+                (code, out.strip()),
+                f"non-zero exit naming every dangling DENY_FILES entry ({deny_rels})",
+            )
+
+        # --- #3255 direction 7: a CRATE_ROOTS entry that is not a directory --
+        # `crate_root_paths()` filters through `is_dir()`, so a renamed or
+        # misspelled crate segment narrows the walk to nothing with no signal —
+        # this PR's own failure mode, one level up, inside the guard written to
+        # end it. Four of the six roots hold no baseline entries, so the
+        # dangling-baseline check cannot catch it for them indirectly either.
+        # `agaric-engine`, deliberately, NOT `agaric-store`: the only
+        # DENY_FILES stand-in lives under the store root, so removing that one
+        # would raise a dangling-deny finding too and the case would be
+        # satisfiable by either. Removing a root that holds no deny entry
+        # leaves exactly one thing that can make this run non-zero.
+        missing_root = root / "src-tauri" / "agaric-engine" / "src"
+        try:
+            shutil.rmtree(missing_root)
+            code, out = _run_cli(guard, [str(clean)])
+        finally:
+            missing_root.mkdir(parents=True, exist_ok=True)
+        if code != 0 and "CRATE_ROOTS names a directory that does not exist" in out:
+            record("CLI: a vanished CRATE_ROOTS entry exits non-zero (#3255)", True, True)
+        else:
+            record(
+                "CLI: a vanished CRATE_ROOTS entry exits non-zero (#3255)",
+                (code, out.strip()),
+                "non-zero exit naming the missing agaric-engine root",
+            )
+
+        # Same run, separate assertion — the pattern directions 3 and 15 each
+        # needed. Asserting only on the finding text let the `root` kind be
+        # folded into the baseline arm for two rounds after the other two
+        # kinds were split out: the finding printed correctly while the
+        # banner said "the baseline no longer describes this tree" (nothing
+        # about the baseline is wrong) and the hint pointed at a command the
+        # reader had not run. A case that checks only the finding cannot see
+        # which banner or hint carried it.
+        if (
+            "a declared CRATE_ROOTS directory is missing or unusable" in out
+            and "Fix the LIST, not the" in out
+            and "no longer describes this tree" not in out
+        ):
+            record("CLI: a missing root gets the root banner and hint", True, True)
+        else:
+            record(
+                "CLI: a missing root gets the root banner and hint",
+                out.strip(),
+                "the CRATE_ROOTS banner and ROOT_MISSING_HINT, not the "
+                "baseline ones",
+            )
+
+        # --- #3255 direction 7b: a root that resolves OUTSIDE the repo ------
+        # The roots became `.resolve()`d so `_is_under` compares like with
+        # like. That made a symlinked root pointing out of the tree satisfy
+        # `_is_under` and then blow up in `relative_to(REPO_ROOT)` — an
+        # uncaught ValueError traceback where a guard owes a diagnostic. It is
+        # reported, not filtered away: silently dropping a declared root is
+        # the narrowing this change exists to end.
+        outside = tmp_outside / "elsewhere"
+        outside.mkdir(parents=True, exist_ok=True)
+        # A `.rs` file at the far end is load-bearing. With the target EMPTY
+        # the walk finds nothing, never reaches `relative_to`, and the run
+        # merely exits 0 in silence — which is how an earlier revision of this
+        # case "passed" while `all_source_files()` still raised an uncaught
+        # ValueError on any real content. The fixture must carry a file for
+        # the case to pin the crash rather than only the reporting.
+        (outside / "leaf.rs").write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        engine_root = root / "src-tauri" / "agaric-engine" / "src"
+        try:
+            shutil.rmtree(engine_root)
+            engine_root.symlink_to(outside, target_is_directory=True)
+            # NO argv: the crash lives in `all_source_files()`, which only a
+            # whole-tree run reaches. A targeted invocation takes its paths
+            # from argv and never walks the roots, so it exits non-zero on the
+            # reporting alone and cannot tell the walk exclusion apart — which
+            # is exactly how the first version of this case passed against a
+            # build that still raised ValueError on real content.
+            code, out = _run_cli(guard, [])
+        finally:
+            if engine_root.is_symlink():
+                engine_root.unlink()
+            engine_root.mkdir(parents=True, exist_ok=True)
+        if (
+            code != 0
+            and "resolves OUTSIDE the repository" in out
+            and "Traceback" not in out
+            and "ValueError" not in out
+        ):
+            record("CLI: a root symlinked out of the tree is reported (#3255)", True, True)
+        else:
+            record(
+                "CLI: a root symlinked out of the tree is reported (#3255)",
+                (code, out.strip()[:300]),
+                "non-zero exit naming the root as resolving outside the repo",
+            )
+
+        # --- #3255 direction 8: a BASELINE-ONLY invocation still re-verifies -
+        # The hook's `files:` regex includes the baseline file so that editing
+        # it re-runs the guard. But every non-`.rs` arg is dropped by the
+        # suffix filter, so without a fallback the target set is empty and only
+        # the dangling check runs — a hand-edit LOWERING a count would pass,
+        # which is the one thing adding the baseline to `files:` was for.
+        removed.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/removed.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(baseline_path)])
+        if code != 0 and "baseline expects 2" in out:
+            record("CLI: a baseline-only invocation still scans (#3255)", True, True)
+        else:
+            record(
+                "CLI: a baseline-only invocation still scans (#3255)",
+                (code, out.strip()),
+                "non-zero exit mentioning 'baseline expects 2' from a baseline-only argv",
+            )
+
+        # --- #3255 direction 9: baseline edited ALONGSIDE an unrelated .rs ---
+        # Direction 8 pins the baseline-ONLY argv. The commoner shape is a
+        # commit that edits the baseline and a source file together: the
+        # target set is then non-empty, so an empty-set fallback would scan
+        # only that source file and a hand-lowered count for some OTHER file
+        # would pass — the entry still resolves, so the dangling check stays
+        # silent. This pins that the baseline appearing in argv AT ALL forces
+        # the whole-tree walk.
+        unrelated = src / "unrelated.rs"
+        unrelated.write_text("// no space filter here\n", encoding="utf-8")
+        removed.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/removed.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(unrelated), str(baseline_path)])
+        if code != 0 and "baseline expects 2" in out:
+            record("CLI: baseline + an unrelated .rs still scans all (#3255)", True, True)
+        else:
+            record(
+                "CLI: baseline + an unrelated .rs still scans all (#3255)",
+                (code, out.strip()),
+                "non-zero exit mentioning 'baseline expects 2' despite a non-empty target set",
+            )
+
+        # --- #3255 direction 10: a DELETED baseline line is caught ----------
+        # `baseline.get(rel, 0)` means an entry removed outright reads as 0, so
+        # the removal check can never fire for it and the dangling check has
+        # nothing left to find. Hand-editing a line out therefore retired the
+        # net for that file, silently — the guard's own subject, applied to the
+        # guard's own state file.
+        orphan = src / "orphan.rs"
+        orphan.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
+        try:
+            code, out = _run_cli(guard, [str(orphan)])
+        finally:
+            orphan.unlink()
+        if code != 0 and "NO baseline entry" in out and "orphan.rs" in out:
+            record("CLI: a fragment-bearing file with no baseline entry fails", True, True)
+        else:
+            record(
+                "CLI: a fragment-bearing file with no baseline entry fails",
+                (code, out.strip()),
+                "non-zero exit naming orphan.rs as carrying fragments but unbaselined",
+            )
+
+        # --- #3255 direction 11: prek.toml's `files:` covers every root ------
+        # The six roots are hand-duplicated between CRATE_ROOTS here and the
+        # hook's `files:` regex in prek.toml, bound only by a comment in each.
+        # Widening one without the other is the #3255 failure reintroduced one
+        # level up — and the review called it the single most likely way this
+        # regresses. Cheap to test rather than to promise: pull the regex out
+        # of prek.toml and assert it accepts a probe path under every declared
+        # root.
+        # Guarded: an unguarded read aborts the WHOLE self-test with a
+        # traceback if prek.toml is renamed or absent, discarding every case
+        # already recorded. The `files_re is None` branch below already models
+        # the clean failure, so route the missing-file case into it.
+        try:
+            prek = (REPO_ROOT / "prek.toml").read_text(encoding="utf-8")
+        except OSError:
+            prek = ""
+        # Bound the search to THIS hook's own block. Scanning forward without
+        # stopping at the next `[[repos.hooks]]` means that if this hook ever
+        # loses its `files` line, the first one found belongs to a LATER hook
+        # and the case validates that regex instead — reporting coverage this
+        # guard does not have. A false pass inside the check added to prevent
+        # false passes.
+        block = prek.split('\nid = "check-space-filter-drift"', 1)
+        files_re = None
+        if len(block) > 1:
+            for line in block[1].splitlines():
+                if line.lstrip().startswith("[[repos.hooks]]"):
+                    break
+                if line.startswith("files = "):
+                    files_re = line.split("=", 1)[1].strip().strip("'\"")
+                    break
+        uncovered = []
+        if files_re:
+            compiled = re.compile(files_re)
+            for r in CRATE_ROOTS:
+                if not compiled.search(f"{r}probe.rs"):
+                    uncovered.append(r)
+            # The baseline's own path, too. Directions 8 and 9 defend the
+            # baseline-in-argv path, but nothing asserted the hook is SELECTED
+            # when the baseline changes — delete that alternative from
+            # prek.toml and this suite stayed byte-identical and passing,
+            # which is the falsification standard this guard applies to
+            # everything else.
+            if not compiled.search("src-tauri/space-filter-baseline.txt"):
+                uncovered.append("src-tauri/space-filter-baseline.txt")
+            # And the guard script itself, which is the fourth blind spot this
+            # change leads with: before round fifteen a commit editing only
+            # this file — CRATE_ROOTS included — did not select the hook at
+            # all, so the list could be narrowed without the guard ever
+            # running over the tree. That alternative was added by hand and
+            # was the last piece of coverage resting on a manual `prek run`;
+            # deleting it from prek.toml left this suite byte-identical and
+            # passing, which is precisely the standard applied everywhere
+            # else here.
+            if not compiled.search("scripts/check-space-filter-drift.py"):
+                uncovered.append("scripts/check-space-filter-drift.py")
+        if files_re and not uncovered:
+            record("prek.toml `files:` covers every CRATE_ROOTS entry", True, True)
+        else:
+            record(
+                "prek.toml `files:` covers every CRATE_ROOTS entry",
+                uncovered if files_re else "could not parse files: from prek.toml",
+                "every CRATE_ROOTS entry matched by the hook's files: regex",
+            )
+
+        # --- #3255 direction 12: --update-baseline REFUSES a reduction -------
+        # The re-anchor path rewrites the whole baseline, so its reduction
+        # report is the only thing standing between an operator and silently
+        # absorbing the removal this guard exists to catch. Printing it and
+        # exiting 0 left that advisory. Pinned in both directions: refuse by
+        # default, proceed under the explicit opt-in.
+        shrink = src / "shrink.rs"
+        shrink.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/shrink.rs\n", encoding="utf-8")
+        try:
+            code, out = _run_cli(guard, ["--update-baseline"])
+            refused = code != 0 and "REFUSING" in out and "2 -> 0" in out
+            baseline_path.write_text(
+                "2 src-tauri/src/shrink.rs\n", encoding="utf-8"
+            )
+            code2, _ = _run_cli(guard, ["--update-baseline", "--allow-reductions"])
+        finally:
+            shrink.unlink()
+        if refused and code2 == 0:
+            record("CLI: --update-baseline refuses a reduction, opt-in allows", True, True)
+        else:
+            record(
+                "CLI: --update-baseline refuses a reduction, opt-in allows",
+                (code, code2, out.strip()),
+                "non-zero + REFUSING without the flag, exit 0 with --allow-reductions",
+            )
+
+        # --- #3255 direction 13: the refusal survives repetition ------------
+        # An earlier revision wrote the baseline BEFORE refusing, so a second
+        # identical run saw `before == after`, found no drop and exited 0 —
+        # the refusal was defeated by pressing up-arrow, which is the most
+        # natural response to a failed command. Direction 12 cannot catch it:
+        # it restores the pre-state between its two runs. This one does not.
+        shrink.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/shrink.rs\n", encoding="utf-8")
+        try:
+            first, _ = _run_cli(guard, ["--update-baseline"])
+            second, _ = _run_cli(guard, ["--update-baseline"])
+            untouched = baseline_path.read_text(encoding="utf-8").strip() == (
+                "2 src-tauri/src/shrink.rs"
+            )
+        finally:
+            shrink.unlink()
+        if first != 0 and second != 0 and untouched:
+            record("CLI: the reduction refusal is idempotent (#3255)", True, True)
+        else:
+            record(
+                "CLI: the reduction refusal is idempotent (#3255)",
+                (first, second, untouched),
+                "both runs non-zero and the baseline left unwritten",
+            )
+
+        # --- #3255 direction 14: delete-in-A + add-in-B nets to zero ---------
+        # A whole-tree total alone lets a genuine in-place removal hide behind
+        # an unrelated addition. The discriminator is whether the losing file
+        # STILL EXISTS: a relocation empties its old file, an in-place deletion
+        # leaves it present with a smaller count.
+        keep = src / "keep.rs"
+        keep.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n'
+            'let b = "WHERE (?2 IS NULL OR b.space_id = ?2)";\n',
+            encoding="utf-8",
+        )
+        gain = src / "gain.rs"
+        gain.write_text(
+            'let sql = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        # Baseline claims 3 in keep.rs; the tree has 2 there and 1 in gain.rs,
+        # so the TOTAL is unchanged while keep.rs lost one in place.
+        baseline_path.write_text("3 src-tauri/src/keep.rs\n", encoding="utf-8")
+        try:
+            code, out = _run_cli(guard, ["--update-baseline"])
+        finally:
+            keep.unlink()
+            gain.unlink()
+        if code != 0 and "IN PLACE" in out and "keep.rs" in out:
+            record("CLI: an in-place removal that nets to zero is refused", True, True)
+        else:
+            record(
+                "CLI: an in-place removal that nets to zero is refused",
+                (code, out.strip()),
+                "non-zero exit naming keep.rs as an in-place removal",
+            )
+
+        # --- #3255 direction 15: a count ABOVE its baseline is a finding -----
+        # The other half of this guard's failure mode, and the one that
+        # produced its own headline evidence: `backlink/grouped.rs` gained two
+        # canonical guards while unwatched and kept a baseline of 3. Unfixed,
+        # that recurs — the extra guards are unratcheted and a later removal
+        # restores the old number and passes. The same rule catches a
+        # hand-LOWERED baseline, which nothing else can see: the entry
+        # resolves, it is present, and `cnt < base` is false by construction.
+        gained = src / "gained.rs"
+        gained.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n'
+            'let b = "WHERE (?2 IS NULL OR b.space_id = ?2)";\n'
+            'let c = "WHERE (?3 IS NULL OR b.space_id = ?3)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("1 src-tauri/src/gained.rs\n", encoding="utf-8")
+        try:
+            code, out = _run_cli(guard, [str(gained)])
+        finally:
+            gained.unlink()
+        if code != 0 and "unratcheted" in out and "gained.rs" in out:
+            record("CLI: a count above its baseline is a finding (#3255)", True, True)
+        else:
+            record(
+                "CLI: a count above its baseline is a finding (#3255)",
+                (code, out.strip()),
+                "non-zero exit naming gained.rs as carrying unratcheted guards",
+            )
+
+        # Same run, separate assertion, for the same reason direction 3 splits
+        # its banner off: an unanchored count is not drift either, and routing
+        # it through the drift banner is the mislabelling that split was made
+        # to prevent — reintroduced when this rule was wired in.
+        if "fragment drifted" not in out and "not anchored in the baseline" in out:
+            record("CLI: an unbaselined-only run does not claim a drift", True, True)
+        else:
+            record(
+                "CLI: an unbaselined-only run does not claim a drift",
+                out.strip(),
+                "the not-anchored banner, and no 'fragment drifted' claim",
+            )
+
+        # --- #3255 direction 16: a MIXED run names every class that fired ---
+        # The banner used to be a priority chain, so a run carrying both a
+        # dangling entry and an unbaselined count announced only the latter
+        # over a list containing "does not exist". Nothing was lost (both
+        # hints printed), but the headline described the finding set as
+        # something it was not — the fault the split was made to remove,
+        # relocated onto the combination. `gained.rs` supplies the
+        # unbaselined half; `gone.rs` is named by the baseline and never
+        # created, supplying the dangling half.
+        gained.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n'
+            'let b = "WHERE (?2 IS NULL OR b.space_id = ?2)";\n'
+            'let c = "WHERE (?3 IS NULL OR b.space_id = ?3)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text(
+            "1 src-tauri/src/gained.rs\n1 src-tauri/src/gone.rs\n",
+            encoding="utf-8",
+        )
+        try:
+            code, out = _run_cli(guard, [str(gained)])
+        finally:
+            gained.unlink()
+        banner = out.split("\n", 1)[0]
+        if (
+            code != 0
+            and "not anchored in the baseline" in banner
+            and "no longer describes this tree" in banner
+        ):
+            record("CLI: a mixed run names every finding class (#3255)", True, True)
+        else:
+            record(
+                "CLI: a mixed run names every finding class (#3255)",
+                (code, banner),
+                "a banner naming BOTH the unanchored and the dangling class",
+            )
+        # --- #3255 direction 17: a baseline entry NOTHING ever scans --------
+        # Existence is not enough. An entry naming a real file outside every
+        # CRATE_ROOTS entry satisfies the dangling check and is never walked,
+        # so its count is compared against nothing: protection in appearance
+        # only. `--update-baseline` cannot produce it (it writes only paths it
+        # walked), but a hand edit can — which is how the baseline acquired
+        # every other defect this change fixes.
+        outside_rs = root / "src-tauri" / "benches" / "bench.rs"
+        outside_rs.parent.mkdir(parents=True, exist_ok=True)
+        outside_rs.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        saved_baseline_17 = baseline_path.read_text(encoding="utf-8")
+        try:
+            baseline_path.write_text(
+                "1 src-tauri/benches/bench.rs\n", encoding="utf-8"
+            )
+            code, out = _run_cli(guard, [])
+        finally:
+            outside_rs.unlink()
+            baseline_path.write_text(saved_baseline_17, encoding="utf-8")
+        if code != 0 and "OUTSIDE every CRATE_ROOTS entry" in out:
+            record(
+                "CLI: a baseline entry nothing scans is a finding (#3255)",
+                True,
+                True,
+            )
+        else:
+            record(
+                "CLI: a baseline entry nothing scans is a finding (#3255)",
+                (code, out.strip()[:200]),
+                "non-zero exit naming the entry as outside CRATE_ROOTS",
+            )
+
+        # --- #3255 direction 18: --update-baseline refuses a stale deny -----
+        # DENY_FILES names what must NEVER be policed. While an entry is stale
+        # the file it excluded is counted like any other, so a rebuild writes
+        # it a baseline entry — enrolling the canonical constant into the
+        # baseline defined against it. `root` already refuses; this is the
+        # same class of outcome, forbidden by the design rather than merely
+        # unwanted.
+        if DENY_FILES:
+            deny_stand_in = root / sorted(DENY_FILES)[0]
+            saved = deny_stand_in.read_text(encoding="utf-8")
+            # The BASELINE is fixture state too, and this case both empties it
+            # and lets `--update-baseline` rewrite it. Restoring only the deny
+            # stand-in is precisely the hazard direction 6's comment rejects —
+            # "being last today is not a defence; the next case appended is the
+            # one that pays". Captured and restored with it.
+            saved_baseline = baseline_path.read_text(encoding="utf-8")
+            baseline_path.write_text("", encoding="utf-8")
+            try:
+                deny_stand_in.unlink()
+                code, out = _run_cli(guard, ["--update-baseline"])
+            finally:
+                deny_stand_in.parent.mkdir(parents=True, exist_ok=True)
+                deny_stand_in.write_text(saved, encoding="utf-8")
+                baseline_path.write_text(saved_baseline, encoding="utf-8")
+            if code != 0 and "Refusing to re-anchor: a DENY_FILES entry" in out:
+                record(
+                    "CLI: --update-baseline refuses a stale DENY entry (#3255)",
+                    True,
+                    True,
+                )
+            else:
+                record(
+                    "CLI: --update-baseline refuses a stale DENY entry (#3255)",
+                    (code, out.strip()[:200]),
+                    "non-zero exit refusing the re-anchor over the stale deny",
+                )
+
+        # --- #3255 direction 19: a baseline entry for a DENIED file ---------
+        # The other way an entry goes unscanned, and the one that passes both
+        # structural checks: the file exists AND sits under a crate root, so
+        # nothing above objects — yet every walk drops it by DENY_FILES, so
+        # its count is never compared to anything. Same "protects nothing"
+        # shape as direction 17, reached from the opposite side.
+        if DENY_FILES:
+            denied_rel = sorted(DENY_FILES)[0]
+            saved_baseline_19 = baseline_path.read_text(encoding="utf-8")
+            try:
+                baseline_path.write_text(
+                    f"1 {denied_rel}\n", encoding="utf-8"
+                )
+                code, out = _run_cli(guard, [])
+            finally:
+                # Directions 6 and 18 both carry a comment arguing that being
+                # last is not a defence, and I wrote the one on 18 in the same
+                # commit that added this case without a restore. The next case
+                # appended here would inherit a standing `unscanned` finding
+                # and have its `code != 0` half satisfied unconditionally.
+                baseline_path.write_text(
+                    saved_baseline_19, encoding="utf-8"
+                )
+            if code != 0 and "names a DENY_FILES path" in out:
+                record(
+                    "CLI: a baseline entry for a denied file is a finding (#3255)",
+                    True,
+                    True,
+                )
+            else:
+                record(
+                    "CLI: a baseline entry for a denied file is a finding (#3255)",
+                    (code, out.strip()[:200]),
+                    "non-zero exit naming the entry as a DENY_FILES path",
+                )
+            # The unscanned finding must NOT be described as a stale path, and
+            # must not prescribe --update-baseline: the file exists, so that
+            # command refuses via in_place. Separate assertion on the same run,
+            # the pattern directions 3, 7 and 15 each needed.
+            if (
+                "names a file nothing scans" in out
+                and "do not `--update-baseline`" in out
+                and "no longer describes this tree" not in out
+            ):
+                record(
+                    "CLI: an unscanned entry gets its own banner and hint",
+                    True,
+                    True,
+                )
+            else:
+                record(
+                    "CLI: an unscanned entry gets its own banner and hint",
+                    out.strip()[:300],
+                    "the unscanned banner and UNSCANNED_HINT, not the dangling ones",
+                )
+
+        # --- #3255 direction 20: --update-baseline refuses an unscanned entry
+        # Without its own arm the entry falls through to the delta comparison,
+        # where the recomputed count reads 0 while the file still exists — so
+        # `in_place` fires and reports "a guard was removed IN PLACE", which
+        # did not happen. Asserted on BOTH the refusal and the absence of that
+        # wrong diagnosis, because the exit code is 1 either way.
+        if DENY_FILES:
+            denied_rel = sorted(DENY_FILES)[0]
+            saved_baseline_20 = baseline_path.read_text(encoding="utf-8")
+            try:
+                baseline_path.write_text(
+                    f"1 {denied_rel}\n", encoding="utf-8"
+                )
+                code, out = _run_cli(guard, ["--update-baseline"])
+            finally:
+                baseline_path.write_text(
+                    saved_baseline_20, encoding="utf-8"
+                )
+            if (
+                code != 0
+                and "names a file that nothing scans" in out
+                and "removed IN PLACE" not in out
+            ):
+                record(
+                    "CLI: --update-baseline refuses an unscanned entry (#3255)",
+                    True,
+                    True,
+                )
+            else:
+                record(
+                    "CLI: --update-baseline refuses an unscanned entry (#3255)",
+                    (code, out.strip()[:220]),
+                    "the unscanned refusal, and NOT an in-place-removal claim",
+                )
+
+        # --- #3255 direction 21: the baseline file itself is DELETED --------
+        # The purest form of this change's subject. `read_baseline()` returns
+        # {} for a missing file, so every removal check reads an empty
+        # baseline and passes: nothing can dangle, nothing is unscanned, and
+        # `baseline.get(rel, 0)` is 0 for every file. The guard's own state
+        # gone, and the guard reporting success.
+        saved_baseline_21 = baseline_path.read_text(encoding="utf-8")
+        try:
+            baseline_path.unlink()
+            code, out = _run_cli(guard, [])
+        finally:
+            baseline_path.write_text(saved_baseline_21, encoding="utf-8")
+        if code != 0 and "the baseline file does not exist" in out:
+            record(
+                "CLI: a deleted baseline file is a finding (#3255)", True, True
+            )
+        else:
+            record(
+                "CLI: a deleted baseline file is a finding (#3255)",
+                (code, out.strip()[:200]),
+                "non-zero exit naming the baseline file as absent",
+            )
+        # And it must NOT be told to re-anchor: `--update-baseline` would
+        # write a fresh file from the current tree, blessing whatever was
+        # removed since the real baseline was last correct.
+        # A POSITIVE assertion on a phrase unique to MISSING_BASELINE_HINT.
+        # The previous form was `"do not" not in out.split(...)[0]` — a
+        # negative substring test over a slice of the output, which passed for
+        # reasons largely unrelated to the thing it claimed to check. A test
+        # that cannot say which hint was printed is not testing the hint.
+        if (
+            "git checkout -- src-tauri/space-filter-baseline.txt" in out
+            and "silently\n       blessing whatever guards have been removed"
+            in out
+        ):
+            record("CLI: a deleted baseline is told to RESTORE, not re-anchor", True, True)
+        else:
+            record(
+                "CLI: a deleted baseline is told to RESTORE, not re-anchor",
+                out.strip()[:200],
+                "MISSING_BASELINE_HINT prescribing git checkout",
+            )
+
+        # --- #3255 direction 22: a baseline entry that is not a `.rs` file ---
+        # Third way to be unscanned, and the one both walks agree on: under a
+        # root, exists, and still never opened, because the walk globs `*.rs`
+        # and the argv filter drops every other suffix.
+        not_rs = root / "src-tauri" / "src" / "notes.toml"
+        not_rs.write_text("# not rust\n", encoding="utf-8")
+        saved_baseline_22 = baseline_path.read_text(encoding="utf-8")
+        try:
+            baseline_path.write_text(
+                "2 src-tauri/src/notes.toml\n", encoding="utf-8"
+            )
+            code, out = _run_cli(guard, [])
+        finally:
+            baseline_path.write_text(saved_baseline_22, encoding="utf-8")
+            not_rs.unlink()
+        if code != 0 and "is not a `.rs` file" in out:
+            record(
+                "CLI: a non-.rs baseline entry is a finding (#3255)", True, True
+            )
+        else:
+            record(
+                "CLI: a non-.rs baseline entry is a finding (#3255)",
+                (code, out.strip()[:200]),
+                "non-zero exit naming the entry as not a .rs file",
+            )
+
+        # --- #3255 direction 23: --update-baseline refuses over a DRIFT -----
+        # `scan_text` does not count a mangled fragment, so a drifted file's
+        # recomputed count drops while the file still exists — `in_place` then
+        # fired and called it an in-place REMOVAL. Nothing was removed; it
+        # drifted. Asserted on the drift refusal AND on the absence of the
+        # removal claim, since the exit code is 1 either way and only the
+        # diagnosis tells them apart.
+        drift_re = src / "drift_re.rs"
+        drift_re.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n'
+            'let b = "WHERE (?2 IS NULL OR b.space_id = ?7)";\n',
+            encoding="utf-8",
+        )
+        saved_baseline_23 = baseline_path.read_text(encoding="utf-8")
+        try:
+            baseline_path.write_text(
+                "2 src-tauri/src/drift_re.rs\n", encoding="utf-8"
+            )
+            code, out = _run_cli(guard, ["--update-baseline"])
+        finally:
+            drift_re.unlink()
+            baseline_path.write_text(saved_baseline_23, encoding="utf-8")
+        if (
+            code != 0
+            and "has DRIFTED" in out
+            and "removed IN PLACE" not in out
+        ):
+            record(
+                "CLI: --update-baseline refuses over a shape drift (#3255)",
+                True,
+                True,
+            )
+        else:
+            record(
+                "CLI: --update-baseline refuses over a shape drift (#3255)",
+                (code, out.strip()[:220]),
+                "the drift refusal, and NOT an in-place-removal claim",
+            )
+
 
 
 def run_self_test() -> int:
@@ -576,43 +1811,346 @@ def run_self_test() -> int:
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
+    # `file_args` drops every `-`-prefixed argument, so an unrecognised flag —
+    # or a recognised one in the wrong company — used to vanish into a normal
+    # scan with no diagnostic. The concrete case: an operator hits the
+    # reduction refusal, re-runs with `--allow-reductions` but drops
+    # `--update-baseline`, and gets exit 0 from a plain scan that re-anchored
+    # nothing. Refusing the combination is what makes the flag's scope
+    # legible; a ratchet whose opt-in can be silently inert is the same class
+    # of quiet failure as the rest of this file.
+    known = {"--self-test", "--update-baseline", "--allow-reductions"}
+    unknown = [a for a in argv if a.startswith("-") and a not in known]
+    if unknown:
+        print(
+            f"unknown option(s): {', '.join(unknown)}. Known: "
+            f"{', '.join(sorted(known))}.",
+            file=sys.stderr,
+        )
+        return 2
+    if "--allow-reductions" in argv and "--update-baseline" not in argv:
+        print(
+            "`--allow-reductions` only has meaning with `--update-baseline` — "
+            "it opts into a\nre-anchor that drops guards. On its own it would "
+            "have been ignored silently and\nthis run would have re-anchored "
+            "nothing. Re-run with both flags if that was the\nintent.",
+            file=sys.stderr,
+        )
+        return 2
     if "--update-baseline" in argv:
-        write_baseline(compute_baseline())
+        # Run the existence checks FIRST, and treat their two halves
+        # DIFFERENTLY, because only one of them describes a legitimate
+        # re-anchor.
+        #
+        # A dangling BASELINE entry is often exactly why you are re-anchoring:
+        # the file really moved or was deleted. Warn and proceed.
+        #
+        # A missing CRATE_ROOTS entry is never that. `compute_baseline()`
+        # walks `crate_root_paths()`, which `is_dir()`-filters a vanished root
+        # away — so re-anchoring against a misspelled or renamed root SILENTLY
+        # DELETES every baseline entry under it, which is the "re-anchoring
+        # past it is how the finding gets lost" failure DANGLING_HINT warns
+        # about two lines further down. The remedy is to fix the root list, not
+        # the baseline, so refuse rather than warn: there is no case where
+        # rebuilding against a root the operator did not mean to remove is the
+        # right move, and a warning printed above a completed rebuild is read
+        # after the damage is written.
+        pre = _assert_paths_exist(read_baseline())
+        root_findings = [m for kind, m in pre if kind == "root"]
+        if root_findings:
+            print(
+                "Refusing to re-anchor: a declared CRATE_ROOTS entry is "
+                "missing.\n",
+                file=sys.stderr,
+            )
+            for v in root_findings:
+                print(f"  {v}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print(ROOT_MISSING_HINT, file=sys.stderr)
+            return 1
+        # A dangling DENY_FILES entry gets the same treatment, for a sharper
+        # reason than the root case. DENY_FILES names the files that must
+        # NEVER be policed — today the one holding SPACE_FILTER_CANONICAL
+        # itself, where policing would be circular. If that file moves and the
+        # entry is left behind, the deny set no longer matches it, so
+        # `compute_baseline()` counts it like any other file and writes it an
+        # entry. The rebuild would enroll the canonical constant into the
+        # baseline that is defined against it. Warning and proceeding is not
+        # enough for an outcome the design forbids outright.
+        deny_findings = [m for kind, m in pre if kind == "deny"]
+        if deny_findings:
+            print(
+                "Refusing to re-anchor: a DENY_FILES entry names a path that "
+                "no longer exists.\n",
+                file=sys.stderr,
+            )
+            for v in deny_findings:
+                print(f"  {v}", file=sys.stderr)
+            print(
+                "\n  DENY_FILES marks files that must never be policed. While "
+                "an entry is stale the\n  file it was meant to exclude is "
+                "scanned like any other, so re-anchoring now would\n  write it "
+                "a baseline entry. Fix DENY_FILES in this script first — "
+                "`--update-baseline`\n  rebuilds only the baseline and will "
+                "not touch it — then re-run.",
+                file=sys.stderr,
+            )
+            return 1
+        # `unscanned` too, and for a reason the generic warning cannot cover:
+        # left to fall through, the entry survives to the delta comparison,
+        # where the file's recomputed count reads 0 (nothing scans it) while
+        # the file itself still exists — so `in_place` fires and the operator
+        # is told "a guard was removed IN PLACE from
+        # .../space_filter_canonical.rs (the file is still there with fewer)".
+        # No guard was removed. That is the same mislabelling this change
+        # splits out four times over on the reporting side, reappearing on the
+        # re-anchor side because only `root` and `deny` had their own arm.
+        unscanned_findings = [m for kind, m in pre if kind == "unscanned"]
+        if unscanned_findings:
+            print(
+                "Refusing to re-anchor: a baseline entry names a file that "
+                "nothing scans.\n",
+                file=sys.stderr,
+            )
+            for v in unscanned_findings:
+                print(f"  {v}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print(UNSCANNED_HINT, file=sys.stderr)
+            return 1
+        for _kind, m in pre:
+            print(f"  WARNING before re-anchor: {m}", file=sys.stderr)
+        # Compute the new baseline, report the deltas, and decide BEFORE
+        # writing anything.
+        #
+        # An earlier revision wrote first and refused after, so the operator
+        # could read the diff. That made the refusal skippable by repetition:
+        # re-running the identical command saw `before == after`, found no
+        # drop, and exited 0 — absorbing the removal without
+        # `--allow-reductions` ever being typed. Re-running a failed command is
+        # the most natural response to it, so the "explicit act" the refusal
+        # exists to force was defeated by pressing up-arrow. Refusing before
+        # the write makes it idempotent, and the printed deltas give the
+        # operator the same information the diff would have.
+        #
+        # The comparison is on the TOTAL, not per-file. A pure MOVE shows a
+        # per-file reduction at the old path and an equal gain at the new one
+        # — and a move is the headline reason to re-anchor at all (it is what
+        # #2621 did to eleven of these entries). Refusing it would make the
+        # command that DANGLING_HINT prescribes fail for its own primary case.
+        # A total that drops is a fragment that left the tree.
+        # A Rule-A drift must stop the re-anchor before the deltas are even
+        # computed. `scan_text` does not COUNT a mangled fragment, so a
+        # drifted file's recomputed count drops while the file plainly still
+        # exists — `in_place` then fires and reports "a guard was removed IN
+        # PLACE", which did not happen: it drifted. Sixth instance of this
+        # mislabelling, and the last place on the re-anchor side that lacked
+        # its own arm. Re-anchoring over a drift is also the wrong outcome
+        # regardless of wording: it would bake the lower count in and retire
+        # the evidence.
+        # One walk, both answers: the shape violations that must stop the
+        # re-anchor, and the counts it would write. `compute_baseline()` does
+        # the same walk and discards the violations, so calling it as well
+        # would scan the tree twice for a command that is already the slow
+        # path.
+        shape_now: list[str] = []
+        after_counts: dict[str, int] = {}
+        for _p in all_source_files():
+            _cnt, _viols = scan_file(_p)
+            shape_now.extend(_viols)
+            if _cnt:
+                after_counts[_p.relative_to(REPO_ROOT).as_posix()] = _cnt
+        if shape_now:
+            print(
+                "Refusing to re-anchor: a canonical fragment has DRIFTED "
+                "(mismatched bind indices).\n",
+                file=sys.stderr,
+            )
+            for v in shape_now:
+                print(f"  {v}", file=sys.stderr)
+            print(
+                "\n  A drifted fragment is not counted, so re-anchoring now "
+                "would record the lower\n  count and retire the evidence — and "
+                "the delta would be reported as an in-place\n  REMOVAL, which "
+                "is not what happened. Restore the canonical form first.",
+                file=sys.stderr,
+            )
+            return 1
+        before = read_baseline()
+        after = after_counts
+        for rel in sorted(set(before) | set(after)):
+            old_n, new_n = before.get(rel, 0), after.get(rel, 0)
+            if old_n != new_n:
+                mark = "  <-- fewer" if new_n < old_n else ""
+                print(f"  {rel}: {old_n} -> {new_n}{mark}", file=sys.stderr)
+        lost = sum(before.values()) - sum(after.values())
+        # A total alone is not sufficient, and the earlier revision said so
+        # only implicitly. Deleting a guard in file A while adding an unrelated
+        # one in file B nets to zero, and would have re-anchored without
+        # `--allow-reductions` ever being typed. The discriminator is whether
+        # the losing file STILL EXISTS: a relocation empties its old file (the
+        # entry disappears because the file is gone or no longer carries the
+        # fragment at all), whereas an in-place deletion leaves the file
+        # present with a smaller count. So refuse on either signal.
+        in_place = [
+            rel
+            for rel, old_n in before.items()
+            if after.get(rel, 0) < old_n and (REPO_ROOT / rel).is_file()
+        ]
+        if (lost > 0 or in_place) and "--allow-reductions" not in argv:
+            if in_place:
+                why = (
+                    f"a guard was removed IN PLACE from {', '.join(in_place)} "
+                    "(the file is still there with fewer)"
+                )
+            else:
+                why = (
+                    f"{lost} canonical space-filter guard(s) would leave the "
+                    "baseline entirely"
+                )
+            print(
+                f"\n  REFUSING: {why}.\n"
+                "  Per-file gains and losses are listed above. A whole-file "
+                "MOVE — the old file\n"
+                "  GONE, an equal gain elsewhere — nets to zero and is allowed "
+                "without a flag; a file\n"
+                "  left in place with fewer guards (an emptied shim included) "
+                "is refused here.\n"
+                "  Nothing has been written. If the removal is intended, "
+                "re-run with `--allow-reductions`.",
+                file=sys.stderr,
+            )
+            return 1
+        write_baseline(after)
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
         return 0
 
     baseline = read_baseline()
 
     # Determine targets. prek passes changed files; a bare invocation scans
-    # the whole tree. Either way only police production .rs under
-    # src-tauri/src/ (skip DENY_FILES).
+    # the whole tree. Either way only police `.rs` under a CRATE_ROOTS entry
+    # (skip DENY_FILES, and skip anything outside those roots).
     file_args = [a for a in argv if not a.startswith("-")]
     if file_args:
         targets: list[Path] = []
+        roots = crate_root_paths()
         for arg in file_args:
             p = Path(arg)
             if p.suffix != ".rs":
                 continue
-            try:
-                rp = p.resolve()
-                rp.relative_to(SRC_ROOT)
-            except ValueError:
+            rp = p.resolve()
+            if not any(_is_under(rp, root) for root in roots):
                 continue
-            if rp.relative_to(SRC_ROOT).as_posix() in DENY_FILES:
+            if rp.relative_to(REPO_ROOT).as_posix() in DENY_FILES:
                 continue
             if rp.is_file():
                 targets.append(rp)
+        baseline_touched = any(
+            Path(a).resolve() == BASELINE_PATH for a in file_args
+        )
+        if baseline_touched or not targets:
+            # Two triggers, and the first is the one that matters.
+            #
+            # (a) The BASELINE itself changed. Scanning only the other `.rs`
+            #     files in the commit would let a hand-edit LOWERING some
+            #     OTHER file's count pass — the entry still resolves, so the
+            #     dangling check is silent, and that file is never scanned.
+            #     An earlier revision only fell back when the target set came
+            #     out empty, which missed exactly the common case of editing
+            #     the baseline alongside a source file.
+            #
+            # (b) Nothing survived the filter. That happens for a guard script
+            #     named in the hook's `files:` regex — and, contrary to what
+            #     this comment said until the reviewer caught it, ALSO for an
+            #     ordinary `.rs` commit touching only a DENY_FILES entry
+            #     (`space_filter_canonical.rs`), which the deny filter drops.
+            #     Harmless, but it does spend the walk, and the previous
+            #     wording asserted it could not happen.
+            #
+            # The whole-tree walk is ~3.5s.
+            targets = all_source_files()
     else:
         targets = all_source_files()
 
     shape_violations: list[str] = []
     removal_violations: list[str] = []
+    unbaselined: list[str] = []
+    # #3255: a baseline entry naming a file that no longer exists protects
+    # nothing, and — this is the part that let the rot survive two years — it
+    # cannot fail. The scan asks "is this file's count still >= its baseline?"
+    # of files it FINDS; an entry whose file is gone is never asked about, so
+    # the guard reports success while 11 of its 15 subjects are unwatched.
+    # Session 1299 caught the same shape in the unsafe-allowlist checker
+    # ("it walked discovered files and asked 'is this one allowed?', never
+    # 'does this entry still name a file?'") and named existence checks as the
+    # cheap structural answer. This is that check, and it is deliberately
+    # unconditional — it runs on a targeted prek invocation too, because the
+    # rot is a property of the baseline, not of the files in any one commit.
+    # The `kind` exists so control flow never has to sniff the wording, and
+    # discarding it here was the last place that still did. A missing
+    # CRATE_ROOTS directory was folded into the baseline arm, so it announced
+    # "the baseline no longer describes this tree" — nothing about the
+    # baseline is wrong — and drew DANGLING_HINT, which points at the refusal
+    # message of a command the reader has not run. ROOT_MISSING_HINT, the one
+    # that names the actual remedy, was reachable only from
+    # `--update-baseline`. Rounds 15 and 16 fixed exactly this for the other
+    # two kinds; this is the third.
+    _found = _assert_paths_exist(baseline)
+    missing_roots = [m for kind, m in _found if kind == "root"]
+    unscanned = [m for kind, m in _found if kind == "unscanned"]
+    missing_baseline = [
+        m for kind, m in _found if kind == "missing_baseline"
+    ]
+    dangling = [
+        m
+        for kind, m in _found
+        if kind not in ("root", "unscanned", "missing_baseline")
+    ]
 
     for p in targets:
         rel = p.relative_to(REPO_ROOT).as_posix()
         cnt, viols = scan_file(p)
         shape_violations.extend(viols)
         base = baseline.get(rel, 0)
+        if cnt > 0 and rel not in baseline:
+            # #3255 review: `baseline.get(rel, 0)` means an entry DELETED
+            # outright reads as 0, so `cnt < base` can never fire for it —
+            # hand-editing a line out of the baseline silently retires the
+            # removal net for that file, which is the very net this guard is.
+            # The dangling check cannot see it either: there is no entry left
+            # to dangle. A file carrying canonical fragments must therefore
+            # carry a baseline entry. A genuinely NEW file trips this too,
+            # which is correct ratchet behaviour — re-anchor and the entry
+            # appears.
+            unbaselined.append(
+                f"{rel}: {cnt} canonical space-filter fragment(s) but NO "
+                f"baseline entry — an entry was deleted (retiring the removal "
+                f"net for this file), or the file is new and needs anchoring."
+            )
+        if cnt > base and rel in baseline:
+            # #3255 review: a count that EXCEEDS its baseline was silent, and
+            # that silence is the other half of this guard's own failure mode.
+            # Two ways in, one rule out:
+            #
+            #   * a file GAINS a canonical guard and keeps its stale-low
+            #     baseline — which is exactly the `backlink/grouped.rs` 3 -> 5
+            #     rot this change was written to expose. Unfixed, that rot
+            #     recurs unchanged: the added guards are unratcheted, and a
+            #     later removal restores the old number and passes.
+            #   * the baseline is HAND-LOWERED while the file is untouched
+            #     (`5 foo.rs` edited to `3`). Nothing else sees it — the entry
+            #     resolves so `dangling` is silent, it is present so
+            #     `unbaselined` is silent, and `cnt < base` is false by
+            #     construction.
+            #
+            # It is also what the `unbaselined` rule above already does for a
+            # brand-new file, for the same reason. A file whose count exceeds
+            # its record is a file whose record needs re-anchoring.
+            unbaselined.append(
+                f"{rel}: {cnt} canonical space-filter fragment(s) but the "
+                f"baseline records {base} — guards were added without "
+                f"re-anchoring, or the baseline was lowered by hand. Either "
+                f"way the extra {cnt - base} are unratcheted."
+            )
         if cnt < base:
             removal_violations.append(
                 f"{rel}: {cnt} canonical space-filter fragment(s), "
@@ -621,20 +2159,76 @@ def main(argv: list[str]) -> int:
                 f"`b.space_id = ?N`."
             )
 
-    if not shape_violations and not removal_violations:
+    if (
+        not shape_violations
+        and not removal_violations
+        and not dangling
+        and not missing_roots
+        and not unscanned
+        and not missing_baseline
+        and not unbaselined
+    ):
         return 0
 
+    # One clause per finding class that actually fired, joined — NOT a
+    # priority chain. Only shape/removal findings are drift; a dangling or
+    # unbaselined run has canonical SQL and a baseline that fails to describe
+    # it. An earlier revision picked a single banner by priority, so a run
+    # with BOTH a dangling entry and an unbaselined count announced only the
+    # latter above a list containing "does not exist" — the same mislabelling
+    # the split was made to fix, moved onto the combination. Composing means
+    # no combination can be described by a class it does not contain; the
+    # single-class wording is unchanged, so those cases read as before.
+    parts = []
+    if shape_violations or removal_violations:
+        parts.append(f"the inlined `{CANONICAL}` fragment drifted")
+    if unbaselined:
+        parts.append(
+            "canonical space-filter guards are not anchored in the baseline"
+        )
+    if dangling:
+        parts.append("the baseline no longer describes this tree")
+    if missing_roots:
+        # "missing or unusable", not "does not exist": the kind covers both a
+        # root that is absent and one that exists but resolves outside the
+        # repo. Saying "does not exist" over the second is the same
+        # mislabelling this banner was composed to prevent.
+        parts.append("a declared CRATE_ROOTS directory is missing or unusable")
+    if unscanned:
+        parts.append("a baseline entry names a file nothing scans")
+    if missing_baseline:
+        parts.append("the baseline file is missing")
     print(
-        "Space-filter drift guard (#139) — the inlined "
-        f"`{CANONICAL}` fragment drifted:\n",
+        f"Space-filter drift guard (#139) — {'; '.join(parts)}:\n",
         file=sys.stderr,
     )
     for v in shape_violations:
         print(f"  {v}", file=sys.stderr)
     for v in removal_violations:
         print(f"  {v}", file=sys.stderr)
+    for v in unbaselined:
+        print(f"  {v}", file=sys.stderr)
+    for v in dangling:
+        print(f"  {v}", file=sys.stderr)
+    for v in missing_roots:
+        print(f"  {v}", file=sys.stderr)
+    for v in unscanned:
+        print(f"  {v}", file=sys.stderr)
+    for v in missing_baseline:
+        print(f"  {v}", file=sys.stderr)
     print("", file=sys.stderr)
-    print(HINT, file=sys.stderr)
+    if dangling:
+        print(DANGLING_HINT, file=sys.stderr)
+    if missing_roots:
+        print(ROOT_MISSING_HINT, file=sys.stderr)
+    if unscanned:
+        print(UNSCANNED_HINT, file=sys.stderr)
+    if missing_baseline:
+        print(MISSING_BASELINE_HINT, file=sys.stderr)
+    if unbaselined:
+        print(UNBASELINED_HINT, file=sys.stderr)
+    if shape_violations or removal_violations:
+        print(HINT, file=sys.stderr)
     return 1
 
 
