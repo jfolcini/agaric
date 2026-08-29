@@ -1392,11 +1392,137 @@ jobs:
   # ---------------------------------------------------------------------------
   fuzz:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 90, not 60: the cmin step added in #4496 can take up to 20 minutes of the
+    # job on its own, on top of setup, five nightly ASan builds (15-25 min on a
+    # cold rust-cache) and ~10 min of fuzzing. A JOB timeout is a cancellation,
+    # which correctly skips the save — so an under-sized budget would surface as
+    # a corpus that silently stops accumulating, the failure #4496 exists to
+    # remove.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Placed IMMEDIATELY after checkout, before every setup step, and that
+      # position is load-bearing rather than tidy (#4503 review). It depends on
+      # nothing in between — apt, the nightly toolchain, rust-cache, node, npm
+      # and install-action are all irrelevant to extracting a corpus tarball —
+      # and running it first buys two things:
+      #
+      #   * ~8 minutes back on the 7-day eviction margin (#4504), since what
+      #     resets the entry's idle clock is the RESTORE, not the save;
+      #   * survival of a setup failure. With the restore below apt, a failed
+      #     `npm ci` skipped it, so the newest entry went unaccessed for that
+      #     whole week and was evicted a week later — losing the lineage
+      #     silently. Above setup the restore still runs, cmin then finds no
+      #     manifest and writes `collapsed=0`, and the save republishes the
+      #     restored corpus, refreshing the timestamp.
+      - name: Restore the accumulated fuzz corpus (#4496)
+        # Coverage-guided fuzzing only reaches depth if the corpus ACCUMULATES.
+        # Before this, `src-tauri/fuzz/corpus/` was uploaded as an artifact and
+        # never restored — the `Swatinem/rust-cache` step covers `~/.cargo` and
+        # `target/`, not the corpus — so every weekly run restarted all five
+        # targets from the seeds committed to git (8 files over 2 targets at the
+        # time; the other three had no corpus directory at all). Each run then
+        # re-explored the same shallow frontier that `-max_total_time` reaches
+        # from cold, indefinitely, and reported `ok` for doing so.
+        #
+        # `restore`/`save` are split rather than using one `actions/cache`.
+        # Not for the tempting reason: a combined action's post step re-globs
+        # and tars `path` from disk at post-job time, so cmin's result WOULD be
+        # captured (only the key and exact-hit flag ride forward in state). The
+        # reasons that actually hold are:
+        #   * the save point is explicit and ordered — it happens HERE, before
+        #     the artifact upload below, not in an implicit post-job step whose
+        #     position relative to other post steps is not ours to choose;
+        # (A second reason is sometimes given — that a combined action skips the
+        # save on an exact-key hit — but it does not apply here: a run-scoped
+        # primary key never hits on read, so that branch is unreachable either
+        # way. The ordering above is what carries the decision.)
+        # The run-scoped key never hits on read — `restore-keys` takes the most
+        # recent prefix match — which is what makes each run write a fresh
+        # entry instead of being stuck on the first one saved.
+        id: corpus-cache
+        # `continue-on-error` so this step cannot STOP the fuzzing: before this
+        # change the lane fuzzed from the committed seeds regardless of any
+        # cache, and it still must.
+        #
+        # What it buys is narrower than it looks. Checked against
+        # `@actions/cache`'s `restoreCache`
+        # (actions/toolkit, packages/cache/src/cache.ts): only a
+        # `ValidationError` (over-long key, bad path) is re-thrown; EVERY other
+        # failure — a cache service outage included — is logged via
+        # `core.error`/`core.warning` and the function returns `undefined`. So:
+        #
+        #   * `continue-on-error` matters only for the ValidationError path;
+        #   * a service outage leaves this step `outcome: success` with an EMPTY
+        #     `cache-matched-key`, i.e. indistinguishable from a genuine cold
+        #     start, so the `outcome == 'success'` gates below do NOT catch it.
+        #
+        # KNOWN RESIDUAL HOLE (#4504): on such a run the lane fuzzes from seeds
+        # only and then publishes a seeds-only entry as the newest
+        # `fuzz-corpus-*`, resetting the lineage — the thing those gates exist
+        # to prevent. It self-heals the following week and is still strictly
+        # better than the pre-change every-run-cold behaviour, which is why it
+        # is not fixed here. It is NOT closable by a content check either: a
+        # genuine cold start and an outage both end with the seeds plus
+        # whatever this run found, so nothing inside the job can separate them
+        # without querying the cache API.
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+          # KNOWN MARGIN (not fixed here): GitHub evicts cache entries not
+          # ACCESSED for 7 days. What resets an entry's idle clock is THIS step,
+          # not the save. The restore now runs within a minute of checkout and
+          # the save lands ~25 min into the job, so save-to-next-restore is
+          # about 6d23h35m — roughly TWENTY-FIVE minutes of headroom.
+          # `restore-keys` gives no cushion: it touches only the newest entry,
+          # so every older one is already a full 7 days idle by the next
+          # restore. There is no second chance. A run delayed past that (they are routinely
+          # delayed under load) evicts the corpus and resets to the seeds. The
+          # warm/cold step that follows is what makes that visible rather than
+          # silent; making accumulation robust
+          # rather than marginal needs a mid-week touch or a second scheduled
+          # restore, which is a follow-up rather than part of this change.
+          #
+          # Restore is deliberately NOT branch-gated while save is: Actions
+          # cache scoping lets any branch read the default branch's entries, so
+          # a `workflow_dispatch` run on a feature branch starts from main's
+          # accumulated corpus and then discards whatever it finds, because it
+          # will not save. That asymmetry is the intended trade — such a run
+          # gets a realistic starting corpus without spending the cache budget.
+          restore-keys: |
+            fuzz-corpus-
+
+      - name: Report whether this run started warm or cold (#4496)
+        # Whether the restore HIT is the single most useful fact in this lane's
+        # log, and it is exactly what was invisible before this change: a silent
+        # cache miss looks identical to a working lane that simply found
+        # nothing. `cache-matched-key` names the entry this run inherited.
+        env:
+          MATCHED: ${{ steps.corpus-cache.outputs.cache-matched-key }}
+          RESTORE_OUTCOME: ${{ steps.corpus-cache.outcome }}
+        run: |
+          # The `!= success` branch fires only for a ValidationError, because
+          # `restoreCache` swallows every other failure (see the restore step).
+          # An empty `$MATCHED` therefore means EITHER a genuine cold start OR a
+          # cache-service outage, and nothing here can tell them apart — so the
+          # message below says so instead of asserting the cheerful reading.
+          if [ "$RESTORE_OUTCOME" != "success" ]; then
+            echo "::warning::corpus restore FAILED (outcome=$RESTORE_OUTCOME) — fuzzing from the committed seeds only."
+            echo "cmin and the save are gated on this outcome, so this run will NOT publish a corpus entry."
+          elif [ -n "$MATCHED" ]; then
+            echo "corpus restored from cache entry: $MATCHED (warm start)"
+          else
+            echo "::warning::NO corpus cache entry matched — fuzzing from the committed seeds only."
+            echo "EITHER a genuine cold start OR a cache-service outage: restoreCache swallows the latter"
+            echo "and returns empty, so they are indistinguishable here (#4504). Expected exactly once, just"
+            echo "after this landed; on any later run suspect the save side or an evicted entry."
+          fi
+          find src-tauri/fuzz/corpus -type f 2>/dev/null | wc -l | xargs echo "corpus files on disk before fuzzing:"
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
@@ -1458,9 +1584,11 @@ jobs:
         working-directory: src-tauri/fuzz
         # `-max_total_time` keeps each target to a smoke budget so the weekly
         # lane stays bounded; a crash exits non-zero and the artifact upload
-        # below preserves the reproducer. Seeds come from the checked-in
-        # corpora under fuzz/corpus/<target>/. The dispatch input rides via
-        # `env:` (not inline `${{ }}`) per zizmor template-injection.
+        # below preserves the reproducer. The starting corpus is the checked-in
+        # seeds under fuzz/corpus/<target>/ UNIONED with whatever the restore
+        # step above recovered from previous runs (#4496) — the seeds are the
+        # floor on a cache miss, not the whole input set. The dispatch input
+        # rides via `env:` (not inline `${{ }}`) per zizmor template-injection.
         env:
           FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds || '120' }}
           # cargo-fuzz builds with `-Zsanitizer=address`, which rustc rejects
@@ -1548,6 +1676,194 @@ jobs:
           done
           # Aggregate: any non-ok target fails the job. Never silently green.
           exit "$overall"
+
+      - name: Minimise the corpus, then persist it (#4496)
+        id: corpus-cmin
+        # The one step here with no time bound of its own: the fuzz step caps
+        # itself with `-max_total_time`, but the merge re-executes every corpus
+        # input with only `-rss_limit_mb` to bound it. As the corpus grows this
+        # is the likeliest thing to push the job into its 90-minute timeout —
+        # and a job timeout is a CANCELLATION, which correctly skips the save,
+        # so the symptom would be a corpus that silently stops accumulating:
+        # the exact failure mode this change exists to remove. A step-level
+        # bound makes it a loud, attributable failure instead.
+        timeout-minutes: 20
+        # Condition is `!cancelled() && steps.corpus-cache.outcome == 'success'`
+        # (spelled out below). A crash in ONE target still leaves the other four
+        # with a run's worth of new coverage, and discarding that because the
+        # lane went red would make a single crashing target permanently reset
+        # every sibling's corpus — so a failed FUZZ step must not stop this.
+        #
+        # `cargo fuzz cmin` keeps a minimal input set covering the same edges,
+        # so the cache stays proportional to REACHED COVERAGE rather than to
+        # the number of runs. Without it the corpus only grows, and a corpus
+        # that outgrows the cache entry limit stops being restored at all —
+        # which would silently return this lane to the cold-start behaviour
+        # this step exists to end.
+        #
+        # Failures here are non-fatal (captured per target as `|| rc=$?`, then
+        # reported as a `::warning::` — NOT `|| true`, which is the mechanism
+        # this step replaced precisely because it discarded the exit status):
+        # cmin is an optimisation, and a corpus that failed to minimise is
+        # still a corpus worth saving. cargo-fuzz's `exec_cmin` swaps the
+        # directory only `if status.success()` (it merges into a temp dir, then
+        # `fs::rename`s the old corpus away and the minimised one into place),
+        # so a failed cmin leaves that target's corpus intact rather than
+        # emptied. The fuzz step above owns the lane's pass/fail verdict.
+        #
+        # Two conditions, guarding two different ways the corpus lineage gets
+        # silently reset to the committed seeds.
+        #
+        # `!cancelled()` rather than `always()`: cmin replaces `corpus/<target>`
+        # in place once its merge succeeds, so a cancellation or runner loss
+        # landing inside that swap leaves the directory absent — and `always()`
+        # would then let the save step below store THAT as the newest
+        # `fuzz-corpus-*` entry for the next run to inherit.
+        #
+        # `steps.corpus-cache.outcome == 'success'` is a DEFENCE IN DEPTH gate,
+        # and it is worth being honest that it is close to vacuous today: only
+        # `actions/checkout` precedes the restore now, so the failure it was
+        # written for cannot really occur.
+        #
+        # It is kept because it costs nothing and would catch the same shape if
+        # a step were ever inserted between checkout and the restore: any step
+        # that fails there skips the restore while these two, carrying their own
+        # `if:`, would run anyway — cmin finding no manifest and the save then
+        # publishing a `corpus/` holding only what `git checkout` put there,
+        # which every later run would inherit via `restore-keys`.
+        #
+        # `== 'success'`, not `!= 'skipped'`: the latter also passes when the
+        # restore ran and FAILED (cache service unavailable), and an absent step
+        # evaluates to `''`, which is likewise `!= 'skipped'`. A cache MISS is
+        # still `success`, which is correct — a genuine cold start should save.
+        if: ${{ !cancelled() && steps.corpus-cache.outcome == 'success' }}
+        working-directory: src-tauri/fuzz
+        env:
+          RUSTFLAGS: "-C target-feature=-crt-static"
+        run: |
+          # `set -uo pipefail` does NOT clear the `-e` that GitHub's default
+          # `bash -e {0}` already set, so every `find | wc -l` below carries
+          # `|| true`: `find` exits 1 on a missing directory, `pipefail`
+          # propagates that, and the assignment's non-zero status would trip
+          # `-e`, aborting the loop before the remaining targets are minimised.
+          # Unreachable today (all five targets have committed seed dirs), but
+          # reachable the moment a sixth is added without seeds and its build
+          # fails — `cargo fuzz run` builds before it creates `corpus/<target>`.
+          # That is the exact fail-fast shape #3169 removed from the fuzz step's
+          # own target loop; not reintroducing it here.
+          set -uo pipefail
+          # Read the target list the fuzz step already wrote, rather than
+          # hardcoding a THIRD copy of it. There are two today — the `[[bin]]`
+          # entries in `src-tauri/fuzz/Cargo.toml` and the `targets=(...)` array
+          # above — and #2945 is what a copy going stale costs: two targets were
+          # added to the manifest and not to the workflow, so they were built
+          # and never fuzzed for three months while the lane stayed green.
+          collapsed=0
+          manifest="${GITHUB_WORKSPACE}/fuzz-status/targets.txt"
+          if [ ! -f "$manifest" ]; then
+            # The fuzz step died before writing it (runner loss, job timeout).
+            # Save what is on disk unminimised rather than guessing a list.
+            echo "no target manifest at $manifest — skipping cmin"
+            # Still record a clean result: the corpus here is exactly what the
+            # restore left — un-minimised but intact — so republishing it is a
+            # no-op that also refreshes the entry's access timestamp. Without
+            # this the fail-closed gate below would read `''` and decline.
+            echo "collapsed=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # `|| [ -n "$target" ]` so a final unterminated line is not dropped.
+          # Safe today — the producer is `printf '%s\n'`, which always
+          # terminates — but the producer is a different step from this
+          # consumer, and removing the coupling costs nothing.
+          while read -r target || [ -n "$target" ]; do
+            [ -n "$target" ] || continue
+            before=$(find "corpus/$target" -type f 2>/dev/null | wc -l || true)
+            # `< /dev/null`: this loop's stdin IS the manifest (`done < ...`).
+            # cargo-fuzz nulls the fuzz binary's own stdin so this is fine
+            # today, but a child that ever read stdin would swallow the
+            # remaining target lines and cmin only the first — and the
+            # redirect below would hide that completely.
+            log="$RUNNER_TEMP/cmin-$target.log"
+            rc=0
+            # `-rss_limit_mb=4096` mirrors the fuzz step: without it the merge
+            # inherits libFuzzer's 2048 MB default, which is the most likely
+            # way cmin starts failing as the corpus grows — i.e. exactly when
+            # minimisation matters most.
+            cargo +nightly fuzz cmin "$target" \
+              --target x86_64-unknown-linux-gnu </dev/null \
+              -- -rss_limit_mb=4096 >"$log" 2>&1 || rc=$?
+            after=$(find "corpus/$target" -type f 2>/dev/null | wc -l || true)
+            echo "cmin $target: $before -> $after inputs"
+            # Non-fatal, but never SILENT. `>/dev/null 2>&1 || true`
+            # discarded the exit status too, so a permanently broken
+            # cmin (a CLI change, or a target that stops building under
+            # a newer nightly) would surface only as `N -> N inputs` —
+            # which is ALSO the correct output for an already-minimal
+            # corpus. The corpus would then grow unbounded until it
+            # outgrew the cache entry limit: the very failure this step
+            # exists to prevent, with nothing in the log saying so.
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::cmin FAILED for $target (exit $rc) — corpus left un-minimised"
+              tail -n 20 "$log" || true
+            fi
+            # The one silent-reset path the two `if:` gates above cannot see: a
+            # cmin that exits 0 having collapsed a non-empty corpus to nothing.
+            # The save would publish that as the newest `fuzz-corpus-` entry and
+            # every later run would inherit it through `restore-keys`. Flag it
+            # and let the save step stand down; the previous entry then stays
+            # newest and the next run recovers on its own.
+            if [ "$before" -gt 0 ] && [ "$after" -eq 0 ]; then
+              echo "::warning::cmin collapsed $target from $before inputs to 0 — standing down the save for ALL five targets this run (the flag is run-wide), so the previous cache entry stays newest"
+              collapsed=1
+            fi
+          done < "$manifest"
+          echo "collapsed=$collapsed" >> "$GITHUB_OUTPUT"
+
+      - name: Save the minimised fuzz corpus (#4496)
+        # Keyed on `github.run_id`, so every run writes a NEW entry that the
+        # next run's `restore-keys: fuzz-corpus-` prefix match then picks up.
+        # A content-independent constant key would be written once and never
+        # updated (GitHub's cache is immutable per key), freezing the corpus at
+        # whatever the first run produced.
+        #
+        # Gated on `main` for the same reason the `Swatinem/rust-cache` step
+        # above carries `save-if: github.ref == 'refs/heads/main'`. Nothing
+        # prunes these entries explicitly, but they do NOT accumulate.
+        # `restore-keys` touches only the NEWEST entry, so every
+        # older one goes unaccessed for a week and is evicted by the same 7-day
+        # idle rule described on the restore step. Steady state is about two.
+        # The `main` gate is therefore about not spending a feature branch's
+        # cache budget, not about bounding growth. Cache scoping already keeps such an entry out of main's
+        # restores. The scheduled run this lane exists for is on `main`, and
+        # still saves.
+        #
+        # `!cancelled() && steps.corpus-cache.outcome == 'success'` for the two
+        # reasons spelled out on the step above — a cancellation mid-cmin, and a
+        # setup failure before the restore — either of which would otherwise
+        # publish a truncated or seeds-only corpus as the newest entry.
+        # `steps.corpus-cmin.outputs.collapsed == '0'` is the third gate, and it
+        # is deliberately fail-CLOSED, and the explicit `'0'` matters: a test of
+        # `!= '1'` would pass on `''`, and `''` is not only the skipped case.
+        # What that catches: cmin hitting its own `timeout-minutes` is marked
+        # FAILED, not cancelled, so `!cancelled()` stays true while the output
+        # write never ran — and `!= '1'` would have published a half-minimised
+        # corpus as the newest entry. (The missing-manifest path is NOT such a
+        # case: it writes `collapsed=0` explicitly before its early exit, since
+        # the corpus there is intact and republishing it is a useful no-op.)
+        # Requiring an explicit `'0'` means every path that did not finish the
+        # loop and record a clean result declines to publish, leaving the
+        # previous entry newest.
+        if: ${{ !cancelled() && steps.corpus-cache.outcome == 'success' && steps.corpus-cmin.outputs.collapsed == '0' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/fuzz/corpus
+          # `run_attempt` is in the key because `run_id` alone is STABLE across
+          # attempts: re-running this job from the Actions UI would hit the
+          # already-reserved key, and `actions/cache/save` warns and continues
+          # rather than failing — so the step stays green while that attempt's
+          # corpus is silently dropped. The `fuzz-corpus-` prefix is unchanged,
+          # so `restore-keys` still selects the newest entry.
+          key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload fuzz artifacts (crashes / corpus)
         if: always()
