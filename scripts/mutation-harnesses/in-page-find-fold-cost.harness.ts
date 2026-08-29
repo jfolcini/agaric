@@ -51,9 +51,13 @@
  *
  * # The recompute check
  *
- * `assertTableIsSelfConsistent` is the part that earns this file its place.
- * Every percentage and multiplier printed is recomputed from the row's own
- * operands and compared to what the row claims. Three rounds of *trying
+ * `assertTableIsSelfConsistent` re-derives each row's percentage and multiplier
+ * from that row's own `pre`/`naive`/`now` and compares them to `deltaPct` and
+ * `guardX`. Be exact about the scope, because earlier drafts of this paragraph
+ * were not: it compares NUMBERS TO NUMBERS, never to `renderTable`'s output. A
+ * renderer defect — a transposed column, a wrong `toFixed` precision, `guardX`
+ * used where `deltaPct` belongs inside the template literal — prints wrong and
+ * asserts clean. Nothing here checks the rendering. Three rounds of *trying
  * harder* to keep prose consistent with a table produced three more wrong
  * summaries; one mechanical recompute produced none. If you edit the table in
  * `matcher.ts`, run this and diff — do not eyeball it.

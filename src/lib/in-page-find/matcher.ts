@@ -494,11 +494,14 @@ const FINAL_SIGMA_RE = /ς/g
  * (+21% against 5%) — same code, same experiment, opposite verdict. `english
  * para` failed to clear here and cleared there, at +11% against a 10% floor.
  * Over six runs the only rows that have ever flipped are `astral` and `english
- * para`; the other five have cleared every time. Three of those six are in the
- * tree and can be diffed against your own — this table, `session-1447` and
- * `session-1451`; the rest were run before the harness was committed, which is
- * the gap committing it closes. Any row
- * whose `now/pre` is within about twice its `range` figure should be treated
+ * para`; the other five have cleared every time. Three of those six have tables
+ * in the tree and can be diffed against your own — this one, `session-1447`
+ * and `session-1451`. The other three do not, and that is the only claim made
+ * about them: `session-1447` records the split as three runs while drafting
+ * and three from the committed harness, so in-the-tree and ran-from-the-harness
+ * are NOT the same three, and this table is itself a drafting run carried over
+ * from #4537. Any row whose `now/pre` is within about twice its `range` figure
+ * should be treated
  * as "direction known, magnitude not" — the verdict column is a property of
  * the run, not of the code. Three earlier versions of this block
  * reported single runs to the percentage point, which is how `+127%` was
