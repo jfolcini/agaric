@@ -52,7 +52,8 @@
 # sized well above the project's own parallel-PR pipeline cap (5) so it
 # will not itself start forcing renumbers under normal parallelism.
 #
-# Checks, for each staged ADDED docs/session-log/session-NNN-*.md:
+# Checks, for each staged ADDED or RENAMED docs/session-log/session-NNN-*.md
+# (resolved to its destination path — see `staged_targets` below):
 #   1. NNN is not already taken — on this branch, in the merge target, or by
 #      another file in this same commit. THIS is what makes a collision
 #      unrepresentable in the merge result; it does not depend on check 2.
@@ -64,7 +65,18 @@
 #   3. The `# Session NNNN` heading inside the file matches the filename.
 #
 # Pre-existing duplicates (the fifteen session-1000 files, the two
-# session-1281 files) are history: only a STAGED addition can fail.
+# session-1281 files) are history: only a STAGED addition or rename can fail.
+#
+# WHY RENAMES ALSO HAVE TO BE SELECTED (#4527)
+# ---------------------------------------------
+# A renumber — the exact fix this guard's own "your base is stale" message
+# tells you to run — is `git mv session-NNN-x.md session-MMM-x.md`, which
+# git stages as a RENAME, not an addition. Selecting only `A` (as this guard
+# did before #4527) means the loop body never runs on a renumber, and the
+# guard exits 0 having checked nothing — on exactly the collision-prone path
+# (two parallel branches renumbering onto the same number) it exists for.
+# See `staged_targets` for the selector and why a rename must resolve to its
+# DESTINATION path, never its source.
 #
 # `--self-test` drives the guard through throwaway git repositories — no
 # network, no mutation of this repo — including the exact #3690 shape:
@@ -81,6 +93,66 @@ LOG_DIR="docs/session-log"
 GAP_BOUND=10
 
 num_of() { basename "$1" | sed -E 's/^session-([0-9]+)-.*$/\1/'; }
+
+# Staged files this guard must check: brand-new logs AND `git mv` renumbers,
+# resolved to their DESTINATION path (#4527).
+#
+# The original selector was `git diff --cached --name-only --diff-filter=A`.
+# A renumber — the operation this guard's own "your base is stale" message
+# tells you to perform — is done as `git mv session-NNN-x.md
+# session-MMM-x.md`, which git stages as a RENAME (`R`), not an addition.
+# `--diff-filter=A` matches none of that, so the loop body never ran and the
+# guard exited 0 having checked nothing — silently, on precisely the
+# collision-prone path (two parallel branches renumbering onto the same
+# number) the guard exists for. Whether git records `R` or `D`+`A` for the
+# same logical edit depends on rename-detection similarity (edit the body
+# enough while renumbering and it flips to `D`+`A`), so the old selector's
+# coverage flickered on and off for the identical operation.
+#
+# `--diff-filter=ACR`:
+#   A — a brand-new log (the case the guard already covered).
+#   R — a renumber. THE dominant path by which this guard's own advice is
+#       acted on. Resolved below to its DESTINATION — the new, contested
+#       number — never the source.
+#   C — a copy (rare here, but the same "a number newly appears" shape as A,
+#       and the same two-path record shape as R).
+# `M` (content edited, filename and number both unchanged) is DELIBERATELY
+# EXCLUDED. Including it would be a wrong-answer bug, not a missed check:
+# the file's number is already present in `HEAD` — as this same file — so
+# running it through check 1 below would flag it as colliding WITH ITSELF.
+# There is nothing to (re-)validate about a number that did not change.
+#
+# `-z --name-status` rather than plain `--name-status`: an ordinary rename
+# line prints BOTH paths on one row, and naive whitespace-splitting would
+# hand the guard the SOURCE path — the OLD, colliding number — which is
+# worse than the silent skip it replaces. `-z` NUL-delimits every field (a
+# status token, then one path for A/M, two for R/C), so source and
+# destination can never be confused for a single token; the parser below
+# reads exactly the field count each status implies and explicitly discards
+# the source.
+staged_targets() {
+  local status path1 path2
+  while IFS= read -r -d '' status; do
+    case "$status" in
+      A)
+        IFS= read -r -d '' path1
+        printf '%s\n' "$path1"
+        ;;
+      R* | C*)
+        IFS= read -r -d '' path1 # source — discarded
+        IFS= read -r -d '' path2 # destination — the number that matters
+        printf '%s\n' "$path2"
+        ;;
+      *)
+        # Unreached under --diff-filter=ACR today. If git ever adds a status
+        # letter this filter can select, fail loudly rather than silently
+        # mis-parse an unknown record's field count as a bare path.
+        echo "ERROR: check-session-log-numbering: unexpected diff status '$status' for a staged $LOG_DIR change — refusing to guess its field shape." >&2
+        return 1
+        ;;
+    esac
+  done < <(git diff --cached -z --name-status --diff-filter=ACR -- "$LOG_DIR/session-*.md")
+}
 
 # Session numbers recorded in a ref's tree. Empty (not an error) when the
 # ref does not exist or holds no session logs.
@@ -116,8 +188,19 @@ run_guard() {
   local added existing_max expected max_allowed fail=0
   local target_ref target_nums head_nums taken n f heading
 
-  added="$(git diff --cached --name-only --diff-filter=A -- "$LOG_DIR/session-*.md" || true)"
-  [ -z "$added" ] && return 0
+  added="$(staged_targets)" || return 1
+  if [ -z "$added" ]; then
+    # #4527: a run that checked nothing must SAY so, not just exit 0 —
+    # otherwise it is indistinguishable from a run that checked and
+    # approved. This hook only runs at all when prek's file filter has
+    # already matched a staged docs/session-log change, so an empty
+    # selection here is real information (a pure content edit or a pure
+    # deletion — see the `staged_targets` comment for why those are not
+    # selected), not a no-op worth staying silent about.
+    echo "session-log-numbering: 0 additions/renames staged under $LOG_DIR — nothing to check."
+    return 0
+  fi
+  echo "session-log-numbering: checking $(printf '%s\n' "$added" | grep -c .) staged addition/rename(s)."
 
   target_ref="$(merge_target_ref)"
   head_nums="$(nums_in_ref HEAD)"
@@ -250,15 +333,56 @@ if [ "${1:-}" = "--self-test" ]; then
   }
 
   # write <dir> <number> <slug> [heading-number]
+  # Body padded to 8 filler lines (not just the 3-line header) so that
+  # `st_renumber`'s heading-only edit (below) stays a HIGH-similarity
+  # rename (git measured: R094) rather than tipping into a D+A pair on its
+  # own — a real risk on a file this short, and one that would make Cases
+  # 10/11 test the wrong thing (a heading edit that happens to cross the
+  # rename threshold, not the renumber itself).
   st_write() {
-    local dir="$1" num="$2" slug="$3" heading="${4:-$2}"
-    printf '# Session %s — %s\n\n**Date:** 2026-01-01\n' "$heading" "$slug" \
-      >"$dir/docs/session-log/session-$num-$slug.md"
+    local dir="$1" num="$2" slug="$3" heading="${4:-$2}" i
+    {
+      printf '# Session %s — %s\n\n**Date:** 2026-01-01\n' "$heading" "$slug"
+      for i in 1 2 3 4 5 6 7 8; do
+        printf 'Body content line %d for the %s session log entry.\n' "$i" "$slug"
+      done
+    } >"$dir/docs/session-log/session-$num-$slug.md"
   }
 
   st_commit() {
     git -C "$1" add -A
     git -C "$1" commit -qm "$2" --no-verify
+  }
+
+  # renumber <dir> <old-num> <slug> <new-num> [rewrite-body?]
+  # The actual `git mv` renumber this guard's own stale-base message tells
+  # you to perform (#4527) — as opposed to `st_write` above, which drops a
+  # brand-new file in place and was all the pre-#4527 fixtures ever staged.
+  # Also updates the `# Session NNNN` heading to the new number, because a
+  # WELL-FORMED renumber does — Case 4 below already covers the
+  # forgot-the-heading half; this helper stays out of that half's way so
+  # the collision/window assertions are not muddied by an unrelated
+  # heading failure.
+  # rewrite-body=1 additionally pads the file with enough new text to push
+  # git's rename-detection similarity below its threshold, so the SAME
+  # logical renumber stages as `D`+`A` instead of `R` — the nondeterminism
+  # edge #4527 calls out. Staged with `add -A` so the rename (or D+A) and
+  # the heading fix land in the index together, the way a real renumber
+  # commit does.
+  st_renumber() {
+    local dir="$1" old="$2" slug="$3" new="$4" rewrite="${5:-0}"
+    local old_path="docs/session-log/session-$old-$slug.md"
+    local new_path="docs/session-log/session-$new-$slug.md"
+    git -C "$dir" mv "$old_path" "$new_path"
+    sed -i -E "s/^# Session [0-9]+/# Session $new/" "$dir/$new_path"
+    if [ "$rewrite" = 1 ]; then
+      {
+        for i in $(seq 1 12); do
+          printf 'filler filler filler filler filler filler filler filler line %d\n' "$i"
+        done
+      } >>"$dir/$new_path"
+    fi
+    git -C "$dir" add -A
   }
 
   st_run() { (cd "$1" && bash "$GUARD" >"$ST_ROOT/out.txt" 2>&1); }
@@ -488,6 +612,132 @@ if [ "${1:-}" = "--self-test" ]; then
     st_ok "no staged session-log additions: passes trivially"
   else
     st_bad "no staged session-log additions: passes trivially" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 10: #4527 — a `git mv` renumber onto a TAKEN number is caught ──
+  # THE defect this issue is about: before the fix, this renumber staged
+  # as a pure rename (`R100`), `--diff-filter=A` selected nothing, and the
+  # guard exited 0 having checked nothing at all.
+  d="$(st_new_repo mv-collision)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  base_sha="$(git -C "$d" rev-parse HEAD)"
+  st_write "$d" 1281 sibling
+  st_commit "$d" "sibling merged to main"
+  git -C "$d" update-ref refs/remotes/origin/main "$(git -C "$d" rev-parse HEAD)"
+  git -C "$d" reset -q --hard "$base_sha"
+  st_renumber "$d" 1280 base 1281 0
+  if ! git -C "$d" diff --cached --name-status | grep -q '^R'; then
+    st_bad "the mv-collision fixture actually stages as a rename" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_bad "a git-mv renumber onto a number already taken is caught (#4527)" "guard passed"
+  elif grep -q 'BASE IS STALE' "$ST_ROOT/out.txt" && grep -q 'already taken' "$ST_ROOT/out.txt"; then
+    st_ok "a git-mv renumber onto a number already taken is caught (#4527)"
+  else
+    st_bad "a git-mv renumber onto a number already taken is caught (#4527)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 11: #4527 — a `git mv` renumber onto a FREE number passes ─────
+  # The complement of Case 10: a fix that rejected every rename (not just
+  # colliding ones) would pass Case 10 and fail here.
+  d="$(st_new_repo mv-free)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  base_sha="$(git -C "$d" rev-parse HEAD)"
+  st_write "$d" 1281 sibling
+  st_commit "$d" "sibling merged to main"
+  git -C "$d" update-ref refs/remotes/origin/main "$(git -C "$d" rev-parse HEAD)"
+  git -C "$d" reset -q --hard "$base_sha"
+  st_renumber "$d" 1280 base 1283 0
+  if st_run "$d"; then
+    st_ok "a git-mv renumber onto a free, in-window number passes (#4527)"
+  else
+    st_bad "a git-mv renumber onto a free, in-window number passes (#4527)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+  if grep -q 'checking 1 staged addition/rename' "$ST_ROOT/out.txt"; then
+    st_ok "a checked renumber reports how many files it checked (#4527)"
+  else
+    st_bad "a checked renumber reports how many files it checked (#4527)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 12: #4527 — the SAME collision, staged as D+A (nondeterminism) ─
+  # Whether git records a renumber as `R` or as `D`+`A` depends on
+  # rename-detection similarity, not on what the operation MEANS. Rewriting
+  # the body past the similarity threshold must not change the verdict.
+  d="$(st_new_repo mv-collision-da)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  base_sha="$(git -C "$d" rev-parse HEAD)"
+  st_write "$d" 1281 sibling
+  st_commit "$d" "sibling merged to main"
+  git -C "$d" update-ref refs/remotes/origin/main "$(git -C "$d" rev-parse HEAD)"
+  git -C "$d" reset -q --hard "$base_sha"
+  st_renumber "$d" 1280 base 1281 1
+  if git -C "$d" diff --cached --name-status | grep -q '^R'; then
+    st_bad "the D+A fixture actually stages as D+A, not a rename — fixture invalid" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_bad "the same collision, staged as D+A instead of R, is still caught (#4527)" "guard passed"
+  elif grep -q 'already taken' "$ST_ROOT/out.txt"; then
+    st_ok "the same collision, staged as D+A instead of R, is still caught (#4527)"
+  else
+    st_bad "the same collision, staged as D+A instead of R, is still caught (#4527)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 13: #4527 — the SAME free renumber, staged as D+A ─────────────
+  d="$(st_new_repo mv-free-da)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  base_sha="$(git -C "$d" rev-parse HEAD)"
+  st_write "$d" 1281 sibling
+  st_commit "$d" "sibling merged to main"
+  git -C "$d" update-ref refs/remotes/origin/main "$(git -C "$d" rev-parse HEAD)"
+  git -C "$d" reset -q --hard "$base_sha"
+  st_renumber "$d" 1280 base 1283 1
+  if git -C "$d" diff --cached --name-status | grep -q '^R'; then
+    st_bad "the D+A free-renumber fixture actually stages as D+A, not a rename — fixture invalid" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_ok "the same free renumber, staged as D+A instead of R, still passes (#4527)"
+  else
+    st_bad "the same free renumber, staged as D+A instead of R, still passes (#4527)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 14: #4527 — a content-only edit must not false-alarm ──────────
+  # The number is unchanged, so it is already present in HEAD as this same
+  # file. Selecting `M` naively (as the issue's own "ACMR" suggestion would,
+  # unqualified) would flag it as colliding with itself. Also pins that the
+  # empty selection is now REPORTED, not silent (the other half of #4527).
+  d="$(st_new_repo modify-only)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  printf '\nAn appended paragraph. The session number never changes.\n' \
+    >>"$d/docs/session-log/session-1280-base.md"
+  git -C "$d" add -A
+  if ! git -C "$d" diff --cached --name-status | grep -qx $'M\tdocs/session-log/session-1280-base.md'; then
+    st_bad "the modify-only fixture actually stages as a pure M" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_ok "a content-only edit to an existing log does not false-alarm (#4527)"
+  else
+    st_bad "a content-only edit to an existing log does not false-alarm (#4527)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+  if grep -q '0 additions/renames staged' "$ST_ROOT/out.txt"; then
+    st_ok "a content-only edit reports the empty selection explicitly, not silently (#4527)"
+  else
+    st_bad "a content-only edit reports the empty selection explicitly, not silently (#4527)" \
       "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
   fi
 
