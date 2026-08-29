@@ -4,9 +4,22 @@
 //! security argument rather than only a robustness one: #2989 was a
 //! path-traversal filename reaching `rename_attachment` because validation did
 //! not reject it. The parser is what stands between user-supplied path text and
-//! the filesystem, so "never panics, and rejects anything it should not accept"
-//! is the contract worth stressing with adversarial bytes — `..` segments,
-//! absolute paths, NUL bytes, Windows separators, overlong sequences.
+//! the filesystem, and adversarial bytes — `..` segments, absolute paths, NUL
+//! bytes, Windows separators, overlong sequences — are what it has to survive.
+//!
+//! **What this target actually asserts**, which is narrower than the contract
+//! that motivates it:
+//!
+//! 1. **No panic**, on any input.
+//! 2. **Idempotence** on accepted values: `parse(parse(x)) == parse(x)`.
+//!
+//! It asserts **nothing about which inputs are rejected**. "Rejects anything it
+//! should not accept" is the reason this boundary is worth fuzzing, but it is
+//! not a property arbitrary bytes can check — a rejection is a correct outcome
+//! for almost all of them, and pinning the accept/reject split belongs in the
+//! unit tests, where the expected answer is known. So the lane can go red here
+//! two ways, a panic and the idempotence assertion, and this list is the whole
+//! of it.
 //!
 //! Run: `cargo +nightly fuzz run attachment_path_parse`.
 
@@ -20,12 +33,6 @@ fuzz_target!(|data: &[u8]| {
     // Takes `&str`; only valid UTF-8 reaches it, and libFuzzer still explores
     // the full byte space.
     //
-    // Nothing is asserted about WHICH inputs are rejected — a rejection is a
-    // correct outcome for arbitrary bytes, and pinning the accept/reject split
-    // belongs in the unit tests, where the expected answer is known. What IS
-    // asserted, below, is a property of the values that ARE accepted: parsing
-    // is a fixed point. So this target can fail the lane two ways, a panic and
-    // that assertion, and the header used to claim only the first.
     if let Ok(s) = std::str::from_utf8(data) {
         if let Ok(parsed) = AttachmentFsPath::parse(s) {
             // IDEMPOTENCE, not a round-trip. An earlier version of this target

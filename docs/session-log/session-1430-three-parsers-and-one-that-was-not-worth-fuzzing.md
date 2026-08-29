@@ -327,3 +327,38 @@ suggestion was good, the caveat attached to it was the load-bearing part, and
 following the caveat is what turned a plausible invariant into a latent
 precision bug. "Validate before asserting" caught something neither of us
 expected to find.
+
+## A header that described a contract instead of an assertion
+
+Third review round. The most useful of its notes is about
+`attachment_path_parse`'s module header, which said the contract worth stressing
+was "never panics, and rejects anything it should not accept".
+
+The first half is asserted. The second is not, and cannot be: a rejection is the
+correct outcome for almost every arbitrary byte string, so there is nothing for a
+fuzz target to check there — pinning the accept/reject split belongs in the unit
+tests, where the expected answer is known. Meanwhile the assertion that *can*
+redden the lane, idempotence, was not in the header at all. So the header named
+one thing the target does, one thing it does not, and omitted the one most likely
+to fail.
+
+The body comment made it worse by ending "the header used to claim only the
+first" — a back-reference to a revision that no longer existed, describing a
+header that by then claimed something else. Two copies of one fact, drifting
+apart, in a change whose whole subject is second copies drifting apart. That is
+the third time in this PR.
+
+The header now separates the **motivation** (this is the validation boundary,
+#2989 was a traversal filename reaching `rename_attachment`, adversarial bytes
+are what it must survive) from the **assertions**, which are enumerated as
+exactly two and described as the whole of it. A reader deciding whether a red
+lane is real needs the second list, not the first.
+
+The remaining notes were mine and mechanical: the "git ls-files, NOT find"
+rationale had ended up duplicated inside the same loop body, with the second copy
+back-referencing a comment about a different concern; the `mktemp` leaked on the
+producer-failure path; and the loop I guarded last round sat at the enclosing
+indent, so its two stacked `fi`s did not pair by eye. All three were introduced
+by my own previous round of review fixes, which is worth noticing on its own —
+each fix was correct and each left the file slightly harder to read than it found
+it.
