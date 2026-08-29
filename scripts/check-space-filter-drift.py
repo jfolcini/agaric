@@ -1002,6 +1002,17 @@ def run_cli_self_test(record) -> None:
             # everything else.
             if not compiled.search("src-tauri/space-filter-baseline.txt"):
                 uncovered.append("src-tauri/space-filter-baseline.txt")
+            # And the guard script itself, which is the fourth blind spot this
+            # change leads with: before round fifteen a commit editing only
+            # this file — CRATE_ROOTS included — did not select the hook at
+            # all, so the list could be narrowed without the guard ever
+            # running over the tree. That alternative was added by hand and
+            # was the last piece of coverage resting on a manual `prek run`;
+            # deleting it from prek.toml left this suite byte-identical and
+            # passing, which is precisely the standard applied everywhere
+            # else here.
+            if not compiled.search("scripts/check-space-filter-drift.py"):
+                uncovered.append("scripts/check-space-filter-drift.py")
         if files_re and not uncovered:
             record("prek.toml `files:` covers every CRATE_ROOTS entry", True, True)
         else:
