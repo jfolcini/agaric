@@ -2206,7 +2206,16 @@ language = "system"
 # all of which delegate to check-raw-tx.py for real.) `guard_file_source.py`
 # is unioned too: loading check-raw-tx.py runs ITS top-level
 # `exec_module(guard_file_source)` as a side effect.
-files = '^src-tauri/src/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
+# #3255: this used to read `^src-tauri/src/.*\.rs$`, so a commit confined to
+# `agaric-store/` — where 21 of the 31 canonical fragments now live — did not
+# select this hook AT ALL. Widening the guard's scan roots without widening
+# this regex would have fixed nothing for exactly the commits that matter;
+# the two have to move together, which is the same pairing #3110 made for
+# `check-raw-tx`. NOT a copy of that hook's regex, which lists four roots
+# (prek.toml, hook id `check-raw-tx`): this one lists six, adding
+# `agaric-core/src` and the baseline file itself, and it must stay in step
+# with CRATE_ROOTS in the guard rather than with its sibling hook.
+files = '^src-tauri/(src|agaric-core/src|agaric-store/src|agaric-engine/src|agaric-sync/src|diagnostics/src)/.*\.rs$|^src-tauri/space-filter-baseline\.txt$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
 # Self-test the space-filter drift guard's own exit behavior (a canonical
