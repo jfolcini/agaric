@@ -72,11 +72,12 @@ third-party deps.
 
 `--update-baseline` re-anchors. It REFUSES (exit 1, writing nothing) when a
 canonical guard would leave the baseline — either a net loss across the tree,
-or a drop in a file that still exists. A WHOLE-file move (the old file gone or
-emptied, an equal gain elsewhere) nets to zero and is allowed without a flag.
-A PARTIAL move — relocating one query out of a file that keeps the rest — is
-refused, because by counts alone it is indistinguishable from deleting one in
-place; `--allow-reductions` records it, and note that the flag is run-wide, so
+or a drop in a file that still exists. A WHOLE-file move — the old file GONE,
+an equal gain elsewhere — nets to zero and is allowed without a flag. Every
+other shape that loses a guard from a file still present is refused, including
+an emptied-but-present shim and a PARTIAL move (relocating one query out of a
+file that keeps the rest), because by counts alone neither is distinguishable
+from deleting one in place; `--allow-reductions` records it, and note that the flag is run-wide, so
 it also suppresses any unintended deletion in the same invocation.
 """
 
@@ -1086,6 +1087,43 @@ def run_cli_self_test(record) -> None:
                 "the not-anchored banner, and no 'fragment drifted' claim",
             )
 
+        # --- #3255 direction 16: a MIXED run names every class that fired ---
+        # The banner used to be a priority chain, so a run carrying both a
+        # dangling entry and an unbaselined count announced only the latter
+        # over a list containing "does not exist". Nothing was lost (both
+        # hints printed), but the headline described the finding set as
+        # something it was not — the fault the split was made to remove,
+        # relocated onto the combination. `gained.rs` supplies the
+        # unbaselined half; `gone.rs` is named by the baseline and never
+        # created, supplying the dangling half.
+        gained.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n'
+            'let b = "WHERE (?2 IS NULL OR b.space_id = ?2)";\n'
+            'let c = "WHERE (?3 IS NULL OR b.space_id = ?3)";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text(
+            "1 src-tauri/src/gained.rs\n1 src-tauri/src/gone.rs\n",
+            encoding="utf-8",
+        )
+        try:
+            code, out = _run_cli(guard, [str(gained)])
+        finally:
+            gained.unlink()
+        banner = out.split("\n", 1)[0]
+        if (
+            code != 0
+            and "not anchored in the baseline" in banner
+            and "no longer describes this tree" in banner
+        ):
+            record("CLI: a mixed run names every finding class (#3255)", True, True)
+        else:
+            record(
+                "CLI: a mixed run names every finding class (#3255)",
+                (code, banner),
+                "a banner naming BOTH the unanchored and the dangling class",
+            )
+
 
 def run_self_test() -> int:
     """Assert scan_text/parse_baseline's exit-relevant behavior.
@@ -1289,10 +1327,12 @@ def main(argv: list[str]) -> int:
                 )
             print(
                 f"\n  REFUSING: {why}.\n"
-                "  Per-file gains and losses are listed above. A pure MOVE — "
-                "the old file gone or\n"
-                "  emptied, an equal gain elsewhere — nets to zero and is "
-                "allowed without a flag.\n"
+                "  Per-file gains and losses are listed above. A whole-file "
+                "MOVE — the old file\n"
+                "  GONE, an equal gain elsewhere — nets to zero and is allowed "
+                "without a flag; a file\n"
+                "  left in place with fewer guards (an emptied shim included) "
+                "is refused here.\n"
                 "  Nothing has been written. If the removal is intended, "
                 "re-run with `--allow-reductions`.",
                 file=sys.stderr,
@@ -1426,30 +1466,28 @@ def main(argv: list[str]) -> int:
     ):
         return 0
 
-    # Three headers, one per finding class, because only shape/removal
-    # findings are actually drift. A dangling-only run has nothing drifted in
-    # it, and neither does an unbaselined-only one: the SQL is canonical, it
-    # is the baseline that does not cover it. Saying "drifted" over either
-    # sends the reader hunting for a mismatched `?N` that is not there. The
-    # hints are routed the same way for the same reason.
+    # One clause per finding class that actually fired, joined — NOT a
+    # priority chain. Only shape/removal findings are drift; a dangling or
+    # unbaselined run has canonical SQL and a baseline that fails to describe
+    # it. An earlier revision picked a single banner by priority, so a run
+    # with BOTH a dangling entry and an unbaselined count announced only the
+    # latter above a list containing "does not exist" — the same mislabelling
+    # the split was made to fix, moved onto the combination. Composing means
+    # no combination can be described by a class it does not contain; the
+    # single-class wording is unchanged, so those cases read as before.
+    parts = []
     if shape_violations or removal_violations:
-        print(
-            "Space-filter drift guard (#139) — the inlined "
-            f"`{CANONICAL}` fragment drifted:\n",
-            file=sys.stderr,
+        parts.append(f"the inlined `{CANONICAL}` fragment drifted")
+    if unbaselined:
+        parts.append(
+            "canonical space-filter guards are not anchored in the baseline"
         )
-    elif unbaselined:
-        print(
-            "Space-filter drift guard (#139) — canonical space-filter "
-            "guards are not anchored in the baseline:\n",
-            file=sys.stderr,
-        )
-    else:
-        print(
-            "Space-filter drift guard (#139) — the baseline no longer "
-            "describes this tree:\n",
-            file=sys.stderr,
-        )
+    if dangling:
+        parts.append("the baseline no longer describes this tree")
+    print(
+        f"Space-filter drift guard (#139) — {'; '.join(parts)}:\n",
+        file=sys.stderr,
+    )
     for v in shape_violations:
         print(f"  {v}", file=sys.stderr)
     for v in removal_violations:
