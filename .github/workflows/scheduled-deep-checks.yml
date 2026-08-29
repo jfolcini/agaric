@@ -1392,7 +1392,13 @@ jobs:
   # ---------------------------------------------------------------------------
   fuzz:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 90, not 60: the cmin step added in #4496 can take up to 20 minutes of the
+    # job on its own, on top of setup, five nightly ASan builds (15-25 min on a
+    # cold rust-cache) and ~10 min of fuzzing. A JOB timeout is a cancellation,
+    # which correctly skips the save — so an under-sized budget would surface as
+    # a corpus that silently stops accumulating, the failure #4496 exists to
+    # remove.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1498,8 +1504,10 @@ jobs:
           key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
           # KNOWN MARGIN (not fixed here): GitHub evicts cache entries not
           # ACCESSED for 7 days. This lane runs Mondays 04:17 UTC and saves
-          # ~20-35 min into the job, so save-to-next-restore is about 6d23h30m
-          # — roughly half an hour of headroom. A scheduled run delayed past
+          # ~25 min into the job while the restore runs ~8 min in, so
+          # save-to-next-restore is about 6d23h43m — roughly SEVENTEEN minutes
+          # of headroom, and `restore-keys` gives no cushion because the older
+          # entries were last accessed at the same clock time. A run delayed past
           # that (they are routinely delayed under load) evicts the corpus and
           # resets to the committed seeds. The warm/cold step below is what
           # makes that visible rather than silent; making accumulation robust
@@ -1724,6 +1732,11 @@ jobs:
             # The fuzz step died before writing it (runner loss, job timeout).
             # Save what is on disk unminimised rather than guessing a list.
             echo "no target manifest at $manifest — skipping cmin"
+            # Still record a clean result: the corpus here is exactly what the
+            # restore left — un-minimised but intact — so republishing it is a
+            # no-op that also refreshes the entry's access timestamp. Without
+            # this the fail-closed gate below would read `''` and decline.
+            echo "collapsed=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # `|| [ -n "$target" ]` so a final unterminated line is not dropped.
@@ -1783,10 +1796,13 @@ jobs:
         #
         # Gated on `main` for the same reason the `Swatinem/rust-cache` step
         # above carries `save-if: github.ref == 'refs/heads/main'`. Nothing
-        # prunes these entries — each run writes one and they age out only via
-        # the repo-wide 10 GB LRU, shared with the rust-cache and npm entries —
-        # so a `workflow_dispatch` run on a feature branch should not spend that
-        # budget. Cache scoping already keeps such an entry out of main's
+        # prunes these entries explicitly, but they do NOT accumulate: an
+        # earlier note here claimed ~52/year against the repo-wide LRU and that
+        # was wrong. `restore-keys` touches only the NEWEST entry, so every
+        # older one goes unaccessed for a week and is evicted by the same 7-day
+        # idle rule described on the restore step. Steady state is about two.
+        # The `main` gate is therefore about not spending a feature branch's
+        # cache budget, not about bounding growth. Cache scoping already keeps such an entry out of main's
         # restores, so this is quota and consistency, not correctness. The
         # scheduled run this lane exists for is on `main` and still saves.
         #
@@ -1794,10 +1810,17 @@ jobs:
         # reasons spelled out on the step above — a cancellation mid-cmin, and a
         # setup failure before the restore — either of which would otherwise
         # publish a truncated or seeds-only corpus as the newest entry.
-        # `steps.corpus-cmin.outputs.collapsed != '1'` is the third gate: see the
-        # collapse check in the step above. When cmin is skipped the output is
-        # `''`, which passes — correct, because this step is skipped then too.
-        if: ${{ !cancelled() && steps.corpus-cache.outcome == 'success' && steps.corpus-cmin.outputs.collapsed != '1' && github.ref == 'refs/heads/main' }}
+        # `steps.corpus-cmin.outputs.collapsed == '0'` is the third gate, and it
+        # is deliberately fail-CLOSED. An earlier form tested `!= '1'`, which
+        # passes on `''` — and `''` is NOT only the skipped case:
+        #   * cmin hitting its own `timeout-minutes` is marked FAILED, not
+        #     cancelled, so `!cancelled()` stays true while the output write
+        #     never ran — publishing a half-minimised corpus as the newest entry;
+        #   * the missing-manifest early exit returned before writing it at all.
+        # Requiring an explicit `'0'` means every path that did not finish the
+        # loop and record a clean result declines to publish, leaving the
+        # previous entry newest.
+        if: ${{ !cancelled() && steps.corpus-cache.outcome == 'success' && steps.corpus-cmin.outputs.collapsed == '0' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: src-tauri/fuzz/corpus
