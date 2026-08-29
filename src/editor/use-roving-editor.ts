@@ -65,6 +65,7 @@ import { TaskPaste } from '@/editor/extensions/task-paste'
 import { Underline } from '@/editor/extensions/underline'
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { parse, serialize } from '@/editor/markdown-serializer'
+import { ignoreReactNodeViewChrome } from '@/editor/node-view-mutations'
 import { cleanupOrphanedPopups } from '@/editor/suggestion-renderer'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
@@ -383,38 +384,12 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
       // `e2e/mobile-editor.spec.ts`) showed it DID freeze: the block never
       // materialised and React bailed out with "Maximum update depth exceeded".
       //
-      // The trigger is a mobile-only branch in @tiptap/core's default
-      // `NodeView.ignoreMutation`: on iOS/Android, while the editor is focused,
-      // a childList mutation ANYWHERE inside the node view's `dom` — not only
-      // inside `contentDOM` — is *not* ignored as long as every added/removed
-      // node is contentEditable. React rewriting its own subtree therefore looks
-      // like a user edit; prosemirror-view reads it, dispatches, the node view
-      // re-renders, and the cycle never terminates. Desktop skips that branch
-      // and ignores everything outside `contentDOM`, which is exactly why the
-      // freeze is UA-gated.
-      //
-      // Supplying `ignoreMutation` short-circuits BEFORE that branch, restoring
-      // the desktop rule on every UA: mutations inside `contentDOM` are real
-      // content edits and must be read, everything else is React's own chrome
-      // (the source toggle, the rendered diagram) and is ignored. What that
-      // gives up is tiptap's mobile-IME workaround for text typed OUTSIDE
-      // `contentDOM`, which cannot happen here — the only editable text in this
-      // view IS the content hole.
-      ignoreMutation: ({ mutation }) => {
-        if (mutation.type === 'selection') return false
-        // tiptap marks its own content host with `data-node-view-content-react`
-        // (`ReactNodeView`'s `contentDOMElement`). A code block's content is
-        // plain text, so it can never nest another node view — the nearest such
-        // ancestor is always THIS view's `contentDOM`.
-        const target = mutation.target
-        const element = target instanceof Element ? target : target.parentElement
-        const contentHost = element?.closest('[data-node-view-content-react]') ?? null
-        if (contentHost === null) return true
-        // An attribute write on the host itself is React re-rendering the
-        // wrapper, not a content edit (tiptap's default says the same).
-        if (target === contentHost && mutation.type === 'attributes') return true
-        return false
-      },
+      // #4353 — the mechanism, the reason it is user-agent-gated, and the reason
+      // a LEAF React node view (image, math) is not exposed to it all live in
+      // `node-view-mutations.ts`. `codeBlock` is the only NON-leaf React node
+      // view in the app, so it is the only one for which this option is even
+      // consulted — tiptap answers a leaf view `true` before reading it.
+      ignoreMutation: ignoreReactNodeViewChrome,
     })
 
     return (props) => {
