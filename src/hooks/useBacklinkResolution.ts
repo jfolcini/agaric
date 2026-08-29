@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unwrap } from '@/lib/app-error'
 import type { BacklinkGroup, ResolvedBlock } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
-import { resolveStoreTitle } from '@/lib/block-title'
+import { resolveStoreTitle, unresolvedBlockLabel, unresolvedTagLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -92,27 +92,28 @@ function collectContentIds(groups: BacklinkGroup[]): Set<string> {
  * (`'   '`), where every other writer's trimmed-empty test made it
  * "Untitled". It is now "Untitled" here too.
  *
- * ## The one cell that still diverges (#4238)
+ * ## The blank cells, closed (#4238)
  *
- * A `null`/`''` title on a non-tag row keeps the `[[id…]]` broken-link shape
- * instead of the "Untitled" placeholder its siblings write. That is
- * deliberate and NOT reconcilable here: the row keeps a stable label AND
- * `has()` stays true for it — otherwise a name-less-but-real row would be
- * re-fetched on every pass — and `resolveBlockDisplay`
- * (`@/lib/query-result-utils`) pattern-matches exactly this `[[id...]]`
- * shape to detect "nothing real is cached" and fall back to the block's own
- * content. Routing it through the gate would make a nameless row look
- * resolved on both surfaces. So the divergence is real, it is TWO cells wide
- * — this writer keeps `[[id...]]` on a blank non-tag row and `#<id>...` on a
- * blank tag row, where its siblings write "Untitled" for both — the matrix in
- * `resolve-store-title-seed-parity.test.ts` asserts each explicitly rather
- * than skipping them, and #4238 tracks unifying them. (`@/lib/block-title`'s
- * docblock enumerates the same two cells; an earlier version of BOTH said
- * "one cell" and undercounted the tag arm.)
+ * Until #4238 this function had a `r.title !== null && r.title.length > 0`
+ * guard in front of the gate: a `null`/`''` title kept the `[[id…]]`
+ * broken-link shape (or `#<id>...` for a tag) instead of the "Untitled"
+ * placeholder its three siblings write. That was not sloppiness — the shape
+ * was the cache-miss SIGNAL `resolveBlockDisplay`
+ * (`@/lib/query-result-utils`) pattern-matches, so normalising it here alone
+ * would have made a nameless row look resolved there.
+ *
+ * The signal now lives on `ResolveEntry.resolved` (`@/stores/resolve`)
+ * instead of on the title's bytes, so the guard is gone and this writer is
+ * unconditionally on the gate — which is what makes "the title has one
+ * owner" true with no exception clause. The row IS resolved (the backend
+ * returned it), it is simply blank, and blank has one rendering everywhere:
+ * "Untitled". A target the backend did NOT return is still a miss, and still
+ * reads as one — see `resolveBlockTitle` / `resolveTagName` below, which take
+ * that verdict from `isResolved`, and `fetchAndCacheLinks`, which is the one
+ * writer that records it.
  */
 function storeTitle(r: ResolvedBlock): string {
-  if (r.title !== null && r.title.length > 0) return resolveStoreTitle(r.block_type, r.title)
-  return r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`
+  return resolveStoreTitle(r.block_type, r.title)
 }
 
 export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResolutionResult {
@@ -201,7 +202,18 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
   const resolveBlockTitle = useCallback(
     (id: string): string => {
       const store = useResolveStore.getState()
-      return store.has(id) ? store.resolveTitle(id) : `[[${id.slice(0, 8)}...]]`
+      // #4238 — `isResolved`, not `has`: an entry can be PRESENT and stand for
+      // "the backend returned nothing" (`fetchAndCacheLinks`' unreturned-target
+      // placeholder). `has` is the right probe for "do I need to re-fetch",
+      // which is why the effect above still uses it; it is the wrong one for
+      // "may I show this title".
+      //
+      // Stated plainly so nobody mistakes it for load-bearing: on THIS line the
+      // two probes agree today, because `resolveTitle` derives the very same
+      // label from the flag for an unresolved entry. It is written this way to
+      // ask the question it means, and to match `resolveTagName` below — where
+      // the choice does change the answer, and is pinned by a test.
+      return store.isResolved(id) ? store.resolveTitle(id) : unresolvedBlockLabel(id)
     },
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- storeVersion/localVersion (unused in the body) are listed to bust the memo when resolutions land in the store or the attempted set changes
     [storeVersion, localVersion, currentSpaceId],
@@ -220,7 +232,11 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
   const resolveTagName = useCallback(
     (id: string): string => {
       const store = useResolveStore.getState()
-      return store.has(id) ? store.resolveTitle(id) : `#${id.slice(0, 8)}...`
+      // See `resolveBlockTitle` — same verdict, tag-shaped label. Reading the
+      // flag rather than `has` also fixes a shape bug this had: an unresolved
+      // entry used to fall through to `resolveTitle`, which hands back the
+      // BLOCK-shaped `[[id…]]`, on a surface that renders `#tag` chips.
+      return store.isResolved(id) ? store.resolveTitle(id) : unresolvedTagLabel(id)
     },
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- storeVersion/localVersion (unused in the body) are listed to bust the memo when resolutions land in the store or the attempted set changes
     [storeVersion, localVersion, currentSpaceId],

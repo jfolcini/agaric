@@ -811,6 +811,7 @@ describe('DaySection', () => {
       expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
         title: '2025-06-15',
         deleted: true,
+        resolved: true,
       })
 
       const deleteToast = mockedToastSuccess.mock.calls.find(
@@ -830,6 +831,7 @@ describe('DaySection', () => {
       expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
         title: '2025-06-15',
         deleted: false,
+        resolved: true,
       })
     })
   })

@@ -614,7 +614,7 @@ describe('TrashView', () => {
 
     await waitFor(() => {
       const entry = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'P1'))
-      expect(entry).toEqual({ title: 'My Page', deleted: false })
+      expect(entry).toEqual({ title: 'My Page', deleted: false, resolved: true })
     })
   })
 

@@ -915,7 +915,7 @@ describe('refresh after undo/redo', () => {
 
     await vi.waitFor(() => {
       const entry = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'PAGE_1'))
-      expect(entry).toEqual({ title: 'Reverted Title', deleted: false })
+      expect(entry).toEqual({ title: 'Reverted Title', deleted: false, resolved: true })
     })
 
     unmount()
