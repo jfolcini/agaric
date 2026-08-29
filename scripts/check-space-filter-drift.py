@@ -731,6 +731,27 @@ def run_cli_self_test(record) -> None:
                 "non-zero exit naming the missing agaric-engine root",
             )
 
+        # --- #3255 direction 8: a BASELINE-ONLY invocation still re-verifies -
+        # The hook's `files:` regex includes the baseline file so that editing
+        # it re-runs the guard. But every non-`.rs` arg is dropped by the
+        # suffix filter, so without a fallback the target set is empty and only
+        # the dangling check runs — a hand-edit LOWERING a count would pass,
+        # which is the one thing adding the baseline to `files:` was for.
+        removed.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/removed.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(baseline_path)])
+        if code != 0 and "baseline expects 2" in out:
+            record("CLI: a baseline-only invocation still scans (#3255)", True, True)
+        else:
+            record(
+                "CLI: a baseline-only invocation still scans (#3255)",
+                (code, out.strip()),
+                "non-zero exit mentioning 'baseline expects 2' from a baseline-only argv",
+            )
+
 
 def run_self_test() -> int:
     """Assert scan_text/parse_baseline's exit-relevant behavior.
@@ -873,6 +894,18 @@ def main(argv: list[str]) -> int:
                 continue
             if rp.is_file():
                 targets.append(rp)
+        if not targets:
+            # Selected by a NON-`.rs` path and nothing survived the filter —
+            # i.e. the baseline itself, or one of the guard scripts in the
+            # hook's `files:` regex. Falling through with an empty target set
+            # would run only the dangling check, so a hand-edit LOWERING an
+            # existing file's baseline count would pass: the entry still
+            # resolves, and no file is scanned to notice the count no longer
+            # matches. Adding the baseline to `files:` was meant to catch
+            # exactly that edit, and without this fallback it did not.
+            # The whole-tree walk is ~3.5s and this fires only on those few
+            # paths, never on an ordinary `.rs` commit.
+            targets = all_source_files()
     else:
         targets = all_source_files()
 

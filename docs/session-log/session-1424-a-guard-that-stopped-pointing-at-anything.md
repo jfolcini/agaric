@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 16 cases pass |
+| control (restored) | 17 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 16 cases pass (was 10).
+- `--self-test`: 17 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -217,3 +217,37 @@ yields `(0, '')` rather than a non-zero exit for the wrong cause.
 Four notes are left to #4501, where they belong: the `prek.toml` ↔ `CRATE_ROOTS` pairing, the
 in-scope-ness of baseline entries, the silent-drop re-anchor, and the Rust parity test walking
 two roots while the guard walks six.
+
+## Review round four
+
+A third approval, and one finding that mattered: **adding the baseline file to the hook's
+`files:` regex did less than it looked like.**
+
+The intent was that editing `space-filter-baseline.txt` re-runs the guard. It does select the
+hook — but every non-`.rs` argument is dropped by the suffix filter, so the target set came out
+empty and only the dangling check ran. A hand-edit *lowering* an existing file's count would
+therefore pass: the entry still resolves, and no file is scanned to notice the count no longer
+matches. That is precisely the edit adding the baseline to `files:` was meant to catch.
+
+`main()` now falls back to the whole-tree walk when arguments were passed but none survived
+filtering — which happens only for the baseline itself and the two guard scripts in the regex,
+never on an ordinary `.rs` commit. The walk is 3.5s. Falsified: with the fallback removed the
+new case yields `(0, '')`.
+
+**And a confirmation the reviewer asked for rather than asserted.** They suspected a commit
+that only *deletes* a baselined file would not select the hook, since prek does not pass
+deleted paths. Checked directly:
+
+```
+$ prek run --files src-tauri/agaric-store/src/does_not_exist.rs check-space-filter-drift
+space-filter drift guard (#139)..............................(no files to check)Skipped
+```
+
+Confirmed. The gap is real and deliberately not closed here: closing it means `always_run`,
+which spends 3.5s on every commit in the repo to cover a case where CI's all-files sweep
+already fires, and where deleting a module in practice also edits an in-scope `mod.rs`. Worth
+recording as a known limit rather than paying that toll — and worth revisiting in #4501, where
+the same question arises for every ratchet guard, not just this one.
+
+The reviewer also caught the PR description still claiming "10 → 14 cases" against an actual
+17 — in a change whose whole argument is about denominators being right. Corrected.
