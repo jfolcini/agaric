@@ -41,7 +41,7 @@ import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { invalidateNameCaches, notifyPageRemoved } from '@/lib/name-change-bus'
+import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -174,10 +174,10 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
   const handleConfirm = useCallback(
     async function handleConfirm() {
       if (!target) return
-      const { id, onDeleted, onFailed } = target
+      const { id, originSpaceId, onDeleted, onFailed } = target
       setDeletingId(id)
       try {
-        unwrap(await commands.deleteBlock(id))
+        const { affected_page_ids: cascadedPageIds } = unwrap(await commands.deleteBlock(id))
         setResolveDeletedStatus(target, true)
         // #4007 — the `[[` picker's page-name cache is filled once per space
         // and has no other delete signal; without this it keeps offering the
@@ -191,8 +191,45 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // Skipping would be equally correct; the "When the caller has NO active
         // space" section of `src/lib/name-change-bus.ts` is where that is
         // settled once for all the publishers.
-        if (target.originSpaceId != null) notifyPageRemoved(id, target.originSpaceId)
-        else invalidateNameCaches()
+        //
+        // #4523 — the set to evict is NOT just `id`. `delete_block`'s cascade
+        // walks `parent_id` with no page-boundary stop, so deleting a page
+        // trashes its nested PAGE children too; the picker cache is keyed on
+        // `list_all_pages_in_space` (`block_type = 'page' AND deleted_at IS
+        // NULL AND space_id = ?`), so those children silently stopped being
+        // real while the cache went on offering them — selecting one links to
+        // a page in the trash. `affected_page_ids` is the cascade's page
+        // membership, which only the backend can see; the frontend must not
+        // re-derive it by walking the tree itself, because a second walk is
+        // exactly how the two arms drift apart. This mirrors
+        // `PageBrowserBatchToolbar.handleTrash` (#4480/#4521) one command over
+        // — the single delete is the more common gesture of the two.
+        //
+        // UNION, not replacement: `id` stays in the set unconditionally so
+        // this is purely additive and cannot regress the pre-#4523 eviction if
+        // the cohort ever comes back narrower than expected.
+        //
+        // Accepted cost of that unconditional union, recorded rather than
+        // fixed: `id` is the caller-supplied string while the cohort carries
+        // the canonical uppercase ids the command normalises to, so a caller
+        // passing a non-canonical case emits one extra `removed` event that
+        // matches nothing. `DeleteResponse` carries no echoed seed id to union
+        // with instead (only `descendants_affected` and `affected_page_ids`),
+        // and the cohort already contains the canonical seed whenever the seed
+        // is a page — so the alternatives are to drop `id` and lose the
+        // narrower-cohort backstop above, or to add a field to the reply for a
+        // no-op event. The extra event is inert; its only cost is one slot
+        // against the fan-out budget.
+        //
+        // `notifyPagesRemoved` (#4524, landed in #4534) owns the de-duplication,
+        // the `NAME_CACHE_FANOUT_MAX_IDS` budget and the null-space fallback,
+        // so this is the straight substitution session-1442 said it would be
+        // once that publisher was on `main`. Measuring the budget against the
+        // UNION rather than the one requested id is its behaviour, not this
+        // caller's: the cascade is what makes this a set, so `1 <= budget`
+        // would wave a 200-nested-page delete straight past the threshold the
+        // budget exists to enforce.
+        notifyPagesRemoved([id, ...cascadedPageIds], originSpaceId)
         // #3626 — a deleted page must stop lighting up the calendar. The
         // journal's own DaySection routes its delete through here too, so this
         // one call covers every surface that can remove a journal page.

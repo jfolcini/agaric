@@ -1355,6 +1355,287 @@ async fn delete_block_normalises_lowercase_block_id() {
     );
 }
 
+/// #4523 — the SINGLE-block trash cascade crosses a nested-page boundary
+/// exactly as the batch one does (#4480, pinned by
+/// `delete_blocks_by_ids_reports_cascaded_nested_pages_4480` further down this
+/// file), so this command must hand back the page ids it swept too.
+///
+/// `collect_delete_cohort` walks `parent_id` via
+/// `collect_subtree_ids_unbounded(.., Active)`, whose recursive arm filters
+/// only on `deleted_at IS NULL` and depth — there is no `block_type != 'page'`
+/// stop. A deleted page's nested PAGE children are therefore tombstoned along
+/// with it, and until #4523 the reply carried only a COUNT, so
+/// `usePageDeleteAction` could evict nothing but the one id it had sent. The
+/// `[[` picker went on offering the cascaded nested pages — rows now sitting
+/// in the trash — for the rest of the session, and selecting one linked to a
+/// trashed page.
+///
+/// NON-TAUTOLOGY — what each assertion rules out:
+///   * `affected_page_ids` containing the CONTENT ids → the `block_type =
+///     'page'` filter is missing; content events would burn the frontend's
+///     `NAME_CACHE_FANOUT_MAX_IDS` budget on rows the picker cannot hold. The
+///     fixture nests content under BOTH pages so a filter that only happens to
+///     work at depth 1 still fails here.
+///   * `affected_page_ids` containing `DB4523_SIB` → the query is returning
+///     the space's pages rather than the COHORT's pages. The sibling is live
+///     and in the same space precisely so that mistake cannot pass.
+///   * `affected_page_ids` equal to `[DB4523_PAGE]` → the cascade half is
+///     missing; `DB4523_KID` was never named by the caller and is the whole
+///     point of the field.
+///   * the listing assertions prove the eviction is actually OWED: the two
+///     cascaded pages really do stop being offerable in the space, while the
+///     sibling really does remain — the two halves of #4523's acceptance
+///     criterion, read off the backend rather than the picker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_reports_cascaded_nested_pages_4523() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "DB4523_SPACE").await;
+    insert_block(&pool, "DB4523_PAGE", "page", "Parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "DB4523_CONTENT",
+        "content",
+        "c",
+        Some("DB4523_PAGE"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "DB4523_KID",
+        "page",
+        "Kid",
+        Some("DB4523_PAGE"),
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "DB4523_KIDCONTENT",
+        "content",
+        "kc",
+        Some("DB4523_KID"),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, "DB4523_SIB", "page", "Sibling", None, Some(3)).await;
+
+    // Every page genuinely in the space, through the production path, so the
+    // listing assertions below are about the delete and not about a missing
+    // space stamp.
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![
+            "DB4523_PAGE".into(),
+            "DB4523_KID".into(),
+            "DB4523_SIB".into(),
+        ],
+        "DB4523_SPACE".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let baseline: Vec<String> = list_all_pages_in_space_inner(&pool, "DB4523_SPACE", None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id.to_string())
+        .collect();
+    for id in ["DB4523_PAGE", "DB4523_KID", "DB4523_SIB"] {
+        assert!(
+            baseline.contains(&id.to_string()),
+            "baseline: {id} must be offerable before the delete (got {baseline:?})"
+        );
+    }
+
+    // Delete ONLY the parent — what the confirm dialog sends when the user
+    // trashes that one page.
+    let resp = delete_block_inner(&pool, DEV, &mat, "DB4523_PAGE".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        resp.descendants_affected, 4,
+        "the cascade crosses the nested-page boundary: the page + its content \
+         + the nested page + the nested page's content"
+    );
+
+    let mut pages = resp.affected_page_ids.clone();
+    pages.sort();
+    assert_eq!(
+        pages,
+        vec!["DB4523_KID".to_string(), "DB4523_PAGE".to_string()],
+        "affected_page_ids must be exactly the PAGE members of the cohort — \
+         the deleted seed AND the nested page the caller never named, and \
+         neither content block nor the untouched sibling (got {:?})",
+        resp.affected_page_ids
+    );
+
+    // The eviction is genuinely owed: both reported pages have stopped being
+    // offerable, and the sibling has not.
+    let after: Vec<String> = list_all_pages_in_space_inner(&pool, "DB4523_SPACE", None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id.to_string())
+        .collect();
+    for id in ["DB4523_PAGE", "DB4523_KID"] {
+        assert!(
+            !after.contains(&id.to_string()),
+            "{id} was tombstoned and must drop out of the space listing (got {after:?})"
+        );
+    }
+    assert!(
+        after.contains(&"DB4523_SIB".to_string()),
+        "the untouched sibling must still be offerable (got {after:?})"
+    );
+    let sib_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind("DB4523_SIB")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        sib_deleted.is_none(),
+        "the sibling must not be swept by the deleted page's cascade"
+    );
+}
+
+/// #4523 error paths — a REFUSED delete must not report a cohort, because the
+/// caller turns a reported cohort straight into `[[` cache evictions and an
+/// eviction for a page that is still live is the mirror-image bug: the picker
+/// stops offering a page the user still has.
+///
+/// Three refusals, each reached by a different guard inside
+/// `delete_block_inner`, and all three asserted against the SAME live space so
+/// the "nothing was evicted" claim is a listing fact rather than a claim about
+/// the error variant:
+///
+///   * `NotFound` — a ghost id, refused by the existence probe.
+///   * `InvalidOperation` — an already-deleted seed, refused by the
+///     `deleted_at IS NOT NULL` probe. This is the one that matters most for
+///     this field: a lenient re-delete returning `Ok` with the cohort would
+///     make the frontend evict a second time and show a success toast for a
+///     no-op.
+///   * `InvalidOperation` — a non-empty SPACE, refused by the child-page
+///     count. The space's pages are exactly the rows a spurious cohort would
+///     name, so this is where a cohort read hoisted above the guards would
+///     show up.
+///
+/// The `is_err()` assertions alone would pass against a version that
+/// tombstoned rows and *then* returned the error, which is why every arm is
+/// followed by the space listing being unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_refusals_report_no_cohort_to_evict_4523() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "DB4523E_SPACE").await;
+    insert_block(&pool, "DB4523E_LIVE", "page", "Live", None, Some(1)).await;
+    insert_block(&pool, "DB4523E_GONE", "page", "Gone", None, Some(2)).await;
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["DB4523E_LIVE".into(), "DB4523E_GONE".into()],
+        "DB4523E_SPACE".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Take DB4523E_GONE out of circulation through the production path, so the
+    // already-deleted arm below is refused by the real guard.
+    let gone = delete_block_inner(&pool, DEV, &mat, "DB4523E_GONE".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        gone.affected_page_ids,
+        vec!["DB4523E_GONE".to_string()],
+        "control: the successful delete DOES report its own page, so the empty \
+         cohorts below are a property of the refusals and not of the fixture"
+    );
+    settle(&mat).await;
+
+    let offerable = |pool: SqlitePool| async move {
+        let mut ids: Vec<String> = list_all_pages_in_space_inner(&pool, "DB4523E_SPACE", None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id.to_string())
+            .collect();
+        ids.sort();
+        ids
+    };
+    let before = offerable(pool.clone()).await;
+    assert_eq!(
+        before,
+        vec!["DB4523E_LIVE".to_string()],
+        "fixture: exactly the one live page is offerable going into the refusals"
+    );
+
+    // (a) ghost id.
+    assert!(
+        matches!(
+            delete_block_inner(&pool, DEV, &mat, "DB4523E_GHOST".into()).await,
+            Err(AppError::NotFound(_))
+        ),
+        "a ghost id must be refused, not reported as a deleted cohort"
+    );
+
+    // (b) already-deleted seed.
+    assert!(
+        matches!(
+            delete_block_inner(&pool, DEV, &mat, "DB4523E_GONE".into()).await,
+            Err(AppError::InvalidOperation(_))
+        ),
+        "a second delete must be refused, not report the cohort again"
+    );
+
+    // (c) a space that still holds pages.
+    assert!(
+        matches!(
+            delete_block_inner(&pool, DEV, &mat, "DB4523E_SPACE".into()).await,
+            Err(AppError::InvalidOperation(_))
+        ),
+        "deleting a non-empty space must be refused"
+    );
+
+    settle(&mat).await;
+    assert_eq!(
+        offerable(pool.clone()).await,
+        before,
+        "no refusal may tombstone anything — the set of offerable pages must be \
+         byte-identical to the pre-refusal listing, or the caller would owe an \
+         eviction the reply never told it about"
+    );
+    // Read the rows directly as well. The listing above cannot see the SPACE
+    // block (it is not a page in itself), so a refusal that stamped its target
+    // and only THEN returned the error — the shape a guard hoisted below the
+    // cascade would produce — would slip past a listing-only check.
+    for (id, expect_deleted) in [
+        ("DB4523E_LIVE", false),
+        ("DB4523E_GONE", true),
+        ("DB4523E_SPACE", false),
+    ] {
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            deleted_at.is_some(),
+            expect_deleted,
+            "{id}: a refused delete must leave every row exactly as it found it"
+        );
+    }
+}
+
 // ======================================================================
 // restore_block
 // ======================================================================

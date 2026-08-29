@@ -225,6 +225,24 @@ describe('deleteBlock', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'BLK001' })
     expect(result).toEqual(expected)
   })
+
+  // #4523 — the mirror of the `deleteBlocksByIds` pin below. The cascade can
+  // trash PAGE descendants the caller never named, and the `[[` picker's
+  // per-space cache needs their ids to stop offering them; pin that the
+  // wrapper passes the field through rather than narrowing the reply back down
+  // to the id it was called with.
+  it('passes through page ids the caller never sent (cascade)', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      block_id: 'ROOT',
+      deleted_at: 1_700_000_000_000,
+      descendants_affected: 3,
+      affected_page_ids: ['ROOT', 'NESTED_PAGE'],
+    })
+
+    const result = await deleteBlock('ROOT')
+
+    expect(result.affected_page_ids).toEqual(['ROOT', 'NESTED_PAGE'])
+  })
 })
 
 // ---------------------------------------------------------------------------

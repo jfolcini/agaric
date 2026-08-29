@@ -61,20 +61,28 @@ export function nextCohortMarker(): string {
 
 /**
  * Soft-delete `blockId` and its whole ACTIVE descendant subtree, stamping the
- * SAME `marker` on every row tombstoned. Returns the number of rows tombstoned
- * (target INCLUDED — the backend's `descendants_affected` is the CTE's
- * `rows_affected()`, and the CTE yields the seed at depth 0).
+ * SAME `marker` on every row tombstoned. Returns the ids tombstoned, target
+ * INCLUDED — the backend's cohort (`ApplyEffects::deleted_cohort`) yields the
+ * seed at depth 0, and `descendants_affected` is that cohort's length, so
+ * `deleteCohort(...).length` is the mock's `descendants_affected`.
+ *
+ * #4523 — the ID LIST, not just its length, because a caller needs to know
+ * WHICH rows went (the `[[` picker's name cache must evict the cascade's PAGE
+ * members, and the backend `DeleteResponse.affected_page_ids` reports exactly
+ * that). Same reason the batch handler grew its own list in #4480: a count
+ * cannot drive an eviction. Callers that only want the count keep using
+ * `.length`.
  *
  * Mirrors `descendants_cte_active!()`: the recursive arm only descends into
  * children whose `deleted_at` is NULL, so an already-deleted descendant — and
  * everything below it — keeps its own, older cohort marker and is left
  * untouched. A missing or already-deleted target is a no-op (matching the
- * CTE seed's `WHERE deleted_at IS NULL` filter) and returns 0.
+ * CTE seed's `WHERE deleted_at IS NULL` filter) and returns `[]`.
  */
-export function deleteCohort(blocks: CohortBlocks, blockId: string, marker: string): number {
+export function deleteCohort(blocks: CohortBlocks, blockId: string, marker: string): string[] {
   const target = blocks.get(blockId)
-  if (!target || target['deleted_at']) return 0
-  let affected = 0
+  if (!target || target['deleted_at']) return []
+  const affected: string[] = []
   const stack: string[] = [blockId]
   const seen = new Set<string>()
   while (stack.length > 0) {
@@ -85,7 +93,7 @@ export function deleteCohort(blocks: CohortBlocks, blockId: string, marker: stri
     const node = blocks.get(id)
     if (!node || node['deleted_at']) continue
     node['deleted_at'] = marker
-    affected++
+    affected.push(id)
     for (const child of blocks.values()) {
       if (child['parent_id'] === id && !child['deleted_at'] && !seen.has(child['id'] as string)) {
         stack.push(child['id'] as string)

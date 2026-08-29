@@ -790,6 +790,7 @@ describe('DaySection', () => {
             block_id: 'PAGE_1',
             deleted_at: '2026-01-01T00:00:00Z',
             descendants_affected: 0,
+            affected_page_ids: [],
           }),
           restore_blocks_by_ids: () => ({ affected_count: 1 }),
         }),
