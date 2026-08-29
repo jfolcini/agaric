@@ -446,51 +446,77 @@ const FINAL_SIGMA_RE = /ς/g
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  *
- * **Cost.** One experiment, three variants, eleven interleaved repetitions per
+ * **Cost.** Re-run this rather than re-arguing a row — the experiment is
+ * committed:
+ *
+ * ```
+ * npx vitest run --config scripts/mutation-harnesses/vitest.config.ts \
+ *   scripts/mutation-harnesses/in-page-find-fold-cost.harness.ts \
+ *   --disable-console-intercept
+ * ```
+ *
+ * One experiment, three variants, eleven interleaved repetitions per
  * variant with rotating order, medians, and the observed spread on each row as
- * a noise floor. `pre` is the code before #4507 — `foldCodePoint` was a bare
- * `f === 'ς' ? 'σ' : f`, `scanLiteral` a bare `text.toLowerCase()`. `naive` is
- * `replace`-always, unguarded. `now` is this function.
+ * a noise floor. The `range` column is that spread: full peak-to-peak as a
+ * percentage of the median, NOT a half-width — writing it `±`, as earlier
+ * versions of this block did, overstates the band by about 2x. `pre` is the
+ * code before #4507 — `foldCodePoint` was a bare `f === 'ς' ? 'σ' : f`, and
+ * `scanLiteral` a bare `text.toLowerCase()`. `naive` is
+ * `replace`-always, unguarded — a shape argued against in review and **never
+ * one that shipped**, so the `naive/now` column sizes what the guard buys and
+ * is NOT a regression baseline. Reading it as one is exactly how three earlier
+ * versions of this block reported a regression as a win. `now` is this
+ * function.
  *
  * Per CODE POINT, how `foldCodePoint` calls it (1M iterations):
  *
  * ```
- *                     pre    naive     now   now/pre   naive/now   noise
- * latin (no sigma)   19.6     80.4    31.7    +62%       2.5x       ±20%
- * turkish (İ)        55.2    122.5    67.9    +23%       1.8x        ±5%
- * greek (has sigma)  90.3    159.7   108.7    +20%       1.5x        ±4%
- * astral (pairs)     86.0    159.6   103.6    +20%       1.5x       ±26%
+ *                     pre    naive     now   now/pre   naive/now   range
+ * latin (no sigma)   19.6     80.4    31.7    +62%       2.5x        20%
+ * turkish (İ)        55.2    122.5    67.9    +23%       1.8x         5%
+ * greek (has sigma)  90.3    159.7   108.7    +20%       1.5x         4%
+ * astral (pairs)     86.0    159.6   103.6    +20%       1.5x        26%
  * ```
  *
  * Per WHOLE TEXT NODE, how `scanLiteral` calls it (300k iterations):
  *
  * ```
- *                       pre    naive      now   now/pre   naive/now   noise
- * short heading (15)    8.6     27.2     12.9    +50%       2.1x        ±3%
- * english para (540)   46.7     66.4     51.1     +9%       1.3x       ±11%
- * greek para (504)   1489.6   2284.5   2331.1    +56%       1.0x        ±9%
+ *                       pre    naive      now   now/pre   naive/now   range
+ * short heading (15)    8.6     27.2     12.9    +50%       2.1x         3%
+ * english para (540)   46.7     66.4     51.1     +9%       1.3x        11%
+ * greek para (504)   1489.6   2284.5   2331.1    +56%       1.0x         9%
  * ```
  *
  * **Read these as bands, not as measurements.** This is a shared cloud runner
  * and the spread proves it: five of the seven rows clear their own floor here,
- * but a previous run of this identical experiment had `astral` clearing
- * comfortably (±6%) and this one has it buried (±26%), while `english para`
- * failed to clear in both. Any row whose `now/pre` is within about twice its
- * noise figure has either flipped verdict between runs (`astral`) or failed to
- * clear in both (`english para`), and should be treated as "direction known,
- * magnitude not". Three earlier versions of this block
+ * but the table above has `astral` buried (+20% against a range of 26%) while
+ * the run recorded in `session-1451` has the same row clearing comfortably
+ * (+21% against 5%) — same code, same experiment, opposite verdict. `english
+ * para` failed to clear here and cleared there, at +11% against a 10% floor.
+ * Over six runs the only rows that have ever flipped are `astral` and `english
+ * para`; the other five have cleared every time. Three of those six have
+ * tables in the tree and can be diffed against your own — this one,
+ * `session-1447` and `session-1451`. The other three do not, and that is the
+ * only claim made about them. Do not read it as "the three run from the
+ * harness": `session-1447` records five runs, three while drafting and two
+ * from the harness, and `session-1451` adds the sixth — so this table is
+ * itself a drafting run, carried over from #4537, and the two groupings do
+ * not line up. Any row whose `now/pre` is within about twice its `range`
+ * figure should be treated as "direction known, magnitude not" — the verdict
+ * column is a property of the run, not of the code. Three earlier versions of
+ * this block
  * reported single runs to the percentage point, which is how `+127%` was
  * published for what is really a ~60% effect.
  *
- * What survives both runs, and all that should be relied on:
+ * What survives all six runs, and all that should be relied on:
  *
  * **The guard is worth having, but it is not free and not universal.** `now`
- * beats or matches `naive` on every row, up to 2.5x — and on the Greek
- * paragraph it is fractionally WORSE (naive 2284.5, now 2331.1, a ~2% loss the
- * `1.0x` column rounds away). That is the guard's worst case working exactly as
- * designed: on a long string that does contain a sigma, the `indexOf` scan is
- * paid and the `replace` runs anyway, so the guard buys nothing and costs one
- * pass.
+ * beats or matches `naive` on every row, up to 2.5x — except on the Greek
+ * paragraph, where it is fractionally WORSE (naive 2284.5, now 2331.1, a ~2%
+ * loss the `1.0x` column rounds away). That is the guard's worst case working
+ * exactly as designed: on a long string that does contain a sigma, the
+ * `indexOf` scan is paid and the `replace` runs anyway, so the guard buys
+ * nothing and costs one pass.
  *
  * Everywhere else it pays: best on short sigma-free strings (latin 2.5x, short
  * heading 2.1x), less on longer ones. Note that `astral` is sigma-free and
@@ -498,12 +524,13 @@ const FINAL_SIGMA_RE = /ς/g
  * as much as it tracks sigma presence — do not read it as a sigma signal.
  *
  * **Both call sites are slower than before #4507.** Every row is positive in
- * both runs. Six of the seven span +20% to +62% on a fold; the seventh,
- * `english para`, is +9% and buried in its own noise, so it is evidence of
- * direction and nothing more. The guard recovers
- * most of what the regex cost, not all of it: `indexOf` over one code unit is
- * still dearer than `=== 'ς'`, and folding through one owner was always going
- * to cost more than not folding at all.
+ * every run. Six of the seven span +20% to +62% on a fold; the seventh,
+ * `english para`, is +9% here and buried in its own noise — it has since
+ * cleared once, at +11% against a 10% floor, so it is evidence of direction
+ * and a magnitude no better than "small". The guard recovers most of what the
+ * regex cost, not all of it: `indexOf` over one code unit is still dearer than
+ * `=== 'ς'`, and folding through one owner was always going to cost more than
+ * not folding at all.
  *
  * That is the price of #4507 and it is worth paying, but the comparison a
  * reader should weigh is not "guarded beats naive" — it is **"correct, and
