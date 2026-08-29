@@ -2,7 +2,7 @@
  * Unicode-aware case-insensitive substring matching for interactive
  * Search / filter surfaces.
  *
- * `String.prototype.toLowerCase()` is not locale-aware and has three
+ * `String.prototype.toLowerCase()` is not locale-aware and has four
  * well-known substring-match failure modes:
  *
  *  - Turkish dotted I `İ` (U+0130) → lowercases to `i` + combining
@@ -13,6 +13,11 @@
  *    `"Straße".toLowerCase().includes("strasse")` returns **false**.
  *  - Accented letters stay accented, so users expecting "naive" to
  *    match "naïve" see no match.
+ *  - Greek capital sigma `Σ` (U+03A3) → lowercases to the word-final
+ *    `ς` (U+03C2) at the end of a word and to `σ` (U+03C3) elsewhere,
+ *    under Unicode's context-sensitive Final_Sigma rule, so
+ *    `"ΟΔΟΣ".toLowerCase().includes("Σ".toLowerCase())` returns
+ *    **false** (`"οδος"` vs `"σ"`).
  *
  * The [`foldForSearch`] helper normalises both sides of the comparison
  * the way an interactive filter UI is expected to behave:
@@ -21,6 +26,9 @@
  *  2. Strip combining diacritics (`U+0300..U+036F`).
  *  3. Lowercase the remainder.
  *  4. Fold `ß` → `ss` explicitly (decomposition does not cover it).
+ *  5. Collapse word-final `ς` onto `σ`, undoing Final_Sigma — the one
+ *     rule in step 3 that depends on a character's *surroundings*
+ *     rather than only on the character itself.
  *
  * The common case — both strings pure ASCII — fast-paths through
  * plain `.toLowerCase()` so the extra normalisation cost is only
@@ -55,14 +63,33 @@ function isAsciiOnly(s: string): boolean {
  *
  * - ASCII-only input short-circuits to `.toLowerCase()` (cheap).
  * - Non-ASCII input is NFKD-normalised, stripped of combining
- *   marks, lowercased, and has `ß` replaced with `ss`.
+ *   marks, lowercased, has `ß` replaced with `ss`, and has the
+ *   word-final Greek sigma `ς` collapsed onto `σ`.
  *
- * Always apply this function to **both** sides of the comparison —
- * `foldForSearch(haystack).includes(foldForSearch(needle))`.
+ * Apply this function to **both** sides of the comparison —
+ * `foldForSearch(haystack).includes(foldForSearch(needle))`. That is
+ * necessary but **not sufficient**, and it is not what makes the
+ * comparison sound: folding both sides only lines up when the fold is
+ * *context-free*, i.e. each character's image depends on that
+ * character alone. `.toLowerCase()` is not context-free — Final_Sigma
+ * makes `Σ` fold to `ς` word-finally and `σ` otherwise — so before
+ * step 5 of the list at the top of this file,
+ * `foldForSearch('ΟΔΟΣ')` was `'οδος'` while
+ * `foldForSearch('Σ')` was `'σ'` and the `includes` failed with the
+ * both-sides rule scrupulously obeyed (#4514). The sigma collapse is
+ * what restores context-freedom; the rule is only safe on top of it.
  */
 export function foldForSearch(s: string): string {
+  // The ASCII fast path needs no sigma collapse: every sigma form is
+  // above U+007F, so any string containing one fails `isAsciiOnly` and
+  // takes the branch below.
   if (isAsciiOnly(s)) return s.toLowerCase()
-  return s.normalize('NFKD').replace(COMBINING_DIACRITICS, '').toLowerCase().replace(/ß/g, 'ss')
+  return s
+    .normalize('NFKD')
+    .replace(COMBINING_DIACRITICS, '')
+    .toLowerCase()
+    .replace(/ß/g, 'ss')
+    .replace(/ς/g, 'σ')
 }
 
 /**
@@ -114,14 +141,38 @@ export function indexOfFolded(haystack: string, needle: string): number {
  *
  * Walks haystack one code **point** at a time, accumulating the fold of
  * each code point onto a running buffer.  Per-code-point folding is
- * safe because NFKD decomposes individual code points independently
- * and combining-mark stripping never re-introduces context across
- * characters.  Walking code *units* instead would split surrogate
- * pairs: a supplementary-plane compatibility character such as 𝐀
- * (U+1D400) NFKD-folds to "a" as a whole code point, but its two lone
- * surrogate halves fold to themselves — desyncing the running buffer
- * from the whole-string fold and corrupting the span math.  O(n) on
- * the haystack length.
+ * safe because the fold is *context-free up to canonical reordering,
+ * which is length-preserving* — each code point's image depends on
+ * that code point alone: NFKD decomposes individual code points
+ * independently, combining-mark stripping never re-introduces context
+ * across characters, and `.toLowerCase()`'s one context-sensitive
+ * rule, Final_Sigma, is undone by the `ς` → `σ` collapse in
+ * [`foldForSearch`].  That last clause is load-bearing and was missing
+ * before #4514: folded in isolation a `Σ` always became `σ`, while
+ * the whole-string `haystackFolded` turned a word-final one into `ς`,
+ * so the two buffers disagreed in *content*.  The span arithmetic
+ * survived that only by luck — both sigma forms are a single UTF-16
+ * code unit, so the two buffers still agreed in *length*, which is
+ * all this loop compares.
+ *
+ * The "up to canonical reordering" residual: NFKD also reorders
+ * adjacent combining marks by combining class outside the
+ * U+0300..U+036F range this file strips (e.g. U+0653, ccc 230,
+ * before U+0655, ccc 220, come out swapped by the whole-string fold),
+ * and the per-code-point walk below does not perform that reordering.
+ * It is harmless here for the same reason Final_Sigma no longer
+ * bites: reordering only permutes code points within a fixed-length
+ * span, and length is all this loop compares.  A future
+ * context-sensitive rule that was NOT length-preserving would corrupt
+ * the spans outright, so keep new folds context-free rather than
+ * relying on the coincidence.
+ *
+ * Walking code *units* instead would split surrogate pairs: a
+ * supplementary-plane compatibility character such as 𝐀 (U+1D400)
+ * NFKD-folds to "a" as a whole code point, but its two lone surrogate
+ * halves fold to themselves — desyncing the running buffer from the
+ * whole-string fold and corrupting the span math.  O(n) on the
+ * haystack length.
  */
 export function findFoldedMatch(
   haystack: string,

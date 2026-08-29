@@ -410,6 +410,31 @@ describe('searchTags', () => {
     expect(createOption).toBeUndefined()
   })
 
+  // #4522 — the sigma-collapse fix in `foldForSearch` broadens this
+  // exact-match check, not just substring search: a tag stored with a
+  // word-final sigma (U+03C2, 'ς') now folds equal to a query typed with
+  // the regular sigma (U+03C3, 'σ'). Pin the user-visible consequence
+  // (the create-new-tag affordance stays suppressed), not just fold
+  // equality — a fold returning '' for both sides would also satisfy a
+  // bare equality assertion.
+  it('does NOT append "Create new tag" when the only difference is Greek final-sigma form (#4522)', async () => {
+    mockedListAllTagsInSpace.mockResolvedValueOnce([
+      { tag_id: 'T25', name: 'οδος', usage_count: 1, updated_at: '2024-01-01' },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    let items: Awaited<ReturnType<typeof result.current.searchTags>> = []
+    await act(async () => {
+      // Regular sigma (U+03C3) where the stored tag ends in the
+      // word-final form (U+03C2) — same word, different sigma glyph.
+      items = await result.current.searchTags('οδοσ')
+    })
+
+    const createOption = items.find((i) => i.isCreate)
+    expect(createOption).toBeUndefined()
+  })
+
   it('does NOT append "Create new tag" for empty query', async () => {
     mockedListAllTagsInSpace.mockResolvedValueOnce([
       { tag_id: 'T30', name: 'any-tag', usage_count: 1, updated_at: '2024-01-01' },

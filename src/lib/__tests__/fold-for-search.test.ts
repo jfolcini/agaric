@@ -3,7 +3,8 @@
  * substring matching used by PageBrowser and HighlightMatch.
  *
  * The baseline JS `.toLowerCase()` has known substring-match failure
- * modes for Turkish, German, and accented characters.  These tests
+ * modes for Turkish, German, accented and Greek text — the last of
+ * these because Final_Sigma makes it context-sensitive.  These tests
  * lock in the behaviour of [`foldForSearch`] and
  * [`matchesSearchFolded`] so a future refactor cannot regress the
  * case-insensitive filter contract.
@@ -17,6 +18,16 @@ import {
   indexOfFolded,
   matchesSearchFolded,
 } from '@/lib/fold-for-search'
+
+// ─────────────────────────────────────────────────────────────────────────
+// #4514 — the three Greek sigma forms, written as escapes because
+// Σ / σ / ς are easy to confuse by eye and the whole point of these cases
+// is *which* lowercase form comes out of the fold. Expectations below
+// use these constants rather than pasted literals for the same reason.
+// ─────────────────────────────────────────────────────────────────────────
+const SIGMA_CAP = '\u03A3' // Σ — capital
+const SIGMA_MID = '\u03C3' // σ — non-final lowercase (U+03C3)
+const SIGMA_FINAL = '\u03C2' // ς — word-final lowercase (U+03C2)
 
 describe('foldForSearch', () => {
   describe('ASCII fast path', () => {
@@ -80,6 +91,53 @@ describe('foldForSearch', () => {
     })
   })
 
+  // ───────────────────────────────────────────────────────────────────
+  // #4514 — Unicode's Final_Sigma rule makes `.toLowerCase()`
+  // context-sensitive: `Σ` lowercases to `ς` at the end of a word and to
+  // `σ` everywhere else. Folding both sides of a comparison therefore did
+  // NOT line the two sides up: the same character came out differently
+  // depending on its surroundings. The fold collapses `ς` onto `σ` to
+  // restore context-freedom.
+  // ───────────────────────────────────────────────────────────────────
+  describe('Greek final sigma', () => {
+    it('folds every sigma form to σ in isolation', () => {
+      expect(foldForSearch(SIGMA_CAP)).toBe(SIGMA_MID)
+      expect(foldForSearch(SIGMA_MID)).toBe(SIGMA_MID)
+      expect(foldForSearch(SIGMA_FINAL)).toBe(SIGMA_MID)
+    })
+
+    it('folds a word-final sigma to σ, not ς (ΟΔΟΣ)', () => {
+      // Pin the exact folded value, not merely that two folds agree:
+      // `fold(a) === fold(b)` is equally satisfied by a fold that returns
+      // '' for every input.
+      expect(foldForSearch('ΟΔΟΣ')).toBe(`οδο${SIGMA_MID}`)
+      expect(foldForSearch('οδος')).toBe(`οδο${SIGMA_MID}`)
+      expect(foldForSearch('ΟΔΟΣ')).toHaveLength(4)
+    })
+
+    it('folds a mid-word sigma to σ as before (ΑΣΑ — regression guard)', () => {
+      // Already correct before the fix; pinned so the collapse cannot be
+      // "fixed" by breaking the non-final case it never affected.
+      expect(foldForSearch('ΑΣΑ')).toBe(`α${SIGMA_MID}α`)
+    })
+
+    it('folds ΣΣ to two identical σ, not σ followed by ς', () => {
+      expect(foldForSearch(`${SIGMA_CAP}${SIGMA_CAP}`)).toBe(`${SIGMA_MID}${SIGMA_MID}`)
+    })
+
+    it('does not collapse unrelated Greek letters onto sigma', () => {
+      // Negative control: a fold that mapped everything together — or to
+      // '' — would satisfy every equality above. These must stay distinct.
+      expect(foldForSearch('ΟΞΟΣ')).not.toBe(foldForSearch('ΟΔΟΣ'))
+      expect(foldForSearch('ΑΒΓ')).toBe('αβγ')
+    })
+
+    it('stays idempotent for a word-final sigma', () => {
+      const once = foldForSearch('ΟΔΟΣ')
+      expect(foldForSearch(once)).toBe(once)
+    })
+  })
+
   describe('idempotent on folded strings', () => {
     it('folding an already-folded string is a no-op', () => {
       const input = 'İstanbul'
@@ -139,6 +197,40 @@ describe('matchesSearchFolded', () => {
     })
   })
 
+  describe('Greek final sigma regression cases (#4514)', () => {
+    it('matches the word-final sigma of ΟΔΟΣ whichever form the user types', () => {
+      expect(matchesSearchFolded('ΟΔΟΣ', SIGMA_CAP)).toBe(true)
+      expect(matchesSearchFolded('ΟΔΟΣ', SIGMA_MID)).toBe(true)
+      expect(matchesSearchFolded('ΟΔΟΣ', SIGMA_FINAL)).toBe(true)
+    })
+
+    it('makes the three sigma forms mutually interchangeable', () => {
+      expect(matchesSearchFolded(SIGMA_CAP, SIGMA_MID)).toBe(true)
+      expect(matchesSearchFolded(SIGMA_CAP, SIGMA_FINAL)).toBe(true)
+      expect(matchesSearchFolded(SIGMA_MID, SIGMA_CAP)).toBe(true)
+      expect(matchesSearchFolded(SIGMA_MID, SIGMA_FINAL)).toBe(true)
+      expect(matchesSearchFolded(SIGMA_FINAL, SIGMA_CAP)).toBe(true)
+      expect(matchesSearchFolded(SIGMA_FINAL, SIGMA_MID)).toBe(true)
+    })
+
+    it('matches a whole word in either case, in either direction', () => {
+      expect(matchesSearchFolded('ΟΔΟΣ', 'οδος')).toBe(true)
+      expect(matchesSearchFolded('οδος', 'ΟΔΟΣ')).toBe(true)
+      expect(matchesSearchFolded('οδος', SIGMA_CAP)).toBe(true)
+    })
+
+    it('mid-word sigma still matches (ΑΣΑ — regression guard)', () => {
+      expect(matchesSearchFolded('ΑΣΑ', SIGMA_CAP)).toBe(true)
+      expect(matchesSearchFolded('ΑΣΑ', SIGMA_FINAL)).toBe(true)
+    })
+
+    it('does not match sigma against Greek text that has none', () => {
+      expect(matchesSearchFolded('ΑΒΓ', SIGMA_CAP)).toBe(false)
+      expect(matchesSearchFolded('ΑΒΓ', SIGMA_FINAL)).toBe(false)
+      expect(matchesSearchFolded('ΟΔΟΣ', 'ΑΒΓ')).toBe(false)
+    })
+  })
+
   describe('accent regression cases', () => {
     it('matches "naïve" when query is "naive"', () => {
       expect(matchesSearchFolded('naïve', 'naive')).toBe(true)
@@ -188,6 +280,14 @@ describe('indexOfFolded', () => {
     // The slice starting at `offset` for the folded-length of the
     // match should visually read as `İstanbul`.
     expect(haystack.slice(offset, offset + 'İstanbul'.length)).toBe('İstanbul')
+  })
+
+  it('locates a word-final sigma whichever form is searched for (#4514)', () => {
+    expect(indexOfFolded('ΟΔΟΣ', SIGMA_CAP)).toBe(3)
+    expect(indexOfFolded('ΟΔΟΣ', SIGMA_MID)).toBe(3)
+    expect(indexOfFolded('ΟΔΟΣ', SIGMA_FINAL)).toBe(3)
+    // Non-final sigma keeps its own offset — not the same position.
+    expect(indexOfFolded('ΑΣΑ', SIGMA_CAP)).toBe(1)
   })
 
   // -------------------------------------------------------------------
@@ -379,6 +479,35 @@ describe('findFoldedMatch (PAGES-FOLD-MARK)', () => {
     expect(match).toEqual({ start: 3, length: 5 })
     if (match === null) throw new Error('expected match')
     expect(haystack.slice(match.start, match.start + match.length)).toBe('naïve')
+  })
+
+  it('word-final sigma: the span is the one sigma code unit (#4514)', () => {
+    const haystack = 'ΟΔΟΣ'
+    const match = findFoldedMatch(haystack, SIGMA_CAP)
+    if (match === null) throw new Error('expected match')
+    expect(match).toEqual({ start: 3, length: 1 })
+    expect(haystack.slice(match.start, match.start + match.length)).toBe(SIGMA_CAP)
+  })
+
+  it('ΣΣ searched for Σ yields BOTH sigmas — at 0 and 1, not one hit (#4514)', () => {
+    // The issue's third table row. A whole-document search scans the
+    // FOLDED text for the folded needle; before the collapse the folded
+    // haystack was `σ` + `ς`, so that scan reported a single hit at 0.
+    // Assert the positions, not just the count: an over-matching fold —
+    // one that folded unrelated letters together — would also report two.
+    //
+    // Deliberately a scan of the folded string rather than a tail-slicing
+    // walk with `findFoldedMatch`: re-folding the tail `Σ` in isolation
+    // makes it non-final, which hid the bug from that formulation.
+    const haystack = `${SIGMA_CAP}${SIGMA_CAP}`
+    const folded = foldForSearch(haystack)
+    const needle = foldForSearch(SIGMA_CAP)
+    const hits: number[] = []
+    for (let i = folded.indexOf(needle); i !== -1; i = folded.indexOf(needle, i + 1)) {
+      hits.push(i)
+    }
+    expect(hits).toEqual([0, 1])
+    expect(findFoldedMatch(haystack, SIGMA_CAP)).toEqual({ start: 0, length: 1 })
   })
 
   it('indexOfFolded stays consistent with findFoldedMatch.start', () => {
