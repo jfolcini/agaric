@@ -1392,15 +1392,35 @@ jobs:
   # ---------------------------------------------------------------------------
   fuzz:
     runs-on: ubuntu-24.04
-    # 110, not 60: the cmin step (#4496) can take up to 30 minutes of the job on
-    # its own, on top of setup, eight nightly ASan builds (20-35 min on a cold
-    # rust-cache) and ~16 min of fuzzing at the default 120s per target. A JOB
-    # timeout is a cancellation, which correctly skips the save — so an
-    # under-sized budget would surface as a corpus that silently stops
-    # accumulating, the failure #4496 exists to remove. Every number here scales
-    # with the target count, so raise this alongside any batch of new targets;
-    # #4497 took the count from five to eight and this from 90.
-    timeout-minutes: 110
+    # 130, not 60. The arithmetic, written out because review showed the
+    # previous figure had less headroom than its own comment implied:
+    #
+    #   setup (apt, toolchain, node, npm, install-action)   ~10 min
+    #   eight nightly ASan builds, COLD rust-cache          24-40 min
+    #   eight targets x 120s of fuzzing                     ~16 min
+    #   cmin, at its own step bound                         up to 30 min
+    #   artifact uploads                                     ~2 min
+    #                                                      ------------
+    #   worst case                                          ~98 min
+    #
+    # The build range is the five-target 15-25 min figure scaled to eight. On a
+    # warm cache (`save-if` on main keeps main warm) the build term is a
+    # fraction of that and the job finishes far inside the bound; the number
+    # exists for the cold-cache worst case, which is the one that would fail.
+    #
+    # Headroom matters more here than elsewhere because of HOW this overruns: a
+    # JOB timeout is a cancellation, which correctly skips the corpus save, so
+    # the symptom is a corpus that silently stops accumulating — the failure
+    # #4496 exists to remove — rather than a red lane anyone would look at. The
+    # cmin step's own `timeout-minutes` is the loud bound; this one is the quiet
+    # one, and is sized to not be reached.
+    #
+    # Every term above scales with the target count, so re-check this alongside
+    # any batch of new targets. The fuzz step warns when the derived count
+    # outgrows `BUDGETED_TARGETS`. #4497 took the count from five to eight, this
+    # bound from 90 to 110, and then to 130 once the build term was scaled
+    # honestly rather than assumed.
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1669,7 +1689,18 @@ jobs:
           # none), so this warns rather than fails.
           for target in "${targets[@]}"; do
             if [ -z "$(find "corpus/$target" -type f -print -quit 2>/dev/null || true)" ]; then
-              echo "::warning::fuzz target '$target' has no seed corpus at corpus/$target/ — it starts from libFuzzer's empty input on every cache miss. Add seeds that reach distinct branches."
+              seedless_msg="fuzz target '$target' has no seed corpus at corpus/$target/ — it starts from libFuzzer's empty input on every cache miss. Add seeds that reach distinct branches."
+              echo "::warning::$seedless_msg"
+              # To the run summary as well, for the same reason the budget
+              # warning below does it: this fires on a GREEN run — a target
+              # quietly exploring from cold forever — and nobody opens the log
+              # of a job that passed. An annotation alone would be a signal with
+              # no reader, which is the failure the warning itself describes.
+              {
+                echo "### :warning: fuzz target without seeds"
+                echo
+                echo "$seedless_msg"
+              } >> "$GITHUB_STEP_SUMMARY"
             fi
           done
           # Enrolling a target is now a one-line `[[bin]]` edit that never opens
