@@ -1,0 +1,34 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+#
+# PROVENANCE (#4498): these seeds did NOT come from a failure of the shipped
+# code. They are the shrunk witnesses proptest produced during the deliberate
+# falsification pass documented in `protocol_proptest.rs` — one per mutation
+# applied to a copy of the production file and then restored. So the header
+# above is true of the mechanism but not of this repository's history: nothing
+# here ever failed against `main`.
+#
+# They are kept because the shrinker made them good boundary cases in their own
+# right — equal own-counters, an absent local space, a lone record at a cap of
+# 1 — and re-running eight tiny inputs first costs nothing. Delete them freely
+# if a strategy change makes them unreproducible; nothing depends on them.
+#
+# One reading trap: proptest keys persistence by SOURCE FILE, so all eight seeds
+# replay against all 18 properties in `protocol_proptest.rs`, not only against
+# the one each was shrunk from. The `shrinks to` annotations are therefore
+# per-ORIGIN, not per-test — a seed annotated with `max_bytes` will be replayed
+# under `persisted_vvs_round_trip` too, where it re-expands through that test's
+# own strategies and means something entirely different. Nothing unsound; just
+# do not read an annotation as describing the test you are debugging.
+cc 2fc9f291e08a9d437e3358a6782d10151aaa1f1a3bbb06791f426e150f2be53a # shrinks to own = 1005, vvs = {0: {1005: 1}}
+cc 0c072d346f63f38263cbccbe2fe6f46051566876f9d4c3e8abe577d1133d28eb # shrinks to own = 1004, local = {2: {1004: 1}}, peer = {2: {1004: 1}}
+cc 30e37a84e79ce9dbe645eec416baa89868b411d2170ef0c063d1d1e3ff6bb7da # shrinks to own = 1001, local = {}, peer = {3: {1001: 1}}, noise = {3: {}}
+cc ca86413ff5c0da80427f71799c18b1899a7f73557ffda0b0d7359a8c2277a259 # shrinks to local = {1004: 1}, peer = {1004: 1}
+cc db5d730926157f1c7444dc5b99716cd639d79a07a428cb97c5d892a4b10a2e60 # shrinks to local = {1001: 3, 1004: 1}, peer = {1004: 1}
+cc e5120ae76e6ccc71da948199c5288073d7fce4ba8687fa0ef7c8a182481b7911 # shrinks to records = [OpTransfer { device_id: "a", seq: 0, parent_seqs: None, hash: "a00a", op_type: "create_block", payload: "", created_at: 0, origin: "user" }], max_bytes = 1
+cc 3345e100a30a96067972212bc770b107042b01d387ab8d1f13e6e36c35e88062 # shrinks to own = 1005, local = {2: {1005: 2}}, peer = {2: {1005: 1}}
+cc 7e081835e91c2275ae5c37a7e2b9b25d2bd2d076246a1487efa00f335e9199eb # shrinks to own = 1004, local = {0: {1004: 2}}, peer = {0: {1004: 1}}, bump = 1

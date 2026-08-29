@@ -240,6 +240,7 @@ dependencies = [
  "n0-error",
  "n0-future",
  "ndk-context",
+ "proptest",
  "qrcode",
  "rand 0.10.2",
  "serde",

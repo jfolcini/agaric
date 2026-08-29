@@ -160,6 +160,12 @@ agaric-store = { path = "../agaric-store", version = "0.1.0", features = ["test-
 # drift silently across a transport migration). Version/features mirror
 # `agaric-store`'s dev-dependency.
 insta = { version = "1.47.0", features = ["yaml", "redactions"] }
+# `sync_protocol`'s pure decision functions — the two version-vector
+# comparisons, the wire-batch partition, the persisted-bookmark codec — are
+# property-tested against an independently-computed model (#4498). Version
+# mirrors `agaric-core` / `agaric-store` / `agaric-engine` and the app crate,
+# which all pin the same 1.11.0.
+proptest = "1.11.0"
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically under
 # CI (same pattern as the `agaric-core` / `agaric-store` / `agaric-engine`
