@@ -147,3 +147,80 @@ Four falsifications, each against a copy with the restore proven byte-identical:
   old test could not catch it;
 - deleting the carrier advice reddens the stacked-child case only;
 - replacing `remedySuggestion` with the plain suggestion reddens **4**.
+
+## Round 3 — the same defect, one level further out, for the third time
+
+Review rejected round 2 as well, and the finding is the same shape as the one round 2 fixed:
+round 2 replaced rank-indexing with a `taken` set, and allocated that set **per collision**.
+Distinctness then holds within a table and not across tables.
+
+One board, merge target max 1404, `{#100: 1423, #200: 1423, #300: 1424, #400: 1424}`:
+
+```
+#100 (rank 1 of 2) → session-1425, #200 (rank 2 of 2) → session-1426.
+#300 (rank 1 of 2) → session-1425, #400 (rank 2 of 2) → session-1426.
+```
+
+#100 and #300 are handed the same number, deterministically, on a single board — and **silently**,
+because `selfCollisions` shows each PR only its own collision, so neither author can see the other
+was told the same thing. The same-PR variant is visible inside one report: with #100 claiming both
+1423 and 1424, its own output renders two different files with one number.
+
+Nothing pinned it because **every self-test board had exactly one collision** — cases 30-36, and
+all three `noWasteBoards`. That is the shape this very log named two rounds ago, in the section
+about a branch nobody writes a test for.
+
+### The class, not the instance
+
+Three rounds is enough evidence that "two things that must be distinct, allocated from independent
+non-communicating scopes" is the defect, not any particular instance of it. So there is now exactly
+**one** `taken` set in the file, owned by `createRunAllocator(claims)`, created once per `analyze`
+and threaded through every site that hands anybody a number: the collision tables, the per-file
+stale-claim remedies, and the row-less carrier's number.
+
+The supporting changes are what make that structural rather than a convention:
+
+- `firstFreeInWindow` is a pure lookup that makes no distinctness claim of its own;
+- `suggestNextFree` no longer takes a `taken` set at all, and is documented as the non-allocating
+  query used only on the CLEAN path;
+- `rankedCollisionAssignment` takes the allocator as a **parameter** and can no longer create one;
+- the run-wide `remedySuggestion` — one number reused by every remedy, which was round 2's own
+  version of this bug — is **deleted**. Each finding carries the number it was allocated, and
+  `result.allocated` exposes every number the run handed out, so the invariant is assertable
+  directly instead of re-derived at each site.
+
+Allocation is board-wide and ordered — all tables, then all stale remedies, then the carrier — and
+computed before the self/other split, so two PRs reading the same board still compute the same
+allocation.
+
+### The channel that hid it
+
+`reportFindings` did its own writing, so a rendering defect was only observable through spawned-step
+fixtures. It is split into a pure exported `findingLines(result)` and a thin one-`writeSync`
+emitter, which is what makes cases 37-43 possible in-process at all. The narrow channel is why "one
+collision per board" survived two rounds: not because nobody thought of a second collision, but
+because asserting on the rendered output was expensive.
+
+Case 36 had to be rewired off the deleted `remedySuggestion` — reading it would have been
+`undefined`, which `includes()` reports as "not assigned", so the case would have kept **passing
+while measuring nothing**. That is the specific way a deleted field makes a green test lie.
+
+### Notes, all of them the same root cause
+
+Two stale claims in one report both printed `session-1320`; the carrier paragraph and its number
+were emitted once per collision, so a child carrying two colliding parent files got both twice. Both
+are the reuse-instead-of-allocate bug at a different site, and both fall out of the run allocator.
+The emitted distinctness sentence is now scoped to what the code does — distinct from every row
+here, from every row of any other collision, and from every number offered further down —
+and `firstFreeInWindow`'s "holds by construction" header is retracted and re-attributed to the
+allocator. `analyze` builds new objects instead of assigning `assignment` in place, so its "Pure"
+docblock is true.
+
+### Verification
+
+Self-test **131 → 143**, green; real board CLEAN. Six falsifications, each against a copy with the
+restore proven by `cmp`: putting the allocator back inside `rankedCollisionAssignment` reddens
+**9**, including the verbatim `[[100,1425],[200,1426]]` / `[[300,1425],[400,1426]]` pair; sharing
+one run-wide number across stale remedies reddens 3; moving the carrier advice back inside the loop
+reddens 1; narrowing the distinctness sentence reddens 1; and hoisting the allocator to module scope
+reddens **14**, which is the one that shows the per-run lifetime is load-bearing and not incidental.
