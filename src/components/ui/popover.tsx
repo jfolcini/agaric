@@ -134,7 +134,7 @@ const POPOVER_CONTENT_BASE =
  * themselves), not an incidental one, so it gets its own disposition:
  *
  * - The default itself IS pinned by a test
- *   (`__tests__/popover.test.tsx`, "defaults collisionPadding to
+ *   (`src/components/ui/__tests__/popover.test.tsx`, "defaults collisionPadding to
  *   EDGE_PADDING_PX"). It calls `PopoverContent` directly as a function and
  *   reads the element tree it returns, because `collisionPadding` isn't
  *   reflected anywhere in the rendered DOM (no attribute, no style) — it
@@ -142,13 +142,12 @@ const POPOVER_CONTENT_BASE =
  *   actually run, which happy-dom never lays out enough to do (same reason
  *   the height-cap test above asserts the class expression, not a computed
  *   px value). That is deliberately narrower than "the popover sits 4px off
- *   the edge in a real browser", and NOTHING covers that wider claim —
- *   grepping `collisionPadding` and `data-side` across `e2e/` finds only
- *   comment mentions, and the one spec that touches this area asserts the
- *   available-height variable rather than the 4px inset. Stated plainly
- *   rather than deferred to "whatever end-to-end checks exist", because an
- *   unexamined elsewhere is exactly the absence-read-as-coverage this
- *   disposition exists to avoid.
+ *   the edge in a real browser" — see that same test's comment in
+ *   `src/components/ui/__tests__/popover.test.tsx` for the full claim that NOTHING covers the
+ *   wider one end-to-end (the `e2e/` grep, and why it's stated rather than
+ *   deferred to "whatever end-to-end checks exist"). Recorded there, not
+ *   restated here, so the two files don't carry two copies of the same
+ *   claim that could drift out of step with each other.
  * - Whether 4px of padding flips any existing popover to a different side
  *   than it used to land on was checked and not resolved: no test in this
  *   repo asserts `data-side` for any popover, so there is no "before"

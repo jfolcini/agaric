@@ -81,7 +81,24 @@ import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
 import { listStyleFromRows } from '@/lib/list-style'
 import type { ListStyle } from '@/lib/list-style'
 
-/** True iff two id→style maps have identical entries. */
+/**
+ * True iff two id→style maps have identical entries.
+ *
+ * Iterates only `a` and relies on the size check to cover `b`: a same-size
+ * map that agrees with `a` on every one of `a`'s keys cannot hold an extra
+ * key `a` lacks. That reasoning depends on values never being `undefined`
+ * — `next.set` (below) only ever runs for a style that is not `'none'`. If
+ * `ListStyle` ever widened to include `undefined`, an entry `a` maps to
+ * `undefined` would be indistinguishable from a KEY `b` DOESN'T HAVE AT
+ * ALL: `Map#get` returns `undefined` either way, so `b.get(id) !== style`
+ * is false in both cases. A same-size `b` that instead holds some other
+ * key entirely (e.g. `a = {x: undefined}` vs `b = {y: 'bullet'}`) would
+ * then compare equal here despite the two maps sharing no key at all.
+ * Unreachable given the current `ListStyle` type, so not a defect today —
+ * but the "checks size and every entry" claim in the docblock above
+ * quietly depends on this, and would stop being true if that value type
+ * ever widened.
+ */
 function mapsEqual(a: Map<string, ListStyle>, b: Map<string, ListStyle>): boolean {
   if (a === b) return true
   if (a.size !== b.size) return false
