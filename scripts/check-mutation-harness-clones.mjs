@@ -2,6 +2,16 @@
 // ─────────────────────────────────────────────────────────────────────
 // Mutation-harness source-pin guard (#3907).
 //
+// ONE WAY THIS CAN BREAK A BUILD, added by #4509 and worth knowing before it
+// surprises you: any line in a harness whose comment OPENS with the
+// `mutation-harness-source-pin:` keyword is now required to be a well-formed
+// pin. So a prose comment that merely mentions the keyword — for instance
+// `// mutation-harness-source-pin: see the guard for the syntax` — is a hard
+// failure rather than being ignored. That is the intended trade: such a line
+// is genuinely indistinguishable from a pin with a typo in it, and treating
+// it as prose is what let a malformed marker vanish in the first place. Refer
+// to the marker without leading with the keyword.
+//
 // `scripts/mutation-harnesses/*.harness.ts` each contain hand-copied
 // CLONES of a real function under test, plus hand-copied clones of the
 // specific mutants they discriminate — necessary, because you cannot
@@ -572,6 +582,15 @@ function checkTree({ root, harnessDir }) {
       // — i.e. once every malformed marker here has been fixed or removed
       // — so `pinCount` never advertises a malformed line as a verified pin.
       if (pin.malformed) {
+        // #4509 review — a shape-correct hash with something after it (most
+        // often a JSDoc `*/` closed on the same line) is the one malformed
+        // case where a reader will study the HASH and not the line ending,
+        // because the hash is the part that looks like it could be wrong.
+        // Name it when we can see it; the generic message keeps the rest.
+        const trailing = /sha256=[0-9a-f]{64}(?<rest>.+)$/.exec(pin.raw)?.groups?.rest?.trim()
+        const trailingHint = trailing
+          ? ` The hash itself is well-formed; what breaks it is the trailing "${trailing}" — a marker must end at the hash.`
+          : ''
         violations.push({
           harness: relHarness,
           message:
@@ -579,8 +598,7 @@ function checkTree({ root, harnessDir }) {
             `match the required shape "<repo-relative-path>#<symbolName> sha256=<64 lowercase hex ` +
             `chars>" (got "${pin.raw}"). A malformed marker used to be silently dropped — indistinguishable ` +
             'from an ordinary comment — so the clone it was meant to gate went unpinned with no ' +
-            'signal anywhere; it now fails instead. Fix the marker (or generate a correct pin) ' +
-            'rather than removing it.',
+            `signal anywhere; it now fails instead. Fix the marker (or generate a correct pin) rather than removing it.${trailingHint}`,
         })
         continue
       }
