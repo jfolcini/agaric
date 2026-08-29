@@ -71,7 +71,9 @@ its annotations and a newly-appearing pair is emitted bare. Running
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import re
 import sys
 from collections import defaultdict
@@ -668,16 +670,46 @@ def run_self_test() -> int:
     # Asserted by swapping the module-level list rather than the filesystem —
     # the constant is what a careless edit actually breaks, and a temp
     # directory could not reproduce a MISSPELLING.
-    root_cases = 2
+    root_cases = 5
     _saved_roots = CRATE_ROOTS[:]
     try:
+        # A misspelled segment ALONGSIDE present siblings — the realistic
+        # shape, and the one the exemption below must not swallow. An earlier
+        # version of this case used the misspelled root ALONE, which the
+        # exemption correctly treats as "not this repo"; the suite caught it.
         globals()["CRATE_ROOTS"] = [
             ("store", REPO_ROOT / "src-tauri" / "agaric-stores" / "src"),
+            ("app", REPO_ROOT / "src-tauri" / "src"),
         ]
         missing = missing_crate_roots()
         if missing != ["src-tauri/agaric-stores/src"]:
             failures.append(
                 f"a misspelled crate root was not reported: {missing!r}"
+            )
+        # `--synthetic-tree` suppresses the assertion, and ONLY it does.
+        # Asserted through `main()` rather than the helper, because the flag
+        # is handled there and a helper-level test would not notice the wiring
+        # being dropped.
+        globals()["CRATE_ROOTS"] = _saved_roots
+        if main(["--synthetic-tree"]) != 0:
+            failures.append(
+                "--synthetic-tree did not suppress the roots assertion"
+            )
+        globals()["CRATE_ROOTS"] = [
+            ("store", REPO_ROOT / "src-tauri" / "agaric-stores" / "src"),
+            ("app", REPO_ROOT / "src-tauri" / "src"),
+        ]
+        if main(["--synthetic-tree"]) != 0:
+            failures.append(
+                "--synthetic-tree did not suppress a MISSING root either"
+            )
+        # stderr captured: this call is SUPPOSED to fail, and its diagnostic
+        # in the middle of a passing suite reads like a real failure.
+        with contextlib.redirect_stderr(io.StringIO()):
+            unflagged = main([])
+        if unflagged == 0:
+            failures.append(
+                "without --synthetic-tree a missing root did not fail the run"
             )
         globals()["CRATE_ROOTS"] = _saved_roots
         if missing_crate_roots():
@@ -723,7 +755,24 @@ def main(argv: list[str]) -> int:
     # roots only, so re-anchoring against a narrowed walk deletes every count
     # under the vanished root and exits 0 — the finding destroyed by the
     # command prescribed to fix it.
-    missing = missing_crate_roots()
+    # `--synthetic-tree` is how a caller says "this tree is deliberately not
+    # this repository". `pr-merge-result-check.sh` builds synthetic fixture
+    # repos with roots like `src-tauri/source` and runs the ratchet guards
+    # against them; asserting our roots there fails every fixture merge and
+    # says nothing true about the merge under test.
+    #
+    # An explicit FLAG, not an env var and not an inferred condition:
+    #   * inference does not work. I tried "report only when at least one
+    #     declared root exists", on the theory that a misspelling leaves the
+    #     siblings present while a foreign tree has none of them. The fixtures
+    #     create `src-tauri/src`, so they have exactly one — indistinguishable
+    #     from four crates genuinely being deleted. Nineteen assertions still
+    #     failed.
+    #   * an env var can arrive from anywhere, including a CI runner that
+    #     inherited it by accident; a flag is visible at the call site and has
+    #     to be typed by whoever meant it.
+    synthetic = "--synthetic-tree" in argv
+    missing = [] if synthetic else missing_crate_roots()
     if missing:
         if "--update-baseline" in argv:
             print(

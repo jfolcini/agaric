@@ -544,10 +544,25 @@ run_one_guard() {
       # behaviour, and reads the same under prek, under CI and by hand.
       python3 "$workdir/scripts/$guard" --worktree "$@"
       ;;
+    check-table-ownership.py)
+      # No source flags: it ignores argv for FILE selection and rescans its
+      # own crate roots off the filesystem, so it only ever reads the
+      # worktree in the first place.
+      #
+      # `--synthetic-tree` (#4501) is required here and is not a weakening.
+      # That guard now fails when a declared CRATE_ROOTS directory is absent,
+      # because a renamed or misspelled segment used to narrow its walk to
+      # nothing in silence. The trees THIS script builds are deliberately not
+      # this repository — `src-tauri/source`, `src-tauri/extra/src` — so the
+      # assertion is inapplicable rather than violated, and without the flag
+      # it fails every fixture merge (19-22 of the assertions below).
+      #
+      # The case it exists for already has a correct owner: when no `.rs`
+      # lives under any known crate root, this script exits 3 ("verified
+      # nothing") rather than returning a verdict on the merge.
+      python3 "$workdir/scripts/$guard" --synthetic-tree "$@"
+      ;;
     *.py)
-      # check-table-ownership.py has no source flags: it ignores argv and
-      # rescans its own crate roots off the filesystem, so it only ever reads
-      # the worktree in the first place.
       python3 "$workdir/scripts/$guard" "$@"
       ;;
     check-unsafe-allowlist.sh)
