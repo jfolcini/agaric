@@ -127,19 +127,34 @@ truncated-JSON seed added: valid base64 whose *payload* is cut short.
 ## A finding the probe produced
 
 `parse_bibtex` returns `Ok(0 entries, 0 warnings)` for CSL-JSON, for RIS, and for empty
-input. Not an error, not a warning — a silent, successful, empty parse.
+input — a successful, empty parse, with nothing in the parser distinguishing "a `.bib` with
+no entries" from "not a `.bib` at all".
 
 `parse_bibliography` guards `content.trim().is_empty()` before dispatching, so the empty
 case is unreachable through it. The other two are reachable, and through a `pub` Tauri
 command rather than only in theory: `import_bibliography_inner`
 (`src-tauri/src/commands/pages/bibliography.rs:269`) sniffs the format only when its `format`
-argument is `None`, so `Some("bibtex")` with CSL-JSON content skips detection entirely and
-returns a successful import of nothing — no error, no warning, nothing distinguishing it
-from a `.bib` that genuinely held no entries. The argument is a raw `Option<String>` fed by
-MCP tools and scripted imports, per that function's own comment.
+argument is `None`, so `Some("bibtex")` with CSL-JSON content skips detection entirely. The
+argument is a raw `Option<String>` fed by MCP tools and scripted imports, per that
+function's own comment.
 
-That is a UX defect in the importer, not a fuzzing defect, and fixing it here would widen a
-fuzz PR into behaviour change. Filed separately.
+**And here this log was wrong, in the direction that inflates a finding.** Its first
+revision said that path "returns a successful import of nothing — no error, no warning".
+It does not. The review on #4506 checked the caller, which this session had not: the
+empty-entries path at `src-tauri/src/commands/pages/bibliography.rs:293` pushes
+`"no importable bibliography entries found"` onto `warnings` and returns it. The import
+reports something; what it does not report is that the *format argument* was the mistake,
+since that same message is what a legitimately-empty `.bib` produces.
+
+So the parser-level measurement held and the extension to the command layer did not. The
+measurement was made — I ran every seed through `parse_bibtex` and read the counts — while
+the sentence about what the user sees was inferred from the parser's return value without
+opening the caller. Measured at one layer, asserted at the next: the seam is exactly where
+the error entered, and it is worth naming because the fix (read the caller too) is cheap and
+the failure looked like evidence.
+
+#4505 has been corrected and re-scoped from a silent-failure issue to a
+diagnostic-quality one.
 
 ## What is verified, and what cannot be
 
@@ -160,3 +175,18 @@ target, so it scales with the count) and the job from 90 to 110. A cmin timeout 
 step failure; a *job* timeout is a cancellation, which correctly skips the save and would
 therefore surface as a corpus that silently stopped accumulating — the exact failure #4496
 exists to remove, reintroduced by growing the lane it protects.
+
+Review then pointed out what that trade actually costs, and it is worth recording as the
+shape of the change rather than as a note on it: removing the second target list means
+enrolling a target no longer opens this workflow at all, so the reminder to re-check those
+budgets now lives in a file the person adding a target never reads. List drift was traded
+for budget drift, and budget drift is the quieter of the two. The derivation step now
+carries a `BUDGETED_TARGETS` count and warns when the derived list outgrows it — two lines
+beside the empty-derivation guard that was already there, in the one place that always runs.
+
+A second review catch in the same area: `cargo metadata` was invoked bare, and rustup
+searches upward for a toolchain file. It would have found the repo root's
+`rust-toolchain.toml`, which pins 1.95.0 and mandates clippy and rustfmt — a toolchain this
+job never installs, since it installs only nightly. A manifest read would have pulled a
+full toolchain plus components over the network, inside the step the fuzz budget is measured
+against. `cargo +nightly metadata` reuses what the job already has.

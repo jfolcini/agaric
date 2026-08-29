@@ -1629,8 +1629,15 @@ jobs:
           # this lane reported success. `--no-deps` reads the manifest only —
           # no dependency resolution, no network, no build — and adding a
           # [[bin]] is now the entire act of enrolling a target in this lane.
+          # `+nightly`, not a bare `cargo`: rustup searches upward from the
+          # working directory for a toolchain file and finds the repo root's
+          # `rust-toolchain.toml`, which pins 1.95.0 AND mandates the clippy and
+          # rustfmt components. This job installs ONLY nightly, so a bare `cargo`
+          # here would trigger a full toolchain-plus-components download inside
+          # the step the fuzz budget is measured against — a network dependency
+          # for a command that only reads a manifest. Nightly is already present.
           mapfile -t targets < <(
-            cargo metadata --format-version 1 --no-deps \
+            cargo +nightly metadata --format-version 1 --no-deps \
               | jq -r '.packages[] | select(.name == "agaric-fuzz")
                        | .targets[] | select(.kind | index("bin")) | .name' \
               | sort
@@ -1648,6 +1655,18 @@ jobs:
             exit 1
           fi
           echo "fuzzing ${#targets[@]} targets: ${targets[*]}"
+          # Enrolling a target is now a one-line `[[bin]]` edit that never opens
+          # this file — which trades list drift (#2945) for BUDGET drift, and
+          # budget drift fails silently in the worse direction: overrunning the
+          # JOB bound is a cancellation, which correctly skips the corpus save,
+          # so the symptom is a corpus that quietly stops accumulating rather
+          # than a red lane. `timeout-minutes` on this job and on the cmin step
+          # are hand-sized for the count below; exceeding it is not an error
+          # (the budgets carry headroom) but it must not pass unremarked.
+          BUDGETED_TARGETS=8
+          if [ "${#targets[@]}" -gt "$BUDGETED_TARGETS" ]; then
+            echo "::warning::${#targets[@]} fuzz targets, but the job and cmin timeouts were sized for $BUDGETED_TARGETS. Re-check timeout-minutes on this job and on the cmin step, then raise BUDGETED_TARGETS here."
+          fi
           printf '%s\n' "${targets[@]}" > "$RESULT_DIR/targets.txt"
           for target in "${targets[@]}"; do
             echo not_run > "$RESULT_DIR/$target.status"
