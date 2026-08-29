@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 14 cases pass |
+| control (restored) | 15 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 14 cases pass (was 10).
+- `--self-test`: 15 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -157,3 +157,32 @@ The general form of this — nothing checks that guards still point at anything 
 filed with the six recorded instances. This session is its first live instance fixed, and
 #4501 proposes falsifying the meta-guard against *this* issue's pre-fix state, which is now
 recorded above in a reproducible form.
+
+## Review round two
+
+`agaric-reviewer` approved and then listed seven notes, which is the normal shape here — an
+approval is not "nothing to address". Four were fixed in a follow-up commit:
+
+- **The dangling hint prescribed a remedy that could not work for half of what it fires on.**
+  It offered `--update-baseline`, which rebuilds the baseline and never touches `DENY_FILES`.
+  An author hitting a dangling deny entry would run the prescribed command, see nothing
+  change, and re-run into the identical message. The hint now names the actual fix.
+- **The banner claimed a drift on a dangling-only run.** Nothing had drifted; the header said
+  it had. Two headers now, and a self-test case pins it — falsified by reverting to the single
+  unconditional banner.
+- **Two comments this change made false**, which is the finding worth recording given what the
+  section above says about confidently-wrong comments: `_build_cli_sandbox`'s docstring still
+  claimed `main()` "only ever scans files under `<REPO_ROOT>/src-tauri/src`", and `main()`'s own
+  inline comment still said "only police production .rs under `src-tauri/src/`". Both were
+  precise statements of the behaviour this PR removes. I wrote a section about inheriting a
+  confidently-wrong comment and left two behind in the same diff.
+- **`all_source_files()`'s `seen` set was dead code** — no crate root is a prefix of another, so
+  the dedup could never fire. Removed; the `sorted()` it sat next to is load-bearing and stays,
+  now with a comment saying why.
+
+Three were left, deliberately: an in-scope-ness check on baseline entries (an entry naming a
+file that exists but sits outside `CRATE_ROOTS` is still never walked), a re-anchor that fails
+when the total canonical count drops, and a mechanical coupling between `prek.toml`'s regex and
+`CRATE_ROOTS`. All three are the same shape one level up — a guard whose scope and whose
+subject can drift apart — and belong in #4501 rather than here, where they would be a fourth
+hand-maintained pairing defended by prose.

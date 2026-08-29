@@ -179,8 +179,13 @@ HINT = (
 
 DANGLING_HINT = (
     "    -> #3255: the baseline (or DENY_FILES) names a path that no longer\n"
-    "       exists. If the code MOVED, re-anchor and check the new counts\n"
-    "       are preserved rather than silently dropped:\n"
+    "       exists.\n"
+    "       A DENY_FILES entry is fixed by EDITING THIS SCRIPT's DENY_FILES\n"
+    "       set — `--update-baseline` rebuilds only the baseline and will\n"
+    "       not touch it, so re-running it on a dangling deny entry changes\n"
+    "       nothing and reports the same message again.\n"
+    "       For a BASELINE entry: if the code MOVED, re-anchor and check the\n"
+    "       new counts are preserved rather than silently dropped:\n"
     "         python3 scripts/check-space-filter-drift.py --update-baseline\n"
     "         git diff src-tauri/space-filter-baseline.txt\n"
     "       If the code was DELETED, the same command is correct — but read\n"
@@ -367,15 +372,15 @@ def crate_root_paths() -> list[Path]:
 
 def all_source_files() -> list[Path]:
     out: list[Path] = []
-    seen: set[Path] = set()
     for root in crate_root_paths():
-        for p in sorted(root.rglob("*.rs")):
-            if p in seen:
-                continue
-            seen.add(p)
+        for p in root.rglob("*.rs"):
             if p.relative_to(REPO_ROOT).as_posix() in DENY_FILES:
                 continue
             out.append(p)
+    # `sorted` is load-bearing: without it the walk emits files grouped by
+    # CRATE_ROOTS declaration order, which is presentational order, not path
+    # order. No dedup is needed — no root is a prefix of another (see the
+    # CRATE_ROOTS comment), so a file cannot be reached twice.
     return sorted(out)
 
 
@@ -436,7 +441,7 @@ def _build_cli_sandbox(root: Path) -> Path:
     """Lay out a throw-away repo `root` that this guard can be RUN inside.
 
     `REPO_ROOT` is derived from `Path(__file__).resolve().parent.parent`, and
-    `main()` only ever scans files under `<REPO_ROOT>/src-tauri/src` — so the
+    `main()` only ever scans files under `<REPO_ROOT>`'s CRATE_ROOTS — so the
     only way to drive the real CLI over a fixture is to give it a repo root of
     its own. `root/scripts/` gets a SYMLINK per entry of the real
     `scripts/` directory (so every sibling this guard imports now, or imports
@@ -603,6 +608,20 @@ def run_cli_self_test(record) -> None:
                 "CLI: a dangling baseline entry exits non-zero (#3255)",
                 (code, out.strip()),
                 "non-zero exit naming gone.rs as not existing",
+            )
+
+        # The banner must not claim a DRIFT when the only finding is a
+        # dangling entry — nothing drifted, and saying so sends the reader
+        # hunting for a mangled fragment that does not exist. Same run as
+        # above; a separate assertion because the exit code and the diagnosis
+        # are different things and a regression can spoil either alone.
+        if "fragment drifted" not in out and "no longer describes this tree" in out:
+            record("CLI: a dangling-only run does not claim a drift", True, True)
+        else:
+            record(
+                "CLI: a dangling-only run does not claim a drift",
+                out.strip(),
+                "the baseline-describes banner, and no 'fragment drifted' claim",
             )
 
         # --- #3255 direction 4: a MEMBER-CRATE file is actually scanned -----
@@ -786,8 +805,8 @@ def main(argv: list[str]) -> int:
     baseline = read_baseline()
 
     # Determine targets. prek passes changed files; a bare invocation scans
-    # the whole tree. Either way only police production .rs under
-    # src-tauri/src/ (skip DENY_FILES).
+    # the whole tree. Either way only police `.rs` under a CRATE_ROOTS entry
+    # (skip DENY_FILES, and skip anything outside those roots).
     file_args = [a for a in argv if not a.startswith("-")]
     if file_args:
         targets: list[Path] = []
@@ -837,11 +856,22 @@ def main(argv: list[str]) -> int:
     if not shape_violations and not removal_violations and not dangling:
         return 0
 
-    print(
-        "Space-filter drift guard (#139) — the inlined "
-        f"`{CANONICAL}` fragment drifted:\n",
-        file=sys.stderr,
-    )
+    # Two headers, because a dangling-only run has nothing drifted in it and
+    # saying so anyway sends the reader looking for a drift that is not there.
+    # The hints below were already conditional; this line was the one that
+    # was not.
+    if shape_violations or removal_violations:
+        print(
+            "Space-filter drift guard (#139) — the inlined "
+            f"`{CANONICAL}` fragment drifted:\n",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "Space-filter drift guard (#139) — the baseline no longer "
+            "describes this tree:\n",
+            file=sys.stderr,
+        )
     for v in shape_violations:
         print(f"  {v}", file=sys.stderr)
     for v in removal_violations:
