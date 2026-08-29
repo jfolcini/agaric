@@ -226,6 +226,16 @@ UNSCANNED_HINT = (
     "       delete the entry if the file is deliberately denied."
 )
 
+MISSING_BASELINE_HINT = (
+    "    -> #3255: the baseline file itself is gone. This is not a stale\n"
+    "       entry and `--update-baseline` is the WRONG first move — it would\n"
+    "       happily write a fresh file from the current tree, silently\n"
+    "       blessing whatever guards have been removed since the real\n"
+    "       baseline was last correct. Restore it:\n"
+    "         git checkout -- src-tauri/space-filter-baseline.txt\n"
+    "       Only re-anchor from scratch if the deletion was deliberate."
+)
+
 DANGLING_HINT = (
     "    -> #3255: the baseline, DENY_FILES, or CRATE_ROOTS names a path that\n"
     "       no longer exists.\n"
@@ -425,7 +435,27 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[tuple[str, str]]:
     # the rendered text couples control flow to diagnosis wording — a baseline
     # path containing the literal would be misrouted. Unlikely, and free to
     # remove.
-    out: list[tuple[str, str]] = [
+    # The baseline file itself. `read_baseline()` returns {} when it is
+    # absent, so deleting it degrades the whole removal ratchet to nothing
+    # while every rule above still "passes": no entry can dangle, none can be
+    # unscanned, and `baseline.get(rel, 0)` reads 0 for every file. prek does
+    # not pass deleted paths, so the deletion does not even select the hook.
+    # That is this change's own subject in its purest form — the guard's state
+    # gone, and the guard reporting success — so it is a finding of its own
+    # kind rather than an empty dict flowing silently into every other rule.
+    out: list[tuple[str, str]] = []
+    if not BASELINE_PATH.is_file():
+        out.append(
+            (
+                "missing_baseline",
+                f"{BASELINE_PATH.relative_to(REPO_ROOT).as_posix()}: the "
+                f"baseline file does not exist. Every removal check reads an "
+                f"empty baseline and passes; the ratchet is not weakened, it "
+                f"is absent. Restore it from git, or re-anchor deliberately "
+                f"with --update-baseline.",
+            )
+        )
+    out += [
         (
             "baseline",
             f"{rel}: baseline names a file that does not exist "
@@ -466,6 +496,23 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[tuple[str, str]]:
         for rel, cnt in sorted(baseline.items())
         if (REPO_ROOT / rel).is_file()
         and not any(rel.startswith(r) for r in CRATE_ROOTS)
+    )
+    # Third way to be unscanned, and the one both walks agree on: the entry is
+    # under a root and exists, but is not a `.rs` file at all.
+    # `all_source_files()` globs `*.rs` and the argv filter drops any other
+    # suffix, so `2 src-tauri/src/foo.toml` satisfies every predicate above
+    # and is still never opened.
+    out.extend(
+        (
+            "unscanned",
+            f"{rel}: baseline entry is not a `.rs` file, so neither the walk "
+            f"nor the targeted filter ever opens it — the {cnt} fragment(s) "
+            f"it records are unenforced.",
+        )
+        for rel, cnt in sorted(baseline.items())
+        if (REPO_ROOT / rel).is_file()
+        and any(rel.startswith(r) for r in CRATE_ROOTS)
+        and not rel.endswith(".rs")
     )
     out.extend(
         (
@@ -1113,8 +1160,10 @@ def run_cli_self_test(record) -> None:
             encoding="utf-8",
         )
         baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
-        code, out = _run_cli(guard, [str(orphan)])
-        orphan.unlink()
+        try:
+            code, out = _run_cli(guard, [str(orphan)])
+        finally:
+            orphan.unlink()
         if code != 0 and "NO baseline entry" in out and "orphan.rs" in out:
             record("CLI: a fragment-bearing file with no baseline entry fails", True, True)
         else:
@@ -1201,11 +1250,15 @@ def run_cli_self_test(record) -> None:
             encoding="utf-8",
         )
         baseline_path.write_text("2 src-tauri/src/shrink.rs\n", encoding="utf-8")
-        code, out = _run_cli(guard, ["--update-baseline"])
-        refused = code != 0 and "REFUSING" in out and "2 -> 0" in out
-        baseline_path.write_text("2 src-tauri/src/shrink.rs\n", encoding="utf-8")
-        code2, _ = _run_cli(guard, ["--update-baseline", "--allow-reductions"])
-        shrink.unlink()
+        try:
+            code, out = _run_cli(guard, ["--update-baseline"])
+            refused = code != 0 and "REFUSING" in out and "2 -> 0" in out
+            baseline_path.write_text(
+                "2 src-tauri/src/shrink.rs\n", encoding="utf-8"
+            )
+            code2, _ = _run_cli(guard, ["--update-baseline", "--allow-reductions"])
+        finally:
+            shrink.unlink()
         if refused and code2 == 0:
             record("CLI: --update-baseline refuses a reduction, opt-in allows", True, True)
         else:
@@ -1226,12 +1279,14 @@ def run_cli_self_test(record) -> None:
             encoding="utf-8",
         )
         baseline_path.write_text("2 src-tauri/src/shrink.rs\n", encoding="utf-8")
-        first, _ = _run_cli(guard, ["--update-baseline"])
-        second, _ = _run_cli(guard, ["--update-baseline"])
-        untouched = baseline_path.read_text(encoding="utf-8").strip() == (
-            "2 src-tauri/src/shrink.rs"
-        )
-        shrink.unlink()
+        try:
+            first, _ = _run_cli(guard, ["--update-baseline"])
+            second, _ = _run_cli(guard, ["--update-baseline"])
+            untouched = baseline_path.read_text(encoding="utf-8").strip() == (
+                "2 src-tauri/src/shrink.rs"
+            )
+        finally:
+            shrink.unlink()
         if first != 0 and second != 0 and untouched:
             record("CLI: the reduction refusal is idempotent (#3255)", True, True)
         else:
@@ -1260,9 +1315,11 @@ def run_cli_self_test(record) -> None:
         # Baseline claims 3 in keep.rs; the tree has 2 there and 1 in gain.rs,
         # so the TOTAL is unchanged while keep.rs lost one in place.
         baseline_path.write_text("3 src-tauri/src/keep.rs\n", encoding="utf-8")
-        code, out = _run_cli(guard, ["--update-baseline"])
-        keep.unlink()
-        gain.unlink()
+        try:
+            code, out = _run_cli(guard, ["--update-baseline"])
+        finally:
+            keep.unlink()
+            gain.unlink()
         if code != 0 and "IN PLACE" in out and "keep.rs" in out:
             record("CLI: an in-place removal that nets to zero is refused", True, True)
         else:
@@ -1288,8 +1345,10 @@ def run_cli_self_test(record) -> None:
             encoding="utf-8",
         )
         baseline_path.write_text("1 src-tauri/src/gained.rs\n", encoding="utf-8")
-        code, out = _run_cli(guard, [str(gained)])
-        gained.unlink()
+        try:
+            code, out = _run_cli(guard, [str(gained)])
+        finally:
+            gained.unlink()
         if code != 0 and "unratcheted" in out and "gained.rs" in out:
             record("CLI: a count above its baseline is a finding (#3255)", True, True)
         else:
@@ -1508,6 +1567,66 @@ def run_cli_self_test(record) -> None:
                     (code, out.strip()[:220]),
                     "the unscanned refusal, and NOT an in-place-removal claim",
                 )
+
+        # --- #3255 direction 21: the baseline file itself is DELETED --------
+        # The purest form of this change's subject. `read_baseline()` returns
+        # {} for a missing file, so every removal check reads an empty
+        # baseline and passes: nothing can dangle, nothing is unscanned, and
+        # `baseline.get(rel, 0)` is 0 for every file. The guard's own state
+        # gone, and the guard reporting success.
+        saved_baseline_21 = baseline_path.read_text(encoding="utf-8")
+        try:
+            baseline_path.unlink()
+            code, out = _run_cli(guard, [])
+        finally:
+            baseline_path.write_text(saved_baseline_21, encoding="utf-8")
+        if code != 0 and "the baseline file does not exist" in out:
+            record(
+                "CLI: a deleted baseline file is a finding (#3255)", True, True
+            )
+        else:
+            record(
+                "CLI: a deleted baseline file is a finding (#3255)",
+                (code, out.strip()[:200]),
+                "non-zero exit naming the baseline file as absent",
+            )
+        # And it must NOT be told to re-anchor: `--update-baseline` would
+        # write a fresh file from the current tree, blessing whatever was
+        # removed since the real baseline was last correct.
+        if "git checkout --" in out and "do not" not in out.split("-> #3255")[0]:
+            record("CLI: a deleted baseline is told to RESTORE, not re-anchor", True, True)
+        else:
+            record(
+                "CLI: a deleted baseline is told to RESTORE, not re-anchor",
+                out.strip()[:200],
+                "MISSING_BASELINE_HINT prescribing git checkout",
+            )
+
+        # --- #3255 direction 22: a baseline entry that is not a `.rs` file ---
+        # Third way to be unscanned, and the one both walks agree on: under a
+        # root, exists, and still never opened, because the walk globs `*.rs`
+        # and the argv filter drops every other suffix.
+        not_rs = root / "src-tauri" / "src" / "notes.toml"
+        not_rs.write_text("# not rust\n", encoding="utf-8")
+        saved_baseline_22 = baseline_path.read_text(encoding="utf-8")
+        try:
+            baseline_path.write_text(
+                "2 src-tauri/src/notes.toml\n", encoding="utf-8"
+            )
+            code, out = _run_cli(guard, [])
+        finally:
+            baseline_path.write_text(saved_baseline_22, encoding="utf-8")
+            not_rs.unlink()
+        if code != 0 and "is not a `.rs` file" in out:
+            record(
+                "CLI: a non-.rs baseline entry is a finding (#3255)", True, True
+            )
+        else:
+            record(
+                "CLI: a non-.rs baseline entry is a finding (#3255)",
+                (code, out.strip()[:200]),
+                "non-zero exit naming the entry as not a .rs file",
+            )
 
 
 
@@ -1876,8 +1995,13 @@ def main(argv: list[str]) -> int:
     _found = _assert_paths_exist(baseline)
     missing_roots = [m for kind, m in _found if kind == "root"]
     unscanned = [m for kind, m in _found if kind == "unscanned"]
+    missing_baseline = [
+        m for kind, m in _found if kind == "missing_baseline"
+    ]
     dangling = [
-        m for kind, m in _found if kind not in ("root", "unscanned")
+        m
+        for kind, m in _found
+        if kind not in ("root", "unscanned", "missing_baseline")
     ]
 
     for p in targets:
@@ -1939,6 +2063,7 @@ def main(argv: list[str]) -> int:
         and not dangling
         and not missing_roots
         and not unscanned
+        and not missing_baseline
         and not unbaselined
     ):
         return 0
@@ -1969,6 +2094,8 @@ def main(argv: list[str]) -> int:
         parts.append("a declared CRATE_ROOTS directory is missing or unusable")
     if unscanned:
         parts.append("a baseline entry names a file nothing scans")
+    if missing_baseline:
+        parts.append("the baseline file is missing")
     print(
         f"Space-filter drift guard (#139) — {'; '.join(parts)}:\n",
         file=sys.stderr,
@@ -1985,6 +2112,8 @@ def main(argv: list[str]) -> int:
         print(f"  {v}", file=sys.stderr)
     for v in unscanned:
         print(f"  {v}", file=sys.stderr)
+    for v in missing_baseline:
+        print(f"  {v}", file=sys.stderr)
     print("", file=sys.stderr)
     if dangling:
         print(DANGLING_HINT, file=sys.stderr)
@@ -1992,6 +2121,8 @@ def main(argv: list[str]) -> int:
         print(ROOT_MISSING_HINT, file=sys.stderr)
     if unscanned:
         print(UNSCANNED_HINT, file=sys.stderr)
+    if missing_baseline:
+        print(MISSING_BASELINE_HINT, file=sys.stderr)
     if unbaselined:
         print(UNBASELINED_HINT, file=sys.stderr)
     if shape_violations or removal_violations:
