@@ -299,7 +299,11 @@ function loadPathAliasMap(repoRoot) {
   }
   if (map.size === 0) {
     throw new Error(
-      `${tsconfigPath}'s compilerOptions.paths has no usable "prefix/*" entry to resolve @/-alias citations against`,
+      `${tsconfigPath}'s compilerOptions.paths has no entry this guard models ` +
+        `(it handles the "prefix/*" -> "target/*" shape only, which is what this repo declares). ` +
+        `Your config may be perfectly valid TypeScript and still land here — e.g. ` +
+        `"@/*": ["./*"], whose target is a bare "*". Add a modelled entry, or teach ` +
+        `loadPathAliasMap the shape you need; do not assume the config is malformed.`,
     )
   }
   return map
@@ -2206,6 +2210,30 @@ function aliasCitationScenarios(root) {
       malformedConfig.status === 2 && /compilerOptions\.paths/.test(malformedConfig.stderr),
       `expected 2 naming compilerOptions.paths, got ${malformedConfig.status}: ${malformedConfig.stderr}`,
     )
+
+    // The SAME broken config through `--print-source`, the flag whose whole
+    // job is to explain what a real run would do. Before #4492's follow-up
+    // the error gate sat AFTER this flag's early return, so `--print-source`
+    // stayed silent about the one thing that would make a real run exit 2 —
+    // the most misleading possible answer from a diagnostic.
+    //
+    // Two arms, because either alone is satisfiable by the wrong
+    // implementation: it must WARN (dropping the warning reddens the first)
+    // and it must still exit 0 (moving the hard gate back above the early
+    // return reddens the second). `--print-source` never runs the scan, so it
+    // has never answered "did the check pass" and must not start now.
+    const printSourceBroken = run(['--print-source'])
+    record(
+      '`--print-source` WARNS about a tsconfig.app.json it cannot read',
+      /compilerOptions\.paths/.test(printSourceBroken.stderr),
+      `expected stderr naming compilerOptions.paths, got: ${printSourceBroken.stderr}`,
+    )
+    record(
+      '`--print-source` still exits 0 on that config — diagnostic, not the check',
+      printSourceBroken.status === 0,
+      `expected 0, got ${printSourceBroken.status}: ${printSourceBroken.stderr}`,
+    )
+
     writeTsconfig({ '@/*': ['./src/*'] })
     git('add', '-A')
 

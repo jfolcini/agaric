@@ -134,7 +134,7 @@ const POPOVER_CONTENT_BASE =
  * themselves), not an incidental one, so it gets its own disposition:
  *
  * - The default itself IS pinned by a test
- *   (`__tests__/popover.test.tsx`, "defaults collisionPadding to
+ *   (`src/components/ui/__tests__/popover.test.tsx`, "defaults collisionPadding to
  *   EDGE_PADDING_PX"). It calls `PopoverContent` directly as a function and
  *   reads the element tree it returns, because `collisionPadding` isn't
  *   reflected anywhere in the rendered DOM (no attribute, no style) — it
@@ -143,7 +143,7 @@ const POPOVER_CONTENT_BASE =
  *   the height-cap test above asserts the class expression, not a computed
  *   px value). That is deliberately narrower than "the popover sits 4px off
  *   the edge in a real browser" — see that same test's comment in
- *   `__tests__/popover.test.tsx` for the full claim that NOTHING covers the
+ *   `src/components/ui/__tests__/popover.test.tsx` for the full claim that NOTHING covers the
  *   wider one end-to-end (the `e2e/` grep, and why it's stated rather than
  *   deferred to "whatever end-to-end checks exist"). Recorded there, not
  *   restated here, so the two files don't carry two copies of the same
