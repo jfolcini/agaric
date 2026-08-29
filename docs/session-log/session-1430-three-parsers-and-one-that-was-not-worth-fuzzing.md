@@ -83,6 +83,7 @@ if ! cargo +nightly metadata --format-version 1 --no-deps \
   | jq -r '.packages[] | select(.name == "agaric-fuzz")
            | .targets[] | select(.kind | index("bin")) | .name' \
   | sort > "$derived_targets"; then
+  rm -f "$derived_targets"
   echo "::error::… TOOLING failure …"; exit 1
 fi
 mapfile -t targets < "$derived_targets"

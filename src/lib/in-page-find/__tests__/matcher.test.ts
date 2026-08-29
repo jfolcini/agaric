@@ -301,6 +301,15 @@ describe('compileQuery — Unicode correctness (#756)', () => {
   // The case-SENSITIVE path has its own thing worth pinning, and it is not the
   // fold assertion: it must leave the query completely alone. Asserted directly
   // rather than as a second `not.toThrow()`, which proved nothing.
+  //
+  // These four are the FOLD-CHANGING subset of the list above, chosen on
+  // purpose — do not "helpfully" extend this to all seventeen. Each of the four
+  // folds away from itself (`ΟΔΟΣ`→`οδοσ`, `ΑΣΑ`→`ασα`, `ςσ`→`σσ`,
+  // `İ`→`i`+U+0307), so removing `compileQuery`'s `caseSensitive ? query : …`
+  // ternary makes every one of them fail. For a query `foldForMatch` maps to
+  // itself — `ı`, `ﬁ`, `\u{10400}` — the same assertion passes whether or not
+  // the case-sensitive branch exists, and adding those would dilute a
+  // falsifiable test with cases that cannot falsify.
   it.each([
     ['final sigma stays final', 'ΟΔΟΣ'],
     ['mid sigma stays mid', 'ΑΣΑ'],

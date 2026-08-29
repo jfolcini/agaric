@@ -472,6 +472,11 @@ const FINAL_SIGMA_RE = /ς/g
  * greek (has sigma)     pre-#4507 271 ms   shipped 323 ms    +19% SLOWER
  * ```
  *
+ * (`shipped` here and `guarded` above are the SAME code, timed in two separate
+ * runs — hence 113 vs 115, 208 vs 234, 323 vs 335. The gap is run-to-run noise
+ * on a shared runner, not a third variant; only the within-table comparisons
+ * mean anything.)
+ *
  * So the slow path DID regress, by a constant factor, and the guard recovers
  * most of what the regex cost but not all of it — `indexOf` over one code unit
  * is still dearer than `=== 'ς'`. That is the price of one owner for the sigma
