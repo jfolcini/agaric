@@ -10,3 +10,15 @@ public/pdf.worker.min.mjs linguist-vendored
 # Node scripts because pulling in tsx/ts-node for ~100-line utilities would
 # be heavier than the scripts themselves.
 scripts/*.mjs linguist-vendored
+
+# Fuzz corpora are opaque inputs, not text. libFuzzer writes new units here as
+# raw bytes, and a checkout that "helpfully" normalises line endings would
+# change what the fuzzer replays. `-text` disables that normalisation and
+# nothing else — diff rendering is a separate `diff` attribute, deliberately
+# not set here, because the seeds that exist today are readable and worth
+# seeing in a diff.
+#
+# Not hypothetical on the fixer side: `snapshot_decode/zstd-magic.seed` is
+# `28 b5 2f fd 0a` — the zstd magic plus a newline the end-of-file-fixer hook
+# appended before that hook excluded this directory (see prek.toml).
+src-tauri/fuzz/corpus/** -text
