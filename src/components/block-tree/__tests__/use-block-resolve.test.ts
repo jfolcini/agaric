@@ -102,6 +102,26 @@ describe('resolveBlockTitle', () => {
     const { result } = renderHook(() => useBlockResolve())
     expect(result.current.resolveBlockTitle('XYZW1234REST')).toBe('[[XYZW1234...]]')
   })
+
+  it('returns the fallback for a CACHED but unresolved entry, whatever its title says', () => {
+    // #4238 — these resolvers read the very same store entries as
+    // `useResolveStore.resolveTitle`, so they have to take the same verdict
+    // from the same place. `fetchAndCacheLinks` parks a `resolved: false`
+    // entry for a target the backend never returned; a `cached ? ... ` test
+    // would count it as a hit and render whatever string is parked there.
+    // The stored title here is deliberately NOT the broken-link shape, so the
+    // assertion cannot pass by the bytes coincidentally matching.
+    useResolveStore
+      .getState()
+      .batchSet([{ id: 'GONE1234REST', title: 'parked label', deleted: true, resolved: false }])
+
+    const { result } = renderHook(() => useBlockResolve())
+    expect(result.current.resolveBlockTitle('GONE1234REST')).toBe('[[GONE1234...]]')
+    expect(result.current.resolveTagName('GONE1234REST')).toBe('#GONE1234...')
+    // Status still reads off `deleted`, which is a separate question — the
+    // chip must render as broken, not as live.
+    expect(result.current.resolveBlockStatus('GONE1234REST')).toBe('deleted')
+  })
 })
 
 describe('resolveBlockStatus', () => {
@@ -330,8 +350,16 @@ describe('searchTags', () => {
     // Verify the resolve store cache was populated.
     // Cache is composite-keyed (`${spaceId}::${ulid}`).
     const cache = useResolveStore.getState().cache
-    expect(cache.get(keyFor('SPACE_TEST', 'T10'))).toEqual({ title: 'important', deleted: false })
-    expect(cache.get(keyFor('SPACE_TEST', 'T11'))).toEqual({ title: 'urgent', deleted: false })
+    expect(cache.get(keyFor('SPACE_TEST', 'T10'))).toEqual({
+      title: 'important',
+      deleted: false,
+      resolved: true,
+    })
+    expect(cache.get(keyFor('SPACE_TEST', 'T11'))).toEqual({
+      title: 'urgent',
+      deleted: false,
+      resolved: true,
+    })
   })
 
   it('does not call batchSet when no tags match', async () => {
@@ -485,7 +513,7 @@ describe('onCreateTag', () => {
     })
 
     const cached = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'NEW_TAG_2'))
-    expect(cached).toEqual({ title: 'important', deleted: false })
+    expect(cached).toEqual({ title: 'important', deleted: false, resolved: true })
   })
 
   it('returns the new block id', async () => {
@@ -2240,7 +2268,7 @@ describe('onCreatePage', () => {
     })
 
     const cached = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'NEW_PAGE_2'))
-    expect(cached).toEqual({ title: 'Store Updated Page', deleted: false })
+    expect(cached).toEqual({ title: 'Store Updated Page', deleted: false, resolved: true })
   })
 
   it('appends the new page to pagesListRef', async () => {
@@ -3135,6 +3163,7 @@ describe('searchPages — strategy priority ordering', () => {
     expect(cache.get(keyFor('SPACE_TEST', 'CACHE_POP_1'))).toEqual({
       title: 'Sample Page',
       deleted: false,
+      resolved: true,
     })
     expect(cache.get(keyFor('SPACE_TEST', '__create__'))).toBeUndefined()
   })
@@ -3605,6 +3634,7 @@ describe('searchBlockRefs — untitled placeholder for blank content (#4190)', (
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'BR11B'))).toEqual({
       title: t('block.untitled'),
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -3650,6 +3680,7 @@ describe('searchBlockRefs — untitled placeholder for blank content (#4190)', (
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'BR13'))).toEqual({
       title: t('block.untitled'),
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -3675,6 +3706,7 @@ describe('searchBlockRefs — untitled placeholder for blank content (#4190)', (
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'BR14'))).toEqual({
       title: 'real title',
       deleted: false,
+      resolved: true,
     })
   })
 })
@@ -5572,6 +5604,7 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'T_OLDER'))).toEqual({
       title: 'older',
       deleted: false,
+      resolved: true,
     })
 
     // The winner is rejected in turn: a bus event lands while it is in
@@ -5589,6 +5622,7 @@ describe('in-flight fill vs. mid-flight invalidation (#4055)', () => {
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'T_OLDER'))).toEqual({
       title: 'older',
       deleted: false,
+      resolved: true,
     })
   })
 

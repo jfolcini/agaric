@@ -41,6 +41,7 @@ import {
   useBlockLinkResolve,
 } from '@/components/block-tree/use-block-link-resolve'
 import type { ResolvedBlock } from '@/lib/bindings'
+import { unresolvedBlockLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { useResolveStore } from '@/stores/resolve'
@@ -336,20 +337,32 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
     expect(cache.get(keyFor(TEST_SPACE_ID, ULID_A))).toEqual({
       title: 'Linked A',
       deleted: false,
+      resolved: true,
     })
+    // #4238 — `deleted: true` and `resolved: true` together, which is the
+    // whole reason the cache-miss signal could NOT be folded into `deleted`:
+    // a soft-deleted block comes back from `batch_resolve` with its real
+    // title, so it is a perfectly ordinary resolution.
     expect(cache.get(keyFor(TEST_SPACE_ID, ULID_B))).toEqual({
       title: 'Deleted B',
       deleted: true,
+      resolved: true,
     })
-    // Empty title (resolved, blank content) → "Untitled" placeholder.
+    // Empty title (resolved, blank content) → "Untitled" placeholder, and
+    // still `resolved: true`: the row exists, it just has no name.
     expect(cache.get(keyFor(TEST_SPACE_ID, ULID_C))).toEqual({
       title: t('block.untitled'),
       deleted: false,
+      resolved: true,
     })
-    // Requested but not returned → deleted placeholder.
+    // Requested but not returned → the one entry in the cache that means
+    // "the backend handed us nothing". #4238 moved that verdict onto
+    // `resolved`; the label is still stored so a direct `.title` reader
+    // agrees with the resolvers.
     expect(cache.get(keyFor(TEST_SPACE_ID, ULID_D))).toEqual({
-      title: `[[${ULID_D.slice(0, 8)}...]]`,
+      title: unresolvedBlockLabel(ULID_D),
       deleted: true,
+      resolved: false,
     })
   })
 
@@ -376,6 +389,7 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
     expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, ULID_A))).toEqual({
       title: longPath,
       deleted: false,
+      resolved: true,
     })
   })
 
@@ -401,6 +415,7 @@ describe('fetchAndCacheLinks — single-batchSet writeback (#1072)', () => {
     expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, ULID_A))).toEqual({
       title: `${'x'.repeat(57)}...`,
       deleted: false,
+      resolved: true,
     })
   })
 

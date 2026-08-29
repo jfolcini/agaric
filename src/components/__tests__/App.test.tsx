@@ -2268,6 +2268,7 @@ describe('App', () => {
         expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_A1'))).toEqual({
           title: 'Page A1',
           deleted: false,
+          resolved: true,
         })
       })
 

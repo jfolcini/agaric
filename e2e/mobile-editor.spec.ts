@@ -18,6 +18,7 @@
 import { devices } from '@playwright/test'
 
 import {
+  blurEditors,
   clearInvokeCalls,
   expect,
   focusBlock,
@@ -143,6 +144,62 @@ function plainCodeView(page: Page) {
 /** The React node view's wrapper element (`NodeViewWrapper`). */
 function reactNodeViewWrapper(page: Page) {
   return page.locator('[data-testid="block-editor"] [data-node-view-wrapper]')
+}
+
+/**
+ * Assert that BOTH conditions gating the freeze hold *right now* (#4353).
+ *
+ * A node view test that never actually met these would pass for the same reason
+ * a node view that never mounted would: vacuously. tiptap's default
+ * `NodeView.ignoreMutation` only reaches its dangerous branch when
+ * `(isiOS() || isAndroid()) && this.editor.isFocused`, so a spec claiming "this
+ * node view does not freeze on mobile" has to show both were true while the node
+ * view was on screen.
+ *
+ * The two predicates are transcribed from `@tiptap/core`'s `isiOS.ts` /
+ * `isAndroid.ts` (3.30.2) — they cannot be imported into `page.evaluate`. The
+ * transcription is not the only evidence the gate is armed: the mermaid test at
+ * the bottom of this file goes RED under this same `test.use()` block when its
+ * `ignoreMutation` override is removed, which is a live demonstration that the
+ * branch really does fire on this user agent.
+ *
+ * `editor.isFocused` is `view.hasFocus()`, i.e. the ProseMirror contenteditable
+ * owns the document's active element — which is what is checked here.
+ */
+async function expectMobileFreezeConditions(page: Page): Promise<void> {
+  const gate = await page.evaluate(() => {
+    const isAndroid =
+      ['Android'].includes(navigator.platform) || /android/i.test(navigator.userAgent)
+    const isiOS =
+      ['iPad Simulator', 'iPhone Simulator', 'iPod Simulator', 'iPad', 'iPhone', 'iPod'].includes(
+        navigator.platform,
+      ) ||
+      (navigator.userAgent.includes('Mac') && 'ontouchend' in document)
+    const active = document.activeElement
+    const editorFocused =
+      active instanceof HTMLElement &&
+      active.isContentEditable &&
+      active.closest('[data-testid="block-editor"]') !== null
+    return { isAndroid, isiOS, editorFocused, userAgent: navigator.userAgent }
+  })
+
+  expect(gate.isiOS || gate.isAndroid, `UA did not read as mobile: ${gate.userAgent}`).toBe(true)
+  expect(gate.editorFocused, 'the ProseMirror contenteditable did not hold focus').toBe(true)
+}
+
+/**
+ * The React content host tiptap creates for a NON-leaf node view
+ * (`ReactNodeView`'s `contentDOMElement`), scoped to `nodeView`.
+ *
+ * Its absence is the browser-observable form of the reason a leaf node view is
+ * safe: `@tiptap/react` builds no `contentDOMElement` when `node.isLeaf`, its
+ * `contentDOM` getter returns `null`, and tiptap's default `ignoreMutation`
+ * answers "ignore" on its first line — above both the `options.ignoreMutation`
+ * consultation and the mobile branch. Asserting count 0 here is what makes
+ * "image/math did not freeze" a structural claim rather than a lucky run.
+ */
+function reactContentHost(nodeView: ReturnType<Page['locator']>) {
+  return nodeView.locator('[data-node-view-content-react]')
 }
 
 test.describe('Mobile editor (iPhone 13 viewport)', () => {
@@ -300,6 +357,15 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
     // mode (Finding 45) and the editable `NodeViewContent` is on screen.
     await expect(page.locator('[data-testid="block-editor"] pre.mermaid-source')).toBeVisible()
 
+    // #4353 — the discriminator, asserted positively here and negatively in the
+    // image/math tests below: `codeBlock` is NOT a leaf, so tiptap DOES build a
+    // React content host for it, its `contentDOM` is non-null, and its
+    // `ignoreMutation` option is therefore consulted. This is the one node view
+    // in the app that reaches the mobile branch — the reason it needs the
+    // override, and the reason the leaf node views do not.
+    await expect(reactContentHost(page.getByTestId('mermaid-node-view'))).not.toHaveCount(0)
+    await expectMobileFreezeConditions(page)
+
     // The editor must still accept input — a frozen main thread swallows this,
     // and every one of these keystrokes re-renders the React node view.
     await editor.pressSequentially('graph TD')
@@ -310,5 +376,118 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
     // so a loop it feeds would only bite on a later keystroke).
     await editor.pressSequentially(';A-->B')
     await expect.poll(async () => (await editor.textContent()) ?? '').toContain(';A-->B')
+  })
+
+  /**
+   * #4353 — the other React node views, measured rather than assumed.
+   *
+   * #4353's premise is that the code block was simply the one that got reported
+   * and that every React node view mounting on a mobile UA while the editor is
+   * focused meets the same condition. Measured against `@tiptap/core@3.30.2`,
+   * that premise is too broad: the snippet the issue quotes is `MarkView`'s copy
+   * of `ignoreMutation`. `NodeView`'s — the one React node views actually run —
+   * refuses the branch twice before reaching it, for a node view whose
+   * `contentDOM` is null and again for a node that `isLeaf || isAtom`. `image`,
+   * `math_inline` and `math_block` are leaf atoms, so both guards fire.
+   *
+   * These three tests are what turns that reading of a vendored file into
+   * evidence. Each one mounts the node view on the mobile UA with the caret in
+   * the editor, asserts BOTH gate conditions were actually in force at that
+   * moment (`expectMobileFreezeConditions` — otherwise "it didn't freeze" is
+   * indistinguishable from "it was never exercised"), asserts the node view
+   * really painted (a React node view that never mounts also never freezes —
+   * that is exactly how mermaid failed on mobile before #4315), asserts the
+   * structural reason it is safe (no React content host ⇒ `contentDOM === null`),
+   * and then proves the app is still alive.
+   *
+   * `node-view-mobile-freeze.test.ts` pins the same chain from the other side,
+   * against the real `NodeView.prototype`, so a `@tiptap/core` bump that drops
+   * either guard fails there rather than waiting for a mobile user to find it.
+   */
+  test('an image node view renders and stays responsive on the mobile user agent', async ({
+    page,
+  }) => {
+    const editor = await focusBlock(page, 0)
+    await clearFocusedBlock(page)
+
+    // `![alt](url)` — the image input rule fires on the closing `)`.
+    // `/favicon.svg` is same-origin so the <img> actually loads and the real
+    // element stays mounted (see image-node.spec.ts for why not an external URL).
+    await page.keyboard.type('pic ![a cat](/favicon.svg)')
+
+    const nodeView = page.getByTestId('image-node-view')
+    await expect(nodeView).toBeVisible()
+    await expect(reactNodeViewWrapper(page)).not.toHaveCount(0)
+    // The <img> is what `GatedImage` mounts once the src passes the policy —
+    // i.e. the React subtree inside the node view really rendered, on this UA,
+    // rather than the node view existing as an empty shell.
+    await expect(nodeView.locator('img[alt="a cat"]')).toBeAttached()
+
+    await expectMobileFreezeConditions(page)
+    // Leaf ⇒ no content host ⇒ contentDOM is null ⇒ tiptap ignores every
+    // mutation before the mobile branch. This is WHY it does not freeze.
+    await expect(reactContentHost(nodeView)).toHaveCount(0)
+
+    // The editor must still accept input — a frozen main thread swallows this.
+    await page.keyboard.type(' done')
+    await expect.poll(async () => (await editor.textContent()) ?? '').toContain('done')
+    await expect(nodeView).toBeVisible()
+  })
+
+  test('an inline math node view renders and stays responsive on the mobile user agent', async ({
+    page,
+  }) => {
+    const editor = await focusBlock(page, 0)
+    await clearFocusedBlock(page)
+
+    // `$…$` — the inline-math input rule fires on the closing `$`.
+    await page.keyboard.type('e $x^2$')
+
+    const nodeView = page.getByTestId('math-inline-node-view')
+    await expect(nodeView).toBeVisible()
+    await expect(reactNodeViewWrapper(page)).not.toHaveCount(0)
+    // KaTeX is lazy (React.lazy + Suspense), so `.katex` appearing proves the
+    // node view swapped its own subtree AFTER mount, while the editor was
+    // focused on a mobile UA — the exact React write the mobile branch would
+    // have read back as a user edit.
+    await expect(nodeView.locator('.katex').first()).toBeVisible({ timeout: 10_000 })
+
+    await expectMobileFreezeConditions(page)
+    await expect(reactContentHost(nodeView)).toHaveCount(0)
+
+    // The caret sits after the atom in the same paragraph, so the editor must
+    // still take text.
+    await page.keyboard.type(' ok')
+    await expect.poll(async () => (await editor.textContent()) ?? '').toContain('ok')
+    await expect(nodeView).toBeVisible()
+  })
+
+  test('a block math node view renders and stays responsive on the mobile user agent', async ({
+    page,
+  }) => {
+    await focusBlock(page, 0)
+    await clearFocusedBlock(page)
+
+    // `$$ … $$` as the WHOLE textblock — the block-math rule is `^`-anchored.
+    // The spaces matter: `$$E=mc^2$$` would trip the INLINE rule on the
+    // second-to-last `$` (its group may not start with a space), producing a
+    // math_inline atom instead.
+    await page.keyboard.type('$$ E = mc^2 $$')
+
+    const nodeView = page.getByTestId('math-block-node-view')
+    await expect(nodeView).toBeVisible()
+    await expect(reactNodeViewWrapper(page)).not.toHaveCount(0)
+    await expect(nodeView.locator('.katex').first()).toBeVisible({ timeout: 10_000 })
+
+    await expectMobileFreezeConditions(page)
+    await expect(reactContentHost(nodeView)).toHaveCount(0)
+
+    // The block-math rule replaces the whole paragraph with the atom, so there
+    // is no text hole left to type into — the liveness probe moves to another
+    // block instead. A frozen main thread fails at the very first step.
+    await blurEditors(page)
+    const other = await focusBlock(page, 1)
+    await other.pressSequentially('alive')
+    await expect.poll(async () => (await other.textContent()) ?? '').toContain('alive')
   })
 })

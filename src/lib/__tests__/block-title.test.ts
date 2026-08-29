@@ -5,7 +5,13 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { blockFirstLineOr, normalizeBlockRefTitle, untitledOr } from '@/lib/block-title'
+import {
+  blockFirstLineOr,
+  normalizeBlockRefTitle,
+  unresolvedBlockLabel,
+  unresolvedTagLabel,
+  untitledOr,
+} from '@/lib/block-title'
 import { t } from '@/lib/i18n'
 
 describe('untitledOr', () => {
@@ -147,5 +153,32 @@ describe('normalizeBlockRefTitle — CRLF (#4228 review)', () => {
 
   it('still substitutes the placeholder for a CRLF-only first line', () => {
     expect(normalizeBlockRefTitle('  \r\nreal text')).toBe(t('block.untitled'))
+  })
+})
+
+/**
+ * #4238 — the unresolved LABELS. These are what a surface shows for an id
+ * nothing is resolved for; they are derived from `ResolveEntry.resolved`
+ * rather than stored as any row's title, which is the separation the issue
+ * bought. Pinned against literals because `resolveBlockDisplay`'s private
+ * `CACHE_MISS_FALLBACK_PATTERN` (`@/lib/query-result-utils`) has to keep
+ * matching the block one, and the two live in different modules.
+ */
+describe('unresolvedBlockLabel / unresolvedTagLabel (#4238)', () => {
+  const ULID = '01HAAAAA0000000000000000AA'
+
+  it('shows the first 8 characters of the id in the block shape', () => {
+    expect(unresolvedBlockLabel(ULID)).toBe('[[01HAAAAA...]]')
+  })
+
+  it('shows the same 8 characters in the tag shape', () => {
+    expect(unresolvedTagLabel(ULID)).toBe('#01HAAAAA...')
+  })
+
+  it('does not pad or throw for an id shorter than the prefix', () => {
+    // Test fixtures and legacy short ids reach these; `slice` is total, and
+    // the label must stay a label rather than becoming `[[...]]`-shaped noise.
+    expect(unresolvedBlockLabel('AB')).toBe('[[AB...]]')
+    expect(unresolvedTagLabel('AB')).toBe('#AB...')
   })
 })

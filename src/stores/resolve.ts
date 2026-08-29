@@ -35,7 +35,7 @@
 
 import { create } from 'zustand'
 
-import { resolveStoreTitle } from '@/lib/block-title'
+import { resolveStoreTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { logger } from '@/lib/logger'
 import { batchResolve, listAllTagsInSpace, listBlocks, listBlocksLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
@@ -123,8 +123,69 @@ interface PreloadScanResult {
 }
 
 interface ResolveEntry {
+  /**
+   * What to SHOW for this id. Purely presentational since #4238 — every seed
+   * writer runs it through `resolveStoreTitle` unconditionally, blank content
+   * included, so two writers reaching the same row produce the same bytes and
+   * `set`/`batchSet`'s value diff sees a genuine no-op.
+   */
   title: string
   deleted: boolean
+  /**
+   * Whether the backend actually returned a row for this id.
+   *
+   * #4238 — this is the cache-miss signal, moved OFF {@link ResolveEntry.title}.
+   * It used to ride on the title's bytes (`useBacklinkResolution` stored the
+   * `[[id…]]` broken-link shape for a resolved-but-blank row so
+   * `resolveBlockDisplay` would still see a miss), which made the title mean
+   * two things and forced that one writer off the shared gate. Now the flag
+   * answers "is this resolved" and the title answers "what do I render",
+   * independently.
+   *
+   * `false` is written by exactly one place: `fetchAndCacheLinks`'
+   * unreturned-target branch (`@/components/block-tree/use-block-link-resolve`),
+   * for an id `batch_resolve` did not hand back — foreign-space or genuinely
+   * unknown.
+   *
+   * ## Why `set`/`batchSet` default it to `true`, and what that does NOT risk
+   *
+   * The field is REQUIRED here and optional at the setters, which looks like a
+   * fail-open: a writer that cannot resolve a row and forgets the flag would
+   * record it as resolved — the exact bug #4238 removed, relocated from a
+   * string to a boolean. It is not, and the reason is structural rather than
+   * convenient: **this cache is not a total map, so "I could not resolve this
+   * id" already has a correct, zero-effort representation — write nothing.**
+   * An absent key falls to {@link unresolvedBlockLabel} through
+   * {@link ResolveStore.resolveTitle}, identically to a `resolved: false`
+   * entry. So the default does not govern "a writer that failed to resolve";
+   * it governs only "a writer that deliberately PARKS a sentinel entry to
+   * suppress a re-fetch", which is a conscious, documented act with one
+   * instance. Forgetting the flag is not something a writer can drift into —
+   * it has to first choose to write a row it does not have.
+   *
+   * Residual, stated rather than hidden: a SECOND sentinel writer that copied
+   * the parking pattern without the flag would be silently wrong, and no test
+   * would notice — the omission has no textual footprint for the enumeration
+   * guard in `resolve-store-title-seed-parity.test.ts` to find. The evidence
+   * that this is remote rather than merely unlikely: the other bulk resolver
+   * that faces the same "some ids did not come back" case,
+   * `useBacklinkResolution`, deliberately does NOT park in the shared store
+   * (#2635) — it keeps a hook-local attempted-unresolved set. If a second one
+   * ever does appear, the fix is to stop making the verdict a caller's
+   * parameter at all: give the sentinel its own named operation (a second
+   * argument to {@link ResolveStore.batchSet} taking the unreturned ids, with
+   * the store owning the label and the `deleted` flag) so `set`/`batchSet`
+   * can only ever mean "here is a row I have". Making the flag REQUIRED at
+   * the setters instead was considered and rejected: it costs ~100 call sites
+   * writing `true`, and it converts a silent omission into an explicit wrong
+   * value rather than preventing it.
+   *
+   * NOT foldable into `deleted`: a soft-deleted block is returned by
+   * `batch_resolve` WITH its real title, so `deleted: true` is a perfectly
+   * ordinary resolved state and conflating them would put every trashed
+   * block's chip back on the `[[id…]]` label.
+   */
+  resolved: boolean
 }
 
 interface ResolveStore {
@@ -169,18 +230,40 @@ interface ResolveStore {
     forceRefresh?: boolean,
     changedPageIds?: ReadonlySet<string> | undefined,
   ) => Promise<void>
-  /** Add/update a single entry under the active space. */
-  set: (id: string, title: string, deleted: boolean) => void
+  /**
+   * Add/update a single entry under the active space.
+   *
+   * `resolved` (#4238) defaults to `true`: calling this form at all means the
+   * caller HOLDS a title — an echo writer re-stating one it just persisted, or
+   * a seed writer holding a row the backend returned. A writer with no row
+   * does not call `set` with a placeholder, it calls nothing, and an absent
+   * key already reads as unresolved. See {@link ResolveEntry.resolved} for
+   * why that makes the default safe and for the residual it leaves.
+   */
+  set: (id: string, title: string, deleted: boolean, resolved?: boolean) => void
   /**
    * Batch-add entries under the active space. Entries already cached
-   * with an identical `{ title, deleted }` are skipped; when EVERY
+   * with an identical `{ title, deleted, resolved }` are skipped; when EVERY
    * entry is unchanged the call is a no-op — no Map clone, no
    * `version` bump (#753: batchSet fires per picker keystroke with
    * mostly-cached rows, and an unconditional bump re-renders every
    * version-subscribed block row).
+   *
+   * `resolved` is optional and defaults to `true` — see {@link ResolveEntry}.
    */
-  batchSet: (entries: Array<{ id: string; title: string; deleted: boolean }>) => void
-  /** Resolve title under the active space, with fallback. */
+  batchSet: (
+    entries: Array<{ id: string; title: string; deleted: boolean; resolved?: boolean }>,
+  ) => void
+  /**
+   * Resolve the display title under the active space, with fallback.
+   *
+   * #4238 — an entry with `resolved: false` resolves to
+   * {@link unresolvedBlockLabel}, exactly as an ABSENT key does. The verdict
+   * comes from the flag, never from the stored string: that is what stops a
+   * title from doubling as a cache-miss signal, and it means a future writer
+   * that flags a placeholder `resolved: false` cannot leak whatever it parked
+   * in `title` into a chip.
+   */
   resolveTitle: (id: string) => string
   /** Resolve deleted status under the active space. */
   resolveStatus: (id: string) => 'active' | 'deleted'
@@ -193,6 +276,17 @@ interface ResolveStore {
    * writing that placeholder back into the shared cache.
    */
   has: (id: string) => boolean
+  /**
+   * Whether a REAL resolution for `id` exists under the active space — an
+   * entry that is present AND carries `resolved: true`.
+   *
+   * #4238 — the question {@link ResolveStore.has} cannot answer. `has` is an
+   * occupancy probe used to decide whether to re-FETCH (a `resolved: false`
+   * placeholder must keep suppressing the re-fetch, or a foreign-space chip
+   * re-queries on every pass); this is the DISPLAY question — may a surface
+   * show `title`, or must it fall back to its own broken-link label?
+   */
+  isResolved: (id: string) => boolean
   /**
    * Flush every cache entry whose composite key starts with
    * `${prevSpaceId}::`. Other spaces' entries (and the
@@ -310,6 +404,9 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
             // literal — see the doc on `preload`.
             title: resolveStoreTitle('page', resolved.title),
             deleted: resolved.deleted,
+            // #4238 — `batch_resolve` returned this row, so it IS resolved;
+            // a blank `title` now means "a page with no name", not "no page".
+            resolved: true,
           })
         }
       } else {
@@ -330,6 +427,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
               // scopes this walk, so the `'page'` literal is exact.
               title: resolveStoreTitle('page', p.content),
               deleted: p.deleted_at !== null,
+              resolved: true,
             })
           }
           hasMore = pagesResp.has_more
@@ -363,6 +461,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
           // fill instead of storing whitespace.
           title: resolveStoreTitle('tag', t.name),
           deleted: false,
+          resolved: true,
         })
       }
 
@@ -394,7 +493,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         if (
           cached !== undefined &&
           cached.title === value.title &&
-          cached.deleted === value.deleted
+          cached.deleted === value.deleted &&
+          cached.resolved === value.resolved
         )
           return
         cache.set(key, value)
@@ -515,7 +615,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     // (Earlier behaviour debounced `set` via a microtask + closure flag,
     // which left an asymmetric contract — `batchSet` always bumped, `set`
     // sometimes coalesced. Inline is simpler and consistent.)
-    set: (id, title, deleted) => {
+    set: (id, title, deleted, resolved = true) => {
       const spaceId = activeSpaceId()
       const compositeKey = keyFor(spaceId, id)
       // #1073 — diff before cloning, mirroring batchSet's #753 guard. `set`
@@ -525,14 +625,20 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       // full Map and bumping `version` for a no-op change re-renders every
       // version-subscribed block row for zero gain. Skip when unchanged.
       const cached = get().cache.get(compositeKey)
-      if (cached && cached.title === title && cached.deleted === deleted) return
+      if (
+        cached &&
+        cached.title === title &&
+        cached.deleted === deleted &&
+        cached.resolved === resolved
+      )
+        return
       // Perf (#2267) — mutate the cache Map in place (write the one changed
       // key + evict) instead of cloning the whole (<=10k entry) Map on every
       // write. Every consumer re-renders off `version`, not the Map
       // reference, so reusing the same object is safe (see consumer audit).
       set((state) => {
         const cache = state.cache
-        touch(cache, compositeKey, { title, deleted })
+        touch(cache, compositeKey, { title, deleted, resolved })
         evictLeastRecentlyUsed(cache, MAX_CACHE_SIZE)
         return { cache, version: state.version + 1 }
       })
@@ -549,7 +655,12 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       const current = get().cache
       const changed = entries.filter((e) => {
         const cached = current.get(keyFor(spaceId, e.id))
-        return !cached || cached.title !== e.title || cached.deleted !== e.deleted
+        return (
+          !cached ||
+          cached.title !== e.title ||
+          cached.deleted !== e.deleted ||
+          cached.resolved !== (e.resolved ?? true)
+        )
       })
       if (changed.length === 0) return
       // Perf (#2267) — mutate the cache Map in place (write only the
@@ -562,6 +673,7 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
           touch(cache, keyFor(spaceId, e.id), {
             title: e.title,
             deleted: e.deleted,
+            resolved: e.resolved ?? true,
           })
         }
         evictLeastRecentlyUsed(cache, MAX_CACHE_SIZE)
@@ -583,9 +695,14 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         // resumes touching so recency stays accurate for the next write's
         // eviction pass.
         if (cache.size >= MAX_CACHE_SIZE) touch(cache, key, cached)
-        return cached.title
+        // #4238 — the FLAG decides, not the bytes. An entry the backend never
+        // returned falls through to the same label an absent key produces, so
+        // the two cache-miss shapes stay indistinguishable to every consumer
+        // (including `resolveBlockDisplay`'s pattern) without any writer having
+        // to encode "unresolved" into a title.
+        if (cached.resolved) return cached.title
       }
-      return `[[${id.slice(0, 8)}...]]`
+      return unresolvedBlockLabel(id)
     },
 
     resolveStatus: (id) => {
@@ -601,6 +718,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
     },
 
     has: (id) => get().cache.has(keyFor(activeSpaceId(), id)),
+
+    isResolved: (id) => get().cache.get(keyFor(activeSpaceId(), id))?.resolved === true,
 
     clearAllForSpace: (prevSpaceId) =>
       set((state) => {
