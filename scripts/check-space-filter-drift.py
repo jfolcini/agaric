@@ -852,7 +852,16 @@ def run_cli_self_test(record) -> None:
             'let sql = "SELECT id FROM blocks b WHERE (?2 IS NULL OR b.space_id = ?3)";\n',
             encoding="utf-8",
         )
-        code, out = _run_cli(guard, [str(drifted)])
+        try:
+            code, out = _run_cli(guard, [str(drifted)])
+        finally:
+            # Removed here, not left lying: once `--update-baseline` refuses
+            # on an outstanding shape violation (a later direction), a drifted
+            # fixture surviving into the re-anchor cases makes THEM fail for a
+            # reason that has nothing to do with what they assert. The
+            # pollution the earlier comments called a latent hazard is now
+            # load-bearing.
+            drifted.unlink()
         if code != 0 and "mismatched bind index" in out:
             record("CLI: a Rule-A shape drift exits non-zero and says why", True, True)
         else:
@@ -942,7 +951,13 @@ def run_cli_self_test(record) -> None:
         # --- #3255 direction 5: the bare (whole-tree) walk reaches members ---
         # Direction 4 pins the argv path; this pins `all_source_files()`. They
         # are different code paths and a regression can drop either alone.
-        code, out = _run_cli(guard, [])
+        try:
+            code, out = _run_cli(guard, [])
+        finally:
+            # Last use of the member-crate drift fixture (direction 4 needs it
+            # too, which is why it is not removed there). Same reason as
+            # `drifted.rs` above.
+            sub.unlink()
         if code != 0 and "sub_drift.rs" in out:
             record("CLI: the bare walk reaches member crates (#3255)", True, True)
         else:
@@ -1420,13 +1435,15 @@ def run_cli_self_test(record) -> None:
             'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
             encoding="utf-8",
         )
-        baseline_path.write_text(
-            "1 src-tauri/benches/bench.rs\n", encoding="utf-8"
-        )
+        saved_baseline_17 = baseline_path.read_text(encoding="utf-8")
         try:
+            baseline_path.write_text(
+                "1 src-tauri/benches/bench.rs\n", encoding="utf-8"
+            )
             code, out = _run_cli(guard, [])
         finally:
             outside_rs.unlink()
+            baseline_path.write_text(saved_baseline_17, encoding="utf-8")
         if code != 0 and "OUTSIDE every CRATE_ROOTS entry" in out:
             record(
                 "CLI: a baseline entry nothing scans is a finding (#3255)",
@@ -1593,7 +1610,16 @@ def run_cli_self_test(record) -> None:
         # And it must NOT be told to re-anchor: `--update-baseline` would
         # write a fresh file from the current tree, blessing whatever was
         # removed since the real baseline was last correct.
-        if "git checkout --" in out and "do not" not in out.split("-> #3255")[0]:
+        # A POSITIVE assertion on a phrase unique to MISSING_BASELINE_HINT.
+        # The previous form was `"do not" not in out.split(...)[0]` — a
+        # negative substring test over a slice of the output, which passed for
+        # reasons largely unrelated to the thing it claimed to check. A test
+        # that cannot say which hint was printed is not testing the hint.
+        if (
+            "git checkout -- src-tauri/space-filter-baseline.txt" in out
+            and "silently\n       blessing whatever guards have been removed"
+            in out
+        ):
             record("CLI: a deleted baseline is told to RESTORE, not re-anchor", True, True)
         else:
             record(
@@ -1626,6 +1652,45 @@ def run_cli_self_test(record) -> None:
                 "CLI: a non-.rs baseline entry is a finding (#3255)",
                 (code, out.strip()[:200]),
                 "non-zero exit naming the entry as not a .rs file",
+            )
+
+        # --- #3255 direction 23: --update-baseline refuses over a DRIFT -----
+        # `scan_text` does not count a mangled fragment, so a drifted file's
+        # recomputed count drops while the file still exists — `in_place` then
+        # fired and called it an in-place REMOVAL. Nothing was removed; it
+        # drifted. Asserted on the drift refusal AND on the absence of the
+        # removal claim, since the exit code is 1 either way and only the
+        # diagnosis tells them apart.
+        drift_re = src / "drift_re.rs"
+        drift_re.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n'
+            'let b = "WHERE (?2 IS NULL OR b.space_id = ?7)";\n',
+            encoding="utf-8",
+        )
+        saved_baseline_23 = baseline_path.read_text(encoding="utf-8")
+        try:
+            baseline_path.write_text(
+                "2 src-tauri/src/drift_re.rs\n", encoding="utf-8"
+            )
+            code, out = _run_cli(guard, ["--update-baseline"])
+        finally:
+            drift_re.unlink()
+            baseline_path.write_text(saved_baseline_23, encoding="utf-8")
+        if (
+            code != 0
+            and "has DRIFTED" in out
+            and "removed IN PLACE" not in out
+        ):
+            record(
+                "CLI: --update-baseline refuses over a shape drift (#3255)",
+                True,
+                True,
+            )
+        else:
+            record(
+                "CLI: --update-baseline refuses over a shape drift (#3255)",
+                (code, out.strip()[:220]),
+                "the drift refusal, and NOT an in-place-removal claim",
             )
 
 
@@ -1873,8 +1938,45 @@ def main(argv: list[str]) -> int:
         # #2621 did to eleven of these entries). Refusing it would make the
         # command that DANGLING_HINT prescribes fail for its own primary case.
         # A total that drops is a fragment that left the tree.
+        # A Rule-A drift must stop the re-anchor before the deltas are even
+        # computed. `scan_text` does not COUNT a mangled fragment, so a
+        # drifted file's recomputed count drops while the file plainly still
+        # exists — `in_place` then fires and reports "a guard was removed IN
+        # PLACE", which did not happen: it drifted. Sixth instance of this
+        # mislabelling, and the last place on the re-anchor side that lacked
+        # its own arm. Re-anchoring over a drift is also the wrong outcome
+        # regardless of wording: it would bake the lower count in and retire
+        # the evidence.
+        # One walk, both answers: the shape violations that must stop the
+        # re-anchor, and the counts it would write. `compute_baseline()` does
+        # the same walk and discards the violations, so calling it as well
+        # would scan the tree twice for a command that is already the slow
+        # path.
+        shape_now: list[str] = []
+        after_counts: dict[str, int] = {}
+        for _p in all_source_files():
+            _cnt, _viols = scan_file(_p)
+            shape_now.extend(_viols)
+            if _cnt:
+                after_counts[_p.relative_to(REPO_ROOT).as_posix()] = _cnt
+        if shape_now:
+            print(
+                "Refusing to re-anchor: a canonical fragment has DRIFTED "
+                "(mismatched bind indices).\n",
+                file=sys.stderr,
+            )
+            for v in shape_now:
+                print(f"  {v}", file=sys.stderr)
+            print(
+                "\n  A drifted fragment is not counted, so re-anchoring now "
+                "would record the lower\n  count and retire the evidence — and "
+                "the delta would be reported as an in-place\n  REMOVAL, which "
+                "is not what happened. Restore the canonical form first.",
+                file=sys.stderr,
+            )
+            return 1
         before = read_baseline()
-        after = compute_baseline()
+        after = after_counts
         for rel in sorted(set(before) | set(after)):
             old_n, new_n = before.get(rel, 0), after.get(rel, 0)
             if old_n != new_n:
