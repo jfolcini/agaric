@@ -26,10 +26,10 @@ hooks = [
     # comments and a trailing blank line, so these two whitespace fixers strip
     # them and make `specta_tests::ts_bindings_up_to_date` fail (committed !=
     # generated). Exclude the generated file from both, like the other formatters.
-    { id = "trailing-whitespace", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$)", stages = [
+    { id = "trailing-whitespace", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$|^src-tauri/fuzz/corpus/)", stages = [
         "pre-commit",
     ] },
-    { id = "end-of-file-fixer", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$)", stages = [
+    { id = "end-of-file-fixer", exclude = "(\\.(png|ico|icns|svg)$|^src/lib/bindings\\.ts$|^src-tauri/fuzz/corpus/)", stages = [
         "pre-commit",
     ] },
     { id = "check-yaml", stages = [

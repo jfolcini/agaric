@@ -1404,62 +1404,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Prepare apt (free dpkg lock, bound downloads)
-        uses: ./.github/actions/prepare-apt
-
-      - name: Install system dependencies
-        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
-        # that cannot serve the index no longer reds this job as a code
-        # failure; the INSTALL decides. Measured trace + exit codes in
-        # .github/actions/apt-install/action.yml.
-        uses: ./.github/actions/apt-install
-        with:
-          packages: >-
-            libwebkit2gtk-4.1-dev
-            libgtk-3-dev
-            libssl-dev
-            librsvg2-dev
-            libsoup-3.0-dev
-            pkg-config
-            mold
-
-      - name: Enable mold linker (CI-only .cargo/config.toml)
-        run: |
-          mkdir -p .cargo
-          cp .cargo/config.toml.example .cargo/config.toml
-
-      - name: Install nightly Rust toolchain
-        # cargo-fuzz requires nightly for the libFuzzer sanitizer coverage
-        # instrumentation (`-Z sanitizer`). The production toolchain stays
-        # pinned at 1.95.0; only this lane uses nightly.
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: nightly
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri/fuzz
-          shared-key: rust-fuzz
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Prepare externalBin placeholder (FEAT-4f)
-        run: node scripts/prepare-external-bins.mjs --placeholder-only
-
-      - name: Install cargo-fuzz via prebuilt binary
-        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
-        with:
-          tool: cargo-fuzz
-
+      # Placed IMMEDIATELY after checkout, before every setup step, and that
+      # position is load-bearing rather than tidy (#4503 review). It depends on
+      # nothing in between — apt, the nightly toolchain, rust-cache, node, npm
+      # and install-action are all irrelevant to extracting a corpus tarball —
+      # and running it first buys two things:
+      #
+      #   * ~8 minutes back on the 7-day eviction margin (#4504), since what
+      #     resets the entry's idle clock is the RESTORE, not the save;
+      #   * survival of a setup failure. With the restore below apt, a failed
+      #     `npm ci` skipped it, so the newest entry went unaccessed for that
+      #     whole week and was evicted a week later — losing the lineage
+      #     silently. Above setup the restore still runs, cmin then finds no
+      #     manifest and writes `collapsed=0`, and the save republishes the
+      #     restored corpus, refreshing the timestamp.
       - name: Restore the accumulated fuzz corpus (#4496)
         # Coverage-guided fuzzing only reaches depth if the corpus ACCUMULATES.
         # Before this, `src-tauri/fuzz/corpus/` was uploaded as an artifact and
@@ -1561,6 +1519,62 @@ jobs:
             echo "after this landed; on any later run suspect the save side or an evicted entry."
           fi
           find src-tauri/fuzz/corpus -type f 2>/dev/null | wc -l | xargs echo "corpus files on disk before fuzzing:"
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
+      - name: Install system dependencies
+        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
+        # that cannot serve the index no longer reds this job as a code
+        # failure; the INSTALL decides. Measured trace + exit codes in
+        # .github/actions/apt-install/action.yml.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install nightly Rust toolchain
+        # cargo-fuzz requires nightly for the libFuzzer sanitizer coverage
+        # instrumentation (`-Z sanitizer`). The production toolchain stays
+        # pinned at 1.95.0; only this lane uses nightly.
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: nightly
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri/fuzz
+          shared-key: rust-fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install cargo-fuzz via prebuilt binary
+        uses: taiki-e/install-action@ba47c86ac325773530516bb756137ac718732518 # v2.86.5
+        with:
+          tool: cargo-fuzz
 
       - name: Fuzz each parser target (smoke length)
         working-directory: src-tauri/fuzz
@@ -1818,8 +1832,8 @@ jobs:
         # idle rule described on the restore step. Steady state is about two.
         # The `main` gate is therefore about not spending a feature branch's
         # cache budget, not about bounding growth. Cache scoping already keeps such an entry out of main's
-        # restores. The
-        # scheduled run this lane exists for is on `main` and still saves.
+        # restores. The scheduled run this lane exists for is on `main`, and
+        # still saves.
         #
         # `!cancelled() && steps.corpus-cache.outcome == 'success'` for the two
         # reasons spelled out on the step above — a cancellation mid-cmin, and a
@@ -1827,8 +1841,8 @@ jobs:
         # publish a truncated or seeds-only corpus as the newest entry.
         # `steps.corpus-cmin.outputs.collapsed == '0'` is the third gate, and it
         # is deliberately fail-CLOSED. An earlier form tested `!= '1'`, which
-        # passes on `''` — and `''` is NOT only the skipped case:
-        # The case it catches: cmin hitting its own `timeout-minutes` is marked
+        # passes on `''` — and `''` is not only the skipped case. What it
+        # catches: cmin hitting its own `timeout-minutes` is marked
         # FAILED, not cancelled, so `!cancelled()` stays true while the output
         # write never ran — and `!= '1'` would have published a half-minimised
         # corpus as the newest entry. (The missing-manifest path is NOT such a
