@@ -1,0 +1,122 @@
+# =============================================================================
+# Fuzz corpus keep-alive (#4504)
+# =============================================================================
+# #4503 made the `fuzz` lane in `scheduled-deep-checks.yml` persist its corpus
+# across weekly runs via `actions/cache`. That cache is subject to GitHub's
+# 7-day "not accessed" eviction, and what resets an entry's idle clock is a
+# RESTORE, not a save. The fuzz lane runs weekly (Mon 04:17 UTC), so the gap
+# from one save to the next restore is nearly the whole 7-day window:
+#
+#     restore lands ~8 min into the fuzz job, save ~25 min in (measured,
+#     #4504) → save-to-next-restore ≈ 6d23h43m → ONLY ~17 MINUTES of
+#     headroom against the 7-day eviction. Scheduled workflows are routinely
+#     delayed past that under runner load (this repo's own
+#     `scripts/check-workflow-liveness.mjs` has measured up to 6.25h of
+#     delivery lag on `scheduled-deep-checks`' own cron) — a delay past the
+#     margin evicts the corpus and silently resets the lineage to the
+#     committed seeds, the exact cold-start behaviour #4496/#4503 exist to
+#     end. The lane still reports `ok`.
+#
+# This workflow is the fix (option 1 of #4504): a separate, minimal job that
+# ONLY restores the corpus cache — never saves it, never fuzzes — purely to
+# touch the entry's access timestamp. It cannot live as a second cron trigger
+# on `scheduled-deep-checks.yml` without gating every one of that workflow's
+# other (heavy, expensive) lanes to skip a mid-week trigger; a dedicated file
+# is simpler and cannot accidentally double-run anything else in that
+# workflow, mirroring the existing `workflow-watchdog.yml` pattern of "own
+# workflow, own cron, touches nothing else".
+#
+# ─── Why Thursday 16:17 UTC ──────────────────────────────────────────────────
+#
+# Chosen as the midpoint between two Monday-04:17 fuzz runs: Mon 04:17 + 3.5
+# days = Thu 16:17. That splits the 7-day window into two ~3.5-day gaps
+# instead of one ~7-day gap:
+#
+#   * save (Mon, ~04:42) → this restore (Thu, ~16:17):        ≈ 3d 11h 35m
+#   * this restore (Thu, ~16:17) → next restore (Mon, ~04:25): ≈ 3d 12h 08m
+#
+# Both are comfortably under the 7-day limit — margin goes from ~17 minutes to
+# ~3.5 days on EITHER side, which is what makes this worth doing rather than
+# only tightening the estimate. It also easily absorbs the largest delivery
+# lag this repo has measured for a weekly cron (6.25h, see
+# `check-workflow-liveness.mjs`): shifting either boundary by that much still
+# leaves days, not minutes, of margin. That lag figure was measured for
+# `scheduled-deep-checks`' own cron, not this workflow's Thursday slot
+# specifically — carried over as the best available evidence of how late a
+# weekly cron in THIS repo can run, not asserted as this slot's own measured
+# value.
+#
+# `'17'` as the minute, matching the fuzz lane's own cron, for the same
+# stated reason: an off-top-of-hour minute avoids the scheduler stampede at
+# `:00`.
+#
+# ─── What this does NOT fix ──────────────────────────────────────────────────
+#
+# It does not make eviction impossible — a sufficiently long outage or a
+# missed run of THIS workflow narrows the margin back down. It is a
+# mitigation, not a guarantee, which is why #4504's acceptance criterion is a
+# month of observed warm/cold lines on the fuzz lane itself, not a claim made
+# here.
+# =============================================================================
+
+name: Fuzz corpus keep-alive
+
+on:
+  schedule:
+    - cron: '17 16 * * 4'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Touch the fuzz corpus cache's access timestamp
+    runs-on: ubuntu-24.04
+    # One `actions/cache/restore` call. Seconds of real work; 10 min bounds a
+    # wedged cache-service call rather than budgeting anything else.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore the fuzz corpus cache (#4504)
+        id: corpus-cache
+        # `continue-on-error`: this job has exactly one job to do, and a
+        # cache-service hiccup must not turn a no-op keep-alive into a red
+        # run. As in the fuzz lane's own restore step, `restoreCache` swallows
+        # every failure except a `ValidationError` and returns `undefined`
+        # instead — this only matters for that one path.
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: src-tauri/fuzz/corpus
+          # A key that never hits on read, exactly like the fuzz lane's own
+          # restore step — the point is the `restore-keys` prefix fallback,
+          # which resolves to the newest `fuzz-corpus-*` entry and, in doing
+          # so, refreshes ITS access timestamp. Never writes: there is no
+          # matching `cache/save` step in this workflow, on purpose — this
+          # job's only effect is the access, not a new entry.
+          key: fuzz-corpus-keepalive-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            fuzz-corpus-
+
+      - name: Report whether an entry was found
+        env:
+          MATCHED: ${{ steps.corpus-cache.outputs.cache-matched-key }}
+          RESTORE_OUTCOME: ${{ steps.corpus-cache.outcome }}
+        run: |
+          if [ "$RESTORE_OUTCOME" != "success" ]; then
+            echo "::warning::corpus keep-alive restore FAILED (outcome=$RESTORE_OUTCOME) — no entry was touched this cycle."
+          elif [ -n "$MATCHED" ]; then
+            # Deliberately does NOT claim the refresh happened. That a restore
+            # updates the entry's access timestamp is the mechanism this whole
+            # workflow is betting on, and it is NOT documented by GitHub at that
+            # precision — see #4504. Asserting it here would print a success line
+            # every week for the one thing nobody has verified. The real signal is
+            # the fuzz lane's own warm/cold report over the coming weeks.
+            echo "restored fuzz corpus cache entry: $MATCHED (intended to refresh its access timestamp — unverified mechanism, see #4504)"
+          else
+            echo "::warning::NO fuzz-corpus-* cache entry found to refresh — either the fuzz lane has never saved one yet, or it was already evicted."
+          fi

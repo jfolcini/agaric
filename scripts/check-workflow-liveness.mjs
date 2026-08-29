@@ -180,6 +180,12 @@ export const WATCHED = Object.freeze([
     why: 'weekly Mon 02:43 UTC',
   }),
   Object.freeze({
+    workflow: 'fuzz-corpus-refresh.yml',
+    periodHours: 168,
+    maxAgeHours: 200,
+    why: 'weekly Thu 16:17 UTC; refreshes the fuzz-corpus-* cache entry access timestamp midway between fuzz lane runs so the 7-day eviction margin does not depend on the fuzz lane alone (#4504)',
+  }),
+  Object.freeze({
     workflow: 'scheduled-deep-checks.yml',
     periodHours: 168,
     maxAgeHours: 200,
@@ -1186,7 +1192,8 @@ function selfTestWindows({ check }) {
  *     `--event schedule` only rationale at the top of this file, deleted, with
  *     every assertion still green. That is a check that cannot fail.
  *   * `--workflow <name>`: without it every watched entry is classified from
- *     one repo-wide run list, so a single live workflow makes all six healthy.
+ *     one repo-wide run list, so a single live workflow makes every watched
+ *     entry read healthy.
  *   * `databaseId` in `--json`: without it `r.databaseId` is `undefined`, the
  *     `--exclude-run-id` filter matches nothing, and the self-watch is back to
  *     grading its own in-flight run — vacuous, and invisible.

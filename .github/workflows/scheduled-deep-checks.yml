@@ -1474,19 +1474,25 @@ jobs:
         with:
           path: src-tauri/fuzz/corpus
           key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
-          # KNOWN MARGIN (not fixed here): GitHub evicts cache entries not
-          # ACCESSED for 7 days. What resets an entry's idle clock is THIS step,
-          # not the save. The restore now runs within a minute of checkout and
-          # the save lands ~25 min into the job, so save-to-next-restore is
-          # about 6d23h35m — roughly TWENTY-FIVE minutes of headroom.
+          # MARGIN, addressed by #4504: GitHub evicts cache entries not
+          # ACCESSED for 7 days. What resets an entry's idle clock is THIS
+          # step, not the save. Measured (jfolcini, review of #4503): the
+          # restore lands ~8 min into the job, the save ~25 min in, so
+          # save-to-next-restore is about 6d23h43m — roughly SEVENTEEN
+          # minutes of headroom, not the ~25 originally estimated.
           # `restore-keys` gives no cushion: it touches only the newest entry,
           # so every older one is already a full 7 days idle by the next
-          # restore. There is no second chance. A run delayed past that (they are routinely
-          # delayed under load) evicts the corpus and resets to the seeds. The
-          # warm/cold step that follows is what makes that visible rather than
-          # silent; making accumulation robust
-          # rather than marginal needs a mid-week touch or a second scheduled
-          # restore, which is a follow-up rather than part of this change.
+          # restore. There is no second chance, and scheduled runs are
+          # routinely delayed past that margin under load. The warm/cold step
+          # that follows is what makes an eviction visible rather than
+          # silent.
+          #
+          # `.github/workflows/fuzz-corpus-refresh.yml` is the fix (#4504):
+          # a separate, minimal weekly job that ONLY restores this cache
+          # (never saves), scheduled roughly midway between two fuzz runs
+          # purely to touch the entry's access timestamp — see that file for
+          # the schedule derivation. That moves the margin from ~17 minutes
+          # to ~3.5 days on either side of the week.
           #
           # Restore is deliberately NOT branch-gated while save is: Actions
           # cache scoping lets any branch read the default branch's entries, so

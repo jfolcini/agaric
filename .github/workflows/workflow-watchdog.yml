@@ -189,7 +189,7 @@ jobs:
             "" \
             "Run: $RUN_URL" \
             "" \
-            "Open that run, then check by hand that \`branch-protection-assert\`, \`codeql\`, \`scorecard\`, \`e2e-tauri-weekly\` and \`scheduled-deep-checks\` have all run recently and green.")"
+            "Open that run, then check by hand that \`branch-protection-assert\`, \`codeql\`, \`scorecard\`, \`e2e-tauri-weekly\`, \`scheduled-deep-checks\` and \`fuzz-corpus-refresh\` have all run recently and green.")"
           number="$(gh issue list --repo "$TARGET_REPO" \
             --search "in:title \"$title\"" --state all \
             --json number,title,state --limit 20 \

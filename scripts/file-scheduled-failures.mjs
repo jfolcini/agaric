@@ -3730,12 +3730,16 @@ function selfTestBodySize({ check, lanesOf }) {
   //    `streaking` enumeration too. Both growths, one profile, one lane. The
   //    third check below is that shape, and the reason the cap is not moving
   //    is that the combined shape is only reachable on the watchdog profile,
-  //    whose lane count is exactly `WATCHED.length` (6). Measured: the real
-  //    all-6-stale body is 3473 chars, 20 such lanes are 5844, and 40 — the
-  //    count the two fixtures below use, which no profile is anywhere near —
-  //    are 9464, i.e. over. So the fixture is sized to 20 (>3x the real 6,
-  //    the same headroom framing as the 40 below) rather than the cap being
-  //    raised to accommodate a lane count that cannot occur.
+  //    whose lane count is exactly `WATCHED.length` (7 as of #4504's
+  //    `fuzz-corpus-refresh.yml`, up from 6 when the figures below were
+  //    measured — still nowhere near the 40-lane fixture, so the conclusion
+  //    is unaffected and the exact byte counts were not re-measured for one
+  //    added lane). Measured then: the real all-6-stale body is 3473 chars,
+  //    20 such lanes are 5844, and 40 — the count the two fixtures below
+  //    use, which no profile is anywhere near — are 9464, i.e. over. So the
+  //    fixture is sized well past the real lane count (>3x it, the same
+  //    headroom framing as the 40 below) rather than the cap being raised to
+  //    accommodate a lane count that cannot occur.
   //
   //    The two growths are pinned as the two shapes that actually ship, not
   //    summed into one fixture, because (pre-#4456) no profile produced both
@@ -3752,7 +3756,7 @@ function selfTestBodySize({ check, lanesOf }) {
   //    decoration is all it would take), this cap is what has to move, and
   //    this comment is the measurement to move it against. Nothing shipping
   //    today is close — 40 lanes is already ~3.6x the largest real profile
-  //    (11 deep-checks jobs, 6 watched workflows).
+  //    (11 deep-checks jobs, 7 watched workflows).
   //
   //    Measured at 40 lanes: 7134 (deep-checks shape) and 7356 (watchdog
   //    shape) against the 8000 cap; the pre-#4400 bare block this used to
