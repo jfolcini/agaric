@@ -1421,7 +1421,7 @@ jobs:
       - name: Restore the accumulated fuzz corpus (#4496)
         # Coverage-guided fuzzing only reaches depth if the corpus ACCUMULATES.
         # Before this, `src-tauri/fuzz/corpus/` was uploaded as an artifact and
-        # never restored — `Swatinem/rust-cache` above covers `~/.cargo` and
+        # never restored — the `Swatinem/rust-cache` step covers `~/.cargo` and
         # `target/`, not the corpus — so every weekly run restarted all five
         # targets from the seeds committed to git (8 files over 2 targets at the
         # time; the other three had no corpus directory at all). Each run then
@@ -1436,8 +1436,10 @@ jobs:
         #   * the save point is explicit and ordered — it happens HERE, before
         #     the artifact upload below, not in an implicit post-job step whose
         #     position relative to other post steps is not ours to choose;
-        #   * there is no exact-hit save-skip to reason about (a combined
-        #     action declines to save when the primary key hit on read).
+        # (A second reason is sometimes given — that a combined action skips the
+        # save on an exact-key hit — but it does not apply here: a run-scoped
+        # primary key never hits on read, so that branch is unreachable either
+        # way. The ordering above is what carries the decision.)
         # The run-scoped key never hits on read — `restore-keys` takes the most
         # recent prefix match — which is what makes each run write a fresh
         # entry instead of being stuck on the first one saved.
@@ -1446,8 +1448,8 @@ jobs:
         # change the lane fuzzed from the committed seeds regardless of any
         # cache, and it still must.
         #
-        # It buys less than an earlier revision of this comment claimed, and the
-        # difference matters. Checked against `@actions/cache`'s `restoreCache`
+        # What it buys is narrower than it looks. Checked against
+        # `@actions/cache`'s `restoreCache`
         # (actions/toolkit, packages/cache/src/cache.ts): only a
         # `ValidationError` (over-long key, bad path) is re-thrown; EVERY other
         # failure — a cache service outage included — is logged via
@@ -1476,12 +1478,13 @@ jobs:
           # ACCESSED for 7 days. What resets an entry's idle clock is THIS step,
           # not the save. The restore now runs within a minute of checkout and
           # the save lands ~25 min into the job, so save-to-next-restore is
-          # about 6d23h35m — roughly TWENTY-FIVE minutes of headroom (it was
-          # ~17 before this step moved above the setup steps). `restore-keys`
-          # gives no cushion, because the older entries were last accessed at
-          # the same clock time. A run delayed past that (they are routinely
-          # delayed under load) evicts the corpus and resets to the seeds. The warm/cold step below is what
-          # makes that visible rather than silent; making accumulation robust
+          # about 6d23h35m — roughly TWENTY-FIVE minutes of headroom.
+          # `restore-keys` gives no cushion: it touches only the newest entry,
+          # so every older one is already a full 7 days idle by the next
+          # restore. There is no second chance. A run delayed past that (they are routinely
+          # delayed under load) evicts the corpus and resets to the seeds. The
+          # warm/cold step that follows is what makes that visible rather than
+          # silent; making accumulation robust
           # rather than marginal needs a mid-week touch or a second scheduled
           # restore, which is a follow-up rather than part of this change.
           #
@@ -1722,16 +1725,12 @@ jobs:
         # `actions/checkout` precedes the restore now, so the failure it was
         # written for cannot really occur.
         #
-        # It was not vacuous when written. The restore then sat below ten setup
-        # steps — apt, the nightly toolchain, rust-cache, setup-node, `npm ci`,
-        # the externalBin placeholder, install-action — several network-bound
-        # (#4163 exists because apt mirrors fail here). A failure in any of them
-        # SKIPPED the restore while these two, carrying their own `if:`, ran
-        # anyway: cmin found no manifest, and the save published a `corpus/`
-        # holding only what `git checkout` put there, which every later run then
-        # inherited via `restore-keys`. Moving the restore above the setup steps
-        # is what removed that, and the gate is kept because it costs nothing
-        # and would catch the same shape if a step is ever inserted above it.
+        # It is kept because it costs nothing and would catch the same shape if
+        # a step were ever inserted between checkout and the restore: any step
+        # that fails there skips the restore while these two, carrying their own
+        # `if:`, would run anyway — cmin finding no manifest and the save then
+        # publishing a `corpus/` holding only what `git checkout` put there,
+        # which every later run would inherit via `restore-keys`.
         #
         # `== 'success'`, not `!= 'skipped'`: the latter also passes when the
         # restore ran and FAILED (cache service unavailable), and an absent step
@@ -1750,8 +1749,8 @@ jobs:
           # Unreachable today (all five targets have committed seed dirs), but
           # reachable the moment a sixth is added without seeds and its build
           # fails — `cargo fuzz run` builds before it creates `corpus/<target>`.
-          # That is the exact fail-fast shape #3169 removed from the fuzz loop
-          # 200 lines above; not reintroducing it here.
+          # That is the exact fail-fast shape #3169 removed from the fuzz step's
+          # own target loop; not reintroducing it here.
           set -uo pipefail
           # Read the target list the fuzz step already wrote, rather than
           # hardcoding a THIRD copy of it. There are two today — the `[[bin]]`
@@ -1774,8 +1773,8 @@ jobs:
           fi
           # `|| [ -n "$target" ]` so a final unterminated line is not dropped.
           # Safe today — the producer is `printf '%s\n'`, which always
-          # terminates — but producer and consumer are 130 lines apart, and
-          # removing the coupling costs nothing.
+          # terminates — but the producer is a different step from this
+          # consumer, and removing the coupling costs nothing.
           while read -r target || [ -n "$target" ]; do
             [ -n "$target" ] || continue
             before=$(find "corpus/$target" -type f 2>/dev/null | wc -l || true)
@@ -1829,9 +1828,8 @@ jobs:
         #
         # Gated on `main` for the same reason the `Swatinem/rust-cache` step
         # above carries `save-if: github.ref == 'refs/heads/main'`. Nothing
-        # prunes these entries explicitly, but they do NOT accumulate: an
-        # earlier note here claimed ~52/year against the repo-wide LRU and that
-        # was wrong. `restore-keys` touches only the NEWEST entry, so every
+        # prunes these entries explicitly, but they do NOT accumulate.
+        # `restore-keys` touches only the NEWEST entry, so every
         # older one goes unaccessed for a week and is evicted by the same 7-day
         # idle rule described on the restore step. Steady state is about two.
         # The `main` gate is therefore about not spending a feature branch's
@@ -1844,9 +1842,9 @@ jobs:
         # setup failure before the restore — either of which would otherwise
         # publish a truncated or seeds-only corpus as the newest entry.
         # `steps.corpus-cmin.outputs.collapsed == '0'` is the third gate, and it
-        # is deliberately fail-CLOSED. An earlier form tested `!= '1'`, which
-        # passes on `''` — and `''` is not only the skipped case. What it
-        # catches: cmin hitting its own `timeout-minutes` is marked
+        # is deliberately fail-CLOSED, and the explicit `'0'` matters: a test of
+        # `!= '1'` would pass on `''`, and `''` is not only the skipped case.
+        # What that catches: cmin hitting its own `timeout-minutes` is marked
         # FAILED, not cancelled, so `!cancelled()` stays true while the output
         # write never ran — and `!= '1'` would have published a half-minimised
         # corpus as the newest entry. (The missing-manifest path is NOT such a
