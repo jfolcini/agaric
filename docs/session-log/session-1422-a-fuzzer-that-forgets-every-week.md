@@ -51,9 +51,27 @@ run-scoped key never hits on read; the prefix falls back to the most recent entr
 constant key would look simpler and freeze the corpus at whatever the first run saved,
 because GitHub cache entries are immutable per key.
 
-`if: always()` on both trailing steps: a crash in one target still leaves the other four
-with a run's worth of coverage, and letting one red target reset every sibling's corpus
-would be a worse failure than the one being fixed.
+Both trailing steps are gated `!cancelled() && steps.corpus-cache.outcome == 'success'`.
+A crash in one target still leaves the other four with a run's worth of coverage, so a red
+fuzz step must not stop them — but neither condition is the obvious `always()`, and the
+second one is the interesting half.
+
+`!cancelled()` is not enough on its own, because **it is true when an earlier step
+failed**, not only on a clean run. Ten steps precede the restore, several network-bound
+(the repo already carries #4163 because apt mirrors fail here). If one of them fails, the
+restore and fuzz steps are skipped — while these two, carrying their own `if:`, run
+anyway. cmin finds no manifest and exits 0, and the save then publishes a `corpus/`
+holding only what `git checkout` put there. Since `restore-keys` returns the most recently
+*created* prefix match, every later run inherits that seeds-only entry.
+
+One flaky apt mirror would have permanently reset the corpus lineage, through a log that
+reads normally — the exact failure this change exists to end, reintroduced by the fix for
+it. Gating on `steps.corpus-cache.outcome == 'success'` closes it: `== 'success'` rather
+than `!= 'skipped'`, since the latter also passes when the restore ran and *failed*, and
+an absent step evaluates to `''`.
+
+This was a review catch, not a local one, and it is the second time on this change that
+the thing needing correction was a confident sentence rather than a line of code.
 
 ## The list that was about to become a third copy
 

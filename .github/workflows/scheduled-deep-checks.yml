@@ -1483,7 +1483,13 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: src-tauri/fuzz/corpus
-          key: fuzz-corpus-${{ github.run_id }}
+          key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+          # Restore is deliberately NOT branch-gated while save is: Actions
+          # cache scoping lets any branch read the default branch's entries, so
+          # a `workflow_dispatch` run on a feature branch starts from main's
+          # accumulated corpus and then discards whatever it finds, because it
+          # will not save. That asymmetry is the intended trade — such a run
+          # gets a realistic starting corpus without spending the cache budget.
           restore-keys: |
             fuzz-corpus-
 
@@ -1601,10 +1607,11 @@ jobs:
           exit "$overall"
 
       - name: Minimise the corpus, then persist it (#4496)
-        # `if: always()` — a crash in ONE target still leaves the other four
+        # Condition is `!cancelled() && steps.corpus-cache.outcome == 'success'`
+        # (spelled out below). A crash in ONE target still leaves the other four
         # with a run's worth of new coverage, and discarding that because the
         # lane went red would make a single crashing target permanently reset
-        # every sibling's corpus.
+        # every sibling's corpus — so a failed FUZZ step must not stop this.
         #
         # `cargo fuzz cmin` keeps a minimal input set covering the same edges,
         # so the cache stays proportional to REACHED COVERAGE rather than to
@@ -1617,15 +1624,33 @@ jobs:
         # optimisation, and a corpus that failed to minimise is still a corpus
         # worth saving. The fuzz step above owns the lane's pass/fail verdict.
         #
+        # Two conditions, guarding two different ways the corpus lineage gets
+        # silently reset to the committed seeds.
+        #
         # `!cancelled()` rather than `always()`: cmin replaces `corpus/<target>`
         # in place once its merge succeeds, so a cancellation or runner loss
         # landing inside that swap leaves the directory absent — and `always()`
         # would then let the save step below store THAT as the newest
-        # `fuzz-corpus-*` entry for the next run to inherit. It self-heals (the
-        # committed seeds are the floor) but it silently discards a target's
-        # accumulated corpus, which is the exact failure this change exists to
-        # end. Genuine pass and fail both still run.
-        if: ${{ !cancelled() }}
+        # `fuzz-corpus-*` entry for the next run to inherit.
+        #
+        # `steps.corpus-cache.outcome == 'success'` guards the COMMONER case and
+        # is why `!cancelled()` alone is not enough: it is true when an EARLIER
+        # STEP FAILED, not only on a clean run. Ten steps precede the restore —
+        # apt, the nightly toolchain, rust-cache, setup-node, `npm ci`, the
+        # externalBin placeholder, install-action — several network-bound (#4163
+        # exists because apt mirrors fail here). If one fails, the restore and
+        # fuzz steps are SKIPPED while these two, carrying their own `if:`, run
+        # anyway: cmin finds no manifest and exits 0, then the save publishes a
+        # `corpus/` holding only what `git checkout` put there. Since
+        # `restore-keys` returns the most recently CREATED prefix match, every
+        # later run would inherit that seeds-only entry — the cold start this
+        # change exists to end, arriving through a log that reads normally.
+        #
+        # `== 'success'`, not `!= 'skipped'`: the latter also passes when the
+        # restore ran and FAILED (cache service unavailable), and an absent step
+        # evaluates to `''`, which is likewise `!= 'skipped'`. A cache MISS is
+        # still `success`, which is correct — a genuine cold start should save.
+        if: ${{ !cancelled() && steps.corpus-cache.outcome == 'success' }}
         working-directory: src-tauri/fuzz
         env:
           RUSTFLAGS: "-C target-feature=-crt-static"
@@ -1652,10 +1677,24 @@ jobs:
             # today, but a child that ever read stdin would swallow the
             # remaining target lines and cmin only the first — and the
             # redirect below would hide that completely.
+            log="$RUNNER_TEMP/cmin-$target.log"
+            rc=0
             cargo +nightly fuzz cmin "$target" \
-              --target x86_64-unknown-linux-gnu </dev/null >/dev/null 2>&1 || true
+              --target x86_64-unknown-linux-gnu </dev/null >"$log" 2>&1 || rc=$?
             after=$(find "corpus/$target" -type f 2>/dev/null | wc -l)
             echo "cmin $target: $before -> $after inputs"
+            # Non-fatal, but never SILENT. `>/dev/null 2>&1 || true`
+            # discarded the exit status too, so a permanently broken
+            # cmin (a CLI change, or a target that stops building under
+            # a newer nightly) would surface only as `N -> N inputs` —
+            # which is ALSO the correct output for an already-minimal
+            # corpus. The corpus would then grow unbounded until it
+            # outgrew the cache entry limit: the very failure this step
+            # exists to prevent, with nothing in the log saying so.
+            if [ "$rc" -ne 0 ]; then
+              echo "::warning::cmin FAILED for $target (exit $rc) — corpus left un-minimised"
+              tail -n 20 "$log" || true
+            fi
           done < "$manifest"
 
       - name: Save the minimised fuzz corpus (#4496)
@@ -1674,13 +1713,21 @@ jobs:
         # restores, so this is quota and consistency, not correctness. The
         # scheduled run this lane exists for is on `main` and still saves.
         #
-        # `!cancelled()` for the reason given on the step above: a cancellation
-        # mid-cmin must not have its truncated corpus saved as the newest entry.
-        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        # `!cancelled() && steps.corpus-cache.outcome == 'success'` for the two
+        # reasons spelled out on the step above — a cancellation mid-cmin, and a
+        # setup failure before the restore — either of which would otherwise
+        # publish a truncated or seeds-only corpus as the newest entry.
+        if: ${{ !cancelled() && steps.corpus-cache.outcome == 'success' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: src-tauri/fuzz/corpus
-          key: fuzz-corpus-${{ github.run_id }}
+          # `run_attempt` is in the key because `run_id` alone is STABLE across
+          # attempts: re-running this job from the Actions UI would hit the
+          # already-reserved key, and `actions/cache/save` warns and continues
+          # rather than failing — so the step stays green while that attempt's
+          # corpus is silently dropped. The `fuzz-corpus-` prefix is unchanged,
+          # so `restore-keys` still selects the newest entry.
+          key: fuzz-corpus-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload fuzz artifacts (crashes / corpus)
         if: always()
