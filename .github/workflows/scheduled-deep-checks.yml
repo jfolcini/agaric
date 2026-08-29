@@ -1680,6 +1680,7 @@ jobs:
             exit 1
           fi
           mapfile -t targets < "$derived_targets"
+          rm -f "$derived_targets"
           if [ "${#targets[@]}" -eq 0 ]; then
             echo "::error::the fuzz target list derived from src-tauri/fuzz/Cargo.toml is EMPTY: the manifest declares no [[bin]] entries, or the jq filter no longer matches them. The producer itself succeeded."
             exit 1
@@ -1706,6 +1707,7 @@ jobs:
           # about the exact targets whose seeding nobody would then re-check.
           # A guard is allowed to say nothing; it is not allowed to invert.
           seed_check_available=1
+          seedless_targets=()
           if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             seed_check_available=0
             seedless_skip_msg="the committed-seed check was SKIPPED: 'git rev-parse --is-inside-work-tree' failed, so an empty 'git ls-files' cannot be distinguished from a failed one. No conclusion about seeding should be drawn from this run."
@@ -1716,10 +1718,8 @@ jobs:
               echo "$seedless_skip_msg"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ "$seed_check_available" -eq 1 ]; then
           for target in "${targets[@]}"; do
-            if [ "$seed_check_available" -eq 0 ]; then
-              break
-            fi
             # `git ls-files`, NOT `find`: the question is whether this target
             # has COMMITTED seeds, and the working tree cannot answer it here.
             # The restore step (#4496) extracts the accumulated corpus into
@@ -1730,21 +1730,30 @@ jobs:
             # still starts that target from libFuzzer's empty input. A guard
             # that fires only on the one run where the target is new AND the
             # cache also missed is barely a guard.
+            # `git ls-files`, NOT `find`: see the comment above the
+            # precondition. Names are ACCUMULATED here and reported once after
+            # the loop — eight seedless targets used to render eight identical
+            # H3 headings in the run summary, which is the one surface this
+            # warning exists to be read from and the one place a repeated
+            # heading reads as noise rather than as eight findings.
             if [ -z "$(git ls-files "corpus/$target" | head -n 1)" ]; then
-              seedless_msg="fuzz target '$target' has no COMMITTED seed corpus at corpus/$target/ — on a cache miss it starts from libFuzzer's empty input. Add seeds that reach distinct branches."
-              echo "::warning::$seedless_msg"
-              # To the run summary as well, for the same reason the budget
-              # warning below does it: this fires on a GREEN run — a target
-              # quietly exploring from cold forever — and nobody opens the log
-              # of a job that passed. An annotation alone would be a signal with
-              # no reader, which is the failure the warning itself describes.
-              {
-                echo "### :warning: fuzz target without seeds"
-                echo
-                echo "$seedless_msg"
-              } >> "$GITHUB_STEP_SUMMARY"
+              seedless_targets+=("$target")
             fi
           done
+          if [ "${#seedless_targets[@]}" -gt 0 ]; then
+            seedless_msg="fuzz target(s) with no COMMITTED seed corpus: ${seedless_targets[*]} — on a cache miss each starts from libFuzzer's empty input. Add seeds under corpus/<target>/ that reach distinct branches."
+            echo "::warning::$seedless_msg"
+            # To the run summary as well: this fires on a GREEN run — targets
+            # quietly exploring from cold forever — and nobody opens the log of
+            # a job that passed. An annotation alone would be a signal with no
+            # reader, which is the failure the warning itself describes.
+            {
+              echo "### :warning: fuzz target(s) without seeds"
+              echo
+              echo "$seedless_msg"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          fi
           # Enrolling a target is now a one-line `[[bin]]` edit that never opens
           # this file — which trades list drift (#2945) for BUDGET drift, and
           # budget drift fails silently in the worse direction: overrunning the

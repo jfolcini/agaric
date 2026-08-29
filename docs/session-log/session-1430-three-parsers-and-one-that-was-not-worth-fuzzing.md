@@ -254,3 +254,76 @@ The rule the pair suggests is worth stating once: **a guard is allowed to say no
 is not allowed to invert.** An absence-detector has to treat "I could not look" as a third
 outcome, not fold it into "I looked and found nothing" — otherwise its signal is strongest
 exactly where it is least trustworthy.
+
+## The property that would have red-lit the lane
+
+A second review round proposed giving `pagination_cursor_decode` a real
+invariant, since it asserts only the no-panic contract while its sibling got a
+load-bearing one. The suggestion was a re-encode fixed point:
+
+```rust
+if let Ok(e) = parsed.encode() {
+    assert_eq!(Cursor::decode(&e).ok().as_ref(), Some(&parsed))
+}
+```
+
+with the right caveat attached — validate it against generated inputs first,
+because a false invariant reds the lane on its first scheduled run.
+
+**It is false.** Probed against 300,000 generated cursor-shaped blobs, of which
+24,882 decoded:
+
+```
+PROBE checked=300000 decoded_ok=24882 encode_failed=0 violations=1138
+PROBE violation: {"id":"","rank":123456789.123456789}
+  -> Cursor { rank: Some(123456789.12345679) }
+  -> Ok(Cursor { rank: Some(123456789.1234568) })
+```
+
+4.6% of decodable cursors violate it, every one of them through `rank`.
+
+## Whose fault, exactly
+
+Not the cursor codec's. Narrowed to three lines:
+
+```
+PROBE text            = 123456789.12345679
+PROBE std   parse bits = 419d6f34547e6b75
+PROBE serde_json bits  = 419d6f34547e6b76
+```
+
+`serde_json` is not correctly rounded on parse. Rust's own `str::parse::<f64>`
+returns the nearest representable double; `serde_json::from_str` returns its
+neighbour, one ULP away. Serialization is fine — ryu emits the shortest form
+that round-trips — so the loss is entirely on the way in, and it is a known and
+documented trade: `serde_json`'s `float_roundtrip` feature exists precisely to
+buy correct rounding back, at roughly 2x parse cost, and this repo does not
+enable it.
+
+So `encode` writes `123456789.12345679`, and `decode` reads it back as a
+different double. The codec is a faithful messenger for a parser that is not.
+
+## Does it matter, and the honest answer
+
+At that magnitude the drift is **1.49e-8**, which is larger than the `1e-9`
+epsilon the FTS keyset compares ranks with (`ABS(rank - cursor_rank) < 1e-9`) —
+so a cursor at that scale would fail to match its own row and pagination would
+skip or repeat.
+
+It does not happen, for a reason that is luck rather than design: SQLite's bm25
+returns ranks of order 1, where one ULP is `2.2e-16` — seven orders of magnitude
+below the epsilon. The epsilon absorbs the parser's error only because the
+values are small. Nothing in the cursor type says they must be, and nothing
+would notice if a future rank-bearing query used a differently-scaled score.
+Filed as #4519 rather than fixed here; this PR adds fuzz targets and is not
+the place to change a workspace-wide serde feature.
+
+The target keeps the no-panic contract it shipped with, and its header now says
+why the obvious stronger assertion is not there — which is more useful than
+either adding a false one or leaving the omission unexplained.
+
+**The general point is the one the review made and I want to keep:** the
+suggestion was good, the caveat attached to it was the load-bearing part, and
+following the caveat is what turned a plausible invariant into a latent
+precision bug. "Validate before asserting" caught something neither of us
+expected to find.
