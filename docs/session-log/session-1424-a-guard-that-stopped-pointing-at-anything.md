@@ -691,3 +691,43 @@ verified byte-identical to the pre-rewrite backup before the force-push. The loc
 is now set to match, so the four-commit divergence that caused this cannot recur here.
 
 Twenty-six cases. Seventeen mutants.
+
+## Round seventeen — the third kind, and why two rounds did not see it
+
+`_assert_paths_exist` returns a typed `kind` for exactly one reason: so that control flow
+never has to sniff the rendered message. Round nine introduced it after the
+`--update-baseline` branch was found selecting on a substring of the diagnosis. And the
+ordinary failing path threw it away on the next line — `dangling = [m for _kind, m in ...]`.
+
+So a missing `CRATE_ROOTS` directory was announced as "the baseline no longer describes this
+tree", which is false; nothing about the baseline is wrong. It then drew `DANGLING_HINT`,
+which tells the reader to consult the refusal message of a command they have not run.
+`ROOT_MISSING_HINT` — the one that says *fix the LIST, not the baseline*, and explains that
+re-anchoring against a vanished root deletes every entry under it — was reachable only from
+`--update-baseline`.
+
+Rounds fifteen and sixteen split this class out for the other two kinds. This is the third,
+sitting between them the whole time.
+
+**Why neither round caught it.** Direction 7 asserts on the finding text only. The finding
+was always correct: `CRATE_ROOTS names a directory that does not exist` printed exactly as
+intended. What was wrong was the banner above it and the hint below it — the parts no
+assertion looked at. Directions 3 and 15 each needed a second assertion on the same run for
+precisely this reason, and I wrote both of those while leaving 7 with one. The mutant now
+reproduces the old banner verbatim, DANGLING_HINT and all.
+
+Splitting the list also forced a widening of the early return: with roots no longer inside
+`dangling`, a root-only failure would have returned 0. The check disabling itself, in the file
+whose subject is checks that stopped checking. Caught by reading the exit condition after the
+edit rather than by any test — worth noting, because nothing in the suite would have failed.
+
+Three smaller ones, all real: the header `write_baseline()` stamps on the committed baseline
+still advertised only the two original failure modes, so a developer who tripped the new
+`unratcheted` rule could open the named file and read that the case was not policed;
+`crate_root_paths()` compared unresolved roots against resolved argv paths, a silent
+narrowing under any symlinked component that today survives only because the empty-target
+fallback walks everything anyway; and `--allow-reductions` without `--update-baseline` was
+swallowed by the `-`-prefix filter, so an operator recovering from the reduction refusal who
+dropped the other flag got exit 0 from a scan that re-anchored nothing.
+
+Twenty-seven cases.
