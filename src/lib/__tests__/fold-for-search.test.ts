@@ -484,8 +484,8 @@ describe('findFoldedMatch (PAGES-FOLD-MARK)', () => {
   it('word-final sigma: the span is the one sigma code unit (#4514)', () => {
     const haystack = 'ΟΔΟΣ'
     const match = findFoldedMatch(haystack, SIGMA_CAP)
-    expect(match).toEqual({ start: 3, length: 1 })
     if (match === null) throw new Error('expected match')
+    expect(match).toEqual({ start: 3, length: 1 })
     expect(haystack.slice(match.start, match.start + match.length)).toBe(SIGMA_CAP)
   })
 
