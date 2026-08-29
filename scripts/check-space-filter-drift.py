@@ -362,6 +362,18 @@ def _assert_paths_exist(baseline: dict[str, int]) -> list[str]:
         for rel in sorted(DENY_FILES)
         if not (REPO_ROOT / rel).is_file()
     )
+    # And the roots themselves. `crate_root_paths()` filters CRATE_ROOTS
+    # through `is_dir()` and silently drops what is missing, so a renamed or
+    # misspelled crate segment narrows the walk with no signal at all — this
+    # guard's own subject, one level up. Four of the six roots carry no
+    # baseline entries, so a dangling-baseline finding would not catch it for
+    # them indirectly. The sandbox materialises every root for the same reason
+    # it materialises DENY_FILES.
+    out.extend(
+        f"{rel}: CRATE_ROOTS names a directory that does not exist"
+        for rel in CRATE_ROOTS
+        if not (REPO_ROOT / rel).is_dir()
+    )
     return out
 
 
@@ -470,6 +482,11 @@ def _build_cli_sandbox(root: Path) -> Path:
     # would report a dangling deny entry on EVERY case below — turning each
     # case's "exits non-zero" half into an unconditional pass and drowning
     # out what that case is actually asserting.
+    # Same reason as DENY_FILES below: the CRATE_ROOTS check is unconditional,
+    # so a sandbox missing these roots would report them dangling on EVERY
+    # case and satisfy each case's "exits non-zero" half for the wrong reason.
+    for rel in CRATE_ROOTS:
+        (root / rel).mkdir(parents=True, exist_ok=True)
     for rel in DENY_FILES:
         stand_in = root / rel
         stand_in.parent.mkdir(parents=True, exist_ok=True)
@@ -668,9 +685,19 @@ def run_cli_self_test(record) -> None:
         # touching any baseline, so the two halves of `_assert_paths_exist`
         # are pinned independently.
         deny_rel = sorted(DENY_FILES)[0]
-        (root / deny_rel).unlink()
+        stand_in = root / deny_rel
+        stand_in.unlink()
         baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
         code, out = _run_cli(guard, [str(clean)])
+        # RESTORE before recording. This case is the only one that removes a
+        # sandbox fixture, and leaving it removed would hand every case
+        # appended after it a standing dangling-deny finding — satisfying the
+        # `code != 0` half unconditionally, which is precisely the pollution
+        # `_build_cli_sandbox` materialises these files to prevent. Being last
+        # today is not a defence; the next case appended is the one that pays.
+        stand_in.write_text(
+            "// sandbox stand-in for a DENY_FILES entry\n", encoding="utf-8"
+        )
         if code != 0 and "DENY_FILES names a file that does not exist" in out:
             record("CLI: a dangling DENY_FILES entry exits non-zero (#3255)", True, True)
         else:
@@ -678,6 +705,30 @@ def run_cli_self_test(record) -> None:
                 "CLI: a dangling DENY_FILES entry exits non-zero (#3255)",
                 (code, out.strip()),
                 f"non-zero exit naming {deny_rel} as a dangling DENY_FILES entry",
+            )
+
+        # --- #3255 direction 7: a CRATE_ROOTS entry that is not a directory --
+        # `crate_root_paths()` filters through `is_dir()`, so a renamed or
+        # misspelled crate segment narrows the walk to nothing with no signal —
+        # this PR's own failure mode, one level up, inside the guard written to
+        # end it. Four of the six roots hold no baseline entries, so the
+        # dangling-baseline check cannot catch it for them indirectly either.
+        # `agaric-engine`, deliberately, NOT `agaric-store`: the only
+        # DENY_FILES stand-in lives under the store root, so removing that one
+        # would raise a dangling-deny finding too and the case would be
+        # satisfiable by either. Removing a root that holds no deny entry
+        # leaves exactly one thing that can make this run non-zero.
+        missing_root = root / "src-tauri" / "agaric-engine" / "src"
+        shutil.rmtree(missing_root)
+        code, out = _run_cli(guard, [str(clean)])
+        missing_root.mkdir(parents=True, exist_ok=True)
+        if code != 0 and "CRATE_ROOTS names a directory that does not exist" in out:
+            record("CLI: a vanished CRATE_ROOTS entry exits non-zero (#3255)", True, True)
+        else:
+            record(
+                "CLI: a vanished CRATE_ROOTS entry exits non-zero (#3255)",
+                (code, out.strip()),
+                "non-zero exit naming the missing agaric-engine root",
             )
 
 

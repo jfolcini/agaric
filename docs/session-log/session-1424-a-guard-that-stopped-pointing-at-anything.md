@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 15 cases pass |
+| control (restored) | 16 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 15 cases pass (was 10).
+- `--self-test`: 16 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -186,3 +186,34 @@ when the total canonical count drops, and a mechanical coupling between `prek.to
 `CRATE_ROOTS`. All three are the same shape one level up — a guard whose scope and whose
 subject can drift apart — and belong in #4501 rather than here, where they would be a fourth
 hand-maintained pairing defended by prose.
+
+## Review round three
+
+A second approval, six more notes. Two were real and are fixed:
+
+- **`crate_root_paths()` filtered `CRATE_ROOTS` through `is_dir()` and silently dropped what
+  was missing.** Misspell or rename a crate segment and the walk narrows to nothing, with no
+  signal — this PR's own failure mode, one level up, inside the guard written to end it. Four
+  of the six roots carry no baseline entries, so a dangling-baseline finding could not have
+  caught it for them indirectly either. `_assert_paths_exist` now flags a root that is not a
+  directory, and `_build_cli_sandbox` materialises every root for the same reason it
+  materialises `DENY_FILES`.
+- **Self-test direction 6 removed a sandbox fixture and never put it back**, and it was the
+  last case. Anything appended after it would have inherited a standing dangling-deny finding
+  that satisfies the `code != 0` half unconditionally — exactly the pollution the sandbox
+  materialisation was added to prevent, reintroduced by the case that tests it.
+
+The second of those is worth being precise about: **it is not falsifiable today.** Because the
+case is last, removing the restore changes no observable output, and the self-test passes
+either way. It is preventive hygiene, not a demonstrated fix, and claiming a mutant killed it
+would be the kind of unearned claim this log has already had to correct twice.
+
+The new root case needed narrowing for the same reason. It first removed `agaric-store/src` —
+which contains the only `DENY_FILES` stand-in, so the run went non-zero for *two* reasons and
+only the substring assertion discriminated. It now removes `agaric-engine/src`, which holds no
+deny entry, so exactly one thing can make that run fail. With the check removed, the case now
+yields `(0, '')` rather than a non-zero exit for the wrong cause.
+
+Four notes are left to #4501, where they belong: the `prek.toml` ↔ `CRATE_ROOTS` pairing, the
+in-scope-ness of baseline entries, the silent-drop re-anchor, and the Rust parity test walking
+two roots while the guard walks six.
