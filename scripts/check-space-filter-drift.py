@@ -69,6 +69,11 @@ Invocation: prek passes the changed files as argv (hook id
 
 (no args = scan every `*.rs` under CRATE_ROOTS). Stdlib only — no
 third-party deps.
+
+`--update-baseline` re-anchors. It REFUSES (exit 1, writing nothing) when a
+canonical guard would leave the baseline — either a net loss across the tree,
+or a removal in place from a file that still exists. A pure move nets to zero
+and is allowed. To record a genuine removal, add `--allow-reductions`.
 """
 
 from __future__ import annotations
@@ -80,7 +85,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # `.resolve()`: `baseline_touched` in `main()` compares this against a
@@ -538,6 +543,12 @@ def _build_cli_sandbox(root: Path) -> Path:
     # Same reason, for the deny half: a sandbox missing these would report a
     # dangling deny entry on every case and drown out what each is asserting.
     for rel in DENY_FILES:
+        # `Path.__truediv__` DISCARDS the left operand when the right is
+        # absolute, so an absolute DENY_FILES entry would place — and later
+        # `unlink` — a real file outside this TemporaryDirectory. The constant
+        # is relative today; this makes that a precondition rather than a
+        # coincidence, because the operations here are destructive.
+        assert not PurePosixPath(rel).is_absolute(), rel
         stand_in = root / rel
         stand_in.parent.mkdir(parents=True, exist_ok=True)
         stand_in.write_text(
@@ -897,7 +908,7 @@ def run_cli_self_test(record) -> None:
         # and the case validates that regex instead — reporting coverage this
         # guard does not have. A false pass inside the check added to prevent
         # false passes.
-        block = prek.split('id = "check-space-filter-drift"', 1)
+        block = prek.split('\nid = "check-space-filter-drift"', 1)
         files_re = None
         if len(block) > 1:
             for line in block[1].splitlines():
@@ -979,6 +990,37 @@ def run_cli_self_test(record) -> None:
                 "CLI: the reduction refusal is idempotent (#3255)",
                 (first, second, untouched),
                 "both runs non-zero and the baseline left unwritten",
+            )
+
+        # --- #3255 direction 14: delete-in-A + add-in-B nets to zero ---------
+        # A whole-tree total alone lets a genuine in-place removal hide behind
+        # an unrelated addition. The discriminator is whether the losing file
+        # STILL EXISTS: a relocation empties its old file, an in-place deletion
+        # leaves it present with a smaller count.
+        keep = src / "keep.rs"
+        keep.write_text(
+            'let a = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n'
+            'let b = "WHERE (?2 IS NULL OR b.space_id = ?2)";\n',
+            encoding="utf-8",
+        )
+        gain = src / "gain.rs"
+        gain.write_text(
+            'let sql = "WHERE (?1 IS NULL OR b.space_id = ?1)";\n',
+            encoding="utf-8",
+        )
+        # Baseline claims 3 in keep.rs; the tree has 2 there and 1 in gain.rs,
+        # so the TOTAL is unchanged while keep.rs lost one in place.
+        baseline_path.write_text("3 src-tauri/src/keep.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, ["--update-baseline"])
+        keep.unlink()
+        gain.unlink()
+        if code != 0 and "IN PLACE" in out and "keep.rs" in out:
+            record("CLI: an in-place removal that nets to zero is refused", True, True)
+        else:
+            record(
+                "CLI: an in-place removal that nets to zero is refused",
+                (code, out.strip()),
+                "non-zero exit naming keep.rs as an in-place removal",
             )
 
 
@@ -1158,14 +1200,36 @@ def main(argv: list[str]) -> int:
                 mark = "  <-- fewer" if new_n < old_n else ""
                 print(f"  {rel}: {old_n} -> {new_n}{mark}", file=sys.stderr)
         lost = sum(before.values()) - sum(after.values())
-        if lost > 0 and "--allow-reductions" not in argv:
+        # A total alone is not sufficient, and the earlier revision said so
+        # only implicitly. Deleting a guard in file A while adding an unrelated
+        # one in file B nets to zero, and would have re-anchored without
+        # `--allow-reductions` ever being typed. The discriminator is whether
+        # the losing file STILL EXISTS: a relocation empties its old file (the
+        # entry disappears because the file is gone or no longer carries the
+        # fragment at all), whereas an in-place deletion leaves the file
+        # present with a smaller count. So refuse on either signal.
+        in_place = [
+            rel
+            for rel, old_n in before.items()
+            if after.get(rel, 0) < old_n and (REPO_ROOT / rel).is_file()
+        ]
+        if (lost > 0 or in_place) and "--allow-reductions" not in argv:
+            if in_place:
+                why = (
+                    f"a guard was removed IN PLACE from {', '.join(in_place)} "
+                    "(the file is still there with fewer)"
+                )
+            else:
+                why = (
+                    f"{lost} canonical space-filter guard(s) would leave the "
+                    "baseline entirely"
+                )
             print(
-                f"\n  REFUSING: {lost} canonical space-filter guard(s) would "
-                "leave the baseline.\n"
-                "  Per-file gains and losses are listed above — a pure MOVE "
-                "nets to zero and is\n"
-                "  allowed; this is a net loss, i.e. a guard that is no longer "
-                "anywhere in the tree.\n"
+                f"\n  REFUSING: {why}.\n"
+                "  Per-file gains and losses are listed above. A pure MOVE — "
+                "the old file gone or\n"
+                "  emptied, an equal gain elsewhere — nets to zero and is "
+                "allowed without a flag.\n"
                 "  Nothing has been written. If the removal is intended, "
                 "re-run with `--allow-reductions`.",
                 file=sys.stderr,

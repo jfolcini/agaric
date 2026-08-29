@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 22 cases pass |
+| control (restored) | 23 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 22 cases pass (was 10).
+- `--self-test`: 23 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -527,3 +527,38 @@ baseline-in-argv path, but nothing asserted the hook is *selected* when the base
 delete `^src-tauri/space-filter-baseline\.txt$` from `prek.toml` and the suite stayed
 byte-identical and passing. That is precisely the standard this change applies everywhere else,
 and direction 11 now covers it.
+
+## Review round thirteen
+
+**The total-only refusal had a hole the reviewer named and I had not stated.** Comparing whole-tree
+totals lets a genuine in-place deletion in file A hide behind an unrelated addition in file B: the
+sum is unchanged, so the re-anchor proceeds without `--allow-reductions`. The comment justified
+totals correctly — a pure move must be allowed, and it is the primary re-anchor case — but never
+said what that permits.
+
+The discriminator is whether the losing file **still exists**. A relocation empties its old file;
+an in-place deletion leaves the file present with a smaller count. Refusing on either signal
+closes it without breaking moves. Direction 14 pins it, and against the total-only version the
+case shows `keep.rs: 3 -> 2  <-- fewer` absorbed silently at exit 0.
+
+**A claim in the PR body was stale, and checking it produced a better answer than fixing it.**
+The body said direction 6's fixture restore "is not falsifiable — that case is last". It is now
+case 6 of 13. So I neutered the restore and re-ran expecting failures.
+
+There were none. The restore is still not falsifiable, but the reason is different and more
+interesting: **every case after it asserts on a specific substring rather than a bare exit code**,
+so a leaked dangling-deny finding adds noise without satisfying anything. The discipline this
+change adopted in round one — assert on the finding, never on `code != 0` — is what makes the
+suite immune to its own fixture leaks. The restore defends against a future case that forgets
+that discipline, which is worth keeping and worth describing accurately.
+
+Also fixed: `--allow-reductions` existed only in the refusal message, while the docstring and
+hints still taught bare `--update-baseline`; `root / rel` over `DENY_FILES` would escape the
+sandbox and `unlink` a real file if an entry were ever absolute (latent, but the operations are
+destructive, so it is now an assert rather than a coincidence); and the hook-id split is anchored
+to a line start so an earlier quoted occurrence cannot relocate the search.
+
+Two notes stay open and are recorded rather than fixed: the Rust `DENY_FILES` entry would also
+deny a same-named file under `src-tauri/src/` (latent, silent), and the Rust↔Python root pairing
+remains hand-duplicated — the one coupling direction 11 mechanized on the `prek.toml` side and
+left unmechanized here.
