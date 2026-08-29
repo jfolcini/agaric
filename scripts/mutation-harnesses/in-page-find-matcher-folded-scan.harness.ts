@@ -60,7 +60,7 @@
  * literal and update the pin.
  *
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldCodePoint sha256=27068332538b97f803845a294d3dacb5ce60f4eb05522dca904c8f7ae18da0b3
- * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldForMatch sha256=c2648cd2ebf1e3e33218b9f648810cef264a48d8a3cc7560e3735e747c64ef16
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldForMatch sha256=fd252bfb7c92699c2a335fcd43b637736d7d9e9812dd71c27ae662d22078998b
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#FINAL_SIGMA_RE sha256=b3551818575e60e5ae5b4b013000e0680855db365291f6058a1dade9e35b6d7e
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#scanLiteralFolded sha256=e368c19ed972375248269fbaac7ac3446f23cdffe793eb02cf4349b9c9bc3baa
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#isWordCodePoint sha256=1187f44517fcbf5a2ffd1e10a8518fc0e20e2b458faa3e784a488fb074ebaf7c
@@ -125,7 +125,8 @@ function foldCodePoint(ch: string): string {
 // byte-faithful to what that constant currently is, and a change to the regex
 // ALONE fires the gate (both are pinned below).
 function foldForMatch(s: string): string {
-  return s.toLowerCase().replace(/ς/g, 'σ')
+  const lowered = s.toLowerCase()
+  return lowered.indexOf('ς') === -1 ? lowered : lowered.replace(/ς/g, 'σ')
 }
 
 function isWordCodePoint(cp: number | undefined): boolean {

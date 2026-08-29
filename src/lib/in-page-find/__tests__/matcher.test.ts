@@ -239,7 +239,7 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     expect(compiled.matcher('x𝐀 x')).toEqual([{ start: 4, end: 5 }])
   })
 
-  it('length-preserving folds take the fast path', () => {
+  it('a sigma query finds itself, on either path', () => {
     // CORRECTION (#4507). This test used to claim it "kills matcher.ts:231:7
     // [ConditionalExpression → false] and 231:40 [BlockStatement → {}], i.e.
     // 'always take the slow per-code-point path'". It does not, and never did:
@@ -250,9 +250,47 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     // discriminating case needs the text and the query to disagree about
     // whether their sigma is word-final; see the #4507 tests below, which do.
     //
-    // Kept as a path-selection smoke test, which is what it actually is.
+    // Renamed to match what it asserts. The old title,
+    // "length-preserving folds take the fast path", named a path selection
+    // this body cannot observe — which is the same overclaim as the kill
+    // comment above it, one layer up.
     const compiled = compileQuery('ΑΣ', defaultOpts) as Extract<CompiledQuery, { kind: 'literal' }>
     expect(compiled.matcher('ΑΣ')).toEqual([{ start: 0, end: 2 }])
+  })
+
+  // #4507 review — the DEV assertion in `compileQuery` compares the
+  // per-code-point fold against the whole-string fold, and it only evaluates
+  // for queries something actually compiles. Left to the rest of the suite,
+  // that is a handful of ASCII and a few sigma cases: a host whose Unicode
+  // tables gained a SECOND context-sensitive lowercase mapping would slip
+  // through unless some existing test happened to type it.
+  //
+  // These queries are chosen to be hostile to the distribution premise rather
+  // than to any particular behaviour: every construct that could plausibly
+  // make whole-string and per-code-point folding disagree. They assert only
+  // that compiling does not throw, because the DEV assertion is the thing
+  // under test — if it fires, this fails, and the message names the two folds.
+  it.each([
+    ['final sigma, bare', 'Σ'],
+    ['final sigma, word-final position', 'ΟΔΟΣ'],
+    ['both sigma forms adjacent', 'ςσΣ'],
+    ['sigma behind a Case_Ignorable full stop', 'Α.Σ'],
+    ['sigma behind a combining acute', 'Α\u0301Σ'],
+    ['sigma behind a soft hyphen', 'Α\u00ADΣ'],
+    ['sigma behind two middle dots', 'Α\u00B7\u00B7Σ'],
+    ['sigma between cased letters', 'ΑΣΑ'],
+    ['the expanding Turkish dotted I', 'İ'],
+    ['dotted I next to a sigma', 'İΣ'],
+    ['dotless i', '\u0131'],
+    ['German sharp s', 'ß'],
+    ['capital sharp s (expands under toLowerCase)', '\u1E9E'],
+    ['ligature ﬁ', '\uFB01'],
+    ['Cherokee, cased only since Unicode 8', '\u13A0'],
+    ['Deseret, an astral cased script', '\u{10400}'],
+    ['a lone high surrogate cannot be typed, so a pair instead', '\u{1D400}'],
+  ])('compiling %s does not trip the fold-distribution assertion (#4507)', (_label, query) => {
+    expect(() => compileQuery(query, defaultOpts)).not.toThrow()
+    expect(() => compileQuery(query, { ...defaultOpts, caseSensitive: true })).not.toThrow()
   })
 
   // #4507 — the FAST path's sigma tests. Everything below this comment in the

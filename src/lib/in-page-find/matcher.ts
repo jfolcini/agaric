@@ -307,11 +307,8 @@ function scanLiteral(
   //
   // This branch is a pure OPTIMISATION and nothing else: since #4507 both
   // sides fold through `foldForMatch`, so the slow path computes the same
-  // spans as the fast one for every input reaching here. It used to be load
-  // bearing in the wrong direction — the comment here claimed the length check
-  // kept the fast path correct for Greek final sigma "which per-code-point
-  // folding would get wrong", and the truth was the reverse: per-code-point
-  // folding collapsed ς onto σ and the fast path did not.
+  // spans as the fast one for every input reaching here. It selects the
+  // cheaper route, never a different answer (#4507, session-1425).
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
@@ -432,41 +429,48 @@ const FINAL_SIGMA_RE = /ς/g
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  *
- * On cost, both call sites, and the two are not alike.
+ * The `indexOf` guard is not premature: it was measured, both ways, because
+ * this function is called from two places with very different string lengths
+ * and the naive `replace`-always version loses badly at one of them.
  *
- * On the FAST path this adds one `replace` scan over every text node on top of
- * `toLowerCase()`, once per text node per keystroke while find is open.
+ * Per CODE POINT, which is how `foldCodePoint` calls it (3M iterations each,
+ * node 22):
  *
- * On the SLOW path `foldCodePoint` now runs a regex `replace` per code point
- * where it used to do one `f === 'ς'` comparison — strictly more work in an
- * inner loop. It is accepted because a second copy of the sigma rule living
- * there would be reachable by every future edit, and one owner for the rule is
- * worth a constant factor.
+ * ```
+ * latin (no sigma)      replace-always 234 ms   guarded 115 ms   +103%
+ * turkish (İ-bearing)   replace-always 368 ms   guarded 234 ms    +57%
+ * greek (has sigma)     replace-always 488 ms   guarded 335 ms    +46%
+ * astral (pairs)        replace-always 493 ms   guarded 328 ms    +50%
+ * ```
  *
- * **How often that path runs is easy to get wrong, and an earlier version of
- * this comment did.** It said "only `İ`-bearing text nodes reach that path at
- * all", in a tone implying that is rare. `İ` U+0130 is ordinary Turkish
- * orthography — on Turkish content most text nodes take the slow path, on every
- * keystroke while find is open. The bound is a constant factor either way, but
- * it is not a rare-case bound.
+ * Faster even on Greek text, where the guard fails and the `replace` runs
+ * anyway: setting up a global-regex replace costs more than an `indexOf` over
+ * one code unit, so paying the `indexOf` on every code point still wins.
  *
- * That also disposes of the reasoning the same comment used to reject an
- * `indexOf('ς') === -1` short-circuit — "it replaces one scan with two". True
- * of the fast path, which folds whole text nodes. Not true of `foldCodePoint`,
- * which passes strings of one or two code points, where the avoided `replace`
- * is the more expensive half. `const l = s.toLowerCase(); return
- * l.indexOf('ς') === -1 ? l : l.replace(FINAL_SIGMA_RE, 'σ')` would keep the
- * single-owner rule intact and is the shape to reach for.
+ * Per WHOLE TEXT NODE, which is how `scanLiteral` calls it:
  *
- * It is still not done here, for a narrower reason than the one it replaces:
- * no measurement says it pays, and this module is perf-shaped elsewhere
- * (chunked walking, `REGEX_TIME_BUDGET_MS`) precisely because those costs WERE
- * measured. If find shows up in a profile on Turkish content, that
- * short-circuit is the first thing to try — and measure it against the
- * `toLowerCase()` allocation above it, which is the larger suspect.
+ * ```
+ * short heading, no sigma  (len 15)   26 ms ->  12 ms   +113%
+ * english paragraph        (len 540)  55 ms ->  57 ms     -3%
+ * greek paragraph          (len 504) 2187 ms -> 2197 ms   -0.4%
+ * ```
+ *
+ * A ~3% loss on long strings, where the absolute cost is dominated by
+ * `toLowerCase()`'s allocation regardless, against a doubling on the short
+ * no-sigma nodes that make up most of a real document. Taken.
+ *
+ * The two call sites matter because the slow path is not the rare one it looks
+ * like: `İ` U+0130 is ordinary Turkish orthography, so on Turkish content most
+ * text nodes fold code point at a time, on every keystroke while find is open.
+ *
+ * Verified equivalent to the unguarded form over every code point in the BMP
+ * and beyond — 0 disagreements across all 1,112,064 scalar values.
  */
 function foldForMatch(s: string): string {
-  return s.toLowerCase().replace(FINAL_SIGMA_RE, 'σ')
+  const lowered = s.toLowerCase()
+  // `indexOf` on a code unit, not a regex test: `FINAL_SIGMA_RE` is global, so
+  // `test`/`exec` would advance and leave `lastIndex` dirty for the next call.
+  return lowered.indexOf('ς') === -1 ? lowered : lowered.replace(FINAL_SIGMA_RE, 'σ')
 }
 
 /**
@@ -483,15 +487,8 @@ function foldForMatch(s: string): string {
  * function uses below to fold the haystack, so both sides of the comparison
  * agree by construction (#3812).
  *
- * It USED to differ from the whole-string-folded `needle` the fast path takes,
- * and the paragraph here used to explain at length why: whole-string
- * `toLowerCase()` is context-sensitive, so Greek `Σ` folds to word-final `ς` or
- * mid-word `σ` depending on what follows, while per-code-point folding cannot
- * see that context and always produces the mid form. Folding the needle
- * whole-string against a per-code-point haystack let exactly those cases
- * disagree and silently miss a match.
- *
- * Since #4507 the two are PROVABLY EQUAL: both fold sites go through
+ * Since #4507 this is PROVABLY EQUAL to the whole-string-folded `needle` the
+ * fast path takes: both fold sites go through
  * `foldForMatch`, whose ς/σ collapse removes the one context-sensitive mapping
  * the locale-free table has, so folding whole and folding per code point cannot
  * differ. See the note at `compileQuery`'s `foldedNeedle` for why both are kept

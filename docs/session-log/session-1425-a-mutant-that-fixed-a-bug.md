@@ -270,3 +270,88 @@ The pattern across both findings is the same one this log opened with: a number
 that is correct, attached to a noun wider than it earned. "Six" is right about
 twelve contexts and says nothing about Unicode; "only İ-bearing nodes" is right
 about the branch and says nothing about how much text has an İ in it.
+
+## The measurement was cheaper than the argument about it
+
+Fourth review round, and the note that lands hardest is the shortest: the
+`indexOf('ς') === -1` short-circuit was "a real regression shipping unmeasured,
+and the measurement is cheaper than the comment arguing about it."
+
+That is exactly right. By the third round this comment had accumulated three
+paragraphs reasoning about whether the guard would pay — a fast-path argument, a
+correction to that argument, and a narrower reason for declining anyway. All of
+it could have been replaced by twenty lines of benchmark, which is what it has
+been replaced by.
+
+Per code point, which is how `foldCodePoint` calls it (3M iterations, node 22):
+
+```
+latin (no sigma)      replace-always 234 ms   guarded 115 ms   +103%
+turkish (İ-bearing)   replace-always 368 ms   guarded 234 ms    +57%
+greek (has sigma)     replace-always 488 ms   guarded 335 ms    +46%
+astral (pairs)        replace-always 493 ms   guarded 328 ms    +50%
+```
+
+Faster **even on Greek text**, where the guard fails and the `replace` runs
+anyway — setting up a global-regex replace costs more than an `indexOf` over one
+code unit, so paying the `indexOf` on every code point still wins. That is the
+part no amount of reasoning from the armchair was going to produce; my written
+argument had assumed the sigma-bearing case would be the one that lost.
+
+Per whole text node, which is how `scanLiteral` calls it:
+
+```
+short heading, no sigma  (len 15)   26 ms ->  12 ms   +113%
+english paragraph        (len 540)  55 ms ->  57 ms     -3%
+greek paragraph          (len 504) 2187 ms -> 2197 ms   -0.4%
+```
+
+A ~3% loss on long strings, where `toLowerCase()`'s allocation dominates
+regardless, against a doubling on the short no-sigma nodes that make up most of
+a real document. Taken, and verified equivalent to the unguarded form over all
+1,112,064 scalar values — 0 disagreements.
+
+The lesson is not about this function. It is that **an argument about
+performance is a stand-in for a measurement, and a stand-in that grows across
+three review rounds has stopped being cheaper than the thing it replaces.** The
+comment is now shorter than any single one of the paragraphs it displaced.
+
+## A guard that only fires for queries someone types
+
+Second finding, and it is a real hole rather than a wording problem. The DEV
+assertion comparing the two folds is the in-CI guard on the distribution
+premise — but it only evaluates for queries something actually compiles. Left to
+the rest of the suite that is a handful of ASCII and a few sigma cases, so a
+host whose Unicode tables gained a *second* context-sensitive lowercase mapping
+would slip through unless some existing test happened to type it.
+
+Seventeen adversarial queries now compile in a `it.each` alongside the sigma
+tests: both sigma forms adjacent, sigma behind each Case_Ignorable separator the
+sweep uses, the expanding `İ`, dotless `ı`, `ß` and capital `ẞ`, the `ﬁ`
+ligature, Cherokee (cased only since Unicode 8), and an astral cased script.
+They assert only that compiling does not throw, because the assertion is the
+thing under test.
+
+Falsified by breaking the distribution — `foldCodePoint` reverted to a bare
+`toLowerCase()`:
+
+```
+× compiling both sigma forms adjacent does not trip the fold-distribution assertion
+  "the per-code-point fold and the whole-string fold disagree (\"ςσσ\" vs \"σσσ\")"
+```
+
+## Two smaller ones
+
+A test titled `length-preserving folds take the fast path` asserted only that
+`ΑΣ` finds itself — which, as its own comment already admitted, passes on either
+path. The title named a path selection the body cannot observe: the same
+overclaim as the kill-comment above it, one layer up. Renamed to
+`a sigma query finds itself, on either path`.
+
+And the review-history prose I said had been moved out of the source had only
+partly moved: three sites survived, narrating what an earlier revision of each
+comment had claimed. They are gone now, trimmed to the rule with the history
+here. Roughly 200 lines of comment for a three-line behavioural change was the
+fair characterisation, and the right response was not to defend the reasoning —
+which is good — but to notice that a reader who wants the rule should not have to
+walk past three rounds of how it was reached.
