@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 17 cases pass |
+| control (restored) | 18 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 17 cases pass (was 10).
+- `--self-test`: 18 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -292,3 +292,46 @@ each was a run cancelled by the next push landing on top of it, and the gate cor
 cancelled as unacceptable. Pushing a fix the moment it is ready costs a CI cycle when reviews
 are arriving faster than CI completes. Batching the round-four and round-five fixes into one
 push would have been better.
+
+## Review rounds six and seven
+
+Two more approvals, converging on the same set. Four fixes, and the first is the one that
+mattered.
+
+**The new `CRATE_ROOTS` check had a footgun bolted to it.** `DANGLING_HINT` fires for every
+dangling finding and prescribed `--update-baseline`. For a missing *root* that remedy is
+actively destructive: `compute_baseline()` walks `crate_root_paths()`, which `is_dir()`-filters
+the vanished root away, so re-anchoring deletes every baseline entry under it and reports
+success — precisely the "re-anchoring past it is how the finding gets lost" failure the same
+hint warns about two lines further down. I had added the warning-before-rebuild in the previous
+round and thought that covered it; it did not, because a warning printed above a completed
+rebuild is read after the damage is written.
+
+The distinction the two halves need is not cosmetic:
+
+- a dangling **baseline** entry is often *why* you are re-anchoring — the file really moved.
+  Warn and proceed.
+- a missing **root** is never that. The remedy is to fix the list, not the baseline. **Refuse.**
+
+Demonstrated by misspelling `agaric-store` and running `--update-baseline`: it now exits 1
+naming the root, and the baseline is byte-identical afterwards — all 21 store entries intact.
+Under the warn-only version the same typo would have deleted them.
+
+**The whole-tree fallback only fired when the target set came out empty**, so a commit editing
+the baseline *alongside* a source file scanned only that source file, and a hand-lowered count
+for some other file passed. That is the commoner shape and it was untested — direction 8 pinned
+only the baseline-only argv. The baseline appearing in argv at all now forces the full walk,
+pinned by direction 9 and falsified against the old condition.
+
+**And a third confidently-wrong comment**, flagged independently by both reviews: the fallback
+comment claimed it fires "never on an ordinary `.rs` commit". It also fires on a commit touching
+only `space_filter_canonical.rs`, which is an ordinary `.rs` commit that the deny filter drops.
+Harmless behaviourally, wrong as documentation, and the third instance of this exact fault in a
+change whose log opens with a section about it.
+
+The `_build_cli_sandbox` comment blocks were transposed relative to their loops, and the
+`src-tauri/src` mkdir was redundant now that it is a `CRATE_ROOTS` entry. Both fixed.
+
+Four notes stay deferred and are unchanged across three rounds now: the parity test's narrower
+walk, in-scope-ness of baseline entries, unlisted crates carrying no enforcement, and the
+`prek.toml` pairing. All four are #4501.

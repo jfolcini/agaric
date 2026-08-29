@@ -182,9 +182,23 @@ HINT = (
     "       in sync."
 )
 
+ROOT_MISSING_HINT = (
+    "    -> #3255: a CRATE_ROOTS entry in scripts/check-space-filter-drift.py\n"
+    "       names a directory that does not exist. Fix the LIST, not the\n"
+    "       baseline: `--update-baseline` walks the surviving roots only, so\n"
+    "       re-anchoring here would delete every baseline entry under the\n"
+    "       missing root and report success. If the crate was genuinely\n"
+    "       retired, remove its root from CRATE_ROOTS and from the\n"
+    "       check-space-filter-drift hook's `files:` regex in prek.toml in the\n"
+    "       same commit, then re-anchor."
+)
+
 DANGLING_HINT = (
-    "    -> #3255: the baseline (or DENY_FILES) names a path that no longer\n"
-    "       exists.\n"
+    "    -> #3255: the baseline, DENY_FILES, or CRATE_ROOTS names a path that\n"
+    "       no longer exists.\n"
+    "       A CRATE_ROOTS entry is fixed by editing the list in this script\n"
+    "       (see the refusal message from --update-baseline for why\n"
+    "       re-anchoring is the wrong remedy there).\n"
     "       A DENY_FILES entry is fixed by EDITING THIS SCRIPT's DENY_FILES\n"
     "       set — `--update-baseline` rebuilds only the baseline and will\n"
     "       not touch it, so re-running it on a dangling deny entry changes\n"
@@ -481,17 +495,15 @@ def _build_cli_sandbox(root: Path) -> Path:
     guard = scripts_dir / Path(__file__).name
     guard.unlink()
     shutil.copyfile(Path(__file__).resolve(), guard)
-    (root / "src-tauri" / "src").mkdir(parents=True)
-    # Materialise every DENY_FILES path. The deny half of
-    # `_assert_paths_exist` is unconditional, so a sandbox missing these
-    # would report a dangling deny entry on EVERY case below — turning each
-    # case's "exits non-zero" half into an unconditional pass and drowning
-    # out what that case is actually asserting.
-    # Same reason as DENY_FILES below: the CRATE_ROOTS check is unconditional,
-    # so a sandbox missing these roots would report them dangling on EVERY
-    # case and satisfy each case's "exits non-zero" half for the wrong reason.
+    # Materialise every CRATE_ROOTS directory. The roots half of
+    # `_assert_paths_exist` is unconditional, so a sandbox missing them would
+    # report every root dangling on EVERY case below — satisfying each case's
+    # "exits non-zero" half for the wrong reason. (`src-tauri/src` needs no
+    # separate mkdir: it is itself a CRATE_ROOTS entry.)
     for rel in CRATE_ROOTS:
         (root / rel).mkdir(parents=True, exist_ok=True)
+    # Same reason, for the deny half: a sandbox missing these would report a
+    # dangling deny entry on every case and drown out what each is asserting.
     for rel in DENY_FILES:
         stand_in = root / rel
         stand_in.parent.mkdir(parents=True, exist_ok=True)
@@ -773,6 +785,31 @@ def run_cli_self_test(record) -> None:
                 "non-zero exit mentioning 'baseline expects 2' from a baseline-only argv",
             )
 
+        # --- #3255 direction 9: baseline edited ALONGSIDE an unrelated .rs ---
+        # Direction 8 pins the baseline-ONLY argv. The commoner shape is a
+        # commit that edits the baseline and a source file together: the
+        # target set is then non-empty, so an empty-set fallback would scan
+        # only that source file and a hand-lowered count for some OTHER file
+        # would pass — the entry still resolves, so the dangling check stays
+        # silent. This pins that the baseline appearing in argv AT ALL forces
+        # the whole-tree walk.
+        unrelated = src / "unrelated.rs"
+        unrelated.write_text("// no space filter here\n", encoding="utf-8")
+        removed.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/removed.rs\n", encoding="utf-8")
+        code, out = _run_cli(guard, [str(unrelated), str(baseline_path)])
+        if code != 0 and "baseline expects 2" in out:
+            record("CLI: baseline + an unrelated .rs still scans all (#3255)", True, True)
+        else:
+            record(
+                "CLI: baseline + an unrelated .rs still scans all (#3255)",
+                (code, out.strip()),
+                "non-zero exit mentioning 'baseline expects 2' despite a non-empty target set",
+            )
+
 
 def run_self_test() -> int:
     """Assert scan_text/parse_baseline's exit-relevant behavior.
@@ -891,24 +928,38 @@ def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
     if "--update-baseline" in argv:
-        # Run the existence checks FIRST. `compute_baseline()` rebuilds from
-        # the walk, so a misspelled or renamed CRATE_ROOTS segment silently
-        # writes a NARROWED baseline — the damage happens here, while the next
-        # ordinary run is where it would otherwise be reported. Landing the
-        # warning at the moment of the rebuild puts it where the person doing
-        # it is actually looking. Warn rather than refuse: a genuine crate
-        # retirement is a legitimate reason to re-anchor, and the operator is
-        # the one who knows which it is.
+        # Run the existence checks FIRST, and treat their two halves
+        # DIFFERENTLY, because only one of them describes a legitimate
+        # re-anchor.
+        #
+        # A dangling BASELINE entry is often exactly why you are re-anchoring:
+        # the file really moved or was deleted. Warn and proceed.
+        #
+        # A missing CRATE_ROOTS entry is never that. `compute_baseline()`
+        # walks `crate_root_paths()`, which `is_dir()`-filters a vanished root
+        # away — so re-anchoring against a misspelled or renamed root SILENTLY
+        # DELETES every baseline entry under it, which is the "re-anchoring
+        # past it is how the finding gets lost" failure DANGLING_HINT warns
+        # about two lines further down. The remedy is to fix the root list, not
+        # the baseline, so refuse rather than warn: there is no case where
+        # rebuilding against a root the operator did not mean to remove is the
+        # right move, and a warning printed above a completed rebuild is read
+        # after the damage is written.
         pre = _assert_paths_exist(read_baseline())
-        for v in pre:
-            print(f"  WARNING before re-anchor: {v}", file=sys.stderr)
-        if pre:
+        root_findings = [v for v in pre if "CRATE_ROOTS" in v]
+        if root_findings:
             print(
-                "  -> the rebuild below is computed from the CURRENT roots; if a\n"
-                "     root above is missing by mistake, the new baseline will be\n"
-                "     narrower than the old one. Read the diff.",
+                "Refusing to re-anchor: a declared CRATE_ROOTS entry is "
+                "missing.\n",
                 file=sys.stderr,
             )
+            for v in root_findings:
+                print(f"  {v}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print(ROOT_MISSING_HINT, file=sys.stderr)
+            return 1
+        for v in pre:
+            print(f"  WARNING before re-anchor: {v}", file=sys.stderr)
         write_baseline(compute_baseline())
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
         return 0
@@ -933,17 +984,29 @@ def main(argv: list[str]) -> int:
                 continue
             if rp.is_file():
                 targets.append(rp)
-        if not targets:
-            # Selected by a NON-`.rs` path and nothing survived the filter —
-            # i.e. the baseline itself, or one of the guard scripts in the
-            # hook's `files:` regex. Falling through with an empty target set
-            # would run only the dangling check, so a hand-edit LOWERING an
-            # existing file's baseline count would pass: the entry still
-            # resolves, and no file is scanned to notice the count no longer
-            # matches. Adding the baseline to `files:` was meant to catch
-            # exactly that edit, and without this fallback it did not.
-            # The whole-tree walk is ~3.5s and this fires only on those few
-            # paths, never on an ordinary `.rs` commit.
+        baseline_touched = any(
+            Path(a).resolve() == BASELINE_PATH for a in file_args
+        )
+        if baseline_touched or not targets:
+            # Two triggers, and the first is the one that matters.
+            #
+            # (a) The BASELINE itself changed. Scanning only the other `.rs`
+            #     files in the commit would let a hand-edit LOWERING some
+            #     OTHER file's count pass — the entry still resolves, so the
+            #     dangling check is silent, and that file is never scanned.
+            #     An earlier revision only fell back when the target set came
+            #     out empty, which missed exactly the common case of editing
+            #     the baseline alongside a source file.
+            #
+            # (b) Nothing survived the filter. That happens for a guard script
+            #     named in the hook's `files:` regex — and, contrary to what
+            #     this comment said until the reviewer caught it, ALSO for an
+            #     ordinary `.rs` commit touching only a DENY_FILES entry
+            #     (`space_filter_canonical.rs`), which the deny filter drops.
+            #     Harmless, but it does spend the walk, and the previous
+            #     wording asserted it could not happen.
+            #
+            # The whole-tree walk is ~3.5s.
             targets = all_source_files()
     else:
         targets = all_source_files()
