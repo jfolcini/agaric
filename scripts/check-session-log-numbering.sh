@@ -64,6 +64,10 @@
 #      value.
 #   3. The `# Session NNNN` heading inside the file matches the filename.
 #
+# Checks 1 and 2 are about a number that NEWLY APPEARS, so they are skipped
+# for a staged path whose number did not change (a slug-only rename); check
+# 3 is not, and still runs on it. See `staged_targets` for why.
+#
 # Pre-existing duplicates (the fifteen session-1000 files, the two
 # session-1281 files) are history: only a STAGED addition or rename can fail.
 #
@@ -127,11 +131,20 @@ num_of() { basename "$1" | sed -E 's/^session-([0-9]+)-.*$/\1/'; }
 # `session-1440-the-guard-….md`) or a move within $LOG_DIR — and #4527
 # widened it from a near-miss into the deterministic outcome by adding `R`
 # to this selector without accounting for it (caught in review on #4535).
-# The number-preserving half of an `R`/`C` record is excluded below by the
-# same reasoning as `M`, using the source path this comment's predecessor
-# discarded: a RENUMBER always changes the number and is still emitted,
-# checked, and reported; a number-preserving rename never reaches check 1
-# at all, exactly like `M`.
+# The number-preserving half of an `R`/`C` record is excluded below from
+# CHECKS 1 AND 2 by the same reasoning as `M`, using the source path this
+# comment's predecessor discarded: a RENUMBER always changes the number and
+# is still emitted, checked, and reported; a number-preserving rename never
+# reaches check 1 at all, exactly like `M`.
+#
+# It is NOT excluded from check 3 (review, #4535 note 3). The first cut of
+# this fix dropped the path entirely, which meant a slug reword that also
+# mangled the in-file `# Session NNNN` heading passed silently — the guard
+# stopped looking at a file it had every reason to keep looking at. Only
+# the two NUMBER checks are meaningless for a number that did not change;
+# the "the number is stored twice and both copies must agree" check is
+# exactly as meaningful as before. `staged_targets` therefore emits a MODE
+# per path rather than a bare path.
 #
 # Git also records the identical number-preserving rename as a `D`+`A`
 # pair when the slug edit drops below the rename-similarity threshold —
@@ -144,8 +157,8 @@ num_of() { basename "$1" | sed -E 's/^session-([0-9]+)-.*$/\1/'; }
 # guard's old `--diff-filter=A` selector already matched on the `A` half).
 # `freed_by_deletion` below closes it the same way: a `D` under $LOG_DIR in
 # this same commit frees its number, and an `A` claiming that exact number
-# in the same commit is that same move, not a new arrival, so it is
-# excluded too.
+# in the same commit is that same move, not a new arrival, so it takes the
+# same heading-only mode — one `A` per `D`, see `staged_targets`.
 #
 # `-z --name-status` rather than plain `--name-status`: an ordinary rename
 # line prints BOTH paths on one row, and naive whitespace-splitting would
@@ -169,8 +182,20 @@ freed_by_deletion() {
     done
 }
 
+# Emits one record per staged path this guard must act on, as
+# `<mode>\t<path>`:
+#
+#   full    — a number NEWLY APPEARS at this path (a brand-new log, or a
+#             renumber's destination). Checks 1, 2 and 3 all apply.
+#   heading — the path's number did NOT change (a slug-only rename, or the
+#             `D`+`A` spelling of one). Checks 1 and 2 are skipped — the
+#             number is already in `HEAD`, as this same entry, so check 1
+#             would flag it as colliding with itself. Check 3 still runs.
+#
+# A TAB cannot appear in either mode token, so `cut -f2-` / `read -r mode
+# path` recover a path containing one.
 staged_targets() {
-  local status path1 path2 freed
+  local status path1 path2 freed want rest fline hit
   freed="$(freed_by_deletion)"
   while IFS= read -r -d '' status; do
     case "$status" in
@@ -179,20 +204,67 @@ staged_targets() {
         # A number this same commit just freed via a staged deletion (the
         # D+A spelling of a number-preserving rename) is not a new arrival
         # — see the header comment.
-        if [ -n "$freed" ] && printf '%s\n' "$freed" | grep -qx "$(num_of "$path1")"; then
+        #
+        # The exemption is CONSUMED, one `D` per `A`, not tested as set
+        # membership (review, #4535 note 2). Set membership let a single
+        # staged deletion of `session-1280-a.md` exempt EVERY `A` claiming
+        # 1280: stage additions of both `session-1280-b.md` and
+        # `session-1280-c.md` alongside it and both were waved through, so
+        # the selection came back empty, the guard printed "nothing to
+        # check" and exited 0 over an in-commit duplicate — the exact case
+        # check 1's own "or by another file in this same commit" clause
+        # exists to catch. One deletion can only be one file's move.
+        #
+        # Compared with `=` on the whole string, not `grep -qx` (review,
+        # #4535 note 5): `num_of` returns the basename UNCHANGED when the
+        # filename does not match its pattern, and such a path
+        # (`docs/session-log/session-1.2-x.md`) still matches this guard's
+        # pathspec — so the old form handed grep a pattern with live
+        # metacharacters, where a `.` could match a freed basename the
+        # path is not actually equal to (`session-1a2-x.md`, same length,
+        # differing only under the dot) and exempt it wrongly.
+        #
+        # Stated plainly because it cannot be pinned: this one is NOT
+        # independently falsifiable, and no fixture in the suite below
+        # makes it so. A wrong exemption needs a NON-NUMERIC `want` — a
+        # pure-digit string is its own only regex match — and any path
+        # with a non-numeric number is rejected by run_guard's "cannot
+        # parse session number" branch (Case 20) before the exemption's
+        # outcome can change a verdict. Swapping `=` back for `grep -qx`
+        # therefore leaves the whole suite green; verified, not assumed.
+        # The fix stays anyway: "another check happens to catch it
+        # downstream" is not a property to build an exemption on, and the
+        # masking disappears the moment `num_of` or that branch changes.
+        want="$(num_of "$path1")"
+        hit=0
+        rest=""
+        while IFS= read -r fline; do
+          [ -n "$fline" ] || continue
+          if [ "$hit" = 0 ] && [ "$fline" = "$want" ]; then
+            hit=1
+            continue
+          fi
+          rest="$rest$fline
+"
+        done <<<"$freed"
+        freed="$rest"
+        if [ "$hit" = 1 ]; then
+          printf 'heading\t%s\n' "$path1"
           continue
         fi
-        printf '%s\n' "$path1"
+        printf 'full\t%s\n' "$path1"
         ;;
       R* | C*)
         IFS= read -r -d '' path1 # source — read for its number, never emitted
         IFS= read -r -d '' path2 # destination — the number that matters
-        # A rename/copy that does not change the number is excluded for the
-        # same reason `M` is — see the header comment.
+        # A rename/copy that does not change the number is excluded from
+        # the NUMBER checks for the same reason `M` is, and kept for the
+        # heading check — see the header comment.
         if [ "$(num_of "$path1")" = "$(num_of "$path2")" ]; then
+          printf 'heading\t%s\n' "$path2"
           continue
         fi
-        printf '%s\n' "$path2"
+        printf 'full\t%s\n' "$path2"
         ;;
       *)
         # Unreached under --diff-filter=ACR today. If git ever adds a status
@@ -236,11 +308,12 @@ heading_num_of() {
 }
 
 run_guard() {
-  local added existing_max expected max_allowed fail=0
-  local target_ref target_nums head_nums taken n f heading
+  local records existing_max expected max_allowed fail=0
+  local target_ref target_nums head_nums taken n f mode heading
+  local total heading_count checked=0
 
-  added="$(staged_targets)" || return 1
-  if [ -z "$added" ]; then
+  records="$(staged_targets)" || return 1
+  if [ -z "$records" ]; then
     # #4527: a run that checked nothing must SAY so, not just exit 0 —
     # otherwise it is indistinguishable from a run that checked and
     # approved. prek's `files` regex for this hook unions in
@@ -254,7 +327,14 @@ run_guard() {
     echo "session-log-numbering: 0 additions/renames staged under $LOG_DIR — nothing to check."
     return 0
   fi
-  echo "session-log-numbering: checking $(printf '%s\n' "$added" | grep -c .) staged addition/rename(s)."
+
+  total="$(printf '%s\n' "$records" | grep -c . || true)"
+  heading_count="$(printf '%s\n' "$records" | grep -c $'^heading\t' || true)"
+  if [ "$heading_count" -eq 0 ]; then
+    echo "session-log-numbering: checking $total staged addition/rename(s)."
+  else
+    echo "session-log-numbering: checking $total staged addition/rename(s) ($heading_count number-preserving — heading only)."
+  fi
 
   target_ref="$(merge_target_ref)"
   head_nums="$(nums_in_ref HEAD)"
@@ -273,13 +353,15 @@ run_guard() {
   # embedded space, and the unquoted `for f in $(...)` this used to be
   # word-splits the result a second time. Unreachable under today's
   # hyphen-only naming convention, but not for a reason this code
-  # enforces. A TAB cannot appear in `num_of`'s output, and `cut -f2-`
-  # (not `-f2`) keeps everything after the first TAB together even if one
-  # somehow did. `while read` over a process substitution, not
-  # `for … in $(...)`, so a path is never handed to the shell to
-  # word-split at all.
-  while IFS= read -r f; do
+  # enforces. A TAB cannot appear in `num_of`'s output or in a mode token,
+  # and `cut -f2-` (not `-f2`) keeps everything after the first TAB
+  # together even if one somehow appeared in a path; `read -r mode f`
+  # likewise puts the whole remainder of the line in `f`. `while read`
+  # over a process substitution, not `for … in $(...)`, so a path is never
+  # handed to the shell to word-split at all.
+  while IFS=$'\t' read -r mode f; do
     [ -n "$f" ] || continue
+    checked=$((checked + 1))
     n="$(num_of "$f")"
     if ! [[ "$n" =~ ^[0-9]+$ ]]; then
       echo "ERROR: $f — cannot parse session number." >&2
@@ -287,53 +369,63 @@ run_guard() {
       continue
     fi
 
-    # 1. Collision — against the branch, the merge target, or a sibling
-    #    file in this same commit.
-    if printf '%s\n' "$taken" | grep -qx "$n"; then
-      echo "ERROR: $f — session number $n is already taken." >&2
-      if [ -n "$target_ref" ] \
-        && printf '%s\n' "$target_nums" | grep -qx "$n" \
-        && ! printf '%s\n' "$head_nums" | grep -qx "$n"; then
-        echo "  It exists on ${target_ref#refs/remotes/} but NOT on this branch: YOUR BASE IS STALE." >&2
-        echo "  A sibling branch forked from the same main, computed the same max+1," >&2
-        echo "  and merged first. Nothing you did was wrong; the number moved under you." >&2
-        echo "  Fix: git fetch origin && git rebase origin/main, then renumber to $expected:" >&2
-        echo "    git mv $f $(dirname "$f")/session-$expected-$(basename "$f" | sed -E 's/^session-[0-9]+-//')" >&2
-        echo "  ...and update the '# Session $n' heading INSIDE the file — the number" >&2
-        echo "  is stored twice, and this guard checks both." >&2
-      else
-        echo "  (Already used by another entry — every session number must be unique.)" >&2
+    # Checks 1 and 2 ask "is this number free, and is it plausible?" —
+    # questions only a number that NEWLY APPEARS can be asked. A
+    # `heading` record's number is already in HEAD as this same entry
+    # (see `staged_targets`), so both would answer about the file itself.
+    if [ "$mode" = full ]; then
+      # 1. Collision — against the branch, the merge target, or a sibling
+      #    file in this same commit.
+      if printf '%s\n' "$taken" | grep -qx "$n"; then
+        echo "ERROR: $f — session number $n is already taken." >&2
+        if [ -n "$target_ref" ] \
+          && printf '%s\n' "$target_nums" | grep -qx "$n" \
+          && ! printf '%s\n' "$head_nums" | grep -qx "$n"; then
+          echo "  It exists on ${target_ref#refs/remotes/} but NOT on this branch: YOUR BASE IS STALE." >&2
+          echo "  A sibling branch forked from the same main, computed the same max+1," >&2
+          echo "  and merged first. Nothing you did was wrong; the number moved under you." >&2
+          echo "  Fix: git fetch origin && git rebase origin/main, then renumber to $expected:" >&2
+          echo "    git mv $f $(dirname "$f")/session-$expected-$(basename "$f" | sed -E 's/^session-[0-9]+-//')" >&2
+          echo "  ...and update the '# Session $n' heading INSIDE the file — the number" >&2
+          echo "  is stored twice, and this guard checks both." >&2
+        else
+          echo "  (Already used by another entry — every session number must be unique.)" >&2
+        fi
+        fail=1
+        taken="$(printf '%s\n%s\n' "$taken" "$n" | grep -E '^[0-9]+$' | sort -n -u)"
+        expected=$((n + 1))
+        continue
       fi
-      fail=1
-      taken="$(printf '%s\n%s\n' "$taken" "$n" | grep -E '^[0-9]+$' | sort -n -u)"
-      expected=$((n + 1))
-      continue
+
+      # 2. Bounded window above the running max (#3929) — NOT exact max+1.
+      #    Several parallel PRs, each forked from the same base, can each
+      #    claim a distinct number in (max, max+GAP_BOUND] without a
+      #    renumber when a sibling merges first. A number outside the
+      #    window is still almost certainly wrong (a stale understanding of
+      #    the max, or a typo), so it is still a hard failure — the window
+      #    trades away "no gaps ever" (cosmetic; check 1 above is what
+      #    actually prevents a collision), not the uniqueness guarantee.
+      max_allowed=$((expected + GAP_BOUND - 1))
+      if [ "$n" -lt "$expected" ] || [ "$n" -gt "$max_allowed" ]; then
+        echo "ERROR: $f is numbered $n but must be between $expected and $max_allowed" >&2
+        echo "  (numeric max across this branch and ${target_ref:-HEAD} is $existing_max; a window" >&2
+        echo "  of $GAP_BOUND lets several parallel PRs each hold a distinct valid number without" >&2
+        echo "  a renumber when one of them merges first — see #3929)." >&2
+        echo "  If $n is still outside that window, your base is probably stale — fetch and" >&2
+        echo "  rebase onto origin/main first, which is where the number you want may already" >&2
+        echo "  have been taken by a branch that merged while you were working." >&2
+        echo "  Compute the max with:" >&2
+        echo "    git ls-tree -r --name-only origin/main -- $LOG_DIR | grep -oP 'session-\\K[0-9]+' | sort -n | tail -1" >&2
+        echo "  NEVER with plain 'ls | tail': it sorts lexicographically." >&2
+        fail=1
+      fi
     fi
 
-    # 2. Bounded window above the running max (#3929) — NOT exact max+1.
-    #    Several parallel PRs, each forked from the same base, can each
-    #    claim a distinct number in (max, max+GAP_BOUND] without a
-    #    renumber when a sibling merges first. A number outside the
-    #    window is still almost certainly wrong (a stale understanding of
-    #    the max, or a typo), so it is still a hard failure — the window
-    #    trades away "no gaps ever" (cosmetic; check 1 above is what
-    #    actually prevents a collision), not the uniqueness guarantee.
-    max_allowed=$((expected + GAP_BOUND - 1))
-    if [ "$n" -lt "$expected" ] || [ "$n" -gt "$max_allowed" ]; then
-      echo "ERROR: $f is numbered $n but must be between $expected and $max_allowed" >&2
-      echo "  (numeric max across this branch and ${target_ref:-HEAD} is $existing_max; a window" >&2
-      echo "  of $GAP_BOUND lets several parallel PRs each hold a distinct valid number without" >&2
-      echo "  a renumber when one of them merges first — see #3929)." >&2
-      echo "  If $n is still outside that window, your base is probably stale — fetch and" >&2
-      echo "  rebase onto origin/main first, which is where the number you want may already" >&2
-      echo "  have been taken by a branch that merged while you were working." >&2
-      echo "  Compute the max with:" >&2
-      echo "    git ls-tree -r --name-only origin/main -- $LOG_DIR | grep -oP 'session-\\K[0-9]+' | sort -n | tail -1" >&2
-      echo "  NEVER with plain 'ls | tail': it sorts lexicographically." >&2
-      fail=1
-    fi
-
-    # 3. The second copy of the same fact.
+    # 3. The second copy of the same fact. Runs for BOTH modes (review,
+    #    #4535 note 3): a slug reword that also mangles the heading is
+    #    still a file whose two copies of the number disagree, and the
+    #    number not having changed is exactly why nothing else would
+    #    catch it.
     heading="$(heading_num_of "$f")"
     if [ -z "$heading" ]; then
       echo "ERROR: $f — no '# Session NNNN' heading found." >&2
@@ -345,11 +437,28 @@ run_guard() {
       fail=1
     fi
 
-    taken="$(printf '%s\n%s\n' "$taken" "$n" | grep -E '^[0-9]+$' | sort -n -u)"
-    expected=$((n + 1))
-  done < <(printf '%s\n' "$added" | while IFS= read -r p; do
-    [ -n "$p" ] && printf '%s\t%s\n' "$(num_of "$p")" "$p"
+    if [ "$mode" = full ]; then
+      taken="$(printf '%s\n%s\n' "$taken" "$n" | grep -E '^[0-9]+$' | sort -n -u)"
+      expected=$((n + 1))
+    fi
+  done < <(printf '%s\n' "$records" | while IFS=$'\t' read -r mode p; do
+    [ -n "$p" ] && printf '%s\t%s\t%s\n' "$(num_of "$p")" "$mode" "$p"
   done | sort -t "$(printf '\t')" -k1,1n | cut -f2- -d "$(printf '\t')")
+
+  # The count line above is an ASSERTION, not decoration (review, #4535
+  # note 4). The pairing/sorting process substitution feeding this loop
+  # inherits `set -e`, so a mid-stream failure inside it closes the pipe
+  # early: the loop simply sees fewer records, every one it did see
+  # passes, and the guard returns 0 — after having announced a larger
+  # number out loud. Nothing else in this function can tell a truncated
+  # run from a complete one, because a truncated run looks exactly like a
+  # smaller commit. Comparing what was consumed against what was reported
+  # is the only local evidence, and it costs one integer.
+  if [ "$checked" -ne "$total" ]; then
+    echo "ERROR: check-session-log-numbering: reported $total staged addition/rename(s) but checked $checked." >&2
+    echo "  The record pipeline truncated mid-stream — this run is NOT a completed check." >&2
+    fail=1
+  fi
 
   return "$fail"
 }
@@ -724,6 +833,15 @@ if [ "${1:-}" = "--self-test" ]; then
     st_bad "no staged session-log additions: passes trivially" \
       "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
   fi
+  # The purest instance of the empty-selection path — literally nothing
+  # staged — and until #4535 note 7 only Case 14 (a pure `M`) pinned the
+  # message. Free coverage on a fixture that already exists.
+  if grep -q '0 additions/renames staged' "$ST_ROOT/out.txt"; then
+    st_ok "an empty index reports the empty selection explicitly, not silently (#4527)"
+  else
+    st_bad "an empty index reports the empty selection explicitly, not silently (#4527)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
 
   # ── Case 10: #4527 — a `git mv` renumber onto a TAKEN number is caught ──
   # THE defect this issue is about: before the fix, this renumber staged
@@ -898,6 +1016,204 @@ if [ "${1:-}" = "--self-test" ]; then
   else
     st_bad "the same slug-only rename, staged as D+A instead of R, still passes (#4535 note 1)" \
       "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 17: #4535 note 2 — one deletion exempts exactly one addition ──
+  # The `D`-frees-a-number exemption used to be a SET membership test, so a
+  # single staged deletion of session-1280-a.md exempted EVERY staged `A`
+  # claiming 1280. Stage two of them and the guard printed "0
+  # additions/renames staged — nothing to check" and exited 0 over an
+  # in-commit duplicate — the case check 1's own "or by another file in
+  # this same commit" clause exists to catch. Consuming the exemption once
+  # per freed number leaves the second `A` to be checked, and caught.
+  d="$(st_new_repo freed-consumed-once)"
+  st_write "$d" 1280 alpha-original-entry
+  st_commit "$d" "base"
+  # Written BEFORE the `git rm`: removing the directory's last file makes
+  # git prune the now-empty directory out from under the next write.
+  st_write "$d" 1280 bravo-replacement-entry
+  st_write "$d" 1280 charlie-extra-entry
+  git -C "$d" rm -q "docs/session-log/session-1280-alpha-original-entry.md"
+  git -C "$d" add -A
+  # The fixture is only testing what it claims if git kept all three
+  # records apart (D + A + A). If rename detection paired the D with one
+  # of the As it becomes R + A, which is a different — also caught —
+  # shape, and this case would stop covering the set-membership bug.
+  if git -C "$d" diff --cached --name-status | grep -q '^R'; then
+    st_bad "the freed-consumed-once fixture stages as D+A+A, not a rename — fixture invalid" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_bad "one staged deletion exempts only ONE addition claiming that number (#4535 note 2)" \
+      "guard passed over an in-commit duplicate: $(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  elif grep -q 'already taken' "$ST_ROOT/out.txt"; then
+    st_ok "one staged deletion exempts only ONE addition claiming that number (#4535 note 2)"
+  else
+    st_bad "one staged deletion exempts only ONE addition claiming that number (#4535 note 2)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 18: #4535 note 3 — a number-preserving rename still gets the
+  # heading check ───────────────────────────────────────────────────────
+  # Excluding a slug-only rename from checks 1 and 2 is correct; excluding
+  # it from the FILE was not. A reword that also mangles the in-file
+  # `# Session NNNN` heading leaves the number's two copies disagreeing,
+  # and because the number did not change, nothing else in this guard
+  # would ever look at it again.
+  d="$(st_new_repo slug-rename-bad-heading)"
+  st_write "$d" 1280 a-guard-that-never-looked
+  st_commit "$d" "base"
+  st_rename_slug "$d" 1280 a-guard-that-never-looked the-guard-that-never-looked 0
+  sed -i.bak -E 's/^# Session [0-9]+/# Session 1279/' \
+    "$d/docs/session-log/session-1280-the-guard-that-never-looked.md"
+  rm -f "$d/docs/session-log/session-1280-the-guard-that-never-looked.md.bak"
+  git -C "$d" add -A
+  if ! git -C "$d" diff --cached --name-status | grep -q '^R'; then
+    st_bad "the slug-rename-bad-heading fixture actually stages as a rename" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_bad "a slug-only rename that mangles the heading is still caught (#4535 note 3)" "guard passed"
+  elif grep -q 'heading inside says' "$ST_ROOT/out.txt"; then
+    st_ok "a slug-only rename that mangles the heading is still caught (#4535 note 3)"
+  else
+    st_bad "a slug-only rename that mangles the heading is still caught (#4535 note 3)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 19: #4535 note 3, the D+A spelling ───────────────────────────
+  # The same operation below git's rename-similarity threshold reaches the
+  # heading check by the OTHER exclusion path (`freed_by_deletion`), so it
+  # needs its own case: a fix scoped to the R/C pairing alone would leave
+  # this one silent.
+  d="$(st_new_repo slug-rename-bad-heading-da)"
+  st_write "$d" 1280 a-guard-that-never-looked
+  st_commit "$d" "base"
+  st_rename_slug "$d" 1280 a-guard-that-never-looked the-guard-that-never-looked 1
+  sed -i.bak -E 's/^# Session [0-9]+/# Session 1279/' \
+    "$d/docs/session-log/session-1280-the-guard-that-never-looked.md"
+  rm -f "$d/docs/session-log/session-1280-the-guard-that-never-looked.md.bak"
+  git -C "$d" add -A
+  if git -C "$d" diff --cached --name-status | grep -q '^R'; then
+    st_bad "the slug-rename-bad-heading D+A fixture actually stages as D+A — fixture invalid" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_bad "the same slug-only rename staged as D+A, heading mangled, is still caught (#4535 note 3)" \
+      "guard passed"
+  elif grep -q 'heading inside says' "$ST_ROOT/out.txt"; then
+    st_ok "the same slug-only rename staged as D+A, heading mangled, is still caught (#4535 note 3)"
+  else
+    st_bad "the same slug-only rename staged as D+A, heading mangled, is still caught (#4535 note 3)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 20: an unparseable session number is reported, not accepted ──
+  # `num_of` returns the basename UNCHANGED when the filename does not fit
+  # `session-NNN-`, and such a path still matches this guard's pathspec —
+  # `session-1.2-x.md` here. The `cannot parse session number` branch is
+  # what stops that being waved through, and it had no fixture at all.
+  #
+  # This is also the case #4535 note 5 was about, and the note deserves a
+  # straight answer rather than a fixture that only looks like it pins it:
+  # the exact-match fix in `staged_targets` is NOT independently
+  # observable, and no fixture here can make it so. See the note 5 comment
+  # in `staged_targets` for why (short version: a wrong regex exemption
+  # requires an unparseable basename, and this very branch catches those
+  # before the exemption's outcome can matter). What the fix buys is that
+  # the exemption stops depending on a downstream check to mask it.
+  d="$(st_new_repo unparseable)"
+  st_write "$d" 1280 base
+  st_commit "$d" "base"
+  printf '# Session 1281 — malformed\n\nbody\n' >"$d/docs/session-log/session-1.2-x.md"
+  git -C "$d" add -A
+  if st_run "$d"; then
+    st_bad "a filename with no parseable session number is reported" \
+      "guard passed: $(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  elif grep -q 'cannot parse session number' "$ST_ROOT/out.txt"; then
+    st_ok "a filename with no parseable session number is reported"
+  else
+    st_bad "a filename with no parseable session number is reported" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 21: #4535 BLOCKING — the report lines reach the terminal
+  # THROUGH prek ────────────────────────────────────────────────────────
+  # Every assertion above reads `st_run`'s capture, and `st_run` invokes
+  # this script DIRECTLY. prek swallows a PASSING hook's stdout (verified
+  # against prek 0.3.8), and both report lines are printed on exit-0
+  # paths — so those assertions were green over a channel that is closed
+  # in the only place this guard actually runs. What holds the channel
+  # open is `verbose = true` in the hook block, and nothing tested that it
+  # was there; #4527 shipped without it.
+  #
+  # This case runs the guard through prek in a throwaway repository whose
+  # config is THIS repository's own `session-log-numbering` block, lifted
+  # out of prek.toml verbatim. So it asserts the config as committed, not
+  # a restatement of it: delete `verbose = true` from prek.toml and this
+  # case goes red.
+  #
+  # Only the POSITIVE direction is asserted. "prek hides it without
+  # verbose" is a fact about prek, not about this repository; pinning it
+  # would turn a future prek that prints everything into a red build for
+  # no reason.
+  st_prek_toml="$(cd "$(dirname "$GUARD")/.." && pwd)/prek.toml"
+  st_hook_block=""
+  if [ -f "$st_prek_toml" ]; then
+    st_hook_block="$(awk '
+      /^\[\[/ {
+        if (want) { printf "%s", blk; want = 0; exit }
+        blk = ""; want = 0
+        inblk = ($0 ~ /^\[\[repos\.hooks\]\]/) ? 1 : 0
+      }
+      inblk { blk = blk $0 "\n"; if ($0 ~ /^id = "session-log-numbering"$/) want = 1 }
+      END { if (want) printf "%s", blk }
+    ' "$st_prek_toml")"
+  fi
+  if ! command -v prek >/dev/null 2>&1; then
+    # Loud, not silent: this is the one case that covers the production
+    # channel. It cannot run standalone without prek, but prek is present
+    # by construction wherever this self-test runs as a hook.
+    printf '  SKIP - the guard report reaches the terminal through prek: prek is not on PATH\n'
+  elif [ ! -f "$st_prek_toml" ]; then
+    printf '  SKIP - the guard report reaches the terminal through prek: no %s\n' "$st_prek_toml"
+  elif [ -z "$st_hook_block" ]; then
+    st_bad "the guard report reaches the terminal through prek (#4535 BLOCKING)" \
+      "no [[repos.hooks]] block with id = \"session-log-numbering\" found in $st_prek_toml"
+  else
+    d="$(st_new_repo through-prek)"
+    mkdir -p "$d/scripts"
+    cp "$GUARD" "$d/scripts/check-session-log-numbering.sh"
+    {
+      printf '[[repos]]\nrepo = "local"\n'
+      printf '%s' "$st_hook_block"
+    } >"$d/prek.toml"
+    st_write "$d" 1280 base
+    st_commit "$d" "base"
+
+    st_write "$d" 1281 mine
+    git -C "$d" add -A
+    (cd "$d" && prek run session-log-numbering --hook-stage pre-commit) \
+      >"$ST_ROOT/out.txt" 2>&1 || true
+    if grep -q 'checking 1 staged addition/rename' "$ST_ROOT/out.txt"; then
+      st_ok "the per-run count line reaches the terminal through prek (#4535 BLOCKING)"
+    else
+      st_bad "the per-run count line reaches the terminal through prek (#4535 BLOCKING)" \
+        "prek swallowed it — is 'verbose = true' still on the hook? output: $(tr '\n' '|' <"$ST_ROOT/out.txt")"
+    fi
+
+    # ...and the empty-selection line, on the `--all-files` shape Phase A
+    # of verify-ci-equivalent.sh uses, where nothing is staged.
+    git -C "$d" reset -q
+    rm -f "$d/docs/session-log/session-1281-mine.md"
+    (cd "$d" && prek run session-log-numbering --all-files --hook-stage pre-commit) \
+      >"$ST_ROOT/out.txt" 2>&1 || true
+    if grep -q '0 additions/renames staged' "$ST_ROOT/out.txt"; then
+      st_ok "the empty-selection line reaches the terminal through prek (#4535 BLOCKING)"
+    else
+      st_bad "the empty-selection line reaches the terminal through prek (#4535 BLOCKING)" \
+        "prek swallowed it — is 'verbose = true' still on the hook? output: $(tr '\n' '|' <"$ST_ROOT/out.txt")"
+    fi
   fi
 
   if [ "$st_fail" != 0 ]; then

@@ -52,28 +52,109 @@ selection: `checking N staged addition/rename(s)`, or `0 additions/renames stage
 check`. Failing on empty would false-positive on a legitimate pure-`M` or pure-`D` change. The
 distinction worth keeping is that the guard must be *audible*, not that emptiness must be *fatal*.
 
+## What review found, and the one that mattered
+
+The audible half above was **inert in the only place it runs**. Both new lines go to stdout on
+exit-0 paths, and prek swallows a *passing* hook's stdout — so a real `git commit` printed
+`session-log numbering guard...Passed` and nothing else: exactly the silence this PR exists to end.
+The hook block had no `verbose = true`. `prek.toml` documents that key as load-bearing for this
+precise reason in two other places, and I did not carry it here.
+
+The assertions on those lines were green the whole time, because the fixture runner invokes the
+script directly and never goes through prek. Green over a channel that is closed in production —
+the same shape as the bug being fixed, one layer up.
+
+The evidence is observed output, not argument. Same hook, same staged file, before and after:
+
+```
+# before — no verbose on the hook
+session-log numbering guard..............................................Passed
+
+# after
+session-log numbering guard..............................................Passed
+- hook id: session-log-numbering
+- duration: 0.04s
+
+  session-log-numbering: checking 1 staged addition/rename(s).
+```
+
+The test gap is closed rather than noted. A fixture case lifts **this repository's own**
+`session-log-numbering` block out of `prek.toml` verbatim, drops it into a throwaway repository
+beside a copy of the guard, and runs `prek run` there — so it asserts the config as committed, not
+a restatement of it. Delete `verbose = true` and the case goes red. Only the positive direction is
+asserted: "prek hides output without verbose" is a fact about prek, and pinning it would turn a
+future prek that stopped doing so into a red build for no reason.
+
+`verbose = true` also means every pre-push prints the empty-selection line, because Phase A of
+`verify-ci-equivalent.sh` is `prek run --all-files` with nothing staged. Four extra lines, accurate
+but uninformative there. Taken deliberately and written into the hook comment, because the
+alternative — teaching the guard to tell its two callers apart — is more mechanism, and more to get
+wrong, than the noise costs.
+
+## Four narrower ones
+
+**A set-wise exemption let an in-commit duplicate through.** A staged `D` frees its number for the
+`A` half of the same move, and that exemption was tested as SET MEMBERSHIP — so one deletion
+exempted *every* addition claiming the number. Delete `session-1280-a.md`, add both
+`session-1280-b.md` and `session-1280-c.md`, and the guard reported "nothing to check" over a
+duplicate that check 1's own "or by another file in this same commit" clause exists to catch. The
+exemption is now consumed once per freed number: one deletion can only be one file's move.
+
+**The exclusion skipped a check it had no reason to skip.** A number-preserving rename is rightly
+excluded from the collision and window checks — its number is already in `HEAD` as that same file.
+The first cut dropped the path from the guard *entirely*, which also dropped the heading check, so
+a slug reword that simultaneously mangled `# Session NNNN` passed in silence — and because the
+number never changes, nothing would ever look at that file again. `staged_targets` now emits a MODE
+per path, and only the two number checks are skipped.
+
+**A fail-open path in the file about fail-open paths.** The pairing/sorting process substitution
+inherits `set -e`; a mid-stream failure closes the pipe, the loop simply sees fewer records, and
+the guard returns 0 having already announced a larger number out loud. Nothing else could tell a
+truncated run from a smaller commit. The count line is now compared against what the loop actually
+consumed, which makes it an assertion rather than decoration.
+
+**An extracted number used as a regex.** `num_of` returns the basename unchanged when the filename
+does not match, and such a path still matches the guard's pathspec, so a `.` reached `grep` live.
+Compared with `=` now. This one is recorded for what it is: with the heading-check fix in place it
+is **not independently falsifiable** — a wrong exemption needs a non-numeric value, and non-numeric
+values are rejected upstream by the "cannot parse" branch before the exemption can change a
+verdict, so swapping the exact match back for the regex leaves the whole suite green. That is
+written into the code beside it rather than papered over with a fixture that would only look like
+it discriminated.
+
 ## Verification
 
-Self-test 13 → 20 `st_ok` assertions, green (`git grep -c 'st_ok "' scripts/check-session-log-numbering.sh`,
-run against this commit and its parent). Five new fixture cases (10-14), contributing seven of
-those assertions: a colliding pure rename (must fail, 1), a free pure rename (must pass, and
-separately asserts the count-report text, 2), both `A`+`D` low-similarity variants of those (1
-each), and a content-only edit that must pass while separately asserting the empty-selection
-message (2). Each rename fixture self-checks its own `git diff --cached --name-status` to confirm it
-actually staged in the shape it claims to be testing — otherwise a fixture that silently tipped
-from `R` into `A`+`D` would be testing the case next to it and reporting green. (Those self-checks
-are themselves additional assertions, on top of the `st_ok` count above, that only ever fire on
-failure — they have no passing counterpart to count.)
+`--self-test` green, `shellcheck -x` clean, and the guard run against the real tree exits 0.
 
-That precaution was needed: `st_write`'s bodies had to grow to 8 filler lines so a heading-only
-edit reliably stays a high-similarity rename (measured `R094`) instead of accidentally becoming
-the very `A`+`D` shape the sibling case covers.
+No assertion count in this paragraph, on purpose. The sentence that used to carry one was wrong
+three times in three different ways — including once against the very command it cited — and each
+correction was overtaken by the next review round before it shipped. `git grep -c 'st_ok "'
+scripts/check-session-log-numbering.sh` answers it on demand and cannot go stale.
 
-Falsified: reverting only `ACR` to `A` reddens exactly **2 of 20** — the pure-rename collision and
-the count-report assertion. The `A`+`D` variants correctly stay green, because bare `A` still
-matches the add-half of a `D`+`A` pair. A blanket "everything went red" would have meant the
-fixtures were not discriminating between the two staging shapes, which is the whole subject.
+Every fix was falsified against a **copy** of the tree, never in place, each mutation restored and
+proved with `cmp`:
 
-`shellcheck -x` clean.
+- removing `verbose = true` → both through-prek assertions red, captured output being
+  `session-log numbering guard...Passed` and nothing further;
+- restoring the set-wise exemption → the in-commit duplicate passes ("checking 2 staged
+  addition/rename(s) (2 number-preserving — heading only)"), so the case reddens;
+- dropping number-preserving paths instead of downgrading them → both mangled-heading cases red;
+- *not* skipping checks 1 and 2 for a downgraded path → the self-collision cases red again, which
+  is what stops the two halves of that change from quietly cancelling each other out;
+- truncating the record pipeline with `| head -1` → the new consumed-versus-reported check names it
+  instead of returning 0;
+- silencing the empty-selection line → three assertions red, one of them through prek.
+
+The exception is the regex-to-`=` change, which stays green under its own falsification for the
+reason given above.
+
+Each rename fixture self-checks its own `git diff --cached --name-status`, because a fixture that
+tipped from `R` into `A`+`D` would be testing the case next to it and reporting green. That
+precaution earned itself three times. `st_write`'s bodies had to grow to 8 filler lines so a
+heading-only edit reliably stays a high-similarity rename (measured `R094`); the duplicate-exemption
+fixture needs its additions written *before* the deletion, because git prunes the emptied directory
+out from under the next write; and the first attempt at the regex fixture used identical file
+bodies, which made git pair the delete and the add as `R100` and route the whole thing past the
+branch it was written to test.
 
 Closes #4527.
