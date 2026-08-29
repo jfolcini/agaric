@@ -54,18 +54,22 @@ distinction worth keeping is that the guard must be *audible*, not that emptines
 
 ## Verification
 
-Self-test 15 → 21 assertions, green. Six new fixture cases: a colliding pure rename (must fail), a
-free pure rename (must pass, and asserts the count-report text), both `A`+`D` low-similarity
-variants of those, and a content-only edit that must pass while asserting the empty-selection
-message. Each rename fixture self-checks its own `git diff --cached --name-status` to confirm it
+Self-test 13 → 20 `st_ok` assertions, green (`git grep -c 'st_ok "' scripts/check-session-log-numbering.sh`,
+run against this commit and its parent). Five new fixture cases (10-14), contributing seven of
+those assertions: a colliding pure rename (must fail, 1), a free pure rename (must pass, and
+separately asserts the count-report text, 2), both `A`+`D` low-similarity variants of those (1
+each), and a content-only edit that must pass while separately asserting the empty-selection
+message (2). Each rename fixture self-checks its own `git diff --cached --name-status` to confirm it
 actually staged in the shape it claims to be testing — otherwise a fixture that silently tipped
-from `R` into `A`+`D` would be testing the case next to it and reporting green.
+from `R` into `A`+`D` would be testing the case next to it and reporting green. (Those self-checks
+are themselves additional assertions, on top of the `st_ok` count above, that only ever fire on
+failure — they have no passing counterpart to count.)
 
 That precaution was needed: `st_write`'s bodies had to grow to 8 filler lines so a heading-only
 edit reliably stays a high-similarity rename (measured `R094`) instead of accidentally becoming
 the very `A`+`D` shape the sibling case covers.
 
-Falsified: reverting only `ACR` to `A` reddens exactly **2 of 21** — the pure-rename collision and
+Falsified: reverting only `ACR` to `A` reddens exactly **2 of 20** — the pure-rename collision and
 the count-report assertion. The `A`+`D` variants correctly stay green, because bare `A` still
 matches the add-half of a `D`+`A` pair. A blanket "everything went red" would have meant the
 fixtures were not discriminating between the two staging shapes, which is the whole subject.

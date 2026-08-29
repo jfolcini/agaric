@@ -122,6 +122,31 @@ num_of() { basename "$1" | sed -E 's/^session-([0-9]+)-.*$/\1/'; }
 # running it through check 1 below would flag it as colliding WITH ITSELF.
 # There is nothing to (re-)validate about a number that did not change.
 #
+# The SAME self-collision hazard applies to a rename that does not change
+# the number — a reworded slug (`session-1440-a-guard-….md` →
+# `session-1440-the-guard-….md`) or a move within $LOG_DIR — and #4527
+# widened it from a near-miss into the deterministic outcome by adding `R`
+# to this selector without accounting for it (caught in review on #4535).
+# The number-preserving half of an `R`/`C` record is excluded below by the
+# same reasoning as `M`, using the source path this comment's predecessor
+# discarded: a RENUMBER always changes the number and is still emitted,
+# checked, and reported; a number-preserving rename never reaches check 1
+# at all, exactly like `M`.
+#
+# Git also records the identical number-preserving rename as a `D`+`A`
+# pair when the slug edit drops below the rename-similarity threshold —
+# the same nondeterminism the header above documents for a genuine
+# renumber. `--diff-filter=ACR` never sees the `D` half, so on the `A`
+# record alone there is no way to tell "a brand-new file claiming a number
+# `HEAD` already has" from "the same file `HEAD` already has, arriving
+# under a new name, in the same commit that removes the old one" — the
+# distinction that made this a live bug even before #4527 (a rename this
+# guard's old `--diff-filter=A` selector already matched on the `A` half).
+# `freed_by_deletion` below closes it the same way: a `D` under $LOG_DIR in
+# this same commit frees its number, and an `A` claiming that exact number
+# in the same commit is that same move, not a new arrival, so it is
+# excluded too.
+#
 # `-z --name-status` rather than plain `--name-status`: an ordinary rename
 # line prints BOTH paths on one row, and naive whitespace-splitting would
 # hand the guard the SOURCE path — the OLD, colliding number — which is
@@ -129,18 +154,44 @@ num_of() { basename "$1" | sed -E 's/^session-([0-9]+)-.*$/\1/'; }
 # status token, then one path for A/M, two for R/C), so source and
 # destination can never be confused for a single token; the parser below
 # reads exactly the field count each status implies and explicitly discards
-# the source.
+# the source (except where it is read for its NUMBER, below, and still
+# never emitted as a path).
+
+# Session numbers freed by a pure staged DELETION under $LOG_DIR in this
+# same commit — the `D` half of a low-similarity `D`+`A` split. `D` is not
+# in `--diff-filter=ACR`, so it needs its own pass; see the comment above
+# `staged_targets` for why this exists at all.
+freed_by_deletion() {
+  git diff --cached -z --name-status --diff-filter=D -- "$LOG_DIR/session-*.md" \
+    | while IFS= read -r -d '' _status; do
+      IFS= read -r -d '' _path
+      num_of "$_path"
+    done
+}
+
 staged_targets() {
-  local status path1 path2
+  local status path1 path2 freed
+  freed="$(freed_by_deletion)"
   while IFS= read -r -d '' status; do
     case "$status" in
       A)
         IFS= read -r -d '' path1
+        # A number this same commit just freed via a staged deletion (the
+        # D+A spelling of a number-preserving rename) is not a new arrival
+        # — see the header comment.
+        if [ -n "$freed" ] && printf '%s\n' "$freed" | grep -qx "$(num_of "$path1")"; then
+          continue
+        fi
         printf '%s\n' "$path1"
         ;;
       R* | C*)
-        IFS= read -r -d '' path1 # source — discarded
+        IFS= read -r -d '' path1 # source — read for its number, never emitted
         IFS= read -r -d '' path2 # destination — the number that matters
+        # A rename/copy that does not change the number is excluded for the
+        # same reason `M` is — see the header comment.
+        if [ "$(num_of "$path1")" = "$(num_of "$path2")" ]; then
+          continue
+        fi
         printf '%s\n' "$path2"
         ;;
       *)
@@ -192,11 +243,14 @@ run_guard() {
   if [ -z "$added" ]; then
     # #4527: a run that checked nothing must SAY so, not just exit 0 —
     # otherwise it is indistinguishable from a run that checked and
-    # approved. This hook only runs at all when prek's file filter has
-    # already matched a staged docs/session-log change, so an empty
-    # selection here is real information (a pure content edit or a pure
-    # deletion — see the `staged_targets` comment for why those are not
-    # selected), not a no-op worth staying silent about.
+    # approved. prek's `files` regex for this hook unions in
+    # `scripts/lib/git-scratch-guard.sh` itself (#3997, since this guard
+    # sources it), so a commit staging only that shared file fires this
+    # hook with ZERO session-log files staged at all — this is not even a
+    # rare path. An empty selection is real information (that case, a pure
+    # content edit, or a pure deletion — see the `staged_targets` comment
+    # for why those are not selected), not a no-op worth staying silent
+    # about.
     echo "session-log-numbering: 0 additions/renames staged under $LOG_DIR — nothing to check."
     return 0
   fi
@@ -214,10 +268,18 @@ run_guard() {
   expected=$((existing_max + 1))
 
   # Sort the staged additions numerically so a multi-file commit is checked
-  # in the order the numbers must run.
-  for f in $(printf '%s\n' "$added" | while read -r p; do
-    [ -n "$p" ] && echo "$(num_of "$p") $p"
-  done | sort -n | cut -d' ' -f2); do
+  # in the order the numbers must run. Paired and split on TAB, not SPACE
+  # (review, #4535 note 7): `cut -d' ' -f2` truncates at a path's OWN
+  # embedded space, and the unquoted `for f in $(...)` this used to be
+  # word-splits the result a second time. Unreachable under today's
+  # hyphen-only naming convention, but not for a reason this code
+  # enforces. A TAB cannot appear in `num_of`'s output, and `cut -f2-`
+  # (not `-f2`) keeps everything after the first TAB together even if one
+  # somehow did. `while read` over a process substitution, not
+  # `for … in $(...)`, so a path is never handed to the shell to
+  # word-split at all.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
     n="$(num_of "$f")"
     if ! [[ "$n" =~ ^[0-9]+$ ]]; then
       echo "ERROR: $f — cannot parse session number." >&2
@@ -285,7 +347,9 @@ run_guard() {
 
     taken="$(printf '%s\n%s\n' "$taken" "$n" | grep -E '^[0-9]+$' | sort -n -u)"
     expected=$((n + 1))
-  done
+  done < <(printf '%s\n' "$added" | while IFS= read -r p; do
+    [ -n "$p" ] && printf '%s\t%s\n' "$(num_of "$p")" "$p"
+  done | sort -t "$(printf '\t')" -k1,1n | cut -f2- -d "$(printf '\t')")
 
   return "$fail"
 }
@@ -329,6 +393,21 @@ if [ "${1:-}" = "--self-test" ]; then
     local dir="$ST_ROOT/$1"
     mkdir -p "$dir/docs/session-log"
     git_scratch_init "$dir"
+    # Cases 10/11/15/16 depend on git's rename detection being ON so their
+    # `git mv` fixtures actually stage as `R` (each self-checks this, but a
+    # self-check only reports the wrong shape — it does not produce the
+    # right one). `git_scratch_guard` scrubs `GIT_CONFIG*` from the
+    # environment but not `~/.gitconfig`, so a developer with
+    # `diff.renames = false` there stages those fixtures as `D`+`A`
+    # instead, the fixture-shape check fires `st_bad`, and the self-test
+    # exits 2 for an environment reason, not a code one (review, #4535
+    # note 2). Pinned here, not in the shared `git_scratch_init` — that
+    # helper is also used by `check-migrations-immutable.sh`,
+    # `test-related-rust.sh` and `pr-merge-result-check.sh`, each with its
+    # own rename-shaped fixtures this script has not reviewed; changing a
+    # shared default risks their coverage for a config knob only this
+    # file's fixtures are known to depend on.
+    git -C "$dir" config diff.renames true
     echo "$dir"
   }
 
@@ -374,7 +453,38 @@ if [ "${1:-}" = "--self-test" ]; then
     local old_path="docs/session-log/session-$old-$slug.md"
     local new_path="docs/session-log/session-$new-$slug.md"
     git -C "$dir" mv "$old_path" "$new_path"
-    sed -i -E "s/^# Session [0-9]+/# Session $new/" "$dir/$new_path"
+    # Portable `-i.bak` form (review, #4535 note 3), not GNU-only bare
+    # `-i -E` — matches `bump-version.sh:1086` and
+    # `patch-android-build.sh:42`, the spelling `bump-version.sh:899`'s own
+    # self-test pins. Bare `-i -E` parses on BSD/macOS sed as `-i` taking
+    # `-E` AS THE BACKUP SUFFIX, breaking every case that calls this helper
+    # on a Mac checkout.
+    sed -i.bak -E "s/^# Session [0-9]+/# Session $new/" "$dir/$new_path"
+    rm -f "$dir/$new_path.bak"
+    if [ "$rewrite" = 1 ]; then
+      {
+        for i in $(seq 1 12); do
+          printf 'filler filler filler filler filler filler filler filler line %d\n' "$i"
+        done
+      } >>"$dir/$new_path"
+    fi
+    git -C "$dir" add -A
+  }
+
+  # rename_slug <dir> <num> <old-slug> <new-slug> [rewrite-body?]
+  # A rename that changes ONLY the slug — a typo fix, or a move within
+  # $LOG_DIR — and never touches the number, as opposed to `st_renumber`
+  # above. Review, #4535 note 1: the false positive this guards against is
+  # exactly the one #4527 introduced by selecting `R` without accounting
+  # for a number-preserving rename. No heading edit, because the number
+  # never changes. rewrite=1 pushes the same operation below git's
+  # rename-similarity threshold, so it stages as `D`+`A` instead of `R` —
+  # the pre-#4527 spelling of this same bug (review, #4535 note 1).
+  st_rename_slug() {
+    local dir="$1" num="$2" old_slug="$3" new_slug="$4" rewrite="${5:-0}"
+    local old_path="docs/session-log/session-$num-$old_slug.md"
+    local new_path="docs/session-log/session-$num-$new_slug.md"
+    git -C "$dir" mv "$old_path" "$new_path"
     if [ "$rewrite" = 1 ]; then
       {
         for i in $(seq 1 12); do
@@ -618,7 +728,12 @@ if [ "${1:-}" = "--self-test" ]; then
   # ── Case 10: #4527 — a `git mv` renumber onto a TAKEN number is caught ──
   # THE defect this issue is about: before the fix, this renumber staged
   # as a pure rename (`R100`), `--diff-filter=A` selected nothing, and the
-  # guard exited 0 having checked nothing at all.
+  # guard exited 0 having checked nothing at all. Also doubles, after
+  # #4535 note 1, as the complement of Cases 15/16 below: the number DOES
+  # change here (1280 → 1281), so the short-circuit that excludes a
+  # number-preserving rename must NOT swallow this one — a short-circuit
+  # broad enough to do that would turn this case green for the wrong
+  # reason.
   d="$(st_new_repo mv-collision)"
   st_write "$d" 1280 base
   st_commit "$d" "base"
@@ -738,6 +853,50 @@ if [ "${1:-}" = "--self-test" ]; then
     st_ok "a content-only edit reports the empty selection explicitly, not silently (#4527)"
   else
     st_bad "a content-only edit reports the empty selection explicitly, not silently (#4527)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 15: #4535 note 1 — a slug-only rename must not false-alarm ────
+  # THE regression #4527 introduced: selecting `R` without excluding a
+  # number-preserving rename means the destination's number is already in
+  # `HEAD` — as the SOURCE path of this very commit — so check 1 flagged it
+  # as "already taken", pointing at a duplicate that does not exist.
+  # Reproduced verbatim against the unfixed guard before this fix landed:
+  # `ERROR: … session number 1280 is already taken.` /
+  # `(Already used by another entry — every session number must be unique.)`
+  d="$(st_new_repo slug-rename)"
+  st_write "$d" 1280 a-guard-that-never-looked
+  st_commit "$d" "base"
+  st_rename_slug "$d" 1280 a-guard-that-never-looked the-guard-that-never-looked 0
+  if ! git -C "$d" diff --cached --name-status | grep -q '^R'; then
+    st_bad "the slug-rename fixture actually stages as a rename" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_ok "a slug-only rename that preserves the session number passes (#4535 note 1)"
+  else
+    st_bad "a slug-only rename that preserves the session number passes (#4535 note 1)" \
+      "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
+  fi
+
+  # ── Case 16: #4535 note 1 — the same slug-only rename, staged as D+A ───
+  # The reviewer flagged this as broken even BEFORE #4527: the old
+  # `--diff-filter=A` selector already matched the `A` half of a
+  # low-similarity D+A split, with the same self-collision result. A fix
+  # scoped only to the `R`/`C` pairing (Case 15) would leave this spelling
+  # of the identical operation red.
+  d="$(st_new_repo slug-rename-da)"
+  st_write "$d" 1280 a-guard-that-never-looked
+  st_commit "$d" "base"
+  st_rename_slug "$d" 1280 a-guard-that-never-looked the-guard-that-never-looked 1
+  if git -C "$d" diff --cached --name-status | grep -q '^R'; then
+    st_bad "the slug-rename D+A fixture actually stages as D+A, not a rename — fixture invalid" \
+      "$(git -C "$d" diff --cached --name-status)"
+  fi
+  if st_run "$d"; then
+    st_ok "the same slug-only rename, staged as D+A instead of R, still passes (#4535 note 1)"
+  else
+    st_bad "the same slug-only rename, staged as D+A instead of R, still passes (#4535 note 1)" \
       "$(tr '\n' '|' <"$ST_ROOT/out.txt")"
   fi
 
