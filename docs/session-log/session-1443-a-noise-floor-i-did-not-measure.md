@@ -47,8 +47,23 @@ on identical code. `english para` failed to clear in both.
 So the honest form is not a fourth table of per-row verdicts. It is: report the
 band, state that rows within about twice their noise figure have flipped
 between runs, and rely only on what survived both — that both call sites are
-slower, in a range of roughly +20% to +60%, and that the guard beats the naive
-form everywhere but degenerates to 1.0x on a long sigma-bearing string.
+slower, and that the guard beats or matches the naive form everywhere except a
+long sigma-bearing string, where it is fractionally worse — the `indexOf` is
+paid for a `replace` that runs anyway.
+
+Review caught that overreach too, in the sentence written to replace the
+previous overreach: "beats `naive` on every row, from 1.3x to 2.5x", against a
+table whose Greek-paragraph row prints `naive 2284.5` / `now 2331.1`. A ~2% loss,
+and a `1.0x` outside the stated band, fifteen lines below the claim. Checking
+each summary sentence against its own table before committing then caught two
+more that review had not: `astral` is sigma-free and only 1.5x, so the
+multiplier is not a sigma signal; and `latin` at +62% falls outside the "+20% to
++60%" band I had just written.
+
+The habit that finally worked is mechanical rather than attentive: extract every
+number the prose asserts, recompute it from the table's own operands, and diff.
+Three rounds of trying harder produced three more wrong summaries; one script
+produced none.
 
 Three rounds of this block were wrong because each reported a single noisy run
 to the percentage point. The fourth is right because it stopped reporting

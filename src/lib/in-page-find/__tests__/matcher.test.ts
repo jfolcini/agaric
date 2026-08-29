@@ -1569,10 +1569,16 @@ describe('runWalker', () => {
  *
  *      AFTER #4507 both paths fold through `foldForMatch`, so the branch is a
  *      pure optimisation and the two mutants are genuinely equivalent. That
- *      rests on `foldForMatch` distributing over code points, which is an
- *      empirical claim about the host's Unicode tables rather than a deduction
- *      — Final_Sigma is the only context-sensitive mapping in the locale-free
- *      case-mapping table, so collapsing ς removes the only discrepancy.
+ *      rests on `foldForMatch` distributing over code points, and what carries
+ *      that is a DEDUCTION from the case-mapping table: Final_Sigma is its only
+ *      context-sensitive mapping in the locale-free case, so collapsing ς
+ *      removes the only possible discrepancy. (An earlier version of this
+ *      paragraph called it "an empirical claim rather than a deduction", which
+ *      contradicts `foldForMatch`'s own docblock. The premise the deduction
+ *      rests on — what the host's tables contain — is empirical and can change
+ *      under a new Unicode version; the step from that premise to distribution
+ *      is not. The sweep below corroborates over every scalar value in twelve
+ *      fixed contexts; it does not and cannot prove the universal.)
  *      Swept and committed: every code point in twelve contexts, 13,344,768
  *      cases, 0 differing, with the pre-#4507 fold as a control that
  *      differs on 6 of them. Six of the twelve are ADJACENT contexts and six

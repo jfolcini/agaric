@@ -476,34 +476,41 @@ const FINAL_SIGMA_RE = /ς/g
  * but a previous run of this identical experiment had `astral` clearing
  * comfortably (±6%) and this one has it buried (±26%), while `english para`
  * failed to clear in both. Any row whose `now/pre` is within about twice its
- * noise figure has flipped verdict between runs and should be treated as
- * "direction known, magnitude not". Three earlier versions of this block
+ * noise figure has either flipped verdict between runs (`astral`) or failed to
+ * clear in both (`english para`), and should be treated as "direction known,
+ * magnitude not". Three earlier versions of this block
  * reported single runs to the percentage point, which is how `+127%` was
  * published for what is really a ~60% effect.
  *
  * What survives both runs, and all that should be relied on:
  *
- * **The guard is worth having.** `now` beats `naive` on every row, from 1.3x
- * to 2.5x, and the spread is explained by how often the guard can skip the
- * `replace`: best on short sigma-free strings (latin 2.5x, short heading 2.1x),
- * least on a long string that *does* contain a sigma, where the `indexOf` is
- * paid and the `replace` runs anyway — the Greek paragraph is 1.0x, i.e.
- * indistinguishable from not having the guard at all. Note that `astral` is
- * sigma-free and still only 1.5x; the guard's benefit tracks string length and
- * allocation cost as much as it tracks sigma, so do not read the multiplier as
- * a pure sigma-presence signal.
+ * **The guard is worth having, but it is not free and not universal.** `now`
+ * beats or matches `naive` on every row, up to 2.5x — and on the Greek
+ * paragraph it is fractionally WORSE (naive 2284.5, now 2331.1, a ~2% loss the
+ * `1.0x` column rounds away). That is the guard's worst case working exactly as
+ * designed: on a long string that does contain a sigma, the `indexOf` scan is
+ * paid and the `replace` runs anyway, so the guard buys nothing and costs one
+ * pass.
+ *
+ * Everywhere else it pays: best on short sigma-free strings (latin 2.5x, short
+ * heading 2.1x), less on longer ones. Note that `astral` is sigma-free and
+ * still only 1.5x, so the multiplier tracks string length and allocation cost
+ * as much as it tracks sigma presence — do not read it as a sigma signal.
  *
  * **Both call sites are slower than before #4507.** Every row is positive in
- * both runs, in a band of roughly +20% to +60% on a fold. The guard recovers
+ * both runs. Six of the seven span +20% to +62% on a fold; the seventh,
+ * `english para`, is +9% and buried in its own noise, so it is evidence of
+ * direction and nothing more. The guard recovers
  * most of what the regex cost, not all of it: `indexOf` over one code unit is
  * still dearer than `=== 'ς'`, and folding through one owner was always going
  * to cost more than not folding at all.
  *
  * That is the price of #4507 and it is worth paying, but the comparison a
- * reader should weigh is not "guarded beats naive" — it is **"correct and
- * ~20-60% slower on a fold" against "fast and silently missing every
- * word-final sigma"**, which is what the fast path did before. Both forms
- * agree over all 1,112,064 scalar values, 0 disagreements in every direction.
+ * reader should weigh is not "guarded beats naive" — it is **"correct, and
+ * measurably slower on a fold by the amounts in the tables above" against
+ * "fast and silently missing every word-final sigma"**, which is what the fast
+ * path did before. The tables are the only place a number belongs; every
+ * earlier version of this block that restated one in prose got it wrong.
  *
  * The two call sites matter because the slow path is not the rare one it looks
  * like: `İ` U+0130 is ordinary Turkish orthography, so on Turkish content most
