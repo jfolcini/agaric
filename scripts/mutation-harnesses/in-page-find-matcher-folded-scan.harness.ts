@@ -653,7 +653,7 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
   (code point, context) cases checked:            ${checked}
   differing with the sigma collapse (expect 0):   ${differing}
   differing WITHOUT it — control (expect 6):      ${controlDiffering}
-    of those, in SEPARATED contexts (expect > 0): ${controlDifferingSeparated}
+    of those, in SEPARATED contexts (expect 5): ${controlDifferingSeparated}
 ${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
 `)
 
@@ -669,7 +669,14 @@ ${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
     // And the separated family must contribute, or the six contexts that make
     // this sweep stronger than its first revision could be deleted with every
     // other assertion still green.
-    expect(controlDifferingSeparated).toBeGreaterThan(0)
+    //
+    // `toBe(5)`, not `> 0` — which was the loose form the paragraph above
+    // argues against, used in the very assertion making the argument. 5 is
+    // derived like the 6: of the six separated contexts, Final_Sigma fires in
+    // five (`['Α.','']`, `['Α··','']`, `['Ά','']`, `['Α\u00AD','']`,
+    // `['Α.',' ']`) and not in `['Α.','.Α']`, where a cased letter follows past
+    // the ignorables and suppresses the rule.
+    expect(controlDifferingSeparated).toBe(5)
     expect(contexts.length).toBe(12)
     expect(checked).toBe(12 * (0x110000 - 2048))
     // The claim under test.

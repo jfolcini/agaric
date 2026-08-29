@@ -341,40 +341,35 @@ function scanIndexOf(
 }
 
 /**
- * Fold ONE code point for the slow path, canonicalising Greek sigma.
+ * Fold ONE code point, for the slow path's offset map.
  *
- * `toLowerCase()` on a single code point is context-free, so `Σ` always
- * yields the mid-word `σ` (U+03C3) and never the word-final `ς` (U+03C2)
- * that whole-string folding would produce. Folding both sides
- * per-code-point makes them agree on `Σ`, but on its own it does NOT make
- * them agree on text that already CONTAINS a final `ς` — natural Greek
- * orthography — because `'ς'.toLowerCase()` is `'ς'`. Searching `ΟΔΟΣ`
- * over `οδος` would then fold to `οδοσ` vs `οδος` and silently miss.
+ * A one-line delegation to [`foldForMatch`], which owns the rule and documents
+ * it — the ς/σ collapse, why both sides must fold identically (#3812, #4507),
+ * and why the collapse costs nothing in offset mapping. Deliberately not
+ * restated here: two copies of one rule is the shape that produced the defect
+ * #4507 fixed.
  *
- * So the two sigma forms are collapsed onto one. `οδος`, `ΟΔΟΣ` and `οδοσ`
- * all fold to `οδοσ`: no miss in either direction, and no false positive
- * introduced beyond the ς/σ conflation itself, which is the one deliberate
- * imprecision (pinned in the tests).
- *
- * That collapse no longer happens HERE, and neither does the offset-mapping
- * argument that used to sit in this docblock: both moved to `foldForMatch`
- * below, which this function is now a one-line delegation to. #4507 made the
- * whole-string fold sites use the same helper, because #3812 applied the rule
- * to the slow path only and left the fast path — the one essentially all text
- * takes — folding with a bare `toLowerCase()`.
- *
- * What survives here is the reason this per-code-point entry point exists at
- * all: `scanLiteralFolded` needs the fold applied one code point at a time to
- * build its offset map, not just the same result on the whole string.
- *
- * The needle MUST use the same fold as the haystack, whichever spelling: mixing
- * a context-SENSITIVE fold on one side with a context-FREE one on the other is
- * the original #3812 defect, and mixing the collapsing fold with the
- * non-collapsing one is #4507.
+ * What this entry point is FOR, which `foldForMatch` cannot say: the slow path
+ * needs the fold applied one code point at a time, because `scanLiteralFolded`
+ * records the original span of each folded code unit as it goes. Folding the
+ * whole string would give the same characters and no way to map a match back to
+ * an offset in the original text.
  */
 function foldCodePoint(ch: string): string {
   return foldForMatch(ch)
 }
+
+/**
+ * Hoisted out of `foldForMatch` so the pattern is compiled once rather than on
+ * every call — this runs once per text node per keystroke while a find is open.
+ *
+ * Sharing one `/g` regex across calls is safe **here specifically**:
+ * `String.prototype.replace` sets `lastIndex` to 0 before scanning and again
+ * after, so no state carries between calls. It would NOT be safe to share this
+ * with an `exec` or `test` call site, both of which advance `lastIndex` and
+ * leave it advanced.
+ */
+const FINAL_SIGMA_RE = /ς/g
 
 /**
  * The case fold both literal paths use: `toLowerCase()`, then the ς/σ
@@ -402,18 +397,6 @@ function foldCodePoint(ch: string): string {
 function foldForMatch(s: string): string {
   return s.toLowerCase().replace(FINAL_SIGMA_RE, 'σ')
 }
-
-/**
- * Hoisted out of `foldForMatch` so the pattern is compiled once rather than on
- * every call — this runs once per text node per keystroke while a find is open.
- *
- * Sharing one `/g` regex across calls is safe **here specifically**:
- * `String.prototype.replace` sets `lastIndex` to 0 before scanning and again
- * after, so no state carries between calls. It would NOT be safe to share this
- * with an `exec` or `test` call site, both of which advance `lastIndex` and
- * leave it advanced.
- */
-const FINAL_SIGMA_RE = /ς/g
 
 /**
  * Slow literal path for haystacks whose lowercase fold changes length.
