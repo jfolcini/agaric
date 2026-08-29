@@ -439,21 +439,25 @@ function foldForMatch(s: string): string {
  * a length-changing fold early in the node (`İ` U+0130) no longer
  * shifts every later highlight span.
  *
- * `foldedNeedle` is the query text already folded by `compileQuery` (not
- * the whole-string-folded `needle` used by the fast path above).
- * `compileQuery` folds it once, code-point-by-code-point via
- * `foldCodePoint` — the exact same algorithm this function uses below to
- * fold the haystack — so both sides of the comparison use the same
- * context-*insensitive* algorithm (#3812). Whole-string folding
- * (`query.toLowerCase()`) is context-sensitive — e.g. Greek `Σ` folds to
- * word-final `ς` or mid-word `σ` depending on what follows it in the
- * string — while folding code-point-by-code-point can never see that
- * context and always produces the mid-word form. Folding the needle
- * whole-string while the haystack is folded per-code-point (as this
- * function used to do internally) let exactly those context-sensitive
- * cases disagree and silently miss a match; folding both sides the same
- * way trades full correctness for guaranteed agreement between the two
- * fold call sites, which is what this path actually needs.
+ * `foldedNeedle` is the query text already folded by `compileQuery`,
+ * code-point-by-code-point via `foldCodePoint` — the exact same algorithm this
+ * function uses below to fold the haystack, so both sides of the comparison
+ * agree by construction (#3812).
+ *
+ * It USED to differ from the whole-string-folded `needle` the fast path takes,
+ * and the paragraph here used to explain at length why: whole-string
+ * `toLowerCase()` is context-sensitive, so Greek `Σ` folds to word-final `ς` or
+ * mid-word `σ` depending on what follows, while per-code-point folding cannot
+ * see that context and always produces the mid form. Folding the needle
+ * whole-string against a per-code-point haystack let exactly those cases
+ * disagree and silently miss a match.
+ *
+ * Since #4507 the two are PROVABLY EQUAL: both fold sites go through
+ * `foldForMatch`, whose ς/σ collapse removes the one context-sensitive mapping
+ * the locale-free table has, so folding whole and folding per code point cannot
+ * differ. See the note at `compileQuery`'s `foldedNeedle` for why both are kept
+ * anyway — that equality rests on an empirical fact about the host's Unicode
+ * tables, and the DEV assertion below is what would notice it ceasing to hold.
  *
  * Agreeing on the fold is necessary but NOT sufficient, and an earlier
  * version of this fix stopped there and was wrong. Per-code-point folding
