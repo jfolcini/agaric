@@ -1392,22 +1392,22 @@ jobs:
   # ---------------------------------------------------------------------------
   fuzz:
     runs-on: ubuntu-24.04
-    # 130, not 60. The arithmetic, written out because review showed the
-    # previous figure had less headroom than its own comment implied:
+    # 130, not 60. The arithmetic, written out because review showed an earlier
+    # figure had less headroom than its own comment implied — N is the derived
+    # target count, currently 8:
     #
     #   setup (apt, toolchain, node, npm, install-action)   ~10 min
     #   N nightly ASan builds, COLD rust-cache              24-40 min
     #   N targets x 120s of fuzzing                         ~16 min
-    #
-    # where N is the derived target count, currently 8 — pinned ONCE, as
-    # `BUDGETED_TARGETS` in the fuzz step, which warns when the derivation
-    # outgrows it. The figures above are that N substituted in; they are not a
-    # second declaration of it, and re-deriving them for a different N is the
-    # work that warning exists to prompt.
     #   cmin, at its own step bound                         up to 30 min
     #   artifact uploads                                     ~2 min
     #                                                      ------------
     #   worst case                                          ~98 min
+    #
+    # N is pinned ONCE, as `BUDGETED_TARGETS` in the fuzz step, which warns when
+    # the derivation outgrows it. The figures above are that N substituted in —
+    # not a second declaration of it — and re-deriving them for a larger N is
+    # the work that warning exists to prompt.
     #
     # The build range is the five-target 15-25 min figure scaled to eight. On a
     # warm cache (`save-if` on main keeps main warm) the build term is a
@@ -1419,13 +1419,11 @@ jobs:
     # the symptom is a corpus that silently stops accumulating — the failure
     # #4496 exists to remove — rather than a red lane anyone would look at. The
     # cmin step's own `timeout-minutes` is the loud bound; this one is the quiet
-    # one, and is sized to not be reached.
+    # one, and is sized not to be reached.
     #
-    # Every term above scales with the target count, so re-check this alongside
-    # any batch of new targets. The fuzz step warns when the derived count
-    # #4497 took the count from five to its current value, this bound from 90 to
-    # 110, and then to 130 once the build term was scaled honestly rather than
-    # assumed.
+    # History: #4497 took the count from five to eight, this bound from 90 to
+    # 110, and then to 130 once the build term was scaled by arithmetic rather
+    # than by assumption.
     timeout-minutes: 130
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1689,8 +1687,8 @@ jobs:
           # own exit status, which #4496 changed from `|| true` to `|| rc=$?`
           # precisely so a broken cmin stops being silent) — so the lane stays
           # green while that target explores from cold forever, which is the
-          # exact behaviour #4496
-          # exists to end, reintroduced one target at a time. Not fatal (an
+          # exact behaviour #4496 exists to end, reintroduced one target at a
+          # time. Not fatal (an
           # unseeded target still fuzzes, and a first run legitimately has
           # none), so this warns rather than fails.
           for target in "${targets[@]}"; do
@@ -1802,9 +1800,9 @@ jobs:
         # itself with `-max_total_time`, but the merge re-executes every corpus
         # input with only `-rss_limit_mb` to bound it. As the corpus grows this
         # is the likeliest thing to push the job into its own `timeout-minutes`
-        # (see the job's, above; it was 90 when this comment was written and is
-        # not restated here, because restating it is how it went stale) —
-        # and a job timeout is a CANCELLATION, which correctly skips the save,
+        # (the job's, above — deliberately not restated here, since a copy of it
+        # is what went stale twice), and a job timeout is a CANCELLATION,
+        # which correctly skips the save,
         # so the symptom would be a corpus that silently stops accumulating:
         # the exact failure mode this change exists to remove. A step-level
         # bound makes it a loud, attributable failure instead.

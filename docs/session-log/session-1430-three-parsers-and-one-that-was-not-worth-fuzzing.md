@@ -54,8 +54,18 @@ it is the state least likely to be covered by the example tests.
 
 `attachment_path_parse` is the one with a security argument rather than a robustness one.
 #2989 was a path-traversal filename reaching `rename_attachment` because validation did not
-reject it. The target asserts only the no-panic contract — *which* inputs get rejected
-belongs in the unit tests, where the expected answer is known.
+reject it. The target says nothing about *which* inputs get rejected — that belongs in the
+unit tests, where the expected answer is known — but it does assert a property of the ones
+accepted: parsing is a **fixed point**, so re-parsing an accepted path yields the same
+value. `for_storage_id` gates minting on exactly that identity, so a path accepted but not
+a fixed point would silently take the digest fallback instead of the readable name.
+
+(An earlier revision of this paragraph said the target "asserts only the no-panic contract".
+That was true of the first version, which read the value back through `Display`/`AsRef` and
+asserted nothing at all — both hand back the inner `String`, so no input could make them
+fail. Review replaced it with the fixed-point property; this sentence did not follow until a
+later review caught it, which is the second copy of one fact going stale in a change whose
+subject is second copies going stale.)
 
 ## The duplication the issue asked to guard, removed instead
 
