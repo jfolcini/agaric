@@ -460,11 +460,14 @@ const FINAL_SIGMA_RE = /ς/g
  * anyway: setting up a global-regex replace costs more than an `indexOf` over
  * one code unit, so paying the `indexOf` on every code point still wins.
  *
- * **That comparison does not say the slow path got no slower, and an earlier
- * version of this block read as though it did.** Neither shape it measures is
- * what `foldCodePoint` was before #4507 — that was a bare string equality,
- * `const f = ch.toLowerCase(); return f === 'ς' ? 'σ' : f`, cheaper than both.
- * Against the code as it actually stood:
+ * **Neither column above is what the code was before #4507, so that table
+ * cannot say whether anything got slower — and two earlier versions of this
+ * block read as though it could.** `replace`-always is a strawman: it is the
+ * shape argued against in review, never a shape that shipped. The real
+ * baselines are per call site. `foldCodePoint` was a bare string equality,
+ * `const f = ch.toLowerCase(); return f === 'ς' ? 'σ' : f`; `scanLiteral`
+ * folded with a bare `text.toLowerCase()`. Both are cheaper than either column.
+ * Against the code as it actually stood, per CODE POINT:
  *
  * ```
  * latin (no sigma)      pre-#4507  50 ms   shipped 113 ms   +127% SLOWER
@@ -484,17 +487,21 @@ const FINAL_SIGMA_RE = /ς/g
  * of the rule living in `foldCodePoint` is what #4507 was fixing. Both forms
  * agree over all 1,112,064 scalar values, 0 disagreements.
  *
- * Per WHOLE TEXT NODE, which is how `scanLiteral` calls it:
+ * And per WHOLE TEXT NODE, which is how `scanLiteral` calls it, against its
+ * own real baseline of a bare `text.toLowerCase()`:
  *
  * ```
- * short heading, no sigma  (len 15)   26 ms ->  12 ms   +113%
- * english paragraph        (len 540)  55 ms ->  57 ms     -3%
- * greek paragraph          (len 504) 2187 ms -> 2197 ms   -0.4%
+ * short heading, no sigma  (len 15)  pre-#4507   12 ms   shipped   19 ms   +56% SLOWER
+ * english paragraph        (len 540) pre-#4507   47 ms   shipped   52 ms   +12% SLOWER
+ * greek paragraph          (len 504) pre-#4507 1410 ms   shipped 2152 ms   +53% SLOWER
  * ```
  *
- * A ~3% loss on long strings, where the absolute cost is dominated by
- * `toLowerCase()`'s allocation regardless, against a doubling on the short
- * no-sigma nodes that make up most of a real document. Taken.
+ * So **both** call sites regressed, not just the slow one. The guard makes the
+ * sigma collapse as cheap as it can be; it cannot make it free, and folding
+ * through one owner was always going to cost more than not folding at all.
+ * That is the price of #4507 — the fast path was *wrong* before, and the
+ * comparison a reader should care about is "correct and slower" against
+ * "fast and silently missing matches".
  *
  * The two call sites matter because the slow path is not the rare one it looks
  * like: `İ` U+0130 is ordinary Turkish orthography, so on Turkish content most

@@ -77,21 +77,24 @@ success.
 
 The issue asked for either "both, or a guard". The array is now derived:
 
+The shape, in outline — **read the workflow for the text**, since an abridged
+copy is exactly what goes stale next, and that is this log's whole subject:
+
 ```bash
 derived_targets="$(mktemp)"
-if ! cargo +nightly metadata --format-version 1 --no-deps \
-  | jq -r '.packages[] | select(.name == "agaric-fuzz")
-           | .targets[] | select(.kind | index("bin")) | .name' \
-  | sort > "$derived_targets"; then
-  rm -f "$derived_targets"
-  echo "::error::… TOOLING failure …"; exit 1
+if ! cargo +nightly metadata --format-version 1 --no-deps | jq -r '…' | sort \
+     > "$derived_targets"; then
+  # tooling failed: nightly, jq, or an unparseable manifest
 fi
 mapfile -t targets < "$derived_targets"
-rm -f "$derived_targets"
 if [ "${#targets[@]}" -eq 0 ]; then
-  echo "::error::… the manifest declares no [[bin]] entries …"; exit 1
+  # the producer succeeded and the manifest declares no [[bin]] entries
 fi
 ```
+
+The live version, with both `::error::` strings and the `rm -f` on each exit
+path, is the `fuzz` job's derivation step in
+`.github/workflows/scheduled-deep-checks.yml` (search for `derived_targets`).
 
 `--no-deps` reads the manifest only — no dependency resolution, no network, no build.
 Adding a `[[bin]]` is now the entire act of enrolling a target in the weekly lane, and the

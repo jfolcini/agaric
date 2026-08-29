@@ -103,3 +103,62 @@ in another, and the only thing that ever caught the remainder was someone else
 reading the diff. Reviewing one's own change for copies is apparently not a thing
 one can do; the copies are invisible precisely because you already know the fact
 they state.
+
+## The correction that stopped one table short
+
+Review of the correction found the same defect one paragraph lower, and it is
+the most useful thing in this log.
+
+The fix above rebaselined the **per-code-point** table against what
+`foldCodePoint` actually was before #4507. It left the **per-whole-text-node**
+table untouched — and that table had the identical problem. Pre-#4507
+`scanLiteral` folded with a bare `text.toLowerCase()`, cheaper than either
+column it compares. So `short heading, no sigma (len 15) 26 ms -> 12 ms +113%`
+read as a win for the shipped code, on a call site where the shipped code is in
+fact slower. Measured:
+
+```
+short heading, no sigma  (len 15)  pre-#4507   12 ms   shipped   19 ms   +56% SLOWER
+english paragraph        (len 540) pre-#4507   47 ms   shipped   52 ms   +12% SLOWER
+greek paragraph          (len 504) pre-#4507 1410 ms   shipped 2152 ms   +53% SLOWER
+```
+
+**Both call sites regressed**, not just the slow one. The caveat paragraph added
+in the first correction was scoped to `foldCodePoint`, so it did not reach the
+second table; a reader would have found an explicit warning about one table
+sitting directly above another with the same flaw and no warning.
+
+That is the honest cost accounting for #4507, and it is not a bad trade — it is
+just a trade, which is what the earlier framing obscured. The fast path was
+*wrong* before: it silently missed every word-final sigma. The comparison worth
+making is "correct and 12–56% slower on a fold" against "fast and missing
+matches", not "guarded beats replace-always".
+
+## Three smaller ones, and a pattern that will not stop
+
+- The comment justifying four case-sensitive tests said they were "the
+  fold-changing subset of the list above". `ςσ` is not in that list, and
+  `\u{10400}` was cited as a query that maps to itself — Deseret capital long I
+  lowercases to U+10428, so it folds away and would falsify fine. So would `ẞ`
+  and `ΑΣ`. Two wrong claims in one sentence written to justify a choice that
+  was correct for a different reason: the four cover distinct *shapes*, and more
+  would repeat them.
+- The two benchmark tables labelled the same code `guarded` and `shipped`, up to
+  11% apart, with nothing saying they were separate runs.
+- The workflow snippet in session-1430 was abridged with `…` in both `::error::`
+  strings. Defensible anywhere else; not in a log whose subject is second copies
+  going stale, since an abridged copy is what goes stale next. Replaced with an
+  outline plus a pointer to the live step.
+
+**Four rounds of review on a change about stale second copies produced, from
+me:** a benchmark against a strawman baseline, a correction to it that fixed one
+of two tables, a justification with two false claims in one sentence, an
+illustration that leaked a tempfile the code cleans up, and an abridged copy in
+the file arguing against abridged copies.
+
+The consistent shape is that each fix was *locally* correct and stopped at the
+boundary of what I was looking at. I corrected the table I was editing, not the
+one below it; the description, not the log; the log, not AGENTS.md. There is no
+insight here about being more careful — I was being careful, and had the
+argument for why it mattered written out in front of me. What actually caught
+every one of them was a second reader with no memory of having already fixed it.

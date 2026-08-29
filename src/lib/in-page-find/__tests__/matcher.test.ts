@@ -302,14 +302,20 @@ describe('compileQuery — Unicode correctness (#756)', () => {
   // fold assertion: it must leave the query completely alone. Asserted directly
   // rather than as a second `not.toThrow()`, which proved nothing.
   //
-  // These four are the FOLD-CHANGING subset of the list above, chosen on
-  // purpose — do not "helpfully" extend this to all seventeen. Each of the four
-  // folds away from itself (`ΟΔΟΣ`→`οδοσ`, `ΑΣΑ`→`ασα`, `ςσ`→`σσ`,
-  // `İ`→`i`+U+0307), so removing `compileQuery`'s `caseSensitive ? query : …`
-  // ternary makes every one of them fail. For a query `foldForMatch` maps to
-  // itself — `ı`, `ﬁ`, `\u{10400}` — the same assertion passes whether or not
-  // the case-sensitive branch exists, and adding those would dilute a
-  // falsifiable test with cases that cannot falsify.
+  // Every one of these four FOLDS AWAY FROM ITSELF — `ΟΔΟΣ`→`οδοσ`,
+  // `ΑΣΑ`→`ασα`, `ςσ`→`σσ`, `İ`→`i`+U+0307 — which is what makes the assertion
+  // load-bearing: remove `compileQuery`'s `caseSensitive ? query : …` ternary
+  // and all four miss themselves. A query `foldForMatch` maps to itself (`ı`,
+  // `ﬁ`) would pass whether or not that branch exists.
+  //
+  // They are four REPRESENTATIVE cases, not the exhaustive fold-changing set,
+  // and an earlier version of this comment claimed otherwise on both counts:
+  // it called them "the subset of the list above" when `ςσ` is not in that
+  // list, and cited `\u{10400}` as a self-mapping query when Deseret capital
+  // long I lowercases to U+10428 and would falsify perfectly well. So would
+  // `ẞ` and `ΑΣ`. The four cover the distinct shapes — final sigma, medial
+  // sigma, both forms adjacent, and the length-expanding fold — and adding
+  // more would repeat those shapes rather than reach a new one.
   it.each([
     ['final sigma stays final', 'ΟΔΟΣ'],
     ['mid sigma stays mid', 'ΑΣΑ'],
