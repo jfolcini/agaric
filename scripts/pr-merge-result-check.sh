@@ -469,7 +469,11 @@ count_examined() {
   case "$guard" in
     check-table-ownership.py)
       for root in "${roots[@]}"; do
-        [ -d "$workdir/$root" ] || continue
+        # No `[ -d ] || continue` here. `find` on a missing directory prints
+        # nothing (its error is already discarded below), so the count is
+        # identical either way — and this file is the one removing that
+        # construct from the guard it invokes. Leaving the last copy in place
+        # is how the next reader learns to skip a root that vanished.
         while IFS= read -r -d '' f; do
           n=$((n + 1))
         done < <(find "$workdir/$root" -type f -name '*.rs' -print0 2>/dev/null)
@@ -529,8 +533,8 @@ count_examined() {
 #                                    import resolves the same way, so both
 #                                    must exist together in the merged tree.
 run_one_guard() {
-  local guard="$1" workdir="$2" base_tip="$3"
-  shift 3
+  local guard="$1" workdir="$2" base_tip="$3" synthetic="${4:-0}"
+  shift 4
   case "$guard" in
     check-raw-tx.py | check-dynamic-sql.py)
       # `--worktree` is EXPLICIT, never left to the guards' AUTO rule (#4017).
@@ -544,10 +548,38 @@ run_one_guard() {
       # behaviour, and reads the same under prek, under CI and by hand.
       python3 "$workdir/scripts/$guard" --worktree "$@"
       ;;
+    check-table-ownership.py)
+      # No source flags: it ignores argv for FILE selection and rescans its
+      # own crate roots off the filesystem, so it only ever reads the
+      # worktree in the first place.
+      #
+      # `--synthetic-tree` (#4501) ONLY for a tree this script's own self-test
+      # built. That guard now fails when a declared CRATE_ROOTS directory is
+      # absent, because a renamed or misspelled segment used to narrow its walk
+      # to nothing in silence. The self-test's trees are deliberately not this
+      # repository (`src-tauri/source`, `src-tauri/extra/src`), so there the
+      # assertion is inapplicable rather than violated.
+      #
+      # It must NOT be set on a real merge. `run_one_guard` has ONE call site
+      # and `run_merge_check` is what the workflow invokes per PR, so passing
+      # it unconditionally — as the first revision of this change did — leaves
+      # the merged-tree verifier permanently unable to see the very thing it
+      # exists for: a base that renames `agaric-store/` while the PR does not
+      # touch CRATE_ROOTS.
+      #
+      # That revision also claimed a compensating control that does not exist:
+      # the exit-3 "verified nothing" branch fires only when `targets` is
+      # EMPTY — every root barren — so one missing root among five leaves it
+      # non-empty and the merge is reported as verified. `targets` is also
+      # derived from check-raw-tx.py's roots, not this guard's, and the two
+      # lists are known to differ.
+      if [ "$synthetic" = "1" ]; then
+        python3 "$workdir/scripts/$guard" --synthetic-tree "$@"
+      else
+        python3 "$workdir/scripts/$guard" "$@"
+      fi
+      ;;
     *.py)
-      # check-table-ownership.py has no source flags: it ignores argv and
-      # rescans its own crate roots off the filesystem, so it only ever reads
-      # the worktree in the first place.
       python3 "$workdir/scripts/$guard" "$@"
       ;;
     check-unsafe-allowlist.sh)
@@ -844,7 +876,8 @@ process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)
 # ratchet guards against it, and report. Never touches the caller's own
 # working tree or index.
 run_merge_check() {
-  local base_ref="$1" head_sha="$2"
+  # $3 is the fixture marker (see main()); absent/0 on every real invocation.
+  local base_ref="$1" head_sha="$2" mr_synthetic="${3:-0}"
   local base_tip parent workdir
 
   # Checked BEFORE any work: the guards are stdlib-only Python, so without
@@ -1040,7 +1073,7 @@ run_merge_check() {
       missing="${missing:+$missing }$guard"
       continue
     fi
-    if ! run_one_guard "$guard" "$workdir" "$base_tip" "${targets[@]}"; then
+    if ! run_one_guard "$guard" "$workdir" "$base_tip" "$mr_synthetic" "${targets[@]}"; then
       echo "pr-merge-result-check: $guard FAILED on the MERGED tree" >&2
       failures=$((failures + 1))
     fi
@@ -1829,11 +1862,30 @@ run_self_test() {
   # ── 1. THE FALSIFICATION: this script, run end to end ───────────────────
   local rc
 
-  ( cd "$clean" && bash "$SELF" main pr ) >"$tmp/clean.out" 2>"$tmp/clean.err"
+  ( cd "$clean" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/clean.out" 2>"$tmp/clean.err"
   rc=$?
   st_expect 'CLEAN merge: pr-merge-result-check exits 0 (computed, guards pass)' '0' "$rc"
 
-  ( cd "$nearmiss" && bash "$SELF" main pr ) >"$tmp/nearmiss.out" 2>"$tmp/nearmiss.err"
+  # THE SAME CLEAN FIXTURE, END TO END, WITHOUT the marker (#4501). 3l-bis
+  # pins `run_one_guard` in both directions, but it calls that function
+  # directly — so with every end-to-end fixture passing `--synthetic-fixture`,
+  # flipping `local synthetic=0` to `1` in main(), or hard-wiring the third
+  # argument to run_merge_check, leaves this entire suite green while
+  # production silently loses the assertion. That is the same "disabled on the
+  # only path that runs in production" shape this change was written to fix,
+  # one link further up the chain, and it needs a run that goes through
+  # main() -> run_merge_check -> run_one_guard with the marker genuinely
+  # absent. The fixture's roots are `src-tauri/source` etc., so the guard must
+  # report them missing and the merge must come back non-zero.
+  local unflagged_rc unflagged_err="$tmp/clean-unflagged.err"
+  ( cd "$clean" && bash "$SELF" main pr ) >/dev/null 2>"$unflagged_err"
+  unflagged_rc=$?
+  st_expect 'the SAME clean merge WITHOUT --synthetic-fixture fails: the roots assertion is live end to end' \
+    '1' "$unflagged_rc"
+  st_expect 'and it is check-table-ownership that failed, on the MERGED tree' \
+    '1' "$(grep -c 'check-table-ownership.py FAILED on the MERGED tree' "$unflagged_err" || true)"
+
+  ( cd "$nearmiss" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/nearmiss.out" 2>"$tmp/nearmiss.err"
   rc=$?
   st_expect 'NEAR-MISS merge: pr-merge-result-check exits 1 (computed, a guard FAILED on the merge result)' \
     '1' "$rc"
@@ -1851,10 +1903,10 @@ run_self_test() {
   #      (exit 2) — the two must NOT share a code, or a runner-side failure
   #      renders as a `::warning::` on a job pr-overlap.yml still shows GREEN.
   local rc2
-  ( cd "$clean" && bash "$SELF" no-such-branch pr ) >/dev/null 2>&1; rc2=$?
+  ( cd "$clean" && bash "$SELF" no-such-branch pr --synthetic-fixture ) >/dev/null 2>&1; rc2=$?
   st_expect 'an unresolvable base ref is exit 3 (verified nothing), NOT exit 2' '3' "$rc2"
 
-  ( cd "$clean" && bash "$SELF" main deadbeefdeadbeefdeadbeefdeadbeefdeadbeef ) >/dev/null 2>&1; rc2=$?
+  ( cd "$clean" && bash "$SELF" main deadbeefdeadbeefdeadbeefdeadbeefdeadbeef --synthetic-fixture ) >/dev/null 2>&1; rc2=$?
   st_expect 'an unresolvable head sha is also exit 3 (verified nothing), NOT exit 2' '3' "$rc2"
 
   # A call site that forgot the head-sha argument entirely (not merely an
@@ -1908,7 +1960,7 @@ run_self_test() {
   st_expect 'fixture sanity: the second orphaned worktree is also registered and stale before any run' \
     '1' "$(git -C "$conflict" worktree list | grep -c "$conflict_stale_wt" || true)"
 
-  ( cd "$conflict" && bash "$SELF" main pr ) >"$tmp/conflict.out" 2>"$tmp/conflict.err"; rc2=$?
+  ( cd "$conflict" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/conflict.out" 2>"$tmp/conflict.err"; rc2=$?
   st_expect 'a real textual conflict is STILL exit 2, never exit 3 and never a pass' '2' "$rc2"
   # Note 2: git's own conflict text must reach the log — the step summary
   # says "See the job log above for the conflict", and before this fix the
@@ -1944,7 +1996,7 @@ run_self_test() {
   git -C "$unrelated" commit --quiet -m 'unrelated pr history, shares no ancestor with main'
   git -C "$unrelated" checkout --quiet main
 
-  ( cd "$unrelated" && bash "$SELF" main pr ) >"$tmp/unrelated.out" 2>"$tmp/unrelated.err"; rc2=$?
+  ( cd "$unrelated" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/unrelated.out" 2>"$tmp/unrelated.err"; rc2=$?
   st_expect 'a non-conflict git-merge failure (unrelated histories) is exit 3, NOT exit 2' '3' "$rc2"
   st_expect 'and it is NOT reported using the content-conflict wording ("do NOT merge cleanly")' \
     '0' "$(grep -c 'do NOT merge cleanly' "$tmp/unrelated.err" || true)"
@@ -1995,7 +2047,7 @@ STUB
 
   local rc3
   ( cd "$prunecheck" && MRTEST_FIXED_PARENT="$fixed_parent" PATH="$stubdir:$PATH" \
-      bash "$SELF" main pr ) >/dev/null 2>&1
+      bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>&1
   rc3=$?
   st_expect 'a git-worktree-add failure is exit 3 (verified nothing), NOT exit 2' '3' "$rc3"
   st_expect "the worktree-add-failure path prunes the CALLER repo's stale entry, not just its own" \
@@ -2005,12 +2057,12 @@ STUB
   local fresh="$tmp/fresh"
   mkdir -p "$fresh"
   mr_make_fresh_base_repo "$fresh"
-  ( cd "$fresh/down" && bash "$SELF" main pr ) >/dev/null 2>&1; rc2=$?
+  ( cd "$fresh/down" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>&1; rc2=$?
   st_expect 'the base resolves to origin/<ref>, so a stale local branch cannot hide the near-miss' \
     '1' "$rc2"
   # The contrast that makes the assertion above non-vacuous: the SAME repo,
   # the SAME head, resolved against the stale local ref instead, merges clean.
-  ( cd "$fresh/down" && bash "$SELF" refs/heads/main pr ) >/dev/null 2>&1; rc2=$?
+  ( cd "$fresh/down" && bash "$SELF" refs/heads/main pr --synthetic-fixture ) >/dev/null 2>&1; rc2=$?
   st_expect 'and against the STALE local ref the same merge looks clean — which is the bug' \
     '0' "$rc2"
 
@@ -2024,7 +2076,7 @@ STUB
   mr_make_near_miss_repo "$noguards"
   git -C "$noguards" rm -q -r scripts
   git -C "$noguards" commit --quiet -m 'the guard scripts are gone'
-  ( cd "$noguards" && bash "$SELF" main pr ) >/dev/null 2>&1; rc2=$?
+  ( cd "$noguards" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>&1; rc2=$?
   st_expect 'a guard named in RATCHET_GUARDS but absent from the merged tree is exit 3, not 0' \
     '3' "$rc2"
 
@@ -2045,7 +2097,7 @@ STUB
   git -C "$partial" rm -q scripts/check-raw-tx.py
   git -C "$partial" commit --quiet -m 'check-raw-tx.py alone is gone; the other two guards still import it'
 
-  ( cd "$partial" && bash "$SELF" main pr ) >"$tmp/partial.out" 2>"$tmp/partial.err"; rc2=$?
+  ( cd "$partial" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/partial.out" 2>"$tmp/partial.err"; rc2=$?
   st_expect 'a PARTIAL guard absence (the other guards still import the missing one, and crash) is ALSO exit 3, not exit 1' \
     '3' "$rc2"
   # The OTHER two guards still get invoked (the loop cannot know in advance
@@ -2063,7 +2115,7 @@ STUB
   local moved="$tmp/moved"
   mkdir -p "$moved"
   mr_make_near_miss_repo "$moved" src-tauri/source
-  ( cd "$moved" && bash "$SELF" main pr ) >/dev/null 2>&1; rc2=$?
+  ( cd "$moved" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>&1; rc2=$?
   st_expect 'zero .rs files under any known crate root is exit 3, not a green "guards pass"' \
     '3' "$rc2"
 
@@ -2082,7 +2134,7 @@ STUB
   done
 
   local nopy_out
-  nopy_out=$( cd "$nearmiss" && PATH="$nopy" bash "$SELF" main pr 2>&1 ); rc2=$?
+  nopy_out=$( cd "$nearmiss" && PATH="$nopy" bash "$SELF" main pr --synthetic-fixture 2>&1 ); rc2=$?
   st_expect 'python3 missing is exit 3 (verified nothing), not exit 1 (a guard failed)' '3' "$rc2"
   st_expect 'and it does NOT claim a guard failed on the merged tree' \
     '0' "$(printf '%s' "$nopy_out" | grep -c 'FAILED on the MERGED tree' || true)"
@@ -2251,7 +2303,7 @@ STUB
   local crateroots="$tmp/crateroots"
   mkdir -p "$crateroots"
   mr_make_crateroots_rename_repo "$crateroots"
-  ( cd "$crateroots" && bash "$SELF" main pr ) >"$tmp/crateroots.out" 2>"$tmp/crateroots.err"; rc2=$?
+  ( cd "$crateroots" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/crateroots.out" 2>"$tmp/crateroots.err"; rc2=$?
   st_expect 'a renamed crate root check-raw-tx.py itself now accepts is scanned and its violation caught (exit 1)' \
     '1' "$rc2"
   st_expect 'and it names check-raw-tx.py as the guard that failed' \
@@ -2267,7 +2319,7 @@ STUB
   local unsafeallow="$tmp/unsafeallow"
   mkdir -p "$unsafeallow"
   mr_make_unsafe_allowlist_break_repo "$unsafeallow"
-  ( cd "$unsafeallow" && bash "$SELF" main pr ) >"$tmp/unsafeallow.out" 2>"$tmp/unsafeallow.err"; rc2=$?
+  ( cd "$unsafeallow" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/unsafeallow.out" 2>"$tmp/unsafeallow.err"; rc2=$?
   st_expect 'unsafe-allowlist: an unlisted #![allow(unsafe_code)] file introduced by the merge fails (exit 1)' \
     '1' "$rc2"
   st_expect 'and it names check-unsafe-allowlist.sh as the guard that failed' \
@@ -2276,7 +2328,7 @@ STUB
   local migbreak="$tmp/migbreak"
   mkdir -p "$migbreak"
   mr_make_migrations_break_repo "$migbreak"
-  ( cd "$migbreak" && bash "$SELF" main pr ) >"$tmp/migbreak.out" 2>"$tmp/migbreak.err"; rc2=$?
+  ( cd "$migbreak" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/migbreak.out" 2>"$tmp/migbreak.err"; rc2=$?
   st_expect 'migrations-immutable: a shipped migration modified by the merge fails (exit 1)' \
     '1' "$rc2"
   st_expect 'and it names check-migrations-immutable.sh as the guard that failed' \
@@ -2285,7 +2337,7 @@ STUB
   local tauriimport="$tmp/tauriimport"
   mkdir -p "$tauriimport"
   mr_make_tauri_import_near_miss_repo "$tauriimport"
-  ( cd "$tauriimport" && bash "$SELF" main pr ) >"$tmp/tauriimport.out" 2>"$tmp/tauriimport.err"; rc2=$?
+  ( cd "$tauriimport" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/tauriimport.out" 2>"$tmp/tauriimport.err"; rc2=$?
   st_expect 'tauri-import-baseline: the #3724-shaped near-miss (each branch right alone, merge wrong) fails (exit 1)' \
     '1' "$rc2"
   st_expect 'and it names check-tauri-import-baseline.mjs as the guard that failed' \
@@ -2309,7 +2361,7 @@ STUB
   done
 
   local nonode_out
-  nonode_out=$( cd "$nearmiss" && PATH="$nonode" bash "$SELF" main pr 2>&1 ); rc2=$?
+  nonode_out=$( cd "$nearmiss" && PATH="$nonode" bash "$SELF" main pr --synthetic-fixture 2>&1 ); rc2=$?
   st_expect 'node missing is exit 3 (verified nothing), not exit 1 (a guard failed)' '3' "$rc2"
   st_expect 'and it does NOT claim a guard failed on the merged tree' \
     '0' "$(printf '%s' "$nonode_out" | grep -c 'FAILED on the MERGED tree' || true)"
@@ -2320,7 +2372,7 @@ STUB
   # file, a src/ dir) — this re-runs the ORIGINAL clean fixture end to end
   # once more, after all of the above, as a guard against the seeding
   # change itself silently breaking the already-passing case.
-  ( cd "$clean" && bash "$SELF" main pr ) >/dev/null 2>&1; rc2=$?
+  ( cd "$clean" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>&1; rc2=$?
   st_expect 'the clean merge is still exit 0 with all six guards wired in' '0' "$rc2"
 
   # ── 3i. A GUARD THAT EXAMINED NOTHING IS NOT A PASS (#3989) ──────────────
@@ -2334,7 +2386,7 @@ STUB
   local extraroot="$tmp/extraroot"
   mkdir -p "$extraroot"
   mr_make_extra_root_repo "$extraroot"
-  ( cd "$extraroot" && bash "$SELF" main pr ) >"$tmp/extraroot.out" 2>"$tmp/extraroot.err"; rc2=$?
+  ( cd "$extraroot" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/extraroot.out" 2>"$tmp/extraroot.err"; rc2=$?
   st_expect 'a guard that examined ZERO files is exit 3, not the green "guards pass" it used to be' \
     '3' "$rc2"
   st_expect 'and it names BOTH guards that read nothing, not just the fact that something was wrong' \
@@ -2380,7 +2432,7 @@ STUB
     mr_make_clean_repo "$prereq_dir"
     git -C "$prereq_dir" rm -q "$prereq"
     git -C "$prereq_dir" commit --quiet -m "main: $prereq is gone from the merged tree"
-    ( cd "$prereq_dir" && bash "$SELF" main pr ) \
+    ( cd "$prereq_dir" && bash "$SELF" main pr --synthetic-fixture ) \
       >"$tmp/prereq.out" 2>"$tmp/prereq.err"; prereq_rc=$?
     st_expect "a merged tree missing $prereq is exit 3 (nothing verified), not exit 1" \
       '3' "$prereq_rc"
@@ -2413,7 +2465,7 @@ STUB
   st_expect 'fixture sanity: the FIRST target alone is clean, so a guard handed only argv[1] would pass' \
     '0' "$(python3 "$multi/scripts/check-dynamic-sql.py" \
       "$multi/src-tauri/agaric-store/src/first.rs" >/dev/null 2>&1; echo $?)"
-  ( cd "$multi" && bash "$SELF" main pr ) >"$tmp/multi.out" 2>"$tmp/multi.err"; rc2=$?
+  ( cd "$multi" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/multi.out" 2>"$tmp/multi.err"; rc2=$?
   st_expect 'a violation in a NON-FIRST target is still caught (exit 1) — every target is passed, not just one' \
     '1' "$rc2"
   st_expect 'and it names check-dynamic-sql.py, the guard whose later target carried the violation' \
@@ -2426,11 +2478,47 @@ STUB
   # typo in RATCHET_GUARDS, or a newly added guard with no invocation rule,
   # buy a green verdict from something that never ran.
   local unknown_out unknown_rc
-  unknown_out=$(run_one_guard 'no-such-guard.qqq' "$tmp" HEAD 2>&1); unknown_rc=$?
+  # The explicit `0` is the fixture marker. `run_one_guard` does `shift 4`;
+  # with three arguments that shift fails silently (no `shift_verbose`, no
+  # `set -e`) and leaves the positionals unshifted — harmless only because the
+  # `*)` arm never reads "$@". Passing it keeps the arity honest rather than
+  # relying on that.
+  unknown_out=$(run_one_guard 'no-such-guard.qqq' "$tmp" HEAD 0 2>&1); unknown_rc=$?
   st_expect 'a guard with no invocation rule FAILS (returns 1), it does not silently pass' \
     '1' "$unknown_rc"
   st_expect 'and it says so, naming the guard it could not invoke' \
     '1' "$(printf '%s' "$unknown_out" | grep -c "no invocation rule for guard 'no-such-guard.qqq'" || true)"
+
+  # ── 3l-bis. THE ROOTS ASSERTION IS LIVE ON THE REAL MERGE PATH (#4501) ───
+  # `run_one_guard` has ONE call site and `run_merge_check` is what the
+  # workflow invokes per PR, so the fixture marker must NOT be set by default.
+  # The first revision of this change passed `--synthetic-tree`
+  # unconditionally, which left the merged-tree verifier permanently unable to
+  # see the case it exists for — a base that renames a crate root while the PR
+  # does not touch CRATE_ROOTS. Pinned in BOTH directions against one tree, so
+  # dropping the marker and hard-wiring it are each caught:
+  #   * marker absent  -> the guard reports the missing root (non-zero);
+  #   * marker "1"     -> suppressed (zero).
+  # A single-direction test would pass against the exact bug this replaces.
+  local ro_tree="$tmp/rootslive"
+  mkdir -p "$ro_tree/scripts/lib" "$ro_tree/src-tauri/src"
+  # The guard `importlib`-loads check-raw-tx.py at module scope, which in turn
+  # execs lib/guard_file_source.py — the same RATCHET_PREREQS relationship the
+  # merge path already seeds. Without them the import raises and the run exits
+  # 1 for a reason that has nothing to do with crate roots, which would make
+  # the "marker absent" half of this pair pass for the wrong reason.
+  cp "$REPO_ROOT/scripts/check-table-ownership.py" \
+     "$REPO_ROOT/scripts/check-raw-tx.py" "$ro_tree/scripts/"
+  cp "$REPO_ROOT/scripts/lib/guard_file_source.py" "$ro_tree/scripts/lib/"
+  local ro_unflagged_rc ro_flagged_rc
+  ro_unflagged_rc=$( run_one_guard 'check-table-ownership.py' "$ro_tree" HEAD 0 \
+    >/dev/null 2>&1; echo $? )
+  ro_flagged_rc=$( run_one_guard 'check-table-ownership.py' "$ro_tree" HEAD 1 \
+    >/dev/null 2>&1; echo $? )
+  st_expect 'WITHOUT the fixture marker, a missing crate root fails the merged-tree check' \
+    '1' "$ro_unflagged_rc"
+  st_expect 'WITH the fixture marker, the same tree is not judged on our crate roots' \
+    '0' "$ro_flagged_rc"
 
   # ── 3m. THE mjs GUARD IS INVOKED cwd-INDEPENDENTLY ───────────────────────
   # The comment on `run_one_guard`'s `*.mjs` arm claims cwd does not matter
@@ -2465,7 +2553,7 @@ STUB
   local brokenraw="$tmp/brokenraw"
   mkdir -p "$brokenraw"
   mr_make_broken_rawtx_repo "$brokenraw"
-  ( cd "$brokenraw" && bash "$SELF" main pr ) >"$tmp/brokenraw.out" 2>"$tmp/brokenraw.err"; rc2=$?
+  ( cd "$brokenraw" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/brokenraw.out" 2>"$tmp/brokenraw.err"; rc2=$?
   st_expect 'a present-but-unparseable check-raw-tx.py is exit 3 (verified nothing)' '3' "$rc2"
   st_expect "and the interpreter's own cause reaches stderr instead of /dev/null" \
     '1' "$(grep -c 'SyntaxError' "$tmp/brokenraw.err" || true)"
@@ -2495,7 +2583,7 @@ STUB
   # the merge; remove it anyway so the merged worktree's own run is cold.
   rm -rf "$tsnearmiss/.tsbuild"
 
-  ( cd "$tsnearmiss" && bash "$SELF" main pr ) \
+  ( cd "$tsnearmiss" && bash "$SELF" main pr --synthetic-fixture ) \
     >"$tmp/tsnearmiss.out" 2>"$tmp/tsnearmiss.err"; rc2=$?
   st_expect 'the #4078 merge is exit 4 — computed, and the MERGED tree does not typecheck' \
     '4' "$rc2"
@@ -2521,7 +2609,7 @@ STUB
   git -C "$tsboth" add -A
   git -C "$tsboth" commit --quiet -m 'pr: ALSO trips the unsafe allowlist'
   git -C "$tsboth" checkout --quiet main
-  ( cd "$tsboth" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsboth.err"; rc2=$?
+  ( cd "$tsboth" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>"$tmp/tsboth.err"; rc2=$?
   st_expect 'a merge that BOTH breaks a ratchet and fails to typecheck is exit 1, not 4' \
     '1' "$rc2"
   st_expect 'and the guard failure is still named' \
@@ -2536,7 +2624,7 @@ STUB
   mr_make_clean_repo "$tsnopkg"
   git -C "$tsnopkg" rm -q package.json
   git -C "$tsnopkg" commit --quiet -m 'main: package.json is gone from the merged tree'
-  ( cd "$tsnopkg" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsnopkg.err"; rc2=$?
+  ( cd "$tsnopkg" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>"$tmp/tsnopkg.err"; rc2=$?
   st_expect 'a merged tree with no package.json is exit 3, not a green "guards pass"' \
     '3' "$rc2"
   st_expect 'and it says so, rather than blaming a guard' \
@@ -2549,7 +2637,7 @@ STUB
     > "$tsnoscript/package.json"
   git -C "$tsnoscript" add -A
   git -C "$tsnoscript" commit --quiet -m 'main: the typecheck script is gone from package.json'
-  ( cd "$tsnoscript" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsnoscript.err"; rc2=$?
+  ( cd "$tsnoscript" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>"$tmp/tsnoscript.err"; rc2=$?
   st_expect 'a merged tree whose package.json defines no `typecheck` script is exit 3' \
     '3' "$rc2"
   st_expect 'and it is NOT reported as the merge failing to compile (exit 4)' \
@@ -2560,7 +2648,7 @@ STUB
   mr_make_clean_repo "$tsnotsconfig"
   git -C "$tsnotsconfig" rm -q tsconfig.json
   git -C "$tsnotsconfig" commit --quiet -m 'main: tsconfig.json is gone from the merged tree'
-  ( cd "$tsnotsconfig" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsnotsconfig.err"; rc2=$?
+  ( cd "$tsnotsconfig" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>"$tmp/tsnotsconfig.err"; rc2=$?
   st_expect 'a merged tree with no tsconfig.json is exit 3, not exit 4' '3' "$rc2"
 
   # No install to borrow at all. `resolve_node_modules_source` must say so
@@ -2571,7 +2659,7 @@ STUB
   mkdir -p "$tsnonm"
   mr_make_clean_repo "$tsnonm"
   rm -f "$tsnonm/node_modules"
-  ( cd "$tsnonm" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsnonm.err"; rc2=$?
+  ( cd "$tsnonm" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>"$tmp/tsnonm.err"; rc2=$?
   st_expect 'no node_modules to borrow is exit 3 (verified nothing), not exit 4' '3' "$rc2"
   st_expect 'and it names the gap as a call-site one, not a verdict on the merge' \
     '1' "$(grep -c 'no installed `node_modules` to type-check against' "$tmp/tsnonm.err" || true)"
@@ -2589,7 +2677,7 @@ STUB
   mr_make_clean_repo "$tsemptynm"
   rm -f "$tsemptynm/node_modules"
   ln -s "$tmp/empty-install/node_modules" "$tsemptynm/node_modules"
-  ( cd "$tsemptynm" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/tsemptynm.err"; rc2=$?
+  ( cd "$tsemptynm" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>"$tmp/tsemptynm.err"; rc2=$?
   st_expect 'an EMPTY node_modules is also exit 3, not a tree of phantom type errors' \
     '3' "$rc2"
 
@@ -2616,7 +2704,7 @@ STUB
   local lockdel="$tmp/lockfile-deleted-by-merge"
   mkdir -p "$lockdel"
   mr_make_lockfile_deleted_repo "$lockdel"
-  ( cd "$lockdel" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/lockdel.err"; rc2=$?
+  ( cd "$lockdel" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>"$tmp/lockdel.err"; rc2=$?
   st_expect 'a merge that DELETES package-lock.json is never a silent pass — exit 3, not 0' \
     '3' "$rc2"
   st_expect 'and the cause is named as the merged tree having no lockfile' \
@@ -2649,7 +2737,7 @@ STUB
   mkdir -p "$mrnm"
   mr_make_clean_repo "$mrnm"
   rm -f "$mrnm/node_modules"
-  ( cd "$mrnm" && MR_NODE_MODULES="$REPO_ROOT/node_modules" bash "$SELF" main pr ) \
+  ( cd "$mrnm" && MR_NODE_MODULES="$REPO_ROOT/node_modules" bash "$SELF" main pr --synthetic-fixture ) \
     >/dev/null 2>"$tmp/mrnm.err"; rc2=$?
   st_expect 'MR_NODE_MODULES, when set, is actually honored as the borrow source' \
     '0' "$rc2"
@@ -2672,7 +2760,7 @@ STUB
   git -C "$missingskip" rm -q -r scripts
   git -C "$missingskip" commit --quiet -m 'the guard scripts are gone too'
   rm -f "$missingskip/node_modules"
-  ( cd "$missingskip" && bash "$SELF" main pr ) >/dev/null 2>"$tmp/missingskip.err"; rc2=$?
+  ( cd "$missingskip" && bash "$SELF" main pr --synthetic-fixture ) >/dev/null 2>"$tmp/missingskip.err"; rc2=$?
   st_expect 'missing ratchet guards still exits 3 — the gate must not change this verdict' \
     '3' "$rc2"
   st_expect 'and the typecheck stage was SKIPPED, not invoked-and-ignored (no node_modules diagnostic reaches stderr)' \
@@ -2706,6 +2794,22 @@ SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]
 REPO_ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 
 main() {
+  # `--synthetic-fixture` marks a tree THIS script's own self-test built:
+  # deliberately not this repository (`src-tauri/source`, `src-tauri/extra/src`).
+  # Scanned out of argv rather than read from the environment, and never
+  # defaulted on: an assertion that a stray exported variable can switch off is
+  # the class of failure #4501 exists to end, and this one guards a check whose
+  # whole job is noticing that a walk stopped reaching anything.
+  local synthetic=0
+  local -a positional=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --synthetic-fixture) synthetic=1 ;;
+      *) positional+=("$arg") ;;
+    esac
+  done
+  set -- "${positional[@]+"${positional[@]}"}"
   local base_ref="${1:-}" head_sha="${2:-}"
   if [ -z "$base_ref" ] || [ -z "$head_sha" ]; then
     echo "pr-merge-result-check: usage: $0 <base-ref> <head-sha>" >&2
@@ -2714,7 +2818,7 @@ main() {
     # invocation must be red.
     exit 3
   fi
-  run_merge_check "$base_ref" "$head_sha"
+  run_merge_check "$base_ref" "$head_sha" "$synthetic"
 }
 
 if [ "${1:-}" = "--self-test" ]; then

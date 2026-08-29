@@ -29,6 +29,19 @@ The ratchet only applies back-pressure to NEW cross-crate writes:
     removed, regenerate the baseline to re-anchor future additions
     against the new, lower floor:
         python3 scripts/check-table-ownership.py --update-baseline
+  * A declared CRATE_ROOTS directory that does not exist FAILS (#4501). A
+    renamed or misspelled segment used to narrow the walk to nothing in
+    silence — the guard exited 0 over a tree it had stopped reading. Under
+    `--update-baseline` this REFUSES rather than warning: re-anchoring against
+    a narrowed walk deletes every count under the vanished root and reports
+    success, so the command that fixes the finding would have destroyed it.
+        python3 scripts/check-table-ownership.py --synthetic-tree
+    says "this tree is deliberately not this repository" and is the ONLY way
+    to suppress that check. `pr-merge-result-check.sh` passes it for the
+    synthetic fixture repos its self-test builds, and only for those — never
+    on a real merge, where the assertion is the point. It is rejected
+    alongside `--update-baseline`, which would re-anchor from the surviving
+    roots only.
 
 OWNER choices (see src-tauri/migrations/AGENTS.md "Table ownership"):
 `peer_refs` and all derived caches are store-owned; `blocks` is owned by
@@ -71,7 +84,9 @@ its annotations and a newly-appearing pair is emitted bare. Running
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import re
 import sys
 from collections import defaultdict
@@ -303,11 +318,33 @@ def count_writes_in_text(text: str) -> dict[str, list[int]]:
     return hits
 
 
+def missing_crate_roots() -> list[str]:
+    """Declared CRATE_ROOTS that are not directories in this checkout.
+
+    #4501: `_crate_files()` used to `continue` past a missing root, so a
+    renamed or misspelled crate segment narrowed the walk to nothing with no
+    signal at all — the guard reporting success over a tree it had stopped
+    reading. That is the class this repo has now hit seven times, and it is
+    the same construct removed from `check-space-filter-drift` in #4508.
+
+    Reported rather than filtered: a root that vanished is a broken
+    declaration, not an absent one, and the whole point is that it must be
+    loud.
+    """
+    return [
+        str(root.relative_to(REPO_ROOT))
+        for _crate, root in CRATE_ROOTS
+        if not root.is_dir()
+    ]
+
+
 def _crate_files() -> list[tuple[str, Path]]:
     """(crate, path) for every non-test production .rs under a crate root."""
     result: list[tuple[str, Path]] = []
     for crate, root in CRATE_ROOTS:
         if not root.is_dir():
+            # Skipped here only so the walk does not raise; the run is failed
+            # by `missing_crate_roots()` in `main()`, which names the root.
             continue
         for p in sorted(root.rglob("*.rs")):
             rel = str(p.relative_to(REPO_ROOT))
@@ -637,22 +674,220 @@ def run_self_test() -> int:
             "BaselineFormatError"
         )
 
+    # --- #4501: a declared crate root that vanished must be LOUD ----------
+    # `_crate_files()` used to `continue` past a missing root, so a renamed or
+    # misspelled segment narrowed the walk to nothing and the guard exited 0
+    # over a tree it had stopped reading. Reproduced before fixing: with
+    # `agaric-store` misspelled the whole run passed silently.
+    #
+    # Asserted by swapping the module-level list rather than the filesystem —
+    # the constant is what a careless edit actually breaks, and a temp
+    # directory could not reproduce a MISSPELLING.
+    # Counted, not declared. This was `root_cases = 5`, and adding the
+    # mutual-exclusion assertion below left the literal untouched — the suite
+    # kept printing the old total while testing one thing more. A count
+    # maintained by hand beside the assertions it counts is the same
+    # hand-synchronised-pair problem #4501 is about, in miniature.
+    root_cases = 0
+    _saved_roots = CRATE_ROOTS[:]
+    try:
+        # A misspelled segment ALONGSIDE present siblings — the realistic
+        # shape, and the one the exemption below must not swallow. An earlier
+        # version of this case used the misspelled root ALONE, which the
+        # exemption correctly treats as "not this repo"; the suite caught it.
+        globals()["CRATE_ROOTS"] = [
+            ("store", REPO_ROOT / "src-tauri" / "agaric-stores" / "src"),
+            ("app", REPO_ROOT / "src-tauri" / "src"),
+        ]
+        missing = missing_crate_roots()
+        root_cases += 1
+        if missing != ["src-tauri/agaric-stores/src"]:
+            failures.append(
+                f"a misspelled crate root was not reported: {missing!r}"
+            )
+        # `--synthetic-tree` suppresses the assertion, and ONLY it does.
+        # Asserted through `main()` rather than the helper, because the flag is
+        # handled there and a helper-level test would not notice the WIRING
+        # being dropped.
+        #
+        # Everything downstream of the roots check is stubbed out, and that is
+        # load-bearing rather than tidiness. An earlier revision let `main()`
+        # run on past the check into `compute_counts()` + `read_baseline()` +
+        # the violation comparison, against the real tree and the real
+        # baseline. The outcome then depended on repository state, not on the
+        # code under test: a commit leaving `table-ownership-baseline.txt`
+        # malformed does not match this hook's `files` regex, so the real guard
+        # is deselected and never reports — but this self-test hook is
+        # `always_run`, so `read_baseline()` raises, `main()` returns 1, and the
+        # suite blames "--synthetic-tree did not suppress the roots assertion".
+        # A test that names the wrong subsystem is worse than no test. It also
+        # made every commit pay two extra whole-tree scans.
+        # `write_baseline` is stubbed alongside the readers, and that is the
+        # load-bearing part rather than symmetry. The mutual-exclusion call
+        # below runs with the MISSPELLED roots installed, so it is safe only
+        # because the arm it is testing returns 2 first. If that arm ever
+        # regresses, this hook — which is `always_run` — would rewrite the
+        # tracked `src-tauri/table-ownership-baseline.txt` from the narrowed
+        # walk on every commit, with stderr captured: the destruction this
+        # change exists to prevent, performed by the assertion that tests for
+        # it, silently. A test must not depend on the code under test to avoid
+        # doing damage.
+        _saved_counts = globals()["compute_counts"]
+        _saved_read = globals()["read_baseline"]
+        _saved_write = globals()["write_baseline"]
+        _wrote: list[object] = []
+        globals()["compute_counts"] = lambda: ({}, {})
+        globals()["read_baseline"] = lambda: {}
+        globals()["write_baseline"] = lambda *a, **k: _wrote.append(a)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                globals()["CRATE_ROOTS"] = _saved_roots
+                real_roots_flagged = main(["--synthetic-tree"])
+                globals()["CRATE_ROOTS"] = [
+                    ("store", REPO_ROOT / "src-tauri" / "agaric-stores" / "src"),
+                    ("app", REPO_ROOT / "src-tauri" / "src"),
+                ]
+                missing_root_flagged = main(["--synthetic-tree"])
+                both_rc = main(["--synthetic-tree", "--update-baseline"])
+        finally:
+            globals()["compute_counts"] = _saved_counts
+            globals()["read_baseline"] = _saved_read
+            globals()["write_baseline"] = _saved_write
+        root_cases += 1
+        if real_roots_flagged != 0:
+            failures.append(
+                "--synthetic-tree changed the verdict on intact roots"
+            )
+        root_cases += 1
+        if missing_root_flagged != 0:
+            failures.append(
+                "--synthetic-tree did not suppress a MISSING root"
+            )
+        # The two flags together must REFUSE, not re-anchor. Suppressing the
+        # roots check and then rebuilding the baseline from the surviving
+        # roots is how the finding gets destroyed by the flag that exists to
+        # say it does not apply. Asserted on the exit code AND on the writer
+        # never being reached, because only the second notices a future
+        # revision that refuses after writing.
+        root_cases += 1
+        if _wrote:
+            failures.append(
+                "--synthetic-tree --update-baseline reached write_baseline "
+                f"({len(_wrote)} call(s)) — it must refuse BEFORE writing"
+            )
+        root_cases += 1
+        if both_rc != 2:
+            failures.append(
+                "--synthetic-tree --update-baseline was not refused "
+                f"(exit {both_rc})"
+            )
+        # stderr captured: this call is SUPPOSED to fail, and its diagnostic
+        # in the middle of a passing suite reads like a real failure.
+        with contextlib.redirect_stderr(io.StringIO()):
+            unflagged = main([])
+        root_cases += 1
+        if unflagged == 0:
+            failures.append(
+                "without --synthetic-tree a missing root did not fail the run"
+            )
+        globals()["CRATE_ROOTS"] = _saved_roots
+        root_cases += 1
+        if missing_crate_roots():
+            failures.append(
+                "the real CRATE_ROOTS reported a missing root: "
+                f"{missing_crate_roots()!r}"
+            )
+    finally:
+        globals()["CRATE_ROOTS"] = _saved_roots
+
     if failures:
         print("check-table-ownership self-test FAILED:", file=sys.stderr)
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print(
-        f"check-table-ownership self-test passed "
-        f"({len(regex_cases) + 2 + len(exclusion_cases) + annotation_cases} "
-        f"cases)."
+    total = (
+        len(regex_cases)
+        + 2
+        + len(exclusion_cases)
+        + annotation_cases
+        + root_cases
     )
+    print(f"check-table-ownership self-test passed ({total} cases).")
     return 0
+
+
+ROOT_MISSING_HINT = (
+    "    -> #4501: a CRATE_ROOTS entry in scripts/check-table-ownership.py\n"
+    "       names a directory that does not exist. Fix the LIST, not the\n"
+    "       baseline: the walk skips a missing root, so re-anchoring here\n"
+    "       would drop every count under it and report success. If the crate\n"
+    "       was genuinely retired, remove its root from CRATE_ROOTS in the\n"
+    "       same commit, then re-anchor."
+)
 
 
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
+    # #4501: before anything reads or writes the baseline. A missing root is
+    # checked on BOTH paths, and refuses the re-anchor rather than warning,
+    # for the reason the hint gives: `compute_baseline()` walks the surviving
+    # roots only, so re-anchoring against a narrowed walk deletes every count
+    # under the vanished root and exits 0 — the finding destroyed by the
+    # command prescribed to fix it.
+    # `--synthetic-tree` is how a caller says "this tree is deliberately not
+    # this repository". `pr-merge-result-check.sh` builds synthetic fixture
+    # repos with roots like `src-tauri/source` and runs the ratchet guards
+    # against them; asserting our roots there fails every fixture merge and
+    # says nothing true about the merge under test.
+    #
+    # An explicit FLAG, not an env var and not an inferred condition:
+    #   * inference does not work. I tried "report only when at least one
+    #     declared root exists", on the theory that a misspelling leaves the
+    #     siblings present while a foreign tree has none of them. The fixtures
+    #     create `src-tauri/src`, so they have exactly one — indistinguishable
+    #     from four crates genuinely being deleted. Nineteen assertions still
+    #     failed.
+    #   * an env var can arrive from anywhere, including a CI runner that
+    #     inherited it by accident; a flag is visible at the call site and has
+    #     to be typed by whoever meant it.
+    synthetic = "--synthetic-tree" in argv
+    # The two flags together are a hard error, not a quiet re-anchor.
+    # `--synthetic-tree` suppresses the roots check; `--update-baseline` then
+    # rebuilds from `compute_counts()`, which walks the SURVIVING roots only —
+    # so the combination writes a baseline with every count under the vanished
+    # root deleted and exits 0. That is precisely the destruction
+    # ROOT_MISSING_HINT exists to prevent, reached by way of the flag that
+    # exists to say "these roots do not apply here". No call site passes both
+    # today; refusing keeps it that way.
+    if synthetic and "--update-baseline" in argv:
+        print(
+            "--synthetic-tree and --update-baseline are mutually exclusive: "
+            "the first says\nthis tree's crate roots do not apply, the second "
+            "rewrites the baseline FROM those\nroots. Together they would "
+            "silently drop every count under a root that is missing.",
+            file=sys.stderr,
+        )
+        return 2
+    missing = [] if synthetic else missing_crate_roots()
+    if missing:
+        if "--update-baseline" in argv:
+            print(
+                "Refusing to re-anchor: a declared CRATE_ROOTS entry is "
+                "missing.\n",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Table-ownership guard (#2895) — a declared CRATE_ROOTS "
+                "directory does not exist:\n",
+                file=sys.stderr,
+            )
+        for rel in missing:
+            print(f"  {rel}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(ROOT_MISSING_HINT, file=sys.stderr)
+        return 1
     if "--update-baseline" in argv:
         write_baseline(compute_baseline())
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
