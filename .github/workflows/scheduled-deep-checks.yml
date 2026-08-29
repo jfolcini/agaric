@@ -1465,12 +1465,10 @@ jobs:
         # from cold, indefinitely, and reported `ok` for doing so.
         #
         # `restore`/`save` are split rather than using one `actions/cache`.
-        # NOT because a combined action would miss the minimisation — it would
-        # not: its post step re-globs and tars `path` from disk at post-job
-        # time, so cmin's result WOULD be captured (the action carries only the
-        # key and the exact-hit flag forward in state, never file contents).
-        # An earlier revision of this comment claimed otherwise; it was wrong,
-        # and the reasons that actually hold are:
+        # Not for the tempting reason: a combined action's post step re-globs
+        # and tars `path` from disk at post-job time, so cmin's result WOULD be
+        # captured (only the key and exact-hit flag ride forward in state). The
+        # reasons that actually hold are:
         #   * the save point is explicit and ordered — it happens HERE, before
         #     the artifact upload below, not in an implicit post-job step whose
         #     position relative to other post steps is not ours to choose;
@@ -1640,6 +1638,15 @@ jobs:
 
       - name: Minimise the corpus, then persist it (#4496)
         id: corpus-cmin
+        # The one step here with no time bound of its own: the fuzz step caps
+        # itself with `-max_total_time`, but the merge re-executes every corpus
+        # input with only `-rss_limit_mb` to bound it. As the corpus grows this
+        # is the likeliest thing to push the job into its 60-minute timeout —
+        # and a job timeout is a CANCELLATION, which correctly skips the save,
+        # so the symptom would be a corpus that silently stops accumulating:
+        # the exact failure mode this change exists to remove. A step-level
+        # bound makes it a loud, attributable failure instead.
+        timeout-minutes: 20
         # Condition is `!cancelled() && steps.corpus-cache.outcome == 'success'`
         # (spelled out below). A crash in ONE target still leaves the other four
         # with a run's worth of new coverage, and discarding that because the
@@ -1719,7 +1726,11 @@ jobs:
             echo "no target manifest at $manifest — skipping cmin"
             exit 0
           fi
-          while read -r target; do
+          # `|| [ -n "$target" ]` so a final unterminated line is not dropped.
+          # Safe today — the producer is `printf '%s\n'`, which always
+          # terminates — but producer and consumer are 130 lines apart, and
+          # removing the coupling costs nothing.
+          while read -r target || [ -n "$target" ]; do
             [ -n "$target" ] || continue
             before=$(find "corpus/$target" -type f 2>/dev/null | wc -l || true)
             # `< /dev/null`: this loop's stdin IS the manifest (`done < ...`).
