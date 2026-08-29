@@ -17,8 +17,25 @@
  * empirical sweep this issue is about) — it backs the one section D
  * explicitly names as having an uncommitted 4.4M-case sweep behind it.
  *
- * SCOPE — this harness covers only `scanLiteralFolded`'s index-guard
- * equivalence claims (section D). It does NOT attempt the module's other
+ * #4507 — a SECOND sweep now lives in this file (see the `foldForMatch`
+ * describe at the bottom): the exhaustive check backing section F's claim
+ * that folding a string whole and folding it code point at a time agree once
+ * `ς` is collapsed onto `σ`. That premise is what makes the fast/slow path
+ * choice at the `haystack.length === text.length` branch in
+ * `src/lib/in-page-find/matcher.ts` a pure optimisation, and therefore what
+ * makes that branch's `[ConditionalExpression] -> false` and its
+ * `[BlockStatement] -> {}` twin — both meaning "always take the slow path" —
+ * equivalent rather than merely untested. It was NOT true before #4507, which
+ * is why those two survived as a live bug rather than as an accepted gap.
+ *
+ * Named by construct, not by `line:col`. The report that raised them said
+ * `271:7` / `271:40`; the branch is already elsewhere, moved by this very
+ * change. That is the same lesson the ledger in `matcher.test.ts` now opens
+ * with, and it would be a poor showing for this file to restate the numbers
+ * the same commit invalidates.
+ *
+ * SCOPE — apart from that, this harness covers only `scanLiteralFolded`'s
+ * index-guard equivalence claims (section D). It does NOT attempt the module's other
  * empirical claims (the exhaustive 0x110000 code-point scan for "U+0130 is
  * the only expanding fold", or section E's `327:19`/`363:27`) — those
  * are either a one-time enumeration better re-run standalone than folded
@@ -42,7 +59,9 @@
  * edit now fails the gate, which is the signal to re-sync that inlined
  * literal and update the pin.
  *
- * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldCodePoint sha256=191d915338117d9bae421defafb4f44a5c6d74c12ad5515d66ef875f18cf87ab
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldCodePoint sha256=27068332538b97f803845a294d3dacb5ce60f4eb05522dca904c8f7ae18da0b3
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldForMatch sha256=fd252bfb7c92699c2a335fcd43b637736d7d9e9812dd71c27ae662d22078998b
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#FINAL_SIGMA_RE sha256=b3551818575e60e5ae5b4b013000e0680855db365291f6058a1dade9e35b6d7e
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#scanLiteralFolded sha256=e368c19ed972375248269fbaac7ac3446f23cdffe793eb02cf4349b9c9bc3baa
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#isWordCodePoint sha256=1187f44517fcbf5a2ffd1e10a8518fc0e20e2b458faa3e784a488fb074ebaf7c
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#WORD_RE sha256=a51922e9c0787f4eb305db8a68ebbc7e91f2ebb388fa091a7261e9ff2830ba26
@@ -97,8 +116,17 @@ function mulberry32(seed: number): () => number {
 //    inlines the pinned `WORD_RE` pattern, see the header) ────────────────
 
 function foldCodePoint(ch: string): string {
-  const f = ch.toLowerCase()
-  return f === 'ς' ? 'σ' : f
+  return foldForMatch(ch)
+}
+
+// Clone of `foldForMatch` (#4507), which `foldCodePoint` now delegates to.
+// INLINES the `FINAL_SIGMA_RE` pattern rather than referencing a constant, the
+// same way `isWordCodePoint` above inlines `WORD_RE` — so the clone stays
+// byte-faithful to what that constant currently is, and a change to the regex
+// ALONE fires the gate (both are pinned below).
+function foldForMatch(s: string): string {
+  const lowered = s.toLowerCase()
+  return lowered.indexOf('ς') === -1 ? lowered : lowered.replace(/ς/g, 'σ')
 }
 
 function isWordCodePoint(cp: number | undefined): boolean {
@@ -416,7 +444,11 @@ function randomString(rand: () => number, maxLen: number): string {
 }
 
 /** Fold `s` the same code-point-by-code-point way `compileQuery` folds a needle. */
-function foldWhole(s: string): string {
+// Renamed from `foldWhole` (#4507): it folds one code point at a time and
+// concatenates, which is the OPPOSITE of folding a string whole — precisely
+// the distinction the second sweep below turns on, so the misleading name
+// could not stay once both foldings appear in one file.
+function foldPerCodePoint(s: string): string {
   let out = ''
   for (const ch of s) out += foldCodePoint(ch)
   return out
@@ -452,7 +484,7 @@ function runSweep(): SweepResult {
   for (let i = 0; i < CASES; i++) {
     const text = randomString(rand, 12)
     const needleRaw = randomString(rand, 4)
-    const foldedNeedle = foldWhole(needleRaw)
+    const foldedNeedle = foldPerCodePoint(needleRaw)
     const wholeWord = rand() < 0.5
     if (foldedNeedle.length === 0) continue
 
@@ -507,4 +539,180 @@ describe('scanLiteralFolded equivalence-ledger sweep (#3804 harness for matcher.
     expect(r.diffEnd).toBe(0)
     expect(r.diffInnerOr).toBe(0)
   })
+})
+
+// ── #4507: whole-string vs per-code-point folding ───────────────────────────
+//
+// `matcher.ts` picks between two literal paths at the `haystack.length ===
+// text.length` branch: the fast one folds the whole string with
+// `foldForMatch`, the slow one folds code point at a time through
+// `foldCodePoint` (which delegates to the same function). Those two agree only
+// if `foldForMatch` distributes over code points — and it does NOT distribute
+// on `toLowerCase()` alone, because Unicode's Final_Sigma rule is
+// context-sensitive: `'ΑΣ'.toLowerCase()` is `'ας'` while folding `'Α'` and
+// `'Σ'` separately gives `'ασ'`.
+//
+// Collapsing `ς` onto `σ` removes exactly that discrepancy, and Final_Sigma is
+// the only context-sensitive mapping in the default (locale-free) case-mapping
+// table — so after the collapse the two folds agree everywhere. That is an
+// empirical claim about the host's Unicode tables, not a deduction, so it is
+// swept here rather than asserted in a comment.
+
+/** The pre-#4507 fold, with no sigma collapse — the validation control. */
+function foldWithoutSigmaCollapse(s: string): string {
+  return s.toLowerCase()
+}
+
+function foldPerCodePointWithoutSigmaCollapse(s: string): string {
+  let out = ''
+  for (const ch of s) out += foldWithoutSigmaCollapse(ch)
+  return out
+}
+
+describe('foldForMatch distributes over code points (#4507 — the premise behind the fast/slow path branch)', () => {
+  it('agrees with per-code-point folding for every code point in twelve contexts, and the control fires in both families', () => {
+    // Every assigned code point (lone surrogates skipped — they cannot appear
+    // in a well-formed string), each placed in twelve contexts chosen to cover
+    // Final_Sigma's actual trigger: a preceding cased letter with no following
+    // one. A bare `Σ` does NOT trigger it, which is why the empty context
+    // alone would prove nothing.
+    // Two families, and the second exists because the first is not enough.
+    //
+    // ADJACENT contexts alone would UNDER-test this. Final_Sigma does not look
+    // only at the immediately preceding character: it skips backwards over
+    // Case_Ignorable code points to find the preceding cased letter, and
+    // forwards the same way. So `'Α.Σ'` lowercases WHOLE to `'α.ς'` while
+    // per-code-point folding gives `'α.σ'` — a discrepancy no adjacent-only
+    // context constructs. (Verified: a full stop, two middle dots, a
+    // combining acute and a soft hyphen as the separator all produce it.)
+    //
+    // It does not change the verdict — the ς collapse erases that discrepancy
+    // exactly as it erases the adjacent one — but a sweep that reports "0
+    // differing" while structurally unable to build the harder case is a
+    // number that reads as stronger than it is, which is the failure this
+    // whole file exists to avoid.
+    const contexts: Array<[string, string]> = [
+      // Adjacent.
+      ['', ''],
+      ['Α', ''],
+      ['', 'Α'],
+      ['Α', 'Α'],
+      ['', ' '],
+      [' ', ' '],
+      // Separated from the cased letter by Case_Ignorable characters, which is
+      // what Final_Sigma actually scans past. The combining acute and soft
+      // hyphen are written as ESCAPES deliberately: `\u0391\u0301` and the
+      // precomposed U+0386 render as the same glyph, and prose here once named
+      // the precomposed form — which is a single cased letter, i.e. an ADJACENT
+      // context that would not count toward this family at all.
+      //
+      // Four separators across six contexts: a full stop, two middle dots,
+      // U+0301 COMBINING ACUTE and U+00AD SOFT HYPHEN. The full stop appears in
+      // three of them, varying what FOLLOWS the sigma.
+      ['Α.', ''],
+      ['Α··', ''],
+      ['Α\u0301', ''],
+      ['Α\u00AD', ''],
+      ['Α.', '.Α'],
+      ['Α.', ' '],
+    ]
+
+    let checked = 0
+    let differing = 0
+    let controlDiffering = 0
+    // Counted separately so the SEPARATED family is pinned in its own right.
+    // Without it the six separated contexts could be deleted and every
+    // assertion below would still pass — `checked` would fall to 6,672,384
+    // (still over its old floor) and `controlDiffering` to 1 (still over zero)
+    // — silently restoring the exact structural weakness the comment above
+    // warns about. A guard that survives the removal of the thing it guards is
+    // not a guard, which is the same defect this change fixes one file over.
+    let controlDifferingSeparated = 0
+    const examples: string[] = []
+
+    for (let cp = 0; cp < 0x110000; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue
+      const ch = String.fromCodePoint(cp)
+      for (const [pre, post] of contexts) {
+        const text = pre + ch + post
+        checked++
+        if (foldForMatch(text) !== foldPerCodePoint(text)) {
+          differing++
+          if (examples.length < 8) {
+            examples.push(
+              `U+${cp.toString(16).toUpperCase().padStart(4, '0')} ${JSON.stringify(text)}: ` +
+                `whole=${JSON.stringify(foldForMatch(text))} ` +
+                `perCodePoint=${JSON.stringify(foldPerCodePoint(text))}`,
+            )
+          }
+        }
+        if (foldWithoutSigmaCollapse(text) !== foldPerCodePointWithoutSigmaCollapse(text)) {
+          controlDiffering++
+          // `pre.length > 1` splits the families: every adjacent context has a
+          // `pre` of '' or one character, every separated one is a cased letter
+          // plus at least one Case_Ignorable.
+          if (pre.length > 1) controlDifferingSeparated++
+        }
+      }
+    }
+
+    console.log(`
+[in-page-find matcher foldForMatch distribution sweep]
+  (code point, context) cases checked:            ${checked}
+  differing with the sigma collapse (expect 0):   ${differing}
+  differing WITHOUT it — control (expect 6):      ${controlDiffering}
+  of those, in SEPARATED contexts (expect 5):     ${controlDifferingSeparated}
+${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
+`)
+
+    // The control must fire, or a sweep finding "0 differences" would prove
+    // nothing — it would be consistent with the sweep never reaching a
+    // context-sensitive mapping at all.
+    // Pinned to the EXACT count, not `> 0`. Final_Sigma fires for U+03A3 in
+    // exactly six of the twelve contexts — those with a preceding cased letter
+    // and no following one — so 6 is derived, not a recorded observation, and a
+    // change to the context set has to be a deliberate edit here rather than a
+    // silently absorbed one.
+    //
+    // What 6 is a fact ABOUT, precisely: this context set, not Unicode. The
+    // sweep varies the CODE POINT under test while holding the twelve contexts
+    // fixed, so it establishes "Sigma is context-sensitive in these twelve" and
+    // "no other code point is, in these twelve". It never sweeps arbitrary code
+    // points as the SEPARATOR before a Sigma, so it is not a general statement
+    // about which separators trigger Final_Sigma.
+    //
+    // That does not weaken the result the sweep exists for. `differing === 0`
+    // holds because the ς→σ collapse neutralises Final_Sigma whatever the
+    // context — the collapse is applied after the fold, so no context can
+    // survive it. The control count is the part that is set-relative, and
+    // anyone editing `contexts` should expect to re-derive 6 and 5 by hand
+    // rather than to read them off a run.
+    expect(controlDiffering).toBe(6)
+    // And the separated family must contribute, or the six contexts that make
+    // this sweep stronger than its first revision could be deleted with every
+    // other assertion still green.
+    //
+    // `toBe(5)`, not `> 0` — which was the loose form the paragraph above
+    // argues against, used in the very assertion making the argument. 5 is
+    // derived like the 6: of the six separated contexts, Final_Sigma fires in
+    // five and is suppressed in one. The five are the four distinct
+    // Case_Ignorable separators (`.`, `··`, U+0301 COMBINING ACUTE, U+00AD SOFT
+    // HYPHEN) plus the trailing-space variant of the full stop. The sixth,
+    // `['Α.','.Α']`, does not fire: a cased letter follows past the ignorables
+    // and suppresses the rule.
+    expect(controlDifferingSeparated).toBe(5)
+    expect(contexts.length).toBe(12)
+    // Derived from `contexts.length`, not a repeated literal — the line above
+    // is what pins that number, and restating it here would let the two drift.
+    expect(checked).toBe(contexts.length * (0x110000 - 2048))
+    // The claim under test.
+    expect(examples).toEqual([])
+    expect(differing).toBe(0)
+    // Explicit timeout: this sweep is ~13M cases, roughly 60x the largest
+    // other harness here, and `vitest.config.ts` sets a 20s default that a
+    // slower machine would blow through. Harnesses sit outside the vitest
+    // `include` globs so this can never redden CI — but a harness that cannot
+    // be run by its own documented command is not a re-runnable proof, which
+    // is the entire point of committing it (#3804).
+  }, 300_000)
 })

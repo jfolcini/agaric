@@ -220,7 +220,7 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
   // range over. A length-changing fold breaks that mapping. If in-page find
   // ever needs diacritic insensitivity it needs an offset-preserving fold,
   // not this helper.
-  const needle = opts.caseSensitive ? query : query.toLowerCase()
+  const needle = opts.caseSensitive ? query : foldForMatch(query)
   const wholeWord = opts.wholeWord
   const caseSensitive = opts.caseSensitive
   // Per-code-point-folded needle for the slow path (`scanLiteralFolded`),
@@ -229,10 +229,45 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
   // per-text-node scan. Skipped for `caseSensitive` queries, which never
   // reach the slow path. See the note in `scanLiteral` for why a
   // code-point fold, not `toLowerCase()`, is required here.
+  //
+  // #4507 note: this is now provably EQUAL to `needle` above. The distribution
+  // property that change establishes — whole-string folding and per-code-point
+  // folding agree once `ς` is collapsed — is exactly the statement that this
+  // loop and `query.toLowerCase()` cannot differ. The two needles, the dual
+  // plumbing through `scanLiteral`, and the DEV assertion there are therefore
+  // guarding a distinction that no longer exists.
+  //
+  // Kept deliberately, as defence in depth rather than by oversight. That
+  // property is EMPIRICAL — it holds because Final_Sigma is the only
+  // context-sensitive mapping in the locale-free case-mapping table, a fact
+  // about the host's Unicode tables and not a theorem. Collapsing the two
+  // needles would make the code correct only for as long as that stays true.
   let foldedNeedle = ''
   if (!caseSensitive) {
     for (const ch of query) {
       foldedNeedle += foldCodePoint(ch)
+    }
+    // ...and THIS is what notices if it stops being true. One comparison per
+    // compile (compile-once, not per text node). The committed sweep in
+    // `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`
+    // proves the premise exhaustively but lives outside vitest's `include`
+    // globs by the #3804 convention, so this assertion is the only guard on it
+    // that runs in CI.
+    //
+    // It must compare `foldedNeedle` against `needle`, not merely check that
+    // either is non-empty: a broken premise shows up as the two folds
+    // DISAGREEING, and it surfaces on the fast path through the wrong
+    // `needle` — so an emptiness check, or one sited on the slow path, would
+    // stay silent through exactly the failure this is for.
+    if (import.meta.env.DEV && foldedNeedle !== needle) {
+      throw new Error(
+        `in-page-find: the per-code-point fold and the whole-string fold disagree ` +
+          `(${JSON.stringify(foldedNeedle)} vs ${JSON.stringify(needle)}). Since #4507 ` +
+          `both go through foldForMatch, whose ς/σ collapse removes the only ` +
+          `context-sensitive mapping in the locale-free table, so these cannot differ — ` +
+          `unless the host's Unicode tables gained another one. The fast/slow path ` +
+          `branch is a pure optimisation only while this holds.`,
+      )
     }
   }
   return {
@@ -254,8 +289,10 @@ function scanLiteral(
 ): Array<{ start: number; end: number }> {
   if (caseSensitive) return scanIndexOf(text, text, needle, wholeWord)
   // Locale-independent fold — must stay in lockstep with the needle fold
-  // in `compileQuery` (see the note there).
-  const haystack = text.toLowerCase()
+  // in `compileQuery` (see the note there). Both go through `foldForMatch`,
+  // which is also what `foldCodePoint` folds with, so the fast and slow paths
+  // cannot disagree on sigma (#4507).
+  const haystack = foldForMatch(text)
   // Fast path only when folding preserved the code-unit length. Lowercase
   // mappings never contract (1→N, N ≥ 1), so equal total length means every
   // code point folded 1:1 and offsets into `haystack` are valid offsets
@@ -265,9 +302,13 @@ function scanLiteral(
   // shifts and the indexOf results would point at the wrong span in the
   // original — fall through to the code-point walk that carries an
   // explicit offset map. The check stays length-based rather than
-  // U+0130-specific: it is also what keeps the fast path correct for
-  // context-sensitive but length-preserving folds such as Greek final
-  // sigma, which per-code-point folding would get wrong.
+  // U+0130-specific so that it keeps holding if the fold ever gains another
+  // expanding mapping.
+  //
+  // This branch is a pure OPTIMISATION and nothing else: since #4507 both
+  // sides fold through `foldForMatch`, so the slow path computes the same
+  // spans as the fast one for every input reaching here. It selects the
+  // cheaper route, never a different answer (#4507, session-1425).
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
@@ -332,32 +373,104 @@ function scanIndexOf(
 }
 
 /**
- * Fold ONE code point for the slow path, canonicalising Greek sigma.
+ * Fold ONE code point, for the slow path's offset map.
  *
- * `toLowerCase()` on a single code point is context-free, so `Σ` always
- * yields the mid-word `σ` (U+03C3) and never the word-final `ς` (U+03C2)
- * that whole-string folding would produce. Folding both sides
- * per-code-point makes them agree on `Σ`, but on its own it does NOT make
- * them agree on text that already CONTAINS a final `ς` — natural Greek
- * orthography — because `'ς'.toLowerCase()` is `'ς'`. Searching `ΟΔΟΣ`
- * over `οδος` would then fold to `οδοσ` vs `οδος` and silently miss.
+ * A one-line delegation to [`foldForMatch`], which owns the rule and documents
+ * it — the ς/σ collapse, why both sides must fold identically (#3812, #4507),
+ * and why the collapse costs nothing in offset mapping. Deliberately not
+ * restated here: two copies of one rule is the shape that produced the defect
+ * #4507 fixed.
  *
- * So the two sigma forms are collapsed onto one here. `οδος`, `ΟΔΟΣ` and
- * `οδοσ` all fold to `οδοσ`: no miss in either direction, and no false
- * positive introduced beyond the ς/σ conflation itself, which is the one
- * deliberate imprecision (pinned in the tests).
- *
- * This costs nothing in offset mapping — both sigmas are a single UTF-16
- * code unit, so the folded length is unchanged and `foldedStart` /
- * `foldedEnd` stay aligned.
- *
- * The needle MUST use this same function, not `toLowerCase()` on the whole
- * string: mixing a context-SENSITIVE needle fold with a context-FREE
- * haystack fold is the original #3812 defect.
+ * What this entry point is FOR, which `foldForMatch` cannot say: the slow path
+ * needs the fold applied one code point at a time, because `scanLiteralFolded`
+ * records the original span of each folded code unit as it goes. Folding the
+ * whole string would give the same characters and no way to map a match back to
+ * an offset in the original text.
  */
 function foldCodePoint(ch: string): string {
-  const f = ch.toLowerCase()
-  return f === 'ς' ? 'σ' : f
+  return foldForMatch(ch)
+}
+
+/**
+ * Hoisted out of `foldForMatch` so the pattern is compiled once rather than on
+ * every call — this runs once per text node per keystroke while a find is open.
+ *
+ * Sharing one `/g` regex across calls is safe **here specifically**:
+ * `String.prototype.replace` sets `lastIndex` to 0 before scanning and again
+ * after, so no state carries between calls. It would NOT be safe to share this
+ * with an `exec` or `test` call site, both of which advance `lastIndex` and
+ * leave it advanced.
+ */
+const FINAL_SIGMA_RE = /ς/g
+
+/**
+ * The case fold both literal paths use: `toLowerCase()`, then a collapse of the
+ * two Greek sigma forms — word-final `ς` (U+03C2) onto `σ` (U+03C3).
+ *
+ * This function owns that rule. `foldCodePoint` above delegates here rather
+ * than carrying its own copy.
+ *
+ * #4507 — the collapse used to live only in `foldCodePoint`, i.e. only on the
+ * slow (length-changing) path, which `İ` U+0130 is the sole trigger for. The
+ * fast path folded with a bare `toLowerCase()`, so it hit the exact failure
+ * the comment above describes: `'ΟΔΟΣ'.toLowerCase()` is `'οδος'` — Unicode's
+ * Final_Sigma rule — and a needle folded the same way is `'ς'` when its sigma
+ * is string-final and `'σ'` when it is not. Searching `Σ` over `ΟΔΟΣ` returned
+ * nothing, and `Σ` over `ΣΣ` found one of two. #3812 diagnosed this and fixed
+ * the needle/haystack mismatch on the slow path; the fast path kept it.
+ *
+ * Applying it to both is what makes the two paths agree, and that agreement is
+ * now exact rather than approximate: Final_Sigma is the ONLY context-sensitive
+ * lowercase mapping in the default (locale-free) case-mapping table, so once it
+ * is collapsed, folding a string whole and folding it code point at a time
+ * produce the same result for every input except the length-expanding İ — which
+ * is precisely what the `haystack.length === text.length` check routes away.
+ *
+ * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
+ * `σ` (U+03C3) are both a single UTF-16 code unit.
+ *
+ * The `indexOf` guard is not premature: it was measured, both ways, because
+ * this function is called from two places with very different string lengths
+ * and the naive `replace`-always version loses badly at one of them.
+ *
+ * Per CODE POINT, which is how `foldCodePoint` calls it (3M iterations each,
+ * node 22):
+ *
+ * ```
+ * latin (no sigma)      replace-always 234 ms   guarded 115 ms   +103%
+ * turkish (İ-bearing)   replace-always 368 ms   guarded 234 ms    +57%
+ * greek (has sigma)     replace-always 488 ms   guarded 335 ms    +46%
+ * astral (pairs)        replace-always 493 ms   guarded 328 ms    +50%
+ * ```
+ *
+ * Faster even on Greek text, where the guard fails and the `replace` runs
+ * anyway: setting up a global-regex replace costs more than an `indexOf` over
+ * one code unit, so paying the `indexOf` on every code point still wins.
+ *
+ * Per WHOLE TEXT NODE, which is how `scanLiteral` calls it:
+ *
+ * ```
+ * short heading, no sigma  (len 15)   26 ms ->  12 ms   +113%
+ * english paragraph        (len 540)  55 ms ->  57 ms     -3%
+ * greek paragraph          (len 504) 2187 ms -> 2197 ms   -0.4%
+ * ```
+ *
+ * A ~3% loss on long strings, where the absolute cost is dominated by
+ * `toLowerCase()`'s allocation regardless, against a doubling on the short
+ * no-sigma nodes that make up most of a real document. Taken.
+ *
+ * The two call sites matter because the slow path is not the rare one it looks
+ * like: `İ` U+0130 is ordinary Turkish orthography, so on Turkish content most
+ * text nodes fold code point at a time, on every keystroke while find is open.
+ *
+ * Verified equivalent to the unguarded form over every code point in the BMP
+ * and beyond — 0 disagreements across all 1,112,064 scalar values.
+ */
+function foldForMatch(s: string): string {
+  const lowered = s.toLowerCase()
+  // `indexOf` on a code unit, not a regex test: `FINAL_SIGMA_RE` is global, so
+  // `test`/`exec` would advance and leave `lastIndex` dirty for the next call.
+  return lowered.indexOf('ς') === -1 ? lowered : lowered.replace(FINAL_SIGMA_RE, 'σ')
 }
 
 /**
@@ -369,21 +482,20 @@ function foldCodePoint(ch: string): string {
  * a length-changing fold early in the node (`İ` U+0130) no longer
  * shifts every later highlight span.
  *
- * `foldedNeedle` is the query text already folded by `compileQuery` (not
- * the whole-string-folded `needle` used by the fast path above).
- * `compileQuery` folds it once, code-point-by-code-point via
- * `foldCodePoint` — the exact same algorithm this function uses below to
- * fold the haystack — so both sides of the comparison use the same
- * context-*insensitive* algorithm (#3812). Whole-string folding
- * (`query.toLowerCase()`) is context-sensitive — e.g. Greek `Σ` folds to
- * word-final `ς` or mid-word `σ` depending on what follows it in the
- * string — while folding code-point-by-code-point can never see that
- * context and always produces the mid-word form. Folding the needle
- * whole-string while the haystack is folded per-code-point (as this
- * function used to do internally) let exactly those context-sensitive
- * cases disagree and silently miss a match; folding both sides the same
- * way trades full correctness for guaranteed agreement between the two
- * fold call sites, which is what this path actually needs.
+ * `foldedNeedle` is the query text already folded by `compileQuery`,
+ * code-point-by-code-point via `foldCodePoint` — the exact same algorithm this
+ * function uses below to fold the haystack, so both sides of the comparison
+ * agree by construction (#3812).
+ *
+ * Since #4507 this is PROVABLY EQUAL to the whole-string-folded `needle` the
+ * fast path takes: both fold sites go through
+ * `foldForMatch`, whose ς/σ collapse removes the one context-sensitive mapping
+ * the locale-free table has, so folding whole and folding per code point cannot
+ * differ. See the note at `compileQuery`'s `foldedNeedle` for why both are kept
+ * anyway — that equality rests on an empirical fact about the host's Unicode
+ * tables, and a DEV assertion in `compileQuery` (beside the fold loop itself,
+ * not the emptiness check further down this file) is what notices if it stops
+ * holding.
  *
  * Agreeing on the fold is necessary but NOT sufficient, and an earlier
  * version of this fix stopped there and was wrong. Per-code-point folding
