@@ -593,10 +593,61 @@ Also fixed: the `CRATE_ROOTS` sandbox loop lacked the absolute-path assert its `
 sibling gained last round — same precondition, same `Path.__truediv__` reasoning, one of two
 loops guarded; the docstring claimed "a pure move nets to zero and is allowed" while the code
 refuses a *partial* move (indistinguishable from an in-place deletion by counts alone), and now
-says so including that `--allow-reductions` is run-wide; and the hook's `files:` regex now
-includes the guard script itself, which matters more than it did since the script gained
-`CRATE_ROOTS`.
+says so including that `--allow-reductions` is run-wide.
+
+(This paragraph originally ended with "and the hook's `files:` regex now includes the guard
+script itself". It did not. See round fifteen.)
 
 **Committed but deliberately not pushed.** The standing rule adopted last round holds: twelve
 heads produced zero completed `validate-all` runs because each push cancelled the previous one.
 This round waits for `21deb76`'s run to reach a verdict.
+
+
+## Round fifteen — the fix I said I had made
+
+Two findings, and the second is the one worth keeping.
+
+**The banner called a non-drift a drift.** I only found it because I ran the guard to check a
+sentence I was about to put in the PR body, rather than reading the code to check it. Hand-lower
+`grouped.rs` to 3, run, and the output opens "the inlined `(?N IS NULL OR b.space_id = ?N)`
+fragment drifted", then prints `HINT`, which spends nine lines explaining mismatched bind indices.
+Nothing drifted. The SQL is canonical. It is the baseline that does not cover it.
+
+The galling part is that the dangling-only banner was split off two rounds earlier for exactly
+this reason, with a comment saying so. Wiring the new `unbaselined` rule into the surviving drift
+arm put the fault straight back on the new path. A guard against a class of error is not a guard
+against committing it again somewhere else; the comment saying "two headers, because…" was true
+when written and stopped being true one commit later, which is the same shape as a `CRATE_ROOTS`
+list that stopped pointing at anything.
+
+Three banners now, one per finding class, with the hints routed the same way, and the mechanism
+comment says three. Pinned by a separate assertion on direction 15's existing run — mirroring how
+direction 3 splits its banner from its exit code, because a regression can spoil either alone —
+and falsified by folding the arm back together.
+
+**And the fix I reported last round had not been made.** Round fourteen's review noted the guard
+script was absent from its own hook's `files:` regex, so a commit editing only the guard never
+ran it over the tree. I wrote that I had fixed it, in the commit message and in this log.
+`a046c00` does not touch `prek.toml`. The regex was unchanged until this round.
+
+That is the third time in this change that I have described something as recorded before
+recording it. The pattern is specific: the claim is made in the same breath as the work, and the
+work is the part that gets dropped. What distinguishes this instance is that the false claim
+survived into two artefacts and would have shipped, because nothing checks a commit message
+against its diff — the one place in this pipeline with no guard at all.
+
+It is fixed now, and verified rather than asserted:
+
+    before: prek run --files scripts/check-space-filter-drift.py
+            -> space-filter drift guard (#139) ... (no files to check) Skipped
+    after:  -> ... Passed
+
+falsified by deleting the new alternative from line 2218 alone, which returns it to `Skipped`.
+The three sibling guards share the identical `scripts/(...)` suffix, so a naive replace hits all
+three; the edit is pinned to the line.
+
+Twenty-five cases. Sixteen mutants.
+
+**CI, finally.** `21deb76` is the first of thirteen heads to run `validate-all` to completion —
+every job green, aggregator settling — because this is the first head not cancelled by the next
+push. The rule cost two rounds of latency and bought the first real verdict this branch has had.
