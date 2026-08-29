@@ -1392,13 +1392,39 @@ jobs:
   # ---------------------------------------------------------------------------
   fuzz:
     runs-on: ubuntu-24.04
-    # 90, not 60: the cmin step added in #4496 can take up to 20 minutes of the
-    # job on its own, on top of setup, five nightly ASan builds (15-25 min on a
-    # cold rust-cache) and ~10 min of fuzzing. A JOB timeout is a cancellation,
-    # which correctly skips the save — so an under-sized budget would surface as
-    # a corpus that silently stops accumulating, the failure #4496 exists to
-    # remove.
-    timeout-minutes: 90
+    # 130, not 60. The arithmetic, written out because review showed an earlier
+    # figure had less headroom than its own comment implied — N is the derived
+    # target count, currently 8:
+    #
+    #   setup (apt, toolchain, node, npm, install-action)   ~10 min
+    #   N nightly ASan builds, COLD rust-cache              24-40 min
+    #   N targets x 120s of fuzzing                         ~16 min
+    #   cmin, at its own step bound                         up to 30 min
+    #   artifact uploads                                     ~2 min
+    #                                                      ------------
+    #   worst case                                          ~98 min
+    #
+    # N is pinned ONCE, as `BUDGETED_TARGETS` in the fuzz step, which warns when
+    # the derivation outgrows it. The figures above are that N substituted in —
+    # not a second declaration of it — and re-deriving them for a larger N is
+    # the work that warning exists to prompt.
+    #
+    # The build range is the five-target 15-25 min figure scaled to eight. On a
+    # warm cache (`save-if` on main keeps main warm) the build term is a
+    # fraction of that and the job finishes far inside the bound; the number
+    # exists for the cold-cache worst case, which is the one that would fail.
+    #
+    # Headroom matters more here than elsewhere because of HOW this overruns: a
+    # JOB timeout is a cancellation, which correctly skips the corpus save, so
+    # the symptom is a corpus that silently stops accumulating — the failure
+    # #4496 exists to remove — rather than a red lane anyone would look at. The
+    # cmin step's own `timeout-minutes` is the loud bound; this one is the quiet
+    # one, and is sized not to be reached.
+    #
+    # History: #4497 took the count from five to eight, this bound from 90 to
+    # 110, and then to 130 once the build term was scaled by arithmetic rather
+    # than by assumption.
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1619,11 +1645,138 @@ jobs:
           # as "fine".
           RESULT_DIR="${GITHUB_WORKSPACE}/fuzz-status"
           mkdir -p "$RESULT_DIR"
-          # Keep this list in sync with the `[[bin]]` targets in
-          # src-tauri/fuzz/Cargo.toml — #2945 added `fts_strip`/`html_parse`
-          # there but not here, so for three months they were built and never
-          # fuzzed. All five are smoke-verified to build and run crash-free.
-          targets=(snapshot_decode deeplink_parse import_parse fts_strip html_parse)
+          # Derived from the `[[bin]]` entries in src-tauri/fuzz/Cargo.toml
+          # rather than restated here. This WAS a hand-maintained second copy of
+          # that list, and #2945 is what the copy cost when it went stale:
+          # `fts_strip` and `html_parse` were added to the manifest and not
+          # here, so for three months they were built and never fuzzed while
+          # this lane reported success. `--no-deps` reads the manifest only —
+          # no dependency resolution, no network, no build — and adding a
+          # [[bin]] is now the entire act of enrolling a target in this lane.
+          # `+nightly`, not a bare `cargo`: rustup searches upward from the
+          # working directory for a toolchain file and finds the repo root's
+          # `rust-toolchain.toml`, which pins 1.95.0 AND mandates the clippy and
+          # rustfmt components. This job installs ONLY nightly, so a bare `cargo`
+          # here would trigger a full toolchain-plus-components download inside
+          # the step the fuzz budget is measured against — a network dependency
+          # for a command that only reads a manifest. Nightly is already present.
+          #
+          # Through a FILE, not a process substitution — and the difference is
+          # the whole point. `mapfile < <(cmd)` cannot see that producer's exit
+          # status: not with `set -e`, not with `pipefail`. So a jq filter that
+          # stopped matching (a metadata schema change, a renamed package) would
+          # leave the loop below with nothing to iterate and the step exiting 0:
+          # a green fuzz lane that fuzzed nothing. Redirecting to a file puts
+          # the pipeline back under `pipefail`, which separates the two failures
+          # this guard used to conflate — "the producer broke" and "the manifest
+          # has no targets" — so the annotation can name the one that happened
+          # instead of always blaming Cargo.toml.
+          derived_targets="$(mktemp)"
+          if ! cargo +nightly metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "agaric-fuzz")
+                     | .targets[] | select(.kind | index("bin")) | .name' \
+            | sort > "$derived_targets"; then
+            rm -f "$derived_targets"
+            echo "::error::could not derive the fuzz target list: 'cargo +nightly metadata | jq | sort' failed. This is a TOOLING failure (nightly missing, jq missing, a path dependency's manifest unparseable), not a missing [[bin]] — the command's own stderr is immediately above this line."
+            exit 1
+          fi
+          mapfile -t targets < "$derived_targets"
+          rm -f "$derived_targets"
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "::error::the fuzz target list derived from src-tauri/fuzz/Cargo.toml is EMPTY: the manifest declares no [[bin]] entries, or the jq filter no longer matches them. The producer itself succeeded."
+            exit 1
+          fi
+          echo "fuzzing ${#targets[@]} targets: ${targets[*]}"
+          # Auto-enrolment has one quiet edge: a `[[bin]]` added without a
+          # `corpus/<target>/` directory is fuzzed from libFuzzer's single empty
+          # input, every week, and nothing about that reads as wrong.
+          # `cargo fuzz run` creates the directory, and cmin's `find ... || true`
+          # on the input COUNT tolerates it being absent beforehand (not cmin's
+          # own exit status, which #4496 changed from `|| true` to `|| rc=$?`
+          # precisely so a broken cmin stops being silent) — so the lane stays
+          # green while that target explores from cold forever, which is the
+          # exact behaviour #4496 exists to end, reintroduced one target at a
+          # time. Not fatal (an unseeded target still fuzzes, and a first run
+          # legitimately has none), so this warns rather than fails.
+          #
+          # Ask git ONCE whether it can answer at all, because the guard below
+          # reads an empty `git ls-files` as "this target has no committed
+          # seeds" — and a `git ls-files` that FAILS is also empty. A
+          # `safe.directory` ownership mismatch after a runner or checkout-action
+          # change is the realistic route, and it would turn one broken
+          # precondition into eight confident false reports, on a green run,
+          # about the exact targets whose seeding nobody would then re-check.
+          # A guard is allowed to say nothing; it is not allowed to invert.
+          seed_check_available=1
+          seedless_targets=()
+          if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            seed_check_available=0
+            seedless_skip_msg="the committed-seed check was SKIPPED: 'git rev-parse --is-inside-work-tree' failed, so an empty 'git ls-files' cannot be distinguished from a failed one. No conclusion about seeding should be drawn from this run."
+            echo "::warning::$seedless_skip_msg"
+            {
+              echo "### :warning: seed-corpus check skipped"
+              echo
+              echo "$seedless_skip_msg"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$seed_check_available" -eq 1 ]; then
+            for target in "${targets[@]}"; do
+              # `git ls-files`, NOT `find`: the question is whether this target
+              # has COMMITTED seeds, and the working tree cannot answer it here.
+              # The restore step (#4496) extracts the accumulated corpus into
+              # `corpus/` ~160 lines above this one, so after a seedless target's
+              # first run its directory is non-empty on every subsequent run and a
+              # `find` would go quiet — precisely when the warning still applies,
+              # since the committed floor is still empty and the next cache miss
+              # still starts that target from libFuzzer's empty input. A guard
+              # that fires only on the one run where the target is new AND the
+              # cache also missed is barely a guard.
+              # Names are ACCUMULATED here and reported once after the loop — eight seedless targets used to render eight identical
+              # H3 headings in the run summary, which is the one surface this
+              # warning exists to be read from and the one place a repeated
+              # heading reads as noise rather than as eight findings.
+              if [ -z "$(git ls-files "corpus/$target" | head -n 1)" ]; then
+                seedless_targets+=("$target")
+              fi
+            done
+            if [ "${#seedless_targets[@]}" -gt 0 ]; then
+              seedless_msg="fuzz target(s) with no COMMITTED seed corpus: ${seedless_targets[*]} — on a cache miss each starts from libFuzzer's empty input. Add seeds under corpus/<target>/ that reach distinct branches."
+              echo "::warning::$seedless_msg"
+              # To the run summary as well: this fires on a GREEN run — targets
+              # quietly exploring from cold forever — and nobody opens the log of
+              # a job that passed. An annotation alone would be a signal with no
+              # reader, which is the failure the warning itself describes.
+              {
+                echo "### :warning: fuzz target(s) without seeds"
+                echo
+                echo "$seedless_msg"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          # Enrolling a target is now a one-line `[[bin]]` edit that never opens
+          # this file — which trades list drift (#2945) for BUDGET drift, and
+          # budget drift fails silently in the worse direction: overrunning the
+          # JOB bound is a cancellation, which correctly skips the corpus save,
+          # so the symptom is a corpus that quietly stops accumulating rather
+          # than a red lane. `timeout-minutes` on this job and on the cmin step
+          # are hand-sized for the count below; exceeding it is not an error
+          # (the budgets carry headroom) but it must not pass unremarked.
+          BUDGETED_TARGETS=8
+          if [ "${#targets[@]}" -gt "$BUDGETED_TARGETS" ]; then
+            msg="${#targets[@]} fuzz targets, but the job and cmin timeouts were sized for $BUDGETED_TARGETS. Re-check timeout-minutes on this job and on the cmin step, then raise BUDGETED_TARGETS here."
+            echo "::warning::$msg"
+            # ALSO to the run summary, not only the annotation. This lane runs
+            # weekly and unattended, and a `::warning::` on an otherwise-green
+            # run is a signal with no reader — nobody opens the log of a job
+            # that passed. `$GITHUB_STEP_SUMMARY` renders on the run page
+            # itself, which is the one surface a passing scheduled run gets
+            # looked at from.
+            {
+              echo "### :warning: fuzz target budget"
+              echo
+              echo "$msg"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           printf '%s\n' "${targets[@]}" > "$RESULT_DIR/targets.txt"
           for target in "${targets[@]}"; do
             echo not_run > "$RESULT_DIR/$target.status"
@@ -1682,15 +1835,26 @@ jobs:
         # The one step here with no time bound of its own: the fuzz step caps
         # itself with `-max_total_time`, but the merge re-executes every corpus
         # input with only `-rss_limit_mb` to bound it. As the corpus grows this
-        # is the likeliest thing to push the job into its 90-minute timeout —
-        # and a job timeout is a CANCELLATION, which correctly skips the save,
+        # is the likeliest thing to push the job into its own `timeout-minutes`
+        # (the job's, above — deliberately not restated here, since a copy of it
+        # is what went stale twice), and a job timeout is a CANCELLATION,
+        # which correctly skips the save,
         # so the symptom would be a corpus that silently stops accumulating:
         # the exact failure mode this change exists to remove. A step-level
         # bound makes it a loud, attributable failure instead.
-        timeout-minutes: 20
+        #
+        # 30, raised from 20 by #4497: the merge re-executes every corpus input
+        # of every target, so the bound scales with the target count, which
+        # #4497 raised from five (see `BUDGETED_TARGETS` in the fuzz step for
+        # the current figure — deliberately not restated here). Hitting this
+        # bound is a step failure
+        # (loud) rather than a job timeout (a cancellation, hence silent
+        # non-accumulation) — but the fuzz step above still owns the lane's
+        # verdict, so a red cmin does not by itself mean a target crashed.
+        timeout-minutes: 30
         # Condition is `!cancelled() && steps.corpus-cache.outcome == 'success'`
-        # (spelled out below). A crash in ONE target still leaves the other four
-        # with a run's worth of new coverage, and discarding that because the
+        # (spelled out below). A crash in ONE target still leaves every OTHER
+        # target with a run's worth of new coverage, and discarding that because the
         # lane went red would make a single crashing target permanently reset
         # every sibling's corpus — so a failed FUZZ step must not stop this.
         #
@@ -1746,18 +1910,19 @@ jobs:
           # `|| true`: `find` exits 1 on a missing directory, `pipefail`
           # propagates that, and the assignment's non-zero status would trip
           # `-e`, aborting the loop before the remaining targets are minimised.
-          # Unreachable today (all five targets have committed seed dirs), but
-          # reachable the moment a sixth is added without seeds and its build
+          # Unreachable while every target has a committed seed dir, but
+          # reachable the moment one is added without seeds and its build
           # fails — `cargo fuzz run` builds before it creates `corpus/<target>`.
           # That is the exact fail-fast shape #3169 removed from the fuzz step's
           # own target loop; not reintroducing it here.
           set -uo pipefail
           # Read the target list the fuzz step already wrote, rather than
-          # hardcoding a THIRD copy of it. There are two today — the `[[bin]]`
-          # entries in `src-tauri/fuzz/Cargo.toml` and the `targets=(...)` array
-          # above — and #2945 is what a copy going stale costs: two targets were
-          # added to the manifest and not to the workflow, so they were built
-          # and never fuzzed for three months while the lane stayed green.
+          # restating it. The `[[bin]]` entries in `src-tauri/fuzz/Cargo.toml`
+          # are the single source; the step above derives its list from them and
+          # writes `targets.txt`, and this step consumes that. #2945 is what a
+          # second copy costs when it goes stale: two targets were added to the
+          # manifest and not to the workflow, so they were built and never
+          # fuzzed for three months while the lane stayed green.
           collapsed=0
           manifest="${GITHUB_WORKSPACE}/fuzz-status/targets.txt"
           if [ ! -f "$manifest" ]; then
@@ -1813,7 +1978,7 @@ jobs:
             # and let the save step stand down; the previous entry then stays
             # newest and the next run recovers on its own.
             if [ "$before" -gt 0 ] && [ "$after" -eq 0 ]; then
-              echo "::warning::cmin collapsed $target from $before inputs to 0 — standing down the save for ALL five targets this run (the flag is run-wide), so the previous cache entry stays newest"
+              echo "::warning::cmin collapsed $target from $before inputs to 0 — standing down the save for ALL targets this run (the flag is run-wide), so the previous cache entry stays newest"
               collapsed=1
             fi
           done < "$manifest"

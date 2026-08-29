@@ -1,0 +1,5 @@
+@book{nested,
+  title = {A {Title} with {{Nested}} Braces},
+  author = "Quoted, Value",
+  note = {trailing},
+}
