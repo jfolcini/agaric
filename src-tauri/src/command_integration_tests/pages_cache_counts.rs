@@ -919,7 +919,8 @@ async fn batch_delete_multi_root_varying_depth_cascades_all() {
     // both subtrees; the cascade soft-deletes every descendant of every root.
     let deleted = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id.clone(), r2.id.clone()])
         .await
-        .unwrap();
+        .unwrap()
+        .deleted_count;
     settle(&mat).await;
 
     // R1's subtree = 4 blocks (R1,a,b,c); R2's = 2 (R2,d). Total cohort = 6.

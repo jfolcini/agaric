@@ -271,7 +271,8 @@ export function PageBrowserBatchToolbar({
     // rendered at click time, and freezes it for the duration of the await.
     setBusy(true)
     try {
-      const count = await deleteBlocksByIds(ids)
+      const { deleted_count: count, affected_page_ids: cascadedPageIds } =
+        await deleteBlocksByIds(ids)
       // #4007 — drop every trashed page from the `[[` picker's name cache;
       // it is filled once per space and has no other delete signal.
       // #4008 review note 3 — one event per id is O(ids x listeners x pages)
@@ -283,10 +284,28 @@ export function PageBrowserBatchToolbar({
       // Skipping would be equally correct — see the "When the caller has NO
       // active space" section of `src/lib/name-change-bus.ts`, which settles
       // that once instead of leaving each publisher its own precedent.
-      if (currentSpaceId == null || ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
+      //
+      // #4480 — the set to evict is NOT `ids`. The backend cascade walks
+      // `parent_id` with no page-boundary stop, so selecting a page whose
+      // children include PAGES trashes those children too; the picker cache
+      // is keyed on `list_all_pages_in_space` (`block_type = 'page' AND
+      // deleted_at IS NULL AND space_id = ?`), so a cascaded nested page
+      // silently stopped being real while the cache went on offering it —
+      // #4450's defect one level down. `affected_page_ids` is the cascade's
+      // page membership, which only the backend can see; the frontend must
+      // not re-derive it by walking the tree itself, because a second walk is
+      // exactly how the two arms drift apart.
+      //
+      // UNION, not replacement: an id the backend SKIPPED (missing, or
+      // already soft-deleted by a concurrent write) is absent from the cohort
+      // and so from `affected_page_ids`, but it was in the user's selection
+      // and is not a live page either way. Keeping `ids` in the set preserves
+      // the pre-#4480 eviction exactly and makes this change purely additive.
+      const removedPageIds = new Set<string>([...ids, ...cascadedPageIds])
+      if (currentSpaceId == null || removedPageIds.size > NAME_CACHE_FANOUT_MAX_IDS) {
         invalidateNameCaches()
       } else {
-        for (const id of ids) notifyPageRemoved(id, currentSpaceId)
+        for (const id of removedPageIds) notifyPageRemoved(id, currentSpaceId)
       }
       onClearSelection()
       onMutated()
@@ -358,6 +377,26 @@ export function PageBrowserBatchToolbar({
       // the "worse than no scoping" mislabelling #4391's docblock warns
       // about, since it would let the origin's still-warm cache go on
       // offering pages it no longer has while never touching it.
+      //
+      // #4480 asked whether `ids` is too NARROW here — whether a moved page's
+      // nested page children also leave the origin space and so also need
+      // evicting, the way `handleTrash` below turned out to need. Measured,
+      // they do not, and the roots-only loop is exactly right:
+      // `move_blocks_to_space` moves a page by writing the reserved `space`
+      // property, whose projection is
+      // `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`, and a
+      // page block's `page_id` is its OWN id (the `page_id_self_for_pages`
+      // CHECK). Only CONTENT descendants carry the moved page's `page_id`, so
+      // only they follow; a nested PAGE keeps its own authoritative
+      // `space_id` and STAYS IN THE ORIGIN SPACE. The origin picker going on
+      // to offer it is correct, and evicting it here would be a bug — the
+      // page is still there. Pinned by
+      // `move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480`.
+      //
+      // The trash mirror is genuinely different, and the difference is not
+      // taste: the delete cascade walks `parent_id` with no page-boundary
+      // stop, so it really does sweep nested pages out. Hence the union in
+      // `handleTrash` and the plain `ids` loop here.
       if (currentSpaceId == null || ids.length > NAME_CACHE_FANOUT_MAX_IDS) {
         invalidateNameCaches()
       } else {

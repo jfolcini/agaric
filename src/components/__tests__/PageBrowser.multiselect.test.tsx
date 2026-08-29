@@ -158,7 +158,11 @@ describe('PageBrowser multi-select', () => {
     await user.click(selectCheckbox('P1'))
     await user.click(selectCheckbox('P3'))
 
-    mockedInvoke.mockResolvedValueOnce(2) // delete_blocks_by_ids count
+    // #4480 — `delete_blocks_by_ids` replies with a `BatchDeleteResponse`.
+    mockedInvoke.mockResolvedValueOnce({
+      deleted_count: 2,
+      affected_page_ids: ['P1', 'P3'],
+    })
     await user.click(screen.getByTestId('page-batch-trash-btn'))
     // #3339 — the batch trash confirms before it cascades.
     await user.click(

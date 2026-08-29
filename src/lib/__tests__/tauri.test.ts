@@ -233,7 +233,7 @@ describe('deleteBlock', () => {
 
 describe('deleteBlocksByIds', () => {
   it('invokes delete_blocks_by_ids with the full id list', async () => {
-    mockedInvoke.mockResolvedValueOnce(7)
+    mockedInvoke.mockResolvedValueOnce({ deleted_count: 7, affected_page_ids: ['BLK1'] })
 
     const result = await deleteBlocksByIds(['BLK1', 'BLK2', 'BLK3'])
 
@@ -241,12 +241,29 @@ describe('deleteBlocksByIds', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
       blockIds: ['BLK1', 'BLK2', 'BLK3'],
     })
-    expect(result).toBe(7)
+    expect(result).toEqual({ deleted_count: 7, affected_page_ids: ['BLK1'] })
   })
 
-  it('returns the affected_count number unchanged', async () => {
-    mockedInvoke.mockResolvedValueOnce(0)
-    expect(await deleteBlocksByIds(['MISSING'])).toBe(0)
+  it('returns the BatchDeleteResponse unchanged', async () => {
+    mockedInvoke.mockResolvedValueOnce({ deleted_count: 0, affected_page_ids: [] })
+    expect(await deleteBlocksByIds(['MISSING'])).toEqual({
+      deleted_count: 0,
+      affected_page_ids: [],
+    })
+  })
+
+  // #4480 — `affected_page_ids` is the reason this wrapper stopped returning a
+  // bare number: the cascade can trash PAGE descendants the caller never sent,
+  // and the `[[` picker's per-space cache needs their ids to stop offering
+  // them. Pin that the wrapper passes the field through rather than collapsing
+  // the reply back down to its count.
+  it('passes through page ids the caller never sent (cascade)', async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      deleted_count: 3,
+      affected_page_ids: ['ROOT', 'NESTED_PAGE'],
+    })
+    const result = await deleteBlocksByIds(['ROOT'])
+    expect(result.affected_page_ids).toEqual(['ROOT', 'NESTED_PAGE'])
   })
 })
 

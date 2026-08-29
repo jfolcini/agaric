@@ -248,7 +248,8 @@ async fn delete_blocks_by_ids_matches_per_block_fold() {
                     block_ids(&roots),
                 )
                 .await
-                .expect("bulk delete");
+                .expect("bulk delete")
+                .deleted_count;
                 vec![format!("rows_soft_deleted={n}")]
             })
         },
