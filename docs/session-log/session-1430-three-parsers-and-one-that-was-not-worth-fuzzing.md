@@ -362,3 +362,46 @@ indent, so its two stacked `fi`s did not pair by eye. All three were introduced
 by my own previous round of review fixes, which is worth noticing on its own —
 each fix was correct and each left the file slightly harder to read than it found
 it.
+
+## The list this PR forgot to stop enumerating
+
+Fourth review round found the best find of the four: `AGENTS.md` still named the
+fuzz workspace's path dependencies as "`agaric`, `agaric-store`, `agaric-sync`
+and `agaric-engine`". This PR adds `agaric-core` as a fifth.
+
+That sentence is a hand-maintained second copy of a manifest list — the exact
+shape this change exists to remove. #4497 deleted one such copy from the
+workflow and another from `src-tauri/fuzz/README.md`, wrote a paragraph in each
+about why a fourth copy would undo the point, and then walked past a fifth in
+the file that sets the repo's conventions. Adding `agaric-core` to it would have
+been the wrong fix, and the reviewer said so: *update or reword to stop
+enumerating*.
+
+Reworded. The sentence's actual subject is that the fuzz lock resolves the
+parent manifests' requirements, which is true whichever parents those are; the
+names were never load-bearing. It now points at `src-tauri/fuzz/Cargo.toml` and
+says why it declines to list them, citing the drift #2945 cost this lane.
+
+**The thing worth keeping from this is not "check AGENTS.md too".** It is that a
+change whose entire subject is second copies going stale produced, across four
+review rounds: a stale target table in the README (found before review), two
+stale copies of one budget number, a stale claim in a target header, a stale
+PR-description snippet, and this. Every one of them was written *by the person
+holding the argument for why they are dangerous*. Knowing the failure mode is
+apparently no protection against it at all — the only thing that caught any of
+them was someone else reading the diff.
+
+## What the PR description said the code does
+
+The same round found the description's derivation snippet still showing
+`mapfile -t targets < <(...)`, with the surrounding text arguing that shape
+"fails loud on an empty result". The shipped code uses a temp file plus an
+explicit exit-status branch — precisely because process substitution is what
+*cannot* report producer failure. The description was arguing for the shape the
+code had already abandoned, in a section about why the new shape is better.
+
+That is the third time in this session that a PR body has been left behind the
+code it describes (twice on #4517, once here). The mechanism is always the same:
+the code, the comments and the session log get updated because they are files in
+the diff, and the description is treated as narration rather than as one more
+copy of the same facts. It is a copy, and it drifts like every other copy.
