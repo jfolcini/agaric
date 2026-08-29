@@ -247,23 +247,18 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
     for (const ch of query) {
       foldedNeedle += foldCodePoint(ch)
     }
-    // ...and THIS is what notices if it stops being true.
-    //
-    // An earlier revision of the paragraph above claimed that role for the
-    // `foldedNeedle === ''` assertion in `scanLiteral`. It does not do that job:
-    // it tests EMPTINESS, not equality with `needle`, so a broken distribution
-    // premise would leave it silent — and it sits on the slow path, while a
-    // broken premise surfaces on the fast one, through the wrong `needle`. The
-    // claim was wrong in the direction that matters, describing a guard that
-    // does not guard the thing it was cited for.
-    //
-    // Rather than delete the sentence, here is the assertion it described. It
-    // costs one comparison per compile (compile-once, not per text node), and
-    // unlike the committed sweep in
+    // ...and THIS is what notices if it stops being true. One comparison per
+    // compile (compile-once, not per text node). The committed sweep in
     // `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`
-    // — which lives outside vitest's `include` globs by the #3804 convention —
-    // this one runs in CI on every suite. It is the only in-CI guard the
-    // premise has.
+    // proves the premise exhaustively but lives outside vitest's `include`
+    // globs by the #3804 convention, so this assertion is the only guard on it
+    // that runs in CI.
+    //
+    // It must compare `foldedNeedle` against `needle`, not merely check that
+    // either is non-empty: a broken premise shows up as the two folds
+    // DISAGREEING, and it surfaces on the fast path through the wrong
+    // `needle` — so an emptiness check, or one sited on the slow path, would
+    // stay silent through exactly the failure this is for.
     if (import.meta.env.DEV && foldedNeedle !== needle) {
       throw new Error(
         `in-page-find: the per-code-point fold and the whole-string fold disagree ` +
@@ -443,7 +438,9 @@ const FINAL_SIGMA_RE = /ς/g
  * `replace` per code point where it used to do one `f === 'ς'` comparison —
  * strictly more work in an inner loop, and the reason it is accepted is that
  * only `İ`-bearing text nodes reach that path at all, while a second copy of
- * the sigma rule living there would be reachable by every future edit. An `s.indexOf('ς') === -1` short-circuit would skip it for the
+ * the sigma rule living there would be reachable by every future edit.
+ *
+ * An `s.indexOf('ς') === -1` short-circuit would skip the `replace` for the
  * overwhelmingly common no-sigma document, and is deliberately NOT done here:
  * it replaces one scan with two in that same common case, and no measurement
  * says the branch pays for itself. This module is perf-shaped elsewhere

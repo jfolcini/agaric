@@ -182,3 +182,42 @@ fail — it stops being recognised as a pin at all and is skipped silently.
 A typo in a pin therefore disables that pin rather than breaking the build, which is the
 one failure mode a drift guard must not have. Filed as #4509; not fixed here, where it
 would be unrelated to the diff.
+
+## The comment that cited a guard which did not guard
+
+Review found two prose defects, and the second is the one worth keeping.
+
+The smaller: a sentence had been spliced mid-line into the `foldForMatch` doc
+block, leaving a 135-character line in an otherwise ~85-column comment. oxfmt
+does not reflow comments, so nothing would have rewrapped it. Same class as the
+splices the previous round caught — my edits matching only the first line of a
+multi-line comment.
+
+The larger: `matcher.ts` gained a paragraph narrating this PR's own review
+history — *"An earlier revision of the paragraph above claimed that role for the
+`foldedNeedle === ''` assertion… The claim was wrong in the direction that
+matters"* — sitting between a future reader of `compileQuery` and the rule they
+came for. It is accurate; it is just in the wrong file, and this PR already adds
+this log.
+
+Here is the history, where it belongs. An earlier revision claimed that
+`scanLiteral`'s `foldedNeedle === ''` assertion was what would notice if the
+distribution premise stopped holding. It does not do that job, in two
+independent ways: it tests **emptiness**, not equality with `needle`, so a
+broken premise leaves it silent; and it sits on the **slow** path, while a
+broken premise surfaces on the fast one, through the wrong `needle`. The fix
+was to write the assertion the comment described rather than delete the
+sentence — a DEV-only equality check in `compileQuery`, which is the only guard
+on the premise that runs in CI (the exhaustive sweep lives in a harness outside
+vitest's `include` globs, by the #3804 convention).
+
+What stays in the source is that rule and the two constraints that make it the
+right shape — compare the folds rather than test emptiness, and site it on the
+compile seam rather than the slow path — because those are what a future editor
+would otherwise undo. What moved here is why the previous version was wrong.
+
+The distinction is worth naming, because "record the correction next to the
+code" and "do not narrate the review in the source" pull in opposite directions
+and both are right. The test is whether a reader who has never seen the PR needs
+the sentence: they need *"compare, do not test emptiness, and here is why"*;
+they do not need *"an earlier revision of this comment said otherwise."*
