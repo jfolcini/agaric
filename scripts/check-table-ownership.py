@@ -29,6 +29,19 @@ The ratchet only applies back-pressure to NEW cross-crate writes:
     removed, regenerate the baseline to re-anchor future additions
     against the new, lower floor:
         python3 scripts/check-table-ownership.py --update-baseline
+  * A declared CRATE_ROOTS directory that does not exist FAILS (#4501). A
+    renamed or misspelled segment used to narrow the walk to nothing in
+    silence — the guard exited 0 over a tree it had stopped reading. Under
+    `--update-baseline` this REFUSES rather than warning: re-anchoring against
+    a narrowed walk deletes every count under the vanished root and reports
+    success, so the command that fixes the finding would have destroyed it.
+        python3 scripts/check-table-ownership.py --synthetic-tree
+    says "this tree is deliberately not this repository" and is the ONLY way
+    to suppress that check. `pr-merge-result-check.sh` passes it for the
+    synthetic fixture repos its self-test builds, and only for those — never
+    on a real merge, where the assertion is the point. It is rejected
+    alongside `--update-baseline`, which would re-anchor from the surviving
+    roots only.
 
 OWNER choices (see src-tauri/migrations/AGENTS.md "Table ownership"):
 `peer_refs` and all derived caches are store-owned; `blocks` is owned by
@@ -670,7 +683,12 @@ def run_self_test() -> int:
     # Asserted by swapping the module-level list rather than the filesystem —
     # the constant is what a careless edit actually breaks, and a temp
     # directory could not reproduce a MISSPELLING.
-    root_cases = 5
+    # Counted, not declared. This was `root_cases = 5`, and adding the
+    # mutual-exclusion assertion below left the literal untouched — the suite
+    # kept printing the old total while testing one thing more. A count
+    # maintained by hand beside the assertions it counts is the same
+    # hand-synchronised-pair problem #4501 is about, in miniature.
+    root_cases = 0
     _saved_roots = CRATE_ROOTS[:]
     try:
         # A misspelled segment ALONGSIDE present siblings — the realistic
@@ -682,36 +700,77 @@ def run_self_test() -> int:
             ("app", REPO_ROOT / "src-tauri" / "src"),
         ]
         missing = missing_crate_roots()
+        root_cases += 1
         if missing != ["src-tauri/agaric-stores/src"]:
             failures.append(
                 f"a misspelled crate root was not reported: {missing!r}"
             )
         # `--synthetic-tree` suppresses the assertion, and ONLY it does.
-        # Asserted through `main()` rather than the helper, because the flag
-        # is handled there and a helper-level test would not notice the wiring
+        # Asserted through `main()` rather than the helper, because the flag is
+        # handled there and a helper-level test would not notice the WIRING
         # being dropped.
-        globals()["CRATE_ROOTS"] = _saved_roots
-        if main(["--synthetic-tree"]) != 0:
+        #
+        # Everything downstream of the roots check is stubbed out, and that is
+        # load-bearing rather than tidiness. An earlier revision let `main()`
+        # run on past the check into `compute_counts()` + `read_baseline()` +
+        # the violation comparison, against the real tree and the real
+        # baseline. The outcome then depended on repository state, not on the
+        # code under test: a commit leaving `table-ownership-baseline.txt`
+        # malformed does not match this hook's `files` regex, so the real guard
+        # is deselected and never reports — but this self-test hook is
+        # `always_run`, so `read_baseline()` raises, `main()` returns 1, and the
+        # suite blames "--synthetic-tree did not suppress the roots assertion".
+        # A test that names the wrong subsystem is worse than no test. It also
+        # made every commit pay two extra whole-tree scans.
+        _saved_counts = globals()["compute_counts"]
+        _saved_read = globals()["read_baseline"]
+        globals()["compute_counts"] = lambda: ({}, {})
+        globals()["read_baseline"] = lambda: {}
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                globals()["CRATE_ROOTS"] = _saved_roots
+                real_roots_flagged = main(["--synthetic-tree"])
+                globals()["CRATE_ROOTS"] = [
+                    ("store", REPO_ROOT / "src-tauri" / "agaric-stores" / "src"),
+                    ("app", REPO_ROOT / "src-tauri" / "src"),
+                ]
+                missing_root_flagged = main(["--synthetic-tree"])
+        finally:
+            globals()["compute_counts"] = _saved_counts
+            globals()["read_baseline"] = _saved_read
+        root_cases += 1
+        if real_roots_flagged != 0:
             failures.append(
-                "--synthetic-tree did not suppress the roots assertion"
+                "--synthetic-tree changed the verdict on intact roots"
             )
-        globals()["CRATE_ROOTS"] = [
-            ("store", REPO_ROOT / "src-tauri" / "agaric-stores" / "src"),
-            ("app", REPO_ROOT / "src-tauri" / "src"),
-        ]
-        if main(["--synthetic-tree"]) != 0:
+        root_cases += 1
+        if missing_root_flagged != 0:
             failures.append(
-                "--synthetic-tree did not suppress a MISSING root either"
+                "--synthetic-tree did not suppress a MISSING root"
+            )
+        # The two flags together must REFUSE, not re-anchor. Suppressing the
+        # roots check and then rebuilding the baseline from the surviving
+        # roots is how the finding gets destroyed by the flag that exists to
+        # say it does not apply.
+        with contextlib.redirect_stderr(io.StringIO()):
+            both_rc = main(["--synthetic-tree", "--update-baseline"])
+        root_cases += 1
+        if both_rc != 2:
+            failures.append(
+                "--synthetic-tree --update-baseline was not refused "
+                f"(exit {both_rc})"
             )
         # stderr captured: this call is SUPPOSED to fail, and its diagnostic
         # in the middle of a passing suite reads like a real failure.
         with contextlib.redirect_stderr(io.StringIO()):
             unflagged = main([])
+        root_cases += 1
         if unflagged == 0:
             failures.append(
                 "without --synthetic-tree a missing root did not fail the run"
             )
         globals()["CRATE_ROOTS"] = _saved_roots
+        root_cases += 1
         if missing_crate_roots():
             failures.append(
                 "the real CRATE_ROOTS reported a missing root: "
@@ -772,6 +831,23 @@ def main(argv: list[str]) -> int:
     #     inherited it by accident; a flag is visible at the call site and has
     #     to be typed by whoever meant it.
     synthetic = "--synthetic-tree" in argv
+    # The two flags together are a hard error, not a quiet re-anchor.
+    # `--synthetic-tree` suppresses the roots check; `--update-baseline` then
+    # rebuilds from `compute_counts()`, which walks the SURVIVING roots only —
+    # so the combination writes a baseline with every count under the vanished
+    # root deleted and exits 0. That is precisely the destruction
+    # ROOT_MISSING_HINT exists to prevent, reached by way of the flag that
+    # exists to say "these roots do not apply here". No call site passes both
+    # today; refusing keeps it that way.
+    if synthetic and "--update-baseline" in argv:
+        print(
+            "--synthetic-tree and --update-baseline are mutually exclusive: "
+            "the first says\nthis tree's crate roots do not apply, the second "
+            "rewrites the baseline FROM those\nroots. Together they would "
+            "silently drop every count under a root that is missing.",
+            file=sys.stderr,
+        )
+        return 2
     missing = [] if synthetic else missing_crate_roots()
     if missing:
         if "--update-baseline" in argv:
@@ -787,7 +863,7 @@ def main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
         for rel in missing:
-            print(f"  {rel}: CRATE_ROOTS names a directory that does not exist", file=sys.stderr)
+            print(f"  {rel}", file=sys.stderr)
         print("", file=sys.stderr)
         print(ROOT_MISSING_HINT, file=sys.stderr)
         return 1
