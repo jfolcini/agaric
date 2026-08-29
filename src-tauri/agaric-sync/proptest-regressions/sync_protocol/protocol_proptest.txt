@@ -14,7 +14,7 @@
 #
 # They are kept because the shrinker made them good boundary cases in their own
 # right — equal own-counters, an absent local space, a lone record at a cap of
-# 1 — and re-running seven tiny inputs first costs nothing. Delete them freely
+# 1 — and re-running eight tiny inputs first costs nothing. Delete them freely
 # if a strategy change makes them unreproducible; nothing depends on them.
 #
 # One reading trap: proptest keys persistence by SOURCE FILE, so all eight seeds

@@ -108,6 +108,19 @@ type VvModel = BTreeMap<PeerID, Counter>;
 /// entry, which is exactly how both functions under test read it (`unwrap_or(0)`
 /// on one side, `continue` on the other). The model and the bytes therefore
 /// agree on zero without either side special-casing it.
+///
+/// **A coverage limit that follows from this, and cannot be lifted here.**
+/// Because loro removes the key rather than storing an end of `0`, no vv these
+/// generators produce carries an *explicit* zero-counter entry — and neither
+/// can any vv loro itself produces, since `set_last` is the only way in. So
+/// production's two zero guards (`loro_sync.rs`'s `if peer_counter == 0
+/// { continue }` and `check_reset_required`'s `if peer_own == 0 { continue }`)
+/// are reached in these properties only through an *absent* peer, never a
+/// present-but-zero one. That is not a gap the generators can close: those
+/// guards are defensive against a shape the encoding cannot express, and no
+/// property here distinguishes "absent" from "counter zero" because loro does
+/// not either. Worth knowing before reading a surviving mutant on either guard
+/// as a missing test.
 fn encode_vv(model: &VvModel) -> Vec<u8> {
     let mut vv = VersionVector::new();
     for (&peer, &counter) in model {
@@ -742,8 +755,10 @@ fn monotonicity_predicate_catches_a_truncating_cap() {
 
 /// Generator coverage: the batching properties above are only meaningful if the
 /// generated records and caps actually reach the regime where a batch holds
-/// **several** records. With a 106-byte floor per record (see
-/// `batching_is_monotone_in_the_cap`), a cap range that sat below ~300 would
+/// **several** records. With a 127-byte floor per record — the figure derived
+/// in `batching_is_monotone_in_the_cap`, and not the 106-byte one an earlier
+/// revision of this file used, which measured the wrong thing — a cap range
+/// that sat below ~300 would
 /// make every batch a singleton and quietly turn three properties vacuous —
 /// they would all still pass.
 ///
