@@ -239,15 +239,76 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     expect(compiled.matcher('x𝐀 x')).toEqual([{ start: 4, end: 5 }])
   })
 
-  it('length-preserving folds use whole-string folding, not per-code-point folding', () => {
-    // Kills matcher.ts:231:7 [ConditionalExpression → false] and 231:40
-    // [BlockStatement → {}], i.e. "always take the slow per-code-point path".
-    // Greek final sigma is the discriminator: `'ΑΣ'.toLowerCase()` is
-    // 'ας' (context-sensitive ς), while folding code point by code point
-    // yields 'ασ'. Both are 2 units long, so the fast path is the one that
-    // must run — and a query must always find itself.
+  it('length-preserving folds take the fast path', () => {
+    // CORRECTION (#4507). This test used to claim it "kills matcher.ts:231:7
+    // [ConditionalExpression → false] and 231:40 [BlockStatement → {}], i.e.
+    // 'always take the slow per-code-point path'". It does not, and never did:
+    // both mutants were re-spliced at their exact offsets and the whole suite
+    // stayed green. The reason is that a query finding ITSELF is symmetric —
+    // the fast path folds both sides to 'ας' and the slow path folds both to
+    // 'ασ', so both paths match and no self-search can tell them apart. A
+    // discriminating case needs the text and the query to disagree about
+    // whether their sigma is word-final; see the #4507 tests below, which do.
+    //
+    // Kept as a path-selection smoke test, which is what it actually is.
     const compiled = compileQuery('ΑΣ', defaultOpts) as Extract<CompiledQuery, { kind: 'literal' }>
     expect(compiled.matcher('ΑΣ')).toEqual([{ start: 0, end: 2 }])
+  })
+
+  // #4507 — the FAST path's sigma tests. Everything below this comment in the
+  // sigma group forces the slow path with a leading `İ`; these do the opposite
+  // and pin the path virtually all real text takes.
+  //
+  // The bug they were written for: #3812 collapsed ς onto σ inside
+  // `foldCodePoint`, i.e. on the slow path only, while the fast path folded
+  // with a bare `toLowerCase()`. That applies Unicode's Final_Sigma rule to
+  // BOTH sides independently, so a needle whose sigma is string-final folded to
+  // 'ς' and a haystack whose sigma was not folded to 'σ', and they missed each
+  // other. Every case below returned `[]` before the fix.
+  it('finds a WORD-FINAL sigma in the text from a bare Σ query, on the fast path (#4507)', () => {
+    const text = 'ΟΔΟΣ'
+    expect(text.toLowerCase().length).toBe(text.length) // fast path, not slow
+    expect(text.toLowerCase()).toContain('ς') // toLowerCase() produced final ς
+    const compiled = compileQuery('Σ', defaultOpts) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(compiled.matcher(text)).toEqual([{ start: 3, end: 4 }])
+  })
+
+  it('all three sigma spellings are interchangeable on the fast path (#4507)', () => {
+    // Σ / σ / ς as the query, against the same word-final-sigma text.
+    const text = 'ΟΔΟΣ'
+    for (const query of ['Σ', 'σ', 'ς']) {
+      const compiled = compileQuery(query, defaultOpts) as Extract<
+        CompiledQuery,
+        { kind: 'literal' }
+      >
+      expect(compiled.matcher(text), `query ${JSON.stringify(query)}`).toEqual([
+        { start: 3, end: 4 },
+      ])
+    }
+  })
+
+  it('finds EVERY sigma, not just the non-final ones (#4507)', () => {
+    // 'ΣΣ'.toLowerCase() is 'σς' — the second is word-final. Before the fix
+    // this returned one match; the trailing sigma was invisible.
+    const text = 'ΣΣ'
+    expect(text.toLowerCase()).toBe('σς')
+    const compiled = compileQuery('Σ', defaultOpts) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(compiled.matcher(text)).toEqual([
+      { start: 0, end: 1 },
+      { start: 1, end: 2 },
+    ])
+  })
+
+  it('case-SENSITIVE search still tells the sigma forms apart (#4507)', () => {
+    // The fix must not leak into the case-sensitive path: with case
+    // sensitivity on, ς and σ are simply different characters.
+    const sensitive = { ...defaultOpts, caseSensitive: true }
+    const finalOnly = compileQuery('ς', sensitive) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(finalOnly.matcher('οδος')).toEqual([{ start: 3, end: 4 }])
+    expect(finalOnly.matcher('οδοσ')).toEqual([])
+    const midOnly = compileQuery('σ', sensitive) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(midOnly.matcher('οδος')).toEqual([])
+    expect(midOnly.matcher('οδοσ')).toEqual([{ start: 3, end: 4 }])
   })
 
   it('scanLiteralFolded folds the needle per code point too, so it agrees with the haystack fold (#3812)', () => {
@@ -1263,6 +1324,39 @@ describe('runWalker', () => {
  * so the next triage pass does not re-derive them. Format: line:col [mutator]
  * verbatim replacement — argument.
  *
+ * ─── READ THE CONSTRUCT, NOT THE LINE NUMBER (#4507) ───
+ *
+ * Every `line:col` below is the number from the mutation report that raised it
+ * and is stale the moment anything above it moves. It has now gone stale twice
+ * — #3804 refreshed section D's `301` to `430`, and the 2026-08-17 report
+ * arrived with all of section A drifted by ~124 lines — so treat these numbers
+ * as provenance, never as identity. What identifies a mutant is the CONSTRUCT
+ * named alongside it; find it with grep. The 2026-08-17 pass mapped all 25
+ * findings back onto this ledger that way, and every one matched by construct:
+ *
+ *   err instanceof Error ? ... : ''        A (was 193:81)
+ *   while (from <= haystack.length)        C (was 251:10, reported 320:10)
+ *   while (from <= folded.length)          C (was 296:10, reported 425:10)
+ *   start !== undefined && end !== ...     D (was 301:9/301:32, reported 430)
+ *   text.length > REGEX_NODE_SCAN_MAX      E (was 327:19, reported 451:19)
+ *   high <= 0xdbff                         E (was 363:27, reported 487:27)
+ *   host.ownerDocument?.createTreeWalker   A (was 383:18, reported 507:18)
+ *   !(node instanceof Text)                A (was 385:11, reported 509:11)
+ *   !parent                                A (was 387:11, reported 511:11)
+ *   v == null || v.length === 0            A (was 396:11, reported 520:11)
+ *   !walker                                A (was 400:7,  reported 524:7)
+ *   node.nodeValue ?? '' (collect)         A (was 451:36, reported 575:36)
+ *   !node                                  A (was 532:11, reported 656:11)
+ *   node.nodeValue ?? '' (chunked)         A (was 533:38, reported 657:38)
+ *
+ * SUB-MUTANT AMBIGUITY. A `line:col` can name more than one mutant when
+ * several nodes start at the same offset — section D already documents this for
+ * the `&&` chain. `v == null || v.length === 0` is the same shape: col 11 is
+ * both the whole `||` and its left operand. All four readings were spliced
+ * (#4507); only `v == null` → false survives, which is exactly the section A
+ * claim. The other three die (21, 1 and 21 failing tests respectively), so a
+ * bare "520:11 survived" line understates what the suite already catches.
+ *
  * A. Guards over states the DOM/type contract cannot produce. TypeScript types
  *    `Node.ownerDocument`, `Node.nodeValue` and indexed access as nullable, so
  *    these branches exist to satisfy the compiler; no input reaches them.
@@ -1366,6 +1460,60 @@ describe('runWalker', () => {
  *        checked, none of the 1,024 code points matches `/[\p{L}\p{N}_]/u`, and
  *        the bare trailing surrogate the mutant returns instead is not a word
  *        character either. Both readings classify as "not a word char".
+ *
+ * F. Triaged 2026-08-17 (#4507). The eight findings the ledger did not already
+ *    cover, each spliced at its exact offsets and run against the full suite.
+ *
+ *    `if (!caseSensitive)` in `compileQuery` [ConditionalExpression]
+ *      → true SURVIVES and is equivalent: it computes `foldedNeedle` for a
+ *      case-SENSITIVE query too, and nothing ever reads it, because
+ *      `scanLiteral` returns at `if (caseSensitive) return scanIndexOf(...)`
+ *      before either use. Pure wasted work, same output.
+ *      → false is KILLED (7 tests) — it empties `foldedNeedle` for the
+ *      case-insensitive slow path, where `indexOf('')` then matches at every
+ *      position.
+ *
+ *    `if (haystack.length === text.length)` — the fast/slow path selector —
+ *    [ConditionalExpression → false] and its [BlockStatement → {}] twin, both
+ *    meaning "always take the slow path". BOTH SURVIVE, and the reason changed
+ *    under this change rather than being discovered to be benign:
+ *
+ *      BEFORE #4507 they were NOT equivalent. They altered behaviour on
+ *      word-final Greek sigma — and altered it toward the CORRECT answer,
+ *      because the slow path collapsed ς onto σ via `foldCodePoint` and the
+ *      fast path's bare `toLowerCase()` did not. `compileQuery('Σ')` over
+ *      `'ΟΔΟΣ'` returned `[]`. A surviving mutant that fixes a bug is the
+ *      strongest possible signal that a branch is untested; that is what these
+ *      two were, and #4507 is the fix.
+ *
+ *      AFTER #4507 both paths fold through `foldForMatch`, so the branch is a
+ *      pure optimisation and the two mutants are genuinely equivalent. That
+ *      rests on `foldForMatch` distributing over code points, which is an
+ *      empirical claim about the host's Unicode tables rather than a deduction
+ *      — Final_Sigma is the only context-sensitive mapping in the locale-free
+ *      case-mapping table, so collapsing ς removes the only discrepancy.
+ *      Swept exhaustively and committed: every code point in six contexts,
+ *      6,672,384 cases, 0 differing, with the pre-#4507 fold as a control that
+ *      differs on exactly the one case theory predicts (`ΑΣ`). See
+ *      `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`.
+ *      `→ true` (always fast) stays KILLED (5 tests) — that direction really
+ *      does break the İ offset mapping.
+ *
+ *    The `if (import.meta.env.DEV && foldedNeedle === '')` assertion cluster —
+ *    [ConditionalExpression → false], the `''` [StringLiteral], the throw's
+ *    [BlockStatement], and both message [StringLiteral]s. All survive or report
+ *    no coverage, and all for one reason: the condition is invariably false, by
+ *    construction, exactly as the comment at that site says. `foldedNeedle` is
+ *    non-empty on every path that reaches it, so the block never executes (its
+ *    three inner mutants are unkillable) and the two mutants of the condition's
+ *    right half cannot change a `false` into anything else. `→ true` IS killed
+ *    (7 tests), which confirms the branch is reached and evaluated rather than
+ *    dead — the assertion is doing its job as an assertion.
+ *
+ *    Not filed as accepted gaps to be closed later: an assertion that can fire
+ *    is a caught bug, and one that cannot is unkillable by definition. Writing
+ *    a test to kill these would mean deliberately breaking the coupling the
+ *    assertion exists to detect.
  *
  * Follow-up-worthy (redundant / unreachable production code, not test gaps):
  * the whole of group A. (The `needle.length === 0` early return, the folded

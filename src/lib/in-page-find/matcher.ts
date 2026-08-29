@@ -220,7 +220,7 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
   // range over. A length-changing fold breaks that mapping. If in-page find
   // ever needs diacritic insensitivity it needs an offset-preserving fold,
   // not this helper.
-  const needle = opts.caseSensitive ? query : query.toLowerCase()
+  const needle = opts.caseSensitive ? query : foldForMatch(query)
   const wholeWord = opts.wholeWord
   const caseSensitive = opts.caseSensitive
   // Per-code-point-folded needle for the slow path (`scanLiteralFolded`),
@@ -254,8 +254,10 @@ function scanLiteral(
 ): Array<{ start: number; end: number }> {
   if (caseSensitive) return scanIndexOf(text, text, needle, wholeWord)
   // Locale-independent fold — must stay in lockstep with the needle fold
-  // in `compileQuery` (see the note there).
-  const haystack = text.toLowerCase()
+  // in `compileQuery` (see the note there). Both go through `foldForMatch`,
+  // which is also what `foldCodePoint` folds with, so the fast and slow paths
+  // cannot disagree on sigma (#4507).
+  const haystack = foldForMatch(text)
   // Fast path only when folding preserved the code-unit length. Lowercase
   // mappings never contract (1→N, N ≥ 1), so equal total length means every
   // code point folded 1:1 and offsets into `haystack` are valid offsets
@@ -265,9 +267,16 @@ function scanLiteral(
   // shifts and the indexOf results would point at the wrong span in the
   // original — fall through to the code-point walk that carries an
   // explicit offset map. The check stays length-based rather than
-  // U+0130-specific: it is also what keeps the fast path correct for
-  // context-sensitive but length-preserving folds such as Greek final
-  // sigma, which per-code-point folding would get wrong.
+  // U+0130-specific so that it keeps holding if the fold ever gains another
+  // expanding mapping.
+  //
+  // This branch is a pure OPTIMISATION and nothing else: since #4507 both
+  // sides fold through `foldForMatch`, so the slow path computes the same
+  // spans as the fast one for every input reaching here. It used to be load
+  // bearing in the wrong direction — the comment here claimed the length check
+  // kept the fast path correct for Greek final sigma "which per-code-point
+  // folding would get wrong", and the truth was the reverse: per-code-point
+  // folding collapsed ς onto σ and the fast path did not.
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
@@ -356,8 +365,34 @@ function scanIndexOf(
  * haystack fold is the original #3812 defect.
  */
 function foldCodePoint(ch: string): string {
-  const f = ch.toLowerCase()
-  return f === 'ς' ? 'σ' : f
+  return foldForMatch(ch)
+}
+
+/**
+ * The case fold both literal paths use: `toLowerCase()`, then the ς/σ
+ * collapse `foldCodePoint` documents above.
+ *
+ * #4507 — the collapse used to live only in `foldCodePoint`, i.e. only on the
+ * slow (length-changing) path, which `İ` U+0130 is the sole trigger for. The
+ * fast path folded with a bare `toLowerCase()`, so it hit the exact failure
+ * the comment above describes: `'ΟΔΟΣ'.toLowerCase()` is `'οδος'` — Unicode's
+ * Final_Sigma rule — and a needle folded the same way is `'ς'` when its sigma
+ * is string-final and `'σ'` when it is not. Searching `Σ` over `ΟΔΟΣ` returned
+ * nothing, and `Σ` over `ΣΣ` found one of two. #3812 diagnosed this and fixed
+ * the needle/haystack mismatch on the slow path; the fast path kept it.
+ *
+ * Applying it to both is what makes the two paths agree, and that agreement is
+ * now exact rather than approximate: Final_Sigma is the ONLY context-sensitive
+ * lowercase mapping in the default (locale-free) case-mapping table, so once it
+ * is collapsed, folding a string whole and folding it code point at a time
+ * produce the same result for every input except the length-expanding İ — which
+ * is precisely what the `haystack.length === text.length` check routes away.
+ *
+ * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
+ * `σ` (U+03C3) are both a single UTF-16 code unit.
+ */
+function foldForMatch(s: string): string {
+  return s.toLowerCase().replace(/ς/g, 'σ')
 }
 
 /**

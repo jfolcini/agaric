@@ -1,0 +1,143 @@
+# Session 1425 — a mutant that fixed a bug
+
+#3757's remaining mutants, triaged. Twenty-five findings, seventeen already covered by the
+ledger in `matcher.test.ts` under line numbers that had drifted, six newly recorded as
+equivalent — and two that were not equivalent at all. Those two changed behaviour, and they
+changed it toward the *right* answer.
+
+## The two that mattered
+
+`matcher.ts`'s literal search has a fast path and a slow one, chosen by whether the case
+fold preserved code-unit length. Both surviving mutants at that branch —
+`[ConditionalExpression → false]` and its `[BlockStatement → {}]` twin — mean "always take
+the slow path", and both left the suite green.
+
+The slow path folds code point at a time through `foldCodePoint`, which collapses the two
+Greek sigma forms:
+
+```ts
+const f = ch.toLowerCase()
+return f === 'ς' ? 'σ' : f
+```
+
+The fast path folded with a bare `toLowerCase()`, which applies Unicode's **Final_Sigma**
+rule: `'ΟΔΟΣ'.toLowerCase()` is `'οδος'` — with a final `ς` that nothing then normalised.
+A needle folded the same way gets `'σ'` or `'ς'` depending on where its sigma sits. So the
+two sides disagreed, measured against the real module:
+
+| text | query | result |
+|---|---|---|
+| `ΟΔΟΣ` | `Σ` | `[]` |
+| `ΟΔΟΣ` | `σ` | `[]` |
+| `ΟΔΟΣ` | `ς` | matches |
+| `ΣΣ` | `Σ` | 1 of 2 |
+| `ΟΔΟΣ ΤΙΣ` | `Σ` | `[]` |
+
+Searching a Greek document for a sigma found every non-final one and none of the final
+ones — silently, because searching for the visually distinct `ς` worked.
+
+The mutants were the finding. A mutant that survives *and* repairs a defect is the
+strongest signal a branch can give: it says the branch is not merely untested but is
+carrying the bug, and that the code already contains its own fix on the other side.
+
+## The fix was already written down
+
+The doc comment above `foldCodePoint` describes this failure exactly:
+
+> per-code-point makes them agree on `Σ`, but on its own it does NOT make them agree on
+> text that already CONTAINS a final `ς` — natural Greek orthography — because
+> `'ς'.toLowerCase()` is `'ς'`. Searching `ΟΔΟΣ` over `οδος` would then fold to `οδοσ` vs
+> `οδος` and silently miss.
+
+and closes with "The needle MUST use this same function, not `toLowerCase()` on the whole
+string". #3812 established all of that and applied it to the slow path. The fast path — the
+one essentially all text takes, since the slow path triggers only on `İ` — kept the bare
+fold, which left `foldCodePoint`'s sigma rule as dead code on the path that mattered.
+
+So the fix is the one the module already argued for: both sides fold through one
+`foldForMatch`. Both sigma forms are a single UTF-16 code unit, so the collapse is
+length-preserving and the `{start,end}` offsets the highlighter ranges over are undisturbed
+— the constraint the module says any fold change must respect.
+
+## The comment had it backwards
+
+The branch carried this justification:
+
+> The check stays length-based rather than U+0130-specific: it is also what keeps the fast
+> path correct for context-sensitive but length-preserving folds such as Greek final sigma,
+> which per-code-point folding would get wrong.
+
+The reverse was true. Per-code-point folding got sigma right; the fast path got it wrong.
+Worth recording separately from the code fix, because a confident wrong sentence in a
+comment is what a future reader trusts instead of re-deriving — this repo has now hit that
+failure mode often enough that it deserves naming rather than quietly correcting.
+
+## Killing them was the wrong goal
+
+Once both paths share the fold, the two mutants **still survive** — and that is now
+correct. The branch became a pure optimisation, so "always take the slow path" computes the
+same spans. Re-spliced post-fix to confirm: both survive, while `→ true` (always fast)
+stays killed by the İ offset tests.
+
+The right outcome for these findings was therefore not a test that kills them. A test that
+killed them would have had to pin the fast path's sigma behaviour — pinning the bug as
+intended. The outcome is: fix the defect, then record them as equivalent with the proof
+attached.
+
+That proof is an empirical claim, not a deduction: it needs `foldForMatch` to distribute
+over code points, which holds because Final_Sigma is the only context-sensitive mapping in
+the locale-free case-mapping table. Swept exhaustively rather than asserted — every code
+point in six contexts chosen to cover Final_Sigma's actual trigger (a preceding cased
+letter, no following one), 6,672,384 cases, **0 differing**. The pre-fix fold as control
+differs on exactly **1**, `ΑΣ`, which is precisely where the rule says it must and nowhere
+else. A bare `Σ` does not trigger Final_Sigma, so an empty-context-only sweep would have
+proven nothing.
+
+The sweep is committed into the existing harness rather than run once and described, which
+is the standard #3804 set for this file.
+
+## A test that said it killed a mutant, and did not
+
+`length-preserving folds use whole-string folding, not per-code-point folding` opened with:
+
+> Kills matcher.ts:231:7 [ConditionalExpression → false] and 231:40 [BlockStatement → {}]
+
+It never did. Both were spliced at their exact offsets and the suite stayed green. The
+reason is structural: the test searches for `ΑΣ` inside `ΑΣ`, and a query finding *itself*
+is symmetric — the fast path folds both sides to `ας`, the slow path folds both to `ασ`,
+both match. No self-search can separate the two paths.
+
+The comment has been corrected in place rather than deleted, since "this test does not do
+what it says" is more useful to the next reader than a silently retitled test. Discriminating
+cases need the text and the query to disagree about whether their sigma is word-final;
+the four new `#4507` tests do, and three of them fail against the unfixed module (the
+fourth guards the case-SENSITIVE path against the fix leaking into it, and passes both
+ways by design).
+
+## Line numbers as identity, for the third time
+
+Section D's citations were refreshed once already (#3804, `301` → `430`). This report
+arrived with all of section A drifted ~124 lines. The numbers are now stale *again*, since
+this change moved everything below `compileQuery`.
+
+Rather than refresh them a third time, the ledger now says to read the construct and gives
+a mapping table from each report's `line:col` to the construct and section. All 25 findings
+were matched that way and every one landed. Provenance, not identity.
+
+The same pass resolved a sub-mutant ambiguity the ledger had only documented for the `&&`
+chain: `v == null || v.length === 0` has both the whole `||` and its left operand starting
+at the same column, so "520:11 survived" names four possible mutants. All four were
+spliced; only `v == null → false` survives, exactly the section A claim. The other three
+die with 21, 1 and 21 failing tests.
+
+## A guard with a blind spot
+
+`scripts/check-mutation-harness-clones.mjs` fired correctly when `foldCodePoint` changed —
+that is the guard working. But while re-syncing, both new pins were briefly left as
+`sha256=PLACEHOLDER_A` / `_B`, and the guard reported **`OK: 12 source-pin(s) ... all
+match`**. Its marker regex requires `sha256=([0-9a-f]{64})`, so a malformed pin does not
+fail — it stops being recognised as a pin at all and is skipped silently.
+
+A typo in a pin therefore disables that pin rather than breaking the build, which is the
+one failure mode a drift guard must not have. Filed separately; not fixed here, where it
+would be unrelated to the diff.

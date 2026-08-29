@@ -17,8 +17,18 @@
  * empirical sweep this issue is about) — it backs the one section D
  * explicitly names as having an uncommitted 4.4M-case sweep behind it.
  *
- * SCOPE — this harness covers only `scanLiteralFolded`'s index-guard
- * equivalence claims (section D). It does NOT attempt the module's other
+ * #4507 — a SECOND sweep now lives in this file (see the `foldForMatch`
+ * describe at the bottom): the exhaustive check backing section F's claim
+ * that folding a string whole and folding it code point at a time agree once
+ * `ς` is collapsed onto `σ`. That premise is what makes the fast/slow path
+ * choice at the `haystack.length === text.length` branch in
+ * `src/lib/in-page-find/matcher.ts` a pure optimisation, and therefore what makes the
+ * `271:7 -> false` / `271:40 -> {}` mutants equivalent rather than merely
+ * untested. It was NOT true before #4507, which is why those two survived as a
+ * live bug rather than as an accepted gap.
+ *
+ * SCOPE — apart from that, this harness covers only `scanLiteralFolded`'s
+ * index-guard equivalence claims (section D). It does NOT attempt the module's other
  * empirical claims (the exhaustive 0x110000 code-point scan for "U+0130 is
  * the only expanding fold", or section E's `327:19`/`363:27`) — those
  * are either a one-time enumeration better re-run standalone than folded
@@ -42,7 +52,8 @@
  * edit now fails the gate, which is the signal to re-sync that inlined
  * literal and update the pin.
  *
- * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldCodePoint sha256=191d915338117d9bae421defafb4f44a5c6d74c12ad5515d66ef875f18cf87ab
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldCodePoint sha256=27068332538b97f803845a294d3dacb5ce60f4eb05522dca904c8f7ae18da0b3
+ * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#foldForMatch sha256=197b6462a7d33cb2178d0d5693ce1454dc3279a115c4551b563a90886c547912
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#scanLiteralFolded sha256=e368c19ed972375248269fbaac7ac3446f23cdffe793eb02cf4349b9c9bc3baa
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#isWordCodePoint sha256=1187f44517fcbf5a2ffd1e10a8518fc0e20e2b458faa3e784a488fb074ebaf7c
  * mutation-harness-source-pin: src/lib/in-page-find/matcher.ts#WORD_RE sha256=a51922e9c0787f4eb305db8a68ebbc7e91f2ebb388fa091a7261e9ff2830ba26
@@ -97,8 +108,13 @@ function mulberry32(seed: number): () => number {
 //    inlines the pinned `WORD_RE` pattern, see the header) ────────────────
 
 function foldCodePoint(ch: string): string {
-  const f = ch.toLowerCase()
-  return f === 'ς' ? 'σ' : f
+  return foldForMatch(ch)
+}
+
+// Clone of `foldForMatch` (#4507), which `foldCodePoint` now delegates to.
+// Pinned below alongside it.
+function foldForMatch(s: string): string {
+  return s.toLowerCase().replace(/ς/g, 'σ')
 }
 
 function isWordCodePoint(cp: number | undefined): boolean {
@@ -506,5 +522,102 @@ describe('scanLiteralFolded equivalence-ledger sweep (#3804 harness for matcher.
     expect(r.diffStart).toBe(0)
     expect(r.diffEnd).toBe(0)
     expect(r.diffInnerOr).toBe(0)
+  })
+})
+
+// ── #4507: whole-string vs per-code-point folding ───────────────────────────
+//
+// `matcher.ts` picks between two literal paths at the `haystack.length ===
+// text.length` branch: the fast one folds the whole string with
+// `foldForMatch`, the slow one folds code point at a time through
+// `foldCodePoint` (which delegates to the same function). Those two agree only
+// if `foldForMatch` distributes over code points — and it does NOT distribute
+// on `toLowerCase()` alone, because Unicode's Final_Sigma rule is
+// context-sensitive: `'ΑΣ'.toLowerCase()` is `'ας'` while folding `'Α'` and
+// `'Σ'` separately gives `'ασ'`.
+//
+// Collapsing `ς` onto `σ` removes exactly that discrepancy, and Final_Sigma is
+// the only context-sensitive mapping in the default (locale-free) case-mapping
+// table — so after the collapse the two folds agree everywhere. That is an
+// empirical claim about the host's Unicode tables, not a deduction, so it is
+// swept here rather than asserted in a comment.
+
+/** Fold a string by concatenating the per-code-point fold, as the slow path does. */
+function foldPerCodePoint(s: string): string {
+  let out = ''
+  for (const ch of s) out += foldCodePoint(ch)
+  return out
+}
+
+/** The pre-#4507 fold, with no sigma collapse — the validation control. */
+function foldWithoutSigmaCollapse(s: string): string {
+  return s.toLowerCase()
+}
+
+function foldPerCodePointWithoutSigmaCollapse(s: string): string {
+  let out = ''
+  for (const ch of s) out += foldWithoutSigmaCollapse(ch)
+  return out
+}
+
+describe('foldForMatch distributes over code points (#4507 — the premise behind the fast/slow path branch)', () => {
+  it('agrees with per-code-point folding for every code point in six contexts, and the control fires', () => {
+    // Every assigned code point (lone surrogates skipped — they cannot appear
+    // in a well-formed string), each placed in six contexts chosen to cover
+    // Final_Sigma's actual trigger: a preceding cased letter with no following
+    // one. A bare `Σ` does NOT trigger it, which is why the empty context
+    // alone would prove nothing.
+    const contexts: Array<[string, string]> = [
+      ['', ''],
+      ['Α', ''],
+      ['', 'Α'],
+      ['Α', 'Α'],
+      ['', ' '],
+      [' ', ' '],
+    ]
+
+    let checked = 0
+    let differing = 0
+    let controlDiffering = 0
+    const examples: string[] = []
+
+    for (let cp = 0; cp < 0x110000; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue
+      const ch = String.fromCodePoint(cp)
+      for (const [pre, post] of contexts) {
+        const text = pre + ch + post
+        checked++
+        if (foldForMatch(text) !== foldPerCodePoint(text)) {
+          differing++
+          if (examples.length < 8) {
+            examples.push(
+              `U+${cp.toString(16).toUpperCase().padStart(4, '0')} ${JSON.stringify(text)}: ` +
+                `whole=${JSON.stringify(foldForMatch(text))} ` +
+                `perCodePoint=${JSON.stringify(foldPerCodePoint(text))}`,
+            )
+          }
+        }
+        if (foldWithoutSigmaCollapse(text) !== foldPerCodePointWithoutSigmaCollapse(text)) {
+          controlDiffering++
+        }
+      }
+    }
+
+    console.log(`
+[in-page-find matcher foldForMatch distribution sweep]
+  (code point, context) cases checked:            ${checked}
+  differing with the sigma collapse (expect 0):   ${differing}
+  differing WITHOUT it — control (expect > 0):    ${controlDiffering}
+${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
+`)
+
+    // The control must fire, or a sweep finding "0 differences" would prove
+    // nothing — it would be consistent with the sweep never reaching a
+    // context-sensitive mapping at all.
+    expect(controlDiffering).toBeGreaterThan(0)
+    expect(checked).toBeGreaterThan(6_000_000)
+    // The claim under test.
+    expect(examples).toEqual([])
+    expect(differing).toBe(0)
   })
 })
