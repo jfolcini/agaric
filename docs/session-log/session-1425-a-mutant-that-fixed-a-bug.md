@@ -109,6 +109,34 @@ comment claims a kill it never makes, one section up.
 The sweep is committed into the existing harness rather than run once and described, which
 is the standard #3804 set for this file.
 
+## Two things this changes that are not "fix the missing matches"
+
+Worth separating from the bug report, because both are semantic and neither is
+forced by it.
+
+**The fix widens matching, not only un-breaks it.** On the fast path a
+case-insensitive search for `ς` now also matches `σ` and `Σ`, where before that
+conflation existed only on the slow path. That is intended and consistent —
+regex mode already conflates them under `giu`, and the slow path has since
+#3812 — but "searching for the final form now finds the mid-word form" is a
+behaviour change a user could notice independently of the missing matches this
+started from, and it should not arrive unannounced.
+
+**A guard was left that survives the removal of what it guards.** The sweep's
+assertions were `controlDiffering > 0` and `checked > 6_000_000`. Deleting the
+six separated contexts — the ones added precisely because the adjacent six were
+not enough — left `checked` at 6,672,384 and `controlDiffering` at 1, and every
+assertion still passed. The structural weakness the comment directly above it
+warns about could have been restored silently.
+
+Caught in review, not here, and it is the same defect as the test two sections
+down that claims a kill it never makes: an assertion whose passing is
+insensitive to the thing it exists to hold. Now pinned to the exact derived
+count (`toBe(6)` — Final_Sigma fires in exactly six of the twelve contexts, a
+number derivable rather than observed), plus a separate counter for the
+separated family and the context count itself. Falsified by deleting those six
+contexts: `expected 1 to be 6`, where the previous assertions stayed green.
+
 ## A test that said it killed a mutant, and did not
 
 `length-preserving folds use whole-string folding, not per-code-point folding` opened with:

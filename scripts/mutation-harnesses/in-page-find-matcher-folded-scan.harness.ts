@@ -569,9 +569,9 @@ function foldPerCodePointWithoutSigmaCollapse(s: string): string {
 }
 
 describe('foldForMatch distributes over code points (#4507 — the premise behind the fast/slow path branch)', () => {
-  it('agrees with per-code-point folding for every code point in six contexts, and the control fires', () => {
+  it('agrees with per-code-point folding for every code point in twelve contexts, and the control fires in both families', () => {
     // Every assigned code point (lone surrogates skipped — they cannot appear
-    // in a well-formed string), each placed in six contexts chosen to cover
+    // in a well-formed string), each placed in twelve contexts chosen to cover
     // Final_Sigma's actual trigger: a preceding cased letter with no following
     // one. A bare `Σ` does NOT trigger it, which is why the empty context
     // alone would prove nothing.
@@ -612,6 +612,14 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
     let checked = 0
     let differing = 0
     let controlDiffering = 0
+    // Counted separately so the SEPARATED family is pinned in its own right.
+    // Without it the six separated contexts could be deleted and every
+    // assertion below would still pass — `checked` would fall to 6,672,384
+    // (still over its old floor) and `controlDiffering` to 1 (still over zero)
+    // — silently restoring the exact structural weakness the comment above
+    // warns about. A guard that survives the removal of the thing it guards is
+    // not a guard, which is the same defect this change fixes one file over.
+    let controlDifferingSeparated = 0
     const examples: string[] = []
 
     for (let cp = 0; cp < 0x110000; cp++) {
@@ -632,6 +640,10 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
         }
         if (foldWithoutSigmaCollapse(text) !== foldPerCodePointWithoutSigmaCollapse(text)) {
           controlDiffering++
+          // `pre.length > 1` splits the families: every adjacent context has a
+          // `pre` of '' or one character, every separated one is a cased letter
+          // plus at least one Case_Ignorable.
+          if (pre.length > 1) controlDifferingSeparated++
         }
       }
     }
@@ -640,15 +652,26 @@ describe('foldForMatch distributes over code points (#4507 — the premise behin
 [in-page-find matcher foldForMatch distribution sweep]
   (code point, context) cases checked:            ${checked}
   differing with the sigma collapse (expect 0):   ${differing}
-  differing WITHOUT it — control (expect > 0):    ${controlDiffering}
+  differing WITHOUT it — control (expect 6):      ${controlDiffering}
+    of those, in SEPARATED contexts (expect > 0): ${controlDifferingSeparated}
 ${examples.length > 0 ? `  examples:\n    ${examples.join('\n    ')}` : ''}
 `)
 
     // The control must fire, or a sweep finding "0 differences" would prove
     // nothing — it would be consistent with the sweep never reaching a
     // context-sensitive mapping at all.
-    expect(controlDiffering).toBeGreaterThan(0)
-    expect(checked).toBeGreaterThan(6_000_000)
+    // Pinned to the EXACT count, not `> 0`. Final_Sigma fires for U+03A3 in
+    // exactly six of the twelve contexts — those with a preceding cased letter
+    // and no following one — so 6 is derived, not a recorded observation, and a
+    // change to the context set has to be a deliberate edit here rather than a
+    // silently absorbed one.
+    expect(controlDiffering).toBe(6)
+    // And the separated family must contribute, or the six contexts that make
+    // this sweep stronger than its first revision could be deleted with every
+    // other assertion still green.
+    expect(controlDifferingSeparated).toBeGreaterThan(0)
+    expect(contexts.length).toBe(12)
+    expect(checked).toBe(12 * (0x110000 - 2048))
     // The claim under test.
     expect(examples).toEqual([])
     expect(differing).toBe(0)

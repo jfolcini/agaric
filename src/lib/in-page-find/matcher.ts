@@ -351,18 +351,26 @@ function scanIndexOf(
  * orthography — because `'ς'.toLowerCase()` is `'ς'`. Searching `ΟΔΟΣ`
  * over `οδος` would then fold to `οδοσ` vs `οδος` and silently miss.
  *
- * So the two sigma forms are collapsed onto one here. `οδος`, `ΟΔΟΣ` and
- * `οδοσ` all fold to `οδοσ`: no miss in either direction, and no false
- * positive introduced beyond the ς/σ conflation itself, which is the one
- * deliberate imprecision (pinned in the tests).
+ * So the two sigma forms are collapsed onto one. `οδος`, `ΟΔΟΣ` and `οδοσ`
+ * all fold to `οδοσ`: no miss in either direction, and no false positive
+ * introduced beyond the ς/σ conflation itself, which is the one deliberate
+ * imprecision (pinned in the tests).
  *
- * This costs nothing in offset mapping — both sigmas are a single UTF-16
- * code unit, so the folded length is unchanged and `foldedStart` /
- * `foldedEnd` stay aligned.
+ * That collapse no longer happens HERE, and neither does the offset-mapping
+ * argument that used to sit in this docblock: both moved to `foldForMatch`
+ * below, which this function is now a one-line delegation to. #4507 made the
+ * whole-string fold sites use the same helper, because #3812 applied the rule
+ * to the slow path only and left the fast path — the one essentially all text
+ * takes — folding with a bare `toLowerCase()`.
  *
- * The needle MUST use this same function, not `toLowerCase()` on the whole
- * string: mixing a context-SENSITIVE needle fold with a context-FREE
- * haystack fold is the original #3812 defect.
+ * What survives here is the reason this per-code-point entry point exists at
+ * all: `scanLiteralFolded` needs the fold applied one code point at a time to
+ * build its offset map, not just the same result on the whole string.
+ *
+ * The needle MUST use the same fold as the haystack, whichever spelling: mixing
+ * a context-SENSITIVE fold on one side with a context-FREE one on the other is
+ * the original #3812 defect, and mixing the collapsing fold with the
+ * non-collapsing one is #4507.
  */
 function foldCodePoint(ch: string): string {
   return foldForMatch(ch)
