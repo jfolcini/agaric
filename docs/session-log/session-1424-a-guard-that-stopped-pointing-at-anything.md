@@ -651,3 +651,43 @@ Twenty-five cases. Sixteen mutants.
 **CI, finally.** `21deb76` is the first of thirteen heads to run `validate-all` to completion —
 every job green, aggregator settling — because this is the first head not cancelled by the next
 push. The rule cost two rounds of latency and bought the first real verdict this branch has had.
+
+## Round sixteen — the same fault, one level of combination up
+
+Three notes. Two taken, one rejected for the third time.
+
+**The banner was still wrong, on the combination.** Round fifteen split it three ways so a
+dangling or unanchored run would stop claiming a drift. It was a priority chain, so a run
+carrying *both* a dangling entry and an unbaselined count announced only the second, over a
+list containing "does not exist". Reachable on any commit that edits the baseline — which
+forces the whole-tree walk — after one file was deleted and another gained a guard.
+
+Nothing was lost; both hints still printed. But the headline described the finding set as
+something it did not contain, which is precisely the fault the split was made to remove,
+relocated from the arms onto their combination. Twice now I have fixed this by adding a case
+to a chain, and twice the chain has been the thing that was wrong. It now composes one clause
+per class that actually fired, so no combination can be described by a class it does not
+contain. The single-class wording is byte-identical, which is why the existing cases did not
+notice the defect and still pass unchanged.
+
+**A refusal message asserted that the case being refused was allowed.** Two places — the
+module docstring and the text printed at the moment of refusal — said a move with the old file
+"gone OR EMPTIED" nets to zero and needs no flag. An emptied-but-present file is refused: the
+count drops while `is_file()` stays true, so `in_place` fires. So the operator who empties a
+file into a shim gets exit 1 and, immediately below it, a sentence telling them that is
+allowed. Behaviour was right and is unchanged; only the two claims about it were false.
+
+**Rejected, third time asked:** that direction 11's split key `id = "check-space-filter-drift"`
+also matches `check-space-filter-drift-selftest` and works only by declaration order. It does
+not — the key carries the closing quote. `prek.toml` holds exactly one occurrence and the split
+lands on the block with the `files` line. Verified by running it, as in round ten. Three
+reviews have now raised it and two runs have disproved it; recording it here so the next round
+does not spend a fourth.
+
+**DCO resolved.** The maintainer chose re-authoring over a Claude sign-off: all commits are now
+authored `Javier Folcini <jfolcini86@gmail.com>`, matching the trailer thirteen of them already
+carried. `filter-branch` rather than `rebase`, to preserve the one merge commit; the tree was
+verified byte-identical to the pre-rewrite backup before the force-push. The local git identity
+is now set to match, so the four-commit divergence that caused this cannot recur here.
+
+Twenty-six cases. Seventeen mutants.
