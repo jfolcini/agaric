@@ -59,10 +59,15 @@ including the well-formed parse and essentially every pre-existing fixture.
 
 ## Verification
 
-Self-test green at 65 assertions. Real tree: `OK: 13 source-pin(s) across 5 harness file(s)`,
-verified against an independent count of the markers on disk — all 13 well-formed, so the repo
-has no malformed markers today and this changes nothing about the current state. It is about the
-next one written by hand.
+Self-test green at 65 assertions. On the real tree the guard passes with every marker
+well-formed, so the repo has no malformed markers today and this changes nothing about the
+current state — it is about the next one written by hand.
+
+Deliberately not quoting the marker count here. The first draft did, and review caught that it
+had already gone stale one merge later as sibling PRs added harnesses. A log whose whole subject
+is that a count a reader trusts should not be off is the last place to carry a bare figure that
+drifts. The invariant is the durable claim: every marker the guard finds is well-formed, and a
+malformed one can no longer be absent from both the violations and the tally.
 
 No `prek.toml` change was needed: the self-test hook already existed and its `files` glob already
 covered the script.
