@@ -1665,7 +1665,19 @@ jobs:
           # (the budgets carry headroom) but it must not pass unremarked.
           BUDGETED_TARGETS=8
           if [ "${#targets[@]}" -gt "$BUDGETED_TARGETS" ]; then
-            echo "::warning::${#targets[@]} fuzz targets, but the job and cmin timeouts were sized for $BUDGETED_TARGETS. Re-check timeout-minutes on this job and on the cmin step, then raise BUDGETED_TARGETS here."
+            msg="${#targets[@]} fuzz targets, but the job and cmin timeouts were sized for $BUDGETED_TARGETS. Re-check timeout-minutes on this job and on the cmin step, then raise BUDGETED_TARGETS here."
+            echo "::warning::$msg"
+            # ALSO to the run summary, not only the annotation. This lane runs
+            # weekly and unattended, and a `::warning::` on an otherwise-green
+            # run is a signal with no reader — nobody opens the log of a job
+            # that passed. `$GITHUB_STEP_SUMMARY` renders on the run page
+            # itself, which is the one surface a passing scheduled run gets
+            # looked at from.
+            {
+              echo "### :warning: fuzz target budget"
+              echo
+              echo "$msg"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
           printf '%s\n' "${targets[@]}" > "$RESULT_DIR/targets.txt"
           for target in "${targets[@]}"; do
@@ -1725,7 +1737,9 @@ jobs:
         # The one step here with no time bound of its own: the fuzz step caps
         # itself with `-max_total_time`, but the merge re-executes every corpus
         # input with only `-rss_limit_mb` to bound it. As the corpus grows this
-        # is the likeliest thing to push the job into its 90-minute timeout —
+        # is the likeliest thing to push the job into its own `timeout-minutes`
+        # (see the job's, above; it was 90 when this comment was written and is
+        # not restated here, because restating it is how it went stale) —
         # and a job timeout is a CANCELLATION, which correctly skips the save,
         # so the symptom would be a corpus that silently stops accumulating:
         # the exact failure mode this change exists to remove. A step-level

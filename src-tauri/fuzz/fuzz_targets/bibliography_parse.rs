@@ -9,6 +9,15 @@
 //! adversarial content is part of the surface — a file that sniffs as BibTeX
 //! and then fails to parse as one is exactly the shape worth exploring.
 //!
+//! The cost, stated so it is not rediscovered as a surprise: this target
+//! shares ONE per-target budget across three functions, so each gets roughly a
+//! third of the search a dedicated target would give it — and `parse_bibtex` is
+//! by far the largest of the three. That is the right trade while the corpus is
+//! still growing between runs, since the cross-parser states are only reachable
+//! by driving both. If this target's `cmin <before> -> <after>` line stops
+//! rising while the others keep climbing, it has saturated what a shared budget
+//! can reach and `parse_bibtex` should be split out.
+//!
 //! Run: `cargo +nightly fuzz run bibliography_parse`.
 
 #![no_main]
