@@ -73,30 +73,71 @@ restored with a byte-identical comparison afterwards. Three worth naming:
   back as a different frontier next session, so we ship a delta against state the peer
   does not have) is silent and lands in user data.
 
-## One property could not be shown red, and that is written down
+## One property could not be shown red, and the reason I gave was wrong
 
-`batching_is_monotone_in_the_cap` — a larger `max_bytes` never yields more batches —
-survived every mutation. Not for want of trying: splitting is "`g(state, record)` exceeds
-`h(max_bytes)`", and every monotone `h` keeps the whole pass monotone. The one realistic
-non-monotone `h` is a truncating cast, which this repo already lints for
-(`cast_possible_truncation`), and it provably cannot bite: an `OpTransfer` with every field
-empty already serializes to **106 bytes** of field names and punctuation, so a cap
-truncated through `u8` (ceiling 255) partitions the same records the same way the
-untruncated cap does, and the batch counts coincide.
+`batching_is_monotone_in_the_cap` — a larger `max_bytes` never yields more
+batches — survived every mutation. The first version of this log explained why,
+confidently and incorrectly:
 
-The honest conclusion is not "the property is bad" but "the property is a ratchet, not a
-bug-catcher" — it would break first if the loop were ever rewritten to reorder records to
-fill batches — and that is what its doc comment now says. A green test whose failure you
-cannot construct is worth keeping only if you say which of the two it is.
+> an `OpTransfer` with every field empty already serializes to **106 bytes** of
+> field names and punctuation, so a cap truncated through `u8` (ceiling 255)
+> partitions the same records the same way the untruncated cap does
 
-The attempt did leave one real improvement behind. Working out why the truncation could not
-bite showed the record generator had drifted heavy enough (arbitrary `char`s, JSON-escaped
-to as much as ten bytes each) that *every* batch was a singleton across the whole cap
-range — which would have made three batching properties pass while proving nothing about
-packing. That is now pinned by a plain `#[test]`, not a property:
-`batching_generators_reach_the_multi_record_regime` samples the strategy through proptest's
-deterministic runner and fails if the fullest batch at the widest cap holds fewer than
-three records.
+106 is less than 255, so that sentence argues for the opposite of its
+conclusion. Review caught it, with a counterexample: at `max_bytes = 250` and
+`extra = 20`, the truncated caps are 250 and 14, which would partition 40
+records into 20 batches and 40 — a monotonicity violation the property would
+catch. On that reading the property is a bug-catcher for exactly the mutation I
+had dismissed.
+
+**Both of us were wrong, and measuring settled it.** The counterexample assumes
+two records fit under a cap of 250. They do not: the smallest record the
+strategy actually produces bills at 129 bytes, and `129 + 129 = 258 > 250`, so a
+cap of 250 gives 40 singleton batches, same as 14. The probe:
+
+```
+PROBE billed=129 cap250 -> 40 batches, cap270 -> 40 batches
+```
+
+The real window is narrower than either account. A truncated cap changes the
+partition only where it still fits **two** records, so it needs a cap of at
+least twice the smallest record and at most 255. The hand-derived floor — every
+field at its strategy's shortest value — bills at 127, and `2 x 127 = 254`. So
+the window is a truncated cap of exactly 254 or 255. And over 20,000 sampled
+records the strategy never reached that floor:
+
+```
+PROBE sampled_min=142 hand_min=127 two_of_hand_min=254
+PROBE u8 ceiling = 255; can two minimum records share a truncated batch? true
+```
+
+142-byte records need 284 to pair, which no `u8` can express. So the window is
+real and the random search does not reach it — which is why no mutation turned
+the property red, and it is a different fact from the one I published.
+
+## What that changed about the test
+
+Not the property, which is correct as written; widening the generator to hit a
+two-in-256 cap window would trade a reliable property for a flaky one. What
+changed is that the property now has a **validation control** — the same device
+the in-page-find sweep harness uses, and for the same reason: a property that
+has never failed proves nothing until you have seen it fail.
+
+`monotonicity_predicate_catches_a_truncating_cap` applies the predicate to a
+local copy of the production loop with the truncating cast added, over records
+at the exact 127-byte floor. A cap of 254 pairs them; 256 truncates to 0 and
+cannot. Twenty batches becomes forty on a *larger* cap, which is precisely what
+the property forbids. The predicate has power; the generator is what does not
+reach the window.
+
+The lesson is not "check your arithmetic", though that too. It is that
+**"provably cannot" is a claim with a burden, and I met it with a number instead
+of a derivation.** 106 was a real measurement of a real thing — and it was the
+wrong thing, because the quantity that matters is twice the *generator's* floor,
+not once the *type's* floor. A reviewer checking the sentence found the error in
+one step. The version that would have survived scrutiny is the one that says
+what was measured and how it bounds the conclusion, which is what both the doc
+comment and this section now do.
 
 ## What this does not do
 

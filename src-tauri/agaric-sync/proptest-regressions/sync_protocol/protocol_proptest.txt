@@ -16,6 +16,14 @@
 # right — equal own-counters, an absent local space, a lone record at a cap of
 # 1 — and re-running seven tiny inputs first costs nothing. Delete them freely
 # if a strategy change makes them unreproducible; nothing depends on them.
+#
+# One reading trap: proptest keys persistence by SOURCE FILE, so all eight seeds
+# replay against all 18 properties in `protocol_proptest.rs`, not only against
+# the one each was shrunk from. The `shrinks to` annotations are therefore
+# per-ORIGIN, not per-test — a seed annotated with `max_bytes` will be replayed
+# under `persisted_vvs_round_trip` too, where it re-expands through that test's
+# own strategies and means something entirely different. Nothing unsound; just
+# do not read an annotation as describing the test you are debugging.
 cc 2fc9f291e08a9d437e3358a6782d10151aaa1f1a3bbb06791f426e150f2be53a # shrinks to own = 1005, vvs = {0: {1005: 1}}
 cc 0c072d346f63f38263cbccbe2fe6f46051566876f9d4c3e8abe577d1133d28eb # shrinks to own = 1004, local = {2: {1004: 1}}, peer = {2: {1004: 1}}
 cc 30e37a84e79ce9dbe645eec416baa89868b411d2170ef0c063d1d1e3ff6bb7da # shrinks to own = 1001, local = {}, peer = {3: {1001: 1}}, noise = {3: {}}

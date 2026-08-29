@@ -28,7 +28,10 @@
 //! loro's own `VersionVector::merge`, reached through `agaric-engine`. So
 //! commutativity and idempotence do not apply here. What the comparisons do
 //! have is an order structure — reflexivity, transitivity and monotonicity of
-//! the dominance relation — and that is what this file pins instead. The
+//! the dominance relation — and that is what this file pins instead. (On
+//! transitivity specifically, see its own doc comment: it is a restatement of
+//! the order law that `reachability_matches_model` already subsumes, kept for
+//! legibility rather than for coverage.) The
 //! independently-computed reference #4498 asks for is real: every property
 //! below scores the implementation against a model built from the *generated*
 //! `(peer, counter)` data, which never calls `VersionVector::decode`.
@@ -60,9 +63,12 @@
 //! | codec: decoder panics on an unparseable blob | `decode_is_total`, `decode_is_a_fixed_point` |
 //! | codec: decoder appends a marker | `round_trip`, `decode_is_a_fixed_point` |
 //!
-//! The one property with no entry is `batching_is_monotone_in_the_cap`; its own
-//! doc comment says why no plausible mutation reaches it and what it is
-//! therefore worth.
+//! The one property with no entry is `batching_is_monotone_in_the_cap`. It is
+//! not unfalsified — `monotonicity_predicate_catches_a_truncating_cap` shows
+//! the predicate failing against a deliberately non-monotone control — but no
+//! mutation of the *production* pass reaches it, and its doc comment measures
+//! exactly why: the window is a truncated cap of 254 or 255, and the record
+//! strategy does not reach the 127-byte floor that window needs.
 //!
 //! # Configuration
 //!
@@ -207,10 +213,17 @@ fn op_transfer() -> impl Strategy<Value = OpTransfer> {
         )
 }
 
-/// The size estimate `batch_ops_for_wire` bills each record at, recomputed here
-/// rather than imported — the batching contract is stated in bytes-on-the-wire,
-/// so the test has to be able to say what a batch weighs without asking the
-/// code under test.
+/// The size estimate `batch_ops_for_wire` bills each record at.
+///
+/// **This is a copy of the production formula, not an independent one**, and
+/// the distinction matters for what the cap property can claim. It lets a test
+/// state what a batch weighs without calling into the code under test, which is
+/// what `batching_respects_the_cap_except_for_unsplittable_records` needs to
+/// check the *partitioning loop*. It does NOT cover the formula: change
+/// `operations.rs`'s `+ 2` envelope allowance to `+ 8` and every property here
+/// stays green, because this line moves with it. Pinning the billing itself
+/// would need a fixture with a known serialized length, which is a different
+/// test than any of these.
 fn billed_bytes(rec: &OpTransfer) -> usize {
     serde_json::to_string(rec).map_or(0, |s| s.len()) + 2
 }
@@ -369,7 +382,16 @@ proptest! {
         good in vv_model(),
         corrupt_local in any::<bool>(),
     ) {
-        prop_assume!(VersionVector::decode(&garbage).is_err());
+        // Branch on whether the blob decodes rather than `prop_assume!`-ing it
+        // away. Random bytes essentially never form a valid vv today, so the
+        // assume would filter almost nothing — but "almost nothing" is a
+        // property of loro's framing strictness, not of this test. A future
+        // loro that tolerated trailing bytes or short frames would push the
+        // reject count into proptest's global cap and this would abort with
+        // "Too many global rejects", reporting a harness failure and silently
+        // ceasing to cover the error path. Branching covers both arms and
+        // cannot be rejected.
+        let decodes = VersionVector::decode(&garbage).is_ok();
 
         // A positive own-counter on the peer side, so the local lookup is
         // actually reached rather than short-circuited by the `peer_own == 0`
@@ -389,10 +411,18 @@ proptest! {
             )
         };
 
-        prop_assert!(
-            check_reset_required(own, &local, &peer).is_err(),
-            "a vv that does not decode must be a protocol error, not a decision",
-        );
+        let got = check_reset_required(own, &local, &peer);
+        if decodes {
+            prop_assert!(
+                got.is_ok(),
+                "a vv that DOES decode must produce a decision, not an error",
+            );
+        } else {
+            prop_assert!(
+                got.is_err(),
+                "a vv that does not decode must be a protocol error, not a decision",
+            );
+        }
     }
 }
 
@@ -435,11 +465,20 @@ proptest! {
     /// Dominance is **transitive**: if `b` is reachable from `a` and `c` from
     /// `b`, then `c` is reachable from `a`.
     ///
-    /// This is the property that makes the gate an order rather than an ad-hoc
-    /// predicate, and it is the one no example test gives you: a comparison
-    /// that mishandled the absent-entry case would still pass every
-    /// two-vector example while breaking here, because transitivity is what
-    /// fails first when "absent" and "zero" stop meaning the same thing.
+    /// **This adds no coverage, and the earlier version of this comment
+    /// claimed otherwise.** Dominance is pointwise `>=`, so transitivity is a
+    /// property of the *relation*, not of its implementation: any gate that
+    /// agrees with `model_reachable` is transitive automatically, and
+    /// `reachability_matches_model` already pins that agreement. Worse, the
+    /// chain below is built by pointwise non-negative lifting, so `a >= b >= c`
+    /// holds elementwise by construction and the conclusion re-checks the same
+    /// per-peer comparisons the two premises did. No correct-but-non-transitive
+    /// gate can be expressed under this construction, so none can be caught.
+    ///
+    /// Kept anyway, and deliberately: it states the order law in the file that
+    /// depends on it, and it is the cheapest place for a reader to see what
+    /// "reachable" is supposed to mean. It is documentation that executes, not
+    /// a guard — which is worth having, as long as nobody counts it twice.
     ///
     /// The chain is **constructed**, not filtered. Drawing three independent
     /// vvs and `prop_assume!`-ing the two premises rejects roughly 95% of
@@ -593,21 +632,27 @@ proptest! {
     /// it is the property that would break first if the loop were ever
     /// rewritten to reorder records to fill batches.
     ///
-    /// **Honest note on its strength.** Every other property in this file was
-    /// shown red against a mutation of the code it covers; this one was not,
-    /// and the reason is worth recording rather than leaving as an unexamined
-    /// green. Splitting here is "`g(state, record)` exceeds `h(max_bytes)`",
-    /// and any monotone `h` — a fixed envelope subtraction, a per-record
-    /// allowance, a percentage reserve — keeps the whole pass monotone. The
-    /// one realistic non-monotone `h` is a truncating cast on `max_bytes`,
-    /// which this repo lints for (`cast_possible_truncation`), and it provably
-    /// cannot bite here: an `OpTransfer` with every field empty already
-    /// serializes to 106 bytes of field names and punctuation, so a cap
-    /// truncated through `u8` (ceiling 255) holds at most two records where
-    /// the untruncated cap held two as well, and the batch counts coincide.
-    /// So this property earns its place as a ratchet against a future
-    /// reordering or bin-packing rewrite, not as a bug-catcher against the
-    /// pass as written.
+    /// **On its strength, measured rather than argued.** Every other property
+    /// here was shown red against a mutation of the code it covers. This one
+    /// was not, and the reason is a fact about the generator rather than about
+    /// the pass: see `monotonicity_predicate_catches_a_truncating_cap` below,
+    /// which demonstrates that the predicate *does* have power, against a
+    /// deliberately non-monotone control.
+    ///
+    /// The realistic non-monotone bug is a truncating cast on `max_bytes`
+    /// (`cast_possible_truncation`, which this repo lints for). It can only
+    /// change the partition where a `u8`-truncated cap still fits TWO records,
+    /// i.e. at a cap of `2 x` the smallest record or above, with a ceiling of
+    /// 255. The smallest `OpTransfer` this strategy can produce bills at 127
+    /// bytes, so that window is exactly a truncated cap of 254 or 255 — and
+    /// over 20,000 sampled records the strategy never reached the floor
+    /// (smallest observed: 142 bytes, whose pair needs 284). So the random
+    /// search does not reach the window, which is why no mutation of the pass
+    /// turned this red.
+    ///
+    /// It is kept as written. Widening the generator to hit a two-in-256 cap
+    /// window would trade a reliable property for a flaky one; the control
+    /// below covers the same ground deterministically.
     #[test]
     fn batching_is_monotone_in_the_cap(
         records in prop::collection::vec(op_transfer(), 0..40),
@@ -625,6 +670,76 @@ proptest! {
     }
 }
 
+/// `batch_ops_for_wire`'s loop with one deliberate defect: the cap is truncated
+/// through a `u8`. Used only by the validation control below.
+///
+/// A copy of production rather than a call into it, because the point is to
+/// have something the monotonicity predicate can *fail* on — which is the only
+/// way to show the predicate is not vacuous, since the real function is (as far
+/// as this file can establish) correct.
+fn batch_with_truncated_cap(records: Vec<OpTransfer>, max_bytes: usize) -> Vec<Vec<OpTransfer>> {
+    #[allow(clippy::cast_possible_truncation)]
+    let max_bytes = max_bytes as u8 as usize;
+    let mut batches: Vec<Vec<OpTransfer>> = Vec::new();
+    let mut current: Vec<OpTransfer> = Vec::new();
+    let mut current_bytes: usize = 0;
+    for rec in records {
+        let rec_bytes = billed_bytes(&rec);
+        if !current.is_empty() && current_bytes + rec_bytes > max_bytes {
+            batches.push(std::mem::take(&mut current));
+            current_bytes = 0;
+        }
+        current_bytes += rec_bytes;
+        current.push(rec);
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
+}
+
+/// Validation control for `batching_is_monotone_in_the_cap` — the same pattern
+/// the in-page-find sweep harness uses, and for the same reason: a property
+/// that never fails proves nothing until you have seen it fail.
+///
+/// The predicate is applied to `batch_with_truncated_cap`, which is the real
+/// loop plus a truncating cast, over records at the strategy's exact 127-byte
+/// floor. A cap of 254 pairs them (2 x 127, and the split test is strictly
+/// greater-than); 256 truncates to 0 and cannot. Twenty batches becomes forty
+/// on a *larger* cap, which is precisely what the property forbids.
+#[test]
+fn monotonicity_predicate_catches_a_truncating_cap() {
+    let floor = OpTransfer {
+        device_id: "a".to_string(),
+        seq: 0,
+        parent_seqs: None,
+        hash: "0000".to_string(),
+        op_type: "edit_block".to_string(),
+        payload: String::new(),
+        created_at: 0,
+        origin: "user".to_string(),
+    };
+    assert_eq!(
+        billed_bytes(&floor),
+        127,
+        "the 127-byte floor is load-bearing for the window this control targets \
+         and for the doc comment above; if the wire shape changed, both need \
+         re-deriving rather than this number nudging"
+    );
+
+    let records: Vec<OpTransfer> = std::iter::repeat_n(floor, 40).collect();
+    let small = batch_with_truncated_cap(records.clone(), 254).len();
+    let large = batch_with_truncated_cap(records, 256).len();
+
+    assert_eq!(small, 20, "a cap of 254 must pair 127-byte records");
+    assert_eq!(large, 40, "256 truncates to 0, so nothing pairs");
+    assert!(
+        large > small,
+        "the control is supposed to VIOLATE monotonicity; if it stopped doing \
+         so, `batching_is_monotone_in_the_cap` would be unfalsified again"
+    );
+}
+
 /// Generator coverage: the batching properties above are only meaningful if the
 /// generated records and caps actually reach the regime where a batch holds
 /// **several** records. With a 106-byte floor per record (see
@@ -634,7 +749,18 @@ proptest! {
 ///
 /// This is a plain `#[test]`, not a property: it asserts a fact about the
 /// *strategies*, sampled through proptest's deterministic runner so it cannot
-/// flake.
+/// flake between runs.
+///
+/// It CAN move between proptest versions, though, and the failure would point
+/// at the wrong thing. `TestRunner::deterministic()` is deterministic given a
+/// fixed RNG and fixed per-strategy entropy consumption, both of which are
+/// proptest internals; the dev-dependency is a caret range (`"1.11.0"`, matching
+/// the four sibling crates), so a semver-compatible bump can change what is
+/// sampled with nothing in this repo changing. The margins are wide — the
+/// observed floor is ~142 bytes against a 300-byte assertion, and ~6 records
+/// per batch against an assertion of 3 — so this is unlikely rather than
+/// impossible. If it ever does fail right after a lockfile bump, suspect the
+/// bump before suspecting `op_transfer`.
 #[test]
 fn batching_generators_reach_the_multi_record_regime() {
     use proptest::strategy::{Strategy as _, ValueTree as _};
