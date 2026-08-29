@@ -40,9 +40,10 @@
  * summaries. Interleaving with rotating order cancels drift; medians over
  * eleven repetitions cancel outliers; and the per-row spread is reported as an
  * explicit noise floor because row-level verdicts are NOT stable here — the
- * `astral` row cleared a floor of 6% in one run and was buried under one of
- * 26% in the next, on identical code. (Those are full peak-to-peak ranges, not
- * half-widths — see `spreadPct` below for why this file never writes them `±`.)
+ * `astral` row is buried under a range of 26% in the `matcher.ts` table and
+ * clears against one of 5% in `session-1451`, on identical code. Both of those
+ * are in the tree; open them and compare. (They are full peak-to-peak ranges,
+ * not half-widths — see `spreadPct` below for why this file never writes `±`.)
  *
  * So this prints a floor beside every row and marks which rows clear it. Treat
  * any row whose delta is within about twice its floor as "direction known,
@@ -258,10 +259,12 @@ describe('#4507 — foldForMatch cost, per call site', () => {
     //
     // Read the three thresholds below (0.95, 1.2, 1.5) as CALIBRATED, not
     // derived: nothing in the code implies them. They are margins drawn wide
-    // around the runs published in this repo — latin 2.3-2.5x, greek para
-    // 0.98-1.00x, per-row deltas +9% to +66% (the `matcher.ts` docblock and
-    // `session-1451`; earlier runs exist only in transcripts, which is the
-    // gap this file was committed to close, so they are not cited here).
+    // around the three runs published in this repo — the `matcher.ts` docblock
+    // table, `session-1447` and `session-1451`. Over those: latin 2.3-2.5x,
+    // greek para 0.98-1.01x (0.980, 1.0039, 0.9965 — note the middle one is
+    // above 1.0, so the band is NOT bounded by unity), per-row deltas +9% to
+    // +66%. Runs before the harness was committed exist only in transcripts
+    // and are not cited: closing that gap is why this file is here.
     // This file is outside CI, so a failure here is a message to whoever ran
     // it — "this machine does not behave like the ones these were drawn on",
     // not "the shipped code is wrong". Check the printed table before
