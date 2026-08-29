@@ -1,6 +1,7 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type {
+  BatchDeleteResponse,
   BlockRow,
   CreateBlockSpec,
   DateRange,
@@ -100,8 +101,18 @@ export async function deleteBlock(blockId: string): Promise<WithOps<DeleteRespon
 /**
  * Batch soft-delete a list of blocks (cascade to
  * descendants for each root) inside a single backend IMMEDIATE
- * transaction. Returns the number of blocks soft-deleted (roots +
- * descendants combined).
+ * transaction.
+ *
+ * Returns a `BatchDeleteResponse`: `deleted_count`, the number of blocks
+ * soft-deleted (roots + descendants combined), plus `affected_page_ids`
+ * (#4480) — the `block_type = 'page'` members of that cascade.
+ *
+ * `affected_page_ids` exists because the cascade walks `parent_id` with NO
+ * page-boundary stop, so a selected page's nested PAGE children are trashed
+ * with it and only the backend knows their ids. A caller that maintains a
+ * per-space page cache (the `[[` picker's, via `notifyPageRemoved`) must
+ * evict those too, or it goes on offering rows that are now in the trash.
+ * See `PageBrowserBatchToolbar.handleTrash`.
  *
  * Replaces the per-row `deleteBlock` IPC loop in
  * `useBlockMultiSelect.handleBatchDelete`. Multi-select gestures used
@@ -118,7 +129,7 @@ export async function deleteBlock(blockId: string): Promise<WithOps<DeleteRespon
  * the whole call and surface as `AppError::Validation` /
  * `AppError::InvalidOperation` toast text.
  */
-export async function deleteBlocksByIds(blockIds: string[]): Promise<number> {
+export async function deleteBlocksByIds(blockIds: string[]): Promise<BatchDeleteResponse> {
   return unwrap(await commands.deleteBlocksByIds(blockIds))
 }
 

@@ -145,13 +145,21 @@ export function useBlockMultiSelect({
       let successCount = 0
       let failCount = 0
       try {
-        // Backend returns the number of blocks soft-deleted (roots +
-        // descendants combined). For UX we report against the
+        // Backend returns `deleted_count`, the number of blocks soft-deleted
+        // (roots + descendants combined). For UX we report against the
         // selection size: a 1:1 mapping is the common case for a
         // flat selection; ancestor-coalescing makes the returned
         // count >= selectedRoots, which still represents "every
         // requested row is gone".
-        const affected = unwrap(await commands.deleteBlocksByIds(ids))
+        //
+        // #4480 added a sibling `affected_page_ids` field for callers that
+        // maintain the `[[` picker's per-space page cache. This surface does
+        // not: a block-tree multi-select operates on the content rows of one
+        // open page and publishes nothing to the name bus today (for roots or
+        // descendants), so there is no half-updated cache here to keep
+        // consistent. Wiring it up is a separate question from #4480, which
+        // is about the Pages-view batch toolbar.
+        const affected = unwrap(await commands.deleteBlocksByIds(ids)).deleted_count
         // The selection itself was processed atomically. Count
         // successful "selected rows that are now deleted" by
         // re-reading the in-memory state shape: since the call
