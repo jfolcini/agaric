@@ -99,7 +99,7 @@ the restore with `cmp` each time.
 | `_assert_paths_exist` baseline half neutered | dangling-baseline case fails |
 | `_assert_paths_exist` DENY half deleted outright | dangling-deny case fails |
 | `dangling` dropped from `main()`'s exit condition | dangling case fails |
-| control (restored) | 21 cases pass |
+| control (restored) | 22 cases pass |
 
 The per-half rows are not padding. My original table had one row for "`_assert_paths_exist`
 returns `[]`", which kills both halves at once — and that conflation is precisely why the
@@ -133,7 +133,7 @@ to check) Skipped`**; with the new one, `Passed`.
 
 ## Verification
 
-- `--self-test`: 21 cases pass (was 10).
+- `--self-test`: 22 cases pass (was 10).
 - Whole-tree run on the fixed tree: exit 0.
 - `prek run` hook selection confirmed on both a member-crate file and an app-crate file.
 - `check-hook-deps.mjs`: 0 new gaps, 0 stale.
@@ -491,3 +491,39 @@ was broken by running it, which is the only way it should have been broken.
 That is worth recording alongside the ten rounds of findings I accepted: the reviewer has been
 right about something real every single round, and was still wrong here. "Relayed claims are
 unverified until you verify them" cuts toward the reviewer as well as toward me.
+
+## Review round twelve — the refusal was defeated by pressing up-arrow
+
+The refusal added one round earlier wrote the baseline *before* refusing, so the operator could
+read the diff. The review found what that costs: **a second identical run sees `before == after`,
+finds no drop, and exits 0.** The reduction is absorbed without `--allow-reductions` ever being
+typed — and re-running a failed command is the most natural response to it.
+
+Reproduced before fixing:
+
+```
+run 1 exit: 1
+run 2 exit: 0   <-- the refusal, skipped by repetition
+```
+
+Direction 12 structurally could not catch it: it restores the pre-state between its two runs.
+Direction 13 does not, and reproduces `(1, 0)` against the old shape.
+
+The fix decides **before** writing. Nothing is written on refusal, so it is idempotent, and the
+printed per-file deltas give the operator what the diff would have.
+
+**And the comparison moved from per-file to total**, which fixes a second problem the review
+named in passing: a pure **move** shows a per-file loss at the old path and an equal gain at the
+new one. Under per-file comparison it refused — and a move is the *headline* reason to re-anchor
+at all; it is what #2621 did to eleven of these entries. The command `DANGLING_HINT` prescribes
+was failing for its own primary case. A total that drops is a fragment that left the tree;
+anything that nets to zero is a relocation. Verified both ways: a genuine removal refuses three
+times running with the file untouched, a move re-anchors cleanly at exit 0.
+
+The hints that prescribed the now-refusing command were corrected to match.
+
+**One more falsification standard I had not applied to myself.** Directions 8 and 9 defend the
+baseline-in-argv path, but nothing asserted the hook is *selected* when the baseline changes —
+delete `^src-tauri/space-filter-baseline\.txt$` from `prek.toml` and the suite stayed
+byte-identical and passing. That is precisely the standard this change applies everywhere else,
+and direction 11 now covers it.

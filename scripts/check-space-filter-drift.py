@@ -215,14 +215,16 @@ DANGLING_HINT = (
     "       set — `--update-baseline` rebuilds only the baseline and will\n"
     "       not touch it, so re-running it on a dangling deny entry changes\n"
     "       nothing and reports the same message again.\n"
-    "       For a BASELINE entry: if the code MOVED, re-anchor and check the\n"
-    "       new counts are preserved rather than silently dropped:\n"
+    "       For a BASELINE entry: if the code MOVED, re-anchor — a move nets\n"
+    "       to zero across the tree and is allowed. If a guard was genuinely\n"
+    "       DELETED the re-anchor refuses, and recording that needs an\n"
+    "       explicit `--allow-reductions`:\n"
     "         python3 scripts/check-space-filter-drift.py --update-baseline\n"
     "         git diff src-tauri/space-filter-baseline.txt\n"
-    "       If the code was DELETED, the same command is correct — but read\n"
-    "       the diff: a count that vanishes without a corresponding deletion\n"
-    "       in the source is the removal this guard exists to catch, and\n"
-    "       re-anchoring past it is how the finding gets lost."
+    "       Read the per-file deltas it prints either way: a count that\n"
+    "       vanishes without a corresponding deletion in the source is the\n"
+    "       removal this guard exists to catch, and re-anchoring past it is\n"
+    "       how the finding gets lost."
 )
 
 
@@ -910,6 +912,14 @@ def run_cli_self_test(record) -> None:
             for r in CRATE_ROOTS:
                 if not compiled.search(f"{r}probe.rs"):
                     uncovered.append(r)
+            # The baseline's own path, too. Directions 8 and 9 defend the
+            # baseline-in-argv path, but nothing asserted the hook is SELECTED
+            # when the baseline changes — delete that alternative from
+            # prek.toml and this suite stayed byte-identical and passing,
+            # which is the falsification standard this guard applies to
+            # everything else.
+            if not compiled.search("src-tauri/space-filter-baseline.txt"):
+                uncovered.append("src-tauri/space-filter-baseline.txt")
         if files_re and not uncovered:
             record("prek.toml `files:` covers every CRATE_ROOTS entry", True, True)
         else:
@@ -943,6 +953,32 @@ def run_cli_self_test(record) -> None:
                 "CLI: --update-baseline refuses a reduction, opt-in allows",
                 (code, code2, out.strip()),
                 "non-zero + REFUSING without the flag, exit 0 with --allow-reductions",
+            )
+
+        # --- #3255 direction 13: the refusal survives repetition ------------
+        # An earlier revision wrote the baseline BEFORE refusing, so a second
+        # identical run saw `before == after`, found no drop and exited 0 —
+        # the refusal was defeated by pressing up-arrow, which is the most
+        # natural response to a failed command. Direction 12 cannot catch it:
+        # it restores the pre-state between its two runs. This one does not.
+        shrink.write_text(
+            'let sql = "SELECT id FROM blocks b WHERE b.space_id = ?1";\n',
+            encoding="utf-8",
+        )
+        baseline_path.write_text("2 src-tauri/src/shrink.rs\n", encoding="utf-8")
+        first, _ = _run_cli(guard, ["--update-baseline"])
+        second, _ = _run_cli(guard, ["--update-baseline"])
+        untouched = baseline_path.read_text(encoding="utf-8").strip() == (
+            "2 src-tauri/src/shrink.rs"
+        )
+        shrink.unlink()
+        if first != 0 and second != 0 and untouched:
+            record("CLI: the reduction refusal is idempotent (#3255)", True, True)
+        else:
+            record(
+                "CLI: the reduction refusal is idempotent (#3255)",
+                (first, second, untouched),
+                "both runs non-zero and the baseline left unwritten",
             )
 
 
@@ -1095,49 +1131,48 @@ def main(argv: list[str]) -> int:
             return 1
         for _kind, m in pre:
             print(f"  WARNING before re-anchor: {m}", file=sys.stderr)
-        # Print the per-file deltas. `--update-baseline` regenerates the WHOLE
-        # file, so re-anchoring to absorb one intended change (a new file, a
-        # moved one) silently absorbs every other change in the same pass —
-        # including a count REDUCTION, which is the removal this guard exists
-        # to catch. DANGLING_HINT tells the operator to read `git diff`;
-        # nothing made them. Showing the reductions unprompted, and marking
-        # them, is what makes that unmissable rather than advisory.
+        # Compute the new baseline, report the deltas, and decide BEFORE
+        # writing anything.
+        #
+        # An earlier revision wrote first and refused after, so the operator
+        # could read the diff. That made the refusal skippable by repetition:
+        # re-running the identical command saw `before == after`, found no
+        # drop, and exited 0 — absorbing the removal without
+        # `--allow-reductions` ever being typed. Re-running a failed command is
+        # the most natural response to it, so the "explicit act" the refusal
+        # exists to force was defeated by pressing up-arrow. Refusing before
+        # the write makes it idempotent, and the printed deltas give the
+        # operator the same information the diff would have.
+        #
+        # The comparison is on the TOTAL, not per-file. A pure MOVE shows a
+        # per-file reduction at the old path and an equal gain at the new one
+        # — and a move is the headline reason to re-anchor at all (it is what
+        # #2621 did to eleven of these entries). Refusing it would make the
+        # command that DANGLING_HINT prescribes fail for its own primary case.
+        # A total that drops is a fragment that left the tree.
         before = read_baseline()
         after = compute_baseline()
-        write_baseline(after)
-        print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
-        drops = []
         for rel in sorted(set(before) | set(after)):
             old_n, new_n = before.get(rel, 0), after.get(rel, 0)
-            if old_n == new_n:
-                continue
-            mark = "  <-- REDUCTION" if new_n < old_n else ""
-            line = f"  {rel}: {old_n} -> {new_n}{mark}"
-            print(line, file=sys.stderr)
-            if new_n < old_n:
-                drops.append(rel)
-        if drops and "--allow-reductions" not in argv:
-            # REFUSE, not warn. The missing-root case above already refuses,
-            # and a reduction deserves the same treatment for the same reason:
-            # a ratchet that can be re-anchored downward without an explicit
-            # act is a ratchet in name. Printing the reduction and exiting 0
-            # left the strongest signal this path produces advisory, so a
-            # scripted or inattentive re-anchor still absorbed the drift the
-            # baseline exists to catch.
-            #
-            # The baseline HAS been rewritten at this point — deliberately, so
-            # the operator can read the diff the message points at — and the
-            # non-zero exit is what stops the commit that would carry it.
+            if old_n != new_n:
+                mark = "  <-- fewer" if new_n < old_n else ""
+                print(f"  {rel}: {old_n} -> {new_n}{mark}", file=sys.stderr)
+        lost = sum(before.values()) - sum(after.values())
+        if lost > 0 and "--allow-reductions" not in argv:
             print(
-                "\n  REFUSING: a canonical space-filter guard was REMOVED "
-                "from the file(s) marked above.\n"
-                "  The baseline on disk now reflects that removal — read "
-                "`git diff` before keeping it.\n"
-                "  If the removal is intended, re-run with "
-                "`--allow-reductions` to record it.",
+                f"\n  REFUSING: {lost} canonical space-filter guard(s) would "
+                "leave the baseline.\n"
+                "  Per-file gains and losses are listed above — a pure MOVE "
+                "nets to zero and is\n"
+                "  allowed; this is a net loss, i.e. a guard that is no longer "
+                "anywhere in the tree.\n"
+                "  Nothing has been written. If the removal is intended, "
+                "re-run with `--allow-reductions`.",
                 file=sys.stderr,
             )
             return 1
+        write_baseline(after)
+        print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
         return 0
 
     baseline = read_baseline()
