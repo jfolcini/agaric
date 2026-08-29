@@ -1660,22 +1660,28 @@ jobs:
           # here would trigger a full toolchain-plus-components download inside
           # the step the fuzz budget is measured against — a network dependency
           # for a command that only reads a manifest. Nightly is already present.
-          mapfile -t targets < <(
-            cargo +nightly metadata --format-version 1 --no-deps \
-              | jq -r '.packages[] | select(.name == "agaric-fuzz")
-                       | .targets[] | select(.kind | index("bin")) | .name' \
-              | sort
-          )
-          # Fail loud on an empty derivation. `mapfile` reading from a process
-          # substitution cannot see that producer's exit status — not with
-          # `set -e`, not with `pipefail` — so a jq filter that stops matching
-          # (a metadata schema change, a renamed package) would leave the loop
-          # below with nothing to iterate and the step exiting 0: a green fuzz
-          # lane that fuzzed nothing. That is the same silent-green this file
-          # already carries two other guards against; it does not need a third
-          # instance.
+          #
+          # Through a FILE, not a process substitution — and the difference is
+          # the whole point. `mapfile < <(cmd)` cannot see that producer's exit
+          # status: not with `set -e`, not with `pipefail`. So a jq filter that
+          # stopped matching (a metadata schema change, a renamed package) would
+          # leave the loop below with nothing to iterate and the step exiting 0:
+          # a green fuzz lane that fuzzed nothing. Redirecting to a file puts
+          # the pipeline back under `pipefail`, which separates the two failures
+          # this guard used to conflate — "the producer broke" and "the manifest
+          # has no targets" — so the annotation can name the one that happened
+          # instead of always blaming Cargo.toml.
+          derived_targets="$(mktemp)"
+          if ! cargo +nightly metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "agaric-fuzz")
+                     | .targets[] | select(.kind | index("bin")) | .name' \
+            | sort > "$derived_targets"; then
+            echo "::error::could not derive the fuzz target list: 'cargo +nightly metadata | jq | sort' failed. This is a TOOLING failure (nightly missing, jq missing, a path dependency's manifest unparseable), not a missing [[bin]] — the command's own stderr is immediately above this line."
+            exit 1
+          fi
+          mapfile -t targets < "$derived_targets"
           if [ "${#targets[@]}" -eq 0 ]; then
-            echo "::error::no fuzz targets derived from src-tauri/fuzz/Cargo.toml"
+            echo "::error::the fuzz target list derived from src-tauri/fuzz/Cargo.toml is EMPTY: the manifest declares no [[bin]] entries, or the jq filter no longer matches them. The producer itself succeeded."
             exit 1
           fi
           echo "fuzzing ${#targets[@]} targets: ${targets[*]}"
@@ -1688,10 +1694,32 @@ jobs:
           # precisely so a broken cmin stops being silent) — so the lane stays
           # green while that target explores from cold forever, which is the
           # exact behaviour #4496 exists to end, reintroduced one target at a
-          # time. Not fatal (an
-          # unseeded target still fuzzes, and a first run legitimately has
-          # none), so this warns rather than fails.
+          # time. Not fatal (an unseeded target still fuzzes, and a first run
+          # legitimately has none), so this warns rather than fails.
+          #
+          # Ask git ONCE whether it can answer at all, because the guard below
+          # reads an empty `git ls-files` as "this target has no committed
+          # seeds" — and a `git ls-files` that FAILS is also empty. A
+          # `safe.directory` ownership mismatch after a runner or checkout-action
+          # change is the realistic route, and it would turn one broken
+          # precondition into eight confident false reports, on a green run,
+          # about the exact targets whose seeding nobody would then re-check.
+          # A guard is allowed to say nothing; it is not allowed to invert.
+          seed_check_available=1
+          if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            seed_check_available=0
+            seedless_skip_msg="the committed-seed check was SKIPPED: 'git rev-parse --is-inside-work-tree' failed, so an empty 'git ls-files' cannot be distinguished from a failed one. No conclusion about seeding should be drawn from this run."
+            echo "::warning::$seedless_skip_msg"
+            {
+              echo "### :warning: seed-corpus check skipped"
+              echo
+              echo "$seedless_skip_msg"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
           for target in "${targets[@]}"; do
+            if [ "$seed_check_available" -eq 0 ]; then
+              break
+            fi
             # `git ls-files`, NOT `find`: the question is whether this target
             # has COMMITTED seeds, and the working tree cannot answer it here.
             # The restore step (#4496) extracts the accumulated corpus into

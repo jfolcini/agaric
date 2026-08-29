@@ -209,3 +209,48 @@ searches upward for a toolchain file. It would have found the repo root's
 job never installs, since it installs only nightly. A manifest read would have pulled a
 full toolchain plus components over the network, inside the step the fuzz budget is measured
 against. `cargo +nightly metadata` reuses what the job already has.
+
+## Two guards that could only say one thing
+
+The approving review found the same defect twice, in the two guards this change added. Both
+were built to detect an absence, and neither could distinguish the absence it was looking
+for from its own inability to look.
+
+**The empty-derivation guard blamed the manifest for every failure.** `mapfile` reading a
+process substitution cannot see the producer's exit status, which is the reason the guard
+exists — but it also meant that a missing nightly toolchain, an absent `jq`, or a path
+dependency with an unparseable manifest all arrived at the same place as a genuinely
+target-less `Cargo.toml`, and got the same annotation: `no fuzz targets derived from
+src-tauri/fuzz/Cargo.toml`, naming a file that was fine. The real cause sat in unannotated
+stderr above it.
+
+Redirecting the pipeline to a file instead puts it back under `pipefail`, so the two cases
+separate. Confirmed by running all three:
+
+```
+--- case A: producer fails (simulating missing nightly)
+TOOLING-ERROR branch
+--- case B: producer succeeds, manifest declares no bins
+EMPTY-MANIFEST branch
+--- case C: the real manifest
+OK branch: 8 targets: attachment_path_parse bibliography_parse deeplink_parse fts_strip
+           html_parse import_parse pagination_cursor_decode snapshot_decode
+```
+
+**The seedless guard inverted rather than went quiet.** It reads an empty `git ls-files
+"corpus/$target"` as "this target has no committed seeds" — and a `git ls-files` that
+*fails* is also empty. A `safe.directory` ownership mismatch after a runner or
+checkout-action change is the realistic route, and it would have turned one broken
+precondition into eight confident false reports about the seeding of eight targets, on a
+green run, written to the step summary where they read as findings.
+
+That is the worse failure of the two, because the guard exists precisely to be believed on
+a green run. It now asks git once whether it can answer at all, and on failure says exactly
+that — one warning naming the skipped check — instead of eight answers it is not entitled
+to. Falsified by running the loop outside a git repository: before, two false "no committed
+seeds"; after, one "SKIP: git cannot answer — no seeding conclusion drawn".
+
+The rule the pair suggests is worth stating once: **a guard is allowed to say nothing; it
+is not allowed to invert.** An absence-detector has to treat "I could not look" as a third
+outcome, not fold it into "I looked and found nothing" — otherwise its signal is strongest
+exactly where it is least trustworthy.
