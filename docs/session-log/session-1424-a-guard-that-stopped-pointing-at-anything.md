@@ -251,3 +251,44 @@ the same question arises for every ratchet guard, not just this one.
 
 The reviewer also caught the PR description still claiming "10 → 14 cases" against an actual
 17 — in a change whose whole argument is about denominators being right. Corrected.
+
+## Review round five
+
+A fourth approval, three more fixes.
+
+- **`sorted(DENY_FILES)[0]` would have crashed with an opaque `IndexError` if the set were
+  ever emptied** — a legitimate config change, since its sole entry exists only because
+  `space_filter_canonical.rs` holds the canonical const. It also exercised only the first
+  entry, so a second would have shipped untested. Now iterates every entry and skips cleanly
+  when the set is empty; verified by emptying it, where the suite passes instead of throwing.
+- **`--update-baseline` never ran the existence checks.** With a misspelled root,
+  `compute_baseline()` silently wrote a *narrowed* baseline — the damage happening at the
+  exact moment the operator is looking somewhere else, with the report deferred to the next
+  ordinary run. The checks now run first and warn. Falsified by misspelling `agaric-engine`:
+  the warning fires and names the root before the rebuild.
+- **The guard and its sibling Rust parity test had diverged in scope** — the guard now walks
+  six roots, the test still walks two — and the test's own `DENY_FILES` comment claimed its
+  paths were "relative to `src-tauri/src/`", which was already false for the one entry it
+  holds. Both now carry a keep-in-step cross-reference naming the other. Nothing is unguarded
+  today, since the other four crates hold no `b.space_id` read; the point is that the two
+  lists could drift apart silently, which is this change's own subject one level over.
+
+One note deliberately declined: a whole-`src-tauri` sweep asserting every `b.space_id`
+occurrence falls under a listed root. It would close the inverse blind spot — a read landing
+in an *unlisted* crate — and it is a good idea, but it is a new check rather than a repair of
+this one, and widening the PR on my own is how a focused fix becomes an unreviewable one. It
+is on #4501 with the rest.
+
+## A pattern worth naming, about this session rather than the code
+
+Four review rounds, and the reviewer found something real in every one — including two cases
+where the bug I had just written was an instance of the class I was fixing: a self-test case
+that leaked its fixture into the next case, and a case that passed for two reasons inside the
+fix for a case that passed for two reasons. The guard is better for it, and the honest reading
+is that the first version was not close to done when I thought it was.
+
+Also worth recording: three `validate-all` failures on this branch were **self-inflicted** —
+each was a run cancelled by the next push landing on top of it, and the gate correctly counts
+cancelled as unacceptable. Pushing a fix the moment it is ready costs a CI cycle when reviews
+are arriving faster than CI completes. Batching the round-four and round-five fixes into one
+push would have been better.

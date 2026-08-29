@@ -108,8 +108,13 @@ BASELINE_PATH = REPO_ROOT / "src-tauri" / "space-filter-baseline.txt"
 # on it — and no prefix collision is possible anyway, since
 # `src-tauri/<member>/src/` is never prefixed by `src-tauri/src/`.
 #
-# Note the DIVISION OF LABOUR with the sibling Rust parity test in
-# `agaric-store/src/space_filter_canonical.rs`: that test walks both trees and
+# KEEP IN STEP with the sibling Rust parity test's own walk roots in
+# `agaric-store/src/space_filter_canonical.rs` (it walks two: that crate's
+# `src/` and the app's `../src`). This list is a superset, so nothing is
+# unguarded — but the two can drift apart independently, which is this
+# guard's own subject. Widening one without the other is a silent gap.
+#
+# Note the DIVISION OF LABOUR with that same test: that test walks both trees and
 # catches a DRIFTED fragment (mismatched bind index), because a drifted
 # fragment still matches the canonical regex. It structurally cannot catch a
 # REMOVED one — a deleted guard matches nothing and there is nothing left to
@@ -684,27 +689,43 @@ def run_cli_self_test(record) -> None:
         # Removing the sandbox stand-in makes the deny entry dangle without
         # touching any baseline, so the two halves of `_assert_paths_exist`
         # are pinned independently.
-        deny_rel = sorted(DENY_FILES)[0]
-        stand_in = root / deny_rel
-        stand_in.unlink()
+        # Every entry, not `sorted(DENY_FILES)[0]`: indexing crashes with an
+        # opaque IndexError if DENY_FILES is ever emptied (a legitimate config
+        # change — the sole entry exists only because `space_filter_canonical.rs`
+        # holds the canonical const), and testing just the first would ship a
+        # second entry untested.
+        deny_rels = sorted(DENY_FILES)
+        for rel in deny_rels:
+            (root / rel).unlink()
         baseline_path.write_text("1 src-tauri/src/clean.rs\n", encoding="utf-8")
-        code, out = _run_cli(guard, [str(clean)])
+        code, out = _run_cli(guard, [str(clean)]) if deny_rels else (1, "")
         # RESTORE before recording. This case is the only one that removes a
         # sandbox fixture, and leaving it removed would hand every case
         # appended after it a standing dangling-deny finding — satisfying the
         # `code != 0` half unconditionally, which is precisely the pollution
         # `_build_cli_sandbox` materialises these files to prevent. Being last
         # today is not a defence; the next case appended is the one that pays.
-        stand_in.write_text(
-            "// sandbox stand-in for a DENY_FILES entry\n", encoding="utf-8"
+        for rel in deny_rels:
+            (root / rel).write_text(
+                "// sandbox stand-in for a DENY_FILES entry\n", encoding="utf-8"
+            )
+        missing_named = all(
+            f"{rel}: DENY_FILES names a file that does not exist" in out
+            for rel in deny_rels
         )
-        if code != 0 and "DENY_FILES names a file that does not exist" in out:
+        if not deny_rels:
+            record(
+                "CLI: a dangling DENY_FILES entry exits non-zero (#3255)",
+                "skipped: DENY_FILES is empty",
+                "skipped: DENY_FILES is empty",
+            )
+        elif code != 0 and missing_named:
             record("CLI: a dangling DENY_FILES entry exits non-zero (#3255)", True, True)
         else:
             record(
                 "CLI: a dangling DENY_FILES entry exits non-zero (#3255)",
                 (code, out.strip()),
-                f"non-zero exit naming {deny_rel} as a dangling DENY_FILES entry",
+                f"non-zero exit naming every dangling DENY_FILES entry ({deny_rels})",
             )
 
         # --- #3255 direction 7: a CRATE_ROOTS entry that is not a directory --
@@ -870,6 +891,24 @@ def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
     if "--update-baseline" in argv:
+        # Run the existence checks FIRST. `compute_baseline()` rebuilds from
+        # the walk, so a misspelled or renamed CRATE_ROOTS segment silently
+        # writes a NARROWED baseline — the damage happens here, while the next
+        # ordinary run is where it would otherwise be reported. Landing the
+        # warning at the moment of the rebuild puts it where the person doing
+        # it is actually looking. Warn rather than refuse: a genuine crate
+        # retirement is a legitimate reason to re-anchor, and the operator is
+        # the one who knows which it is.
+        pre = _assert_paths_exist(read_baseline())
+        for v in pre:
+            print(f"  WARNING before re-anchor: {v}", file=sys.stderr)
+        if pre:
+            print(
+                "  -> the rebuild below is computed from the CURRENT roots; if a\n"
+                "     root above is missing by mistake, the new baseline will be\n"
+                "     narrower than the old one. Read the diff.",
+                file=sys.stderr,
+            )
         write_baseline(compute_baseline())
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
         return 0
