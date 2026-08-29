@@ -31,7 +31,8 @@ To see the targets, read `Cargo.toml`, or run:
 cd src-tauri/fuzz
 cargo +nightly metadata --format-version 1 --no-deps \
   | jq -r '.packages[] | select(.name == "agaric-fuzz")
-           | .targets[] | select(.kind | index("bin")) | .name'
+           | .targets[] | select(.kind | index("bin")) | .name' \
+  | sort
 ```
 
 That is the same command the weekly lane uses to build its target list, so what

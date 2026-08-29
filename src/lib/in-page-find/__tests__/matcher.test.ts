@@ -289,8 +289,46 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     ['Deseret, an astral cased script', '\u{10400}'],
     ['a lone high surrogate cannot be typed, so a pair instead', '\u{1D400}'],
   ])('compiling %s does not trip the fold-distribution assertion (#4507)', (_label, query) => {
+    // ONLY the case-INSENSITIVE compile exercises the assertion. `compileQuery`
+    // guards the fold loop and the DEV check behind `if (!caseSensitive)`, so a
+    // `caseSensitive: true` compile skips both — an earlier revision asserted
+    // both arms here, and the second one would have passed with the assertion
+    // deleted outright. Kept to one line so the test cannot look like it covers
+    // twice what it does.
     expect(() => compileQuery(query, defaultOpts)).not.toThrow()
-    expect(() => compileQuery(query, { ...defaultOpts, caseSensitive: true })).not.toThrow()
+  })
+
+  // The case-SENSITIVE path has its own thing worth pinning, and it is not the
+  // fold assertion: it must leave the query completely alone. Asserted directly
+  // rather than as a second `not.toThrow()`, which proved nothing.
+  //
+  // Every one of these four FOLDS AWAY FROM ITSELF — `ΟΔΟΣ`→`οδοσ`,
+  // `ΑΣΑ`→`ασα`, `ςσ`→`σσ`, `İ`→`i`+U+0307 — which is what makes the assertion
+  // load-bearing: remove `compileQuery`'s `caseSensitive ? query : …` ternary
+  // and all four miss themselves. A query `foldForMatch` maps to itself (`ı`,
+  // `ﬁ`) would pass whether or not that branch exists.
+  //
+  // They are four REPRESENTATIVE cases, not the exhaustive fold-changing set,
+  // and an earlier version of this comment claimed otherwise on both counts:
+  // it called them "the subset of the list above" when `ςσ` is not in that
+  // list, and cited `\u{10400}` as a self-mapping query when Deseret capital
+  // long I lowercases to U+10428 and would falsify perfectly well. So would
+  // `ẞ` and `ΑΣ`. The four cover the distinct shapes — final sigma, medial
+  // sigma, both forms adjacent, and the length-expanding fold — and adding
+  // more would repeat those shapes rather than reach a new one.
+  it.each([
+    ['final sigma stays final', 'ΟΔΟΣ'],
+    ['mid sigma stays mid', 'ΑΣΑ'],
+    ['both forms stay distinct', 'ςσ'],
+    ['the dotted I is not expanded', 'İ'],
+  ])('case-sensitive compile leaves %s unfolded (#4507)', (_label, query) => {
+    const compiled = compileQuery(query, {
+      ...defaultOpts,
+      caseSensitive: true,
+    }) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(compiled.kind).toBe('literal')
+    // The needle is the raw query: it matches itself exactly and nothing else.
+    expect(compiled.matcher(query)).toEqual([{ start: 0, end: query.length }])
   })
 
   // #4507 — the FAST path's sigma tests. Everything below this comment in the
