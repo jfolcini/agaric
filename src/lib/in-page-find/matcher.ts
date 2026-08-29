@@ -241,12 +241,38 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
   // property is EMPIRICAL — it holds because Final_Sigma is the only
   // context-sensitive mapping in the locale-free case-mapping table, a fact
   // about the host's Unicode tables and not a theorem. Collapsing the two
-  // needles would make the code correct only for as long as that stays true,
-  // and would delete the assertion that would notice if it ever did not.
+  // needles would make the code correct only for as long as that stays true.
   let foldedNeedle = ''
   if (!caseSensitive) {
     for (const ch of query) {
       foldedNeedle += foldCodePoint(ch)
+    }
+    // ...and THIS is what notices if it stops being true.
+    //
+    // An earlier revision of the paragraph above claimed that role for the
+    // `foldedNeedle === ''` assertion in `scanLiteral`. It does not do that job:
+    // it tests EMPTINESS, not equality with `needle`, so a broken distribution
+    // premise would leave it silent — and it sits on the slow path, while a
+    // broken premise surfaces on the fast one, through the wrong `needle`. The
+    // claim was wrong in the direction that matters, describing a guard that
+    // does not guard the thing it was cited for.
+    //
+    // Rather than delete the sentence, here is the assertion it described. It
+    // costs one comparison per compile (compile-once, not per text node), and
+    // unlike the committed sweep in
+    // `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`
+    // — which lives outside vitest's `include` globs by the #3804 convention —
+    // this one runs in CI on every suite. It is the only in-CI guard the
+    // premise has.
+    if (import.meta.env.DEV && foldedNeedle !== needle) {
+      throw new Error(
+        `in-page-find: the per-code-point fold and the whole-string fold disagree ` +
+          `(${JSON.stringify(foldedNeedle)} vs ${JSON.stringify(needle)}). Since #4507 ` +
+          `both go through foldForMatch, whose ς/σ collapse removes the only ` +
+          `context-sensitive mapping in the locale-free table, so these cannot differ — ` +
+          `unless the host's Unicode tables gained another one. The fast/slow path ` +
+          `branch is a pure optimisation only while this holds.`,
+      )
     }
   }
   return {
@@ -457,7 +483,9 @@ function foldForMatch(s: string): string {
  * the locale-free table has, so folding whole and folding per code point cannot
  * differ. See the note at `compileQuery`'s `foldedNeedle` for why both are kept
  * anyway — that equality rests on an empirical fact about the host's Unicode
- * tables, and the DEV assertion below is what would notice it ceasing to hold.
+ * tables, and a DEV assertion in `compileQuery` (beside the fold loop itself,
+ * not the emptiness check further down this file) is what notices if it stops
+ * holding.
  *
  * Agreeing on the fold is necessary but NOT sufficient, and an earlier
  * version of this fix stopped there and was wrong. Per-code-point folding
