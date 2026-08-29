@@ -34,37 +34,53 @@ The `now` variant is a hand-clone of the shipped `foldForMatch`, so it is
 pinned like every other clone in that directory. A cost experiment silently
 measuring a stale copy would be worse than no experiment.
 
-## The instability claim got a third data point
+## The instability claim, across five runs now
 
-Running the committed harness produced:
+The experiment has been run five times today — three while drafting, twice from
+the committed harness. `astral` has been REAL, NOISE, REAL, clears, clears.
+`english para` has failed to clear every time.
+
+A caveat on that count, because review caught me miscounting it: an earlier
+draft of this log and the PR body carried **two different tables**, disagreeing
+in 20 of 21 cells, both introduced as "the third run" and both followed by the
+same "REAL, then NOISE, then REAL across three runs" sentence. They were two
+separate runs. If they are two, it is four, not three — and it is now five.
+The table below is one run, from the committed harness:
 
 ```
-row                      pre    naive      now  now/pre  naive/now  noise  verdict
-latin (no sigma)        20.1     82.9     33.6    +67%      2.5x    ±16%  clears
-turkish (İ)             56.8    126.0     70.4    +24%      1.8x    ±13%  clears
-greek (has sigma)       93.4    161.8    112.1    +20%      1.4x     ±6%  clears
-astral (pairs)          87.1    159.5    106.6    +22%      1.5x    ±11%  clears
-short heading (15)       8.3     27.3     12.6    +52%      2.2x     ±9%  clears
-english para (540)      47.8     69.0     52.9    +11%      1.3x    ±22%  INSIDE NOISE
-greek para (504)      1479.8   2332.6   2313.5    +56%      1.0x     ±6%  clears
+row                      pre    naive      now  now/pre  naive/now  range  verdict
+latin (no sigma)        23.0     85.2     37.7    +64%      2.3x     20%  clears
+turkish (İ)             57.7    125.2     72.5    +26%      1.7x     25%  clears
+greek (has sigma)       92.8    161.2    110.2    +19%      1.5x      4%  clears
+astral (pairs)          86.4    161.5    102.9    +19%      1.6x      5%  clears
+short heading (15)       8.8     26.9     13.0    +48%      2.1x     30%  clears
+english para (540)      44.4     63.7     49.9    +12%      1.3x     17%  INSIDE NOISE
+greek para (504)      1491.6   2337.7   2328.6    +56%      1.0x      7%  clears
 ```
 
-`astral` has now been REAL, then NOISE, then REAL across three runs of the same
-experiment on the same code. That is exactly the claim the docblock makes about
-this runner, and it is now demonstrable by anyone rather than asserted from a
-transcript.
+Do not treat these cells as the answer — run the harness and get your own. That
+is the entire point of committing it, and quoting a table in prose is what
+produced six rounds of corrections.
 
-Note the direction and the coarse magnitudes reproduce cleanly every time —
-`now` slower than `pre` on all seven rows, the guard paying ~2.5x on sigma-free
-input and ~1.0x on a long sigma-bearing one. Only the per-row verdicts move.
-Which is the whole argument for reporting bands.
+Direction and coarse magnitude reproduce cleanly every time: `now` slower than
+`pre` on all seven rows, the guard paying ~2x on sigma-free input and ~1.0x on a
+long sigma-bearing one. Only the per-row verdicts move, which is the whole
+argument for reporting bands.
 
 ## The three smaller notes
 
 - The summary read `"beats or matches naive on every row … **and** on the Greek
-  paragraph it is fractionally WORSE"`, which is a self-contradiction in one
-  sentence even though the parenthetical immediately explains the rounding.
-  `except` costs one word and removes the ambiguity.
+  paragraph it is fractionally WORSE"`, a self-contradiction in one sentence.
+  `except` costs one word.
+
+  **This is the one worth recording.** An earlier revision of this log said that
+  fix had been applied, and the PR body listed it as done — while the edit was
+  not in the diff at all. The Python script that made it hit an assertion on a
+  later substitution and exited *before writing the file*, so nothing landed; I
+  then verified the tests still passed, which they did, and never verified the
+  edit itself. Merging would have written a false "fixed" into a record that
+  `README.md:34` forbids correcting afterwards. Review caught it by reading the
+  diff against the claim — which is the only thing that can catch it.
 - The old block's `"replace-always is a strawman: never a shape that shipped"`
   warning had been dropped in a rewrite. A reader skimming the prominent
   `naive/now` column had one less guardrail against reading it as a regression

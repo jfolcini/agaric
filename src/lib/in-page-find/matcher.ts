@@ -446,7 +446,16 @@ const FINAL_SIGMA_RE = /ς/g
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  *
- * **Cost.** One experiment, three variants, eleven interleaved repetitions per
+ * **Cost.** Re-run this rather than re-arguing a row — the experiment is
+ * committed:
+ *
+ * ```
+ * npx vitest run --config scripts/mutation-harnesses/vitest.config.ts \
+ *   scripts/mutation-harnesses/in-page-find-fold-cost.harness.ts \
+ *   --disable-console-intercept
+ * ```
+ *
+ * One experiment, three variants, eleven interleaved repetitions per
  * variant with rotating order, medians, and the observed spread on each row as
  * a noise floor. `pre` is the code before #4507 — `foldCodePoint` was a bare
  * `f === 'ς' ? 'σ' : f`, `scanLiteral` a bare `text.toLowerCase()`. `naive` is
@@ -489,8 +498,8 @@ const FINAL_SIGMA_RE = /ς/g
  * What survives both runs, and all that should be relied on:
  *
  * **The guard is worth having, but it is not free and not universal.** `now`
- * beats or matches `naive` on every row, up to 2.5x — and on the Greek
- * paragraph it is fractionally WORSE (naive 2284.5, now 2331.1, a ~2% loss the
+ * beats or matches `naive` on every row, up to 2.5x — except on the Greek
+ * paragraph, where it is fractionally WORSE (naive 2284.5, now 2331.1, a ~2% loss the
  * `1.0x` column rounds away). That is the guard's worst case working exactly as
  * designed: on a long string that does contain a sigma, the `indexOf` scan is
  * paid and the `replace` runs anyway, so the guard buys nothing and costs one

@@ -48,6 +48,15 @@
  * summaries; one mechanical recompute produced none. If you edit the table in
  * `matcher.ts`, run this and diff — do not eyeball it.
  *
+ * Be precise about what that buys, because the PR that added this file
+ * overstated it. The check re-derives THIS harness's printed figures from THIS
+ * harness's operands. The four rounds of wrong ratios were in the
+ * hand-transcribed table and prose in `matcher.ts`, which this file never
+ * reads. What actually closes that gap is the invocation quoted in the
+ * `foldForMatch` docblock: a reader at the table can now re-run rather than
+ * re-argue. This check keeps the harness's own output honest, which is a
+ * smaller and more tractable claim.
+ *
  * `now` below is a hand-clone of the shipped `foldForMatch`, so it is pinned
  * the way every other harness in this directory pins what it clones. If the
  * real function changes, `scripts/check-mutation-harness-clones.mjs` fails
@@ -104,6 +113,12 @@ const median = (xs: number[]): number => {
   return sorted[sorted.length >> 1] ?? Number.NaN
 }
 
+/**
+ * Full peak-to-peak spread as a percentage of the median — NOT a half-width.
+ * Rendered below as `range`, not `±`, because calling a full range `±` would
+ * overstate the band by about 2x, and this file exists to stop numbers being
+ * presented as more precise than they are.
+ */
 const spreadPct = (xs: number[], mid: number): number =>
   ((Math.max(...xs) - Math.min(...xs)) / mid) * 100
 
@@ -141,11 +156,11 @@ const guardX = (r: Row): number => r.naive / r.now
 const clearsNoise = (r: Row): boolean => Math.abs(deltaPct(r)) > r.noisePct
 
 function renderTable(title: string, rows: Row[]): string {
-  const head = `${title}\n${'row'.padEnd(22)}${'pre'.padStart(9)}${'naive'.padStart(10)}${'now'.padStart(10)}${'now/pre'.padStart(10)}${'naive/now'.padStart(11)}${'noise'.padStart(8)}   verdict`
+  const head = `${title}\n${'row'.padEnd(22)}${'pre'.padStart(9)}${'naive'.padStart(10)}${'now'.padStart(10)}${'now/pre'.padStart(10)}${'naive/now'.padStart(11)}${'range'.padStart(8)}   verdict`
   const body = rows.map((r) => {
     const delta = `${deltaPct(r) >= 0 ? '+' : ''}${deltaPct(r).toFixed(0)}%`
     const verdict = clearsNoise(r) ? 'clears' : 'INSIDE NOISE'
-    return `${r.label.padEnd(22)}${r.pre.toFixed(1).padStart(9)}${r.naive.toFixed(1).padStart(10)}${r.now.toFixed(1).padStart(10)}${delta.padStart(10)}${`${guardX(r).toFixed(1)}x`.padStart(11)}${`±${r.noisePct.toFixed(0)}%`.padStart(8)}   ${verdict}`
+    return `${r.label.padEnd(22)}${r.pre.toFixed(1).padStart(9)}${r.naive.toFixed(1).padStart(10)}${r.now.toFixed(1).padStart(10)}${delta.padStart(10)}${`${guardX(r).toFixed(1)}x`.padStart(11)}${`${r.noisePct.toFixed(0)}%`.padStart(8)}   ${verdict}`
   })
   return [head, ...body].join('\n')
 }
@@ -162,11 +177,16 @@ function assertTableIsSelfConsistent(rows: Row[]): void {
     expect(r.now, `${r.label}: now must be positive`).toBeGreaterThan(0)
     // The rendered percentage must be recoverable from the rendered operands,
     // to within the rounding the renderer itself applies.
+    // The tolerance must scale with the operands: `toFixed(1)` loses up to
+    // 0.05 ms on each, and that is a larger RELATIVE error on a 4 ms row than
+    // on a 1500 ms one. A fixed 1pp bound false-fails the fastest rows on a
+    // quick host — reporting "does not follow" about a table that is fine.
     const fromOperands = (Number(r.now.toFixed(1)) / Number(r.pre.toFixed(1)) - 1) * 100
+    const roundingSlackPct = 0.5 + 100 * (0.05 / r.pre + (0.05 * r.now) / r.pre ** 2)
     expect(
       Math.abs(fromOperands - deltaPct(r)),
       `${r.label}: printed now/pre does not follow from printed pre and now`,
-    ).toBeLessThan(1)
+    ).toBeLessThan(roundingSlackPct)
     const guardFromOperands = Number(r.naive.toFixed(1)) / Number(r.now.toFixed(1))
     expect(
       Math.abs(guardFromOperands - guardX(r)),
@@ -231,13 +251,19 @@ describe('#4507 — foldForMatch cost, per call site', () => {
     }
   })
 
-  it('the shipped fold agrees with both baselines over every scalar value', () => {
-    let cpDisagreements = 0
+  it('the shipped fold agrees with pre-#4507 AND with naive, over every scalar value', () => {
+    // Both directions, because the docblock claims both. `preWholeNode` is
+    // deliberately absent: it never collapsed sigma at all, so it cannot agree
+    // by construction — that difference IS #4507.
+    let vsPre = 0
+    let vsNaive = 0
     for (let cp = 0; cp < 0x110000; cp++) {
       if (cp >= 0xd800 && cp <= 0xdfff) continue
       const ch = String.fromCodePoint(cp)
-      if (preCodePoint(ch) !== now(ch)) cpDisagreements++
+      if (preCodePoint(ch) !== now(ch)) vsPre++
+      if (naive(ch) !== now(ch)) vsNaive++
     }
-    expect(cpDisagreements, 'shipped fold must agree with pre-#4507 foldCodePoint').toBe(0)
+    expect(vsPre, 'shipped fold must agree with pre-#4507 foldCodePoint').toBe(0)
+    expect(vsNaive, 'the indexOf guard must not change the result').toBe(0)
   })
 })
