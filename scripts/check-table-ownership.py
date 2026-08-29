@@ -303,11 +303,33 @@ def count_writes_in_text(text: str) -> dict[str, list[int]]:
     return hits
 
 
+def missing_crate_roots() -> list[str]:
+    """Declared CRATE_ROOTS that are not directories in this checkout.
+
+    #4501: `_crate_files()` used to `continue` past a missing root, so a
+    renamed or misspelled crate segment narrowed the walk to nothing with no
+    signal at all — the guard reporting success over a tree it had stopped
+    reading. That is the class this repo has now hit seven times, and it is
+    the same construct removed from `check-space-filter-drift` in #4508.
+
+    Reported rather than filtered: a root that vanished is a broken
+    declaration, not an absent one, and the whole point is that it must be
+    loud.
+    """
+    return [
+        str(root.relative_to(REPO_ROOT))
+        for _crate, root in CRATE_ROOTS
+        if not root.is_dir()
+    ]
+
+
 def _crate_files() -> list[tuple[str, Path]]:
     """(crate, path) for every non-test production .rs under a crate root."""
     result: list[tuple[str, Path]] = []
     for crate, root in CRATE_ROOTS:
         if not root.is_dir():
+            # Skipped here only so the walk does not raise; the run is failed
+            # by `missing_crate_roots()` in `main()`, which names the root.
             continue
         for p in sorted(root.rglob("*.rs")):
             rel = str(p.relative_to(REPO_ROOT))
@@ -637,22 +659,89 @@ def run_self_test() -> int:
             "BaselineFormatError"
         )
 
+    # --- #4501: a declared crate root that vanished must be LOUD ----------
+    # `_crate_files()` used to `continue` past a missing root, so a renamed or
+    # misspelled segment narrowed the walk to nothing and the guard exited 0
+    # over a tree it had stopped reading. Reproduced before fixing: with
+    # `agaric-store` misspelled the whole run passed silently.
+    #
+    # Asserted by swapping the module-level list rather than the filesystem —
+    # the constant is what a careless edit actually breaks, and a temp
+    # directory could not reproduce a MISSPELLING.
+    root_cases = 2
+    _saved_roots = CRATE_ROOTS[:]
+    try:
+        globals()["CRATE_ROOTS"] = [
+            ("store", REPO_ROOT / "src-tauri" / "agaric-stores" / "src"),
+        ]
+        missing = missing_crate_roots()
+        if missing != ["src-tauri/agaric-stores/src"]:
+            failures.append(
+                f"a misspelled crate root was not reported: {missing!r}"
+            )
+        globals()["CRATE_ROOTS"] = _saved_roots
+        if missing_crate_roots():
+            failures.append(
+                "the real CRATE_ROOTS reported a missing root: "
+                f"{missing_crate_roots()!r}"
+            )
+    finally:
+        globals()["CRATE_ROOTS"] = _saved_roots
+
     if failures:
         print("check-table-ownership self-test FAILED:", file=sys.stderr)
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print(
-        f"check-table-ownership self-test passed "
-        f"({len(regex_cases) + 2 + len(exclusion_cases) + annotation_cases} "
-        f"cases)."
+    total = (
+        len(regex_cases)
+        + 2
+        + len(exclusion_cases)
+        + annotation_cases
+        + root_cases
     )
+    print(f"check-table-ownership self-test passed ({total} cases).")
     return 0
+
+
+ROOT_MISSING_HINT = (
+    "    -> #4501: a CRATE_ROOTS entry in scripts/check-table-ownership.py\n"
+    "       names a directory that does not exist. Fix the LIST, not the\n"
+    "       baseline: the walk skips a missing root, so re-anchoring here\n"
+    "       would drop every count under it and report success. If the crate\n"
+    "       was genuinely retired, remove its root from CRATE_ROOTS in the\n"
+    "       same commit, then re-anchor."
+)
 
 
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
+    # #4501: before anything reads or writes the baseline. A missing root is
+    # checked on BOTH paths, and refuses the re-anchor rather than warning,
+    # for the reason the hint gives: `compute_baseline()` walks the surviving
+    # roots only, so re-anchoring against a narrowed walk deletes every count
+    # under the vanished root and exits 0 — the finding destroyed by the
+    # command prescribed to fix it.
+    missing = missing_crate_roots()
+    if missing:
+        if "--update-baseline" in argv:
+            print(
+                "Refusing to re-anchor: a declared CRATE_ROOTS entry is "
+                "missing.\n",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Table-ownership guard (#2895) — a declared CRATE_ROOTS "
+                "directory does not exist:\n",
+                file=sys.stderr,
+            )
+        for rel in missing:
+            print(f"  {rel}: CRATE_ROOTS names a directory that does not exist", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(ROOT_MISSING_HINT, file=sys.stderr)
+        return 1
     if "--update-baseline" in argv:
         write_baseline(compute_baseline())
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
