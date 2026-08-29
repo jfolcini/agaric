@@ -256,9 +256,17 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
     //
     // It must compare `foldedNeedle` against `needle`, not merely check that
     // either is non-empty: a broken premise shows up as the two folds
-    // DISAGREEING, and it surfaces on the fast path through the wrong
-    // `needle` — so an emptiness check, or one sited on the slow path, would
-    // stay silent through exactly the failure this is for.
+    // DISAGREEING, so an emptiness check would stay silent through exactly the
+    // failure this is for.
+    //
+    // Its reach is narrower than that makes it sound, and worth stating
+    // exactly. It sees only the QUERY. A newly context-sensitive mapping in the
+    // host's tables would break matching for any TEXT containing it, and this
+    // fires only if a compiled query contains it too — a bare `Σ` query, the
+    // very shape whose fast-path miss #4507 fixed, folds identically both ways
+    // and leaves this silent. That is why the adversarial query list in
+    // `matcher.test.ts` exists: it is what makes the guard see anything at all
+    // beyond the ASCII a normal suite happens to type.
     if (import.meta.env.DEV && foldedNeedle !== needle) {
       throw new Error(
         `in-page-find: the per-code-point fold and the whole-string fold disagree ` +
@@ -423,8 +431,13 @@ const FINAL_SIGMA_RE = /ς/g
  * now exact rather than approximate: Final_Sigma is the ONLY context-sensitive
  * lowercase mapping in the default (locale-free) case-mapping table, so once it
  * is collapsed, folding a string whole and folding it code point at a time
- * produce the same result for every input except the length-expanding İ — which
- * is precisely what the `haystack.length === text.length` check routes away.
+ * produce the same result for **every** input, `İ` U+0130 included: it folds to
+ * `i` + U+0307 whole and per code point alike (probed, and the harness sweep
+ * asserts it). `İ` is routed to the slow path by the
+ * `haystack.length === text.length` check because it changes LENGTH, which
+ * breaks the offset mapping — not because the two folds disagree about it. An
+ * earlier version of this sentence called it an exception to the distribution
+ * and sent the reader hunting a discrepancy that does not exist.
  *
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
@@ -434,7 +447,7 @@ const FINAL_SIGMA_RE = /ς/g
  * and the naive `replace`-always version loses badly at one of them.
  *
  * Per CODE POINT, which is how `foldCodePoint` calls it (3M iterations each,
- * node 22):
+ * node 22). What the guard buys against the naive form:
  *
  * ```
  * latin (no sigma)      replace-always 234 ms   guarded 115 ms   +103%
@@ -446,6 +459,25 @@ const FINAL_SIGMA_RE = /ς/g
  * Faster even on Greek text, where the guard fails and the `replace` runs
  * anyway: setting up a global-regex replace costs more than an `indexOf` over
  * one code unit, so paying the `indexOf` on every code point still wins.
+ *
+ * **That comparison does not say the slow path got no slower, and an earlier
+ * version of this block read as though it did.** Neither shape it measures is
+ * what `foldCodePoint` was before #4507 — that was a bare string equality,
+ * `const f = ch.toLowerCase(); return f === 'ς' ? 'σ' : f`, cheaper than both.
+ * Against the code as it actually stood:
+ *
+ * ```
+ * latin (no sigma)      pre-#4507  50 ms   shipped 113 ms   +127% SLOWER
+ * turkish (İ-bearing)   pre-#4507 181 ms   shipped 208 ms    +15% SLOWER
+ * greek (has sigma)     pre-#4507 271 ms   shipped 323 ms    +19% SLOWER
+ * ```
+ *
+ * So the slow path DID regress, by a constant factor, and the guard recovers
+ * most of what the regex cost but not all of it — `indexOf` over one code unit
+ * is still dearer than `=== 'ς'`. That is the price of one owner for the sigma
+ * rule, and it is accepted deliberately rather than accidentally: a second copy
+ * of the rule living in `foldCodePoint` is what #4507 was fixing. Both forms
+ * agree over all 1,112,064 scalar values, 0 disagreements.
  *
  * Per WHOLE TEXT NODE, which is how `scanLiteral` calls it:
  *
@@ -463,8 +495,9 @@ const FINAL_SIGMA_RE = /ς/g
  * like: `İ` U+0130 is ordinary Turkish orthography, so on Turkish content most
  * text nodes fold code point at a time, on every keystroke while find is open.
  *
- * Verified equivalent to the unguarded form over every code point in the BMP
- * and beyond — 0 disagreements across all 1,112,064 scalar values.
+ * Verified equivalent to the unguarded form, and to the pre-#4507 form, over
+ * every code point in the BMP and beyond — 0 disagreements in both directions
+ * across all 1,112,064 scalar values.
  */
 function foldForMatch(s: string): string {
   const lowered = s.toLowerCase()

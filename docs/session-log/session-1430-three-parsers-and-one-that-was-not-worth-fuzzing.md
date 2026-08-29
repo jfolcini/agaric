@@ -78,12 +78,18 @@ success.
 The issue asked for either "both, or a guard". The array is now derived:
 
 ```bash
-mapfile -t targets < <(
-  cargo +nightly metadata --format-version 1 --no-deps \
-    | jq -r '.packages[] | select(.name == "agaric-fuzz")
-             | .targets[] | select(.kind | index("bin")) | .name' \
-    | sort
-)
+derived_targets="$(mktemp)"
+if ! cargo +nightly metadata --format-version 1 --no-deps \
+  | jq -r '.packages[] | select(.name == "agaric-fuzz")
+           | .targets[] | select(.kind | index("bin")) | .name' \
+  | sort > "$derived_targets"; then
+  echo "::error::… TOOLING failure …"; exit 1
+fi
+mapfile -t targets < "$derived_targets"
+rm -f "$derived_targets"
+if [ "${#targets[@]}" -eq 0 ]; then
+  echo "::error::… the manifest declares no [[bin]] entries …"; exit 1
+fi
 ```
 
 `--no-deps` reads the manifest only — no dependency resolution, no network, no build.
@@ -91,11 +97,17 @@ Adding a `[[bin]]` is now the entire act of enrolling a target in the weekly lan
 cmin step downstream already consumed `targets.txt` rather than a third copy (#4496), so
 there is one source for all three consumers.
 
-The derivation carries its own guard, and the reason is specific rather than defensive
-habit: `mapfile` reading from a **process substitution** cannot see that producer's exit
-status — not under `set -e`, not under `pipefail`. A jq filter that stops matching leaves
-the loop with nothing to iterate and the step exiting 0: a green fuzz lane that fuzzed
-nothing. An empty derivation is therefore an explicit `::error::` and a non-zero exit.
+**The file is load-bearing, and the first version of this section did not have it.** It
+shipped `mapfile -t targets < <(…)` and argued that shape "fails loud on an empty result".
+It does — but a process substitution cannot report the producer's exit status either, not
+under `set -e` and not under `pipefail`, so *every* failure arrived at one annotation
+blaming a `Cargo.toml` that was fine. Redirecting to a file puts the pipeline back under
+`pipefail` and separates the two. See "Two guards that could only say one thing" below for
+the three-branch verification.
+
+That correction reached the workflow and the PR description before it reached this
+paragraph, which sat here for two more review rounds describing the shape the code had
+abandoned — in a log whose subject is second copies going stale.
 
 ## Seeds, and the newline that would have wasted half of them
 

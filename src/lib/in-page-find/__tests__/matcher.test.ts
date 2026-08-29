@@ -289,8 +289,31 @@ describe('compileQuery — Unicode correctness (#756)', () => {
     ['Deseret, an astral cased script', '\u{10400}'],
     ['a lone high surrogate cannot be typed, so a pair instead', '\u{1D400}'],
   ])('compiling %s does not trip the fold-distribution assertion (#4507)', (_label, query) => {
+    // ONLY the case-INSENSITIVE compile exercises the assertion. `compileQuery`
+    // guards the fold loop and the DEV check behind `if (!caseSensitive)`, so a
+    // `caseSensitive: true` compile skips both — an earlier revision asserted
+    // both arms here, and the second one would have passed with the assertion
+    // deleted outright. Kept to one line so the test cannot look like it covers
+    // twice what it does.
     expect(() => compileQuery(query, defaultOpts)).not.toThrow()
-    expect(() => compileQuery(query, { ...defaultOpts, caseSensitive: true })).not.toThrow()
+  })
+
+  // The case-SENSITIVE path has its own thing worth pinning, and it is not the
+  // fold assertion: it must leave the query completely alone. Asserted directly
+  // rather than as a second `not.toThrow()`, which proved nothing.
+  it.each([
+    ['final sigma stays final', 'ΟΔΟΣ'],
+    ['mid sigma stays mid', 'ΑΣΑ'],
+    ['both forms stay distinct', 'ςσ'],
+    ['the dotted I is not expanded', 'İ'],
+  ])('case-sensitive compile leaves %s unfolded (#4507)', (_label, query) => {
+    const compiled = compileQuery(query, {
+      ...defaultOpts,
+      caseSensitive: true,
+    }) as Extract<CompiledQuery, { kind: 'literal' }>
+    expect(compiled.kind).toBe('literal')
+    // The needle is the raw query: it matches itself exactly and nothing else.
+    expect(compiled.matcher(query)).toEqual([{ start: 0, end: query.length }])
   })
 
   // #4507 — the FAST path's sigma tests. Everything below this comment in the
