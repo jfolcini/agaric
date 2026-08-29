@@ -1649,7 +1649,7 @@ jobs:
         # The one step here with no time bound of its own: the fuzz step caps
         # itself with `-max_total_time`, but the merge re-executes every corpus
         # input with only `-rss_limit_mb` to bound it. As the corpus grows this
-        # is the likeliest thing to push the job into its 60-minute timeout —
+        # is the likeliest thing to push the job into its 90-minute timeout —
         # and a job timeout is a CANCELLATION, which correctly skips the save,
         # so the symptom would be a corpus that silently stops accumulating:
         # the exact failure mode this change exists to remove. A step-level
@@ -1803,7 +1803,7 @@ jobs:
         # idle rule described on the restore step. Steady state is about two.
         # The `main` gate is therefore about not spending a feature branch's
         # cache budget, not about bounding growth. Cache scoping already keeps such an entry out of main's
-        # restores, so this is quota and consistency, not correctness. The
+        # restores. The
         # scheduled run this lane exists for is on `main` and still saves.
         #
         # `!cancelled() && steps.corpus-cache.outcome == 'success'` for the two
@@ -1813,10 +1813,12 @@ jobs:
         # `steps.corpus-cmin.outputs.collapsed == '0'` is the third gate, and it
         # is deliberately fail-CLOSED. An earlier form tested `!= '1'`, which
         # passes on `''` — and `''` is NOT only the skipped case:
-        #   * cmin hitting its own `timeout-minutes` is marked FAILED, not
-        #     cancelled, so `!cancelled()` stays true while the output write
-        #     never ran — publishing a half-minimised corpus as the newest entry;
-        #   * the missing-manifest early exit returned before writing it at all.
+        # The case it catches: cmin hitting its own `timeout-minutes` is marked
+        # FAILED, not cancelled, so `!cancelled()` stays true while the output
+        # write never ran — and `!= '1'` would have published a half-minimised
+        # corpus as the newest entry. (The missing-manifest path is NOT such a
+        # case: it writes `collapsed=0` explicitly before its early exit, since
+        # the corpus there is intact and republishing it is a useful no-op.)
         # Requiring an explicit `'0'` means every path that did not finish the
         # loop and record a clean result declines to publish, leaving the
         # previous entry newest.
