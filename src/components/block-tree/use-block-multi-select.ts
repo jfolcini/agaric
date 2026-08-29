@@ -149,6 +149,23 @@ export function useBlockMultiSelect({
     setBatchInProgress(true)
     try {
       const ids = [...selectedBlockIds]
+      // #4524 review note 2 — captured HERE, alongside `ids` and before the
+      // `deleteBlocksByIds` await below, not read fresh off the store after
+      // it. Same value-at-the-moment-the-user-acted discipline the
+      // `currentSpaceId` prop above is for: a read taken after the await
+      // would reflect whatever the store holds once the IPC settles, and a
+      // reload or navigation mid-flight can replace it before then. The
+      // page-subset fan-out (below) filters `ids` through this snapshot, so
+      // a stale reference after such a swap would silently drop ids from
+      // that subset — never add a wrong one, because a swapped-in store
+      // holds a different id space entirely and a lookup for an old id
+      // simply misses. Low stakes either way: `affected_page_ids` (also
+      // below) already reports every page this call actually deleted, in
+      // full, straight from the backend; this snapshot only ever adds ids
+      // the backend SKIPPED (missing, or soft-deleted by a concurrent
+      // write) to that set, so the asymmetry this closes could only have
+      // under-evicted a page that was not live anyway.
+      const blocksById = pageStore.getState().blocksById
       // The ancestor pre-walk is no
       // longer needed. The single-row `deleteBlock` IPC required the
       // FE to filter selected descendants client-side because each
@@ -221,8 +238,9 @@ export function useBlockMultiSelect({
         // delete would exceed `NAME_CACHE_FANOUT_MAX_IDS` and wipe a warm
         // cache to describe the removal of nothing. `block_type` is on the
         // rows already in the store, so the filter costs one map lookup per
-        // selected id and is read BEFORE the splice below drops those rows.
-        const blocksById = pageStore.getState().blocksById
+        // selected id. `blocksById` is the snapshot captured above, BEFORE
+        // both the await and the splice below drop those rows — see the
+        // review-note-2 comment at its capture site.
         const removedPageIds = new Set<string>(cascadedPageIds)
         for (const id of ids) {
           if (blocksById.get(id)?.block_type === 'page') removedPageIds.add(id)

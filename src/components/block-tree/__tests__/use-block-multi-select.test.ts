@@ -890,6 +890,57 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
     }
   })
 
+  // #4524 review note 2 — `blocksById` must be captured alongside `ids`,
+  // BEFORE the `deleteBlocksByIds` await, not read fresh off the store once
+  // it resolves. A navigation or reload mid-flight can swap the store's
+  // contents for an unrelated page's before the response lands; a post-await
+  // read would then classify the selected id against the WRONG page's rows
+  // and silently drop it from the eviction, undetected because
+  // `blocksById.get` on a swapped-in store simply returns `undefined` rather
+  // than throwing.
+  it('classifies the page subset from the store as it was when the user acted, not after a mid-flight reload', async () => {
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
+    })
+    let releaseFirst: ((value: unknown) => void) | null = null
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'delete_blocks_by_ids') {
+        return new Promise((resolve) => {
+          releaseFirst = resolve
+        })
+      }
+      return strictInvokeFallback(cmd)
+    })
+    const params = makeDefaultParams({ selectedBlockIds: ['P_ROOT'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    const { changes, unsubscribe } = recordChanges()
+    try {
+      let done: Promise<void> | null = null
+      act(() => {
+        done = result.current.handleBatchDelete()
+      })
+
+      // The IPC is in flight. Simulate the page editor navigating away and
+      // loading an unrelated page before the response arrives — the store's
+      // `blocks` (and derived `blocksById`) are wholesale replaced.
+      act(() => {
+        pageStore.setState({ blocks: [makeBlock({ id: 'OTHER_CONTENT' })] })
+      })
+
+      await act(async () => {
+        releaseFirst?.({ deleted_count: 1, affected_page_ids: [] })
+        await done
+      })
+
+      expect(changes).toEqual([
+        { kind: 'removed', entity: 'page', id: 'P_ROOT', spaceId: 'SPACE_TEST' },
+      ] satisfies NameChange[])
+    } finally {
+      unsubscribe()
+    }
+  })
+
   // The `NAME_CACHE_FANOUT_MAX_IDS` budget is measured against what will
   // ACTUALLY be emitted — the de-duplicated union — not against the selection.
   //

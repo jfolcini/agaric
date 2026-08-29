@@ -48,9 +48,20 @@ extension could most easily have got backwards.
 The toolbar's selection is pages by construction — it is the Pages view. A block-tree selection is
 mostly **content** rows, which the picker never offers. Publishing them wholesale would fire
 O(listeners × pages) of synchronous work per id that cannot match anything, and — worse — a
-routine 30-block content delete would exceed `NAME_CACHE_FANOUT_MAX_IDS` and wipe a warm cache to
-describe the removal of nothing. Combined with the empty-cohort rule, a `spaceId == null`
-content-only delete would have dropped both caches for no reason at all.
+routine 30-block content delete (a live space, so a genuinely warm cache) would exceed
+`NAME_CACHE_FANOUT_MAX_IDS` and wipe it to describe the removal of nothing.
+
+The empty-cohort rule's own null-space case needed a correction after review: a first pass here
+argued that without it, a `spaceId == null` content-only delete would drop a warm cache. It
+wouldn't — `name-change-bus.ts`'s "When the caller has NO active space" section already establishes
+that with no active space both picker caches are provably empty (the space-switch subscriber clears
+them on any transition to `null`, and both lazy fills refuse to fill while `null`), so there is no
+warm cache there to lose. What the guard actually buys, once that's accounted for, is smaller: with
+a live space the per-id loop already emits nothing for an empty cohort regardless (there's nothing
+to iterate), so the null-space branch is the *only* branch it changes, and there it skips an
+`invalidateNameCaches()` that would otherwise be a real event but a pointless one — a synchronous
+fan-out to every mounted `useBlockResolve` announcing a removal that never happened. Worth keeping
+for that, not for a cache loss that can't happen in that state.
 
 So the hook publishes the **union of two halves**, and both are needed:
 
@@ -104,3 +115,56 @@ backup with the restore proven byte-identical by `cmp`:
   a user-visible consequence (a wiped warm cache), so this is a real gap and a narrow one.
 
 Closes #4524.
+
+## Round 2 — the empty-cohort rule was right for a reason I had wrong
+
+Review approved this and then took apart my justification for the empty-cohort early return,
+correctly. The `notifyPagesRemoved` docblock and the hook's inline comment both said it was
+load-bearing because a `spaceId == null` content-only delete would otherwise "drop a warm cache to
+describe the removal of nothing". Ten lines up, the same module argues that with no active space
+both name caches are **provably empty**. Two passages in one file arguing opposite things about the
+same state, and mine was the wrong one.
+
+Checked the "provably empty" claim by reading the code rather than trusting either passage:
+`searchPagesViaCache` and `searchTags` both short-circuit to `[]` while the space is `null`, and the
+space-switch subscriber clears both refs on any `currentSpaceId` transition *including* one to
+`null`. It holds.
+
+So what does the early return actually buy? With a live space the per-id loop already emits zero
+events for an empty cohort, making the guard a no-op there. The **only** branch it changes is
+`spaceId == null`, where it suppresses an otherwise-unconditional `invalidateNameCaches()`. And
+since those caches are already empty, that suppressed call was never rescuing a warm cache — it was
+a pointless synchronous fan-out describing a removal that did not happen. The rule survives; the
+reason for it does not. Both passages now say the true one.
+
+Worth keeping as a shape: a rule can be correct and its stated justification can be false, and the
+combination is more dangerous than a wrong rule, because the next person extends the rule by
+reasoning from the justification.
+
+### Three more, and one declined
+
+**A type hole.** `notifyPagesRemoved(pageIds: Iterable<string>)` accepted a bare `string` — a
+slipped `notifyPagesRemoved(id, spaceId)` would type-check and fan out one removal event **per
+character**. Narrowed to `readonly string[] | ReadonlySet<string>` and pinned with a
+`@ts-expect-error` test. Falsified: reverting the signature makes `tsc -b` fail with "Unused
+'@ts-expect-error' directive" at that exact line, which is the assertion doing its job in the only
+direction it can.
+
+**A value read after the await.** The hook read `pageStore.getState().blocksById` *after* the IPC,
+so a store reload mid-flight silently dropped the page-subset half of the union. Captured before the
+await now, alongside `ids`, applying the discipline this PR argues for `currentSpaceId`. The impact
+claim was verified rather than repeated: `affected_page_ids` is read backend-side from the same
+`union_cohort_json` the soft-delete `UPDATE` consumes, so it provably covers every page actually
+deleted, and the frontend subset only ever adds ids the backend **skipped** — meaning the old
+ordering could only under-evict a page that was not live anyway. Small, real, and now stated at that
+size. Pinned with a deferred-promise mock simulating the mid-flight reload.
+
+**A redundant `Set` at the call site**, now that the shared function de-duplicates.
+
+**Declined: copying the caller's `Set`.** The narrowed type stops the *function* mutating, not a
+caller mutating its own set elsewhere — so note 1 does not make this moot. No current caller retains
+and mutates one, and the dispatch is synchronous with no `await` inside it. Documented as a tradeoff
+with the instruction to copy at the call site if that ever changes, rather than paying for a defence
+against a caller that does not exist.
+
+86 tests green; `tsc -b` clean.

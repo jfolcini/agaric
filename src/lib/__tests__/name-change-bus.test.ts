@@ -216,4 +216,18 @@ describe('notifyPagesRemoved (#4524)', () => {
     }
     expect(changes).toEqual([])
   })
+
+  // #4524 review note 1 — a bare `string` is itself an `Iterable<string>` (it
+  // iterates its own characters), so a slipped `notifyPagesRemoved(id,
+  // spaceId)` — passing a single id where a cohort was meant — type-checked
+  // under the old `Iterable<string>` signature and would have silently fanned
+  // out one `notifyPageRemoved` per CHARACTER of `id`. `readonly string[] |
+  // ReadonlySet<string>` closes that hole at no cost to any real caller (see
+  // `notifyPagesRemoved`'s docblock).
+  it('a bare string cohort is a compile error (type guard)', () => {
+    // @ts-expect-error — `pageIds` must be `readonly string[] | ReadonlySet<string>`;
+    // a bare string is also `Iterable<string>`, which is exactly the hole this
+    // signature closes.
+    notifyPagesRemoved('P1', 'SPACE_1')
+  })
 })

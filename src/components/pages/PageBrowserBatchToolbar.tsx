@@ -273,9 +273,12 @@ export function PageBrowserBatchToolbar({
       // UNION, not replacement: an id the backend SKIPPED (missing, or
       // already soft-deleted by a concurrent write) is absent from the cohort
       // and so from `affected_page_ids`, but it was in the user's selection
-      // and is not a live page either way. Keeping `ids` in the set preserves
+      // and is not a live page either way. Keeping `ids` in the union preserves
       // the pre-#4480 eviction exactly and makes this change purely additive.
-      notifyPagesRemoved(new Set<string>([...ids, ...cascadedPageIds]), currentSpaceId)
+      // A plain array, not a `new Set` — `notifyPagesRemoved` de-duplicates
+      // internally (#4524), so building one here would be redundant work
+      // that also hides the shared function's own contract at the call site.
+      notifyPagesRemoved([...ids, ...cascadedPageIds], currentSpaceId)
       onClearSelection()
       onMutated()
       notify.success(t('pageBrowser.batch.trashed', { count }), {

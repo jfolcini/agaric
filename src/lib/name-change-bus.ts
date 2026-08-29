@@ -369,20 +369,52 @@ export const NAME_CACHE_FANOUT_MAX_IDS = 25
  *    emitted set larger than the selection, so 20 selected roots that cascade
  *    to 30 pages must collapse to one invalidation, and a check against
  *    `ids.length` would wave 30 synchronous events through under a cap of 25.
- *  - **An EMPTY cohort publishes nothing.** Not an invalidation: no page was
- *    removed, so there is nothing for the picker cache to be wrong about.
- *    This is load-bearing for the block tree, whose selections are usually
- *    pure CONTENT blocks — without it, a `spaceId == null` content-only
- *    delete would drop a warm cache to describe a removal of nothing.
+ *  - **An EMPTY cohort publishes nothing**, not an invalidation. This guard
+ *    only ever changes behaviour on the `spaceId == null` branch below: with
+ *    a live `spaceId` the per-id loop already emits zero events for an empty
+ *    cohort regardless (there is nothing to iterate), so removing the guard
+ *    would be a no-op there. On the null-space branch it stops what would
+ *    otherwise be an unconditional {@link invalidateNameCaches} for a delete
+ *    that removed nothing. That is NOT rescuing a warm cache — see "When the
+ *    caller has NO active space" above: with no active space both picker
+ *    caches are provably already empty, so there is no warm cache there for
+ *    it to drop. The value is smaller and still real: a synchronous fan-out
+ *    to every mounted `useBlockResolve`, for a removal that never happened,
+ *    is worth skipping on its own terms, and the guard costs nothing. Keep
+ *    it for that reason, and revisit only if the empty-cache invariant
+ *    itself ever stops holding.
  *
  * `spaceId` is the space the pages are LEAVING, captured when the publisher
  * decided to act (see the module docblock — for a move that is the ORIGIN,
  * never the destination). `null` falls back to a full invalidation, the
  * conservative half of the "When the caller has NO active space" section
  * above; it is what both toolbar handlers already did.
+ *
+ * `pageIds` is `readonly string[] | ReadonlySet<string>`, not the more
+ * permissive `Iterable<string>` it started as: `string` is itself an
+ * `Iterable<string>` (it iterates its own characters), so a slipped
+ * `notifyPagesRemoved(id, spaceId)` — passing a single id where a cohort was
+ * meant — type-checked under the old signature and would have fanned out one
+ * `notifyPageRemoved` per CHARACTER of `id`. Pinned by a `@ts-expect-error`
+ * case in `name-change-bus.test.ts`.
+ *
+ * The `Set` branch below ALIASES a `Set` argument rather than copying it —
+ * cheaper, and safe today because nothing in the tree holds onto a `Set` it
+ * passes here and mutates it afterward (every call site either builds one
+ * inline or passes an array). `ReadonlySet` keeps this function itself from
+ * writing through the reference, but it cannot stop a caller from mutating
+ * the concrete `Set` it still owns elsewhere during this synchronous call
+ * (there is no `await` between here and the last `notifyPageRemoved`, so the
+ * only way that happens is a listener on this very dispatch reaching back
+ * into the same object). If a future caller needs to keep mutating a `Set`
+ * after handing it here, copy at that call site rather than defensively
+ * copying on every call for a hazard no caller currently creates.
  */
-export function notifyPagesRemoved(pageIds: Iterable<string>, spaceId: string | null): void {
-  const unique = pageIds instanceof Set ? (pageIds as Set<string>) : new Set(pageIds)
+export function notifyPagesRemoved(
+  pageIds: readonly string[] | ReadonlySet<string>,
+  spaceId: string | null,
+): void {
+  const unique: ReadonlySet<string> = pageIds instanceof Set ? pageIds : new Set(pageIds)
   if (unique.size === 0) return
   if (spaceId == null || unique.size > NAME_CACHE_FANOUT_MAX_IDS) {
     invalidateNameCaches()
