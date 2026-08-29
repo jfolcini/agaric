@@ -1426,8 +1426,21 @@ def run_cli_self_test(record) -> None:
         # shape as direction 17, reached from the opposite side.
         if DENY_FILES:
             denied_rel = sorted(DENY_FILES)[0]
-            baseline_path.write_text(f"1 {denied_rel}\n", encoding="utf-8")
-            code, out = _run_cli(guard, [])
+            saved_baseline_19 = baseline_path.read_text(encoding="utf-8")
+            try:
+                baseline_path.write_text(
+                    f"1 {denied_rel}\n", encoding="utf-8"
+                )
+                code, out = _run_cli(guard, [])
+            finally:
+                # Directions 6 and 18 both carry a comment arguing that being
+                # last is not a defence, and I wrote the one on 18 in the same
+                # commit that added this case without a restore. The next case
+                # appended here would inherit a standing `unscanned` finding
+                # and have its `code != 0` half satisfied unconditionally.
+                baseline_path.write_text(
+                    saved_baseline_19, encoding="utf-8"
+                )
             if code != 0 and "names a DENY_FILES path" in out:
                 record(
                     "CLI: a baseline entry for a denied file is a finding (#3255)",
@@ -1459,6 +1472,41 @@ def run_cli_self_test(record) -> None:
                     "CLI: an unscanned entry gets its own banner and hint",
                     out.strip()[:300],
                     "the unscanned banner and UNSCANNED_HINT, not the dangling ones",
+                )
+
+        # --- #3255 direction 20: --update-baseline refuses an unscanned entry
+        # Without its own arm the entry falls through to the delta comparison,
+        # where the recomputed count reads 0 while the file still exists — so
+        # `in_place` fires and reports "a guard was removed IN PLACE", which
+        # did not happen. Asserted on BOTH the refusal and the absence of that
+        # wrong diagnosis, because the exit code is 1 either way.
+        if DENY_FILES:
+            denied_rel = sorted(DENY_FILES)[0]
+            saved_baseline_20 = baseline_path.read_text(encoding="utf-8")
+            try:
+                baseline_path.write_text(
+                    f"1 {denied_rel}\n", encoding="utf-8"
+                )
+                code, out = _run_cli(guard, ["--update-baseline"])
+            finally:
+                baseline_path.write_text(
+                    saved_baseline_20, encoding="utf-8"
+                )
+            if (
+                code != 0
+                and "names a file that nothing scans" in out
+                and "removed IN PLACE" not in out
+            ):
+                record(
+                    "CLI: --update-baseline refuses an unscanned entry (#3255)",
+                    True,
+                    True,
+                )
+            else:
+                record(
+                    "CLI: --update-baseline refuses an unscanned entry (#3255)",
+                    (code, out.strip()[:220]),
+                    "the unscanned refusal, and NOT an in-place-removal claim",
                 )
 
 
@@ -1663,6 +1711,27 @@ def main(argv: list[str]) -> int:
                 "not touch it — then re-run.",
                 file=sys.stderr,
             )
+            return 1
+        # `unscanned` too, and for a reason the generic warning cannot cover:
+        # left to fall through, the entry survives to the delta comparison,
+        # where the file's recomputed count reads 0 (nothing scans it) while
+        # the file itself still exists — so `in_place` fires and the operator
+        # is told "a guard was removed IN PLACE from
+        # .../space_filter_canonical.rs (the file is still there with fewer)".
+        # No guard was removed. That is the same mislabelling this change
+        # splits out four times over on the reporting side, reappearing on the
+        # re-anchor side because only `root` and `deny` had their own arm.
+        unscanned_findings = [m for kind, m in pre if kind == "unscanned"]
+        if unscanned_findings:
+            print(
+                "Refusing to re-anchor: a baseline entry names a file that "
+                "nothing scans.\n",
+                file=sys.stderr,
+            )
+            for v in unscanned_findings:
+                print(f"  {v}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print(UNSCANNED_HINT, file=sys.stderr)
             return 1
         for _kind, m in pre:
             print(f"  WARNING before re-anchor: {m}", file=sys.stderr)
