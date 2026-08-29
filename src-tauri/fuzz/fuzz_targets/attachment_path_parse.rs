@@ -18,9 +18,14 @@ use agaric_core::attachment_path::AttachmentFsPath;
 
 fuzz_target!(|data: &[u8]| {
     // Takes `&str`; only valid UTF-8 reaches it, and libFuzzer still explores
-    // the full byte space. We assert the no-panic contract only — a rejection
-    // is a correct outcome, and asserting anything about WHICH inputs are
-    // rejected belongs in the unit tests, where the expected answer is known.
+    // the full byte space.
+    //
+    // Nothing is asserted about WHICH inputs are rejected — a rejection is a
+    // correct outcome for arbitrary bytes, and pinning the accept/reject split
+    // belongs in the unit tests, where the expected answer is known. What IS
+    // asserted, below, is a property of the values that ARE accepted: parsing
+    // is a fixed point. So this target can fail the lane two ways, a panic and
+    // that assertion, and the header used to claim only the first.
     if let Ok(s) = std::str::from_utf8(data) {
         if let Ok(parsed) = AttachmentFsPath::parse(s) {
             // IDEMPOTENCE, not a round-trip. An earlier version of this target

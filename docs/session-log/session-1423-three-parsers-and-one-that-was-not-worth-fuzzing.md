@@ -69,7 +69,7 @@ The issue asked for either "both, or a guard". The array is now derived:
 
 ```bash
 mapfile -t targets < <(
-  cargo metadata --format-version 1 --no-deps \
+  cargo +nightly metadata --format-version 1 --no-deps \
     | jq -r '.packages[] | select(.name == "agaric-fuzz")
              | .targets[] | select(.kind | index("bin")) | .name' \
     | sort
