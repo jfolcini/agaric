@@ -119,6 +119,25 @@ describe('resolveBlockStatus', () => {
     const { result } = renderHook(() => useRichContentCallbacks())
     expect(result.current.resolveBlockStatus('MISSING')).toBe('active')
   })
+
+  it('reads an unresolved entry as deleted even when `deleted` is false (#4515)', () => {
+    // Mirrors `useResolveStore.resolveStatus` — this hook reads the very same
+    // store entries, so an entry the backend never returned must render as a
+    // broken target here too, not as a live chip. No writer parks this shape
+    // today, which is why it needs pinning rather than merely observing.
+    useResolveStore.getState().batchSet([
+      { id: 'PARKED_RC', title: 'Looks Real', deleted: false, resolved: false },
+      // Same title, same `deleted`, flag set — so the assertions below cannot
+      // pass by the status callbacks returning 'deleted' unconditionally.
+      { id: 'REAL_RC', title: 'Looks Real', deleted: false },
+    ])
+
+    const { result } = renderHook(() => useRichContentCallbacks())
+    expect(result.current.resolveBlockStatus('PARKED_RC')).toBe('deleted')
+    expect(result.current.resolveTagStatus('PARKED_RC')).toBe('deleted')
+    expect(result.current.resolveBlockStatus('REAL_RC')).toBe('active')
+    expect(result.current.resolveTagStatus('REAL_RC')).toBe('active')
+  })
 })
 
 // ── resolveTagName ─────────────────────────────────────────────────────

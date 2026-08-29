@@ -6676,7 +6676,8 @@ describe('BlockTree batch toolbar (#657)', () => {
     })
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'delete_blocks_by_ids') return 2
+      // #4480 — `BatchDeleteResponse`, not a bare count.
+      if (cmd === 'delete_blocks_by_ids') return { deleted_count: 2, affected_page_ids: [] }
       return null
     })
 

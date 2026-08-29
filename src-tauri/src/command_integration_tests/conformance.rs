@@ -3487,7 +3487,8 @@ async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
     // --- DELETE: drive the REAL batch-delete command path on the parent root.
     let deleted = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from(p.as_str())])
         .await
-        .expect("delete_blocks_by_ids_inner");
+        .expect("delete_blocks_by_ids_inner")
+        .deleted_count;
     // Engine fan-out runs post-commit (after `commit_and_dispatch`); the
     // command returns once it has fired. Drain background tasks for parity with
     // the production lifecycle.

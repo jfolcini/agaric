@@ -118,8 +118,7 @@ describe('resolveBlockTitle', () => {
     const { result } = renderHook(() => useBlockResolve())
     expect(result.current.resolveBlockTitle('GONE1234REST')).toBe('[[GONE1234...]]')
     expect(result.current.resolveTagName('GONE1234REST')).toBe('#GONE1234...')
-    // Status still reads off `deleted`, which is a separate question — the
-    // chip must render as broken, not as live.
+    // The chip must render as broken, not as live.
     expect(result.current.resolveBlockStatus('GONE1234REST')).toBe('deleted')
   })
 })
@@ -142,6 +141,24 @@ describe('resolveBlockStatus', () => {
   it('defaults to "active" for uncached block', () => {
     const { result } = renderHook(() => useBlockResolve())
     expect(result.current.resolveBlockStatus('UNKNOWN_ID')).toBe('active')
+  })
+
+  it('reads an unresolved entry as deleted even when `deleted` is false (#4515)', () => {
+    // Mirrors `useResolveStore.resolveStatus` — these callbacks read the very
+    // same entries, so they must take the same verdict from the same field.
+    // No writer parks this shape today; that is why it needs pinning.
+    useResolveStore.getState().batchSet([
+      { id: 'PARKED_BLOCK', title: 'Looks Real', deleted: false, resolved: false },
+      // Same title, same `deleted`, flag set — so the assertions below cannot
+      // pass by `resolveBlockStatus` returning 'deleted' unconditionally.
+      { id: 'REAL_BLOCK', title: 'Looks Real', deleted: false },
+    ])
+
+    const { result } = renderHook(() => useBlockResolve())
+    expect(result.current.resolveBlockStatus('PARKED_BLOCK')).toBe('deleted')
+    expect(result.current.resolveTagStatus('PARKED_BLOCK')).toBe('deleted')
+    expect(result.current.resolveBlockStatus('REAL_BLOCK')).toBe('active')
+    expect(result.current.resolveTagStatus('REAL_BLOCK')).toBe('active')
   })
 })
 

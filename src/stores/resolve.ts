@@ -157,7 +157,18 @@ interface ResolveEntry {
    * id" already has a correct, zero-effort representation — write nothing.**
    * An absent key falls to {@link unresolvedBlockLabel} through
    * {@link ResolveStore.resolveTitle}, identically to a `resolved: false`
-   * entry. So the default does not govern "a writer that failed to resolve";
+   * entry. (Identically for the LABEL. The two diverge at
+   * {@link ResolveStore.resolveStatus}, deliberately: absent means "not asked
+   * yet" and stays `'active'`, `resolved: false` means "asked, nothing came
+   * back" and reads `'deleted'`. Writing nothing is still the correct
+   * representation of "I could not resolve this id" — a sentinel is for
+   * suppressing a re-fetch, and it buys the broken-link styling with it.
+   * That is not the store guessing on the writer's behalf: a writer that DID
+   * ask and wrote nothing keeps the verdict itself, which is exactly what
+   * `useBacklinkResolution`'s attempted-unresolved set — named in the
+   * "Residual" note below — is for. Only a caller knows whether it has asked
+   * yet; the store only knows what it was told.)
+   * So the default does not govern "a writer that failed to resolve";
    * it governs only "a writer that deliberately PARKS a sentinel entry to
    * suppress a re-fetch", which is a conscious, documented act with one
    * instance. Forgetting the flag is not something a writer can drift into —
@@ -262,10 +273,31 @@ interface ResolveStore {
    * comes from the flag, never from the stored string: that is what stops a
    * title from doubling as a cache-miss signal, and it means a future writer
    * that flags a placeholder `resolved: false` cannot leak whatever it parked
-   * in `title` into a chip.
+   * in `title` into a chip. That covers the LABEL only; what the chip's
+   * styling does with such an entry is {@link ResolveStore.resolveStatus}'
+   * half of the guarantee.
    */
   resolveTitle: (id: string) => string
-  /** Resolve deleted status under the active space. */
+  /**
+   * Resolve deleted status under the active space.
+   *
+   * `'deleted'` when the entry is soft-deleted OR carries `resolved: false`;
+   * `'active'` otherwise, including for an ABSENT key.
+   *
+   * #4515 — the flag is consulted here too, so the "a parked placeholder
+   * cannot reach a chip" guarantee covers the styling and not just the label.
+   * Without it a `{ resolved: false, deleted: false }` sentinel would render
+   * an ACTIVE chip carrying the unresolved label — live-looking, unclickable.
+   * The two states it distinguishes are genuinely different and are rendered
+   * differently on purpose: an absent key means "not asked yet" (stay
+   * optimistic, the real title is about to land), while `resolved: false`
+   * means "asked, and the backend returned nothing" — a broken target, which
+   * is the broken-link UX. That reading was already the sole sentinel
+   * writer's intent; it just had to spell it as a second field
+   * (`fetchAndCacheLinks` passes `deleted: true` alongside `resolved: false`,
+   * `@/components/block-tree/use-block-link-resolve`), so deriving it here is
+   * inert today and only removes the duty to remember both.
+   */
   resolveStatus: (id: string) => 'active' | 'deleted'
   /**
    * Whether a real entry for `id` exists under the active space. A pure
@@ -712,7 +744,12 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       if (cached) {
         // See resolveTitle above — LRU touch only matters at capacity.
         if (cache.size >= MAX_CACHE_SIZE) touch(cache, key, cached)
-        return cached.deleted ? 'deleted' : 'active'
+        // #4515 — `!resolved` counts as deleted. An entry the backend never
+        // returned is a broken target, and rendering it 'active' would put a
+        // live-looking chip on the unresolved label that `resolveTitle` hands
+        // back for the same entry. Inert today (the sole `resolved: false`
+        // writer also sets `deleted: true`) — see the interface docblock.
+        return cached.deleted || !cached.resolved ? 'deleted' : 'active'
       }
       return 'active'
     },
