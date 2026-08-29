@@ -722,10 +722,23 @@ def run_self_test() -> int:
         # suite blames "--synthetic-tree did not suppress the roots assertion".
         # A test that names the wrong subsystem is worse than no test. It also
         # made every commit pay two extra whole-tree scans.
+        # `write_baseline` is stubbed alongside the readers, and that is the
+        # load-bearing part rather than symmetry. The mutual-exclusion call
+        # below runs with the MISSPELLED roots installed, so it is safe only
+        # because the arm it is testing returns 2 first. If that arm ever
+        # regresses, this hook — which is `always_run` — would rewrite the
+        # tracked `src-tauri/table-ownership-baseline.txt` from the narrowed
+        # walk on every commit, with stderr captured: the destruction this
+        # change exists to prevent, performed by the assertion that tests for
+        # it, silently. A test must not depend on the code under test to avoid
+        # doing damage.
         _saved_counts = globals()["compute_counts"]
         _saved_read = globals()["read_baseline"]
+        _saved_write = globals()["write_baseline"]
+        _wrote: list[object] = []
         globals()["compute_counts"] = lambda: ({}, {})
         globals()["read_baseline"] = lambda: {}
+        globals()["write_baseline"] = lambda *a, **k: _wrote.append(a)
         try:
             with contextlib.redirect_stderr(io.StringIO()):
                 globals()["CRATE_ROOTS"] = _saved_roots
@@ -735,9 +748,11 @@ def run_self_test() -> int:
                     ("app", REPO_ROOT / "src-tauri" / "src"),
                 ]
                 missing_root_flagged = main(["--synthetic-tree"])
+                both_rc = main(["--synthetic-tree", "--update-baseline"])
         finally:
             globals()["compute_counts"] = _saved_counts
             globals()["read_baseline"] = _saved_read
+            globals()["write_baseline"] = _saved_write
         root_cases += 1
         if real_roots_flagged != 0:
             failures.append(
@@ -751,9 +766,15 @@ def run_self_test() -> int:
         # The two flags together must REFUSE, not re-anchor. Suppressing the
         # roots check and then rebuilding the baseline from the surviving
         # roots is how the finding gets destroyed by the flag that exists to
-        # say it does not apply.
-        with contextlib.redirect_stderr(io.StringIO()):
-            both_rc = main(["--synthetic-tree", "--update-baseline"])
+        # say it does not apply. Asserted on the exit code AND on the writer
+        # never being reached, because only the second notices a future
+        # revision that refuses after writing.
+        root_cases += 1
+        if _wrote:
+            failures.append(
+                "--synthetic-tree --update-baseline reached write_baseline "
+                f"({len(_wrote)} call(s)) — it must refuse BEFORE writing"
+            )
         root_cases += 1
         if both_rc != 2:
             failures.append(

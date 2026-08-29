@@ -469,7 +469,11 @@ count_examined() {
   case "$guard" in
     check-table-ownership.py)
       for root in "${roots[@]}"; do
-        [ -d "$workdir/$root" ] || continue
+        # No `[ -d ] || continue` here. `find` on a missing directory prints
+        # nothing (its error is already discarded below), so the count is
+        # identical either way — and this file is the one removing that
+        # construct from the guard it invokes. Leaving the last copy in place
+        # is how the next reader learns to skip a root that vanished.
         while IFS= read -r -d '' f; do
           n=$((n + 1))
         done < <(find "$workdir/$root" -type f -name '*.rs' -print0 2>/dev/null)
@@ -1862,6 +1866,25 @@ run_self_test() {
   rc=$?
   st_expect 'CLEAN merge: pr-merge-result-check exits 0 (computed, guards pass)' '0' "$rc"
 
+  # THE SAME CLEAN FIXTURE, END TO END, WITHOUT the marker (#4501). 3l-bis
+  # pins `run_one_guard` in both directions, but it calls that function
+  # directly — so with every end-to-end fixture passing `--synthetic-fixture`,
+  # flipping `local synthetic=0` to `1` in main(), or hard-wiring the third
+  # argument to run_merge_check, leaves this entire suite green while
+  # production silently loses the assertion. That is the same "disabled on the
+  # only path that runs in production" shape this change was written to fix,
+  # one link further up the chain, and it needs a run that goes through
+  # main() -> run_merge_check -> run_one_guard with the marker genuinely
+  # absent. The fixture's roots are `src-tauri/source` etc., so the guard must
+  # report them missing and the merge must come back non-zero.
+  local unflagged_rc unflagged_err="$tmp/clean-unflagged.err"
+  ( cd "$clean" && bash "$SELF" main pr ) >/dev/null 2>"$unflagged_err"
+  unflagged_rc=$?
+  st_expect 'the SAME clean merge WITHOUT --synthetic-fixture fails: the roots assertion is live end to end' \
+    '1' "$unflagged_rc"
+  st_expect 'and it is check-table-ownership that failed, on the MERGED tree' \
+    '1' "$(grep -c 'check-table-ownership.py FAILED on the MERGED tree' "$unflagged_err" || true)"
+
   ( cd "$nearmiss" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/nearmiss.out" 2>"$tmp/nearmiss.err"
   rc=$?
   st_expect 'NEAR-MISS merge: pr-merge-result-check exits 1 (computed, a guard FAILED on the merge result)' \
@@ -2455,7 +2478,12 @@ STUB
   # typo in RATCHET_GUARDS, or a newly added guard with no invocation rule,
   # buy a green verdict from something that never ran.
   local unknown_out unknown_rc
-  unknown_out=$(run_one_guard 'no-such-guard.qqq' "$tmp" HEAD 2>&1); unknown_rc=$?
+  # The explicit `0` is the fixture marker. `run_one_guard` does `shift 4`;
+  # with three arguments that shift fails silently (no `shift_verbose`, no
+  # `set -e`) and leaves the positionals unshifted — harmless only because the
+  # `*)` arm never reads "$@". Passing it keeps the arity honest rather than
+  # relying on that.
+  unknown_out=$(run_one_guard 'no-such-guard.qqq' "$tmp" HEAD 0 2>&1); unknown_rc=$?
   st_expect 'a guard with no invocation rule FAILS (returns 1), it does not silently pass' \
     '1' "$unknown_rc"
   st_expect 'and it says so, naming the guard it could not invoke' \
