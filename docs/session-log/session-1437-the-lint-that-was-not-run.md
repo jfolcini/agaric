@@ -18,15 +18,19 @@ directive as well as below it.
 
 It is deliberate: an author-declared incomplete dependency array means the compiler must not
 trust its own inference for that function. It is present and unchanged in oxlint **1.79.0** — the
-version pinned in `package.json` and installed at `node_modules/.bin/oxlint`, which is the binary
-actually checked here. (A newer 1.80.0 exists upstream; it is not what this repo runs, and an
-earlier draft of this note cited it by mistake.) And no key in `.oxlintrc.json` switches it off.
+version actually resolved by `package-lock.json` and installed at `node_modules/.bin/oxlint`,
+which is the binary actually checked here. `package.json` itself declares
+`"oxlint": "^1.79.0"`, a caret range: `npm install` can move that forward to 1.80.x without
+touching `package.json` at all, so the pin this whole regression story depends on lives in the
+lockfile, not there — only `npm ci`, which honours the lockfile, reproduces the version checked
+below. (A newer 1.80.0 exists upstream; it is not what this repo runs, and an earlier draft of
+this note cited it by mistake.) And no key in `.oxlintrc.json` switches it off.
 So the thing #4493 asked to fix is not a bug and not configurable; the only variable left is
 whether the silence is **visible**.
 
 ## The measurement, with its denominator
 
-Of **1858** lintable files in the tree: **172** carry some disable directive; **31** of those
+Of **1858** lintable files in the tree: **170** carry some disable directive; **31** of those
 carry a bailout-triggering one, at **38** sites; and **15** of those 31 hide findings underneath
 them. `react/set-state-in-effect` is the rule with a consequence outside this issue — it is still
 burning down in #4407, and its remaining count there is **understated by seven**: seven
@@ -35,21 +39,79 @@ scanned. #4407 has a comment saying so now.
 
 This is the canonical measurement — the config comment and the test-suite docblock both point
 here instead of repeating the breakdown, so there is one place to re-derive instead of three to
-keep in sync. Re-measured 2026-08-29 against a review note that these figures had nothing keeping
-them honest; the commands below reproduce every number above. All were run from the repo root with
-the pinned `node_modules/.bin/oxlint` (1.79.0):
+keep in sync. **Point-in-time as of 2026-08-29 at commit `01b5724f2`** — nothing re-runs this
+automatically (see "Whether this should self-check" below), so re-derive these numbers with the
+commands below before trusting them on a tree that has moved since. All were run from the repo
+root with the pinned `node_modules/.bin/oxlint` (1.79.0):
 
 1. **1858** lintable files, and **38** bailout sites in **31** files:
    `node_modules/.bin/oxlint -c .oxlintrc.json -f json .` → its `number_of_files` field is 1858;
    its `diagnostics` array has 38 entries with `"code": "react(rule-suppression)"`, spanning 31
    distinct `filename`s.
-2. **172** files carrying any disable directive (not just a bailout-triggering one):
-   `grep -rlE -e 'oxlint-disable' -e 'eslint-disable' --include='*.ts' --include='*.tsx'
-   --include='*.js' --include='*.jsx' --include='*.mjs' --include='*.cjs' --exclude-dir=node_modules
-   --exclude-dir=dist --exclude-dir=coverage --exclude-dir=src-tauri --exclude-dir=.git .`, minus
-   the three files under `ignorePatterns` in `.oxlintrc.json` that a plain directory-name grep
-   doesn't know to skip (`src/lib/bindings.ts`, `src/editor/emoji-data.generated.ts`,
-   `public/pdf.worker.min.mjs`) — 172.
+2. **170** files carrying any disable directive (not just a bailout-triggering one). A previous
+   version of this recipe used a plain multi-extension `grep -l`, on the theory that a disable
+   directive is always a `//` or `/* */` comment naming `oxlint-disable` or `eslint-disable`. That
+   theory is false: `grep` matches *text*, not *comments*, and this repo has two files where the
+   same text appears as fixture/generator DATA rather than as a directive —
+   `src/__tests__/oxlint-react-compiler-suppression.test.ts` (this suite's own fixtures embed
+   `// oxlint-disable-next-line ...` inside template literals to prove the bailout fires, and one
+   test description contains the string `` `oxlint-disable` `` in prose) and
+   `scripts/generate-emoji-data.mjs` (which emits `emoji-data.generated.ts`'s
+   `/* oxlint-disable */` line as a string literal it writes to disk). A `grep -l` run from this
+   PR's branch counts its own test file as "directive-carrying" — the measurement counting its own
+   apparatus — which is exactly the kind of drift a number nobody re-derives will not catch.
+
+   The repo already has a real lexer for exactly this job:
+   `scripts/lib/js-scanner.mjs`'s exported `blankStringsAndTemplates()`, which replaces
+   string/template-literal *contents* with equal-length whitespace while leaving real comments (and
+   template `${…}` interpolated code) intact. It is reachable from a doc recipe — it's a plain
+   ESM export, not a CLI wrapped around one — so the corrected recipe uses it instead of pretending
+   a bare grep is precise:
+
+   ```sh
+   grep -rlE -e 'oxlint-disable' -e 'eslint-disable' --include='*.ts' --include='*.tsx' \
+     --include='*.js' --include='*.jsx' --include='*.mjs' --include='*.cjs' \
+     --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=coverage \
+     --exclude-dir=src-tauri --exclude-dir=.git . > /tmp/candidates.txt
+
+   node --input-type=module -e '
+     import { readFileSync } from "node:fs"
+     import { blankStringsAndTemplates } from "./scripts/lib/js-scanner.mjs"
+     const files = readFileSync("/tmp/candidates.txt", "utf8").trim().split("\n").filter(Boolean)
+     const ignored = new Set([
+       "src/lib/bindings.ts",
+       "src/editor/emoji-data.generated.ts",
+       "public/pdf.worker.min.mjs",
+     ])
+     const real = files.filter((f) =>
+       /oxlint-disable|eslint-disable/.test(blankStringsAndTemplates(readFileSync(f, "utf8"))),
+     )
+     console.log(real.length, "real directive-carrying files")
+     // grep -r . prefixes every path with "./"; strip it before the Set lookup,
+     // or every ignorePatterns entry silently fails to match and nothing gets
+     // subtracted.
+     console.log(
+       real.filter((f) => !ignored.has(f.replace(/^\.\//, ""))).length,
+       "after removing ignorePatterns files actually present",
+     )
+   '
+   ```
+
+   `grep` still finds the *candidates* (fast, and a superset is safe here); `blankStringsAndTemplates`
+   then decides which of them carry a directive in an actual comment, which drops both false
+   positives above automatically — by construction, not by naming them, so a third file that
+   embeds directive-shaped fixture text later is excluded too without anyone updating an exclude
+   list. That leaves **171** files with a real directive (printed by the script's first line). Only
+   one of the three `ignorePatterns` files in `.oxlintrc.json` is ever in that result —
+   `src/editor/emoji-data.generated.ts`, which has a genuine `/* oxlint-disable */`;
+   `src/lib/bindings.ts` and `public/pdf.worker.min.mjs` contain no disable directive at all, in a
+   comment or otherwise, so they were never in any result set to subtract from. Subtracting the one
+   that IS present (checked, not assumed) aligns the count with oxlint's own 1858-file scanned
+   population, since that file is excluded from it by `ignorePatterns`. **170** (the script's second
+   line). Run against `main` — no `oxlint-react-compiler-suppression.test.ts` there, so no
+   self-counting; the only false positive is `generate-emoji-data.mjs` — the same corrected recipe
+   also yields **170**, which is what makes 170 usable as a stable figure: it no longer depends on
+   which branch happens to be checked out.
 3. **15** files hiding findings, **40** hidden findings (32 `react/refs`, 1
    `react/static-components`, 7 `react/set-state-in-effect`): there is no single-command way to
    measure this — it is a diff, not a count. Copy the tree to a scratch dir (never mutate the
@@ -116,20 +178,52 @@ the account belongs in the file. It also promised that a fix "must add the `reac
 suppressions here in the SAME commit"; that is still true, but the trigger is an oxlint bump, not
 a fix of ours, so the sentence now says which.
 
+## Whether this should self-check
+
+De-duplicating the figures above to this one file is an improvement, but it is not a guard: nothing
+re-runs the recipes and fails a commit or a CI run if the tree has drifted since 2026-08-29. Note 1
+above is not a hypothetical case for why that matters — the recipe drifted from what it claimed
+*inside this same PR*, and the number that will actually cost something if it drifts silently is
+the `react/set-state-in-effect` under-count feeding #4407 (seven today).
+
+I measured rather than assumed the cost of closing that gap. Step 1 (`oxlint -f json .` once) is
+~0.8s wall-clock on this tree. The full step-3 method — `rsync` a working copy (~1.2s for the ~70MB
+tree excluding `node_modules`/`.git`/`dist`/`src-tauri/target`), blank the 38 directive lines,
+re-lint the copy (~1s) — adds up to roughly 3s total, which is not the "slow for a pre-commit hook"
+I expected going in; a bare double-lint is cheap. That is not the whole cost, though: a guard
+worth having would need to reimplement step 3's masking-and-diff logic (find the 38 sites, blank
+exactly those lines without shifting anything else, re-lint, diff two JSON diagnostic sets per
+`(file, code, line)`, compare the resulting 15/40/7 against checked-in numbers) as a maintained
+script with its own tests — new code roughly the size of, or larger than, the fix in this PR,
+introduced into the same `prek` pipeline whose fragility is a recurring cost here (ratchet
+baselines, path-keyed guards breaking on refactors). That is a real piece of engineering, not a
+few-line addition, and building it is out of scope for a PR about documentation accuracy.
+
+Given that, I did not build the guard. What ships instead: every figure in this file, in
+`.oxlintrc.json`, and in the test docblock is now stated as a **point-in-time measurement** — dated
+and pinned to the commit it was taken at — so a reader who cares whether it still holds knows to
+re-run the commands above rather than trust the prose. My recommendation, for a human to decide on
+rather than something I'm filing as an issue: if the drift risk is worth closing, it is a
+follow-up worth scoping deliberately (most likely as a periodic/weekly check in the style of the
+bench-smoke jobs, not a per-commit `prek` hook, given the file-copy step), not something to fold
+into this PR.
+
 ## Verification
 
-The new suite: 5 cases, green. `tsc -b` clean; `oxlint` and `oxfmt --check` clean on the changed
-files.
+The new suite: 6 cases, green (verified 2026-08-29: `npx vitest run
+src/__tests__/oxlint-react-compiler-suppression.test.ts` → 6 passed). `tsc -b` clean; `oxlint` and
+`oxfmt --check` clean on the changed files.
 
 Falsified against a copied backup, restore proven byte-identical with `cmp`: setting
-`react/rule-suppression` to `off` reddens **2 of the 5** arms — the two masked cases, which assert
+`react/rule-suppression` to `off` reddens **2 of the 6** arms — the two masked cases, which assert
 that the bailed-out function is NAMED and not merely silent. I had written "the config-reading arm
 and nothing else" here before running it, which was a guess and was wrong in a way worth keeping
 visible: the config value is not read by one arm, it is what makes the masked arms
 *discriminating*. Without it they would assert "no `react/refs` reported" — true of a masked
 function and true of a clean one, i.e. an assertion that cannot fail for the reason it exists.
-The three that stay green are the no-directive positive control, the unrelated-rule negative
-control, and the file-scope arm — all three assert on `react/refs` output, which the flip does
-not touch.
+The four that stay green are the no-directive positive control, the unrelated-rule negative
+control, the file-scope arm, and the multi-file arm added later for review note 1 on #4493 — all
+four assert on `react/refs` output, which the flip does not touch. (Re-verified 2026-08-29: `npx
+vitest run` on the copy reports 4 passed / 2 failed, matching this breakdown.)
 
 Closes #4493.

@@ -174,24 +174,35 @@
     // that whole function, above the directive as well as below it. It is
     // deliberate upstream (an author-declared incomplete dependency array
     // means the compiler must not trust its own inference for that function),
-    // it is NOT a directive-scope defect, it is present and unchanged in the
-    // pinned oxlint 1.79.0 (checked #4493 against the installed
+    // it is NOT a directive-scope defect, it is present and unchanged in
+    // oxlint 1.79.0 (checked #4493 against the installed
     // node_modules/.bin/oxlint binary; a newer 1.80.0 also exists upstream
     // but is not what this repo runs), and no key in this file switches it
     // off. So it is not something a fix here removes; the only thing that can
-    // change is whether it is visible.
+    // change is whether it is visible. NOTE: 1.79.0 is what package-lock.json
+    // resolves and what npm ci installs, not what package.json pins --
+    // package.json declares "oxlint": "^1.79.0", a caret range npm install
+    // can move within (to 1.80.x, say) without touching package.json at all.
     //
-    // Measured on this tree (#4493): of 1858 lintable files
-    // (`oxlint -c .oxlintrc.json -f json .`'s `number_of_files`), 172 carry
-    // some disable directive, and 31 of those carry a bailout-triggering one,
-    // at 38 sites (`react(rule-suppression)` diagnostic count from that same
-    // run). Unmasking those 38 sites and re-linting reveals 15 files hiding
+    // Measured on this tree (#4493), point-in-time as of 2026-08-29 at commit
+    // 01b5724f2 -- re-run the commands in the session log below rather than
+    // trusting these numbers on an older or newer tree: of 1858 lintable files
+    // (`oxlint -c .oxlintrc.json -f json .`'s `number_of_files`), 170 carry
+    // some disable directive in an actual comment (not merely matched by a
+    // naive grep, which also catches directive-shaped text sitting inside
+    // string/template-literal fixture data -- see the session log), and 31 of
+    // those carry a bailout-triggering one, at 38 sites
+    // (`react(rule-suppression)` diagnostic count from that same run).
+    // Unmasking those 38 sites and re-linting reveals 15 files hiding
     // findings underneath them, understating `react/set-state-in-effect`
     // (still burning down in #4407) by seven. Exact counts, the unmasking
     // method, and the commands that produced all of this live in
     // docs/session-log/session-1437-the-lint-that-was-not-run.md — kept in
     // one place because re-measuring is a multi-step diff, not a one-line
     // grep, and three copies of a number nobody re-derives is worse than one.
+    // Nothing re-runs this automatically; these are the numbers as measured,
+    // not a live invariant, so re-derive them before trusting them on a tree
+    // that has moved on.
     //
     // `error` is unreachable, and not by choice: all 38 sites would fail at
     // once, and the findings underneath them cannot be suppressed in advance.

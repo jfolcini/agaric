@@ -14,8 +14,12 @@ import { describe, expect, it } from 'vitest'
  * ports `babel-plugin-react-compiler`'s suppression bailout verbatim (oxc
  * #24747), where an author-declared incomplete dependency array means the
  * compiler must not trust its own inference for that function. It is present
- * in oxlint 1.79.0, the version pinned in package.json and installed at
- * node_modules/.bin/oxlint — the binary this suite actually drives.
+ * in oxlint 1.79.0 — the version actually resolved in package-lock.json and
+ * installed at node_modules/.bin/oxlint, the binary this suite drives.
+ * package.json itself declares `"oxlint": "^1.79.0"`, a caret range that
+ * `npm install` can move forward within (to 1.80.x, say) without touching
+ * package.json at all; only the lockfile, and `npm ci` honouring it, actually
+ * pin the version this note is about.
  *
  * What CAN be held is the reading of it. `.oxlintrc.json` enables
  * `react/rule-suppression` at `warn` so every bailed-out function is named on
@@ -23,6 +27,17 @@ import { describe, expect, it } from 'vitest'
  * BOTH directions — the finding fires with no directive present, and the same
  * fixture with an unrelated directive added does not — because a one-armed
  * assertion could not tell the current behaviour from a fixed one.
+ *
+ * The "masked" arms assert `not.toContain(REFS_CODE)`, which would be
+ * vacuously true if oxlint ever renamed the `react(refs)` diagnostic code —
+ * a rename could make every arm in this file report "no react(refs) found"
+ * for the wrong reason. That is caught here, not silently: the positive-
+ * control arms (no directive, and the unrelated-rule arm) assert
+ * `toHaveLength(2)` filtering on the SAME `REFS_CODE` constant, so a rename
+ * fails those loudly before the masked arms' silence could be mistaken for
+ * signal. Both the positive filters and the negative assertions read
+ * `REFS_CODE` from the one constant below rather than a repeated literal, so
+ * that coupling can't drift by one arm being updated and another forgotten.
  *
  * If the "masked" cases below ever start reporting `react(refs)`, oxlint has
  * changed and this is not a nuisance failure: the tree's 15 masked files
@@ -37,6 +52,13 @@ import { describe, expect, it } from 'vitest'
 
 const OXLINT = join(__dirname, '../../node_modules/.bin/oxlint')
 const CONFIG = join(__dirname, '../../.oxlintrc.json')
+
+// Read by every assertion below, positive and negative alike (see the
+// docblock): a single constant means a diagnostic-code rename can't leave a
+// negative assertion vacuously true while its literal drifts unnoticed from
+// the positive one.
+const REFS_CODE = 'react(refs)'
+const RULE_SUPPRESSION_CODE = 'react(rule-suppression)'
 
 /** A hook that reads and writes a ref during render — two `react/refs` sites. */
 const REF_READ_WRITE = `  const r = useRef(0)
@@ -131,8 +153,8 @@ ${REF_READ_WRITE}  return prev
 }
 `,
     })
-    expect(codesOf(found).filter((c) => c === 'react(refs)')).toHaveLength(2)
-    expect(codesOf(found)).not.toContain('react(rule-suppression)')
+    expect(codesOf(found).filter((c) => c === REFS_CODE)).toHaveLength(2)
+    expect(codesOf(found)).not.toContain(RULE_SUPPRESSION_CODE)
   })
 
   it('goes silent on the SAME body once the hook carries an exhaustive-deps directive', () => {
@@ -146,11 +168,11 @@ ${REF_READ_WRITE}  // oxlint-disable-next-line react-hooks/exhaustive-deps
 }
 `,
     })
-    expect(codesOf(found)).not.toContain('react(refs)')
+    expect(codesOf(found)).not.toContain(REFS_CODE)
     // ...and the silence is announced rather than left to be inferred. This is
     // the assertion `.oxlintrc.json`'s `react/rule-suppression: warn` exists
     // to make true; dropping the rule there fails here.
-    expect(codesOf(found)).toContain('react(rule-suppression)')
+    expect(codesOf(found)).toContain(RULE_SUPPRESSION_CODE)
   })
 
   it('masks under the `eslint-` spelling too, which a grep for `oxlint-disable` misses', () => {
@@ -164,8 +186,8 @@ ${REF_READ_WRITE}  // eslint-disable-next-line react-hooks/exhaustive-deps
 }
 `,
     })
-    expect(codesOf(found)).not.toContain('react(refs)')
-    expect(codesOf(found)).toContain('react(rule-suppression)')
+    expect(codesOf(found)).not.toContain(REFS_CODE)
+    expect(codesOf(found)).toContain(RULE_SUPPRESSION_CODE)
   })
 
   it('does not mask for a directive naming an unrelated rule', () => {
@@ -182,8 +204,8 @@ ${REF_READ_WRITE}  // oxlint-disable-next-line eslint/no-console
 }
 `,
     })
-    expect(codesOf(found).filter((c) => c === 'react(refs)')).toHaveLength(2)
-    expect(codesOf(found)).not.toContain('react(rule-suppression)')
+    expect(codesOf(found).filter((c) => c === REFS_CODE)).toHaveLength(2)
+    expect(codesOf(found)).not.toContain(RULE_SUPPRESSION_CODE)
   })
 
   it('scopes the bailout to the suppressed function, not the file', () => {
@@ -209,7 +231,7 @@ ${REF_READ_WRITE}  return prev
     expect(betaDeclarationLine).toBeGreaterThan(0) // fixture must still contain the marker
 
     const found = lint({ 'two-hooks.ts': twoHooksSource })
-    const refs = found.filter((f) => f.code === 'react(refs)')
+    const refs = found.filter((f) => f.code === REFS_CODE)
     expect(refs).toHaveLength(2)
     // Both survivors are inside `useBeta`, which starts after the directive.
     for (const r of refs) expect(r.line).toBeGreaterThan(betaDeclarationLine)
@@ -228,7 +250,7 @@ ${REF_READ_WRITE}  return prev
 }
 `
     const found = lint({ 'file-a.ts': body, 'file-b.ts': body })
-    const refs = found.filter((f) => f.code === 'react(refs)')
+    const refs = found.filter((f) => f.code === REFS_CODE)
     expect(refs).toHaveLength(4) // 2 sites * 2 files; a collapse would report fewer
     expect(refs.filter((r) => r.file === 'file-a.ts')).toHaveLength(2)
     expect(refs.filter((r) => r.file === 'file-b.ts')).toHaveLength(2)
