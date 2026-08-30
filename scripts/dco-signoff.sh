@@ -77,30 +77,89 @@ author_name() {
 # select sign-off lines with a fixed regex, then match the address as a
 # FIXED STRING so a `+` in it cannot act as a quantifier.
 has_matching_signoff() {
-    local file="$1" email="$2"
+    local file="$1" email="$2" signoffs
     [ -n "$email" ] || return 1
-    grep -iE '^[[:space:]]*signed-off-by:[[:space:]]' "$file" 2>/dev/null \
-        | grep -qiF "<${email}>"
+    # Two stages, but NOT as a pipeline. `set -o pipefail` is on, and a
+    # pipeline ending in `grep -q` can have its producer SIGPIPE-killed by the
+    # consumer's early exit, giving 141 — read as "no match", which would
+    # append a duplicate trailer. A commit message is small enough that this
+    # would not fire in practice, but the cost of not depending on that is a
+    # single variable. (`dco.yml` carries the same pipeline shape; the same
+    # reasoning applies there, where the consequence is only a re-run.)
+    signoffs="$(grep -iE '^[[:space:]]*signed-off-by:[[:space:]]' "$file" 2>/dev/null || true)"
+    [ -n "$signoffs" ] || return 1
+    printf '%s\n' "$signoffs" | grep -qiF "<${email}>"
+}
+
+# True when $1 is shaped like a trailer line (`Token: value`). Necessary
+# for a trailer, nowhere near sufficient — see `joins_trailer_block`.
+looks_like_trailer() {
+    printf '%s' "$1" | grep -qE '^[A-Za-z][A-Za-z-]*:[[:space:]]'
+}
+
+# True when a trailer appended to $1 (a message file) would land INSIDE an
+# existing trailer block, rather than starting one.
+#
+# "Looks like a trailer" is not enough, and getting this wrong is worse than
+# never joining at all. `^[A-Za-z][A-Za-z-]*:[[:space:]]` also matches a
+# Conventional Commits subject (`chore: bump deps`, `docs: ...`; scoped forms
+# escape only because `(` is outside the class) and ordinary prose
+# (`Note: this matters.`). Two concrete regressions that shape caused:
+#
+#   1. `git commit -m "chore: bump deps"` — the subject IS the last non-blank
+#      line, so no blank line was inserted and the sign-off joined the FIRST
+#      paragraph. Git renders `%s` and `--oneline` as that whole paragraph
+#      joined with spaces, so the subject reads
+#      `chore: bump deps Signed-off-by: ...` forever after.
+#   2. A body paragraph whose last line is `Word: text`. The sign-off is glued
+#      onto the prose, and git-interpret-trailers(1) requires the trailer block
+#      to be the last paragraph AND at least 25% trailer lines — so a body of
+#      more than ~3 lines stops parsing as trailers at all. That is exactly the
+#      "the sign-off stops being visible as a trailer" failure the join was
+#      added to prevent, reintroduced through a different input.
+#
+# So require the candidate line to actually SIT in a trailer block: it is
+# trailer-shaped, it is NOT the message's first line, and the line before it is
+# blank (it opens the last paragraph) or is itself trailer-shaped (it continues
+# one). Comment lines are dropped first — git strips them from the message, so
+# they are not part of the shape being reasoned about.
+joins_trailer_block() {
+    local file="$1" i last prev
+    local -a lines=()
+    mapfile -t lines < <(grep -v '^#' "$file" 2>/dev/null || true)
+
+    last=-1
+    for ((i = ${#lines[@]} - 1; i >= 0; i--)); do
+        if [ -n "${lines[i]//[[:space:]]/}" ]; then
+            last=$i
+            break
+        fi
+    done
+
+    # No content, or the only content line is the subject: never join.
+    [ "$last" -gt 0 ] || return 1
+    looks_like_trailer "${lines[last]}" || return 1
+
+    prev="${lines[last - 1]}"
+    [ -z "${prev//[[:space:]]/}" ] && return 0
+    looks_like_trailer "$prev"
 }
 
 append_signoff() {
-    local file="$1" name="$2" email="$3" last
+    local file="$1" name="$2" email="$3"
     # Append a trailing newline if the message doesn't already end with one.
     # `git interpret-trailers` would also work but pulls in extra
     # normalisation we don't want for human-edited messages.
     if [ -s "$file" ] && [ "$(tail -c1 "$file" | wc -l)" -eq 0 ]; then
         printf '\n' >>"$file"
     fi
-    # Join the existing trailer block rather than starting a second one.
-    # A blank line between trailers splits them into two blocks, and git's
-    # own trailer parsing (`git interpret-trailers --parse`, and anything
-    # built on it) then reads only the LAST block — so a message ending in
-    # `Signed-off-by: <agent>` would get the author trailer in a block of
-    # its own and the agent's would stop being visible as a trailer at all.
-    # CI's `dco.yml` greps the raw message and does not care, but the commit
-    # this produces is the permanent record, and it should be well-formed.
-    last="$(grep -v '^[[:space:]]*$' "$file" | tail -n1 || true)"
-    if ! printf '%s' "$last" | grep -qE '^[A-Za-z][A-Za-z-]*:[[:space:]]'; then
+    # Join an existing trailer block rather than starting a second one: a
+    # blank line between trailers splits them, and git's own parsing reads
+    # only the LAST block — so a message ending in `Signed-off-by: <agent>`
+    # would get the author trailer in a block of its own and the agent's
+    # would stop being visible as a trailer at all. CI's `dco.yml` greps the
+    # raw message and does not care, but the commit is the permanent record.
+    if ! joins_trailer_block "$file"; then
         printf '\n' >>"$file"
     fi
     printf 'Signed-off-by: %s <%s>\n' "$name" "$email" >>"$file"
@@ -128,8 +187,29 @@ main() {
 # ── self-test ────────────────────────────────────────────────────────
 self_test() {
     local tmp fails=0 checked=0
-    tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' RETURN
+    local SCRIPT_PATH
+    SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    tmp="$(mktemp -d -t dco-signoff-selftest.XXXXXX)"
+
+    # The `main()` fixtures below run `git init` in $tmp. That looks isolated
+    # and is not: when this suite runs from a git hook, git has exported
+    # GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE pointing at the REAL repository,
+    # and those OUTRANK both `git -C <dir>` and a subshell `cd` — so an
+    # unscrubbed `git init` re-inits the developer's own repo and rewrites its
+    # `core.worktree` to a directory this function is about to delete. That has
+    # happened here three times (#3690, #3722, #3736, #4015). Shared scrub, not
+    # a private copy: a per-script fix does not end the class, it just moves the
+    # next occurrence somewhere new.
+    # shellcheck source=scripts/lib/git-scratch-guard.sh
+    . "$(dirname "$SCRIPT_PATH")/lib/git-scratch-guard.sh"
+    git_scratch_guard "$tmp"
+    # EXIT, not RETURN: the closing `[ "$fails" -eq 0 ]` trips `set -e` on a
+    # failing run, which is exactly the run whose temp dir a RETURN trap does
+    # not reliably reap.
+    # Path expanded at trap-set time: `$tmp` is `local` to this function and is
+    # already out of scope when an EXIT trap fires.
+    # shellcheck disable=SC2064
+    trap "rm -rf -- '$tmp'" EXIT
 
     check() {
         local desc="$1" cond="$2"
@@ -210,11 +290,65 @@ self_test() {
     cmp -s "$tmp/prose" "$tmp/prose.want" && r=0 || r=1
     check 'a message ending in prose still gets a separating blank line' "$r"
 
+    # A single-line Conventional Commits subject is trailer-SHAPED but is not a
+    # trailer block. Joining it puts the sign-off in the message's first
+    # paragraph, and git renders `%s`/`--oneline` as that whole paragraph joined
+    # with spaces — so the subject would read `chore: bump deps Signed-off-by:
+    # ...` permanently. Scoped subjects (`fix(guards):`) never matched; every
+    # unscoped `chore:`/`docs:`/`test:`/`fix:` did.
+    printf 'chore: bump deps\n' >"$tmp/subj"
+    append_signoff "$tmp/subj" "Dev" "dev@example.com"
+    printf 'chore: bump deps\n\nSigned-off-by: Dev <dev@example.com>\n' >"$tmp/subj.want"
+    cmp -s "$tmp/subj" "$tmp/subj.want" && r=0 || r=1
+    check 'a single-line `chore:` subject is NOT joined — it is a subject, not a trailer block' "$r"
+
+    # Prose whose LAST line happens to be `Word: text`, in a paragraph long
+    # enough that git-interpret-trailers(1)'s 25%-trailer-lines rule would stop
+    # recognising a trailer block at all if the sign-off were glued on.
+    printf 'subject\n\nline one\nline two\nline three\nNote: this matters.\n' >"$tmp/notetail"
+    append_signoff "$tmp/notetail" "Dev" "dev@example.com"
+    printf 'subject\n\nline one\nline two\nline three\nNote: this matters.\n\nSigned-off-by: Dev <dev@example.com>\n' >"$tmp/notetail.want"
+    cmp -s "$tmp/notetail" "$tmp/notetail.want" && r=0 || r=1
+    check 'a body paragraph ending in `Note: ...` is NOT joined — the line before it is prose' "$r"
+
+    # ...but a real trailer block whose predecessor is also a trailer still
+    # joins, so the fix above did not simply disable joining.
+    printf 'subject\n\nCo-authored-by: A <a@example.com>\nSigned-off-by: Claude <noreply@anthropic.com>\n' >"$tmp/twotrailers"
+    append_signoff "$tmp/twotrailers" "Dev" "dev@example.com"
+    printf 'subject\n\nCo-authored-by: A <a@example.com>\nSigned-off-by: Claude <noreply@anthropic.com>\nSigned-off-by: Dev <dev@example.com>\n' >"$tmp/twotrailers.want"
+    cmp -s "$tmp/twotrailers" "$tmp/twotrailers.want" && r=0 || r=1
+    check 'a multi-line trailer block is still joined (the fix did not disable joining)' "$r"
+
+    # `main()` end to end: identity resolution plus the append, driven through
+    # the real entry point rather than the helpers, with GIT_AUTHOR_EMAIL set so
+    # the `git var GIT_AUTHOR_IDENT`-over-`user.email` precedence is the thing
+    # under test — that precedence is the PR's other half and had no fixture.
+    printf 'feat: a thing\n\nSigned-off-by: Claude <noreply@anthropic.com>\n' >"$tmp/e2e"
+    mkdir -p "$tmp/repo"
+    git_scratch_init "$tmp/repo"
+    git -C "$tmp/repo" config user.name 'Config Name'
+    git -C "$tmp/repo" config user.email 'config@example.com'
+    (
+        cd "$tmp/repo" || exit 1
+        GIT_AUTHOR_NAME='Author Name' GIT_AUTHOR_EMAIL='author@example.com' \
+            bash "$SCRIPT_PATH" "$tmp/e2e"
+    ) >/dev/null 2>&1
+    has_matching_signoff "$tmp/e2e" "author@example.com" && r=0 || r=1
+    check 'main() signs off as GIT_AUTHOR_IDENT, which is what CI checks' "$r"
+
+    has_matching_signoff "$tmp/e2e" "config@example.com" && r=0 || r=1
+    check 'main() does NOT sign off as `user.email` when the author differs' "$([ "$r" = 1 ] && echo 0 || echo 1)"
+
     printf '\ndco-signoff self-test: %d checked, %d failed\n' "$checked" "$fails"
     [ "$fails" -eq 0 ]
 }
 
 if [ "${1:-}" = "--self-test" ]; then
+    # Consumed here, not left in $1: `self_test` sources
+    # lib/git-scratch-guard.sh, and a sourced file inherits the caller's
+    # positional parameters — a leftover `--self-test` would trigger the
+    # LIBRARY's own self-test as a side effect of sourcing it.
+    shift || true
     self_test
     exit $?
 fi
