@@ -62,7 +62,9 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import re
 import sys
 from pathlib import Path
@@ -153,11 +155,51 @@ def find_deletes_in_text(text: str) -> list[int]:
     return hits
 
 
+def missing_scan_roots() -> list[str]:
+    """Declared SCAN_ROOTS that are not directories in this checkout.
+
+    #4501: `scan()` used to `continue` past a missing root, so a renamed or
+    misspelled crate segment narrowed the walk with no signal at all — the
+    guard reporting success over a tree it had stopped reading. Byte-identical
+    to the construct removed from `check-space-filter-drift` in #4508 and from
+    `check-table-ownership` in #4540; this guard was the fourth carrier, and
+    the one the original sweep missed because the issue body named only three.
+
+    Reported rather than filtered: a root that vanished is a BROKEN
+    declaration, not an absent one.
+
+    No `--synthetic-tree` opt-out here, unlike `check-table-ownership`, and
+    deliberately: this guard is not in `pr-merge-result-check.sh`'s
+    RATCHET_GUARDS and is not seeded into any fixture repository, so it has no
+    caller that runs it against a deliberately-foreign tree. A suppression
+    flag with no call site is a fail-open nothing polices — the shape #4540's
+    review found three times in one PR — so it is not added on speculation.
+    Add it, and its unreachability assertion, when a synthetic caller appears.
+    """
+    return [
+        str(root.relative_to(REPO_ROOT))
+        for root in SCAN_ROOTS
+        if not root.is_dir()
+    ]
+
+
+ROOT_MISSING_HINT = (
+    "    -> #4501: a SCAN_ROOTS entry in scripts/check-op-log-delete.py names a\n"
+    "       directory that does not exist. Fix the LIST: the walk skips a\n"
+    "       missing root, so this guard would otherwise report zero violations\n"
+    "       over a tree it never read. If the crate was genuinely retired,\n"
+    "       remove its root from SCAN_ROOTS in the same commit — and check the\n"
+    "       sibling guards, which mirror this list by hand."
+)
+
+
 def scan() -> list[tuple[str, int]]:
     """(repo-relative path, 1-based line) of every disallowed delete site."""
     violations: list[tuple[str, int]] = []
     for root in SCAN_ROOTS:
         if not root.is_dir():
+            # Skipped here only so the walk does not raise; the run is failed
+            # by `missing_scan_roots()` in `main()`, which names the root.
             continue
         for path in sorted(root.rglob("*.rs")):
             rel = str(path.relative_to(REPO_ROOT))
@@ -246,18 +288,72 @@ def run_self_test() -> int:
                 "`DELETE FROM op_log`; the exemption is stale"
             )
 
+    # #4501 assertion 3, pinned in BOTH directions. A one-sided "a misspelled
+    # root is reported" would pass just as well against a guard that reports
+    # every root as missing, and the second half is also the live assertion
+    # that this checkout's own declaration is intact.
+    root_cases = 0
+    _saved_roots = SCAN_ROOTS[:]
+    try:
+        globals()["SCAN_ROOTS"] = [
+            REPO_ROOT / "src-tauri" / "agaric-stores" / "src",  # misspelled
+            REPO_ROOT / "src-tauri" / "src",  # present sibling
+        ]
+        root_cases += 1
+        if missing_scan_roots() != ["src-tauri/agaric-stores/src"]:
+            failures.append(
+                "a misspelled crate root alongside a present sibling was not "
+                f"reported: {missing_scan_roots()!r}"
+            )
+        # Through `main()`, not the helper: a helper-level assertion would not
+        # notice the WIRING being dropped, which is how the assertion goes dead
+        # while still passing its own test.
+        root_cases += 1
+        with contextlib.redirect_stderr(io.StringIO()):
+            if main([]) == 0:
+                failures.append(
+                    "main() exited 0 over a missing SCAN_ROOTS entry — the walk "
+                    "was narrowed and the run still reported success"
+                )
+        globals()["SCAN_ROOTS"] = _saved_roots
+        root_cases += 1
+        if missing_scan_roots():
+            failures.append(
+                f"the real SCAN_ROOTS reported a missing root: {missing_scan_roots()!r}"
+            )
+    finally:
+        globals()["SCAN_ROOTS"] = _saved_roots
+
     if failures:
         print("check-op-log-delete self-test FAILED:", file=sys.stderr)
         for f in failures:
             print(f"  - {f}", file=sys.stderr)
         return 1
-    print(f"check-op-log-delete self-test OK ({len(cases)} fixtures)")
+    print(
+        f"check-op-log-delete self-test OK ({len(cases)} fixtures, "
+        f"{root_cases} root cases)"
+    )
     return 0
 
 
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
+    # #4501, before the scan: a narrowed walk answers "no violations" for a
+    # reason that has nothing to do with the tree being clean, and this guard's
+    # entire output is a negative claim.
+    missing = missing_scan_roots()
+    if missing:
+        print(
+            "check-op-log-delete: a declared SCAN_ROOTS directory does not "
+            "exist:\n",
+            file=sys.stderr,
+        )
+        for rel in missing:
+            print(f"  {rel}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(ROOT_MISSING_HINT, file=sys.stderr)
+        return 1
     # File arguments from prek are ignored: the invariant is repo-wide, and a
     # diff-scoped scan would miss a delete added to a file the same commit did
     # not otherwise touch.
