@@ -66,9 +66,11 @@ layer that owns it.
 
 ## Verification
 
-13 new tests. Rust: a page with a content child, a nested page and *its* content child, plus a live
-same-space sibling; and a refusals case covering three paths with per-row `deleted_at` assertions.
-Frontend: four on the hook, three on the mock handler, one wrapper passthrough.
+10 new tests — the count is over added `#[tokio::test]` and `it(` cases in
+`git diff origin/main...HEAD`, which is also what the enumeration below sums to.
+Rust: a page with a content child, a nested page and *its* content child, plus a live
+same-space sibling; and a refusals case covering three paths with per-row `deleted_at`
+assertions. Frontend: four on the hook, three on the mock handler, one wrapper passthrough.
 
 **Ten falsifications**, each against a copied backup with the restore proven byte-identical. Worth
 listing what they separate, because several look redundant and are not:
@@ -91,8 +93,8 @@ green.
 ## Left for the follow-up, deliberately
 
 The eviction block is a hand-rolled `Set` + budget check + loop — which is exactly
-`notifyPagesRemoved`'s job, landing in #4524. It is not imported here because that publisher is not
-on `main` yet. Once it is, this becomes a straight substitution, and the constant is already sitting
-where that publisher wants it.
+`notifyPagesRemoved`'s job. That publisher landed in PR #4534 (closing #4524) after this
+branch was written, so it is not imported here. Substituting it is a straight swap, and the
+constant is already sitting where that publisher wants it.
 
 Closes #4523.
