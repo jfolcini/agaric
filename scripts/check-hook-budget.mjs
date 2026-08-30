@@ -56,7 +56,16 @@ const lines = readFileSync(CONFIG_PATH, 'utf8').split('\n')
 // was introduced by the fix for the multi-line case above. Demonstrated on a
 // scratch tree: two such blocks, only the first explained, reported
 // "2/170 hooks, all with a `# WHY:` line" and exited 0.
-const SKIP = /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=|hooks\s*=\s*\[\s*$)/
+// Any OTHER key that can sit between the comment block and the `id` line.
+// TOML does not order keys, so `name = ` above `id = ` is legal and common —
+// and without it here the walk-up stopped on that line, never reached the
+// comment block, and reported "has no `# WHY:` line" with the line sitting
+// directly above. It fails CLOSED, so it is a misdirection rather than a
+// bypass; but AGENTS.md's own corollary — added by this same PR — says a
+// guard whose failure mode is a confusing error is worse than no guard, and
+// sending an author to add a line that is already there is exactly that.
+const SKIP =
+  /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=|hooks\s*=\s*\[\s*$|(name|entry|language|files|stages|args|types|exclude|always_run|pass_filenames|verbose|require_serial|additional_dependencies|minimum_pre_commit_version)\s*=)/
 const violations = []
 let hooks = 0
 
@@ -100,6 +109,12 @@ for (let i = 0; i < lines.length; i++) {
   )
   if (ids.length === 0) continue
   hooks += ids.length
+  // A `# WHY:` above `hooks = [` is credited to that array's FIRST inline
+  // entry only — the SKIP consumes the `hooks = [` line, then the comment
+  // walk reaches the WHY. Every later entry in the same array must carry its
+  // own. That asymmetry is real, benign, and previously undocumented while
+  // this header enumerated the walk-up's other edges.
+  //
   // ONE id per line, because the `# WHY:` walk below is per-LINE: two inline
   // hooks sharing a line would share one WHY and both count as explained.
   // That is the same fail-open shape as the quote-form bug above, so it gets
