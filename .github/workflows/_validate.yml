@@ -1065,12 +1065,23 @@ jobs:
         # Checkout above uses fetch-depth: 0, so the base sha resolves.
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            base="$PR_BASE_SHA"
+            # NOT `github.event.pull_request.base.sha` (#4544). That is the
+            # base tip as of the TRIGGERING EVENT, and HEAD here is
+            # `refs/pull/N/merge`, which GitHub regenerates against main's
+            # current tip — so `merge-base(base.sha, HEAD) == base.sha` and
+            # the range below widens to include other people's merges as main
+            # advances, blaming this PR for a migration it never touched.
+            # Same defect this PR fixes in the mutation lane; same fix.
+            #
+            # `|| true` keeps the existing semantics exactly: an unresolvable
+            # base still falls through to the skip guard below rather than
+            # failing the job, which is what this backstop did before.
+            base="$(node scripts/pr-diff-base.mjs --base-ref "$PR_BASE_REF" || true)"
           else
             base="$PUSH_BEFORE"
           fi

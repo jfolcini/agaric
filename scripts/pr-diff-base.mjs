@@ -85,6 +85,12 @@ export function resolveDiffBase({
   // `fetch-depth: 0` on the workflow's checkout means this is normally
   // already true. Fall back to fetching by name rather than diffing against
   // nothing — see the header note on why a silent empty diff is unacceptable.
+  //
+  // Both callers set `persist-credentials: false`, so on a private repo this
+  // fetch can only FAIL — it is a loud last resort, not a recovery path, and
+  // it is unreachable under `fetch-depth: 0` anyway. Kept because failing
+  // here with a named ref beats resolving nothing; the code it replaced had
+  // the same fallback with the same limitation.
   if (!remoteRefExists()) {
     try {
       git('fetch', '--no-tags', 'origin', baseRef)
@@ -128,9 +134,22 @@ function parseArgs(argv) {
   const out = { baseRef: undefined, cwd: process.cwd(), head: 'HEAD' }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
-    if (arg === '--base-ref') out.baseRef = argv[++i]
-    else if (arg === '--cwd') out.cwd = argv[++i]
-    else if (arg === '--head') out.head = argv[++i]
+    // Reading `argv[++i]` unchecked is a SILENT fail-open: `--cwd` as the
+    // final argument yields `undefined`, which `execFileSync` reads as
+    // `process.cwd()`, so the tool resolves against whatever repo it happens
+    // to be standing in and exits 0. `--base-ref` was covered by the
+    // required-check below; `--cwd` and `--head` were not. A missing value
+    // must be an error, not a default.
+    const value = (name) => {
+      const v = argv[++i]
+      if (v === undefined || v.startsWith('--')) {
+        throw new Error(`missing required value for ${name}`)
+      }
+      return v
+    }
+    if (arg === '--base-ref') out.baseRef = value('--base-ref')
+    else if (arg === '--cwd') out.cwd = value('--cwd')
+    else if (arg === '--head') out.head = value('--head')
     else throw new Error(`unknown argument: ${arg}`)
   }
   if (!out.baseRef) throw new Error('missing required --base-ref <ref>')
@@ -152,7 +171,12 @@ if (isMainModule) {
   try {
     main(process.argv.slice(2))
   } catch (err) {
-    console.error(`::error::${err.message}`)
+    // Workflow commands are LINE-BASED, and `execFileSync` messages are
+    // "Command failed: ..." plus the captured stderr — so a raw interpolation
+    // annotates only the first line and drops the git stderr that explains
+    // the failure into plain log text. `%0A` is the documented escape for a
+    // newline inside an annotation, which keeps the whole message together.
+    console.error(`::error::${String(err.message).replace(/\r?\n/g, '%0A')}`)
     process.exit(
       err instanceof Error && /^unknown argument|^missing required/.test(err.message) ? 2 : 1,
     )

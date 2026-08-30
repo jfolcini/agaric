@@ -148,7 +148,13 @@ test('resolveDiffBase fails loudly — never an empty base — when the ref cann
       writeFileSync(join(dir, 'f.txt'), 'x\n')
       git('add', '-A')
       git('commit', '-qm', 'only commit, no origin remote configured')
-      assert.throws(() => resolveDiffBase({ baseRef: 'main', cwd: dir, env }), /resolveDiffBase:/)
+      // Matching `/resolveDiffBase:/` would pass on ANY of this function's
+      // five throw sites, so it would not pin the fetch-failure path this
+      // test is named for. Assert on wording only that path produces.
+      assert.throws(
+        () => resolveDiffBase({ baseRef: 'main', cwd: dir, env }),
+        /is not present locally and .* failed/,
+      )
     })
   } finally {
     rmSync(root, { recursive: true, force: true })
