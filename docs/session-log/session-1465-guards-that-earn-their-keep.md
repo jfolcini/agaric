@@ -50,13 +50,21 @@ is `workflow_dispatch`-only, so it is `skipped` on the cron — and
 tracking issue every Monday, forever. Reverted rather than reworked: a
 measurement job whose premise is refuted should not be reworked into shipping.
 
-## #4556: two hooks the issue listed for deletion, and its own criteria kept
+## #4556: three hooks the issue listed for deletion, and its own criteria kept
 
-184 -> 156. Twenty-nine removed, one added. Every removed script stays on disk;
-the revert is config-only.
+184 -> 158. Twenty-seven removed, one added (`hook-budget` itself). Every
+removed script stays on disk; the revert is config-only.
 
-The issue's DELETE list is wrong twice, and in both cases its own five criteria
-are what catch it:
+That count is set-differenced on hook ids against `origin/main`, not read off
+the diff. Reading it off the diff gives 30 removed and 4 added, because three
+stanzas are RELOCATIONS — removed in one commit and restored in the next, or
+moved within the file — and a `-`/`+` tally scores a relocation as churn in
+both directions. The first version of this log said 184 -> 156 for exactly
+that reason, and PR #4557's review caught it.
+
+The issue's DELETE list is wrong twice, and the sweep implementing it was wrong
+a third time. In all three cases the criteria the issue itself proposes are what
+catch it:
 
 - **`bench-lane-coverage`** — #4556 lists it in group C and then says outright
   that deleting it "is the one place this proposal argues against its own §1".
@@ -68,12 +76,30 @@ are what catch it:
   that with its `exists()` defanged those guards return rc=0 on a **real** `.rs`
   file, and that only this suite catches it (#4017). That is criterion 5 with a
   recorded incident.
+- **`pr-overlap-trust-boundary`** — not on the DELETE list at all. My sweep took
+  it along with the self-tests because it sits next to one, and it is not a
+  self-test: it is the guard that mechanically enforces #3967's split of
+  `pr-overlap.yml` into an untrusted `compute` job and a trusted `post` job.
+  Caught by #4557's review, not by me. It survives all five criteria, and
+  `.github/zizmor.yml` does not cover it — `rules:` is `{}` and its closed
+  audits are `dangerous-triggers`, `artipacked`, `unpinned-uses` and
+  `template-injection`, none of which is "write-scoped job with a
+  non-base-pinned checkout".
 
-Both kept. The pattern is worth naming: an issue that proposes deletions is not
-a better authority on them than the criteria it proposes.
+  The detail that settles it: the stanza I deleted says the guard exists
+  because the compute/post split is a fact *"a comment cannot keep true on its
+  own"* — and six comments in `pr-overlap.yml` assert it is enforced. Deleting
+  the guard and keeping the comments is the precise state the stanza was
+  written to prevent. A sweep aimed at removing guards whose claims have gone
+  stale had, in this one case, manufactured exactly that.
+
+All three kept. Two patterns worth naming. An issue that proposes deletions is
+not a better authority on them than the criteria it proposes — and neither is
+the agent implementing it: the same criteria have to be run against the sweep's
+own output, not just against the list it was handed.
 
 Zero hooks had a `# WHY:` line, so a presence-checking guard would have been
-committed permanently red. 156 were authored from each hook's existing comment
+committed permanently red. 158 were authored from each hook's existing comment
 block; review found 3 wrong, all the same claim imported verbatim from #4556's
 own body (attributing a fail-open to `3a78544`/`7f523ed`, both of which touch
 only `check-mutation-harness-clones.mjs`). Those three hooks were the only ones
@@ -118,3 +144,32 @@ fallback pinned to a number that will move.
 
 That is the same failure #4556 is about, one level up: a confident claim from
 something that could not see what it was claiming about.
+
+## The coverage window Phase 1 opens, stated so Phase 2 can close it
+
+27 hooks now run nowhere. Twenty-four are self-tests, which is the whole point
+of Phase 2 — they move to `manual` and run in CI. **Three are guards, not
+self-tests**, and are the part of this window worth naming:
+
+- `mutation-harness-clones` — harness source-pin drift. Six
+  `scripts/mutation-harnesses/*.harness.ts` files hand-clone production
+  functions; nothing now fails when the source moves out from under them.
+- `hook-deps` — a hook's `files:` pattern missing one of its own dependencies.
+  This is the `#3993`/`#3997` shape: a guard defanged by editing the file it
+  loads, without tripping the pattern that selects it.
+- `skip-ci-verify-guard` — rejection of the `SKIP_CI_VERIFY=1` bypass.
+
+Every one of those sites is annotated in-tree in the PAST tense, which is the
+handling this whole session argues for: a claim that has stopped being true is
+worse than no claim. But annotation is not coverage, and until Phase 2 restages
+them the window is real. Phase 2 should restage these three FIRST, ahead of the
+self-tests, because a self-test not running is a guard unproven while a guard
+not running is an invariant unenforced.
+
+One more thing Phase 2 must not do. `main-module-detection-selftest` executes
+`file-mutation-survivors.mjs --self-test` transitively, and with
+`mutation-survivors-filer-selftest` unwired that is now the ONLY path running
+the #3667 derivation assertions — against the real repository, which is what
+gives them teeth. Re-keying that hook's `files:` pattern deletes the coverage
+with everything green. Recorded in the stanza itself as well as here, because
+one of those two will be read and I cannot predict which.
