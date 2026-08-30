@@ -34,6 +34,10 @@ name: Validate (prek-equivalent)
 #                        of `engines.node`, so the supported-Node claim is
 #                        tested rather than asserted; gated on frontend
 #                        changes like vitest.
+#   - playwright-setup — Playwright system deps + browser binaries, run once
+#                        and unsharded so the caches the shards restore are
+#                        warm before they start (#4185); gated on frontend
+#                        changes. `playwright` `needs:` it.
 #   - playwright      — the e2e suite, sharded 3 ways; gated on frontend
 #                        changes.
 #   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
@@ -1499,15 +1503,392 @@ jobs:
         run: npx vitest run
 
   # ---------------------------------------------------------------------------
+  # playwright-setup — runs the Playwright setup steps once, unsharded and
+  # ahead of the shards, so the two cross-job caches they populate are warm
+  # before any shard starts.
+  #
+  # Read the "what the split does and does not change" paragraph below before
+  # reading this as "setup and test now have separate budgets", because only
+  # HALF of that is true: the browser binaries really are installed once (the
+  # shards restore them from cache), but the system deps are NOT -- dpkg state
+  # cannot cross a job boundary, so each shard still runs its own
+  # `install-deps`, and the shard job's own cap still has to cover it. What
+  # this job removes from the shards is the likelihood of a COLD .deb cache,
+  # not the step itself.
+  #
+  # #4185 note 2: the two jobs below used to be ONE job, and it had to fit a
+  # legitimate ~21m10s worst-case setup (see the `install-deps` step's own
+  # comment further down) AND a ~8-9 min shard inside a single 30-minute cap
+  # -- 21 + 9 > 30, and the file already said so before this split ("A
+  # 25-minute step bound does nothing about that -- 25 + 9 is over the job
+  # cap either way"). Any setup bound tight enough to protect the shard
+  # (~18 min) would sit below that legitimate worst case and start failing
+  # healthy runs -- the #4170 mistake this file exists to avoid repeating.
+  #
+  # The maintainer's own framing of the fix (issue #4185, comment
+  # 2026-08-30T17:53:42Z): "raise the `playwright` job cap above 30 minutes,
+  # or split install-deps into its own job so setup and test each get their
+  # own budget... The second is cleaner -- a shard cancelled mid-run reports
+  # as a test failure, which is the failure mode worth designing out." This
+  # job is that split; `playwright` below now `needs:` it.
+  #
+  # What the split does and does not change: this job populates the SAME two
+  # cross-job caches the shard job restores (`playwright-${{ runner.os }}-...`
+  # for browser binaries, `apt-playwright-${{ runner.os }}-...` for the .deb
+  # archives) -- actions/cache is already this repo's existing mechanism for
+  # carrying state across jobs in one run, unchanged by this split. What it
+  # does NOT do is remove the shard job's own `install-deps` step: actual
+  # package INSTALLATION is per-runner OS/dpkg state, which cannot cross a
+  # job boundary the way a cache can -- each job gets a fresh VM. So the
+  # shard job below still runs the identical step; the difference is that by
+  # the time it runs (it `needs:` this job), the .deb cache this job
+  # populated is reliably warm, rather than each of the 3 shards racing an
+  # independently cold mirror on a possibly-stale cross-RUN cache. See that
+  # step's own copy in the shard job for the residual risk this does not
+  # eliminate (a warm .deb cache does not skip `apt-get update`'s own mirror
+  # contact -- the #4170 lesson).
+  playwright-setup:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    # 30 minutes is the SAME figure the combined job carried before this
+    # split (#1458's 20 -> 30 bump) -- not a new number, just given to setup
+    # ALONE now instead of setup-plus-shard, which is strictly more slack for
+    # the same steps than before. The steps it has to fit are: preamble
+    # (checkout/node/npm ci/browser-cache-restore/prepare-apt/
+    # apt-cache-restore, measured 25-43s over
+    # the 26 most recent `validate / playwright (N)` jobs, 2026-08-27 -- see
+    # the install-deps step's own comment below) + up to that step's own
+    # `timeout-minutes: 25` (1500s, unchanged by this split) + the browser
+    # binaries step below (worst case 3 attempts x 360s + 2 x 15s retry sleep
+    # = 1110s if every attempt needs its full retry budget). It does NOT
+    # separately cover the fully-compounded case of both steps needing their
+    # entire worst case at once (43 + 1500 + 1110 = 2653s = 44m13s) -- that
+    # double-fault already exceeded the old combined job's 30-minute budget
+    # too, so this is a pre-existing, documented limit, not a new one.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Restore Playwright browser cache
+        # Browser binaries live in ~/.cache/ms-playwright and are stable
+        # for a given playwright version. Keying on package-lock.json's
+        # hash catches the version pin; restore-keys lets a partial hit
+        # serve as a base layer (`playwright install` below is idempotent
+        # and pulls only what's missing, so a stale restore is safe).
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
+      # Cache the Playwright system-dep .debs (#1464): `install-deps` apt-pulls
+      # ~33 MB of libs/fonts each run; on a hit apt resolves from the cache
+      # instead of the mirror. Keyed on package-lock so a Playwright bump busts
+      # it; restore-keys lets a stale set seed a partial hit.
+      - name: Cache apt archives (Playwright system deps)
+        # `id` is load-bearing (#4163): the install step below bounds itself
+        # only on an exact-key hit, and `cache-hit` cannot be referenced
+        # without it.
+        id: apt-deb-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: apt-playwright-${{ runner.os }}-
+
+      - name: Install Playwright system deps (always)
+        # #4185 — a STEP-level bound, distinct from the loop's own internal
+        # bounds below. Attempt 2 is deliberately left unbounded INSIDE the
+        # script (see the #4170 note further down: it is "the decider", and
+        # capping it risks misreading a legitimately slow-but-succeeding
+        # mirror as a failure). But unbounded means a genuinely HUNG attempt 2
+        # — not slow, just never returning — burns the rest of the 30-minute
+        # JOB cap in silence, and GitHub then reports an undifferentiated
+        # "the job has exceeded the maximum execution time": indistinguishable
+        # from a slow test suite. That is #4185 note 1, and a step-level bound
+        # is one of the two remedies that note names.
+        #
+        # It is NOT a fix for #4185 note 2, and this comment previously read as
+        # though it were. Note 2 is the SUCCEEDING slow mirror: a legitimate
+        # ~21-minute setup that completes, leaving a ~9-minute shard racing
+        # what is left of the 30-minute JOB cap and getting cancelled mid-run
+        # (a red diff, not a red setup). A 25-minute step bound does nothing
+        # about that — 25 + 9 is over the job cap either way, and any bound low
+        # enough to protect the shard (~18 min) would sit BELOW the 21m10s
+        # legitimate worst case below and start failing healthy runs, which is
+        # the #4170 mistake. Note 2 is a genuine budget question and is left
+        # open here deliberately rather than papered over; what this step now
+        # fixes is only the attribution of a HANG.
+        #
+        # 25 minutes, derived from the worst-case LEGITIMATE total this same
+        # step's own comments already measure, summed:
+        #   300s  attempt-1 fast-fail bound (cache-hit path, below)
+        #   + 30s  `timeout -k 30` SIGKILL grace on that bound
+        #   + 180s stray-lock poll between attempts (60 iterations x 3s)
+        #   + 760s attempt-2, the observed cold-mirror runtime (run
+        #          27718957382) the 20->30 min job bump was paid to absorb
+        #   = 1270s = 21m10s
+        # 25 minutes leaves ~3m50s (~18%) of headroom over that measured
+        # worst-known-legitimate total — enough that a real slow-but-healthy
+        # mirror (the case #4170 protects) is never mistaken for a hang. This
+        # is a composite of this step's own already-measured constants, not a
+        # new observation: if a future real run shows setup legitimately
+        # exceeding this, that is new evidence to fold in, not a reason to have
+        # guessed higher up front.
+        #
+        # Two limits of that sum, stated rather than left implied (#4456 review
+        # of this change):
+        #
+        #  - It is the worst case of the .deb-cache-HIT path only. On a MISS
+        #    `bound` is empty and BOTH attempts are unbounded, so a legitimate
+        #    worst case there is 760 + 180 + 760 = 1700s (28m20s), ABOVE this
+        #    cap. That run was already doomed — 28m20s of setup plus a ~9-min
+        #    shard blows the 30-minute job cap regardless — so this bound
+        #    changes its REPORT (an attributed step failure) and not its
+        #    outcome. It does mean the miss path is now bounded at 25 min where
+        #    the #4170 note below still says it keeps "its 30-min budget"; see
+        #    the correction appended to that note.
+        #
+        #  - "Inside the 30-minute job cap" is 5 minutes MINUS everything this
+        #    job does before this step, which the original derivation did not
+        #    account for. Measured over the 26 most recent `validate /
+        #    playwright (N)` jobs (2026-08-27), job start to this step's start
+        #    is 25-43s, so the real margin is ~4m17s at the worst observed
+        #    preamble. The preamble is not fixed — `prepare-apt` above waits up
+        #    to 180s for the dpkg lock, and it does so precisely when apt is
+        #    already sick, i.e. the same runs this bound is for — but 43 + 180
+        #    = 223s still clears the 300s of slack, so the step cap remains the
+        #    binding constraint in the correlated case too. If the preamble
+        #    ever grows past ~5 minutes this bound stops firing first and the
+        #    undifferentiated job-cap timeout comes back silently; that is the
+        #    thing to re-measure before adding work above this step.
+        timeout-minutes: 25
+        # `install-deps` apt-installs ~33 MB of system libs/fonts each run (not
+        # on the base image; the .debs are cached by the step above, #1464).
+        # The earlier flake source was the
+        # runner's `unattended-upgrades`/`apt-daily` holding the dpkg lock at
+        # boot: this step queued behind a ~6-min background job and ran out the
+        # 20-min budget during SETUP, never reaching the suite (runs
+        # 27708752343 / 27711626771). `prepare-apt` above stops those jobs and
+        # waits for the lock; here we retry once more after re-clearing it, in
+        # case a straggler grabbed it.
+        #
+        # #4163: bounded, but ONLY on an exact .deb-cache hit. Two facts have to
+        # hold together:
+        #
+        #   - Unbounded, a stalled mirror hangs attempt 1 forever, so the retry
+        #     below is never reached and the whole 30-min budget burns during
+        #     SETUP -- reported as a Playwright failure with the suite never
+        #     started (jobs 95981613754 / 95982226093, 2026-08-19).
+        #   - But a cap below the real cold-cache runtime is worse than the bug.
+        #     `install-deps` took 760s (12.7 min) on a slow-but-HEALTHY mirror in
+        #     run 27718957382, and the 20 -> 30 minute bump above (line ~1219)
+        #     was paid specifically to absorb that. A 300s cap was tried and
+        #     reverted for exactly this reason; see the sibling note in
+        #     scheduled-deep-checks.yml.
+        #
+        # Gating on the cache hit resolves it without inventing a number. On a
+        # hit apt resolves from /var/cache/apt/archives and does not pull the
+        # ~33 MB, which is the population the 300s was measured against: every
+        # healthy sample available (11, 11, 14, 21, 27, 72 seconds) is a
+        # cache-hit run, so the bound is applied to precisely the runs it was
+        # derived from. On a miss -- or a restore-keys PARTIAL hit, where
+        # `cache-hit` is false -- behaviour is exactly as before this change:
+        # unbounded, and the 760s observation still has its 30-min budget.
+        #
+        # #4185 CORRECTION to the sentence above: the loop is still unbounded
+        # on a miss, but the STEP is not. `timeout-minutes: 25` (see the note
+        # at the top of this step) now caps the miss path at 25 minutes rather
+        # than the 30-minute job budget this note promised it. The 760s
+        # observation still fits with room to spare; what no longer fits is a
+        # miss-path run where BOTH unbounded attempts run long (760 + 180 +
+        # 760 = 28m20s), which the job cap would have killed anyway.
+        #
+        # `Acquire::*::Timeout` (set globally by prepare-apt, so it does reach
+        # the `apt-get` that install-deps shells out to) is not a substitute: it
+        # does not bound a connection that establishes and then produces no
+        # bytes, as prepare-apt's own comment records.
+        #
+        # #4170: the bound above is real, but it was NOT the verdict it was
+        # being used as. Measured, run 32296204297 (2026-08-19), jobs
+        # 96208038360 and 96208038198 (`validate / playwright (2)` and `(3)`)
+        # -- red on a diff that touches one frontend hook and no CI, with
+        # `APT_CACHE_HIT: true` and `Cache restored ... 20 MB` of .debs
+        # immediately above. Both attempts end on the same line:
+        #
+        #   Get:3 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+        #   Get:4 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+        #   Get:5 https://archive.ubuntu.com/ubuntu noble-security InRelease
+        #   ##[warning]playwright install-deps attempt N exceeded 300s
+        #
+        # i.e. InRelease INDEX files -- neither attempt ever reached a package
+        # download or an unpack. `install-deps` shells out to `apt-get update`
+        # before it installs, and that refresh is precisely the phase the .deb
+        # cache does NOT accelerate; #4167's own description records the same
+        # observation ("a cache hit does NOT avoid mirror contact ...  because
+        # it runs its own `apt-get update`"). So the healthy cache-hit samples
+        # the 300s was derived from (11, 11, 14, 21, 27, 72s) are all
+        # healthy-MIRROR samples too, and on a degraded mirror the bound fires
+        # in a phase it was never measured against. Shard 1 of that same run,
+        # same commit, drew a healthy runner and passed the suite -- the code
+        # was never in question.
+        #
+        # The fix keeps the bound and adds no attempt: it is now a FAST-FAIL
+        # for attempt 1 (kill a stalled mirror early, clear the strays) rather
+        # than a verdict, and attempt 2 -- already the last one -- runs
+        # unbounded and decides. That is the contract
+        # `.github/actions/apt-install` ships for every other apt site in the
+        # tree ("an update that does not finish is a WARNING and the install
+        # runs anyway ... Only the INSTALL decides"), which #4167 could not
+        # apply here because `install-deps` fuses update and install into one
+        # opaque command. Unbounded is also exactly what the .deb-cache-MISS
+        # path does today, and what the 20 -> 30 minute budget bump above was
+        # paid for (the 760s cold-mirror observation). NO timing number in
+        # this step is new, and the attempt count is still 2.
+        env:
+          APT_CACHE_HIT: ${{ steps.apt-deb-cache.outputs.cache-hit }}
+        run: |
+          # Bound only when the .debs are already local; see the note above.
+          if [ "${APT_CACHE_HIT}" = "true" ]; then
+            bound="300"
+          else
+            bound=""
+            echo "::notice::apt .deb cache miss -- install-deps left unbounded (760s cold-mirror observation, #4163)"
+          fi
+
+          # #4170: `timed_out` is the sticky one -- it survives across attempts
+          # so the exit code below can tell "the mirror stalled" apart from
+          # "apt said no". `status` is re-initialised per attempt inside the
+          # loop and is only read after it as the last attempt's code.
+          timed_out=0
+
+          for attempt in 1 2; do
+            # Capture via `|| status=$?`, not `$?` after an `if`: a false `if`
+            # with no `else` exits 0 per POSIX, so reading `$?` there would
+            # report success and never take the 124 branch below.
+            status=0
+            # #4170: bound attempt 1 only. Attempt 2 is the last one and is
+            # always unbounded -- see the note above. On a .deb-cache MISS
+            # `bound` is empty and BOTH attempts are unbounded, exactly as
+            # before.
+            if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ]; then
+              # -k: `timeout` otherwise SIGTERMs and then waits on the child
+              # indefinitely, which is not a bound at all.
+              timeout -k 30 "${bound}" npx playwright install-deps chromium || status=$?
+            else
+              npx playwright install-deps chromium || status=$?
+            fi
+            if [ "${status}" -eq 0 ]; then
+              if [ "${timed_out}" -eq 1 ]; then
+                echo "::notice::#4170: install-deps completed on the unbounded attempt after the ${bound}s bound fired inside its apt-get update; the mirror was slow, not the diff."
+              fi
+              exit 0
+            fi
+            if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ] \
+               && { [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; }; then
+              # 137, not just 124 (#4163). `timeout -k` exits 124 when the
+              # child dies on the SIGTERM, but the SIGKILL path exits 137 --
+              # measured on coreutils 9.4 against a TERM-ignoring child:
+              # `timeout -k 1 2` -> exit 137, elapsed 3s. Testing 124 alone
+              # missed precisely the case `-k` was added for, and would have
+              # skipped the stray-clearing below in it.
+              #
+              # `timeout` runs as the runner user and SIGTERMs only its direct
+              # child (npx), so the root `apt-get` grandchild survives -- still
+              # hung on the mirror AND still holding the lock. Without clearing
+              # it the wait below spins its full 180s and attempt 2 races
+              # attempt 1. prepare-apt records the same hazard.
+              timed_out=1
+              echo "::warning::playwright install-deps attempt ${attempt} exceeded ${bound}s (mirror stall, likely inside its apt-get update); clearing strays, the next and final attempt is unbounded"
+              sudo pkill -TERM -x apt-get 2>/dev/null || true
+              sleep 5
+              sudo pkill -KILL -x apt-get 2>/dev/null || true
+              sudo pkill -KILL -x dpkg 2>/dev/null || true
+            else
+              echo "::warning::playwright install-deps attempt ${attempt} failed (exit ${status}); waiting for apt lock before retry"
+            fi
+            # Poll all three locks, as prepare-apt does: killing `apt-get` by
+            # name does not reap a `dpkg` child, which holds /var/lib/dpkg/lock
+            # and is invisible to a lock-frontend-only poll.
+            for _ in $(seq 1 60); do
+              sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
+                     /var/lib/apt/lists/lock >/dev/null 2>&1 || break
+              sleep 3
+            done
+            sudo dpkg --configure -a || true
+          done
+          # #4170: mirror-stalled and still failing is INFRA, not a red diff.
+          # Same distinction, marker and code as `.github/actions/apt-install`:
+          # 75 is sysexits.h EX_TEMPFAIL and is not 1, so the exit code in the
+          # job log is itself the diagnosis.
+          if [ "${timed_out}" -eq 1 ]; then
+            echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: playwright install-deps stalled on the Ubuntu mirror and then failed (exit ${status}). Rerun the job. (#4170)"
+            {
+              echo "### Playwright system deps could not install (infra, not this diff)"
+              echo
+              echo "\`npx playwright install-deps chromium\` exceeded its \`${bound}s\` bound inside its own \`apt-get update\`, and the unbounded retry then failed with exit \`${status}\`."
+              echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            exit 75
+          fi
+
+          # The mirror was fine and install-deps still failed: an ordinary
+          # failure, reported with its own status and nothing invented.
+          echo "::error::playwright install-deps failed after 2 attempts (exit ${status})"
+          exit "${status}"
+
+      - name: Install Playwright browser binaries (on cache miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 360 npx playwright install chromium; then
+              exit 0
+            fi
+            echo "::warning::playwright install chromium attempt ${attempt} stalled/failed; retrying"
+            sleep 15
+          done
+          echo "::error::playwright install chromium failed after 3 attempts"
+          exit 1
+
+  # ---------------------------------------------------------------------------
   # playwright — E2E browser tests, sharded 3-ways. Per-shard report uploaded
   # on failure (artifact name includes the shard number so the shards don't
   # collide). No merge step yet — deferred per the plan.
   # ---------------------------------------------------------------------------
   playwright:
-    needs: detect-changes
+    needs: [detect-changes, playwright-setup]
     # Run the E2E browser suite iff the diff touches frontend files (same
     # `frontend` category as vitest). Fail-closed classifier — see
     # detect-changes.
+    #
+    # `needs: playwright-setup` (#4185) means a failure OR hang there skips
+    # every shard automatically (GitHub's default needs-propagation: a job
+    # runs its own `if:` only once every listed need has succeeded). That
+    # skip is still caught, not silently swallowed: `validate-all`'s
+    # `check_job playwright "$fe_skip_ok"` treats an unexpected skip
+    # (skip_ok=false, i.e. frontend WAS touched) as a gate failure exactly
+    # like it already treats an outright job failure — see that job's
+    # `check_job` function. So the infra-vs-diff DISTINCTION (the
+    # `AGARIC_APT_INFRA` marker, still written by `playwright-setup`'s own
+    # copy of the install-deps step below) survives the move, and the
+    # overall verdict does too: red either way, never a silent skip-to-green.
     if: needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-24.04
     # The e2e suite outgrew the 2-shard split: shard 2 ran 10.5 min and shard 1
@@ -1515,24 +1896,59 @@ jobs:
     # back to ~8-9 min) and raised the cap 15 → 20 min for headroom against
     # runner variance (matches the cargo-tests / vitest jobs).
     #
-    # 20 → 30 (#1458): the cap is a JOB cap covering setup + tests, and apt
-    # `install-deps` is slow-mirror-bound — it ran 760s (12.7 min) on a slow
-    # Ubuntu mirror in run 27718957382 even after the prepare-apt lock fix,
-    # leaving an ~9-min shard only ~7 min before the cap cancelled it mid-run.
-    # `prepare-apt` removes the lock stall but cannot speed a genuinely slow
-    # download; 30 min absorbs a pathological setup + a full shard. (The deb
-    # re-download cost itself is tracked separately as an apt-cache optimization.)
+    # 20 → 30 (#1458), then split off setup into `playwright-setup` above
+    # (#4185 note 2): this job used to ALSO run `install-deps` itself, whose
+    # legitimate worst case (21m10s, see that step's own comment below) left
+    # only ~9 min of a shared 30-minute cap for the shard -- the exact
+    # conflict #4185 was filed for (21 + 9 > 30). `playwright-setup` now
+    # carries that risk on its own separate budget instead.
     #
-    # #4185: this JOB cap alone cannot tell "setup ran long, then the shard
-    # ran long too" apart from "setup hung and burned the whole budget before
-    # a single test ran" — both end the same way, a bare "exceeded the
-    # maximum execution time". The `Install Playwright system deps (always)`
-    # step below now carries its own `timeout-minutes: 25`, derived from this
-    # job's own measured worst-case setup total, so a hang there fails at
-    # THAT step specifically, with the shard never even starting, instead of
-    # racing this 30-minute cap into a mid-run cancellation that reads like a
-    # slow test suite.
-    timeout-minutes: 30
+    # This job still runs the SAME "Install Playwright system deps" step
+    # itself, though, unchanged from `playwright-setup`'s copy -- system-dep
+    # installation is per-runner OS/dpkg state, which cannot cross a job
+    # boundary the way a cache can, so each shard's own runner still needs it
+    # installed locally. What changed is that by the time this job starts
+    # (it `needs: playwright-setup`), the .deb cache `playwright-setup`
+    # populated is reliably warm, so this repeat run should land on the fast
+    # cache-HIT samples this file has measured (11, 11, 14, 21, 27, 72s)
+    # rather than a cold-cache pull. That is a REDUCED likelihood, not a
+    # guarantee: a warm .deb cache does not skip `apt-get update`'s own
+    # mirror contact (#4170 -- a cache hit does not avoid mirror contact,
+    # since `install-deps` runs its own `apt-get update` regardless), so the
+    # same mirror-stall risk that motivated the step's own bound can still
+    # recur independently on a shard's own runner. This job's cap below
+    # therefore still budgets for that step's full legitimate worst case
+    # rather than assuming the fast path.
+    #
+    # 35 minutes = 43s preamble (measured 25-43s over the 26 most recent
+    # `validate / playwright (N)` jobs, 2026-08-27, see the install-deps
+    # step's own comment below) + 1270s (21m10s), the install-deps step's own
+    # worst-KNOWN-legitimate total (300s attempt-1 bound + 30s SIGKILL grace
+    # + 180s lock poll + 760s attempt-2, the observed cold-mirror runtime,
+    # run 27718957382 -- unchanged by this split) + 540s (9 min, this
+    # section's own shard sizing above) = 1853s (30m53s). 35 minutes (2100s)
+    # leaves 247s (~4m7s, ~13%) of headroom over that. Two corrections to the
+    # figures above, both from the #4185 review that landed note 1 (comment
+    # 2026-08-27T22:50:34Z): the 1270s total is the .deb-cache-HIT worst case
+    # only -- on a MISS both attempts are unbounded (760 + 180 + 760 =
+    # 1700s, 28m20s), which is why the install-deps step's own
+    # `timeout-minutes: 25` matters as the binding external ceiling on that
+    # path (see that step's comment); and "inside the job cap" is optimistic
+    # by the measured 25-43s preamble if computed from job start rather than
+    # step start, which is why that preamble is added explicitly above rather
+    # than assumed away.
+    #
+    # Not separately budgeted: a shard whose OWN browser-binary cache restore
+    # misses despite `playwright-setup` having just populated it (should not
+    # happen, given the `needs:` ordering guarantees `playwright-setup`'s
+    # cache SAVE completes before this job's own RESTORE runs, but the
+    # "Install Playwright browser binaries (on cache miss)" step below is
+    # kept as a defensive fallback rather than assumed unreachable) -- that
+    # step has its own internal 360s-per-attempt bound and reports under its
+    # own step name either way, so a shard hitting it still fails
+    # attributably even though this job's cap does not separately size for
+    # it. The same limit was unbudgeted before this split too.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
