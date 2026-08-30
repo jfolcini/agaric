@@ -770,8 +770,9 @@ export function main(argv = process.argv.slice(2)) {
 // self-test
 // ---------------------------------------------------------------------------
 //
-// Wired as the `workflow-watchdog-selftest` prek hook, keyed to this file AND
-// to `.github/workflows/**` so a new cron anywhere trips the wiring guard.
+// USED to run as the `workflow-watchdog-selftest` prek hook, keyed to this
+// file AND to `.github/workflows/**` so a new cron anywhere tripped the
+// wiring guard. #4556 Phase 1 unwired that hook, so this suite runs only when invoked by hand until Phase 2 restages it.
 
 const ISO = (ms) => new Date(ms).toISOString()
 

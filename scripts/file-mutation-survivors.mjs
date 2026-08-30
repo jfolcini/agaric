@@ -363,12 +363,23 @@ async function countRustAreaFiles() {
   const examine = tomlStringArray(config, 'examine_globs')
   const exclude = tomlStringArray(config, 'exclude_globs')
   const files = new Set()
-  // Mirrors `check-mutants-scope.mjs`'s guard around the same globSync. Both
-  // paths already degrade correctly without it (throw -> caught -> fallback,
-  // or empty -> isUsableCount(0) false -> fallback), but the block comment
-  // above calls this logic shared, and two copies that differ are how a
-  // shared-logic claim stops being true.
-  if (!existsSync(MUTANTS_WORKSPACE_DIR)) return 0
+  // UNREACHABLE, deliberately kept, and labelled as such rather than left to
+  // read as live protection. `MUTANTS_TOML_PATH` is
+  // `src-tauri/.cargo/mutants.toml` — strictly INSIDE `MUTANTS_WORKSPACE_DIR`
+  // — and the `readFileSync` above runs first, so a missing workspace already
+  // throws ENOENT there and the caller's warning already names that as the
+  // reason. This branch cannot fire while those two paths keep that
+  // containment relationship.
+  //
+  // It exists because `check-mutants-scope.mjs:245` guards the same globSync
+  // and the block comment above calls the logic shared; it throws rather than
+  // returning 0 so that IF the containment ever stops holding, the failure
+  // names the missing directory instead of landing on the caller's
+  // "examine_globs matched no .rs file" arm, which would point a triager at
+  // globs in a workspace that is not there.
+  if (!existsSync(MUTANTS_WORKSPACE_DIR)) {
+    throw new Error(`workspace directory ${MUTANTS_WORKSPACE_DIR} does not exist`)
+  }
   for (const glob of examine) {
     for (const path of globSync(glob, { cwd: MUTANTS_WORKSPACE_DIR })) {
       if (!path.endsWith('.rs')) continue
