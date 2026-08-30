@@ -48,8 +48,8 @@
 // Usage (CLI): prints the resolved SHA to stdout, nothing else.
 //   node scripts/pr-diff-base.mjs --base-ref <ref> [--cwd <dir>] [--head <head>]
 //
-// Exit: 0 with the SHA on stdout, 1 (with a `::error::` line on stderr) when
-//       the base cannot be resolved, 2 on bad usage.
+// Exit: 0 with the SHA on stdout. Both non-zero paths write a `::error::`
+//       line to stderr — 1 when the base cannot be resolved, 2 on bad usage.
 
 import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
@@ -118,7 +118,9 @@ export function resolveDiffBase({
     if (!remoteRefExists()) {
       throw new Error(
         `resolveDiffBase: fetched 'origin/${baseRef}' but '${remoteRef}' still does not resolve ` +
-          'to a commit — check that the base ref name is correct.',
+          'to a commit. Either the base ref name is wrong, or this remote has no ' +
+          '`remote.origin.fetch` refspec — in which case the fetch wrote only FETCH_HEAD ' +
+          'and never created the remote-tracking ref, and the name was never the problem.',
       )
     }
   }
@@ -205,8 +207,13 @@ if (isMainModule) {
       .replace(/\r/g, '%0D')
       .replace(/\n/g, '%0A')
     console.error(`::error::${annotated}`)
-    process.exit(
-      err instanceof Error && /^unknown argument|^missing required/.test(err.message) ? 2 : 1,
-    )
+    // `process.exitCode` + fallthrough, NOT `process.exit()`. `process.exit()`
+    // can truncate a pending stderr write when stderr is a PIPE, which is
+    // exactly what a GitHub Actions step provides. Small writes almost always
+    // land synchronously, so this rarely bites — but the line at risk is the
+    // `::error::` annotation above, i.e. the loud half of a fail-closed
+    // design. Losing it is how a loud failure becomes a quiet one.
+    process.exitCode =
+      err instanceof Error && /^unknown argument|^missing required/.test(err.message) ? 2 : 1
   }
 }

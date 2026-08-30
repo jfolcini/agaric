@@ -179,6 +179,58 @@ test('CLI: prints the resolved base SHA to stdout and nothing else', () => {
   }
 })
 
+test('CLI: --cwd and --head are honoured, not silently defaulted (#4559 review note 1)', () => {
+  // These two flags had NO caller and NO test: the suite reached `head` only
+  // through the library API. So the `value()` guard added to stop `--cwd` as a
+  // trailing argument from silently falling back to process.cwd() was itself
+  // unexercised — a fix on a path nothing runs, in a PR about exactly that.
+  const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-cli-flags-'))
+  try {
+    withScrubbedProcessEnv(root, () => {
+      const fx = buildForkedFixture(root)
+      // --cwd must be USED: run from a directory that is not the fixture, so a
+      // silent fallback to process.cwd() could not produce the fixture's base.
+      const result = spawnSync(
+        process.execPath,
+        [SCRIPT_PATH, '--base-ref', 'main', '--cwd', fx.dir, '--head', fx.mergeRefSha],
+        { cwd: root, env: fx.env, encoding: 'utf8' },
+      )
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(result.stdout.trim(), fx.advancedMainSha)
+    })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('CLI: bad usage exits 2, an unresolvable base exits 1 (#4559 review note 2)', () => {
+  // The 2-vs-1 split was asserted only by reading. Both paths emit `::error::`,
+  // so the exit CODE is the only thing distinguishing "you called it wrong"
+  // from "the repo could not answer".
+  const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-cli-usage-'))
+  try {
+    withScrubbedProcessEnv(root, () => {
+      const env = scrubbedGitEnv(root)
+      const run = (...args) =>
+        spawnSync(process.execPath, [SCRIPT_PATH, ...args], { cwd: root, env, encoding: 'utf8' })
+
+      const unknown = run('--bogus')
+      assert.equal(unknown.status, 2, unknown.stderr)
+      assert.match(unknown.stderr, /::error::unknown argument: --bogus/)
+
+      const missingValue = run('--base-ref')
+      assert.equal(missingValue.status, 2, missingValue.stderr)
+      assert.match(missingValue.stderr, /::error::missing required value for --base-ref/)
+
+      const missingFlag = run()
+      assert.equal(missingFlag.status, 2, missingFlag.stderr)
+      assert.match(missingFlag.stderr, /::error::missing required --base-ref/)
+    })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('CLI: a base that cannot be resolved fails loudly — non-zero exit with an ::error:: line', () => {
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-cli-fail-'))
   try {
