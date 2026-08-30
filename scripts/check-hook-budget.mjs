@@ -64,8 +64,15 @@ const lines = readFileSync(CONFIG_PATH, 'utf8').split('\n')
 // bypass; but AGENTS.md's own corollary — added by this same PR — says a
 // guard whose failure mode is a confusing error is worse than no guard, and
 // sending an author to add a line that is already there is exactly that.
+//
+// The list is every key pre-commit/prek accepts in a hook stanza, not just the
+// ones `prek.toml` happens to put above an `id` today. `types_or` is already
+// used ten times here and was missing — latent only because every current use
+// sits BELOW its `id`, i.e. one reordering away from the same misdirection.
+// Enumerating the whole key set closes the class; enumerating the observed
+// subset just moves the next instance further out.
 const SKIP =
-  /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=|hooks\s*=\s*\[\s*$|(name|entry|language|files|stages|args|types|exclude|always_run|pass_filenames|verbose|require_serial|additional_dependencies|minimum_pre_commit_version)\s*=)/
+  /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=|hooks\s*=\s*\[\s*$|(name|entry|language|files|stages|args|types|types_or|exclude|exclude_types|always_run|pass_filenames|verbose|require_serial|additional_dependencies|minimum_pre_commit_version|alias|description|language_version|fail_fast|log_file)\s*=)/
 const violations = []
 let hooks = 0
 

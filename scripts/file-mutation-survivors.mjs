@@ -4534,11 +4534,17 @@ async function selfTestDefaultMaxChildren({ ok, fail }) {
   }
   let frontendCount
   let rustCount
+  // Declared out here, NOT inside the `try`: the `rustCount <= 0` branch below
+  // names it, and that branch sits after the `catch`. A `const` inside the try
+  // is out of scope there, and module code is strict — so the one message that
+  // reports a stale `examine_globs` would throw ReferenceError instead of
+  // printing, exiting 1 with a stack trace rather than 2 with the diagnosis.
+  let workspaceDir
   try {
     const { globMatches, tomlStringArray, WORKSPACE_DIR } =
       await import('./check-mutants-scope.mjs')
     const { MODULE_NAMES } = await import('../stryker.modules.mjs')
-    const workspaceDir = resolve(REPO_ROOT, WORKSPACE_DIR)
+    workspaceDir = resolve(REPO_ROOT, WORKSPACE_DIR)
     frontendCount = MODULE_NAMES.length
     const config = readFileSync(MUTANTS_TOML_PATH, 'utf8')
     const examine = tomlStringArray(config, 'examine_globs')

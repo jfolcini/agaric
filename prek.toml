@@ -2414,16 +2414,6 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit", "pre-push"]
 
-# Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a
-# formatting miss is rewritten in place + re-staged mechanically instead
-# of aborting the commit with a manual `cargo fmt` step. Matches the prek
-# "fixer" contract used by the builtin trailing-whitespace hook — the hook
-# mutates the file, prek detects the modification and fails the run, and
-# the author re-stages the now-formatted file.
-#
-# `--all`: without it, `cargo fmt` formats only the root `agaric` package
-# and skips the `agaric-diagnostics` member (same blind spot `cargo clippy`
-# had without `--workspace`). `--all` formats every workspace member.
 # KNOWN GAP surfaced by #3997's sweep (deliberately deferred, not fixed
 # here; carried through #4556's relocation of this stanza so the next sweep
 # does not have to re-discover it): `scripts/check-table-ownership.py` is NOT
@@ -2452,6 +2442,16 @@ pass_filenames = false
 files = '^scripts/(check-(raw-tx|dynamic-sql|command-arity)\.py|lib/guard_file_source\.py|lib/git-scratch-guard\.sh|test-py-guard-file-source\.sh)$'
 stages = ["pre-commit"]
 
+# Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a
+# formatting miss is rewritten in place + re-staged mechanically instead
+# of aborting the commit with a manual `cargo fmt` step. Matches the prek
+# "fixer" contract used by the builtin trailing-whitespace hook — the hook
+# mutates the file, prek detects the modification and fails the run, and
+# the author re-stages the now-formatted file.
+#
+# `--all`: without it, `cargo fmt` formats only the root `agaric` package
+# and skips the `agaric-diagnostics` member (same blind spot `cargo clippy`
+# had without `--workspace`). `--all` formats every workspace member.
 # WHY: a Rust formatting miss aborted the commit instead of self-correcting and re-staging — #817
 [[repos]]
 repo = "local"
