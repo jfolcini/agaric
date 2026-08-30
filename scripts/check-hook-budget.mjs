@@ -29,8 +29,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-// Cap set 2026-08-30 (#4556) from the post-cleanup count of 156 hooks, plus
-// ~10% headroom. Raising this requires deleting or justifying what it buys.
+// Cap set 2026-08-30 (#4556) from the post-cleanup count of 158 hooks (184
+// before, 27 removed and `hook-budget` itself added; set-differenced on ids
+// against origin/main, not eyeballed off the diff, because three stanzas in
+// that diff are RELOCATIONS and a `-`/`+` count reads them as churn). That
+// leaves 12 of headroom, 7.6%. Raising this requires deleting or justifying
+// what it buys.
 const HOOK_CAP = 170
 // Anchored on this file's own location, not the cwd: prek invokes hooks from
 // the repo root today, but nothing in the hook contract guarantees it, and the
@@ -55,6 +59,18 @@ for (let i = 0; i < lines.length; i++) {
   const ids = [...lines[i].matchAll(/id = (?:"([^"]+)"|'([^']+)')/g)].map((m) => m[1] ?? m[2])
   if (ids.length === 0) continue
   hooks += ids.length
+  // ONE id per line, because the `# WHY:` walk below is per-LINE: two inline
+  // hooks sharing a line would share one WHY and both count as explained.
+  // That is the same fail-open shape as the quote-form bug above, so it gets
+  // the same treatment rather than a note. No line in prek.toml does this
+  // today; the point is that none can start to.
+  if (ids.length > 1) {
+    violations.push(
+      `${CONFIG}:${i + 1}: ${ids.length} hook ids on one line (${ids.join(', ')}) — ` +
+        'put each on its own line so each carries its own `# WHY:`',
+    )
+    continue
+  }
   // Walk up past the stanza headers, then over the contiguous comment block.
   let j = i
   while (j > 0 && SKIP.test(lines[j - 1].trim())) j--
