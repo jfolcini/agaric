@@ -46,10 +46,17 @@ const CONFIG = 'prek.toml' // what the error messages name
 const lines = readFileSync(CONFIG_PATH, 'utf8').split('\n')
 // `hooks = [` is in here because a `[[repos]]` stanza can open its hooks as a
 // MULTI-LINE array; without it the walk-up stops on that line and reports a
-// spurious violation naming the first entry. Fails closed, so it misdirects
-// rather than hides — but the first person to hit it would be sent to the
-// wrong place, and that is the corollary about confusing errors.
-const SKIP = /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=|hooks\s*=\s*\[)/
+// spurious violation naming the first entry.
+//
+// ANCHORED to end-of-line, which is the whole point. Unanchored, it also
+// matched the ONE-LINE form `hooks = [{ id = "x" }]` — so two adjacent
+// `[[repos]]` blocks in that form with no blank line between them let the
+// walk-up step over the first hook ENTIRELY and credit the second with the
+// first's `# WHY:`. That is a silent fail-open, not a misdirection, and it
+// was introduced by the fix for the multi-line case above. Demonstrated on a
+// scratch tree: two such blocks, only the first explained, reported
+// "2/170 hooks, all with a `# WHY:` line" and exited 0.
+const SKIP = /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=|hooks\s*=\s*\[\s*$)/
 const violations = []
 let hooks = 0
 
@@ -71,11 +78,22 @@ for (let i = 0; i < lines.length; i++) {
   // Without the first, a commented-out stanza (`# id = "foo"`) counts against
   // the cap and can emit a spurious WHY violation — the population becoming
   // sensitive to PROSE, in a file that is mostly prose. Without the second,
-  // any key ending in `id` (`uuid = "…"`, `build_id = "…"`) counts as a hook.
-  // Both directions fail CLOSED, so neither is a hole; both make the number
-  // mean something other than "hooks", and the number is the entire point.
+  // a key ending in `id` after a WORD character (`uuid`, `build_id`) counts as
+  // a hook. Note what the boundary does NOT buy: `hook-id = "x"` still matches,
+  // because `-` is not a word character. That direction over-counts, i.e. fails
+  // CLOSED, so it is not a hole — but the earlier version of this comment
+  // claimed the boundary excluded "any key ending in id", which is more than
+  // it does, in a header that is otherwise careful about exactly this.
+  //
+  // The `"?` pair accepts a TOML QUOTED KEY. `"id" = "x"` is valid TOML, prek
+  // accepts it, and `taplo fmt` does not unquote keys — so such a hook was
+  // neither counted against the cap nor WHY-checked while this script printed
+  // its green line. Demonstrated on a scratch tree: a lone quoted-key hook
+  // reported "0/170 hooks" and exited 0.
   if (lines[i].trimStart().startsWith('#')) continue
-  const ids = [...lines[i].matchAll(/\bid\s*=\s*(?:"([^"]+)"|'([^']+)')/g)].map((m) => m[1] ?? m[2])
+  const ids = [...lines[i].matchAll(/\b"?id"?\s*=\s*(?:"([^"]+)"|'([^']+)')/g)].map(
+    (m) => m[1] ?? m[2],
+  )
   if (ids.length === 0) continue
   hooks += ids.length
   // ONE id per line, because the `# WHY:` walk below is per-LINE: two inline

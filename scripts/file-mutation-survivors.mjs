@@ -257,11 +257,26 @@ export const MAX_TITLE_CHARS = 256
 //   rust      non-test `.rs` files reachable through `examine_globs` minus
 //             `exclude_globs` in `src-tauri/.cargo/mutants.toml` — one area
 //             per source FILE, which is the only grouping cargo-mutants' ids
-//             expose. Enumerated exactly the way `check-mutants-scope.mjs`
-//             does (its exported `tomlStringArray` / `globMatches`,
+//             expose. Enumerated the way `check-mutants-scope.mjs` does for
+//             the GLOB half (its exported `tomlStringArray` / `globMatches`,
 //             `globSync` per glob filtered to `.rs`, deduped across globs in
 //             a `Set` since globs can overlap) — reused from there rather
-//             than reimplemented here. That reuse is a LAZY `import()`
+//             than reimplemented here.
+//
+//             ONE DELIBERATE DIVERGENCE, stated because the two counts
+//             agreeing today (both 23) is not the same as them being the
+//             same computation: that guard additionally drops files that
+//             exist but sit OUTSIDE the packages the lane examines
+//             (`insideAny(p, examinedDirs, workspace.members)`, its
+//             `glob-outside-examined-packages` arm). This cap does not. A
+//             file inside `examine_globs` but outside the examined package
+//             set would inflate the cap here while that guard reports the
+//             surface as collapsed — the #2621 arch-wave shape. Not fixed
+//             here because the cap wants an UPPER bound on plausible area
+//             count and over-counting fails safe, whereas that guard wants
+//             the true mutable surface; but this is the axis on which the
+//             two copies can drift, so it is named rather than left to be
+//             re-discovered. That reuse is a LAZY `import()`
 //             inside `countRustAreaFiles`, never a top-level one: the #3373
 //             `main-module-detection` assertions copy THIS FILE ALONE to a
 //             detached path and run `--self-test` there, and a static
@@ -2291,7 +2306,10 @@ function printDryRun({
 //   #3257 — the rendered body must never exceed MAX_BODY_CHARS, and the
 //           machine-readable marker block must never be cut mid-way (a
 //           truncated block silently shrinks the tracked set).
-// Wired as the `mutation-survivors-filer-selftest` prek hook.
+// USED to run as the `mutation-survivors-filer-selftest` prek hook; #4556
+// Phase 1 unwired it. These assertions still execute, but only transitively,
+// via `main-module-detection-selftest` — see the note on that hook's stanza
+// in prek.toml before re-keying either.
 // #3364 fixtures, split out of `runSelfTest` to keep its cyclomatic
 // complexity under the repo lint budget.
 // #3350 fixtures — survivor AGE, which is what makes "long-standing" and
