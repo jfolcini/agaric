@@ -747,7 +747,9 @@ export function main(argv = process.argv.slice(2)) {
 // excerpting, MAX_EXCERPT_LINES/CHARS, marker-block state, the same unguarded
 // `execFileSync('gh', ...)` write path) and was the less tested: it had no
 // fixture suite at all while `file-mutation-survivors.mjs` did. It USED to
-// run as the `fuzz-findings-filer-selftest` prek hook; #4556 Phase 1 unwired that hook, so this suite runs only when invoked by hand until Phase 2 restages it.
+// run as the `fuzz-findings-filer-selftest` prek hook; #4556 Phase 1
+// unwired that hook, so this suite runs only when invoked by hand until
+// Phase 2 restages it.
 //
 // Every assertion is paired with its negative where one exists — a clamp that
 // never clamps and a guard that never fires are the two ways this file could

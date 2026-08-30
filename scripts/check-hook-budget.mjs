@@ -85,13 +85,17 @@ for (let i = 0; i < lines.length; i++) {
   // claimed the boundary excluded "any key ending in id", which is more than
   // it does, in a header that is otherwise careful about exactly this.
   //
-  // The `"?` pair accepts a TOML QUOTED KEY. `"id" = "x"` is valid TOML, prek
-  // accepts it, and `taplo fmt` does not unquote keys — so such a hook was
-  // neither counted against the cap nor WHY-checked while this script printed
-  // its green line. Demonstrated on a scratch tree: a lone quoted-key hook
-  // reported "0/170 hooks" and exited 0.
+  // The `['"]?` pairs accept BOTH TOML quoted-key spellings. `"id" = "x"` and
+  // `'id' = "x"` are each valid TOML, prek accepts both, and `taplo fmt` does
+  // not unquote keys — so such a hook was neither counted against the cap nor
+  // WHY-checked while this script printed its green line. An earlier revision
+  // closed the basic-string key and left the LITERAL-string key open, which is
+  // the same asymmetry as closing the single-quoted VALUE and not the key.
+  // Both demonstrated on a scratch tree before and after: bare + `"id"` +
+  // `'id'` reported "2/170 hooks" green, and now reports 3 with the
+  // unexplained one named.
   if (lines[i].trimStart().startsWith('#')) continue
-  const ids = [...lines[i].matchAll(/\b"?id"?\s*=\s*(?:"([^"]+)"|'([^']+)')/g)].map(
+  const ids = [...lines[i].matchAll(/\b['"]?id['"]?\s*=\s*(?:"([^"]+)"|'([^']+)')/g)].map(
     (m) => m[1] ?? m[2],
   )
   if (ids.length === 0) continue

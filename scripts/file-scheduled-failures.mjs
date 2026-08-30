@@ -1952,7 +1952,9 @@ function writeNotifyOrSync({
 // ---------------------------------------------------------------------------
 //
 // Fixture suite for the invariants this reporter exists to hold. It USED to
-// run as the `scheduled-failure-reporter-selftest` prek hook; #4556 Phase 1 unwired that hook, so this suite runs only when invoked by hand until Phase 2 restages it.
+// run as the `scheduled-failure-reporter-selftest` prek hook; #4556
+// Phase 1 unwired that hook, so this suite runs only when invoked by hand
+// until Phase 2 restages it.
 /**
  * 10. What `main()` ACTUALLY writes, driven end to end against a stub `gh`
  *     placed first on `$PATH`.

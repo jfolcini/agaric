@@ -1434,7 +1434,14 @@ pass_filenames = false
 # real repository through the symlinked `scripts/` dir — which is exactly what
 # gives the derivation its teeth. Narrowing this `files:` pattern, or dropping
 # the filer from it, silently deletes that coverage with everything green.
-files = "^scripts/(check-main-module-detection|file-mutation-survivors)\\.mjs$"
+# Keyed on the derivation's INPUTS too, not just the two scripts. Recording
+# that this hook is the only thing still running those assertions (above) and
+# then leaving it un-keyed on what they read would be the same defect one
+# level out: `stryker.modules.mjs` supplies the frontend half,
+# `mutants.toml` the globs, and `check-mutants-scope.mjs` the glob semantics —
+# a change to any of the three moves the derived cap while the hook that
+# checks it stays Skipped.
+files = '^(scripts/(check-main-module-detection|file-mutation-survivors|check-mutants-scope)\.mjs|stryker\.modules\.mjs|src-tauri/\.cargo/mutants\.toml)$'
 stages = ["pre-commit"]
 
 # persist-hooks (#3352, split out of #3323): `pageBrowserFilters.ts` shipped

@@ -354,7 +354,8 @@ release_require_verified_tag() {
 # ── self-test ───────────────────────────────────────────────────────────────
 # Behavioural suite for the identity gate and the post-push verification
 # above. It USED to run as the `release-identity-selftest` prek hook;
-# #4556 Phase 1 unwired that hook, so this suite runs only when invoked by hand until Phase 2 restages it. Everything it
+# #4556 Phase 1 unwired that hook, so this suite runs only when invoked
+# by hand until Phase 2 restages it. Everything it
 # touches is a fake: `gpg` and `gh` are shadowed on PATH and `HOME` points at
 # a throwaway directory, so no key is read, no API is called and neither the
 # host nor the real repository is mutated. Runs before argument parsing, so

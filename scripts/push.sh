@@ -572,7 +572,8 @@ verify_landed() {
 # stubbed `git` on PATH — no network, no repo mutation. It USED to run as
 # the `push-sh-selftest` prek hook, so a regression in either function was
 # caught at commit time rather than live, mid-push;
-# #4556 Phase 1 unwired that hook, so this suite runs only when invoked by hand until Phase 2 restages it. Runs before any real
+# #4556 Phase 1 unwired that hook, so this suite runs only when invoked
+# by hand until Phase 2 restages it. Runs before any real
 # work below, so it's fast and side-effect free (mirrors the
 # `verify-ci-equivalent.sh --self-test` convention).
 if [ "${1:-}" = "--self-test" ]; then
