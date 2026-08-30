@@ -134,6 +134,58 @@ test('#4544 control: the OLD stale base.sha attributes main’s own file to the 
   }
 })
 
+/**
+ * Advance `main` once MORE, after the merge ref already exists, and repoint
+ * `origin/main` at the newer tip. This is the real race: GitHub generated
+ * `refs/pull/N/merge` at time T, someone merged at T+1, and the job's
+ * `fetch-depth: 0` checkout picks up the newer `origin/main`.
+ */
+function advanceMainPastTheMergeRef(fx) {
+  const git = (...args) => execFileSync('git', args, { cwd: fx.dir, env: fx.env, encoding: 'utf8' })
+  git('checkout', '-q', 'main')
+  writeFileSync(join(fx.dir, 'src', 'even-later.txt'), 'landed after the merge ref was built\n')
+  git('add', '-A')
+  git('commit', '-qm', 'a merge landing AFTER GitHub generated the merge ref')
+  const newerMainSha = git('rev-parse', 'HEAD').trim()
+  git('update-ref', 'refs/remotes/origin/main', newerMainSha)
+  git('checkout', '-q', 'pr-merge-ref')
+  return newerMainSha
+}
+
+test('#4544: when origin/main has advanced PAST the merge ref, the base is the merge ref’s own parent — not the newer tip', () => {
+  // The other direction of the property every review of this PR leaned on to
+  // call the fix stale-proof, and the one the fixture did not reach: merge-base
+  // must resolve BACKWARDS to the merge ref's main-side parent. Returning the
+  // newer tip instead would put commits the PR cannot see on the left-hand
+  // side, and `base...HEAD` would silently under-report the PR's own diff.
+  const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-'))
+  try {
+    withScrubbedProcessEnv(root, () => {
+      const fx = buildForkedFixture(root)
+      const newerMainSha = advanceMainPastTheMergeRef(fx)
+      assert.notEqual(newerMainSha, fx.advancedMainSha, 'fixture must actually advance main')
+
+      const resolved = resolveDiffBase({
+        baseRef: 'main',
+        cwd: fx.dir,
+        head: fx.mergeRefSha,
+        env: fx.env,
+      })
+      assert.equal(
+        resolved,
+        fx.advancedMainSha,
+        `expected the merge ref’s own main parent (${fx.advancedMainSha}), got ${resolved} ` +
+          `(origin/main now names the newer ${newerMainSha})`,
+      )
+      // And the diff stays exactly the PR's own work: neither main's earlier
+      // file nor the one it gained after the merge ref was built.
+      assert.deepEqual(changedFiles(fx.dir, fx.env, resolved, fx.mergeRefSha), ['src/pr-file.txt'])
+    })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('resolveDiffBase throws a clear error when baseRef is missing, rather than resolving nothing', () => {
   assert.throws(() => resolveDiffBase({ cwd: process.cwd() }), /baseRef is required/)
 })
@@ -179,7 +231,7 @@ test('CLI: prints the resolved base SHA to stdout and nothing else', () => {
   }
 })
 
-test('CLI: --cwd and --head are honoured, not silently defaulted (#4559 review note 1)', () => {
+test('CLI: --cwd and --head are honoured, not silently defaulted into process.cwd()', () => {
   // These two flags had NO caller and NO test: the suite reached `head` only
   // through the library API. So the `value()` guard added to stop `--cwd` as a
   // trailing argument from silently falling back to process.cwd() was itself
@@ -203,10 +255,11 @@ test('CLI: --cwd and --head are honoured, not silently defaulted (#4559 review n
   }
 })
 
-test('CLI: bad usage exits 2, an unresolvable base exits 1 (#4559 review note 2)', () => {
-  // The 2-vs-1 split was asserted only by reading. Both paths emit `::error::`,
-  // so the exit CODE is the only thing distinguishing "you called it wrong"
-  // from "the repo could not answer".
+test('CLI: every bad-usage shape exits 2, not 1', () => {
+  // Both the usage path and the resolution path emit `::error::`, so the exit
+  // CODE is the only thing distinguishing "you called it wrong" from "the repo
+  // could not answer". The exit-1 half of that split is pinned by the next test;
+  // neither number is load-bearing unless BOTH are asserted exactly.
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-cli-usage-'))
   try {
     withScrubbedProcessEnv(root, () => {
@@ -231,7 +284,7 @@ test('CLI: bad usage exits 2, an unresolvable base exits 1 (#4559 review note 2)
   }
 })
 
-test('CLI: a base that cannot be resolved fails loudly — non-zero exit with an ::error:: line', () => {
+test('CLI: a base that cannot be resolved exits 1 — the resolution failure, not a usage error', () => {
   const root = mkdtempSync(join(tmpdir(), 'pr-diff-base-cli-fail-'))
   try {
     withScrubbedProcessEnv(root, () => {
@@ -246,7 +299,10 @@ test('CLI: a base that cannot be resolved fails loudly — non-zero exit with an
         env,
         encoding: 'utf8',
       })
-      assert.notEqual(result.status, 0)
+      // Exactly 1, not merely non-zero: 2 would mean the CLI had reclassified a
+      // repo it cannot answer for as a caller mistake, and `notEqual(…, 0)`
+      // passed for both.
+      assert.equal(result.status, 1, result.stderr)
       assert.match(result.stderr, /::error::/)
       assert.equal(result.stdout.trim(), '')
     })

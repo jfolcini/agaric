@@ -75,6 +75,10 @@ on:
       # change to it must start the lane it feeds (#4544). Omitting it is the
       # same "it would have run nowhere" class this lane's own fix is about.
       - 'scripts/pr-diff-base.mjs'
+      # Its TEST is deliberately NOT listed: it runs in `validate / lint`, which
+      # is gated only on `docs_only != 'true'` and so already runs on any diff
+      # that could reach it. Listing it here would start this lane to re-run a
+      # test the gating job has run regardless.
       - '.github/workflows/mutation-pr.yml'
 
 concurrency:
