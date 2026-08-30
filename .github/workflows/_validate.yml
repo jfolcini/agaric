@@ -759,6 +759,21 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Script unit tests (node:test)
+        # Lives in `lint`, not `vitest` (#4544). `vitest` is gated on
+        # `frontend == 'true'`, and these tests cover scripts/ and workflow
+        # plumbing — so a scripts-and-workflow-only PR, which is exactly the
+        # kind of diff that changes them, would skip the job that runs them.
+        # `lint` is gated on `docs_only != 'true'` and fails closed, so it
+        # runs on any diff that could touch this code.
+        #
+        # Named explicitly rather than globbed: a glob here would silently
+        # adopt every future `scripts/*.test.mjs` into this job, including
+        # ones needing a toolchain it does not install. Adding a line is the
+        # deliberate act; the cost of forgetting is a test that runs nowhere,
+        # which is the defect class #4544 itself is about.
+        run: node --test scripts/pr-diff-base.test.mjs
+
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; rejects packages whose registry-side Sigstore
         # provenance attestation is missing or invalid. Catches the
