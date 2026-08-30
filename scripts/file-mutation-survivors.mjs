@@ -372,27 +372,22 @@ async function countRustAreaFiles() {
   // cannot catch, so it is removed rather than documented (#4557 review).
   const { globMatches, tomlStringArray, WORKSPACE_DIR } = await import('./check-mutants-scope.mjs')
   const workspaceDir = resolve(REPO_ROOT, WORKSPACE_DIR)
+  // BEFORE the `readFileSync` below, not after, which is what makes this
+  // branch do its job instead of being dead code. `MUTANTS_TOML_PATH` is
+  // `src-tauri/.cargo/mutants.toml` — strictly INSIDE the workspace dir — so
+  // reading the config first meant a missing workspace threw ENOENT on the
+  // TOML and this check could never fire. Checked first, a missing workspace
+  // is reported as the missing workspace, rather than as a missing config
+  // file inside it or as the caller's "examine_globs matched no .rs file"
+  // arm, which would point a triager at globs in a directory that is not
+  // there. `check-mutants-scope.mjs:245` guards the same globSync.
+  if (!existsSync(workspaceDir)) {
+    throw new Error(`workspace directory ${workspaceDir} does not exist`)
+  }
   const config = readFileSync(MUTANTS_TOML_PATH, 'utf8')
   const examine = tomlStringArray(config, 'examine_globs')
   const exclude = tomlStringArray(config, 'exclude_globs')
   const files = new Set()
-  // UNREACHABLE, deliberately kept, and labelled as such rather than left to
-  // read as live protection. `MUTANTS_TOML_PATH` is
-  // `src-tauri/.cargo/mutants.toml` — strictly INSIDE the workspace dir
-  // — and the `readFileSync` above runs first, so a missing workspace already
-  // throws ENOENT there and the caller's warning already names that as the
-  // reason. This branch cannot fire while those two paths keep that
-  // containment relationship.
-  //
-  // It exists because `check-mutants-scope.mjs:245` guards the same globSync
-  // and the block comment above calls the logic shared; it throws rather than
-  // returning 0 so that IF the containment ever stops holding, the failure
-  // names the missing directory instead of landing on the caller's
-  // "examine_globs matched no .rs file" arm, which would point a triager at
-  // globs in a workspace that is not there.
-  if (!existsSync(workspaceDir)) {
-    throw new Error(`workspace directory ${workspaceDir} does not exist`)
-  }
   for (const glob of examine) {
     for (const path of globSync(glob, { cwd: workspaceDir })) {
       if (!path.endsWith('.rs')) continue

@@ -915,9 +915,12 @@ phase_a_skip_extra() {
 # to a fixed /tmp path at commit time rather than as a non-deterministic
 # Phase E failure that blames sqlx; #4556 Phase 1 unwired that hook, so it
 # runs only when invoked by hand until Phase 2 restages it. It also carries
-# the #4424 divergence ratchet comparing this file's skip arrays against
-# `_validate.yml`'s — so nothing currently catches those two drifting
-# apart. Runs BEFORE the
+# the #4424 divergence ratchet, which compares this file's `CI_PATH_RE`
+# against `_validate.yml`'s `ci_re` (and the `_tracked` exclusion that
+# derives from it) — so THAT comparison no longer runs at commit time.
+# It does NOT cover the two files' skip arrays, and never did: nothing has
+# ever ratcheted those against each other, before this PR or after. Runs
+# BEFORE the
 # bypass guard and the multi-minute verifier body, so it is fast and
 # side-effect free.
 if [ "${1:-}" = "--self-test" ]; then
