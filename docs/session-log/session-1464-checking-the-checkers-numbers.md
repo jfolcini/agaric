@@ -59,13 +59,31 @@ Correct, and the precise version is a better finding:
 the point survives that reply badly. "The read path is complete, maintained across
 five propagation paths, and unreachable from any production caller" does not.
 
-## Not fixed here, by rule
+## I applied the freeze rule one step too early
 
-`session-1460:55` says Linking "dropped 10->5". `COMPARISON.md` has it right at −3
-against a previous Agaric score of 8; 10 was *Logseq's* score in that row. The PR
-description repeated the log's version and is corrected there, because
-`docs/session-log/README.md:34` routes reviewer corrections to the PR rather than
-into the log.
+I left four wrong numbers in `session-1460` — the linking figure, the inheritance
+claim, `75` commits and `596/283` axe — on the grounds that
+`docs/session-log/README.md:34` routes reviewer corrections to the PR rather than into
+the log.
+
+The next review pointed out what the rule actually says: *"Never rename or edit
+**existing** files."* `session-1460` is **added by this PR**. It is not an existing
+file; it has never landed. Correcting a draft before it is published is not rewriting
+the record, it is declining to publish a known-wrong one — and a session log is
+precisely what the next audit reads, which is the failure mode Part 5 exists to stop.
+
+All four are now corrected in `session-1460` itself.
+
+This is worth recording as a judgment error rather than a rule ambiguity. Having broken
+that rule four times in the previous PR, I over-corrected into applying it to files it
+does not cover, and the over-application was itself costly: two of the four wrong
+numbers were disclosed nowhere at all, so a later reader would have picked up `75` and
+`596/283` as fact. The same reasoning means my call on `session-1455` in #4541 was also
+wrong — that log was new in its own PR and its `0.98-1.00x` band could have been fixed
+before merging. It is merged now and genuinely frozen, which is what #4536 is about.
+
+A rule that names a class ("existing files") does not extend to the adjacent class just
+because the adjacent class is where I last got burned.
 
 ## Left standing
 

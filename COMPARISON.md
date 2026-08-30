@@ -110,7 +110,7 @@ warning. Binaries: Linux AppImage 174 MB, macOS arm64 dmg 161 MB, Windows NSIS 1
 
 **Agaric 0.9.9** — Rust + React on Tauri 2, SQLite from the start, Loro CRDT engine, LAN-only
 peer sync. Single maintainer, pre-1.0, no public user base. Its engineering discipline is
-exceptional for a personal project (6,284 Rust test functions, 905 test files, 8 fuzz targets, a
+exceptional for a personal project (6,292 Rust test functions, 905 test files, 8 fuzz targets, a
 100K-block benchmark SLO gate, SLSA provenance, a written threat model with an assurance case). Its
 product surface is narrower than either Logseq, and its riskiest areas are the ones a single user
 cannot test alone: multi-device sync and long-horizon data durability.
@@ -226,7 +226,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is now behind, not ahea
 | Tags as pages | Yes. **2.0: tags are classes/supertags** — properties defined on a tag are inherited by every tagged node, and edits propagate live | Tags and pages are separate `block_type` values, separate namespaces | Design choice |
 | Tag hierarchy | OG: `/` naming. **2.0: `Extends`, with multiple inheritance and a tag tree** | Prefix convention (`work/meeting`) matched with `LIKE` | Partial |
 | Boolean tag queries | Via query DSL | `TagExpr` with Tag/Prefix/And/Or/Not, depth-gated, compiled to one pushed-down id-set subquery | Better |
-| Tag inheritance in queries | 2.0: inherited class properties are queryable | **Unreachable.** `block_tag_inherited` is materialized, incrementally maintained across 5 propagation paths, and has a rebuild job. The resolver does read it — `src-tauri/agaric-store/src/tag_query/resolve.rs:35,123` branches on `include_inherited` — but **no production caller ever enables it**: `src/lib/tauri/queries.ts:240` coerces to `false`, and the Rust commands default `None` to `false` (`src-tauri/src/commands/tags.rs:549,599`). Only tests pass anything else. The shared filter vocabulary has no inherited-tag path at all. Inherited tags are *displayed* on a block and nothing more | **Dead** |
+| Tag inheritance in queries | 2.0: inherited class properties are queryable | **Unreachable.** `block_tag_inherited` is materialized, incrementally maintained across 5 propagation paths, and has a rebuild job. The resolver does read it — `src-tauri/agaric-store/src/tag_query/resolve.rs:35,123` branches on `include_inherited` — but **no production caller ever enables it**: `src/lib/tauri/queries.ts:240` defaults it to `false` (`?? false` — a caller passing `true` would be honoured end to end; none does), and the Rust commands default `None` to `false` (`src-tauri/src/commands/tags.rs:549,599`). Only tests pass anything else. The shared filter vocabulary has no inherited-tag path at all. Inherited tags are *displayed* on a block and nothing more | **Dead** |
 | Tag usage counts | Shown in UIs | `tags_cache.usage_count` | Done |
 
 ### 7. Query System
@@ -437,7 +437,7 @@ a project whose stated aim is superiority, these are the cheapest wins available
 
 | Thing | Cost paid | Benefit collected |
 | --- | --- | --- |
-| **`block_tag_inherited`** | A materialized table, five incremental propagation paths across 7 op types, a background rebuild job, and a documented invariant | **Zero in production.** The read path exists and is exercised only by tests: `src-tauri/agaric-store/src/tag_query/resolve.rs:35,123` branches on `include_inherited`, but `src/lib/tauri/queries.ts:240` coerces it to `false` and the commands default `None` to `false` (`src-tauri/src/commands/tags.rs:549,599`), so no production call ever sets it true. Inherited tags are displayed on a block and nothing else |
+| **`block_tag_inherited`** | A materialized table, five incremental propagation paths across 7 op types, a background rebuild job, and a documented invariant | **Zero in production.** The read path exists and is exercised only by tests: `src-tauri/agaric-store/src/tag_query/resolve.rs:35,123` branches on `include_inherited`, but `src/lib/tauri/queries.ts:240` supplies `?? false` and the commands `unwrap_or(false)` (`src-tauri/src/commands/tags.rs:549,599`). Nothing forbids `true`; no production caller passes it. Inherited tags are displayed on a block and nothing else |
 | **`listStyle` block-level lists** | A full read pipeline: property → `ListMarkerContext` → `computeListOrdinals` → `ListMarker`, plus a ProseMirror decoration | **Zero.** `setListStyle` and `clearListStyle` have **no production callers**. Slash commands still write a `1.` or `-` markdown prefix, so the app carries two competing list models and pays for both |
 | **Advanced query engine depth** | 10 property operators, 4 value types, 7 group keys, property aggregates | Partial. The builder exposes **4 operators, Text only, 5 group keys, column-only aggregates**. The rest is reachable only by hand-editing saved-view JSON |
 | **The notification subsystem** | OS plumbing on three platforms, a settings tab, a permission flow | **Zero reminders.** The only production caller is the "send test notification" button |
@@ -477,8 +477,12 @@ These mislead the next audit — and misled this document's previous revision:
   backlinks and the emoji picker — not in the surface where a user types.
 - **Accessibility depth is uneven**: 597 `toHaveNoViolations` assertions across 284 files under
   `src/` (`grep -rho toHaveNoViolations src | wc -l`, `grep -rl … | wc -l`) is genuinely
-  strong, but only **4 of 110** end-to-end specs run axe in a real browser, and there is no
-  skip-link anywhere.
+  strong, but only **4 of 110** end-to-end specs run axe in a real browser. (An earlier
+  draft of this bullet claimed there is no skip link. There is: `src/App.tsx:517-522`
+  renders an `sr-only focus:not-sr-only` anchor to `#main-content`, the target carries
+  `tabIndex = -1` at `src/App.tsx:274`, and `src/components/__tests__/App.test.tsx:1774`
+  asserts both. That claim was false in the *pessimistic* direction, which is how it
+  passed a review posture tuned entirely for overstatement — see Part 10.)
 
 ---
 
@@ -694,8 +698,9 @@ What this revision changes about the previous one. Grouped by severity.
 | Android "Better" | Nothing measured supports it; arm64-only, API 30+, sideload-only is strictly narrower than Logseq's reach |
 | "Cursor pagination everywhere" | The main block editor is not virtualized |
 | Spaces include "sync-scope" | A session syncs every space; there is no selective sync |
-| "~15,000+ tests: ~3,000 Rust + ~12,000 frontend across ~550 files" | Undercount: **6,284 Rust test functions**, 793 frontend test files, 110 Playwright specs, ~905 test files total |
+| "~15,000+ tests: ~3,000 Rust + ~12,000 frontend across ~550 files" | Undercount: **6,292 Rust test functions**, 793 frontend test files, 110 Playwright specs, ~905 test files total |
 | "axe a11y tests on 100+ components" | 597 `toHaveNoViolations` assertions across 284 files under `src/` — but only 4 of 110 e2e specs run axe in a browser |
+| An earlier draft of this revision: "there is no skip-link anywhere" | False, and false in the **pessimistic** direction — `src/App.tsx:517-522` renders one and `src/components/__tests__/App.test.tsx:1774` asserts it. Caught in review, not by this document's own method: the audit posture was tuned for flattery, so an understatement passed the same gate untouched. By this document's own standard that is the same defect with the sign flipped — it would send someone to build a feature that shipped |
 | Previous "Extras" row (Logseq 9 / Agaric 3) | Retired, not rescored. Its contents split between "Extensibility / ecosystem" (new) and rows that already covered them. Those 3 Agaric points are part of the 154→134 arithmetic and do not correspond to any capability loss |
 
 ### Claims that were understated
