@@ -13,7 +13,9 @@
  * is out of CI and outside every tsconfig project). The source-pin markers
  * below are a gate against exactly that: they hash each real function's
  * current text and fail if it no longer matches (see
- * `scripts/check-mutation-harness-clones.mjs`, wired into prek.toml). If
+ * `scripts/check-mutation-harness-clones.mjs` — UNWIRED by #4556, so
+ * nothing enforces these pins today; run it by hand after touching the
+ * source, until #4556 Phase 2 restages it). If
  * this fires, re-sync every hand-copied clone below against the current
  * source, then recompute and update the hashes.
  *

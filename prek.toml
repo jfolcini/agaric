@@ -2298,10 +2298,11 @@ language = "system"
 # skips it too, regardless of content. This union makes the hook SELECTED,
 # which is strictly better than skipped, but does not by itself make it
 # EFFECTIVE against a defanged `exists()`/`read()`. Only
-# `py-guard-file-source-selftest` demonstrably caught that, and #4556
-# removed it, so that gap is currently UNCOVERED. See
-# `check-raw-tx`'s copy of this note above for why the gap is carried as
-# prose rather than as a mechanical check (#4434 review note 10).
+# `py-guard-file-source-selftest` demonstrably catches that, which is why
+# #4556's delete list did NOT take it: the sweep had mis-filed it as a dev
+# convenience, and its own criteria put it back. See `check-raw-tx`'s copy
+# of this note above for why the gap is carried as prose rather than as a
+# mechanical check (#4434 review note 10).
 files = '^src-tauri/src/commands/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
 stages = ["pre-commit", "pre-push"]
 
@@ -3316,6 +3317,77 @@ pass_filenames = false
 # hook at all. That is the #3993/#3997 shape: a guard defanged by editing its
 # own dependency.
 files = '^scripts/(check-git-fixture-isolation\.mjs|lib/git-scratch-guard\.(mjs|sh))$'
+stages = ["pre-commit"]
+
+# pr-overlap-trust-boundary (#3967): RESTORED after being swept up in #4556's
+# unwiring pass. It is not a self-test, and it survives all five of #4556's
+# own criteria — the sweep's mistake, corrected here rather than argued away.
+#
+# The #3672 adversarial review found pr-overlap.yml's (former) single
+# `overlap` job holding `pull-requests: write` in the same job that checked
+# out this PR's own commits — for a fork PR, code the fork author controls.
+# It was not live only because GitHub downgrades a fork `pull_request` run's
+# token to read-only regardless of `permissions:`, a mitigation that lives in
+# GitHub's defaults, not in this file, and survives only until the trigger
+# becomes `pull_request_target` (which gets no such downgrade). #3967 split
+# the job into an untrusted `compute` (permissions: contents: read — no write
+# scope of any kind — no GH_TOKEN, checks out the PR) and a trusted `post`
+# (pull-requests: write, never checks out PR-authored code) — a fact about
+# the file today that a comment cannot keep true on its own. This guard
+# checks it mechanically instead, and fails on EITHER of two independent
+# shapes:
+#
+#   * the workflow's `on:` block names `pull_request_target` AND some step's
+#     checkout `ref:` resolves to PR head content. A `pull_request_target`
+#     checkout with no `ref:` override defaults to the BASE branch — the
+#     actual mitigation — so the guard flags only the shape that
+#     reintroduces the hazard.
+#
+#   * independent of the trigger: any JOB declaring a write scope contains an
+#     `actions/checkout` step whose `ref:` is not pinned to the PR's BASE
+#     commit — a ref-less checkout included, since under TODAY's plain
+#     `pull_request` trigger that already defaults to `refs/pull/N/merge`,
+#     fork-controlled content. This is the condition that catches collapsing
+#     `compute`/`post` back into one job WITHOUT any trigger change.
+#
+# Conditions 3, 4 and 6 are repo-specific and NOT covered by zizmor: the
+# closed audits in `.github/zizmor.yml` are dangerous-triggers, artipacked,
+# unpinned-uses and template-injection, and `rules:` is `{}`. Six comments in
+# pr-overlap.yml (:42, :146, :274, :596, :864, :1204) assert this guard
+# enforces the split; unwiring it while keeping them is precisely the state
+# the stanza was written to prevent.
+# WHY: a write-scoped job checking out fork-controlled code — #3967, #4148, #4183
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "pr-overlap-trust-boundary"
+name = "pr-overlap.yml trust-boundary guard (#3967)"
+entry = "node scripts/check-pr-overlap-trust-boundary.mjs"
+language = "system"
+pass_filenames = false
+files = '^(\.github/workflows/pr-overlap\.yml|scripts/check-pr-overlap-trust-boundary\.mjs)$'
+stages = ["pre-commit"]
+
+# Kept for the same reason `py-guard-file-source-selftest` was kept in this
+# same commit: it is the only thing making criterion 5 (fails CLOSED) true
+# here. The guard's second condition walks pr-overlap.yml's job list looking
+# for checkout steps; if a restructure stops it reaching any, it passes
+# vacuously and silently — a check that inspects nothing passes just as
+# quietly as one that passes. The `--self-test` pins both conditions AND that
+# the second actually REACHES a checkout step in the real file. Two-file
+# trigger, so the cost is a rounding error. It is not exempt from #4556
+# Phase 2 (restage every self-test to CI); it is exempt from Phase 1's
+# delete list.
+# WHY: the trust-boundary guard can pass vacuously if it stops reaching a checkout step — #3967
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "pr-overlap-trust-boundary-selftest"
+name = "pr-overlap.yml trust-boundary guard self-test (#3967 fixtures)"
+entry = "node scripts/check-pr-overlap-trust-boundary.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(\.github/workflows/pr-overlap\.yml|scripts/check-pr-overlap-trust-boundary\.mjs)$'
 stages = ["pre-commit"]
 
 # ─── bench lane coverage (#3362) ──────────────────────────────────

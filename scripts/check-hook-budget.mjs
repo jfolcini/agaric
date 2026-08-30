@@ -27,21 +27,34 @@
 // the number going up, and the commit that does it is the record of why.
 
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-// Cap set 2026-08-30 (#4556) from the post-cleanup count of 155 hooks, plus
+// Cap set 2026-08-30 (#4556) from the post-cleanup count of 156 hooks, plus
 // ~10% headroom. Raising this requires deleting or justifying what it buys.
 const HOOK_CAP = 170
-const CONFIG = 'prek.toml'
+// Anchored on this file's own location, not the cwd: prek invokes hooks from
+// the repo root today, but nothing in the hook contract guarantees it, and the
+// sibling change in this same commit adds the identical anchor to
+// `file-mutation-survivors.mjs` for exactly that reason.
+const CONFIG_PATH = join(import.meta.dirname, '..', 'prek.toml')
+const CONFIG = 'prek.toml' // what the error messages name
 
-const lines = readFileSync(CONFIG, 'utf8').split('\n')
+const lines = readFileSync(CONFIG_PATH, 'utf8').split('\n')
 const SKIP = /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=)/
 const violations = []
 let hooks = 0
 
 for (let i = 0; i < lines.length; i++) {
-  const id = /id = "([^"]+)"/.exec(lines[i])
-  if (!id) continue
-  hooks++
+  // BOTH TOML string forms, and `matchAll` rather than `exec`: keying on the
+  // literal `id = "` alone let a single-quoted id (a TOML literal string,
+  // which `taplo fmt` does NOT rewrite to a basic string) slip past both the
+  // count and the WHY check — an unbudgeted, unexplained hook running on every
+  // commit while this script printed a green line. A silent fail-open is the
+  // one failure mode the no-self-test argument in the header claims this
+  // script cannot have, so it must not have it.
+  const ids = [...lines[i].matchAll(/id = (?:"([^"]+)"|'([^']+)')/g)].map((m) => m[1] ?? m[2])
+  if (ids.length === 0) continue
+  hooks += ids.length
   // Walk up past the stanza headers, then over the contiguous comment block.
   let j = i
   while (j > 0 && SKIP.test(lines[j - 1].trim())) j--
@@ -50,7 +63,11 @@ for (let i = 0; i < lines.length; i++) {
     j--
     if (/^\s*# WHY:/.test(lines[j])) hasWhy = true
   }
-  if (!hasWhy) violations.push(`${CONFIG}:${i + 1}: hook "${id[1]}" has no \`# WHY:\` line`)
+  if (!hasWhy) {
+    for (const id of ids) {
+      violations.push(`${CONFIG}:${i + 1}: hook "${id}" has no \`# WHY:\` line`)
+    }
+  }
 }
 
 let failed = false

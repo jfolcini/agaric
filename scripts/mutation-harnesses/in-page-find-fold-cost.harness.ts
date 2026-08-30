@@ -73,9 +73,11 @@
  *
  * `now` below is a hand-clone of the shipped `foldForMatch`, so it is pinned
  * the way every other harness in this directory pins what it clones. If the
- * real function changes, `scripts/check-mutation-harness-clones.mjs` fails
- * here until this copy is re-synced — which is the point: a cost experiment
- * measuring a stale copy of the code would be worse than no experiment.
+ * real function changes, `scripts/check-mutation-harness-clones.mjs` reports
+ * it here until this copy is re-synced — which is the point: a cost
+ * experiment measuring a stale copy of the code would be worse than no
+ * experiment. #4556 UNWIRED that script from prek.toml, so run it by hand
+ * after touching the source, until #4556 Phase 2 restages it.
  *
  * The `FINAL_SIGMA_RE` clone below is pinned separately (#3953). Both `naive`
  * and `now` close over it, and a pattern-only edit in `matcher.ts` does not

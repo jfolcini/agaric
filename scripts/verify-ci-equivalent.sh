@@ -2699,7 +2699,7 @@ if [ "$HAS_RS" = "0" ]; then
 fi
 # CI/tooling absent → skip the workflow/shell lint hooks.
 if [ "$HAS_CI" = "0" ]; then
-    skip_items+=(actionlint zizmor shellcheck skip-ci-verify-guard)
+    skip_items+=(actionlint zizmor shellcheck)
 fi
 # Docs absent → skip the Markdown/doc hooks.
 if [ "$HAS_DOCS" = "0" ]; then

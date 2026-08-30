@@ -1215,8 +1215,9 @@ jobs:
         # This step fails ONLY on lane liveness — a missing reports root, a
         # module that produced no/invalid `mutation.json`, or a zero total
         # mutant count — never on mutation SCORE, which stays pure triage
-        # signal per the lane's whole design. Its own fixture suite runs as
-        # the `mutation-reports-guard-selftest` prek hook.
+        # signal per the lane's whole design. Its own fixture suite USED to run
+        # as the `mutation-reports-guard-selftest` prek hook; #4556 unwired it,
+        # so it runs nowhere until #4556 Phase 2 restages the self-tests.
         if: always()
         run: node scripts/check-mutation-reports.mjs --reports-dir reports/mutation
 
@@ -1232,7 +1233,9 @@ jobs:
         # and a heredoc can be neither imported nor unit-tested. Its ordering
         # rules (worst module first, survivors grouped per module) and its
         # "cannot fail" property are pinned by that script's own fixture
-        # suite, wired as the `mutation-summary-renderer-selftest` prek hook.
+        # suite, which #4556 unwired from prek.toml (it was the
+        # `mutation-summary-renderer-selftest` hook) and #4556 Phase 2 will
+        # restage into CI. Until then it runs only when invoked by hand.
         if: always()
         run: node scripts/render-mutation-summary.mjs --reports-dir reports/mutation >> "$GITHUB_STEP_SUMMARY"
 
@@ -2234,8 +2237,9 @@ jobs:
         # analogue of `mutants-frontend`'s `Lane-liveness guard (#3330)`.
         # Fails ONLY on whether the lane RAN — never on how many findings it
         # reported, which stays pure triage signal per this lane's design.
-        # Its own fixture suite runs as the `type-aware-liveness-selftest`
-        # prek hook.
+        # (Its fixture suite USED to run as the `type-aware-liveness-selftest`
+        # prek hook; #4556 unwired that hook, so the suite runs nowhere today
+        # until #4556 Phase 2 restages the self-tests into CI.)
         if: always()
         env:
           OXLINT_EXIT: ${{ env.oxlint_exit }}
@@ -2734,8 +2738,9 @@ jobs:
   #   * `needs:` lists EVERY other job in this workflow, including the two
   #     content filers, so a filer that throws (which #3364/#3365 make
   #     possible on purpose) is itself reported here. The
-  #     `scheduled-failure-reporter-selftest` prek hook fails if a job in this
-  #     file is missing from the list below.
+  #     `scheduled-failure-reporter-selftest` prek hook USED to fail if a job
+  #     in this file was missing from the list below; #4556 unwired it, so
+  #     that list is unenforced until #4556 Phase 2 restages the self-tests.
   #   * `if: always()` so a failed/cancelled/skipped upstream lane cannot skip
   #     the reporter — which is the entire point.
   #   * the last step is a deliberately minimal bash fallback that fires when
