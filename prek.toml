@@ -1424,6 +1424,16 @@ pass_filenames = false
 # "self-test: all assertions passed" in its stdout. Keyed on this guard's own
 # file alone, a commit touching only the filer — exactly the commit that can
 # break those two assertions — never ran the hook that checks them.
+#
+# #4556 MADE THAT TRANSITIVE PATH LOAD-BEARING, so do not re-key this hook
+# without reading this first. `mutation-survivors-filer-selftest` was unwired
+# in Phase 1, and the #3667 `DEFAULT_MAX_CHILDREN` derivation assertions
+# (frontend 21 + rust 23 = 44, each half required non-zero in its own right)
+# live in `file-mutation-survivors.mjs --self-test`. The two assertions here
+# are now the ONLY thing that still executes them, and they do it against the
+# real repository through the symlinked `scripts/` dir — which is exactly what
+# gives the derivation its teeth. Narrowing this `files:` pattern, or dropping
+# the filer from it, silently deletes that coverage with everything green.
 files = "^scripts/(check-main-module-detection|file-mutation-survivors)\\.mjs$"
 stages = ["pre-commit"]
 

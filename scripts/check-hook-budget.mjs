@@ -44,7 +44,12 @@ const CONFIG_PATH = join(import.meta.dirname, '..', 'prek.toml')
 const CONFIG = 'prek.toml' // what the error messages name
 
 const lines = readFileSync(CONFIG_PATH, 'utf8').split('\n')
-const SKIP = /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=)/
+// `hooks = [` is in here because a `[[repos]]` stanza can open its hooks as a
+// MULTI-LINE array; without it the walk-up stops on that line and reports a
+// spurious violation naming the first entry. Fails closed, so it misdirects
+// rather than hides — but the first person to hit it would be sent to the
+// wrong place, and that is the corollary about confusing errors.
+const SKIP = /^(\[\[repos(\.hooks)?\]\]|repo\s*=|rev\s*=|hooks\s*=\s*\[)/
 const violations = []
 let hooks = 0
 
@@ -56,7 +61,21 @@ for (let i = 0; i < lines.length; i++) {
   // commit while this script printed a green line. A silent fail-open is the
   // one failure mode the no-self-test argument in the header claims this
   // script cannot have, so it must not have it.
-  const ids = [...lines[i].matchAll(/id = (?:"([^"]+)"|'([^']+)')/g)].map((m) => m[1] ?? m[2])
+  // Skip comment lines outright, require a word boundary before `id`, and
+  // tolerate any spacing around `=`. Hardcoding single spaces was the THIRD
+  // silent fail-open found in this one script: `id  = "x"` and `id="x"` are
+  // both valid TOML and were neither counted nor WHY-checked, while the
+  // script printed a green line. `taplo fmt --check` normalises the spacing
+  // today, but that is another hook's property, not this one's, and the
+  // header claims this script cannot fail open silently.
+  // Without the first, a commented-out stanza (`# id = "foo"`) counts against
+  // the cap and can emit a spurious WHY violation — the population becoming
+  // sensitive to PROSE, in a file that is mostly prose. Without the second,
+  // any key ending in `id` (`uuid = "…"`, `build_id = "…"`) counts as a hook.
+  // Both directions fail CLOSED, so neither is a hole; both make the number
+  // mean something other than "hooks", and the number is the entire point.
+  if (lines[i].trimStart().startsWith('#')) continue
+  const ids = [...lines[i].matchAll(/\bid\s*=\s*(?:"([^"]+)"|'([^']+)')/g)].map((m) => m[1] ?? m[2])
   if (ids.length === 0) continue
   hooks += ids.length
   // ONE id per line, because the `# WHY:` walk below is per-LINE: two inline

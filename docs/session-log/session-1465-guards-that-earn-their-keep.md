@@ -144,3 +144,32 @@ fallback pinned to a number that will move.
 
 That is the same failure #4556 is about, one level up: a confident claim from
 something that could not see what it was claiming about.
+
+## The coverage window Phase 1 opens, stated so Phase 2 can close it
+
+27 hooks now run nowhere. Twenty-four are self-tests, which is the whole point
+of Phase 2 — they move to `manual` and run in CI. **Three are guards, not
+self-tests**, and are the part of this window worth naming:
+
+- `mutation-harness-clones` — harness source-pin drift. Six
+  `scripts/mutation-harnesses/*.harness.ts` files hand-clone production
+  functions; nothing now fails when the source moves out from under them.
+- `hook-deps` — a hook's `files:` pattern missing one of its own dependencies.
+  This is the `#3993`/`#3997` shape: a guard defanged by editing the file it
+  loads, without tripping the pattern that selects it.
+- `skip-ci-verify-guard` — rejection of the `SKIP_CI_VERIFY=1` bypass.
+
+Every one of those sites is annotated in-tree in the PAST tense, which is the
+handling this whole session argues for: a claim that has stopped being true is
+worse than no claim. But annotation is not coverage, and until Phase 2 restages
+them the window is real. Phase 2 should restage these three FIRST, ahead of the
+self-tests, because a self-test not running is a guard unproven while a guard
+not running is an invariant unenforced.
+
+One more thing Phase 2 must not do. `main-module-detection-selftest` executes
+`file-mutation-survivors.mjs --self-test` transitively, and with
+`mutation-survivors-filer-selftest` unwired that is now the ONLY path running
+the #3667 derivation assertions — against the real repository, which is what
+gives them teeth. Re-keying that hook's `files:` pattern deletes the coverage
+with everything green. Recorded in the stanza itself as well as here, because
+one of those two will be read and I cannot predict which.

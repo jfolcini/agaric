@@ -348,6 +348,12 @@ async function countRustAreaFiles() {
   const examine = tomlStringArray(config, 'examine_globs')
   const exclude = tomlStringArray(config, 'exclude_globs')
   const files = new Set()
+  // Mirrors `check-mutants-scope.mjs`'s guard around the same globSync. Both
+  // paths already degrade correctly without it (throw -> caught -> fallback,
+  // or empty -> isUsableCount(0) false -> fallback), but the block comment
+  // above calls this logic shared, and two copies that differ are how a
+  // shared-logic claim stops being true.
+  if (!existsSync(MUTANTS_WORKSPACE_DIR)) return 0
   for (const glob of examine) {
     for (const path of globSync(glob, { cwd: MUTANTS_WORKSPACE_DIR })) {
       if (!path.endsWith('.rs')) continue
@@ -1166,7 +1172,11 @@ export function decideChildActions({
   const creates = actions.filter((a) => a.action === 'create').length
   if (creates > maxChildren) {
     throw new Error(
-      `refusing to open ${creates} child issues in one run (cap: ${maxChildren}). The ${maxChildrenIsFallback ? 'area universe could not be derived, so the cap is FALLBACK_MAX_CHILDREN =' : 'derived area universe of both lanes is'} ${DEFAULT_MAX_CHILDREN} (see DEFAULT_MAX_CHILDREN), so a batch this large means survivorArea() is fragmenting rather than grouping — check the survivor id shapes before raising --max-children.`,
+      `refusing to open ${creates} child issues in one run (cap: ${maxChildren}). ${
+        maxChildrenIsFallback
+          ? `The area universe could not be derived, so DEFAULT_MAX_CHILDREN fell back to FALLBACK_MAX_CHILDREN = ${DEFAULT_MAX_CHILDREN}`
+          : `DEFAULT_MAX_CHILDREN is the derived area universe of both lanes, ${DEFAULT_MAX_CHILDREN}`
+      }, so a batch this large means survivorArea() is fragmenting rather than grouping — check the survivor id shapes before raising --max-children.`,
     )
   }
   return actions.toSorted((a, b) => a.area.localeCompare(b.area))
