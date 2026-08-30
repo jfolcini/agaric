@@ -108,7 +108,7 @@ export function resolveDiffBase({
   // the same fallback with the same limitation.
   if (!remoteRefExists()) {
     try {
-      git('fetch', '--no-tags', 'origin', baseRef)
+      git('fetch', '--no-tags', 'origin', '--', baseRef)
     } catch (err) {
       throw new Error(
         `resolveDiffBase: '${remoteRef}' is not present locally and ` +
@@ -128,9 +128,14 @@ export function resolveDiffBase({
     mergeBase = git('merge-base', remoteRef, head).trim()
   } catch (err) {
     throw new Error(
-      `resolveDiffBase: \`git merge-base ${remoteRef} ${head}\` failed — '${head}' and ` +
-        `'${remoteRef}' share no common ancestor in this checkout (a shallow fetch, or genuinely ` +
-        `unrelated histories): ${err.message}`,
+      // Deliberately does NOT assert a cause. The same catch fires for "no
+      // common ancestor" (a shallow fetch, or genuinely unrelated histories)
+      // AND for a bad revision, and naming only the first would misdiagnose
+      // the second — git's own stderr, appended below, is what actually
+      // distinguishes them.
+      `resolveDiffBase: \`git merge-base ${remoteRef} ${head}\` failed. Either the two ` +
+        `share no common ancestor in this checkout (a shallow fetch, or genuinely unrelated ` +
+        `histories), or one of them is not a valid revision here. git said: ${err.message}`,
     )
   }
   if (!SHA_RE.test(mergeBase)) {
