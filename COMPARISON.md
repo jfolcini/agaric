@@ -60,8 +60,12 @@ property type, publishing with password-protected pages, a recycle bin, multi-ta
 hourly automated backups, and an FSRS flashcard rewrite. 2,257 commits in six months across 46
 authors.
 
-Agaric, over the same window: **one `feat` commit**. Of the 75 commits in the current history
-window, 40 are `fix`, 12 `docs`, 7 `refactor`, 7 `ci`, 6 `test`, 1 `perf`, 1 `feat`. The last ~460
+Agaric, over the same window: **one `feat` commit**. Of the 76 commits reachable from `main` in
+this (shallow) checkout, 40 are `fix`, 13 `docs`, 7 `refactor`, 7 `ci`, 6 `test`, 1 `chore`, 1
+`perf`, 1 `feat` — recount with
+`git log --pretty=%s | grep -oE '^[a-z]+' | sort | uniq -c | sort -rn`. The window is the clone's
+depth, not a fixed date range, so the absolute count moves between checkouts; the *shape* is the
+finding. The last ~460
 session logs are guards, fuzzers, mutation harnesses, review follow-ups and guards that check other
 guards. The open backlog (130 issues) contains almost no product work — it is dominated by
 `mutation-harness clone pins`, `session-log numbering`, `guards that fail open`, and sync
@@ -83,7 +87,10 @@ as a working capability; no query surface consumes it. It rated multi-device syn
 unverified**.
 
 A comparison document that overstates its own side is worse than no document, because it is used
-to decide what to build next. [Part 10](#part-10-corrections-log) lists all 30 corrections.
+to decide what to build next. [Part 10](#part-10-corrections-log) tabulates 24 of the 30 corrections (15 false, 9
+overstated); the remaining six are the false documentation claims in
+[Part 5](#part-5-agarics-self-inflicted-problems), which are defects in `docs/features/*`
+rather than in this document.
 
 ---
 
@@ -208,7 +215,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is now behind, not ahea
 | Property display control | 2.0: UI position (row / start / under / end), hide-by-default, hide-empty | Fixed: PropertyChip (max 3) + drawer | Gap |
 | Constrained references | 2.0: a Node property can be constrained to nodes carrying a given tag | `ref` type accepts any page | Partial |
 | Bidirectional properties | 2.0: reverse lists surface on the target automatically | **Absent** | Gap |
-| Built-in properties | ~15 editable + ~8 hidden | 18 seeded (`status`, `due`, `url`, `todo_state`, `priority`, `due_date`, `scheduled_date`, `created_at`, `completed_at`, `effort`, `assignee`, `location`, `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`, `repeat-origin`, `listStyle`) | Done |
+| Built-in properties | ~15 editable + ~8 hidden | 20 seeded (`status`, `due`, `url`, `todo_state`, `priority`, `due_date`, `scheduled_date`, `created_at`, `completed_at`, `effort`, `assignee`, `location`, `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`, `repeat-origin`, `space`, `is_space`, `listStyle`) — `space` and `is_space` (`src-tauri/migrations/0035_spaces.sql:5-7`) are internal markers, but they are seeded rows like the rest | Done |
 | Property-based queries | Simple `(property k v)` + full Datalog | Typed predicates with 10 operators in the engine — **4 of them, Text-only, in the UI** | Partial |
 
 ### 6. Tags
@@ -219,7 +226,7 @@ Logseq 2.0 turned this into its strongest domain. Agaric is now behind, not ahea
 | Tags as pages | Yes. **2.0: tags are classes/supertags** — properties defined on a tag are inherited by every tagged node, and edits propagate live | Tags and pages are separate `block_type` values, separate namespaces | Design choice |
 | Tag hierarchy | OG: `/` naming. **2.0: `Extends`, with multiple inheritance and a tag tree** | Prefix convention (`work/meeting`) matched with `LIKE` | Partial |
 | Boolean tag queries | Via query DSL | `TagExpr` with Tag/Prefix/And/Or/Not, depth-gated, compiled to one pushed-down id-set subquery | Better |
-| Tag inheritance in queries | 2.0: inherited class properties are queryable | **Dead.** `block_tag_inherited` is materialized, incrementally maintained across 5 propagation paths, and has a rebuild job — and **no query surface reads it**. `include_inherited` defaults to `false` and every caller passes `null`; the shared filter vocabulary has no inherited-tag path at all. Inherited tags are *displayed* on a block and nothing more | **Dead** |
+| Tag inheritance in queries | 2.0: inherited class properties are queryable | **Unreachable.** `block_tag_inherited` is materialized, incrementally maintained across 5 propagation paths, and has a rebuild job. The resolver does read it — `src-tauri/agaric-store/src/tag_query/resolve.rs:35,123` branches on `include_inherited` — but **no production caller ever enables it**: `src/lib/tauri/queries.ts:240` coerces to `false`, and the Rust commands default `None` to `false` (`src-tauri/src/commands/tags.rs:549,599`). Only tests pass anything else. The shared filter vocabulary has no inherited-tag path at all. Inherited tags are *displayed* on a block and nothing more | **Dead** |
 | Tag usage counts | Shown in UIs | `tags_cache.usage_count` | Done |
 
 ### 7. Query System
@@ -430,7 +437,7 @@ a project whose stated aim is superiority, these are the cheapest wins available
 
 | Thing | Cost paid | Benefit collected |
 | --- | --- | --- |
-| **`block_tag_inherited`** | A materialized table, five incremental propagation paths across 7 op types, a background rebuild job, and a documented invariant | **Zero.** No query surface reads it. `include_inherited` defaults to `false`; every caller passes `null`. Inherited tags are displayed on a block and nothing else |
+| **`block_tag_inherited`** | A materialized table, five incremental propagation paths across 7 op types, a background rebuild job, and a documented invariant | **Zero in production.** The read path exists and is exercised only by tests: `src-tauri/agaric-store/src/tag_query/resolve.rs:35,123` branches on `include_inherited`, but `src/lib/tauri/queries.ts:240` coerces it to `false` and the commands default `None` to `false` (`src-tauri/src/commands/tags.rs:549,599`), so no production call ever sets it true. Inherited tags are displayed on a block and nothing else |
 | **`listStyle` block-level lists** | A full read pipeline: property → `ListMarkerContext` → `computeListOrdinals` → `ListMarker`, plus a ProseMirror decoration | **Zero.** `setListStyle` and `clearListStyle` have **no production callers**. Slash commands still write a `1.` or `-` markdown prefix, so the app carries two competing list models and pays for both |
 | **Advanced query engine depth** | 10 property operators, 4 value types, 7 group keys, property aggregates | Partial. The builder exposes **4 operators, Text only, 5 group keys, column-only aggregates**. The rest is reachable only by hand-editing saved-view JSON |
 | **The notification subsystem** | OS plumbing on three platforms, a settings tab, a permission flow | **Zero reminders.** The only production caller is the "send test notification" button |
@@ -468,7 +475,8 @@ These mislead the next audit — and misled this document's previous revision:
   50-op batch) and is gated out of the default run.
 - **The main block editor is not virtualized.** Virtualization exists in Trash, History, Agenda,
   backlinks and the emoji picker — not in the surface where a user types.
-- **Accessibility depth is uneven**: 596 axe assertions across 283 unit test files is genuinely
+- **Accessibility depth is uneven**: 597 `toHaveNoViolations` assertions across 284 files under
+  `src/` (`grep -rho toHaveNoViolations src | wc -l`, `grep -rl … | wc -l`) is genuinely
   strong, but only **4 of 110** end-to-end specs run axe in a real browser, and there is no
   skip-link anywhere.
 
@@ -545,7 +553,7 @@ status called out separately rather than deducted twice.
 
 | Category | Logseq OG (frozen) | Logseq 2.0 (beta) | Agaric | Change vs. previous revision |
 | --- | :---: | :---: | :---: | --- |
-| Block CRUD | 9 | 9 | 9 | — |
+| Block CRUD | 9 | 9 | 9 | −1 (rescale — Logseq also 10→9; relative standing unchanged) |
 | Page management | 9 | 9 | 8 | −1 (no per-block backlinks) |
 | Editor formatting | 8 | 8 | 8 | −1 (markdown subset, lossy round-trip) |
 | Linking system | 10 | 9 | **5** | **−3** (no embeds, thinner refs, no link kinds) |
@@ -687,7 +695,8 @@ What this revision changes about the previous one. Grouped by severity.
 | "Cursor pagination everywhere" | The main block editor is not virtualized |
 | Spaces include "sync-scope" | A session syncs every space; there is no selective sync |
 | "~15,000+ tests: ~3,000 Rust + ~12,000 frontend across ~550 files" | Undercount: **6,284 Rust test functions**, 793 frontend test files, 110 Playwright specs, ~905 test files total |
-| "axe a11y tests on 100+ components" | 596 assertions across 283 files — but only 4 of 110 e2e specs run axe in a browser |
+| "axe a11y tests on 100+ components" | 597 `toHaveNoViolations` assertions across 284 files under `src/` — but only 4 of 110 e2e specs run axe in a browser |
+| Previous "Extras" row (Logseq 9 / Agaric 3) | Retired, not rescored. Its contents split between "Extensibility / ecosystem" (new) and rows that already covered them. Those 3 Agaric points are part of the 154→134 arithmetic and do not correspond to any capability loss |
 
 ### Claims that were understated
 
@@ -714,7 +723,7 @@ packages DB-compatible.
 (v0.9.9) on 2026-08-30, each required to cite `file:line` evidence and to flag doc claims it could
 not confirm in code. Test and coverage counts were recomputed rather than carried forward; the
 counting commands are recorded in the audit notes. One methodological caveat: the working checkout
-is a **shallow clone** (75 commits, all dated 2026-08-26 onward), so "what shipped since the last
+is a **shallow clone** (76 commits, all dated 2026-08-26 onward), so "what shipped since the last
 review" was reconstructed from session logs and in-code issue references rather than from
 `git log`.
 
