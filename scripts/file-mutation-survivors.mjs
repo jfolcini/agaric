@@ -263,7 +263,7 @@ export const MAX_TITLE_CHARS = 256
 //             a `Set` since globs can overlap) — reused from there rather
 //             than reimplemented here.
 //
-//             ONE DELIBERATE DIVERGENCE, stated because the two counts
+//             TWO DELIBERATE DIVERGENCES, stated because the two counts
 //             agreeing today (both 23) is not the same as them being the
 //             same computation: that guard additionally drops files that
 //             exist but sit OUTSIDE the packages the lane examines
@@ -276,7 +276,16 @@ export const MAX_TITLE_CHARS = 256
 //             count and over-counting fails safe, whereas that guard wants
 //             the true mutable surface; but this is the axis on which the
 //             two copies can drift, so it is named rather than left to be
-//             re-discovered. That reuse is a LAZY `import()`
+//             re-discovered.
+//
+//             SECOND: this dedupes across globs in a `Set`, while that guard
+//             sums `live.length - unreachable.length` PER GLOB with no dedup.
+//             Overlapping `examine_globs` entries therefore count once here
+//             and twice there. The `Set` is right for a per-FILE area count
+//             — the cap is a count of areas, and an area is a file — but the
+//             two numbers can differ for that reason alone, and an earlier
+//             version of this comment claimed to enumerate the divergences
+//             while naming only the first. That reuse is a LAZY `import()`
 //             inside `countRustAreaFiles`, never a top-level one: the #3373
 //             `main-module-detection` assertions copy THIS FILE ALONE to a
 //             detached path and run `--self-test` there, and a static
@@ -314,7 +323,6 @@ export const MAX_TITLE_CHARS = 256
 // without saying so is the bug, not the fix.
 const REPO_ROOT = resolve(import.meta.dirname, '..')
 const MUTANTS_TOML_PATH = resolve(REPO_ROOT, 'src-tauri/.cargo/mutants.toml')
-const MUTANTS_WORKSPACE_DIR = resolve(REPO_ROOT, 'src-tauri')
 const STRYKER_MODULES_PATH = resolve(REPO_ROOT, 'stryker.modules.mjs')
 
 // Named fallback, used ONLY when the derivation cannot run. Deliberately
@@ -358,14 +366,19 @@ function warnDerivationFailed(reason) {
  * on purpose — see the block comment above.
  */
 async function countRustAreaFiles() {
-  const { globMatches, tomlStringArray } = await import('./check-mutants-scope.mjs')
+  // WORKSPACE_DIR comes from the SIBLING, not a local copy. Both files must
+  // agree on where the mutation workspace lives, and nothing compares two
+  // duplicated literals — it is a drift axis the self-test below explicitly
+  // cannot catch, so it is removed rather than documented (#4557 review).
+  const { globMatches, tomlStringArray, WORKSPACE_DIR } = await import('./check-mutants-scope.mjs')
+  const workspaceDir = resolve(REPO_ROOT, WORKSPACE_DIR)
   const config = readFileSync(MUTANTS_TOML_PATH, 'utf8')
   const examine = tomlStringArray(config, 'examine_globs')
   const exclude = tomlStringArray(config, 'exclude_globs')
   const files = new Set()
   // UNREACHABLE, deliberately kept, and labelled as such rather than left to
   // read as live protection. `MUTANTS_TOML_PATH` is
-  // `src-tauri/.cargo/mutants.toml` — strictly INSIDE `MUTANTS_WORKSPACE_DIR`
+  // `src-tauri/.cargo/mutants.toml` — strictly INSIDE the workspace dir
   // — and the `readFileSync` above runs first, so a missing workspace already
   // throws ENOENT there and the caller's warning already names that as the
   // reason. This branch cannot fire while those two paths keep that
@@ -377,11 +390,11 @@ async function countRustAreaFiles() {
   // names the missing directory instead of landing on the caller's
   // "examine_globs matched no .rs file" arm, which would point a triager at
   // globs in a workspace that is not there.
-  if (!existsSync(MUTANTS_WORKSPACE_DIR)) {
-    throw new Error(`workspace directory ${MUTANTS_WORKSPACE_DIR} does not exist`)
+  if (!existsSync(workspaceDir)) {
+    throw new Error(`workspace directory ${workspaceDir} does not exist`)
   }
   for (const glob of examine) {
-    for (const path of globSync(glob, { cwd: MUTANTS_WORKSPACE_DIR })) {
+    for (const path of globSync(glob, { cwd: workspaceDir })) {
       if (!path.endsWith('.rs')) continue
       if (exclude.some((e) => globMatches(e, path))) continue
       files.add(path)
@@ -4492,11 +4505,11 @@ function selfTestReanchorNoteCannotParseBack({ ok, fail }) {
  *
  * That independence has a KNOWN LIMIT, and the non-zero checks below exist
  * because of it. The two sides duplicate the enumeration, but they share
- * `MUTANTS_TOML_PATH`, `MUTANTS_WORKSPACE_DIR`, and the `tomlStringArray` /
+ * `MUTANTS_TOML_PATH`, the workspace root, and the `tomlStringArray` /
  * `globMatches` / `globSync` semantics — so a change to any of THOSE moves
  * both sides together and cannot be caught by comparing them. Measured:
  * dropping the `exclude_globs` filter from `countRustAreaFiles` alone
- * reddens this (44 vs 54), but repointing `MUTANTS_WORKSPACE_DIR` at the
+ * reddens this (44 vs 54), but repointing the workspace root at the
  * repo root left it green at `frontend 21 + rust 0 = 21`. The half-is-zero
  * assertions are what close that class, since every shared-surface break
  * found so far collapses a half to zero rather than perturbing it.
@@ -4522,15 +4535,17 @@ async function selfTestDefaultMaxChildren({ ok, fail }) {
   let frontendCount
   let rustCount
   try {
-    const { globMatches, tomlStringArray } = await import('./check-mutants-scope.mjs')
+    const { globMatches, tomlStringArray, WORKSPACE_DIR } =
+      await import('./check-mutants-scope.mjs')
     const { MODULE_NAMES } = await import('../stryker.modules.mjs')
+    const workspaceDir = resolve(REPO_ROOT, WORKSPACE_DIR)
     frontendCount = MODULE_NAMES.length
     const config = readFileSync(MUTANTS_TOML_PATH, 'utf8')
     const examine = tomlStringArray(config, 'examine_globs')
     const exclude = tomlStringArray(config, 'exclude_globs')
     const files = new Set()
     for (const glob of examine) {
-      for (const path of globSync(glob, { cwd: MUTANTS_WORKSPACE_DIR })) {
+      for (const path of globSync(glob, { cwd: workspaceDir })) {
         if (path.endsWith('.rs') && !exclude.some((e) => globMatches(e, path))) files.add(path)
       }
     }
@@ -4545,10 +4560,10 @@ async function selfTestDefaultMaxChildren({ ok, fail }) {
 
   // Each half must be non-zero IN ITS OWN RIGHT. Without this, the two
   // failure modes that break BOTH sides identically pass green: an empty or
-  // renamed `examine_globs`, and a wrong `MUTANTS_WORKSPACE_DIR` (both sides
+  // renamed `examine_globs`, and a wrong workspace root (both sides
   // share that constant). Either one yields `rust 0`, and `21 === 21` agrees
   // itself into a silently halved cap. Measured: pointing
-  // `MUTANTS_WORKSPACE_DIR` at the repo root instead of `src-tauri/` used to
+  // the workspace root at the repo root instead of `src-tauri/` used to
   // leave this assertion green at `frontend 21 + rust 0 = 21`.
   if (frontendCount <= 0) {
     fail(name, `the frontend half derived to ${frontendCount} — stryker.modules.mjs enrols nothing`)
@@ -4557,7 +4572,7 @@ async function selfTestDefaultMaxChildren({ ok, fail }) {
   if (rustCount <= 0) {
     fail(
       name,
-      `the rust half derived to ${rustCount} — examine_globs matched no non-excluded .rs file under ${MUTANTS_WORKSPACE_DIR}`,
+      `the rust half derived to ${rustCount} — examine_globs matched no non-excluded .rs file under ${workspaceDir}`,
     )
     return
   }
