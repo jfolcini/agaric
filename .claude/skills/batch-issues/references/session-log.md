@@ -38,7 +38,12 @@ The `session-log-numbering` pre-commit guard (`prek.toml`) enforces both checks 
 commit time.
 
 `<slug>` is a short kebab-case derivation of the title. **One file per session, never
-appended to.** See `docs/session-log/README.md` for naming + discovery conventions.
+appended to once merged** — a correction to a merged log goes in the *new* session's
+log as a back-reference ("session-1430 said X; it was wrong because Y"), never an edit,
+rename or deletion of the old file. The `session-log-immutable` pre-commit guard
+(`prek.toml`) fails a commit that stages any of the three against a file already in the
+merge target. See `docs/session-log/README.md` for naming + discovery conventions and
+why the log is append-only.
 
 ## Session log format
 
