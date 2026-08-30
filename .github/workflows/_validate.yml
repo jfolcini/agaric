@@ -759,6 +759,28 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Script unit tests (node:test)
+        # Lives in `lint`, not `vitest` (#4544). `lint` is gated on
+        # `docs_only != 'true'`, needs no frontend build to run a node:test
+        # file, and does not depend on a fail-closed SIDE EFFECT holding.
+        #
+        # That last clause is the subtle one, and the reason not to "simplify"
+        # this into `vitest`: a scripts-only PR does reach `vitest` today, but
+        # only by accident. `scripts/*.mjs` matches none of `detect-changes`'
+        # three category regexes (`.mjs` does not satisfy frontend_re's
+        # `\.(ts|tsx|js|jsx|css)$` — the character before `js` is `m`), so it
+        # is an UNRECOGNIZED non-docs path and hits the fail-closed branch
+        # above, which pins frontend=backend=ci=true. Move the test there and
+        # it runs on an unrecognized-path fallback — which stops holding the
+        # day someone adds `\.mjs$` to frontend_re.
+        #
+        # Named explicitly rather than globbed: a glob here would silently
+        # adopt every future `scripts/*.test.mjs` into this job, including
+        # ones needing a toolchain it does not install. Adding a line is the
+        # deliberate act; the cost of forgetting is a test that runs nowhere,
+        # which is the defect class #4544 itself is about.
+        run: node --test scripts/pr-diff-base.test.mjs
+
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; rejects packages whose registry-side Sigstore
         # provenance attestation is missing or invalid. Catches the
@@ -1050,12 +1072,29 @@ jobs:
         # Checkout above uses fetch-depth: 0, so the base sha resolves.
         env:
           EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            base="$PR_BASE_SHA"
+            # NOT `github.event.pull_request.base.sha` (#4544). That is the
+            # base tip as of the TRIGGERING EVENT, and HEAD here is
+            # `refs/pull/N/merge`, which GitHub regenerates against main's
+            # current tip — so `merge-base(base.sha, HEAD) == base.sha` and
+            # the range below widens to include other people's merges as main
+            # advances, blaming this PR for a migration it never touched.
+            # Same defect this PR fixes in the mutation lane; same fix.
+            #
+            # NO `|| true` here, and it is not an oversight. Under the old
+            # code `base` was `$PR_BASE_SHA`, always non-empty on a
+            # `pull_request` event, so the skip guard below was reachable only
+            # on push/tag. Swallowing a resolver failure would make this
+            # append-only backstop skip SILENTLY on a PR while the job stays
+            # green: a fail-open, in a step whose entire purpose is to catch a
+            # `--no-verify` bypass that would otherwise be permanent. `set -e`
+            # fails the step instead. The skip guard below still covers the
+            # push/tag arm, which is the case it was written for.
+            base="$(node scripts/pr-diff-base.mjs --base-ref "$PR_BASE_REF")"
           else
             base="$PUSH_BEFORE"
           fi
