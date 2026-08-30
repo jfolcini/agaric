@@ -24,6 +24,18 @@
 // branch checked out via a narrower fetch), this falls back to fetching it
 // by name.
 //
+// ─── Where `base.sha` is CORRECT, and must be left alone ───────────────
+//
+// Not every `github.event.pull_request.base.sha` reader has this bug, and
+// "fixing" the ones that don't would introduce a real one. The defect needs
+// BOTH halves: `base.sha` AND a diff against the merge ref. The
+// `detect-changes` steps in `_validate.yml` and `ci.yml` diff
+// `base.sha...head.sha` — the PR BRANCH tip, not `refs/pull/N/merge` — and
+// the merge base of a base-branch tip with the branch tip IS the true fork
+// point, regardless of how far the base branch has since advanced. Those
+// are correct as they stand. Check which right-hand side a call site uses
+// before assuming it shares this defect.
+//
 // A base that fails to resolve throws rather than falling through to an
 // empty diff — a silent "this PR touches no module" is indistinguishable
 // from the truthful one, and the caller (the workflow step) turns that
@@ -43,7 +55,10 @@ import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import process from 'node:process'
 
-const SHA_RE = /^[0-9a-f]{40}$/i
+// 40 hex for SHA-1, optionally 24 more for a SHA-256 object-format repo.
+// Hard-coding 40 would throw "unexpected value" on a perfectly correct
+// merge base there, turning a supported repo layout into a hard failure.
+const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i
 
 /**
  * Resolve the merge base between `head` and `origin/<baseRef>`, fetching the
@@ -176,7 +191,15 @@ if (isMainModule) {
     // annotates only the first line and drops the git stderr that explains
     // the failure into plain log text. `%0A` is the documented escape for a
     // newline inside an annotation, which keeps the whole message together.
-    console.error(`::error::${String(err.message).replace(/\r?\n/g, '%0A')}`)
+    // GitHub's escaping order matters: `%` -> `%25` MUST come first, or the
+    // `%` introduced by the CR/LF escapes below would itself be re-escaped.
+    // A git error naming a path containing a literal `%` would otherwise
+    // mangle the annotation — the same failure the newline escape prevents.
+    const annotated = String(err.message)
+      .replace(/%/g, '%25')
+      .replace(/\r/g, '%0D')
+      .replace(/\n/g, '%0A')
+    console.error(`::error::${annotated}`)
     process.exit(
       err instanceof Error && /^unknown argument|^missing required/.test(err.message) ? 2 : 1,
     )

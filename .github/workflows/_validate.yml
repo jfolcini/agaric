@@ -1078,10 +1078,17 @@ jobs:
             # advances, blaming this PR for a migration it never touched.
             # Same defect this PR fixes in the mutation lane; same fix.
             #
-            # `|| true` keeps the existing semantics exactly: an unresolvable
-            # base still falls through to the skip guard below rather than
-            # failing the job, which is what this backstop did before.
-            base="$(node scripts/pr-diff-base.mjs --base-ref "$PR_BASE_REF" || true)"
+            # NO `|| true`. An earlier revision had one, with a comment
+            # claiming it "keeps the existing semantics exactly" — it did not.
+            # Under the old code `base` was `$PR_BASE_SHA`, always non-empty on
+            # a `pull_request` event, so the skip guard below was reachable
+            # only on push/tag. Swallowing a resolver failure would have made
+            # this append-only backstop skip SILENTLY on a PR while the job
+            # stayed green: a fail-open, in a step whose entire purpose is to
+            # catch a `--no-verify` bypass that would otherwise be permanent.
+            # `set -e` fails the step instead. The skip guard below still
+            # covers the push/tag arm, which is the case it was written for.
+            base="$(node scripts/pr-diff-base.mjs --base-ref "$PR_BASE_REF")"
           else
             base="$PUSH_BEFORE"
           fi

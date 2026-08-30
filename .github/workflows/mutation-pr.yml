@@ -71,6 +71,10 @@ on:
       - 'scripts/run-mutation.mjs'
       - 'scripts/select-mutation-modules.mjs'
       - 'scripts/render-mutation-summary.mjs'
+      # The base resolver feeds this lane's "changed source file(s)" set, so a
+      # change to it must start the lane it feeds (#4544). Omitting it is the
+      # same "it would have run nowhere" class this lane's own fix is about.
+      - 'scripts/pr-diff-base.mjs'
       - '.github/workflows/mutation-pr.yml'
 
 concurrency:
