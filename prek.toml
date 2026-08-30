@@ -1662,7 +1662,8 @@ pass_filenames = false
 files = "^(docs/session-log/session-.*\\.md|scripts/lib/git-scratch-guard\\.sh)$"
 stages = ["pre-commit"]
 # `verbose = true` is load-bearing, the same way it is for
-# `check-doc-code-paths` above and `commit-sentinel` below: prek swallows a
+# `check-doc-code-paths` above (and for `commit-sentinel`, which #4556
+# unwired — see this file's header): prek swallows a
 # PASSING hook's stdout (verified against prek 0.3.8 — without this line
 # the run prints only `session-log numbering guard...Passed`, with it the
 # guard's own line follows). BOTH of this guard's report lines — "checking
@@ -2406,6 +2407,20 @@ stages = ["pre-commit", "pre-push"]
 # `--all`: without it, `cargo fmt` formats only the root `agaric` package
 # and skips the `agaric-diagnostics` member (same blind spot `cargo clippy`
 # had without `--workspace`). `--all` formats every workspace member.
+# KNOWN GAP surfaced by #3997's sweep (deliberately deferred, not fixed
+# here; carried through #4556's relocation of this stanza so the next sweep
+# does not have to re-discover it): `scripts/check-table-ownership.py` is NOT
+# in this hook's `files:` and its fixture suite does not exercise it, even
+# though it is now a real dependency of `check-op-log-delete.py` (which loads
+# it via `importlib` for `strip_comments_keep_strings`) — the SAME
+# shared-python-guard-library shape this suite exists to falsify. It is
+# correctly absent from THIS particular list, though: `check-table-ownership.py`
+# does not consume `guard_file_source.py` (confirmed — it has no
+# `guard_file_source` import at all), so this suite's own subject
+# (staged-vs-working-tree behaviour) does not apply to it. Extending
+# `test-py-guard-file-source.sh` (a ~1400-line fixture suite) to also cover
+# `check-op-log-delete.py`'s dependency on `check-table-ownership.py` is out
+# of scope for a `files:` regex fix.
 # WHY: guard_file_source.py is the index-vs-working-tree resolver that five
 # KEEP-list guards load; with its exists() defanged they return rc=0 on a
 # REAL .rs file, and this suite is the only thing that catches it — #4017
