@@ -82,7 +82,8 @@ very likely where the previous revision's block-ref claims came from.
 
 ## Method notes
 
-- The working checkout is a **shallow clone** (76 commits, all dated 2026-08-26 onward),
+- The working checkout is a **shallow clone** (75 commits reachable from `12a4cab`, all dated
+  2026-08-26 onward),
   so `git log --since` is useless for "what shipped since the last review". Every audit
   hit this independently and fell back to session logs and in-code issue references.
 - Test counts were recomputed rather than carried forward: **6,284** Rust test functions,

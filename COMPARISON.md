@@ -60,17 +60,23 @@ property type, publishing with password-protected pages, a recycle bin, multi-ta
 hourly automated backups, and an FSRS flashcard rewrite. 2,257 commits in six months across 46
 authors.
 
-Agaric, over the same window: **one `feat` commit**. Of the 76 commits from `0fadcb2`
-(2026-08-26) to `12a4cab` (2026-08-30), 40 are `fix`, 13 `docs`, 7 `refactor`, 7 `ci`, 6 `test`,
-1 `chore`, 1 `perf`, 1 `feat` — recount in a full clone with
-`git log --pretty=%s 0fadcb2..12a4cab | grep -oE '^[a-z]+' | sort | uniq -c | sort -rn`. The
-window is five days, not six months, because that is the checkout depth the audit had; it is
-anchored to those two commits so the figure is checkable rather than asserted. The *shape*, not
-the absolute count, is the finding — and five days at one `feat` is the same shape as six months
-at one `feat` only if the pattern holds, which the ~460 session logs below suggest it does. The last ~460
-session logs are guards, fuzzers, mutation harnesses, review follow-ups and guards that check other
-guards. The open backlog (130 issues) contains almost no product work — it is dominated by
-`mutation-harness clone pins`, `session-log numbering`, `guards that fail open`, and sync
+Agaric, over a **five-day** window — not the same window, and the comparison is weaker for it:
+**one `feat` commit**. Of the 75 commits reachable from `12a4cab` (2026-08-26 to 2026-08-30), 40
+are `fix`, 12 `docs`, 7 `refactor`, 7 `ci`, 6 `test`, 1 `perf`, 1 `chore`, and 1 `feat` — the
+oldest commit in the window, `0fadcb2`. Recount with
+`git log --pretty=%s 12a4cab | grep -oE '^[a-z]+' | sort | uniq -c | sort -rn`; the total is
+`git rev-list --count 12a4cab`. Do **not** use a `0fadcb2..12a4cab` range: `..` excludes its left
+endpoint, which is the only `feat`, so the range returns 74 commits and zero features. The window
+is the audit checkout's depth, so five days is what was measurable, not a chosen period. Five days
+at one `feat` only means what six months at one `feat` would if the pattern holds; the evidence
+for that is the backlog composition and the session-log subject matter below, not this census. The session logs tell the
+same story, though less precisely than an earlier draft of this document claimed: `docs/session-log/`
+holds **763** entries, of which **108** name a guard, harness, mutation, fuzz, lint, pin, ratchet or
+CI concern in the filename alone — 46 of the most recent 200. Filenames undercount (a log titled
+"approving-review-followups" is guard work by another name), so read that as a floor, not a measure;
+an earlier draft published "~460" with no derivation and it is not reproducible by any method here.
+The **backlog** is the firmer evidence: 130 open issues containing almost no product work, dominated
+by `mutation-harness clone pins`, `session-log numbering`, `guards that fail open`, and sync
 hardening.
 
 This is the single most important finding in this document, and it is not a code-quality
@@ -116,7 +122,7 @@ warning. Binaries: Linux AppImage 174 MB, macOS arm64 dmg 161 MB, Windows NSIS 1
 
 **Agaric 0.9.9** — Rust + React on Tauri 2, SQLite from the start, Loro CRDT engine, LAN-only
 peer sync. Single maintainer, pre-1.0, no public user base. Its engineering discipline is
-exceptional for a personal project (6,284 Rust test functions, ~903 test files, 8 fuzz targets, a
+exceptional for a personal project (6,284 Rust test functions, 903 frontend and e2e test files, 8 fuzz targets, a
 100K-block benchmark SLO gate, SLSA provenance, a written threat model with an assurance case). Its
 product surface is narrower than either Logseq, and its riskiest areas are the ones a single user
 cannot test alone: multi-device sync and long-horizon data durability.
@@ -384,7 +390,7 @@ Both are corrected here.
 
 | Feature | Logseq | Notes |
 | --- | --- | --- |
-| Plugin / extension system | **593-615 marketplace packages** — but **only ~110 (18%) work on 2.0**, 44% have had no push in 2+ years, and 52% declare `effect: true`, i.e. they run **un-sandboxed in the host origin** | Agaric has **no plugin API, no custom CSS, no theme authoring, no user scripts**. It ships 7 built-in themes, 3 font sizes, motion and tooltip controls, and full keyboard rebinding. MCP is the only extension seam |
+| Plugin / extension system | **~615 marketplace packages** (~549 plugins + 66 themes) — but **only ~110 (18%) work on 2.0**, 44% have had no push in 2+ years, and 52% declare `effect: true`, i.e. they run **un-sandboxed in the host origin** | Agaric has **no plugin API, no custom CSS, no theme authoring, no user scripts**. It ships 7 built-in themes, 3 font sizes, motion and tooltip controls, and full keyboard rebinding. MCP is the only extension seam |
 | Flashcards / SRS | OG: SM-5 with an OF matrix, 3 rating buttons, state in block properties. **2.0: rewritten on FSRS with 4 ratings — and explicitly does not import SM-5 data** | Not priority per user |
 | Whiteboard | OG: a tldraw fork with portals, embeds, connectors. **2.0: REMOVED** ("hopefully available as a plugin"). Slides and Excalidraw removed too | Not priority per user |
 | PDF highlight-to-block | OG: highlights become real blocks on an `hls__<name>` page, queryable, with jump-back chips. 2.0: `#PDF Annotation` tag with a cross-PDF table | Agaric ships a pdf.js v6 reader with **highlight + pinned comment** annotation (no ink). Saving **bakes annotations into a new attachment and deletes the original**, which is correct for sync but leaves any inline `attachment:<id>` reference in block content dangling. No highlight-to-block |
@@ -662,8 +668,9 @@ back credibility; the second tier is the real product work.
   deliberately disabled. That is a defensible privacy stance, but it means two devices in two
   buildings cannot sync at all, and no amount of CRDT quality compensates.
 - **17. Where does the hardening loop end?** The engineering quality here is unusual and worth
-  protecting. But 130 open issues with essentially no product work, ~460 consecutive sessions of
-  guards and mutation harnesses, and one `feat` commit in the window means the *quality* of a
+  protecting. But 130 open issues with essentially no product work, a session log in which guard
+  and harness work is the dominant recurring subject (Part 0 section 2 gives the countable floor),
+  and one `feat` commit in the window means the *quality* of a
   feature set that is losing ground on capability. A guard that checks other guards has a
   smaller expected payoff than block embeds.
 
@@ -704,7 +711,7 @@ What this revision changes about the previous one. Grouped by severity.
 | Android "Better" | Nothing measured supports it; arm64-only, API 30+, sideload-only is strictly narrower than Logseq's reach |
 | "Cursor pagination everywhere" | The main block editor is not virtualized |
 | Spaces include "sync-scope" | A session syncs every space; there is no selective sync |
-| "~15,000+ tests: ~3,000 Rust + ~12,000 frontend across ~550 files" | Undercount: **6,284 Rust test functions**, 793 frontend test files, 110 Playwright specs, 903 test files total |
+| "~15,000+ tests: ~3,000 Rust + ~12,000 frontend across ~550 files" | Undercount: **6,284 Rust test functions** (`git ls-files 'src-tauri/**/*.rs' 'src-tauri/*.rs' \| xargs grep -hE '^[[:space:]]*#\[(tokio::)?test(\(\|\])' \| wc -l` — count over tracked source, not the filesystem, or build artifacts under `target/` inflate it), 793 frontend test files, 110 Playwright specs, 903 frontend and e2e test files. Rust tests live in `cfg(test)` modules inside source files, so they are not in that 903 |
 | "axe a11y tests on 100+ components" | 597 `toHaveNoViolations` assertions across 284 files under `src/` — but only 4 of 110 e2e specs run axe in a browser |
 | An earlier draft of this revision: "there is no skip-link anywhere" | False, and false in the **pessimistic** direction — `src/App.tsx:517-522` renders one and `src/components/__tests__/App.test.tsx:1774` asserts it. Caught in review, not by this document's own method: the audit posture was tuned for flattery, so an understatement passed the same gate untouched. By this document's own standard that is the same defect with the sign flipped — it would send someone to build a feature that shipped |
 | Previous "Extras" row (Logseq 9 / Agaric 3) | Retired, not rescored. Its contents split between "Extensibility / ecosystem" (new) and rows that already covered them. Those 3 Agaric points are part of the 154→134 arithmetic and do not correspond to any capability loss |
@@ -734,7 +741,7 @@ packages DB-compatible.
 (v0.9.9) on 2026-08-30, each required to cite `file:line` evidence and to flag doc claims it could
 not confirm in code. Test and coverage counts were recomputed rather than carried forward; the
 counting commands are recorded in the audit notes. One methodological caveat: the working checkout
-is a **shallow clone** (76 commits, all dated 2026-08-26 onward), so "what shipped since the last
+is a **shallow clone** (75 commits reachable from `12a4cab`, all dated 2026-08-26 onward), so "what shipped since the last
 review" was reconstructed from session logs and in-code issue references rather than from
 `git log`.
 
