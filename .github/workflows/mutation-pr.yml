@@ -71,6 +71,14 @@ on:
       - 'scripts/run-mutation.mjs'
       - 'scripts/select-mutation-modules.mjs'
       - 'scripts/render-mutation-summary.mjs'
+      # The base resolver feeds this lane's "changed source file(s)" set, so a
+      # change to it must start the lane it feeds (#4544). Omitting it is the
+      # same "it would have run nowhere" class this lane's own fix is about.
+      - 'scripts/pr-diff-base.mjs'
+      # Its TEST is deliberately NOT listed: it runs in `validate / lint`, which
+      # is gated only on `docs_only != 'true'` and so already runs on any diff
+      # that could reach it. Listing it here would start this lane to re-run a
+      # test the gating job has run regardless.
       - '.github/workflows/mutation-pr.yml'
 
 concurrency:
@@ -113,18 +121,31 @@ jobs:
         id: select
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          # `fetch-depth: 0` above means the base commit is normally already
-          # present; fall back to fetching the base branch if it is not, rather
-          # than diffing against nothing and selecting nothing (a silent "this
-          # PR touches no module" is indistinguishable from the truthful one).
-          base="$BASE_SHA"
-          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
-            git fetch --no-tags origin "$BASE_REF"
-            base="$(git rev-parse "origin/${BASE_REF}")"
-          fi
+          # DO NOT seed `base` from `github.event.pull_request.base.sha` — that
+          # is the base branch's tip AS OF THE TRIGGERING EVENT, not the merge
+          # base. This job runs on `pull_request`, so HEAD here is
+          # `refs/pull/N/merge`, a synthetic commit GitHub REGENERATES against
+          # the base branch's CURRENT tip every time it is fetched. Once main
+          # advances past that captured `base.sha`, HEAD carries main's newer
+          # commits while `base` still names the older tip, so even a correct
+          # three-dot diff reports everything that landed on main in between —
+          # other people's merges included (#4544, observed on PR #4541: with
+          # no change to the branch itself, main advancing turned "1 of 1
+          # changed source file(s)" into "1 of 3", naming files the PR never
+          # touched).
+          #
+          # `scripts/pr-diff-base.mjs` resolves the base LOCALLY instead —
+          # `git merge-base origin/<base-ref> HEAD` — which cannot go stale
+          # because it is re-derived from the objects in this checkout rather
+          # than a value captured at event time. `fetch-depth: 0` above means
+          # those objects are normally already present; the script falls back
+          # to fetching the base branch by name if they are not, and FAILS
+          # LOUDLY (non-zero exit, `::error::`) rather than diffing against
+          # nothing — a silent "this PR touches no module" is indistinguishable
+          # from the truthful one.
+          base="$(node scripts/pr-diff-base.mjs --base-ref "$BASE_REF")"
           # Three-dot diff: what this branch changed relative to the merge
           # base, NOT relative to whatever has since landed on the base branch.
           # A two-dot diff would attribute other people's merges to this PR and
