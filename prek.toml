@@ -1661,6 +1661,28 @@ pass_filenames = false
 # confined to that shared module can't select this hook out entirely.
 files = "^(docs/session-log/session-.*\\.md|scripts/lib/git-scratch-guard\\.sh)$"
 stages = ["pre-commit"]
+# `verbose = true` is load-bearing, the same way it is for
+# `check-doc-code-paths` above and `commit-sentinel` below: prek swallows a
+# PASSING hook's stdout (verified against prek 0.3.8 — without this line
+# the run prints only `session-log numbering guard...Passed`, with it the
+# guard's own line follows). BOTH of this guard's report lines — "checking
+# N staged addition/rename(s)" and "0 additions/renames staged … nothing
+# to check" — are printed on exit-0 paths, so without this the whole
+# audible-run half of #4527 is inert in the only place the guard actually
+# runs: the developer sees the static hook name and nothing else, which is
+# the exact silence #4527 was filed about. The self-test's Case 21 asserts
+# this through prek using this very block, so the key cannot be dropped
+# again without going red.
+#
+# Deliberate, not overlooked: Phase A of scripts/verify-ci-equivalent.sh
+# is `prek run --all-files --hook-stage pre-commit`, where nothing is
+# staged, so every pre-push now also prints the "0 additions/renames
+# staged" line — four extra lines, accurate but uninformative there. That
+# is accepted as the price of the line being visible on the runs that DO
+# matter (a real `git commit` staging a session log). Suppressing it would
+# mean teaching the guard to tell its two callers apart, which is more
+# mechanism, and more to get wrong, than the noise costs.
+verbose = true
 
 # #3690: the guard above is only worth having if it fails on a collision it
 # used to pass. Its fixture suite builds throwaway repositories — including

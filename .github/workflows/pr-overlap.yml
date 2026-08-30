@@ -777,8 +777,8 @@ jobs:
   # #3690 shape `check-session-log-numbering.sh` structurally cannot see
   # after the fact: an open PR whose number was free when it was committed
   # and has since been merged by a sibling — that guard only ever inspects
-  # STAGED additions, so it never looks again. See the guard's own header,
-  # "Which guard owns which case".
+  # STAGED additions and renames, so it never looks again. See the guard's
+  # own header, "Which guard owns which case".
   #
   # It is also NOT the `compute`/`post` overlap above: that lane intersects
   # CHANGED FILE PATHS, and two PRs colliding on session-1319 add two
