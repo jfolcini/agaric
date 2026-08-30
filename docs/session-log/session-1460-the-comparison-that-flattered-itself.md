@@ -85,10 +85,18 @@ very likely where the previous revision's block-ref claims came from.
 - The working checkout is a **shallow clone** (76 commits, all dated 2026-08-26 onward),
   so `git log --since` is useless for "what shipped since the last review". Every audit
   hit this independently and fell back to session logs and in-code issue references.
-- Test counts were recomputed rather than carried forward: **6,292** Rust test functions
-  (`grep -rE '^[[:space:]]*#\[(tokio::)?test(\(|\])' src-tauri --include=*.rs | wc -l`;
-  the unanchored form gives 6,312, which is why the command belongs beside the number),
-  793 frontend test files, 110 Playwright specs, ~905 total. The old "~15,000+ across
+- Test counts were recomputed rather than carried forward: **6,284** Rust test functions,
+  counted over **tracked source** rather than the filesystem —
+
+      git ls-files 'src-tauri/**/*.rs' 'src-tauri/*.rs' \
+        | xargs grep -hE '^[[:space:]]*#\[(tokio::)?test(\(|\])' | wc -l
+
+  The unanchored form gives 6,304. An earlier draft published 6,292/6,312 from a plain
+  `grep -r src-tauri`, which is **not** reproducible: it also matched
+  `src-tauri/target/debug/build/crunchy-*/out/lib.rs` and its twin under `fuzz/target`,
+  generated build artifacts present only in a checkout that has been built. Stating a
+  command is not the same as stating a reproducible one. 793 frontend test files, 110
+  Playwright specs, 903 total. The old "~15,000+ across
   ~550 files" was an undercount. The axe figure was also understated (**597** assertions
   across **284** files under `src/`) — but only 4 of 110 e2e specs run axe in a real
   browser.

@@ -60,12 +60,14 @@ property type, publishing with password-protected pages, a recycle bin, multi-ta
 hourly automated backups, and an FSRS flashcard rewrite. 2,257 commits in six months across 46
 authors.
 
-Agaric, over the same window: **one `feat` commit**. Of the 76 commits reachable from `main` in
-this (shallow) checkout, 40 are `fix`, 13 `docs`, 7 `refactor`, 7 `ci`, 6 `test`, 1 `chore`, 1
-`perf`, 1 `feat` — recount with
-`git log --pretty=%s | grep -oE '^[a-z]+' | sort | uniq -c | sort -rn`. The window is the clone's
-depth, not a fixed date range, so the absolute count moves between checkouts; the *shape* is the
-finding. The last ~460
+Agaric, over the same window: **one `feat` commit**. Of the 76 commits from `0fadcb2`
+(2026-08-26) to `12a4cab` (2026-08-30), 40 are `fix`, 13 `docs`, 7 `refactor`, 7 `ci`, 6 `test`,
+1 `chore`, 1 `perf`, 1 `feat` — recount in a full clone with
+`git log --pretty=%s 0fadcb2..12a4cab | grep -oE '^[a-z]+' | sort | uniq -c | sort -rn`. The
+window is five days, not six months, because that is the checkout depth the audit had; it is
+anchored to those two commits so the figure is checkable rather than asserted. The *shape*, not
+the absolute count, is the finding — and five days at one `feat` is the same shape as six months
+at one `feat` only if the pattern holds, which the ~460 session logs below suggest it does. The last ~460
 session logs are guards, fuzzers, mutation harnesses, review follow-ups and guards that check other
 guards. The open backlog (130 issues) contains almost no product work — it is dominated by
 `mutation-harness clone pins`, `session-log numbering`, `guards that fail open`, and sync
@@ -87,10 +89,14 @@ as a working capability; no query surface consumes it. It rated multi-device syn
 unverified**.
 
 A comparison document that overstates its own side is worse than no document, because it is used
-to decide what to build next. [Part 10](#part-10-corrections-log) tabulates 24 of the 30 corrections (15 false, 9
-overstated); the remaining six are the false documentation claims in
-[Part 5](#part-5-agarics-self-inflicted-problems), which are defects in `docs/features/*`
-rather than in this document.
+to decide what to build next. [Part 10](#part-10-corrections-log) tabulates the corrections to the previous revision:
+15 claims that were false and 9 that were overstated, 24 in all. Its overstated table
+carries two further rows that are **not** corrections to that revision — the skip-link
+row corrects a draft of *this* one, and the "Extras" row is retirement bookkeeping — so
+a row count gives 26. The remaining six of the 30 are in
+[Part 5](#part-5-agarics-self-inflicted-problems): five are false claims in
+`docs/features/*`, and the sixth is a pair of stale docblocks in `advanced_query.rs` and
+`AdvancedQueryView.tsx`.
 
 ---
 
@@ -110,7 +116,7 @@ warning. Binaries: Linux AppImage 174 MB, macOS arm64 dmg 161 MB, Windows NSIS 1
 
 **Agaric 0.9.9** — Rust + React on Tauri 2, SQLite from the start, Loro CRDT engine, LAN-only
 peer sync. Single maintainer, pre-1.0, no public user base. Its engineering discipline is
-exceptional for a personal project (6,292 Rust test functions, 905 test files, 8 fuzz targets, a
+exceptional for a personal project (6,284 Rust test functions, ~903 test files, 8 fuzz targets, a
 100K-block benchmark SLO gate, SLSA provenance, a written threat model with an assurance case). Its
 product surface is narrower than either Logseq, and its riskiest areas are the ones a single user
 cannot test alone: multi-device sync and long-horizon data durability.
@@ -448,7 +454,7 @@ a project whose stated aim is superiority, these are the cheapest wins available
 These mislead the next audit — and misled this document's previous revision:
 
 - `docs/features/tags-and-links.md` claims block references *"render the target block's content
-  inline, kept live … editing the source rewrites every embed."* They render a 60-character title
+  inline, kept live. Editing the source updates every reference."* They render a 60-character title
   chip. This is the single most misleading line in the docs.
 - `docs/features/pickers-and-slash.md` claims `[[` targets "the page **or block** you pick" (the
   picker filters to pages), that `((` "embeds the contents of another block … edit-in-place", and
@@ -480,7 +486,7 @@ These mislead the next audit — and misled this document's previous revision:
   strong, but only **4 of 110** end-to-end specs run axe in a real browser. (An earlier
   draft of this bullet claimed there is no skip link. There is: `src/App.tsx:517-522`
   renders an `sr-only focus:not-sr-only` anchor to `#main-content`, the target carries
-  `tabIndex = -1` at `src/App.tsx:274`, and `src/components/__tests__/App.test.tsx:1774`
+  `tabIndex = -1` at `src/App.tsx:275`, and `src/components/__tests__/App.test.tsx:1774`
   asserts both. That claim was false in the *pessimistic* direction, which is how it
   passed a review posture tuned entirely for overstatement — see Part 10.)
 
@@ -698,7 +704,7 @@ What this revision changes about the previous one. Grouped by severity.
 | Android "Better" | Nothing measured supports it; arm64-only, API 30+, sideload-only is strictly narrower than Logseq's reach |
 | "Cursor pagination everywhere" | The main block editor is not virtualized |
 | Spaces include "sync-scope" | A session syncs every space; there is no selective sync |
-| "~15,000+ tests: ~3,000 Rust + ~12,000 frontend across ~550 files" | Undercount: **6,292 Rust test functions**, 793 frontend test files, 110 Playwright specs, ~905 test files total |
+| "~15,000+ tests: ~3,000 Rust + ~12,000 frontend across ~550 files" | Undercount: **6,284 Rust test functions**, 793 frontend test files, 110 Playwright specs, 903 test files total |
 | "axe a11y tests on 100+ components" | 597 `toHaveNoViolations` assertions across 284 files under `src/` — but only 4 of 110 e2e specs run axe in a browser |
 | An earlier draft of this revision: "there is no skip-link anywhere" | False, and false in the **pessimistic** direction — `src/App.tsx:517-522` renders one and `src/components/__tests__/App.test.tsx:1774` asserts it. Caught in review, not by this document's own method: the audit posture was tuned for flattery, so an understatement passed the same gate untouched. By this document's own standard that is the same defect with the sign flipped — it would send someone to build a feature that shipped |
 | Previous "Extras" row (Logseq 9 / Agaric 3) | Retired, not rescored. Its contents split between "Extensibility / ecosystem" (new) and rows that already covered them. Those 3 Agaric points are part of the 154→134 arithmetic and do not correspond to any capability loss |

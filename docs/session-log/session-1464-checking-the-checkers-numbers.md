@@ -85,6 +85,34 @@ before merging. It is merged now and genuinely frozen, which is what #4536 is ab
 A rule that names a class ("existing files") does not extend to the adjacent class just
 because the adjacent class is where I last got burned.
 
+## The command I published was not reproducible either
+
+The fix for an unverifiable number was to state the command beside it. The command I
+stated was `grep -rE '…' src-tauri --include=*.rs`, and it gave 6,292. A reviewer ran
+the same command and got **6,284**. Consistent 8 apart, in both the anchored and
+unanchored forms.
+
+The eight were `src-tauri/target/debug/build/crunchy-*/out/lib.rs` and its twin under
+`src-tauri/fuzz/target/` — generated Rust from a build-script crate, present only
+because this checkout has been built. A filesystem walk over `src-tauri` is a function
+of build state, so the "reproducible command" produced a different answer for anyone
+who had not run `cargo build`.
+
+Counting over tracked source instead removes the dependency:
+
+    git ls-files 'src-tauri/**/*.rs' 'src-tauri/*.rs' \
+      | xargs grep -hE '^[[:space:]]*#\[(tokio::)?test(\(|\])' | wc -l
+
+That is 6,284, matches the reviewer, and matches the figure this PR's own description
+had said all along under "spot-verified by hand" — the correct value was in the
+building the whole time and did not reach the document.
+
+The transferable point is narrower than "check your numbers". **Publishing a command
+is not the same as publishing a reproducible one**, and the failure is invisible to
+whoever wrote it, because their environment is the one the command was written in. The
+question to ask of a stated command is not "does it run?" but "does it depend on
+anything that is not in the repository?"
+
 ## Left standing
 
 The Block CRUD row dropped 10→9 with no annotation. Logseq's score in that row moved
