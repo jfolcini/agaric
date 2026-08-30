@@ -85,7 +85,7 @@ use agaric_store::space::SpaceId;
 use loro::{Counter, PeerID, VersionVector};
 
 use super::loro_sync::classify_from_vv_reachability;
-use super::operations::{batch_ops_for_wire, check_reset_required};
+use super::operations::{batch_ops_for_wire, billed_bytes, check_reset_required};
 use super::types::{
     OpTransfer, SpaceVersionVector, decode_persisted_loro_vvs, encode_persisted_loro_vvs,
 };
@@ -224,21 +224,6 @@ fn op_transfer() -> impl Strategy<Value = OpTransfer> {
                 }
             },
         )
-}
-
-/// The size estimate `batch_ops_for_wire` bills each record at.
-///
-/// **This is a copy of the production formula, not an independent one**, and
-/// the distinction matters for what the cap property can claim. It lets a test
-/// state what a batch weighs without calling into the code under test, which is
-/// what `batching_respects_the_cap_except_for_unsplittable_records` needs to
-/// check the *partitioning loop*. It does NOT cover the formula: change
-/// `operations.rs`'s `+ 2` envelope allowance to `+ 8` and every property here
-/// stays green, because this line moves with it. Pinning the billing itself
-/// would need a fixture with a known serialized length, which is a different
-/// test than any of these.
-fn billed_bytes(rec: &OpTransfer) -> usize {
-    serde_json::to_string(rec).map_or(0, |s| s.len()) + 2
 }
 
 // ---------------------------------------------------------------------------

@@ -640,6 +640,40 @@ fn peer_frontier_json(peer_heads: &[DeviceHead]) -> Result<String, AppError> {
     Ok(serde_json::to_string(&entries)?)
 }
 
+/// Cheap upper-bound estimate of one record's inline JSON footprint, as billed
+/// by [`batch_ops_for_wire`]: the serialized record's own length plus a small
+/// per-element envelope allowance, `+ 2`, for the bytes the record's
+/// serialization alone doesn't cover when it sits inside the batch's JSON
+/// array (each `OpTransfer` in `SyncMessage::OpLogBatch`'s `records` array
+/// needs a separating comma, and the array itself needs its brackets). The
+/// exact split of that allowance is not further established from the code
+/// beyond this — it is documented only as a "cheap upper-bound estimate".
+///
+/// `pub(crate)` rather than private so `protocol_proptest`'s property tests
+/// can call the exact function `batch_ops_for_wire` bills against, instead of
+/// keeping their own copy of the formula that could silently drift from it
+/// (#4525).
+///
+/// **The `map_or` `Err` arm is dead for today's `OpTransfer` — not merely
+/// untested, unreachable.** Every field is a `String`, `i64`, or
+/// `Option<String>`, and the struct derives `Serialize` with no custom impl;
+/// `serde_json::to_string` can only fail on a map with non-string keys, a
+/// non-finite `f32`/`f64`, or a `Serialize` impl that itself returns `Err`
+/// (`std::io::Error` can't occur — `to_string` writes into an in-memory
+/// buffer). `OpTransfer` has none of those, so this cannot hit `Err` today;
+/// it would need a new field of one of those kinds (most plausibly a `HashMap`
+/// keyed on something other than `String`, or a float) to become reachable
+/// again. `map_or(0, ..)` stays rather than `unwrap`/`expect` regardless: this
+/// runs once per record on the sync send path, and a shared billing helper
+/// panicking there would take down the whole sync session over what is
+/// already a best-effort upper-bound estimate — a record silently mis-billed
+/// at 0 bytes is bounded by the oversized-batch tolerance `batch_ops_for_wire`
+/// already documents (a lone record ships in its own batch even past
+/// `max_bytes`), which is a smaller failure than losing the session.
+pub(crate) fn billed_bytes(rec: &OpTransfer) -> usize {
+    serde_json::to_string(rec).map_or(0, |s| s.len()) + 2
+}
+
 /// #2481 phase 1 — partition op transfers into `OpLogBatch`-sized groups.
 ///
 /// Each returned batch serializes to under `max_bytes` (the caller passes
@@ -659,9 +693,7 @@ pub fn batch_ops_for_wire(records: Vec<OpTransfer>, max_bytes: usize) -> Vec<Vec
     let mut current_bytes: usize = 0;
 
     for rec in records {
-        // Cheap upper-bound estimate of this record's inline JSON footprint:
-        // the serialized length plus a small per-element envelope allowance.
-        let rec_bytes = serde_json::to_string(&rec).map_or(0, |s| s.len()) + 2;
+        let rec_bytes = billed_bytes(&rec);
         if !current.is_empty() && current_bytes + rec_bytes > max_bytes {
             batches.push(std::mem::take(&mut current));
             current_bytes = 0;
