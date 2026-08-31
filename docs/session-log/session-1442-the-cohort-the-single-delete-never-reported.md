@@ -90,11 +90,23 @@ passed. `tsc -b` clean; `check-lib-layering`, `check-tauri-mock-parity`, `check-
 `check-import-cycles`, `check-snapshot-redaction`, `check-hook-deps` and `check-ipc-error-path` all
 green.
 
-## Left for the follow-up, deliberately
+## The follow-up arrived before the branch did
 
-The eviction block is a hand-rolled `Set` + budget check + loop — which is exactly
-`notifyPagesRemoved`'s job. That publisher landed in PR #4534 (closing #4524) after this
-branch was written, so it is not imported here. Substituting it is a straight swap, and the
-constant is already sitting where that publisher wants it.
+The eviction block started as a hand-rolled `Set` + budget check + loop, because
+`notifyPagesRemoved` did not exist when this branch was written. It landed in PR #4534
+(closing #4524) while this PR was open, and `main` moved under the branch — the rebase
+conflicted on exactly the two files that publisher touched.
+
+Resolving it was the straight swap this section originally predicted, and the prediction is
+the reason worth recording: the conflict was not an obstacle to work around but the signal
+that the better shape had become available. The hook now calls
+`notifyPagesRemoved([id, ...cascadedPageIds], originSpaceId)`, which owns the
+de-duplication, the `NAME_CACHE_FANOUT_MAX_IDS` budget and the null-space fallback. The
+batch arm's copy of that branch is gone from this diff too, since `main` already replaced it.
+
+What survives unchanged is the reason the budget is measured against the UNION rather than
+the requested id — it is now `notifyPagesRemoved`'s behaviour rather than this caller's,
+which is strictly better: two delete gestures cannot drift apart on a rule neither of them
+owns any more.
 
 Closes #4523.
