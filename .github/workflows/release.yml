@@ -647,29 +647,31 @@ jobs:
                 echo "::warning::Final attempt: dbus-run-session IS INSTALLED but the live probe FAILED under xvfb-run (the same wrapper the launch uses — so either the bus cannot start there, the #4418 shape, or Xvfb itself is unusable, which would fail the launch anyway; the probe cannot separate them); booting WITHOUT dbus-run-session, so a broken session bus degrades to the previous behaviour instead of gating the release." >&2
                 launcher=()
               fi
-            elif [ "${attempt:-1}" -ge "$MAX_BOOT_ATTEMPTS" ]; then
-              # MAX_BOOT_ATTEMPTS<=1: this IS the final (only) attempt, but
-              # the `[ "$MAX_BOOT_ATTEMPTS" -gt 1 ]` guard above deliberately
-              # keeps it out of the probe branch (#4454). The probe's value
-              # is comparing a live result against two prior plain failures;
-              # with only one attempt configured there is nothing to compare
-              # against, and paying the xvfb-run + dbus-run-session startup
-              # cost on every single-attempt run (which today means every
-              # manual/debug run — CI's own pin is `'3'`, see
-              # MAX_BOOT_ATTEMPTS above) buys nothing. Silence here would
-              # still lose the check without a trace, so say so.
-              echo "::notice::MAX_BOOT_ATTEMPTS=$MAX_BOOT_ATTEMPTS: skipping the live dbus-run-session probe (it only pays for itself as a tiebreaker after prior failed attempts, of which there are none to compare against with only one attempt configured); falling back to a plain command -v check." >&2
+            else
+              # MAX_BOOT_ATTEMPTS<=1 on the final (only) attempt: the
+              # `[ "$MAX_BOOT_ATTEMPTS" -gt 1 ]` guard above deliberately
+              # keeps that case out of the probe branch (#4454). The probe's
+              # value is comparing a live result against two prior plain
+              # failures; with only one attempt configured there is nothing to
+              # compare against, and paying the xvfb-run + dbus-run-session
+              # startup cost on every single-attempt run (which today means
+              # every manual/debug run — CI's own pin is `'3'`, see
+              # MAX_BOOT_ATTEMPTS above) buys nothing. Silence would still
+              # lose the check without a trace, so say so — but ONLY the
+              # notice is special-cased. The fallback itself is the one shared
+              # `command -v` path below, not a second copy of it: the earlier
+              # version duplicated those five lines, and since this branch
+              # never executes under CI's pinned `'3'`, a drift between the
+              # two copies would have gone uncaught by every release.
+              if [ "${attempt:-1}" -ge "$MAX_BOOT_ATTEMPTS" ]; then
+                echo "::notice::MAX_BOOT_ATTEMPTS=$MAX_BOOT_ATTEMPTS: skipping the live dbus-run-session probe (it only pays for itself as a tiebreaker after prior failed attempts, of which there are none to compare against with only one attempt configured); falling back to a plain command -v check." >&2
+              fi
               if command -v dbus-run-session >/dev/null 2>&1; then
                 launcher=(dbus-run-session --)
               else
                 echo "::warning::dbus-run-session unavailable on this runner; booting without a session bus. The a11y/dbus stall this mitigates is unguarded for this run." >&2
                 launcher=()
               fi
-            elif command -v dbus-run-session >/dev/null 2>&1; then
-              launcher=(dbus-run-session --)
-            else
-              echo "::warning::dbus-run-session unavailable on this runner; booting without a session bus. The a11y/dbus stall this mitigates is unguarded for this run." >&2
-              launcher=()
             fi
 
             set +e
@@ -1727,22 +1729,27 @@ jobs:
     # #3542 could not measure is the ~19-min cold aarch64 build; the whole job
     # costs less than the 27.8-min warm figure the old 60 was derived FROM.
     #
-    # 40 applies this repo's "+50% headroom" convention (ci.yml's 24.3→50 and
-    # 27.8→45) to the observed maximum of 26.73 rather than to an estimate.
-    # The rule is written for n=1; against a 12-second spread it is
-    # conservative, which is the direction to err here. Sample independence,
-    # stated rather than implied: the three span nine days, but 0.9.7 and 0.9.8
-    # ran on the SAME day (07:47Z and 09:53Z, 2026-08-17), so this is three
-    # runs on TWO days, not three, and the runner-population variance it
-    # samples is correspondingly narrower than n=3 suggests.
+    # 50 — ABOVE the +50% convention's floor (26.73 x 1.5 = 40.1), deliberately.
+    # Sample independence, stated rather than implied: the three runs span nine
+    # days, but 0.9.7 and 0.9.8 ran on the SAME day (07:47Z and 09:53Z,
+    # 2026-08-17), so this is three runs on TWO days. A 12-second spread across
+    # a two-day window measures repeatability, not the runner population — and
+    # the one term here with no upper bound, a cold cargo-registry fetch for
+    # aarch64-linux-android against a slow crates.io mirror, is precisely what
+    # a two-day sample cannot have sampled. The convention's +50% is also
+    # calibrated for an n=1 ESTIMATE; applying it unchanged to a measurement
+    # and then treating the result as a ceiling spends the very margin it
+    # exists to provide.
     #
-    # Do NOT tighten this further on the arithmetic alone. `finalize-release-notes`
-    # and `publish-release` both `needs:` this job with `result == 'success'`
-    # (see their `if:` guards below), so a timeout does not merely lose the APK —
-    # it blocks the release from ever being published. GitHub bills actual
-    # minutes rather than the budget, so headroom is free and a tight budget is
-    # not. 13 minutes over the observed max is the margin that buys.
-    timeout-minutes: 40
+    # The asymmetry decides it. `finalize-release-notes` and `publish-release`
+    # both `needs:` this job with `result == 'success'` (see their `if:` guards
+    # below), so a timeout does not merely lose the APK — it blocks the release
+    # from ever being published. GitHub bills actual minutes rather than the
+    # budget, so headroom costs nothing and a tight budget can cost a release.
+    # 50 is 23 minutes over the observed max; 90 was 63 minutes over an
+    # estimate no measurement supported. Tightening further wants more sample
+    # DAYS, not more arithmetic on these three runs.
+    timeout-minutes: 50
     permissions:
       contents: write # gh release upload attaches the APK to the existing release
       id-token: write # actions/attest-build-provenance — Sigstore OIDC token

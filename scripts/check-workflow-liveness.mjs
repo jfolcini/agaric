@@ -899,6 +899,19 @@ export function fetchWorkflowState(repo, workflow) {
   if (state.length === 0) {
     return { error: '`gh api` returned no `state` field for this workflow' }
   }
+  // `--jq '.state'` on a payload with NO `state` key prints the literal four
+  // characters `null`, not an empty string — gojq marshals a missing key that
+  // way. So the length check above passes and `state` becomes the STRING
+  // "null", which is not `'active'` and would therefore be reported as
+  // ``schedule-disabled (… state as `null` …)``: the watchdog asserting that
+  // GitHub disabled a schedule, on evidence that GitHub said nothing at all.
+  // That is the same overstates-the-evidence shape this file's #4478 work is
+  // about, so it is rejected here rather than classified downstream.
+  if (state === 'null' || state === 'undefined') {
+    return {
+      error: `\`gh api\` returned \`${state}\` for \`.state\` — the payload has no usable state field`,
+    }
+  }
   return { state }
 }
 
@@ -1684,6 +1697,30 @@ function selfTestGhFailureModes({ check }) {
       threw !== null && !existsSync(out),
       'a missing `gh` binary → throws AND writes no results file',
       `threw=${threw?.message} wrote=${existsSync(out)}`,
+    )
+  }
+
+  // A payload with NO `state` key: `--jq '.state'` prints the literal four
+  // characters `null`, which clears the empty-string guard and would otherwise
+  // become the STRING "null" — reported as ``schedule-disabled (… state as
+  // `null` …)``, i.e. the watchdog asserting GitHub disabled a schedule on
+  // evidence that GitHub said nothing. Driven against `fetchWorkflowState`
+  // directly, because the point is which BRANCH the value lands in.
+  for (const literal of ['null', 'undefined']) {
+    writeFileSync(stub, `#!/bin/sh\necho ${literal}\n`, 'utf8')
+    chmodSync(stub, 0o755)
+    const prevPath = process.env.PATH
+    process.env.PATH = `${dir}:${prevPath}`
+    let got
+    try {
+      got = fetchWorkflowState('owner/repo', 'w.yml')
+    } finally {
+      process.env.PATH = prevPath
+    }
+    check(
+      got.state === undefined && typeof got.error === 'string' && got.error.includes(literal),
+      `#4478: \`.state\` printed as the literal \`${literal}\` is an ERROR, not a state — it must not read as \`schedule-disabled\``,
+      JSON.stringify(got),
     )
   }
 

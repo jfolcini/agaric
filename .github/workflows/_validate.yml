@@ -1547,6 +1547,15 @@ jobs:
   # step's own copy in the shard job for the residual risk this does not
   # eliminate (a warm .deb cache does not skip `apt-get update`'s own mirror
   # contact -- the #4170 lesson).
+  #
+  # And state the cost honestly, in the same breath as the benefit: because
+  # the shards still run `install-deps` themselves, this split takes that step
+  # from 3 executions per run to 4. Since a warm .deb cache does NOT skip its
+  # `apt-get update` mirror contact, the per-run probability of an
+  # `AGARIC_APT_INFRA` red goes UP by roughly a third. What the split buys is
+  # not less mirror exposure -- it is that the first, coldest payment is made
+  # once, in a job whose budget is its own, instead of by three shards racing
+  # it in parallel inside a budget they share with their own test run.
   playwright-setup:
     needs: detect-changes
     if: needs.detect-changes.outputs.frontend == 'true'
@@ -1872,6 +1881,14 @@ jobs:
   # on failure (artifact name includes the shard number so the shards don't
   # collide). No merge step yet — deferred per the plan.
   # ---------------------------------------------------------------------------
+  # COST of that `needs:`, stated because neither timeout comment reasons
+  # about it: the three shards previously started in parallel with everything
+  # else and now cannot begin until setup's checkout, `npm ci`, `prepare-apt`,
+  # `install-deps` and browser install have all finished. Every frontend PR
+  # therefore pays that preamble in series before any shard runs, and the
+  # lane's pathological worst case becomes 30 + 35 = 65 minutes of wall clock
+  # where it was 30. The per-job caps below each fit their own job; this is
+  # the end-to-end number, and it is the real price paid for cache warming.
   playwright:
     needs: [detect-changes, playwright-setup]
     # Run the E2E browser suite iff the diff touches frontend files (same
