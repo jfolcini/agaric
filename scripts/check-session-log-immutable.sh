@@ -116,13 +116,32 @@ exists_in_target() {
   git cat-file -e "$1:$2" 2>/dev/null
 }
 
+# KNOWN GAP, recorded rather than left implicit: this reads the STAGED INDEX
+# only. CI runs `prek run --all-files` with nothing staged, so the guard takes
+# its zero-records exit-0 path on every CI run — it is a commit-time hook and
+# nothing more. A `--no-verify` commit, a GitHub web edit, or any tool that
+# commits outside the hook lands an edit to a merged log with nothing catching
+# it. `check-migrations-immutable.sh` closes exactly this hole for its own
+# subject with a `--range` mode wired into `_validate.yml` and
+# `verify-ci-equivalent.sh`; the same shape would work here and is not built.
+# Scoped out for now (#4536 asks for a ten-line diff filter), but the gap is
+# real and belongs in the record, not only in a review thread.
+#
 # Staged records, read from a FILE rather than a process substitution: a
 # `git diff` that fails inside `< <(…)` leaves the loop reading an empty
 # stream, which this guard would otherwise report as "0 … nothing to
 # check" — a clean run it never performed.
 records_file="$(mktemp)"
 trap 'rm -f "$records_file"' EXIT
-if ! git diff --cached -z --name-status --diff-filter=DMR \
+# `T` (typechange) is in the set deliberately: replacing a merged
+# `session-*.md` with a symlink or a gitlink destroys the record just as an
+# edit does, and it is staged as neither M nor D. Omitting it would be the
+# same silent-selector bug this guard exists to end — and worse than the
+# others, because the `*)` fail-loud arm below cannot catch a letter the
+# FILTER already excluded upstream. (`--diff-filter=a`, the lowercase
+# exclude-additions form, would cover it too but pulls in `U`, hard-failing
+# every conflict-resolution commit through that same arm.)
+if ! git diff --cached -z --name-status --diff-filter=DMRT \
   -- "$LOG_DIR/session-*.md" >"$records_file"; then
   echo "ERROR: session-log-immutable: \`git diff --cached\` failed; refusing to report a clean run it did not perform." >&2
   exit 1
@@ -135,7 +154,7 @@ srcs=()
 dsts=()
 while IFS= read -r -d '' status; do
   case "$status" in
-    M | D)
+    M | D | T)
       IFS= read -r -d '' src
       dst=""
       ;;
@@ -144,7 +163,7 @@ while IFS= read -r -d '' status; do
       IFS= read -r -d '' dst
       ;;
     *)
-      # Unreachable under --diff-filter=DMR today. If git ever emits a
+      # Unreachable under --diff-filter=DMRT today. If git ever emits a
       # status this parser does not know, the field count per record is
       # unknown from here on and every subsequent record is garbage — so
       # fail loudly rather than silently mis-parse the rest.
@@ -160,7 +179,7 @@ done <"$records_file"
 total="${#statuses[@]}"
 
 if [ "$total" -eq 0 ]; then
-  echo "session-log-immutable: 0 staged modification/rename/deletion(s) under $LOG_DIR/session-*.md — nothing to check."
+  echo "session-log-immutable: 0 staged modification/rename/deletion/typechange(s) under $LOG_DIR/session-*.md — nothing to check."
   exit 0
 fi
 
@@ -175,13 +194,19 @@ if [ -z "$target_ref" ]; then
 fi
 
 target_name="${target_ref#refs/remotes/}"
-checked=0
+examined=0
 fail=0
 for i in "${!statuses[@]}"; do
   status="${statuses[$i]}"
   src="${srcs[$i]}"
   dst="${dsts[$i]}"
-  checked=$((checked + 1))
+  # Counted AFTER the decision that can skip, not before it. Incrementing
+  # here-and-unconditionally is what made the `checked -ne total` assertion
+  # below dead code: it could never fire, while reading like a real
+  # invariant. `examined` is every record this loop reached a verdict on;
+  # `total` is every record the selector produced. The two differing means a
+  # record was silently dropped between selection and judgement.
+  examined=$((examined + 1))
   exists_in_target "$target_ref" "$src" || continue
   case "$status" in
     M)
@@ -189,6 +214,9 @@ for i in "${!statuses[@]}"; do
       ;;
     R*)
       echo "ERROR: $src -> $dst — already merged into $target_name; renaming a merged session log is the same violation as editing one (docs/session-log/README.md)." >&2
+      ;;
+    T)
+      echo "ERROR: $src — already merged into $target_name; replacing a merged session log with a symlink or gitlink destroys the record as surely as editing it (docs/session-log/README.md)." >&2
       ;;
     D)
       echo "ERROR: $src — already merged into $target_name; deleting a merged session log destroys the record more completely than editing it (docs/session-log/README.md)." >&2
@@ -199,11 +227,16 @@ for i in "${!statuses[@]}"; do
   fail=1
 done
 
-# #4501: the report must not be able to overstate what was examined.
-if [ "$checked" -ne "$total" ]; then
-  echo "ERROR: session-log-immutable: selected $total staged record(s) but checked $checked." >&2
+# #4501: the report must not be able to overstate what was examined. This
+# compares two counters produced at DIFFERENT points — `total` from the
+# selector, `examined` from past the loop's skip — so it can actually fire.
+# Its first version incremented the counter before the only `continue`, which
+# made it arithmetically incapable of failing: a vacuous assertion wearing the
+# shape of an invariant, in the guard written to stop exactly that.
+if [ "$examined" -ne "$total" ]; then
+  echo "ERROR: session-log-immutable: selected $total staged record(s) but reached a verdict on only $examined." >&2
   fail=1
 fi
 
-echo "session-log-immutable: checked $checked staged modification/rename/deletion(s) against $target_name."
+echo "session-log-immutable: checked $examined staged modification/rename/deletion/typechange(s) against $target_name."
 exit "$fail"

@@ -439,7 +439,8 @@ files between trees. Only the chained-PR case needs special ordering — see pit
 
 Create `docs/session-log/session-NNNN-<slug>.md` (one file per session, never appended to
 once it has merged — a correction to a merged log goes in the NEW session's log as a
-back-reference, enforced by the `session-log-immutable` hook).
+back-reference). The `session-log-immutable` hook blocks the edit; writing the
+back-reference is on you, since no guard can tell whether one was written.
 Use the numbering rules, format, and plan-issue bookkeeping in
 **`references/session-log.md`**. Keep `docs/FEATURE-MAP.md` in sync when new
 commands/components/hooks/stores/tables ship.
