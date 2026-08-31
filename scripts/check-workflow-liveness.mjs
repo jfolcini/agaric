@@ -879,10 +879,17 @@ export function fetchScheduleRuns(repo, workflow) {
  *
  * So the failure is CARRIED, in `error`, and becomes the visible
  * `schedule-state-unknown` verdict rather than either a silent "young" or an
- * asserted "disabled". Every way this can fail — `gh` missing or non-zero,
- * output that is not JSON, JSON with no usable `state` — lands there, and
- * each carries its own reason into the tracking issue so the reader is told
- * WHY the watchdog could not answer. `state` is never invented.
+ * asserted "disabled". `gh` missing or non-zero, output that is not JSON, an
+ * empty read, and the literal `null`/`undefined` that `--jq` prints for a
+ * missing key all land there, each carrying its own reason into the tracking
+ * issue so the reader is told WHY the watchdog could not answer.
+ *
+ * Scope of that claim, stated precisely because the bug this guard closes was
+ * a claim that outran its code: the unusable-payload rejection is an explicit
+ * two-value check on `'null'` and `'undefined'`, NOT a general "anything
+ * unusable". A `.state` that were `false` or numeric would stringify and read
+ * as a state. That is theoretical while GitHub keeps `state` a string enum,
+ * and it is named here rather than papered over with "every way".
  */
 export function fetchWorkflowState(repo, workflow) {
   let raw
