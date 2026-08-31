@@ -1609,6 +1609,43 @@ pass_filenames = false
 files = "^scripts/(check-session-log-numbering\\.sh|lib/git-scratch-guard\\.sh)$"
 stages = ["pre-commit"]
 
+# WHY: append-only session-log record silently rewritten — #4536
+#
+# docs/session-log/README.md: a merged session log is append-only; a
+# correction goes in the NEW session's log as a back-reference, never an
+# edit, rename or deletion of the merged file (#4530 did exactly that,
+# uncaught locally). `--diff-filter=DMRT`, all four letters, per #4527's
+# lesson: `MR` alone looks complete and is not, because a rename that also
+# rewrites the body drops below git's rename-similarity threshold and is
+# staged as `D`+`A`, which an `MR` filter selects not at all — the same
+# silent-zero this guard exists to prevent. `D` also covers a move out of
+# docs/session-log/ and an outright deletion.
+#
+# `always_run = true` with no `files` key, for the reason
+# `check-sqlx-cache-drift` and `migrations-immutable` (both below) already
+# document: prek's changed-file set excludes deletions, so a `files`-keyed
+# hook is skipped entirely on a commit that only removes a session log
+# (verified against prek 0.3.8). It also puts this guard outside #4501's
+# path-keyed-trigger class for good. `verbose = true` for the same reason
+# as the numbering guard above — prek swallows a passing hook's stdout, and
+# both of this guard's report lines (the count and the "0 … nothing to
+# check") are printed on exit-0 paths.
+#
+# See the script header for the five staged spellings of the operations it
+# must catch, why a pure rename of a merged file is rejected, why no
+# `--self-test` is scoped, why an absent merge target FAILS rather than
+# passing green, and how a same-branch add-then-amend before merge is told
+# apart from an edit to an already-merged file.
+[[repos.hooks]]
+id = "session-log-immutable"
+name = "session-log immutability guard"
+entry = "bash scripts/check-session-log-immutable.sh"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+verbose = true
+
 # JS: better-npm-audit (security advisories). Pre-push only (#817, #1087):
 # `better-npm-audit audit` shells out to `npm audit`, a network round-trip to
 # the registry advisory endpoint, so a dependency-bump commit would block on
