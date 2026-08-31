@@ -81,7 +81,13 @@ export const properties: Record<string, string> = {
   // #4553 Phase 1 — the contributing NUMERIC count beside a sum/avg/min/max
   // chip, when the request also asked for a matching Count over the same
   // target (`avg` divides by this, not the total row count).
-  'advancedQuery.aggregate.contributingCount': '(n={{count}})',
+  // Interpolated as `{{n}}`, deliberately NOT `{{count}}`. i18next keys its
+  // plural machinery on the option name `count`, and this is a bare number in
+  // mathematical notation with no surrounding noun to inflect — there is no
+  // singular wording for it to select. Naming it `count` would opt into
+  // pluralisation for a string that can never pluralise, and then need an
+  // entry in `PRE_EXISTING_COUNT_EXEMPT` to say so (#3860/#3882).
+  'advancedQuery.aggregate.contributingCount': '(n={{n}})',
   'advancedQuery.aggregate.summaryLabel': 'Aggregate summary',
   'advancedQuery.group.summaryLabel': 'Group results',
   'advancedQuery.group.noneKey': '(none)',

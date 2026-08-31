@@ -85,3 +85,22 @@ settle, so for one commit the native `<select>` points at an option that no long
 merely brief. `Eq` is in every operator set, so the fallback is always valid.
 
 The three pre-existing warnings are left alone; they are not this diff's to fix.
+
+## `count` is a reserved word, not a variable name
+
+The pre-push gate caught one more thing: `catalog-parity` failed because
+`advancedQuery.aggregate.contributingCount` interpolates `{{count}}` with no plural forms.
+
+i18next keys its pluralisation on the *option name* `count`. This string is `(n={{count}})` — a bare
+number in mathematical notation with no surrounding noun to inflect, so there is no singular wording
+for i18next to select and never will be.
+
+The guard offers an escape hatch, `PRE_EXISTING_COUNT_EXEMPT`, and one of its four documented shapes
+("a bare number with no surrounding word to inflect") fits exactly. It was still the wrong tool. That
+list is explicitly for keys audited under #3882, and adding new entries to an exemption list is the
+same kind of permanent, ownerless debt as bumping a ratchet baseline — the list gets longer, nobody
+ever removes an entry, and the next reader cannot tell an audited exemption from a convenient one.
+
+Renaming the interpolation variable to `n` removes the problem instead of registering it. The string
+never enters i18next's plural machinery, no exemption is needed, and the key stops falsely advertising
+itself as a pluralisable count.

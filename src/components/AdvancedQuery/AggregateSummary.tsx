@@ -108,7 +108,7 @@ export function AggregateSummary({
             data-testid="advanced-query-aggregate-chip"
           >
             {t(`advancedQuery.aggregate.op.${result.op}`)}: {formatAggregateValue(result)}
-            {n != null && ` ${t('advancedQuery.aggregate.contributingCount', { count: n })}`}
+            {n != null && ` ${t('advancedQuery.aggregate.contributingCount', { n })}`}
           </Badge>
         )
       })}
