@@ -508,6 +508,32 @@ describe('container interaction', () => {
     })
   })
 
+  // Review note 3 (#4572): `aria-expanded` used to live only on the
+  // tabIndex={-1} collapse button. The container is the element that is
+  // ACTUALLY focused when Space fires (see the test above), so it is the
+  // container's own `aria-expanded` a screen reader announces a change on —
+  // a button-only attribute update is silent from there. axe does not flag
+  // this (it is not an axe rule), so this assertion, not an axe run, is what
+  // has to catch a regression.
+  it('carries aria-expanded on the focusable container itself, tracking collapse state', async () => {
+    seedDefaultGraph()
+    renderHostBlock('{{embed ((B1))}}')
+    const container = await screen.findByTestId('embed-container')
+    expect(container).toHaveAttribute('aria-expanded', 'true')
+
+    const user = userEvent.setup()
+    container.focus()
+    await user.keyboard(' ')
+    await waitFor(() => {
+      expect(screen.queryByTestId('embed-tree')).not.toBeInTheDocument()
+    })
+    expect(container).toHaveAttribute('aria-expanded', 'false')
+
+    await user.keyboard(' ')
+    await screen.findByTestId('embed-tree')
+    expect(container).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('never writes either page’s collapsed_ids key when an embed collapses', async () => {
     seedDefaultGraph()
     const sourceKey = effectiveKey(PREFERENCES.blockCollapse, 'PAGE_S')

@@ -26,6 +26,15 @@ vi.mock('@/editor/extensions/picker-plugin', () => ({
   },
 }))
 
+// A distinguishing marker rather than real English strings, so a REGRESSION
+// to a hardcoded literal (review note 4, #4572) fails this file's
+// assertions instead of passing vacuously — the real `t()` would resolve
+// 'embed.pickerItem' back to the same 'Insert embed…' text the old hardcoded
+// literal used, which would prove nothing.
+vi.mock('@/lib/i18n', () => ({
+  t: (key: string) => `T:${key}`,
+}))
+
 // --- Import after mocks ---
 import { QueryPicker } from '@/editor/extensions/query-picker'
 
@@ -108,12 +117,19 @@ describe('query-picker — `{{` brace affordance', () => {
     const { items } = setup()
     expect(await items('')).toEqual([
       { id: 'query', label: 'Insert query…' },
-      { id: 'embed', label: 'Insert embed…' },
+      // The embed affordance's label is sourced from `t('embed.pickerItem')`
+      // (mocked above to a marker) — not the hardcoded literal it used to be.
+      { id: 'embed', label: 'T:embed.pickerItem' },
     ])
     // Once the user types anything that is not the embed prefix, yield to
     // manual `{{query …}}` + QueryHint.
     expect(await items('q')).toEqual([])
     expect(await items('query tag:foo')).toEqual([])
+  })
+
+  it('sources the suggestion popup header from i18n, not a hardcoded literal', () => {
+    setup()
+    expect(capturedPickerConfig['displayName']).toBe('T:embed.pickerHeader')
   })
 
   it('routes an `{{embed …}}` query to the embed target search', async () => {

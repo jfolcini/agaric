@@ -313,11 +313,18 @@ function EmbedBody({
   const blocksById = usePageBlockStore((s) => s.blocksById)
   const loading = usePageBlockStore((s) => s.loading)
 
-  // Load only when this provider's store has nothing. A store adopted into an
-  // existing registry slot is SEEDED from the page's live data at
-  // registration (`registerPageStore`), so N embeds of one page cost one
-  // `load_page_subtree`, not N — and an embed of a page already open in a tab
-  // costs none at all.
+  // Load only when this provider's store has nothing. Each embed mounts its
+  // OWN store and issues its OWN `load()` here — adopting into an existing
+  // registry slot (`registerPageStore`) does not seed this store from a
+  // sibling's live data, so N embeds of one page cost N `load_page_subtree`
+  // calls, not one. (An earlier draft of this feature seeded the adopted
+  // store at registration time to avoid exactly that; it was removed before
+  // shipping because a child's effect runs before its provider's own
+  // registration effect, so the seed could never actually beat this `load()`
+  // call.) `mirrorToSiblings` (`page-blocks.ts`) is what keeps N stores of
+  // one page in sync AFTER each has loaded — it does not reduce the IPC
+  // count. Size `EMBED_MOUNT_LIMIT` and any per-page embed cap against N real
+  // loads, not one.
   useEffect(() => {
     if (store.getState().blocks.length === 0) void store.getState().load()
   }, [store])
@@ -455,6 +462,17 @@ function EmbedShell({
       aria-label={label}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the container-level action set must be reachable without entering the subtree; see the note above and the file docblock
       tabIndex={0}
+      // The container — not the tabIndex={-1} collapse button beside it — is
+      // the element that actually HAS focus when Space toggles collapse, so
+      // the expanded state has to live here for a screen reader's
+      // state-change announcement to fire. `undefined` when there is no
+      // collapse control at all (loading / deleted / unresolved shells):
+      // aria-expanded would otherwise assert a togglability that isn't there.
+      // group doesn't formally list aria-expanded among its supported
+      // states; axe accepts it, only oxlint's static rule rejects it (same
+      // situation as SortableBlockWrapper's listitem aria-expanded).
+      // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; mirrors the collapse button's own aria-expanded for the element that is actually focusable
+      aria-expanded={onToggleCollapse ? !collapsed : undefined}
       onKeyDown={handleKeyDown}
       data-testid={testId}
     >

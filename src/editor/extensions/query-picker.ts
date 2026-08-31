@@ -32,6 +32,7 @@ import { PluginKey } from '@tiptap/pm/state'
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
+import { t } from '@/lib/i18n'
 
 export const queryPickerPluginKey = new PluginKey('queryPicker')
 
@@ -41,13 +42,19 @@ export const queryPickerPluginKey = new PluginKey('queryPicker')
  */
 const QUERY_PICKER_ITEM: PickerItem = { id: 'query', label: 'Insert query…' }
 
+/** id of the embed affordance item below — checked in `command` by value. */
+const EMBED_AFFORDANCE_ID = 'embed'
+
 /**
  * The embed affordance offered alongside it. Selecting it does NOT go through
  * the slash dispatch: it rewrites the trigger in place so this same picker
  * re-opens in embed mode, which is the shortest path to "now type what you
- * want to embed".
+ * want to embed". Built fresh (not a module-level constant) so the label is
+ * read from `t()` at call time rather than at module-eval time.
  */
-const EMBED_AFFORDANCE_ITEM: PickerItem = { id: 'embed', label: 'Insert embed…' }
+function embedAffordanceItem(): PickerItem {
+  return { id: EMBED_AFFORDANCE_ID, label: t('embed.pickerItem') }
+}
 
 /**
  * Split `{{`-trigger query text into an embed search, or `null` when the text
@@ -91,7 +98,7 @@ export const QueryPicker = Extension.create<QueryPickerOptions>({
     return [
       createPickerPlugin({
         loggerComponent: 'QueryPicker',
-        displayName: 'Embed query',
+        displayName: t('embed.pickerHeader'),
         pluginKey: queryPickerPluginKey,
         char: '{{',
         // #4550 — spaces must survive the match, because `{{embed ` HAS one
@@ -112,7 +119,7 @@ export const QueryPicker = Extension.create<QueryPickerOptions>({
         },
         editor,
         items: (query) => {
-          if (query === '') return [QUERY_PICKER_ITEM, EMBED_AFFORDANCE_ITEM]
+          if (query === '') return [QUERY_PICKER_ITEM, embedAffordanceItem()]
           const embedQuery = parseEmbedPickerQuery(query)
           if (embedQuery === null) return []
           return extensionOptions.embedItems(embedQuery)
@@ -124,7 +131,7 @@ export const QueryPicker = Extension.create<QueryPickerOptions>({
             extensionOptions.onCommand(QUERY_PICKER_ITEM)
             return
           }
-          if (item.id === EMBED_AFFORDANCE_ITEM.id) {
+          if (item.id === EMBED_AFFORDANCE_ID) {
             // Re-open THIS picker in embed mode rather than routing through
             // the slash dispatch — one fewer hop, and the caret lands exactly
             // where the search query goes.

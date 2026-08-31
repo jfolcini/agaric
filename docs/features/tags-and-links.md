@@ -53,6 +53,7 @@ An **embed** is transclusion: one source of truth rendered in many places. Where
 - **Arrow-key navigation does not descend into an embed** — Down from the row above lands on the row below it.
 - **Collapse applies to the whole container**, not to branches inside it. Container collapse is stored per host block, so it never touches the source page's own saved layout.
 - Only the first 32 rows of an embed render; the rest are one click away in the source.
+- **Embedded rows render content only.** No todo checkbox, no priority or date chips, no list markers, no properties, and no attachments — just the row's rich text. Embed a page of tasks and you'll see the text with no checkboxes; open the source to interact with any of that.
 - Embedding a block from a very large page loads that page's blocks to render the few you asked for.
 - Embedded blocks do **not** count toward the host page's block count or its truncation notice — they are not that page's blocks.
 
