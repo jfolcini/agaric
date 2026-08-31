@@ -1575,7 +1575,7 @@ name: AggregateColumn } |
  *  keyed by `key`. Non-numeric values are SKIPPED by the numeric guard.
  */
 { type: "Property"; 
-/**  The property key whose `value_text` is read + numeric-coerced. */
+/**  The property key whose stored value is folded (numeric-coerced). */
 key: string };
 
 /**
