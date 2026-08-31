@@ -1069,12 +1069,15 @@ def run_self_test() -> int:
             wrote_after_opt_in = len(_wrote)
             stray_flag_rc = main(["--allow-reductions"])
         root_cases += 1
-        # Pin the EXACT code, not merely "not 0". `main` returns 2 for a
-        # `guard_file_source.build` invocation error raised BEFORE the roots
-        # check, so a `!= 0` assertion also passes when the run died for an
-        # unrelated reason — an assertion true for two reasons, which is how a
-        # dead guard looks alive. The sibling arms in this block already pin
-        # exact codes; these two now do too.
+        # Pin the EXACT code, not merely "not 0". Two gates in this file
+        # return 2 ahead of the roots check — the `--allow-reductions` misuse
+        # gate and the `--synthetic-tree` mutual-exclusion gate — so a `!= 0`
+        # assertion also passes when the run died for one of those instead,
+        # which is an assertion true for two reasons and how a dead guard
+        # looks alive. (The `guard_file_source.build` error is the same shape
+        # in `check-raw-tx.py`, where the build call really does precede the
+        # roots check; in THIS file it now sits after it, so it is not the
+        # example to cite here.) The sibling arms already pin exact codes.
         if missing_rc != 1:
             failures.append(
                 f"a missing CRATE_ROOTS entry did not fail the run with the roots "

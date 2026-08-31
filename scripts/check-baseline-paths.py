@@ -88,6 +88,12 @@ paths passes. None of today's eight embedded sources uses either construct;
 this is named alongside the multi-literal limit so the next one that does is
 recognised rather than rediscovered.
 
+A third: the escape branch advances past `\\x` without appending either
+character, so `"a\\b"` extracts as `ab`. No declared set uses an escape today,
+and the failure direction is a self-announcing false positive (it would name a
+path that does exist), but it belongs in this roster rather than being
+rediscovered by whoever first writes one.
+
 Entries that are GLOBS (containing `*` or `?`) are skipped per-entry, not
 per-set: "matches at least one path" is a different assertion with different
 false-positive behaviour (a deliberately forward-looking pattern is legal),
@@ -241,6 +247,10 @@ BANNERS = {
         "Baseline/allowlist path guard (#4501) — the repository could not be "
         "ENUMERATED, so the\npopulation is unknown:\n"
     ),
+    "vanished": (
+        "Baseline/allowlist path guard (#4501) — a DECLARED source is gone "
+        "from the checkout:\n"
+    ),
 }
 
 HINTS = {
@@ -265,6 +275,14 @@ HINTS = {
         "       one does, which is how a guard reports success over a subject\n"
         "       it stopped reading (#4501's whole subject). Fix the extractor\n"
         "       or the declaration; do not delete the source to quiet it.\n"
+    ),
+    "vanished": (
+        "\n    -> The inverse of `unknown`: this file IS declared and has gone\n"
+        "       MISSING, so the declaration now protects nothing. Either the\n"
+        "       source moved — repoint the DATA_SOURCES / NO_PATHS key — or it\n"
+        "       was deleted, in which case remove the declaration. Leaving it\n"
+        "       is a stale entry in a hand-maintained set, which is precisely\n"
+        "       what this guard exists to catch.\n"
     ),
     "discovery": (
         "\n    -> Not a dangling entry, and NOT a pass. Discovery asks git for\n"
@@ -445,9 +463,9 @@ def main(argv: list[str]) -> int:
     # is the exact class this guard exists to catch. Leaving one table
     # unchecked would make this script an instance of its own subject.
     for rel in [r for r in DATA_SOURCES if not (REPO_ROOT / r).is_file()]:
-        findings.append(("unknown", f"{rel}: declared in DATA_SOURCES but not in this checkout"))
+        findings.append(("vanished", f"{rel}: declared in DATA_SOURCES but not in this checkout"))
     for rel in [r for r in NO_PATHS if not (REPO_ROOT / r).is_file()]:
-        findings.append(("unknown", f"{rel}: declared in NO_PATHS but not in this checkout"))
+        findings.append(("vanished", f"{rel}: declared in NO_PATHS but not in this checkout"))
 
     # --- data files -------------------------------------------------------
     for rel, (kind, base) in sorted(DATA_SOURCES.items()):
@@ -489,9 +507,16 @@ def main(argv: list[str]) -> int:
             ))
             continue
         n_bad = _check_entries(f"{rel}:{const}", entries, base, findings)
-        checked += len(entries) - n_bad[1]
+        # Subtract BOTH the dangling entries and the skipped globs. Counting a
+        # dangling entry as one that "resolved" makes the denominator line
+        # disagree with the sentence it prints, and that line is this script's
+        # own honesty mechanism. Unreachable while the line prints only when
+        # `findings` is empty — but a number that is right by luck is exactly
+        # the shape #4501 is about.
+        resolved = len(entries) - n_bad[0] - n_bad[1]
+        checked += resolved
         globs += n_bad[1]
-        per_source.append((f"{rel}:{const}", len(entries) - n_bad[1], n_bad[1]))
+        per_source.append((f"{rel}:{const}", resolved, n_bad[1]))
 
     if verbose:
         for label, n, g in per_source:
@@ -501,7 +526,7 @@ def main(argv: list[str]) -> int:
         # Composed, not chosen by priority: a run can be red for two of these
         # at once, and collapsing them under one banner is what makes a reader
         # hunt for a moved file when the actual fault is a set going unread.
-        for kind in ("dangling", "unknown", "unread", "discovery"):
+        for kind in ("dangling", "unknown", "vanished", "unread", "discovery"):
             hits = [m for k, m in findings if k == kind]
             if not hits:
                 continue
