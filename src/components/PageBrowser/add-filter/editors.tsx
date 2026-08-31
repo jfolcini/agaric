@@ -16,8 +16,8 @@ import {
   BLOCK_TYPE_VALUES,
   DATE_OPS,
   type DateOpKind,
-  PROPERTY_OPS,
   type PropertyOpKind,
+  type PropertyValueKind,
   TODO_STATE_VALUES,
   VALUE_BEARING_OPS,
 } from '@/components/PageBrowser/add-filter/vocab'
@@ -111,11 +111,23 @@ export function PathEditor({
  * and required; for Exists/NotExists the value input is hidden and Apply is
  * enabled on a non-empty key alone. The predicate shape is built by the
  * parent's `applyProperty`.
+ *
+ * #4553 Phase 1 — `ops` and `valueKind` are now passed in by the caller
+ * (derived from the property's declared `value_type` on the advanced
+ * surface; fixed to the classic 4-op/Text pair on the Pages browser) rather
+ * than hardcoded here, so this editor renders whatever comparison set and
+ * value control the caller decides are in scope for the current surface +
+ * key. The value control itself follows `valueKind`: a plain text box for
+ * `Text`, a number input for `Num`, a date input for `Date`, and the shared
+ * page/block picker (`usePagePicker`, also used by `LinkTargetEditor`) for
+ * `Ref`.
  */
 export function PropertyEditor({
   propKey,
   propValue,
   propOp,
+  ops,
+  valueKind,
   onKeyChange,
   onValueChange,
   onOpChange,
@@ -125,6 +137,11 @@ export function PropertyEditor({
   propKey: string
   propValue: string
   propOp: PropertyOpKind
+  /** The predicate-op options to render, in display order (already filtered
+   * for the current surface/value-kind by the caller). */
+  ops: ReadonlyArray<{ value: PropertyOpKind; labelKey: string }>
+  /** Which `PropertyValue` variant the value control edits/emits. */
+  valueKind: PropertyValueKind
   onKeyChange: (v: string) => void
   onValueChange: (v: string) => void
   onOpChange: (v: PropertyOpKind) => void
@@ -133,8 +150,14 @@ export function PropertyEditor({
 }): React.ReactElement {
   const { t } = useTranslation()
   const needsValue = VALUE_BEARING_OPS.has(propOp)
-  // D14/D24: key always required; value required only for Eq/Ne.
-  const canApply = propKey.trim().length > 0 && (!needsValue || propValue.trim().length > 0)
+  // A `Num` value must parse to a finite number — a half-typed "-" or "3."
+  // stays syntactically non-blank but is not a value the engine can bind as
+  // an `f64`, so Apply must stay disabled until it resolves to one.
+  const numericValueOk = valueKind !== 'Num' || Number.isFinite(Number(propValue.trim()))
+  // D14/D24: key always required; value required (and, for Num, numeric) only
+  // for the unary (value-bearing) operators.
+  const canApply =
+    propKey.trim().length > 0 && (!needsValue || (propValue.trim().length > 0 && numericValueOk))
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -155,28 +178,33 @@ export function PropertyEditor({
       />
       {/* Native <select>: Radix Select portals + a focus-scope inside the
           Popover dialog scope, which is brittle in jsdom and overkill for a
-          4-option control. The native element is fully accessible + testable. */}
+          small closed-option control. The native element is fully accessible
+          + testable. */}
       <select
         className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-hidden transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible"
         value={propOp}
         onChange={(e) => onOpChange(e.target.value as PropertyOpKind)}
         aria-label={t('pageBrowser.filter.propertyOpLabel')}
       >
-        {PROPERTY_OPS.map((op) => (
+        {ops.map((op) => (
           <option key={op.value} value={op.value}>
             {t(op.labelKey)}
           </option>
         ))}
       </select>
-      {needsValue && (
-        <Input
-          value={propValue}
-          onChange={(e) => onValueChange(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={t('pageBrowser.filter.propertyValuePlaceholder')}
-          aria-label={t('pageBrowser.filter.propertyValuePlaceholder')}
-        />
-      )}
+      {needsValue &&
+        (valueKind === 'Ref' ? (
+          <PropertyRefValueInput value={propValue} onChange={onValueChange} />
+        ) : (
+          <Input
+            type={valueKind === 'Num' ? 'number' : valueKind === 'Date' ? 'date' : 'text'}
+            value={propValue}
+            onChange={(e) => onValueChange(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={t('pageBrowser.filter.propertyValuePlaceholder')}
+            aria-label={t('pageBrowser.filter.propertyValuePlaceholder')}
+          />
+        ))}
       <div className="flex justify-between gap-2">
         <Button type="button" variant="ghost" size="xs" onClick={onBack}>
           {t('pageBrowser.filter.back')}
@@ -494,27 +522,21 @@ export function CreatedEditor({
 }
 
 /**
- * #1478 — page picker for the `LinksTo` / `LinkedFrom` relational facets. The
- * value the user picks is a page/block ULID, but the user chooses it BY TITLE,
- * so this mirrors the shared ref-picker UX (`RefEditor`): a search box over the
- * space's page list (`listAllPagesInSpace`, filtered client-side with the
- * Unicode-aware fold), each row showing the resolved title. On click it hands
- * the page's ULID to `onSelect`; the parent emits the leaf with the id stored.
- * The chip then resolves the id BACK to a title via the same resolver.
+ * Shared page list + search-by-title state for a page/block picker
+ * (`listAllPagesInSpace`, filtered client-side with the Unicode-aware fold).
+ * Extracted (#4553 Phase 1) so `LinkTargetEditor` (the LinksTo/LinkedFrom
+ * facets) and `PropertyRefValueInput` (the `Ref`-valued property picker)
+ * share ONE "search pages by title, resolve missing titles" implementation
+ * rather than growing a second, drifting copy.
  */
-export function LinkTargetEditor({
-  label,
-  onSelect,
-  onBack,
-}: {
-  label: string
-  onSelect: (id: string) => void
-  onBack: () => void
-}): React.ReactElement {
+function usePagePicker(search: string): {
+  filtered: PageHeading[]
+  loading: boolean
+  labelFor: (page: PageHeading) => string
+} {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const resolveTitle = useResolveStore((s) => s.resolveTitle)
-  const [search, setSearch] = useState('')
   const [pages, setPages] = useState<PageHeading[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -564,6 +586,78 @@ export function LinkTargetEditor({
     return pages.filter((p) => matchesSearchFolded(labelFor(p), search))
   }, [pages, search, labelFor])
 
+  return { filtered, loading, labelFor }
+}
+
+/**
+ * Renders the scrollable page-picker list body (spinner / empty state / rows)
+ * shared by `LinkTargetEditor` and `PropertyRefValueInput` (#4553 Phase 1).
+ */
+function PagePickerResults({
+  filtered,
+  loading,
+  labelFor,
+  onSelect,
+}: {
+  filtered: PageHeading[]
+  loading: boolean
+  labelFor: (page: PageHeading) => string
+  onSelect: (id: string) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <ScrollArea className="max-h-48">
+      <div className="flex flex-col gap-0.5" aria-busy={loading}>
+        {loading ? (
+          <div className="flex justify-center py-3">
+            <Spinner size="sm" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={FileSearch} message={t('pageBrowser.filter.linkNoPages')} compact />
+        ) : (
+          filtered.map((page) => (
+            <button
+              key={page.id}
+              type="button"
+              className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent focus-ring-visible truncate"
+              onClick={() => onSelect(page.id)}
+            >
+              {/* `PageHeading.content` IS the page title; prefer it. Fall back
+                  to the resolver (so a content-less row still shows something),
+                  then to "Untitled". `labelFor` computes this same label that
+                  the search filter matches on, so display and filtering agree.
+                  The chip/value then resolves the id BACK to a title via the
+                  SAME resolver after selection. */}
+              {labelFor(page)}
+            </button>
+          ))
+        )}
+      </div>
+    </ScrollArea>
+  )
+}
+
+/**
+ * #1478 — page picker for the `LinksTo` / `LinkedFrom` relational facets. The
+ * value the user picks is a page/block ULID, but the user chooses it BY TITLE,
+ * so this mirrors the shared ref-picker UX (`RefEditor`): a search box over the
+ * space's page list, each row showing the resolved title. On click it hands
+ * the page's ULID to `onSelect`; the parent emits the leaf with the id stored.
+ * The chip then resolves the id BACK to a title via the same resolver.
+ */
+export function LinkTargetEditor({
+  label,
+  onSelect,
+  onBack,
+}: {
+  label: string
+  onSelect: (id: string) => void
+  onBack: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const [search, setSearch] = useState('')
+  const { filtered, loading, labelFor } = usePagePicker(search)
+
   return (
     <div className="flex flex-col gap-2" data-testid="link-target-editor">
       <span className="px-1 text-xs font-medium">{label}</span>
@@ -576,39 +670,64 @@ export function LinkTargetEditor({
         // oxlint-disable-next-line jsx-a11y/no-autofocus -- this picker renders only after the user opens it from the filter menu; focusing the search input lets them filter pages immediately without an extra click/tab
         autoFocus
       />
-      <ScrollArea className="max-h-48">
-        <div className="flex flex-col gap-0.5" aria-busy={loading}>
-          {loading ? (
-            <div className="flex justify-center py-3">
-              <Spinner size="sm" />
-            </div>
-          ) : filtered.length === 0 ? (
-            <EmptyState icon={FileSearch} message={t('pageBrowser.filter.linkNoPages')} compact />
-          ) : (
-            filtered.map((page) => (
-              <button
-                key={page.id}
-                type="button"
-                className="rounded px-2 py-1 text-left text-xs transition-colors hover:bg-accent focus-ring-visible truncate"
-                onClick={() => onSelect(page.id)}
-              >
-                {/* `PageHeading.content` IS the page title; prefer it. Fall back
-                    to the resolver (so a content-less row still shows something),
-                    then to "Untitled". `labelFor` computes this same label that
-                    the search filter matches on, so display and filtering agree.
-                    The chip resolves the stored id→title via the SAME resolver
-                    after selection. */}
-                {labelFor(page)}
-              </button>
-            ))
-          )}
-        </div>
-      </ScrollArea>
+      <PagePickerResults
+        filtered={filtered}
+        loading={loading}
+        labelFor={labelFor}
+        onSelect={onSelect}
+      />
       <div className="flex justify-start">
         <Button type="button" variant="ghost" size="xs" onClick={onBack}>
           {t('pageBrowser.filter.back')}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * #4553 Phase 1 — the value control `PropertyEditor` renders for a `Ref`-kind
+ * property (a `HasProperty` predicate whose `PropertyValue` is `Ref`,
+ * compared against `block_properties.value_ref`). Reuses `usePagePicker` +
+ * `PagePickerResults` — the SAME search-by-title / emit-the-id picker
+ * `LinkTargetEditor` ships for `LinksTo`/`LinkedFrom` — rather than asking
+ * the user to type a raw block ULID into a bare text box. Embedded inline
+ * (no `autoFocus`, no own Back button): it lives inside `PropertyEditor`,
+ * which already owns the key input's focus and the Back/Apply footer one
+ * level up.
+ */
+function PropertyRefValueInput({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (id: string) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const resolveTitle = useResolveStore((s) => s.resolveTitle)
+  const [search, setSearch] = useState('')
+  const { filtered, loading, labelFor } = usePagePicker(search)
+
+  return (
+    <div className="flex flex-col gap-1" data-testid="property-ref-value-input">
+      <Input
+        className="h-8 text-xs"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={t('pageBrowser.filter.linkSearchPages')}
+        aria-label={t('pageBrowser.filter.linkSearchPages')}
+      />
+      <PagePickerResults
+        filtered={filtered}
+        loading={loading}
+        labelFor={labelFor}
+        onSelect={onChange}
+      />
+      {value && (
+        <p className="px-1 text-xs text-muted-foreground" data-testid="property-ref-selected">
+          {t('pageBrowser.filter.propertyRefSelected', { title: resolveTitle(value) })}
+        </p>
+      )}
     </div>
   )
 }

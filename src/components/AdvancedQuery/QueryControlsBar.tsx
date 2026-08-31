@@ -66,6 +66,13 @@ const AGG_COLUMNS: readonly AggregateColumn[] = ['priority', 'position']
 
 /** Sentinel option value for "no group-by / no target" (Select needs a string). */
 const NONE = '__none__'
+/**
+ * #4553 Phase 1 — sentinel `AggregateTarget` value encoding the `Property`
+ * variant in the target Select (mirrors `RELEVANCE` below for `SortSource`).
+ * Selecting it reveals a property-key text input; the emitted target is
+ * `{ type: 'Property', key }` once a key is typed.
+ */
+const PROPERTY = '__property__'
 /** Sentinel `SortSource` value encoding the Relevance variant in the Select. */
 const RELEVANCE = '__relevance__'
 
@@ -189,12 +196,31 @@ export function QueryControlsBar({
     onAggregatesChange(aggregates.map((a, i) => (i === index ? { ...a, op: value as AggOp } : a)))
   }
   const setAggTarget = (index: number, value: string): void => {
-    const target =
-      value === NONE ? null : { type: 'Column' as const, name: value as AggregateColumn }
+    // #4553 Phase 1 — selecting "Property" seeds an empty key (the key input
+    // below fills it in); the key itself is edited via `setAggTargetKey`, not
+    // by re-selecting this dropdown.
+    const target: AggregateSpec['target'] =
+      value === NONE
+        ? null
+        : value === PROPERTY
+          ? { type: 'Property', key: '' }
+          : { type: 'Column', name: value as AggregateColumn }
     onAggregatesChange(aggregates.map((a, i) => (i === index ? { ...a, target } : a)))
   }
+  // #4553 Phase 1 — the property-key input's own onChange, kept separate from
+  // `setAggTarget` (which only fires on a dropdown selection): typing in the
+  // key box must not re-select the dropdown option, just update `key`.
+  const setAggTargetKey = (index: number, key: string): void => {
+    onAggregatesChange(
+      aggregates.map((a, i) =>
+        i === index && a.target?.type === 'Property'
+          ? { ...a, target: { type: 'Property', key } }
+          : a,
+      ),
+    )
+  }
   const aggTargetValue = (spec: AggregateSpec): string =>
-    spec.target != null && spec.target.type === 'Column' ? spec.target.name : NONE
+    spec.target != null ? (spec.target.type === 'Column' ? spec.target.name : PROPERTY) : NONE
 
   return (
     <fieldset className="advanced-query-controls flex flex-col gap-3 border-0 p-0 m-0">
@@ -339,8 +365,26 @@ export function QueryControlsBar({
                       {t(`advancedQuery.aggregate.target.${col}`)}
                     </SelectItem>
                   ))}
+                  {/* #4553 Phase 1 — `AggregateTarget::Property`: the only
+                      summable target anyone actually wants (`priority`/`position`
+                      are closed, fixed-purpose columns). Paired with the
+                      `agg_target_expr` engine fix so `sum`/`avg` over a
+                      `number`-declared property reads `value_num`, not just
+                      `value_text`. */}
+                  <SelectItem value={PROPERTY}>
+                    {t('advancedQuery.aggregate.target.property')}
+                  </SelectItem>
                 </SelectContent>
               </Select>
+              {spec.target?.type === 'Property' && (
+                <Input
+                  className="h-8 w-28 text-xs"
+                  value={spec.target.key}
+                  onChange={(e) => setAggTargetKey(index, e.target.value)}
+                  placeholder={t('advancedQuery.aggregate.propertyKeyPlaceholder')}
+                  aria-label={t('advancedQuery.aggregate.propertyKeyLabel')}
+                />
+              )}
               <Button
                 variant="ghost"
                 size="xs"

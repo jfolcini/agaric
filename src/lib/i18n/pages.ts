@@ -438,8 +438,18 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.propertyOpLabel': 'Comparison',
   'pageBrowser.filter.propertyOpEq': 'is',
   'pageBrowser.filter.propertyOpNe': 'is not',
+  // #4553 Phase 1 — the six comparison operators the advanced surface adds
+  // on top of the Pages browser's classic Eq/Ne/Exists/NotExists (D24).
+  'pageBrowser.filter.propertyOpLt': 'is less than',
+  'pageBrowser.filter.propertyOpLte': 'is at most',
+  'pageBrowser.filter.propertyOpGt': 'is greater than',
+  'pageBrowser.filter.propertyOpGte': 'is at least',
+  'pageBrowser.filter.propertyOpContains': 'contains',
+  'pageBrowser.filter.propertyOpStartsWith': 'starts with',
   'pageBrowser.filter.propertyOpExists': 'exists',
   'pageBrowser.filter.propertyOpNotExists': "doesn't exist",
+  // #4553 Phase 1 — the Ref-valued property picker's "you picked this page" readout.
+  'pageBrowser.filter.propertyRefSelected': 'Selected: {{title}}',
   'pageBrowser.filter.pathExcludeLabel': 'Exclude matching pages',
   'pageBrowser.filter.summaryTag': 'tag: {{tag}}',
   'pageBrowser.filter.summaryPath': 'path: {{pattern}}',

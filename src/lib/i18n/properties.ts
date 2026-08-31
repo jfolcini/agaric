@@ -73,6 +73,15 @@ export const properties: Record<string, string> = {
   'advancedQuery.aggregate.target.none': 'Rows',
   'advancedQuery.aggregate.target.priority': 'Priority',
   'advancedQuery.aggregate.target.position': 'Position',
+  // #4553 Phase 1 — `AggregateTarget::Property`: sum/avg/min/max over a
+  // named property's numeric value, not just the two fixed columns above.
+  'advancedQuery.aggregate.target.property': 'Property',
+  'advancedQuery.aggregate.propertyKeyLabel': 'Property key to aggregate',
+  'advancedQuery.aggregate.propertyKeyPlaceholder': 'Property key',
+  // #4553 Phase 1 — the contributing NUMERIC count beside a sum/avg/min/max
+  // chip, when the request also asked for a matching Count over the same
+  // target (`avg` divides by this, not the total row count).
+  'advancedQuery.aggregate.contributingCount': '(n={{count}})',
   'advancedQuery.aggregate.summaryLabel': 'Aggregate summary',
   'advancedQuery.group.summaryLabel': 'Group results',
   'advancedQuery.group.noneKey': '(none)',
