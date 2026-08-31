@@ -85,7 +85,7 @@ use agaric_store::space::SpaceId;
 use loro::{Counter, PeerID, VersionVector};
 
 use super::loro_sync::classify_from_vv_reachability;
-use super::operations::{batch_ops_for_wire, check_reset_required};
+use super::operations::{batch_ops_for_wire, billed_bytes, check_reset_required};
 use super::types::{
     OpTransfer, SpaceVersionVector, decode_persisted_loro_vvs, encode_persisted_loro_vvs,
 };
@@ -224,21 +224,6 @@ fn op_transfer() -> impl Strategy<Value = OpTransfer> {
                 }
             },
         )
-}
-
-/// The size estimate `batch_ops_for_wire` bills each record at.
-///
-/// **This is a copy of the production formula, not an independent one**, and
-/// the distinction matters for what the cap property can claim. It lets a test
-/// state what a batch weighs without calling into the code under test, which is
-/// what `batching_respects_the_cap_except_for_unsplittable_records` needs to
-/// check the *partitioning loop*. It does NOT cover the formula: change
-/// `operations.rs`'s `+ 2` envelope allowance to `+ 8` and every property here
-/// stays green, because this line moves with it. Pinning the billing itself
-/// would need a fixture with a known serialized length, which is a different
-/// test than any of these.
-fn billed_bytes(rec: &OpTransfer) -> usize {
-    serde_json::to_string(rec).map_or(0, |s| s.len()) + 2
 }
 
 // ---------------------------------------------------------------------------
@@ -631,6 +616,11 @@ proptest! {
         max_bytes in 1usize..1_200,
     ) {
         for batch in batch_ops_for_wire(records, max_bytes) {
+            // Calling the production `billed_bytes` here does NOT pin it —
+            // this property targets the partitioning loop, and would hold for
+            // any consistent formula. The pin lives in
+            // `monotonicity_predicate_catches_a_truncating_cap` below, which
+            // asserts a literal byte count against it (#4525).
             let billed: usize = batch.iter().map(billed_bytes).sum();
             prop_assert!(
                 batch.len() == 1 || billed <= max_bytes,
@@ -695,15 +685,19 @@ proptest! {
 /// `batch_ops_for_wire`'s loop with one deliberate defect: the cap is truncated
 /// through a `u8`. Used only by the validation control below.
 ///
-/// A copy of production rather than a call into it, because the point is to
-/// have something the monotonicity predicate can *fail* on — which is the only
-/// way to show the predicate is not vacuous, since the real function is (as far
-/// as this file can establish) correct.
+/// The **loop** is a copy of production rather than a call into it, because the
+/// point is to have something the monotonicity predicate can *fail* on — which
+/// is the only way to show the predicate is not vacuous, since the real
+/// function is (as far as this file can establish) correct. The **billing** is
+/// no longer a copy: since #4525 this calls the production `billed_bytes`
+/// directly, so the `+ 2` formula cannot drift here. Scope matters, because a
+/// re-sync following the older wording literally would go looking for a
+/// billing clone that no longer exists.
 ///
-/// **Nothing enforces that this stays a copy**, and that is the one way this
-/// control can rot: rewrite `batch_ops_for_wire` (`operations.rs`, `pub fn
-/// batch_ops_for_wire`) and this keeps exercising the old loop, keeps passing,
-/// and silently stops being a control for the property it backs. Re-sync it by
+/// **Nothing enforces that the loop stays a faithful copy**, and that is the
+/// one way this control can rot: rewrite `batch_ops_for_wire` (`operations.rs`,
+/// `pub fn batch_ops_for_wire`) and this keeps exercising the old loop, keeps
+/// passing, and silently stops being a control for the property it backs. Re-sync it by
 /// hand whenever that loop changes shape. There is no clone-pin guard for Rust
 /// the way `scripts/check-mutation-harness-clones.mjs` does it for the JS
 /// harnesses, so this comment is the whole mechanism.
