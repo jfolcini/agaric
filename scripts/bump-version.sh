@@ -71,7 +71,8 @@ set -euo pipefail
 # release tag — the root every SLSA attestation the release workflow
 # produces describes — names a commit that cannot be attributed. The same
 # address lands in the commit's `Signed-off-by` trailer too
-# (scripts/dco-signoff.sh reads the same config), so the DCO asserts an
+# (scripts/dco-signoff.sh writes it from the AUTHOR identity, which for an
+# un-overridden checkout is that same config), so the DCO asserts an
 # identity that does not exist.
 #
 # Two gates, both fail-closed:
@@ -153,7 +154,7 @@ release_ident_email() {
 # cannot produce a commit GitHub will mark verified; silent, returns 0,
 # otherwise. Same shape as verify-ci-equivalent.sh's `node_deps_problem`.
 release_identity_problem() {
-  local name config_email committer_email format key records matches uids
+  local name config_email committer_email author_email format key records matches uids
   name="$(git config --get user.name 2>/dev/null || true)"
   config_email="$(git config --get user.email 2>/dev/null || true)"
 
@@ -172,13 +173,35 @@ release_identity_problem() {
     printf 'git could not resolve a committer identity (`git var GIT_COMMITTER_IDENT` produced no address).\n'
     return 1
   fi
-  # The DCO trailer is written from `user.email` (scripts/dco-signoff.sh)
-  # while the signature binds to the committer address. If they disagree the
-  # sign-off asserts a different identity from the one that signed, which is
-  # the third symptom reported in #4082.
-  if [ "$config_email" != "$committer_email" ]; then
-    printf 'the Signed-off-by trailer would say <%s> (user.email) while the commit is committed as <%s>; the DCO would assert a different identity from the one that signed.\n' \
-      "$config_email" "$committer_email"
+  # The DCO trailer is written from the AUTHOR identity — `git var
+  # GIT_AUTHOR_IDENT` (scripts/dco-signoff.sh, #4561) — while the signature
+  # binds to the COMMITTER address. If they disagree the sign-off asserts a
+  # different identity from the one that signed, which is the third symptom
+  # reported in #4082.
+  #
+  # Read the author, not `user.email`. Until #4561 the trailer did come from
+  # `user.email` and comparing that was right; it is not any more, and the
+  # difference is not cosmetic: `GIT_AUTHOR_EMAIL` and `git commit --author=`
+  # both change the trailer while leaving `user.email` untouched, so a gate
+  # reading the config would pass while the trailer it protects disagrees with
+  # the committer — exactly the state it exists to refuse.
+  author_email="$(release_ident_email GIT_AUTHOR_IDENT)"
+  if [ -z "$author_email" ]; then
+    printf 'git could not resolve an author identity (`git var GIT_AUTHOR_IDENT` produced no address), so the DCO trailer cannot be written.\n'
+    return 1
+  fi
+  if [ "$author_email" != "$committer_email" ]; then
+    printf 'the Signed-off-by trailer would say <%s> (the AUTHOR identity, per scripts/dco-signoff.sh) while the commit is committed as <%s>; the DCO would assert a different identity from the one that signed.\n' \
+      "$author_email" "$committer_email"
+    return 1
+  fi
+  # `user.email` disagreeing with the author is a weaker but still fatal
+  # signal: it means the release is being cut under an overridden identity,
+  # and WHICH address a release is cut under is a maintainer decision this
+  # gate deliberately does not make for them.
+  if [ "$config_email" != "$author_email" ]; then
+    printf 'git `user.email` is <%s> but the commit would be authored as <%s> (GIT_AUTHOR_EMAIL or --author is overriding it); a release must not be cut under an identity the repository config does not name.\n' \
+      "$config_email" "$author_email"
     return 1
   fi
 
@@ -646,6 +669,36 @@ u'
   if ! (
     export GIT_COMMITTER_EMAIL='someone-else@example.invalid'
     st_identity reject 'a committer address that disagrees with the DCO trailer is rejected' 'Signed-off-by'
+    [ "$st_fail" = 0 ]
+  ); then
+    st_fail=1
+  fi
+
+  # 9b. The AUTHOR side of the same split (#4561). The trailer is written from
+  #     `GIT_AUTHOR_IDENT`, so an author override produces the identical
+  #     "sign-off asserts a different identity from the one that signed" state
+  #     — and before #4561 this gate read `user.email` and could not see it.
+  #     Without this case the suite passes identically whether the comparison
+  #     reads the author or the config, which is the assertion-true-for-the-
+  #     wrong-reason shape #4561 is itself about.
+  if ! (
+    export GIT_AUTHOR_EMAIL='author-override@example.invalid'
+    st_identity reject 'an AUTHOR address that disagrees with the committer is rejected' 'Signed-off-by'
+    [ "$st_fail" = 0 ]
+  ); then
+    st_fail=1
+  fi
+
+  # 9c. `user.email` disagreeing with the author is its own refusal: the
+  #     release would be cut under an identity the repository config does not
+  #     name. Both author and committer are overridden together here, so the
+  #     9b comparison is SATISFIED and only the config-vs-author branch can
+  #     fire — otherwise this case would pass on 9b's rejection and pin
+  #     nothing of its own.
+  if ! (
+    export GIT_AUTHOR_EMAIL='override@example.invalid'
+    export GIT_COMMITTER_EMAIL='override@example.invalid'
+    st_identity reject 'user.email disagreeing with the overridden author is rejected' 'user.email'
     [ "$st_fail" = 0 ]
   ); then
     st_fail=1
