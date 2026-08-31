@@ -641,13 +641,23 @@ fn peer_frontier_json(peer_heads: &[DeviceHead]) -> Result<String, AppError> {
 }
 
 /// Cheap upper-bound estimate of one record's inline JSON footprint, as billed
-/// by [`batch_ops_for_wire`]: the serialized record's own length plus a small
-/// per-element envelope allowance, `+ 2`, for the bytes the record's
-/// serialization alone doesn't cover when it sits inside the batch's JSON
-/// array (each `OpTransfer` in `SyncMessage::OpLogBatch`'s `records` array
-/// needs a separating comma, and the array itself needs its brackets). The
-/// exact split of that allowance is not further established from the code
-/// beyond this — it is documented only as a "cheap upper-bound estimate".
+/// by [`batch_ops_for_wire`]: the serialized record's own length plus a flat
+/// `+ 2` per-element envelope allowance, for the bytes a record's own
+/// serialization doesn't cover once it sits inside the batch's JSON array
+/// (`SyncMessage::OpLogBatch`'s `records` is a plain array, so the overhead is
+/// the separating commas plus the enclosing brackets).
+///
+/// That breakdown is **reconstructed, not recovered**: `git log -S` back to
+/// the formula's introduction (#2481/#2495) shows the original comment said
+/// only "a small per-element envelope allowance" and never named a split. It
+/// is offered as the reading that fits the wire format, not as the author's
+/// stated intent.
+///
+/// It also **deliberately over-provisions**, and that is not a bug to tighten:
+/// N records need N-1 commas plus 2 brackets — `N + 1` bytes — where this
+/// bills `2N`. An upper bound is what the caller wants, so do not "correct"
+/// this to `+ 1`; doing so would turn a bound into an estimate that can be
+/// wrong in the direction that overflows the cap.
 ///
 /// `pub(crate)` rather than private so `protocol_proptest`'s property tests
 /// can call the exact function `batch_ops_for_wire` bills against, instead of

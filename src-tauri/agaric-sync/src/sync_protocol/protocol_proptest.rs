@@ -616,6 +616,11 @@ proptest! {
         max_bytes in 1usize..1_200,
     ) {
         for batch in batch_ops_for_wire(records, max_bytes) {
+            // Calling the production `billed_bytes` here does NOT pin it —
+            // this property targets the partitioning loop, and would hold for
+            // any consistent formula. The pin lives in
+            // `monotonicity_predicate_catches_a_truncating_cap` below, which
+            // asserts a literal byte count against it (#4525).
             let billed: usize = batch.iter().map(billed_bytes).sum();
             prop_assert!(
                 batch.len() == 1 || billed <= max_bytes,
