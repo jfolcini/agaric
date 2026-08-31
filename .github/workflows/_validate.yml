@@ -1552,8 +1552,14 @@ jobs:
   # the shards still run `install-deps` themselves, this split takes that step
   # from 3 executions per run to 4. Since a warm .deb cache does NOT skip its
   # `apt-get update` mirror contact, the per-run probability of an
-  # `AGARIC_APT_INFRA` red goes UP by roughly a third. What the split buys is
-  # not less mirror exposure -- it is that the first, coldest payment is made
+  # `AGARIC_APT_INFRA` red goes UP by roughly a third -- and that cost is paid
+  # on EVERY frontend run, not only the ones that need what it buys. The
+  # benefit is NOT unconditional: both caches (browser binaries and .deb
+  # archives) key exact-match on `hashFiles('package-lock.json')`, so on any
+  # run where that hash is unchanged from the last one, the exact key this
+  # job would populate is already warm cross-run -- the shards would restore
+  # it directly, with or without this job. What the split buys is scoped to
+  # a lockfile bump (an exact-key MISS): the first, coldest payment is made
   # once, in a job whose budget is its own, instead of by three shards racing
   # it in parallel inside a budget they share with their own test run.
   playwright-setup:
@@ -1888,7 +1894,10 @@ jobs:
   # therefore pays that preamble in series before any shard runs, and the
   # lane's pathological worst case becomes 30 + 35 = 65 minutes of wall clock
   # where it was 30. The per-job caps below each fit their own job; this is
-  # the end-to-end number, and it is the real price paid for cache warming.
+  # the end-to-end number, and it is paid on EVERY frontend run -- not only
+  # the ones that get the benefit (see playwright-setup's own cost/benefit
+  # note above: the cache it populates is only cold, and so only worth
+  # populating ahead of the shards, on a lockfile bump).
   playwright:
     needs: [detect-changes, playwright-setup]
     # Run the E2E browser suite iff the diff touches frontend files (same

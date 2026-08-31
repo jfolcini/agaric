@@ -98,10 +98,12 @@
 //        [--exclude-run-id <id>]     (this run's id; see § self-watch below)
 //        [--now <iso8601>]           (TEST-ONLY: pin "now")
 //        [--runs-json-file <path>]   (TEST-ONLY: `{ "<file>.yml": [run…] }`
-//                                     instead of calling `gh`)
-//        [--states-json-file <path>] (TEST-ONLY: `{ "<file>.yml": {"state":
-//                                     "active"} | {"error": "…"} }`, the
-//                                     workflow-state read #4478 added)
+//                                     instead of calling `gh`; REQUIRES
+//                                     --states-json-file alongside it)
+//        [--states-json-file <path>] (TEST-ONLY, REQUIRED with
+//                                     --runs-json-file: `{ "<file>.yml":
+//                                     {"state": "active"} | {"error": "…"} }`,
+//                                     the workflow-state read #4478 added)
 //   node scripts/check-workflow-liveness.mjs --self-test
 //
 // Exit codes: 0 = every watched workflow classified and `--out` written;
@@ -984,9 +986,21 @@ export function main(argv = process.argv.slice(2)) {
   let runsByWorkflow
   let statesByWorkflow
   if (args.runsJsonFile !== undefined) {
+    // `--states-json-file` is REQUIRED alongside it (review of #4562, note
+    // 5): omitting it used to silently default `statesByWorkflow` to `{}`,
+    // which reads as "no state was fetched" for every lane and turns every
+    // empty-run-list lane into `schedule-state-unknown` — a real verdict,
+    // just the wrong one, chosen by a missing flag instead of by data. Every
+    // in-tree fixture already passes both flags, so this is inert today; it
+    // exists so a FUTURE fixture that forgets the flag fails loudly here
+    // instead of quietly mis-verdicting. See selfTestRequiresStatesJsonFile.
+    if (args.statesJsonFile === undefined) {
+      throw new Error(
+        '--states-json-file is required when --runs-json-file is given: omitting it silently defaults statesByWorkflow to {}, which reads as schedule-state-unknown for every empty-run-list lane',
+      )
+    }
     runsByWorkflow = JSON.parse(readFileSync(args.runsJsonFile, 'utf8'))
-    statesByWorkflow =
-      args.statesJsonFile === undefined ? {} : JSON.parse(readFileSync(args.statesJsonFile, 'utf8'))
+    statesByWorkflow = JSON.parse(readFileSync(args.statesJsonFile, 'utf8'))
   } else {
     const repo = args.repo ?? process.env.GITHUB_REPOSITORY
     if (!repo) throw new Error('--repo (or $GITHUB_REPOSITORY) is required outside fixture mode')
@@ -1748,10 +1762,26 @@ function selfTestGhFailureModes({ check }) {
       WATCHED.map((w) => [w.workflow, w.workflow === 'codeql.yml' ? fresh(400) : fresh(1)]),
     )
     writeFileSync(runsFile, JSON.stringify(fixture), 'utf8')
+    // Every lane above has a non-empty run list, so `statesByWorkflow` is
+    // never actually consulted by `buildResults` here — but `main()` now
+    // REQUIRES `--states-json-file` alongside `--runs-json-file` regardless
+    // (#4562 note 5), so this fixture supplies one even though its content
+    // is moot for this particular case.
+    const statesFile = join(dir, 'states-happy.json')
+    writeFileSync(statesFile, JSON.stringify({}), 'utf8')
     const prevLog = console.log
     console.log = () => {}
     try {
-      main(['--out', out, '--now', now, '--runs-json-file', runsFile])
+      main([
+        '--out',
+        out,
+        '--now',
+        now,
+        '--runs-json-file',
+        runsFile,
+        '--states-json-file',
+        statesFile,
+      ])
     } finally {
       console.log = prevLog
     }
@@ -2113,6 +2143,52 @@ function selfTestNeverRanScheduleState({ check }) {
   }
 }
 
+/**
+ * Review of #4562, note 5: `--runs-json-file` without `--states-json-file`
+ * used to default `statesByWorkflow` to `{}` in silence, turning every
+ * empty-run-list lane into `schedule-state-unknown` with no signal that the
+ * flag was ever missing. This pins the refusal end to end through `main()` —
+ * the same entry point production and every other fixture actually calls —
+ * so a future fixture that forgets the flag fails loudly here instead of
+ * shipping a quietly wrong verdict.
+ */
+function selfTestRequiresStatesJsonFile({ check }) {
+  const dir = mkdtempSync(join(tmpdir(), 'workflow-liveness-nostates-'))
+  const out = join(dir, 'out.json')
+  const runsFile = join(dir, 'runs.json')
+  // An empty run list is the exact case the missing flag used to mis-verdict
+  // — it is what makes `schedule-state-unknown` the (wrong) fallback.
+  writeFileSync(
+    runsFile,
+    JSON.stringify(Object.fromEntries(WATCHED.map((w) => [w.workflow, []]))),
+    'utf8',
+  )
+
+  const prevLog = console.log
+  console.log = () => {}
+  let threw = null
+  try {
+    main(['--out', out, '--runs-json-file', runsFile])
+  } catch (err) {
+    threw = err
+  } finally {
+    console.log = prevLog
+  }
+
+  check(
+    threw !== null && !existsSync(out),
+    '#4562 note 5: `--runs-json-file` without `--states-json-file` throws AND writes no results file, instead of silently defaulting every lane to `schedule-state-unknown`',
+    `threw=${threw?.message} wrote=${existsSync(out)}`,
+  )
+  check(
+    threw !== null &&
+      /--states-json-file/.test(threw.message) &&
+      /--runs-json-file/.test(threw.message),
+    '#4562 note 5: the thrown error names BOTH flags, so the fix is obvious from the message alone',
+    `threw=${threw?.message}`,
+  )
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok  - ${name}`)
@@ -2129,6 +2205,7 @@ function runSelfTest() {
   selfTestGhFailureModes({ check })
   selfTestStaleRunIdOmission({ check })
   selfTestNeverRanScheduleState({ check })
+  selfTestRequiresStatesJsonFile({ check })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
