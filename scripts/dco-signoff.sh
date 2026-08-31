@@ -37,7 +37,10 @@
 # while leaving `user.email` untouched.
 #
 # Invoked by prek's `prepare-commit-msg` stage. Git passes the commit
-# message file as $1; $2/$3 are the commit source and SHA (unused).
+# message file as $1, the commit source as $2 ("message" for `-m`/`-F`,
+# otherwise "template"/"merge"/"squash"/"commit"/empty), and $3 the commit
+# SHA (unused). $2 decides how `append_signoff` treats a trailing `#`-led
+# block — see its docstring.
 #
 # `--self-test` runs the fixture suite below. It is NOT wired as a prek
 # hook: #4556 is concurrently unwiring self-test hooks wholesale, and
@@ -56,7 +59,13 @@ author_email() {
     local ident
     ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null || true)"
     if [ -n "$ident" ]; then
-        printf '%s' "$ident" | sed -n 's/.*<\([^>]*\)>.*/\1/p' | head -n1
+        # No `| head -n1`: `git var` emits exactly one line, so it was a
+        # redundant instance of the producer-SIGPIPE-under-`pipefail` shape
+        # already removed from has_matching_signoff/looks_like_trailer. If
+        # `head` ever exited before `sed`, `sed` would take the SIGPIPE,
+        # `pipefail` would report 141, and `set -e` would abort the hook
+        # right here (#4564 review note 1).
+        printf '%s' "$ident" | sed -n 's/.*<\([^>]*\)>.*/\1/p'
         return 0
     fi
     git config --get user.email 2>/dev/null || true
@@ -66,7 +75,9 @@ author_name() {
     local ident
     ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null || true)"
     if [ -n "$ident" ]; then
-        printf '%s' "$ident" | sed -n 's/^\(.*\) <[^>]*>.*/\1/p' | head -n1
+        # See author_email() above: `head -n1` here was the same redundant,
+        # abort-risking shape.
+        printf '%s' "$ident" | sed -n 's/^\(.*\) <[^>]*>.*/\1/p'
         return 0
     fi
     git config --get user.name 2>/dev/null || true
@@ -134,12 +145,25 @@ looks_like_trailer() {
 # So require the candidate line to actually SIT in a trailer block: it is
 # trailer-shaped, it is NOT the message's first line, and the line before it is
 # blank (it opens the last paragraph) or is itself trailer-shaped (it continues
-# one). Comment lines are dropped first — git strips them from the message, so
-# they are not part of the shape being reasoned about.
+# one).
+#
+# $2 is the commit message SOURCE — `prepare-commit-msg`'s own $2:
+# "message" for `-m`/`-F`, or "template"/"merge"/"squash"/"commit"/empty for
+# everything else (editor, amend, merge, squash). Comment lines are dropped
+# first, but ONLY when git is actually going to strip them from the final
+# message: that is `cleanup=default`/`strip`, which is every source except
+# "message". A `-m`/`-F` commit cleans up with `cleanup=whitespace`, which
+# keeps `#`-led lines verbatim — so on that path a line starting with `#` is
+# real content, not a template comment, and stripping it would reason about
+# a shape the committed message doesn't actually have (#4564 review note 3).
 joins_trailer_block() {
-    local file="$1" i last prev
+    local file="$1" source="${2:-}" i last prev
     local -a lines=()
-    mapfile -t lines < <(grep -v '^#' "$file" 2>/dev/null || true)
+    if [ "$source" = "message" ]; then
+        mapfile -t lines <"$file"
+    else
+        mapfile -t lines < <(grep -v '^#' "$file" 2>/dev/null || true)
+    fi
 
     last=-1
     for ((i = ${#lines[@]} - 1; i >= 0; i--)); do
@@ -158,28 +182,76 @@ joins_trailer_block() {
     looks_like_trailer "$prev"
 }
 
+# Join an existing trailer block rather than starting a second one: a blank
+# line between trailers splits them, and git's own parsing reads only the
+# LAST block — so a message ending in `Signed-off-by: <agent>` would get the
+# author trailer in a block of its own and the agent's would stop being
+# visible as a trailer at all. CI's `dco.yml` greps the raw message and does
+# not care, but the commit is the permanent record.
+#
+# $4 is the commit message SOURCE, forwarded to joins_trailer_block() — see
+# that function's docstring. It ALSO decides where the trailer physically
+# goes: on the interactive-editor path (source != "message"), git has
+# already written its own `#`-led template block AFTER whatever the user
+# has typed, and that block sits there for the entire time this hook runs —
+# before the editor ever opens. Appending at the physical EOF would land the
+# trailer on the far side of that block, at a position the join decision
+# above was never computed for, so the split-trailer-block defect this
+# script exists to fix would still happen on exactly the path #4561 was
+# filed about (#4564 review note 2). `-m`/`-F` commits (source ==
+# "message") never get a template block written at all, so EOF remains the
+# right place there.
 append_signoff() {
-    local file="$1" name="$2" email="$3"
+    local file="$1" name="$2" email="$3" source="${4:-}"
+    # `printf -v`, not `trailer="$(printf ...)"`: command substitution strips
+    # the trailing newline the trailer line needs.
+    local trailer
+    printf -v trailer 'Signed-off-by: %s <%s>\n' "$name" "$email"
+
+    if [ "$source" != "message" ]; then
+        local -a all=()
+        mapfile -t all <"$file"
+        local total=${#all[@]} i=${#all[@]}
+        while [ "$i" -ge 1 ] && [[ ${all[i - 1]} == \#* ]]; do
+            i=$((i - 1))
+        done
+        if [ "$i" -lt "$total" ]; then
+            # A trailing `#` block was found: splice the trailer in just
+            # before it. Everything up to line $i is byte-for-byte what was
+            # already there (via head/tail, not a mapfile round-trip), so
+            # nothing about the user's content or git's template is altered.
+            local tmp
+            tmp="$(mktemp "${file}.XXXXXX")"
+            {
+                head -n "$i" "$file"
+                if ! joins_trailer_block "$file" "$source"; then
+                    printf '\n'
+                fi
+                printf '%s' "$trailer"
+                tail -n "+$((i + 1))" "$file"
+            } >"$tmp"
+            mv -- "$tmp" "$file"
+            return 0
+        fi
+    fi
+
+    # No trailing `#` block (either source == "message", or a comment-block
+    # source with nothing to strip): the original EOF-append behaviour.
     # Append a trailing newline if the message doesn't already end with one.
     # `git interpret-trailers` would also work but pulls in extra
     # normalisation we don't want for human-edited messages.
     if [ -s "$file" ] && [ "$(tail -c1 "$file" | wc -l)" -eq 0 ]; then
         printf '\n' >>"$file"
     fi
-    # Join an existing trailer block rather than starting a second one: a
-    # blank line between trailers splits them, and git's own parsing reads
-    # only the LAST block — so a message ending in `Signed-off-by: <agent>`
-    # would get the author trailer in a block of its own and the agent's
-    # would stop being visible as a trailer at all. CI's `dco.yml` greps the
-    # raw message and does not care, but the commit is the permanent record.
-    if ! joins_trailer_block "$file"; then
+    if ! joins_trailer_block "$file" "$source"; then
         printf '\n' >>"$file"
     fi
-    printf 'Signed-off-by: %s <%s>\n' "$name" "$email" >>"$file"
+    printf '%s' "$trailer" >>"$file"
 }
 
 main() {
     local msg_file="${1:?prepare-commit-msg: missing message file argument}"
+    local source="${2:-}"
     local name email
     name="$(author_name)"
     email="$(author_email)"
@@ -194,7 +266,7 @@ main() {
         exit 0
     fi
 
-    append_signoff "$msg_file" "$name" "$email"
+    append_signoff "$msg_file" "$name" "$email" "$source"
 }
 
 # ── self-test ────────────────────────────────────────────────────────
@@ -237,6 +309,24 @@ self_test() {
             fails=$((fails + 1))
         fi
     }
+
+    # #4564 review note 1: author_email()/author_name() used to end their
+    # `git var` pipeline in `| head -n1`, a redundant producer-SIGPIPE-under-
+    # `pipefail` shape (`git var` emits exactly one line already) that could
+    # abort the hook via `set -e` if `head` ever raced ahead of `sed`. There
+    # is no INPUT that makes the two shapes produce different output — a
+    # single-line producer cannot overrun a single-line consumer, so `head
+    # -n1` was always a no-op here — which means this can only be a
+    # structural guard, not a behavioural one: it reddens if that pipe-into-
+    # `head` shape is ever reintroduced, not if the extracted value is wrong
+    # (the case below and the `main()` fixtures near the end of this suite
+    # already cover that).
+    if declare -f author_email author_name | grep -Eq '\|[[:space:]]*head\b'; then
+        r=1
+    else
+        r=0
+    fi
+    check 'author_email()/author_name() do not pipe into `head` (the removed SIGPIPE-under-pipefail shape)' "$r"
 
     # A message carrying ONLY an agent/co-author sign-off must still get the
     # author's own trailer appended. This is #4561, the whole reason the
@@ -335,6 +425,40 @@ self_test() {
     cmp -s "$tmp/twotrailers" "$tmp/twotrailers.want" && r=0 || r=1
     check 'a multi-line trailer block is still joined (the fix did not disable joining)' "$r"
 
+    # The interactive-editor path (no `-m`): git writes its `#`-led template
+    # block AFTER whatever the user has typed, and it is already sitting
+    # there while this hook runs — before the editor even opens. The
+    # sign-off must join the existing trailer block INSIDE that boundary,
+    # not land past the comments at the physical EOF (#4564 review note 2:
+    # the split-trailer-block defect this script exists to fix, still live
+    # on exactly this path before the fix).
+    printf 'subject\n\nSigned-off-by: Claude <noreply@anthropic.com>\n# Please enter the commit message for your changes. Lines starting\n# with '"'"'#'"'"' will be ignored, and an empty message aborts the commit.\n#\n# On branch main\n' >"$tmp/editorjoin"
+    append_signoff "$tmp/editorjoin" "Dev" "dev@example.com" ""
+    printf 'subject\n\nSigned-off-by: Claude <noreply@anthropic.com>\nSigned-off-by: Dev <dev@example.com>\n# Please enter the commit message for your changes. Lines starting\n# with '"'"'#'"'"' will be ignored, and an empty message aborts the commit.\n#\n# On branch main\n' >"$tmp/editorjoin.want"
+    cmp -s "$tmp/editorjoin" "$tmp/editorjoin.want" && r=0 || r=1
+    check "editor path: sign-off joins the trailer block BEFORE git's # template, not appended after it" "$r"
+
+    # ...and a message ending in PROSE on that same editor path still gets
+    # its separating blank line inserted before the comment block, at the
+    # position the join decision was actually computed for.
+    printf 'subject\n\nSome prose paragraph.\n# Please enter the commit message for your changes.\n#\n' >"$tmp/editorprose"
+    append_signoff "$tmp/editorprose" "Dev" "dev@example.com" ""
+    printf 'subject\n\nSome prose paragraph.\n\nSigned-off-by: Dev <dev@example.com>\n# Please enter the commit message for your changes.\n#\n' >"$tmp/editorprose.want"
+    cmp -s "$tmp/editorprose" "$tmp/editorprose.want" && r=0 || r=1
+    check 'editor path: a prose-ending message still gets a separating blank line before the # block' "$r"
+
+    # `-m`/`-F` commits clean up with `cleanup=whitespace`: git never strips
+    # `#`-led lines there, so a message whose last line starts with `#` is
+    # real committed content, not a template comment. Treating it as a
+    # comment (correct on the editor path, wrong here) would hide it, wrongly
+    # read the PRECEDING Signed-off-by as the message's last line, and glue
+    # the new trailer on with no separating blank line (#4564 review note 3).
+    printf 'subject\n\nSigned-off-by: Claude <noreply@anthropic.com>\n#a stray hash-led content line\n' >"$tmp/hashcontent"
+    append_signoff "$tmp/hashcontent" "Dev" "dev@example.com" "message"
+    printf 'subject\n\nSigned-off-by: Claude <noreply@anthropic.com>\n#a stray hash-led content line\n\nSigned-off-by: Dev <dev@example.com>\n' >"$tmp/hashcontent.want"
+    cmp -s "$tmp/hashcontent" "$tmp/hashcontent.want" && r=0 || r=1
+    check '`-m` path: a #-led last line is real content, not a stripped git comment' "$r"
+
     # `main()` end to end: identity resolution plus the append, driven through
     # the real entry point rather than the helpers, with GIT_AUTHOR_EMAIL set so
     # the `git var GIT_AUTHOR_IDENT`-over-`user.email` precedence is the thing
@@ -344,11 +468,18 @@ self_test() {
     git_scratch_init "$tmp/repo"
     git -C "$tmp/repo" config user.name 'Config Name'
     git -C "$tmp/repo" config user.email 'config@example.com'
+    # Captured, not left unguarded: this whole suite runs under `set -e`, so
+    # an unguarded subshell that ever exited non-zero would abort self_test
+    # right here — no FAIL line, no summary, no output at all (#4564 review
+    # note 4).
+    local e2e_status
     (
         cd "$tmp/repo" || exit 1
         GIT_AUTHOR_NAME='Author Name' GIT_AUTHOR_EMAIL='author@example.com' \
             bash "$SCRIPT_PATH" "$tmp/e2e"
-    ) >/dev/null 2>&1
+    ) >/dev/null 2>&1 && e2e_status=0 || e2e_status=$?
+    check 'main() (invoked as the real hook, not via the sourced functions) exits 0' "$e2e_status"
+
     has_matching_signoff "$tmp/e2e" "author@example.com" && r=0 || r=1
     check 'main() signs off as GIT_AUTHOR_IDENT, which is what CI checks' "$r"
 
