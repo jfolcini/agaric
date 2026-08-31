@@ -240,6 +240,7 @@ describe('PageBrowser', () => {
       block_id: 'P1',
       deleted_at: '2025-01-15T00:00:00Z',
       descendants_affected: 0,
+      affected_page_ids: [],
     })
 
     // Open dialog and confirm
