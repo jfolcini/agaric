@@ -678,13 +678,25 @@ fn peer_frontier_json(peer_heads: &[DeviceHead]) -> Result<String, AppError> {
 /// **The `map_or` `Err` arm is dead for today's `OpTransfer` — not merely
 /// untested, unreachable.** Every field is a `String`, `i64`, or
 /// `Option<String>`, and the struct derives `Serialize` with no custom impl;
-/// `serde_json::to_string` can only fail on a map with non-string keys, a
-/// non-finite `f32`/`f64`, or a `Serialize` impl that itself returns `Err`
-/// (`std::io::Error` can't occur — `to_string` writes into an in-memory
-/// buffer). `OpTransfer` has none of those, so this cannot hit `Err` today;
-/// it would need a new field of one of those kinds (most plausibly a `HashMap`
-/// keyed on something other than `String`, or a float) to become reachable
-/// again. `map_or(0, ..)` stays rather than `unwrap`/`expect` regardless: this
+/// `serde_json::to_string` can only fail on a map with non-string keys, or a
+/// `Serialize` impl that itself returns `Err` (`std::io::Error` can't occur —
+/// `to_string` writes into an in-memory buffer). `OpTransfer` has none of
+/// those, so this cannot hit `Err` today; it would need a new field of one of
+/// those kinds — most plausibly a `HashMap` keyed on something other than
+/// `String` — to become reachable again.
+///
+/// A **non-finite float does NOT belong on that list**, though an earlier
+/// revision of this comment said it did. `serde_json`'s value serializer
+/// matches on `value.classify()` and writes `null` for
+/// `FpCategory::Nan | FpCategory::Infinite` (`ser.rs:169-175`), so adding an
+/// `f32`/`f64` field would not reach this arm. The refusal that reasoning
+/// generalised from is a different path: `ser.rs:1042` rejects a non-finite
+/// float used as a MAP KEY, which is already covered by the non-string-key
+/// case above. Recorded rather than silently deleted, because the value of
+/// this paragraph is being a checklist someone trusts without re-deriving
+/// it, and one wrong entry costs more than the whole list saves.
+///
+/// `map_or(0, ..)` stays rather than `unwrap`/`expect` regardless: this
 /// runs once per record on the sync send path, and a shared billing helper
 /// panicking there would take down the whole sync session over what is
 /// already a best-effort upper-bound estimate — a record silently mis-billed

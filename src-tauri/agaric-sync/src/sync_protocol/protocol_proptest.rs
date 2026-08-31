@@ -685,15 +685,19 @@ proptest! {
 /// `batch_ops_for_wire`'s loop with one deliberate defect: the cap is truncated
 /// through a `u8`. Used only by the validation control below.
 ///
-/// A copy of production rather than a call into it, because the point is to
-/// have something the monotonicity predicate can *fail* on — which is the only
-/// way to show the predicate is not vacuous, since the real function is (as far
-/// as this file can establish) correct.
+/// The **loop** is a copy of production rather than a call into it, because the
+/// point is to have something the monotonicity predicate can *fail* on — which
+/// is the only way to show the predicate is not vacuous, since the real
+/// function is (as far as this file can establish) correct. The **billing** is
+/// no longer a copy: since #4525 this calls the production `billed_bytes`
+/// directly, so the `+ 2` formula cannot drift here. Scope matters, because a
+/// re-sync following the older wording literally would go looking for a
+/// billing clone that no longer exists.
 ///
-/// **Nothing enforces that this stays a copy**, and that is the one way this
-/// control can rot: rewrite `batch_ops_for_wire` (`operations.rs`, `pub fn
-/// batch_ops_for_wire`) and this keeps exercising the old loop, keeps passing,
-/// and silently stops being a control for the property it backs. Re-sync it by
+/// **Nothing enforces that the loop stays a faithful copy**, and that is the
+/// one way this control can rot: rewrite `batch_ops_for_wire` (`operations.rs`,
+/// `pub fn batch_ops_for_wire`) and this keeps exercising the old loop, keeps
+/// passing, and silently stops being a control for the property it backs. Re-sync it by
 /// hand whenever that loop changes shape. There is no clone-pin guard for Rust
 /// the way `scripts/check-mutation-harness-clones.mjs` does it for the JS
 /// harnesses, so this comment is the whole mechanism.
