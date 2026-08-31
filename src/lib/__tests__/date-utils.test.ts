@@ -1,9 +1,12 @@
+import { es } from 'date-fns/locale'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { __registerDateLocaleForTests, __unregisterDateLocaleForTests } from '@/lib/date-locale'
 import {
   dueDateColor,
   formatCompactDate,
   formatDate,
+  formatDateDisplay,
   formatJournalTitle,
   formatWeekRange,
   getCalendarMonthRange,
@@ -14,8 +17,36 @@ import {
   getWeekOptions,
   getWeekRange,
   isDateFormattedPage,
-  MONTH_SHORT,
 } from '@/lib/date-utils'
+import { i18n } from '@/lib/i18n'
+
+/**
+ * #4555 — falsification helper. `getDateLocale()`/`getAppLocaleTag()`
+ * resolve from `i18n.language`, and Phase 0 ships English only (no `es`
+ * bundle). To prove a call site actually TRACKS the app locale — rather
+ * than asserting a literal that happens to be the only reachable value —
+ * these tests drive a real `i18n.changeLanguage()` to a synthetic tag
+ * ('xx', never a real locale — a dashed tag like 'xx-test' gets BCP-47
+ * canonicalized by i18next to 'xx-Test', so a plain unhyphenated tag is
+ * used to keep the registered key and the resolved `i18n.language` byte-
+ * identical) that is temporarily registered with a distinguishable
+ * `date-fns` `Locale` (`es`, imported here as a TEST FIXTURE only —
+ * production code never imports it). This is the same
+ * "temporarily-registered test locale" seam `__resetPriorityLevelsForTests`
+ * uses for `priority-levels.ts`.
+ */
+const TEST_LOCALE_TAG = 'xx'
+
+async function withTestLocale<T>(run: () => T | Promise<T>): Promise<T> {
+  __registerDateLocaleForTests(TEST_LOCALE_TAG, es)
+  await i18n.changeLanguage(TEST_LOCALE_TAG)
+  try {
+    return await run()
+  } finally {
+    await i18n.changeLanguage('en')
+    __unregisterDateLocaleForTests(TEST_LOCALE_TAG)
+  }
+}
 
 describe('formatDate (review-timezone semantics regression)', () => {
   // The migration replaced an inline `padStart`-based formatter
@@ -116,21 +147,33 @@ describe('formatCompactDate', () => {
     expect(formatCompactDate('2026-ab-15')).toBe('2026-ab-15')
   })
 
-  it('falls back to Jan when a fractional month indexes MONTH_SHORT off-integer', () => {
+  it('falls back to the January label when the month is a non-integer', () => {
     // A fractional month is numeric and within 1..12, so it clears both the NaN
-    // and the range guard, then indexes MONTH_SHORT at 0.5 — undefined. This is
-    // the only input shape that reaches the `?? 'Jan'` fallback.
+    // and the range guard, then fails the `Number.isInteger` check inside
+    // `monthShortLabel` — the only input shape that reaches that fallback.
     expect(formatCompactDate('2026-1.5-05')).toBe('Jan 5')
   })
 })
 
-describe('MONTH_SHORT', () => {
-  it('has 12 entries', () => expect(MONTH_SHORT).toHaveLength(12))
-  it('starts with Jan', () => expect(MONTH_SHORT[0]).toBe('Jan'))
-  it('ends with Dec', () => expect(MONTH_SHORT[11]).toBe('Dec'))
+// #4555 — `formatCompactDate` used to index a hardcoded English `MONTH_SHORT`
+// array; it now resolves the month label through `getDateLocale()`
+// (`src/lib/date-locale.ts`), keyed on `i18n.language` — the same single
+// resolution point every other date-fns call and the UI catalog itself
+// use. This pins the TRACKING behaviour (the label follows the app
+// locale) rather than asserting a literal — a test asserting only
+// `=== 'Jan'` would still pass if the call site reverted to a hardcoded
+// English table, since English is Phase 0's only reachable value.
+describe('formatCompactDate — locale tracking (#4555)', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+  })
 
-  it('contains all 12 month abbreviations in order', () => {
-    expect(MONTH_SHORT).toEqual([
+  it('renders all 12 months in English under the app default locale', () => {
+    const labels = Array.from(
+      { length: 12 },
+      (_, i) => formatCompactDate(`2026-${String(i + 1).padStart(2, '0')}-15`).split(' ')[0],
+    )
+    expect(labels).toEqual([
       'Jan',
       'Feb',
       'Mar',
@@ -144,6 +187,43 @@ describe('MONTH_SHORT', () => {
       'Nov',
       'Dec',
     ])
+  })
+
+  it("switches to the app locale's month labels when i18n.language changes", async () => {
+    await withTestLocale(() => {
+      // date-fns's `es` locale abbreviates June as "jun" (no capital, unlike
+      // English "Jun") — distinct enough from the English label that this
+      // fails if the call site stops reading `getDateLocale()`.
+      expect(formatCompactDate('2026-06-15')).toBe('jun 15')
+    })
+    // Reverting i18n.language back to 'en' must revert the label too —
+    // proves this isn't a one-way/cached read.
+    expect(formatCompactDate('2026-06-15')).toBe('Jun 15')
+  })
+})
+
+// #4555 — `formatDateDisplay` used to pass `undefined` (the OS/browser
+// locale) to `toLocaleDateString`. Passing the app locale
+// (`getAppLocaleTag()`) instead means the SAME source drives this and the
+// UI catalog, so they can never disagree — even though, unlike the
+// date-fns sites above, `Intl` doesn't consult `DATE_LOCALES`, so this
+// drives `i18n.changeLanguage('es')` directly (a real BCP-47 tag the
+// runtime's own ICU data understands) rather than a synthetic registered
+// tag.
+describe('formatDateDisplay — locale tracking (#4555)', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+  })
+
+  it('renders English under the app default locale', () => {
+    expect(formatDateDisplay(new Date(2026, 5, 17))).toBe('Wed, Jun 17, 2026')
+  })
+
+  it('tracks a changed app locale, and reverts when it changes back', async () => {
+    await i18n.changeLanguage('es')
+    expect(formatDateDisplay(new Date(2026, 5, 17))).toBe('mié, 17 jun 2026')
+    await i18n.changeLanguage('en')
+    expect(formatDateDisplay(new Date(2026, 5, 17))).toBe('Wed, Jun 17, 2026')
   })
 })
 
@@ -496,6 +576,21 @@ describe('formatJournalTitle (#1448 — display-only journal date format)', () =
       expect(lookupKey).toBe('2026-06-17')
     }
   })
+
+  // #4555 — before this fix, `format(date, fmt)` here never passed a
+  // `locale:` option, so every non-'locale' preset always rendered English
+  // regardless of `i18n.language`. Pins the TRACKING behaviour — the
+  // rendered text follows the app locale, the same source the UI catalog
+  // resolves from — rather than a literal, so a revert to a bare
+  // `format(date, fmt)` call fails this.
+  it('resolves textual-token presets through the app date locale, not hardcoded English', async () => {
+    await withTestLocale(() => {
+      expect(formatJournalTitle(ISO, 'MMMM d, yyyy')).toBe('junio 17, 2026')
+      expect(formatJournalTitle(ISO, 'EEE, MMM d')).toBe('mié, jun 17')
+    })
+    // Reverting i18n.language back to 'en' must revert the rendering too.
+    expect(formatJournalTitle(ISO, 'MMMM d, yyyy')).toBe('June 17, 2026')
+  })
 })
 
 // #3752 — `getWeekRange`, `getWeekDays`, `formatWeekRange` and
@@ -554,6 +649,15 @@ describe('week helpers (getWeekRange / getWeekDays / formatWeekRange)', () => {
     // the range carries the year, so a week straddling January pins which
     // side of the range the `yyyy` token is attached to.
     expect(formatWeekRange(new Date(2025, 11, 31))).toBe('Dec 29 - Jan 4, 2026')
+  })
+
+  // #4555 — `formatWeekRange`'s two `format()` calls never passed a
+  // `locale:` option. Pins the tracking behaviour, not a literal.
+  it('formatWeekRange resolves through the app date locale', async () => {
+    await withTestLocale(() => {
+      expect(formatWeekRange(FRIDAY)).toBe('abr 6 - abr 12, 2026')
+    })
+    expect(formatWeekRange(FRIDAY)).toBe('Apr 6 - Apr 12, 2026')
   })
 })
 

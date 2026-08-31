@@ -7,6 +7,18 @@
  */
 
 export const editor: Record<string, string> = {
+  // #4555 — the main block editor surface's aria-label.
+  'editor.blockEditorLabel': 'Block editor',
+  // #4555 — suggestion-popup aria-labels (`createSuggestionRenderer`'s
+  // `label` param, threaded from each picker extension's `displayName`).
+  'editor.suggestion.slashCommands': 'Slash commands',
+  'editor.suggestion.tags': 'Tags',
+  'editor.suggestion.blockLinks': 'Block links',
+  'editor.suggestion.blockReferences': 'Block references',
+  'editor.suggestion.emoji': 'Emoji',
+  'editor.suggestion.properties': 'Properties',
+  'editor.suggestion.embedQuery': 'Embed query',
+  'editor.suggestion.fallback': 'Suggestions',
   'attachments.loading': 'Loading attachments…',
   'attachments.empty': 'No attachments yet.',
   'attachments.list': 'Attachments',
@@ -218,4 +230,18 @@ export const editor: Record<string, string> = {
   'emojiPicker.skinTone.medium': 'Medium',
   'emojiPicker.skinTone.mediumDark': 'Medium-dark',
   'emojiPicker.skinTone.dark': 'Dark',
+  // #4555 — CLDR category names (section headers, tab aria-label/title,
+  // sticky group label). Keys are the source of truth for the DISPLAYED
+  // text; `EmojiPicker.tsx`'s `GROUP_ICONS`/`GROUP_LABEL_KEYS` keep using the
+  // raw English CLDR strings as the lookup identity (`bucket.group`), since
+  // that's what the generated dataset emits.
+  'emojiPicker.group.smileysEmotion': 'Smileys & Emotion',
+  'emojiPicker.group.peopleBody': 'People & Body',
+  'emojiPicker.group.animalsNature': 'Animals & Nature',
+  'emojiPicker.group.foodDrink': 'Food & Drink',
+  'emojiPicker.group.travelPlaces': 'Travel & Places',
+  'emojiPicker.group.activities': 'Activities',
+  'emojiPicker.group.objects': 'Objects',
+  'emojiPicker.group.symbols': 'Symbols',
+  'emojiPicker.group.flags': 'Flags',
 }

@@ -41,6 +41,7 @@
 
 import { format } from 'date-fns'
 
+import { getDateLocale } from '@/lib/date-locale'
 import { formatDate } from '@/lib/date-utils'
 
 export interface TemplateVariableContext {
@@ -86,7 +87,10 @@ function resolveToken(rawName: string, now: Date, ctx: TemplateVariableContext):
     const fmt = name.slice(colonIdx + 1).trim()
     if (head === 'date' && fmt.length > 0) {
       try {
-        return format(now, toDateFnsPattern(fmt))
+        // #4555 — a user FORMAT string (`{{date:MMMM d, yyyy}}`) can carry
+        // textual month/weekday tokens, so it must resolve through the same
+        // single locale point as every other date-fns call.
+        return format(now, toDateFnsPattern(fmt), { locale: getDateLocale() })
       } catch {
         // An invalid format string → leave the token verbatim rather than
         // throw mid-insertion. Returning null falls through to passthrough.

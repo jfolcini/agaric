@@ -22,6 +22,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { announce } from '@/lib/announcer'
+import { i18n } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -421,6 +422,27 @@ describe('useBlockProperties handleToggleTodo toast and announcer', () => {
 
     // none → TODO, display label is "To do"
     expect(mockedAnnounce).toHaveBeenCalledWith('Task state: To do')
+  })
+
+  // #4555 — the state display label used to be a hardcoded English literal
+  // (`STATE_LABELS`). The English catalog value is byte-equal to that old
+  // literal, so overriding the catalog and asserting the override appears
+  // in the announcement is what proves this reads `t()` rather than a
+  // hardcoded map — fails if the call site reverts to a bare object literal.
+  it('#4555: resolves the state label through the i18n catalog, not a hardcoded literal', async () => {
+    const KEY = 'block.taskState.todo'
+    i18n.addResource('en', 'translation', KEY, '__OVERRIDDEN_TODO_LABEL__')
+    try {
+      pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' })] })
+      const { result } = renderHook(() => useBlockProperties(), { wrapper })
+      await act(async () => {
+        await result.current.handleToggleTodo('BLOCK_1')
+      })
+      // none → TODO
+      expect(mockedAnnounce).toHaveBeenCalledWith('Task state: __OVERRIDDEN_TODO_LABEL__')
+    } finally {
+      i18n.addResource('en', 'translation', KEY, 'To do')
+    }
   })
 
   it('announces "none" when cycling back to no state', async () => {

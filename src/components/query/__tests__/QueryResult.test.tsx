@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { detectColumns, QueryResult } from '@/components/query/QueryResult'
+import { i18n } from '@/lib/i18n'
 import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildFilters, parseQueryExpression } from '@/lib/query-utils'
 import { useNavigationStore } from '@/stores/navigation'
@@ -540,7 +541,7 @@ describe('detectColumns', () => {
   // rendered as `—` placeholders in QueryResultTable.
   it('returns all known columns even when no properties are set', () => {
     const blocks = [makeBlock({ id: 'B1', content: 'Hello' })]
-    const cols = detectColumns(blocks, noProps)
+    const cols = detectColumns(blocks, noProps, i18n.t)
     expect(cols.map((c) => c.key)).toEqual(KNOWN)
   })
 
@@ -554,12 +555,12 @@ describe('detectColumns', () => {
         due_date: '2025-01-01',
       }),
     ]
-    const cols = detectColumns(blocks, noProps)
+    const cols = detectColumns(blocks, noProps, i18n.t)
     expect(cols.map((c) => c.key)).toEqual(KNOWN)
   })
 
   it('returns all known columns for an empty result set', () => {
-    const cols = detectColumns([], noProps)
+    const cols = detectColumns([], noProps, i18n.t)
     expect(cols.map((c) => c.key)).toEqual(KNOWN)
   })
 
@@ -571,7 +572,7 @@ describe('detectColumns', () => {
       ['B1', new Map([['status', 'open']])],
       ['B2', new Map([['area', 'frontend']])],
     ])
-    const cols = detectColumns(blocks, customProps)
+    const cols = detectColumns(blocks, customProps, i18n.t)
     expect(cols.map((c) => c.key)).toEqual([...KNOWN, 'prop:area', 'prop:status'])
     const areaCol = cols.find((c) => c.key === 'prop:area')
     expect(areaCol).toMatchObject({ label: 'area', propKey: 'area' })
@@ -583,8 +584,47 @@ describe('detectColumns', () => {
       ['B1', new Map([['area', 'frontend']])],
       ['B2', new Map([['area', 'backend']])],
     ])
-    const cols = detectColumns(blocks, customProps)
+    const cols = detectColumns(blocks, customProps, i18n.t)
     expect(cols.map((c) => c.key)).toEqual([...KNOWN, 'prop:area'])
+  })
+
+  // #4555 — the 5 fixed column labels used to be literal English strings
+  // baked into `KNOWN_PROPERTY_KEYS`/`detectColumns`. The English catalog
+  // value is byte-equal to the old literal, so overriding the catalog and
+  // asserting the override appears is what proves this reads `t()` rather
+  // than a hardcoded literal — fails if a column reverts to a bare string.
+  it('resolves every fixed column label through the i18n catalog, not a hardcoded literal', () => {
+    const overrides: [string, string][] = [
+      ['query.column.content', '__CONTENT__'],
+      ['query.column.status', '__STATUS__'],
+      ['query.column.priority', '__PRIORITY__'],
+      ['query.column.dueDate', '__DUE__'],
+      ['query.column.scheduled', '__SCHEDULED__'],
+    ]
+    for (const [key, value] of overrides) {
+      i18n.addResource('en', 'translation', key, value)
+    }
+    try {
+      const cols = detectColumns([], noProps, i18n.t)
+      expect(cols.map((c) => c.label)).toEqual([
+        '__CONTENT__',
+        '__STATUS__',
+        '__PRIORITY__',
+        '__DUE__',
+        '__SCHEDULED__',
+      ])
+    } finally {
+      const originals: [string, string][] = [
+        ['query.column.content', 'Content'],
+        ['query.column.status', 'Status'],
+        ['query.column.priority', 'Priority'],
+        ['query.column.dueDate', 'Due Date'],
+        ['query.column.scheduled', 'Scheduled'],
+      ]
+      for (const [key, value] of originals) {
+        i18n.addResource('en', 'translation', key, value)
+      }
+    }
   })
 })
 
@@ -706,6 +746,93 @@ describe('QueryResult – table mode', () => {
     expect(within(table).getByText(/Task B/)).toBeInTheDocument()
     expect(within(table).getByText('TODO')).toBeInTheDocument()
     expect(within(table).getByText('DONE')).toBeInTheDocument()
+  })
+
+  // #4555 — `detectColumns` used to read a module-scope `t` import, whose
+  // identity NEVER changes, so nothing in the `columns` `useMemo`'s
+  // dependency list ([results, customProps]) would ever invalidate on a
+  // language change alone — the column headers would freeze at whatever
+  // language was active on first render.
+  //
+  // `QueryResult` ALSO has an unrelated effect (the `customProps`/
+  // `getBatchProperties` fetch, `:232-253`) that lists `t` in its OWN
+  // dependency array, so it ALSO re-fires on every language switch and
+  // produces a fresh `customProps` Map — which independently invalidates
+  // the `columns` memo regardless of whether `t` is in ITS deps. A test
+  // that lets that effect resolve normally on every fetch cannot tell
+  // "the columns memo recomputed because of its own `t` dependency" from
+  // "the columns memo recomputed because `customProps` happened to change
+  // for an unrelated reason" — confirmed empirically: an earlier version
+  // of this test, without the isolation below, passed identically against
+  // the reverted module-scope-`t`-import code.
+  //
+  // To isolate what we're actually testing, `get_batch_properties` here
+  // resolves normally ONCE (the initial mount) and then returns a promise
+  // that never settles for every subsequent call — so `customProps`
+  // never gets a new reference after mount, and `results` doesn't change
+  // either (`useQueryExecution`'s `queryKey` has no language dependency).
+  // The ONLY thing that changes across the `changeLanguage()` round trip
+  // below is `t`'s identity, so if the header updates, it can only be
+  // because the `columns` memo's OWN `t` dependency invalidated it.
+  it('#4555: column headers follow a changeLanguage() round trip, isolated from the unrelated customProps-fetch effect', async () => {
+    let getBatchPropertiesCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_tags_by_prefix') return []
+      if (cmd === 'run_advanced_query') {
+        return {
+          rows: [
+            makeBlock({
+              id: 'B1',
+              content: 'Task A',
+              parent_id: 'P1',
+              page_id: 'P1',
+              todo_state: 'TODO',
+            }),
+          ],
+          nextCursor: null,
+          hasMore: false,
+          totalCount: null,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'P1', title: 'Project Page', block_type: 'page', deleted: false }]
+      }
+      if (cmd === 'get_batch_properties') {
+        getBatchPropertiesCalls += 1
+        if (getBatchPropertiesCalls === 1) return {}
+        // Every re-fire after the initial mount (triggered by this
+        // effect's own `t` dependency) hangs forever — see the docblock
+        // above for why.
+        return new Promise(() => {})
+      }
+      return null
+    })
+
+    render(<QueryResult expression={TABLE_EXPRESSION} />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('table')).toBeInTheDocument()
+    })
+    const table = screen.getByRole('table')
+    expect(within(table).getByText('Status')).toBeInTheDocument()
+
+    // Change what the catalog says BEFORE switching languages — this alone
+    // must not move anything (nothing has re-rendered yet).
+    i18n.addResource('en', 'translation', 'query.column.status', '__STATUS_OVERRIDE__')
+    expect(within(table).getByText('Status')).toBeInTheDocument()
+
+    try {
+      await act(async () => {
+        await i18n.changeLanguage('es')
+      })
+      expect(within(table).getByText('__STATUS_OVERRIDE__')).toBeInTheDocument()
+      expect(within(table).queryByText('Status')).not.toBeInTheDocument()
+    } finally {
+      i18n.addResource('en', 'translation', 'query.column.status', 'Status')
+      await act(async () => {
+        await i18n.changeLanguage('en')
+      })
+    }
   })
 
   it('clicking column header sorts results', async () => {

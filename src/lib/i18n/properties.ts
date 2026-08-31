@@ -8,6 +8,21 @@
 
 export const properties: Record<string, string> = {
   'query.noResults': 'No results',
+  // #4555 — table-mode column headers (`detectColumns` in QueryResult.tsx).
+  'query.column.content': 'Content',
+  'query.column.status': 'Status',
+  'query.column.priority': 'Priority',
+  'query.column.dueDate': 'Due Date',
+  'query.column.scheduled': 'Scheduled',
+  // #4555 — inline-query validation/error text (`useQueryExecution.ts`,
+  // `useAdvancedQuery.ts`), rendered inline in QueryResult's error state.
+  // `key:NAME` / `target:ULID` are the inline-query mini-language's own
+  // literal parameter syntax (not the search-DSL glossary) — kept verbatim.
+  'query.propertyRequiresKey': 'Property query requires key:NAME parameter',
+  'query.backlinksRequiresTarget': 'Backlinks query requires target:ULID parameter',
+  'query.unknownType': 'Unknown query type: {{type}}',
+  'query.expressionEmpty': 'Query expression is empty',
+  'query.failed': 'Query failed',
   // #1743 — inline query result count. When more pages remain unloaded
   // (`hasMore`), the loaded-so-far count is NOT the true total, so it is
   // labelled as partial ("first N loaded…") rather than presented as the

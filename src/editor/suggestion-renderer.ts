@@ -18,6 +18,7 @@ import {
   type SuggestionListRef,
 } from '@/editor/SuggestionList'
 import { applySafePosition } from '@/lib/floating-position'
+import { t } from '@/lib/i18n'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 
@@ -310,7 +311,7 @@ export function createSuggestionRenderer(
       popup.dataset['testid'] = 'suggestion-popup'
       popup.setAttribute('data-editor-portal', '')
       popup.setAttribute('role', 'region')
-      popup.setAttribute('aria-label', label ?? 'Suggestions')
+      popup.setAttribute('aria-label', label ?? t('editor.suggestion.fallback'))
       // Start off-screen to avoid flash at (0,0) before positioning settles.
       // Shared helper for the off-screen fallback.
       Object.assign(popup.style, {

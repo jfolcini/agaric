@@ -7,6 +7,14 @@
  */
 
 export const block: Record<string, string> = {
+  // #4555 — task-state display labels for screen-reader announcements
+  // (`announce.taskState` in common.ts). The stored/serialized state
+  // TOKENS (`TodoState` in task-states.ts: 'TODO'/'DOING'/'DONE'/
+  // 'CANCELLED') are never translated — only these display labels are.
+  'block.taskState.todo': 'To do',
+  'block.taskState.doing': 'In progress',
+  'block.taskState.done': 'Done',
+  'block.taskState.cancelled': 'Cancelled',
   'block.reorder': 'Reorder block (drag or use keyboard)',
   'block.reorderTip': 'Reorder — Ctrl+Shift+↑/↓',
   'block.reorderTouchHint': 'Press and hold to drag',

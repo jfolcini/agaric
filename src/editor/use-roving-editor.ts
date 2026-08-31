@@ -72,6 +72,7 @@ import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import type { DocNode } from '@/editor/types'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
+import { t } from '@/lib/i18n'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { curatedLowlight } from '@/lib/lowlight-curated'
@@ -114,11 +115,30 @@ const lowlight = curatedLowlight
 // literals therefore failed the diff every render → `setOptions` + view churn on
 // every BlockTree render, independent of the extensions array. Hoisting both to
 // module-level constants gives them stable identities so the diff short-circuits.
+// #4555 — the aria-label now resolves via `t()` instead of a hardcoded
+// English literal. It is still read at MODULE INIT time (not per-render),
+// same as before: `EDITOR_PROPS` must stay a single, stable object
+// reference (see the #726 note above — `useEditor`'s `compareOptions` diffs
+// `editorProps` by reference, so a fresh object every render forces
+// `setOptions` + view churn). A ProseMirror `EditorProps.attributes`
+// function *would* let this re-resolve per apply, but TipTap's own
+// `createView` does `attributes: { role: 'textbox', ...editorProps
+// ?.attributes }` — a plain-object SPREAD — so a function here silently
+// discards every attribute (confirmed by this file's own
+// use-roving-editor.test.ts: soft-keyboard attrs go missing when
+// `attributes` is a function). Given that constraint, and that Phase 0
+// ships no language switch (`lng` stays pinned to 'en' — no `changeLanguage`
+// call exists in production yet), the module-scope read is a knowingly
+// accepted Phase-0 trade-off, not an oversight: this ONE label needs a
+// TipTap instance recreated (which already happens on block focus/blur —
+// see the file docblock) to pick up a future language change, matching the
+// #752 "shortcut bindings are frozen at editor creation" precedent already
+// accepted in this file.
 const EDITOR_PROPS = {
   attributes: {
     role: 'textbox',
     'aria-multiline': 'true',
-    'aria-label': 'Block editor',
+    'aria-label': t('editor.blockEditorLabel'),
     // #925 — deliberate soft-keyboard configuration for the prose-first
     // block editor (previously unset, so mobile keyboards guessed). Enter
     // creates a new block, so hint the keyboard's action key as "enter";

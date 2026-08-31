@@ -143,7 +143,6 @@ import {
   formatCompactDate,
   getInlinePropertyLimit,
   INLINE_PROPERTY_LIMITS,
-  MONTH_SHORT,
   TaskCheckbox,
 } from '@/components/editor/BlockInlineControls'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -260,12 +259,6 @@ describe('dueDateColor', () => {
   it('returns muted classes for future dates', () => {
     expect(dueDateColor('2099-12-31')).toContain('bg-muted')
   })
-})
-
-describe('MONTH_SHORT', () => {
-  it('has 12 entries', () => expect(MONTH_SHORT).toHaveLength(12))
-  it('starts with Jan', () => expect(MONTH_SHORT[0]).toBe('Jan'))
-  it('ends with Dec', () => expect(MONTH_SHORT[11]).toBe('Dec'))
 })
 
 describe('TaskCheckbox', () => {

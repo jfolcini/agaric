@@ -256,6 +256,18 @@ export const references: Record<string, string> = {
   'search.invalidFilterWithError': 'Invalid filter: {{label}} — {{error}}',
   // One line per invalid chip in the shared row-level alert region.
   'search.invalidFilterError': '{{label}}: {{error}}',
+  // #4555 — parser-level validation strings from `search-query/register.ts`.
+  // `{{prefix}}`/`{{noun}}` carry search-DSL glossary tokens (`tag:`,
+  // `state:`, `prop`, …) verbatim — per #4555 §1.5 these tokens are NEVER
+  // translated (queries are persisted verbatim and sync across devices), so
+  // only the surrounding sentence is localized.
+  'searchQuery.valueRequired': '{{prefix}} value required',
+  'searchQuery.unknownValue': "unknown {{noun}} '{{value}}'",
+  'searchQuery.dateExpectedAfterOperator': "expected YYYY-MM-DD after '{{op}}', got '{{rest}}'",
+  'searchQuery.unknownDate': "unknown date '{{value}}'",
+  'searchQuery.propKeyValueRequired': '{{prefix}}: key=value required',
+  'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}: expected 'key=value'",
+  'searchQuery.propKeyEmpty': '{{prefix}}: key cannot be empty',
   'search.filterSyntaxIntro':
     'Filter syntax is live — type tag:#name or path:Journal/* in the search input, or use the + Filter button. Press ? for help.',
   'search.searchTags': 'Search tags...',

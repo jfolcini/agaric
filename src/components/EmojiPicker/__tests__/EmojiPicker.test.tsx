@@ -6,6 +6,7 @@ import { axe } from 'vitest-axe'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { EmojiPicker } from '@/components/EmojiPicker/EmojiPicker'
 import { clearEmojiRecents, pushEmojiRecent } from '@/hooks/useEmojiRecents'
+import { i18n } from '@/lib/i18n'
 
 // jsdom/happy-dom collapse the zero-height scroll container to zero virtual
 // rows. Use the shared virtualizer mock, but render only a bounded window of
@@ -44,6 +45,27 @@ describe('<EmojiPicker>', () => {
     // The first group appears twice: the inline header row and the sticky pin.
     expect(screen.getAllByText('Smileys & Emotion').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('People & Body')).toBeInTheDocument()
+  })
+
+  // #4555 — the group header/tab-label/sticky text used to be the raw
+  // English CLDR string baked directly into JSX (`{row.group}`,
+  // `aria-label={group}`). Because the English catalog value is byte-equal
+  // to that CLDR string, a test asserting only the English text can't tell
+  // "reads the catalog" from "hardcoded literal". Overriding the catalog
+  // value and asserting the OVERRIDE renders proves the call site actually
+  // resolves through `t()` — it fails if the call site reverts to `{row.group}`.
+  it('renders the CLDR group text through the i18n catalog, not a hardcoded literal', async () => {
+    const KEY = 'emojiPicker.group.smileysEmotion'
+    const original = i18n.t(KEY)
+    i18n.addResource('en', 'translation', KEY, '__OVERRIDDEN_SMILEYS_LABEL__')
+    try {
+      render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+      await screen.findByRole('gridcell', { name: 'grinning' })
+      expect(screen.getAllByText('__OVERRIDDEN_SMILEYS_LABEL__').length).toBeGreaterThanOrEqual(1)
+      expect(screen.queryByText('Smileys & Emotion')).not.toBeInTheDocument()
+    } finally {
+      i18n.addResource('en', 'translation', KEY, original)
+    }
   })
 
   it('pins the current group as a sticky label, hidden while searching', async () => {
