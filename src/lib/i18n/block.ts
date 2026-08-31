@@ -165,6 +165,7 @@ export const block: Record<string, string> = {
   'blockTree.deletedMessageUndo_one': 'Deleted {{count}} block — Ctrl+Z to undo',
   'blockTree.deletedMessageUndo_other': 'Deleted {{count}} blocks — Ctrl+Z to undo',
   'blockTree.setTaskStateFailed': 'Failed to set task state',
+  'blockTree.setListStyleFailed': 'Failed to set list style',
   'blockTree.linkTargetNotFound': 'Link target not found',
   'blockTree.setPriorityFailed': 'Failed to set priority',
   'blockTree.setHeadingFailed': 'Failed to set heading',

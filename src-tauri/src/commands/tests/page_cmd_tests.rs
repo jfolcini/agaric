@@ -10301,3 +10301,252 @@ async fn export_descendant_internal_and_recurrence_keys_not_round_tripped_2962()
         "a non-excluded custom key on the same block must still export, got:\n{md}"
     );
 }
+
+// ======================================================================
+// listStyle markdown round trip (#4552 slice 4)
+// ======================================================================
+//
+// A block's list-ness lives in a `block_properties` row under the key
+// `listStyle` (migration 0103), never as a `1. ` / `- ` prefix in
+// `blocks.content`. The MARKER is a document-assembly concern — its indent and
+// its NUMBER depend on the block's depth and its neighbours, which only the
+// exporter's descendant walk knows — so `export_page_markdown_inner` emits it
+// and `import::parse_logseq_markdown` consumes it.
+
+/// Seed a `listStyle` row directly (bypassing the op log, like the other raw
+/// export-fixture helpers in this file).
+async fn set_list_style(pool: &sqlx::SqlitePool, block_id: &str, style: &str) {
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'listStyle', ?)",
+    )
+    .bind(block_id)
+    .bind(style)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// #4552 acceptance criterion 10 — exporting a styled block emits `- ` / `N. `
+/// and emits NO `listStyle:: …` property line.
+///
+/// Non-tautological on the pre-fix code in BOTH halves: the marker was absent
+/// entirely (a `bullet` block exported byte-identically to a plain one), and
+/// `listStyle` was missing from the exporter's `key NOT IN (…)` exclusion, so
+/// the block instead exported a literal `listStyle:: ordered` line — the
+/// property leaking as text while the structure it describes vanished.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_list_marker_and_no_list_style_property_4552() {
+    let (pool, _dir) = test_pool().await;
+
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAA4552P1";
+    const BUL: &str = "01AAAAAAAAAAAAAAAAAA4552B1";
+    const ORD1: &str = "01AAAAAAAAAAAAAAAAAA4552N1";
+    const ORD2: &str = "01AAAAAAAAAAAAAAAAAA4552N2";
+    const PLAIN: &str = "01AAAAAAAAAAAAAAAAAA4552X1";
+
+    insert_block(&pool, PAGE, "page", "Marker Page", None, Some(1)).await;
+    insert_block(&pool, BUL, "content", "Buy milk", Some(PAGE), Some(1)).await;
+    insert_block(&pool, ORD1, "content", "Step one", Some(PAGE), Some(2)).await;
+    insert_block(&pool, ORD2, "content", "Step two", Some(PAGE), Some(3)).await;
+    insert_block(&pool, PLAIN, "content", "Just prose", Some(PAGE), Some(4)).await;
+    set_list_style(&pool, BUL, "bullet").await;
+    set_list_style(&pool, ORD1, "ordered").await;
+    set_list_style(&pool, ORD2, "ordered").await;
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    assert_eq!(
+        md,
+        "# Marker Page\n\n\
+         - - Buy milk\n\
+         - 1. Step one\n\
+         - 2. Step two\n\
+         - Just prose\n",
+        "the marker is emitted from `listStyle`, numbered POSITIONALLY, and a \
+         plain block gets none; got:\n{md}"
+    );
+    assert!(
+        !md.contains("listStyle"),
+        "the marker carries the property — no `listStyle:: …` line may be \
+         emitted alongside it; got:\n{md}"
+    );
+}
+
+/// #4552 — the ordinal is POSITIONAL, never the stored literal. A file
+/// carrying `3. / 7. / 1.` normalises to `1. / 2. / 3.` on the first pass,
+/// and a non-`ordered` sibling restarts the run (matching `computeListOrdinals`
+/// and CommonMark's "a changed marker type starts a new list").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_renumbers_ordered_runs_positionally_4552() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // `7.` and `1.` are deliberately non-canonical, and the `- ` bullet in the
+    // middle splits the run in two.
+    let md_in = "- 3. alpha\n- 7. beta\n- - a bullet\n- 1. gamma\n";
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md_in.into(),
+        Some("Renumber4552.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Renumber4552'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let md_out = export_page_markdown_inner(&pool, &page_id).await.unwrap();
+    assert_eq!(
+        md_out,
+        "# Renumber4552\n\n\
+         - 1. alpha\n\
+         - 2. beta\n\
+         - - a bullet\n\
+         - 1. gamma\n",
+        "ordinals are re-derived from sibling position and restart after a \
+         non-ordered sibling; got:\n{md_out}"
+    );
+
+    mat.shutdown();
+}
+
+/// #4552 acceptance criteria 9 and 11 — `export → import → export` is a
+/// BYTE-IDENTICAL fixpoint for a document mixing `bullet`, `ordered` and
+/// plain blocks, including plain blocks whose text merely LOOKS like a marker.
+///
+/// The exported title line is the one thing that cannot be a fixpoint in this
+/// harness (a re-import takes its page title from the filename and keeps the
+/// old `# Heading` as an ordinary block), so the assertions compare the whole
+/// BODY byte-for-byte and account for that single extra heading block
+/// explicitly — no `contains`, so a marker that silently moved, doubled, or
+/// lost its escape fails the test.
+///
+/// Two-reasons guard: the intermediate markdown is asserted verbatim as well,
+/// so this cannot pass because export and import are equally wrong and cancel
+/// out. Criterion 11's `none` blocks (`- not a list`, `1. also not a list`)
+/// are checked on BOTH sides — escaped on the wire, and a property-free
+/// paragraph in the database.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_import_export_list_style_fixpoint_4552() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // The canonical body: two bullets, a two-item ordered run, a nested
+    // ordered child (its own run, restarting at 1), a plain block, and the two
+    // criterion-11 blocks whose text begins with a literal marker.
+    // NOTE: written with `concat!` because Rust's `\<newline>` string
+    // continuation eats the next line's LEADING WHITESPACE — which is exactly
+    // what the nested `  - 1. Nested step` line is testing.
+    const BODY: &str = concat!(
+        "- - Buy milk\n",
+        "- - Buy eggs\n",
+        "- 1. Step one\n",
+        "  - 1. Nested step\n",
+        "- 2. Step two\n",
+        "- Just prose\n",
+        "- \\- not a list\n",
+        "- \\1. also not a list\n",
+    );
+
+    async fn import_and_export(
+        pool: &sqlx::SqlitePool,
+        mat: &Materializer,
+        dir: &std::path::Path,
+        md: String,
+        stem: &str,
+    ) -> String {
+        import_markdown_inner(
+            pool,
+            DEV,
+            mat,
+            dir,
+            md,
+            Some(format!("{stem}.md")),
+            TEST_SPACE_ID.into(),
+            None,
+        )
+        .await
+        .unwrap();
+        settle(mat).await;
+        let page_id: String =
+            sqlx::query_scalar("SELECT id FROM blocks WHERE block_type = 'page' AND content = ?")
+                .bind(stem)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        export_page_markdown_inner(pool, &page_id).await.unwrap()
+    }
+
+    // Pass 1: the body must survive import → export byte-for-byte.
+    let md_a = import_and_export(&pool, &mat, _dir.path(), BODY.into(), "Fix4552A").await;
+    assert_eq!(
+        md_a,
+        format!("# Fix4552A\n\n{BODY}"),
+        "the exported body must equal the imported one byte-for-byte"
+    );
+
+    // Criterion 11, database side: the two marker-looking blocks came back as
+    // plain paragraphs — literal text, NO `listStyle` row.
+    for text in ["- not a list", "1. also not a list"] {
+        let styles: Vec<String> = sqlx::query_scalar(
+            "SELECT p.value_text FROM block_properties p \
+             JOIN blocks b ON b.id = p.block_id \
+             WHERE b.content = ? AND p.key = 'listStyle'",
+        )
+        .bind(text)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            styles.is_empty(),
+            "{text:?} must re-import as a PARAGRAPH, not a list; got listStyle {styles:?}"
+        );
+    }
+    // And the styled ones really did get their property (so the assertion
+    // above is not vacuous on a fixture that lost every property row).
+    let styled: Vec<(String, String)> = sqlx::query_as(
+        "SELECT b.content, p.value_text FROM block_properties p \
+         JOIN blocks b ON b.id = p.block_id \
+         WHERE p.key = 'listStyle' ORDER BY b.content",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        styled,
+        vec![
+            ("Buy eggs".to_string(), "bullet".to_string()),
+            ("Buy milk".to_string(), "bullet".to_string()),
+            ("Nested step".to_string(), "ordered".to_string()),
+            ("Step one".to_string(), "ordered".to_string()),
+            ("Step two".to_string(), "ordered".to_string()),
+        ],
+        "every marker must have become a listStyle row"
+    );
+
+    // Pass 2: feed the FULL export (heading line included) back in. The only
+    // permitted difference is the previous title surviving as a leading block.
+    let md_b = import_and_export(&pool, &mat, _dir.path(), md_a.clone(), "Fix4552B").await;
+    assert_eq!(
+        md_b,
+        format!("# Fix4552B\n\n- # Fix4552A\n{BODY}"),
+        "export → import → export must be a fixpoint over the list lines"
+    );
+
+    mat.shutdown();
+}

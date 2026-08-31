@@ -14,6 +14,7 @@ import {
   clearListStyle,
   LIST_STYLE_KEY,
   LIST_STYLE_OPTIONS_JSON,
+  listStyleForBlockType,
   listStyleFromRows,
   setListStyle,
 } from '@/lib/list-style'
@@ -77,6 +78,22 @@ describe('clearListStyle', () => {
   it('deletes the listStyle property row', async () => {
     await clearListStyle('B2')
     expect(deleteProperty).toHaveBeenCalledWith('B2', LIST_STYLE_KEY)
+  })
+})
+
+describe('listStyleForBlockType (#4552 slice 2)', () => {
+  it('maps the two list targets to their stored style', () => {
+    expect(listStyleForBlockType('numbered-list')).toBe('ordered')
+    expect(listStyleForBlockType('bullet-list')).toBe('bullet')
+  })
+
+  it('maps every other target to none (clears the property)', () => {
+    expect(listStyleForBlockType('paragraph')).toBe('none')
+    expect(listStyleForBlockType('h1')).toBe('none')
+    expect(listStyleForBlockType('h6')).toBe('none')
+    expect(listStyleForBlockType('quote')).toBe('none')
+    expect(listStyleForBlockType('code')).toBe('none')
+    expect(listStyleForBlockType('callout')).toBe('none')
   })
 })
 

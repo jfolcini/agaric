@@ -137,6 +137,22 @@ describe('parseInlineProperties', () => {
     expect([...INLINE_PROPERTY_RESERVED_KEYS].toSorted()).toEqual(EXPECTED_RESERVED_KEYS.toSorted())
   })
 
+  // #4552 slice 4 — `listStyle` is DELIBERATELY absent from this list: the
+  // markdown-export exclusion (`export_page_markdown_inner`'s two
+  // `key NOT IN (…)` SQL lists, `src-tauri/src/commands/pages/markdown.rs`)
+  // must exclude it so a styled block's marker (`- ` / `N. `) isn't ALSO
+  // exported as a raw `listStyle:: ordered` property line — but the inline
+  // `key:: value` picker/typing path should keep working, so `listStyle`
+  // must stay OUT of this reserved set, unlike the export-side lists. This
+  // pins the intended asymmetry so a future "just add listStyle everywhere"
+  // edit doesn't silently break inline `listStyle:: bullet`.
+  it('does NOT reserve `listStyle` — inline `listStyle:: value` must keep working', () => {
+    expect(INLINE_PROPERTY_RESERVED_KEYS.has('listStyle')).toBe(false)
+    expect(parseInlineProperties('listStyle:: bullet')).toEqual([
+      { key: 'listStyle', value: 'bullet', lineIndex: 0 },
+    ])
+  })
+
   it('skips lines inside fenced code blocks', () => {
     const content = '```\nstatus:: active\n```'
     expect(parseInlineProperties(content)).toEqual([])

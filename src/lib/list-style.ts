@@ -11,6 +11,7 @@
  * value literals. See `docs/architecture/list-ergonomics.md` for the model.
  */
 
+import type { BlockTypeToken } from '@/lib/block-type-convert'
 import type { PropertyRow } from '@/lib/tauri/properties'
 import { deleteProperty, setProperty } from '@/lib/tauri/properties'
 
@@ -58,4 +59,18 @@ export async function setListStyle(blockId: string, style: ListStyle): Promise<v
 /** Clear a block's list style (equivalent to `setListStyle(id, 'none')`). */
 export async function clearListStyle(blockId: string): Promise<void> {
   await deleteProperty(blockId, LIST_STYLE_KEY)
+}
+
+/**
+ * The {@link ListStyle} a Turn-into target implies (#4552 slice 2).
+ * `'numbered-list'` / `'bullet-list'` imply the matching stored style; every
+ * other {@link BlockTypeToken} implies `'none'` — converting a styled block to
+ * a heading/quote/paragraph/code/callout clears its `listStyle` (`setListStyle`
+ * deletes the property for `'none'` rather than storing a sentinel), so the
+ * block does not stay flagged as a list it no longer visually is.
+ */
+export function listStyleForBlockType(type: BlockTypeToken): ListStyle {
+  if (type === 'numbered-list') return 'ordered'
+  if (type === 'bullet-list') return 'bullet'
+  return 'none'
 }
