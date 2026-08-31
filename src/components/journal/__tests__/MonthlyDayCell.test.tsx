@@ -16,11 +16,30 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { es } from 'date-fns/locale'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { MonthlyDayCell } from '@/components/journal/MonthlyDayCell'
+import { __registerDateLocaleForTests, __unregisterDateLocaleForTests } from '@/lib/date-locale'
 import type { DayEntry } from '@/lib/date-utils'
+import { i18n } from '@/lib/i18n'
+
+// #4555 — falsification helper: see the matching comment in
+// `src/lib/__tests__/date-utils.test.ts` for why a plain 'xx' tag (rather
+// than a real locale) proves TRACKING of `i18n.language`, not a literal.
+const TEST_LOCALE_TAG = 'xx'
+
+async function withTestLocale<T>(run: () => T | Promise<T>): Promise<T> {
+  __registerDateLocaleForTests(TEST_LOCALE_TAG, es)
+  await i18n.changeLanguage(TEST_LOCALE_TAG)
+  try {
+    return await run()
+  } finally {
+    await i18n.changeLanguage('en')
+    __unregisterDateLocaleForTests(TEST_LOCALE_TAG)
+  }
+}
 
 function makeEntry(dateStr: string): DayEntry {
   const parts = dateStr.split('-')
@@ -244,6 +263,20 @@ describe('MonthlyDayCell', () => {
     const cell = screen.getByRole('gridcell')
     // format(new Date(2025, 0, 15), 'EEEE, MMMM d, yyyy') = 'Wednesday, January 15, 2025'
     expect(cell).toHaveAttribute('aria-label', 'Wednesday, January 15, 2025')
+  })
+
+  // #4555 — the `fullDate` half of the aria-label used to call
+  // `format(entry.date, 'EEEE, MMMM d, yyyy')` with no `locale:`, so it was
+  // always English regardless of `i18n.language`. Pins the tracking
+  // behaviour (the label follows the app locale — the same source the UI
+  // catalog resolves from) rather than a literal — this fails if the call
+  // site reverts to a bare, locale-less `format()`.
+  it('#4555: aria-label full-date text follows the app date locale', async () => {
+    await withTestLocale(() => {
+      render(<MonthlyDayCell {...defaultProps} />)
+      const cell = screen.getByRole('gridcell')
+      expect(cell).toHaveAttribute('aria-label', 'miércoles, enero 15, 2025')
+    })
   })
 
   // #1730: dots/badge are aria-hidden and the explicit aria-label overrides

@@ -735,13 +735,22 @@ export const blocksHandlers = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const now = nextCohortMarker()
-    const descendantsAffected = deleteCohort(blocks, blockId, now)
+    const cohort = deleteCohort(blocks, blockId, now)
     const op = pushOp('delete_block', { block_id: blockId })
+    // #4523 — the PAGE members of the cohort the walk just tombstoned. The
+    // walk does NOT stop at a nested page, exactly as the backend cascade does
+    // not (`collect_subtree_ids_unbounded` filters on `deleted_at` and depth,
+    // never on `block_type`), so a deleted page's nested pages are in here
+    // alongside the seed. A mock that returned only the seed would let the
+    // `[[` picker's stale-cache bug pass in the mock backend — the same trap
+    // the batch handler's list closes below.
+    const affectedPageIds = cohort.filter((id) => blocks.get(id)?.['block_type'] === 'page')
     // #2468 — `WithOps<DeleteResponse>`.
     return {
       block_id: blockId,
       deleted_at: now,
-      descendants_affected: descendantsAffected,
+      descendants_affected: cohort.length,
+      affected_page_ids: affectedPageIds,
       op_refs: [{ device_id: op.device_id, seq: op.seq }],
     }
   },

@@ -557,6 +557,15 @@ pub async fn edit_block_inner(
 /// `DeleteBlock` op, sets `deleted_at` on the block and all descendants
 /// via recursive CTE, and dispatches background cache tasks.
 ///
+/// **Return shape (#4523)**: [`DeleteResponse`] now also carries
+/// `affected_page_ids`, the `block_type = 'page'` members of the cohort this
+/// call tombstoned. The cascade has no page-boundary stop, so a deleted page's
+/// nested PAGE children go with it; only this command knows their ids, and the
+/// `[[` picker's name cache needs them to stop offering rows that are now in
+/// the trash. Mirrors [`delete_blocks_by_ids_inner`]'s
+/// [`BatchDeleteResponse::affected_page_ids`] (#4480/#4521) one command over.
+/// See the type's own docs.
+///
 /// # Errors
 ///
 /// - [`AppError::NotFound`] — block does not exist
@@ -688,6 +697,35 @@ pub async fn delete_block_inner(
     )
     .await?;
 
+    // #4523 — the PAGE subset of the cohort we just tombstoned, reported back
+    // so the caller can evict exactly those rows from the `[[` picker's
+    // per-space name cache. Mirrors the `delete_blocks_by_ids_inner` half
+    // (#4480/#4521) both in shape and in its one load-bearing property: the id
+    // list read here is the SAME list the soft-delete consumed, not a second
+    // walk that could drift from it. `effects.deleted_cohort` is
+    // `collect_delete_cohort`'s pre-UPDATE capture, which
+    // `descendants_affected` two dozen lines below already reports the length
+    // of as "the same set of rows the UPDATE touched" — so this adds no new
+    // assumption about the cascade, it only reads a different column off the
+    // set the response already describes.
+    //
+    // `block_type` is immutable for a live block, so it is immaterial whether
+    // this runs before or after the UPDATE; it sits after so the two
+    // statements read in cascade order. No `deleted_at` predicate: the cohort
+    // was captured pre-UPDATE from live rows and every one of them is now
+    // tombstoned, so filtering on `deleted_at IS NULL` here would return the
+    // empty set. (Byte-identical SQL to the batch arm's query — deliberately,
+    // so the two share one `.sqlx` cache entry and one reading.)
+    let cohort_json = serde_json::to_string(&effects.deleted_cohort)?;
+    let affected_page_ids: Vec<String> = sqlx::query_scalar!(
+        r#"SELECT id AS "id!: String" FROM blocks
+           WHERE id IN (SELECT value FROM json_each(?1))
+             AND block_type = 'page'"#,
+        cohort_json,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+
     // #2042: `pages_cache.{child_block_count,inbound_link_count}` for the pages
     // this subtree owned / linked into are recomputed by the background
     // `RebuildPagesCacheCounts` task (enqueued by `enqueue_lifecycle_background`
@@ -733,6 +771,8 @@ pub async fn delete_block_inner(
         // active CTE), so its length equals the old cascade UPDATE's
         // `rows_affected()` exactly — the same set of rows the UPDATE touched.
         descendants_affected: effects.deleted_cohort.len() as u64,
+        // #4523 — the PAGE subset of that same cohort; see above.
+        affected_page_ids,
     })
 }
 
@@ -2852,6 +2892,9 @@ pub async fn edit_block(
 
 /// Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`].
 /// #2468: the response carries the produced op ref(s) — see [`create_block`].
+/// #4523: it also carries `affected_page_ids`, the page ids inside the cascade
+/// — the frontend cannot see the cascade, so it cannot evict the nested pages
+/// the cascade swept out of the `[[` picker's cache without being told.
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_block(

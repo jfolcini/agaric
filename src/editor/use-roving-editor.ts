@@ -53,6 +53,7 @@ import {
   setListMarkerMeta,
   type ListMarkerState,
 } from '@/editor/extensions/list-marker-decoration'
+import { ListStyleInputRule } from '@/editor/extensions/list-style-input-rule'
 import { MathBlock, MathInline } from '@/editor/extensions/math'
 import { MermaidCodeBlockView } from '@/editor/extensions/MermaidCodeBlockView'
 import { PropertyPicker, propertyPickerPluginKey } from '@/editor/extensions/property-picker'
@@ -71,6 +72,8 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import type { DocNode } from '@/editor/types'
 import { dispatchBlockEvent } from '@/lib/block-events'
+import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
+import { t } from '@/lib/i18n'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { curatedLowlight } from '@/lib/lowlight-curated'
@@ -113,11 +116,30 @@ const lowlight = curatedLowlight
 // literals therefore failed the diff every render → `setOptions` + view churn on
 // every BlockTree render, independent of the extensions array. Hoisting both to
 // module-level constants gives them stable identities so the diff short-circuits.
+// #4555 — the aria-label now resolves via `t()` instead of a hardcoded
+// English literal. It is still read at MODULE INIT time (not per-render),
+// same as before: `EDITOR_PROPS` must stay a single, stable object
+// reference (see the #726 note above — `useEditor`'s `compareOptions` diffs
+// `editorProps` by reference, so a fresh object every render forces
+// `setOptions` + view churn). A ProseMirror `EditorProps.attributes`
+// function *would* let this re-resolve per apply, but TipTap's own
+// `createView` does `attributes: { role: 'textbox', ...editorProps
+// ?.attributes }` — a plain-object SPREAD — so a function here silently
+// discards every attribute (confirmed by this file's own
+// use-roving-editor.test.ts: soft-keyboard attrs go missing when
+// `attributes` is a function). Given that constraint, and that Phase 0
+// ships no language switch (`lng` stays pinned to 'en' — no `changeLanguage`
+// call exists in production yet), the module-scope read is a knowingly
+// accepted Phase-0 trade-off, not an oversight: this ONE label needs a
+// TipTap instance recreated (which already happens on block focus/blur —
+// see the file docblock) to pick up a future language change, matching the
+// #752 "shortcut bindings are frozen at editor creation" precedent already
+// accepted in this file.
 const EDITOR_PROPS = {
   attributes: {
     role: 'textbox',
     'aria-multiline': 'true',
-    'aria-label': 'Block editor',
+    'aria-label': t('editor.blockEditorLabel'),
     // #925 — deliberate soft-keyboard configuration for the prose-first
     // block editor (previously unset, so mobile keyboards guessed). Enter
     // creates a new block, so hint the keyboard's action key as "enter";
@@ -550,6 +572,8 @@ export interface RovingEditorOptions {
   onSlashCommand?: (item: PickerItem) => void
   /** Called when checkbox syntax (- [ ] or - [x]) is detected during typing. */
   onCheckbox?: ((state: 'TODO' | 'DONE') => void) | null
+  /** Called when the block-level `1. ` / `- ` list-marker syntax is detected during typing (#4552). */
+  onListStyle?: ((style: 'bullet' | 'ordered') => void) | null
   /** Return property keys matching query (for :: picker). */
   searchPropertyKeys?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Called when a property is selected from the :: picker. */
@@ -648,7 +672,10 @@ export function replaceDocSilently(editor: Editor, json: Record<string, unknown>
 export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditorHandle {
   const {
     resolveTagName = (id: string) => `#${id.slice(0, 8)}...`,
-    resolveBlockTitle = (id: string) => `[[${id.slice(0, 8)}...]]`,
+    // #4551 — was a local `[[id…]]` literal duplicating `unresolvedBlockLabel`;
+    // now the same helper every real resolver's own miss-fallback calls, so
+    // this default and the app's resolvers can't drift on the shape.
+    resolveBlockTitle = (id: string) => unresolvedBlockLabel(id),
     // / #544: callers own the placeholder text and pass the
     // i18n-keyed translation (e.g. BlockTree → t('block.emptyPlaceholder')).
     // The default is empty rather than a hardcoded English string so a caller
@@ -663,6 +690,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     searchSlashCommands = () => [],
     onSlashCommand,
     onCheckbox,
+    onListStyle,
     searchPropertyKeys = () => [],
     onPropertySelect,
   } = options
@@ -693,6 +721,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const onSlashCommandRef = useRef(onSlashCommand)
   const onPropertySelectRef = useRef(onPropertySelect)
   const onCheckboxRef = useRef(onCheckbox)
+  const onListStyleRef = useRef(onListStyle)
   const searchBlockRefsRef = useRef(options.searchBlockRefs ?? (async () => [] as PickerItem[]))
   const searchTagsRef = useRef(searchTags)
   const searchPagesRef = useRef(searchPages)
@@ -712,6 +741,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onSlashCommandRef.current = onSlashCommand
     onPropertySelectRef.current = onPropertySelect
     onCheckboxRef.current = onCheckbox
+    onListStyleRef.current = onListStyle
     searchBlockRefsRef.current = options.searchBlockRefs ?? (async () => [] as PickerItem[])
     searchTagsRef.current = searchTags
     searchPagesRef.current = searchPages
@@ -788,7 +818,19 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       }),
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `resolveBlockTitleRef` resolves the embedded block's rendered content and `onNavigateRef` fires on click; see #4406
       BlockRef.configure({
-        resolveContent: (id: string) => resolveBlockTitleRef.current(id),
+        // #4551 — `resolveBlockTitleRef.current` is the SAME `resolveBlockTitle`
+        // `BlockLink.configure` above hands to `renderBlockLink`'s NodeView
+        // sibling, so a resolver's own "nothing resolved for this id" miss
+        // fallback comes back `unresolvedBlockLabel`-shaped (`[[id…]]`,
+        // PAGE-link shaped) even for a `((ULID))` block ref. Mirrors
+        // `renderBlockRef`'s by-value substitution
+        // (`@/components/RichContentRenderer/marks/blockRef.tsx`) so the
+        // editing surface and the read-only renderer show the same `(( id… ))`
+        // shape for the same broken ref instead of disagreeing on click.
+        resolveContent: (id: string) => {
+          const resolved = resolveBlockTitleRef.current(id)
+          return resolved === unresolvedBlockLabel(id) ? unresolvedBlockRefLabel(id) : resolved
+        },
         onNavigate: (id: string) => onNavigateRef.current?.(id),
       }),
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `searchTagsRef` powers the `@`-tag picker's query and `onCreateTagRef` creates a tag on demand; see #4406
@@ -840,6 +882,15 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `onCheckboxRef` fires when a typed markdown checkbox pattern (`[ ]`/`[x]`) completes; see #4406
       CheckboxInputRule.configure({
         onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
+      }),
+      // #4552 slice 2 — block-level `1. ` / `- ` list-marker syntax. Its
+      // bullet rule excludes a leading `[` precisely so it never competes
+      // with CheckboxInputRule's `- [ ] ` unwrap rules above (see this
+      // extension's own doc comment for why BulletList/OrderedList's stock
+      // input rules stay enabled rather than being replaced outright).
+      // oxlint-disable-next-line react/refs -- same deferred-read pattern as `onCheckboxRef` immediately above; see #4406
+      ListStyleInputRule.configure({
+        onListStyle: (style: 'bullet' | 'ordered') => onListStyleRef.current?.(style),
       }),
       // #1481 — route a pasted single-line GFM task (`- [ ] x`) through the
       // markdown parser so it becomes a task paragraph (carrying `todoState`)

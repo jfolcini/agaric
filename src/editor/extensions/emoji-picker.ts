@@ -27,6 +27,7 @@ import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { pushEmojiRecent } from '@/hooks/useEmojiRecents'
 import { isEmojiPickerEnabled } from '@/lib/editor-preferences'
+import { t } from '@/lib/i18n'
 
 export const emojiPickerPluginKey = new PluginKey('emojiPicker')
 
@@ -40,7 +41,7 @@ export const EmojiPicker = Extension.create({
     return [
       createPickerPlugin({
         loggerComponent: 'EmojiPicker',
-        displayName: 'Emoji',
+        displayName: t('editor.suggestion.emoji'),
         pluginKey: emojiPickerPluginKey,
         char: ':',
         allowedPrefixes: [' ', '\u00A0', '\n'],

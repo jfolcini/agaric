@@ -54,6 +54,19 @@ const mockedInvoke = vi.mocked(invoke)
 const mockedWriteText = vi.mocked(writeText)
 const mockedFlushActiveDraft = vi.mocked(flushActiveDraft)
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+/**
+ * A successful `delete_block` reply — `WithOps<DeleteResponse>` (#2468's
+ * flattened `op_refs`, #4523's `affected_page_ids`). Every delete flow in this
+ * file targets the lone `PAGE_1`, whose cascade is exactly itself.
+ */
+const DELETE_BLOCK_OK = {
+  block_id: 'PAGE_1',
+  deleted_at: 1_700_000_000_000,
+  descendants_affected: 1,
+  affected_page_ids: ['PAGE_1'],
+  op_refs: [],
+}
 let pageStore: StoreApi<PageBlockState>
 
 // Mock lucide-react
@@ -164,6 +177,12 @@ beforeEach(() => {
     if (cmd === 'list_property_defs')
       return { items: [], next_cursor: null, has_more: false, total_count: null }
     if (cmd === 'get_page_aliases') return []
+    // #4523 — `delete_block` used to fall through to `null` here, which was
+    // enough while `usePageDeleteAction` discarded the reply. It now READS the
+    // reply (`affected_page_ids`, the cascade's page membership), so the stub
+    // has to be the real `WithOps<DeleteResponse>` shape. `affected_page_ids`
+    // is `['PAGE_1']` — a lone page with no nested pages cascades to itself.
+    if (cmd === 'delete_block') return DELETE_BLOCK_OK
     return null
   })
 })

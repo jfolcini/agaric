@@ -93,6 +93,17 @@ describe('collectUncachedLinkIds', () => {
     const ids = collectUncachedLinkIds(blocks, TEST_SPACE_ID)
     expect(ids).toEqual(new Set([ULID_B]))
   })
+
+  // #4551 — the bug this widening fixes: a block reference is inserted as
+  // `((ULID))` (`markdown-serialize.ts`), and before this widening the scan
+  // regex only matched `[[ULID]]`, so a `((ULID))` id was never even
+  // collected as "uncached" — it was invisible to the scan, not merely
+  // skipped as already-cached.
+  it('extracts ULID ids embedded in `((…))` block-ref tokens too, in the same pass as `[[…]]`', () => {
+    const blocks = [{ content: `see ((${ULID_A})) for detail` }, { content: `[[${ULID_B}]]` }]
+    const ids = collectUncachedLinkIds(blocks, TEST_SPACE_ID)
+    expect(ids).toEqual(new Set([ULID_A, ULID_B]))
+  })
 })
 
 // Block ids for the hook fixtures (the hook now keys its memo on
@@ -126,6 +137,31 @@ describe('useBlockLinkResolve', () => {
     await waitFor(() => {
       const cached = useResolveStore.getState().cache
       expect(cached.size).toBeGreaterThan(0)
+    })
+  })
+
+  // #4551 — the reported defect: a page mounted fresh (empty resolve store,
+  // as on first load / a hard refresh) whose only reference is a
+  // `((ULID))` block ref must still resolve it, exactly as it would for
+  // `[[ULID]]`. The empty-store precondition is what makes this
+  // non-vacuous: a pre-populated store would pass whether or not the scan
+  // regex covers `((…))` at all.
+  it('resolves a `((ULID))` block reference on a cold mount with an empty resolve store', async () => {
+    expect(useResolveStore.getState().cache.size).toBe(0)
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: 'Referenced block', block_type: 'content', deleted: false },
+    ])
+
+    renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: `see ((${ULID_A})) above` }]))
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], {
+        kind: 'active',
+        space_id: TEST_SPACE_ID,
+      })
+    })
+    await waitFor(() => {
+      expect(useResolveStore.getState().has(ULID_A)).toBe(true)
     })
   })
 

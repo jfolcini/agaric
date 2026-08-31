@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import { Pencil, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -24,24 +25,41 @@ import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 
-/** Known block property keys that can become table columns. */
-const KNOWN_PROPERTY_KEYS: { key: keyof BlockRow; label: string }[] = [
-  { key: 'todo_state', label: 'Status' },
-  { key: 'priority', label: 'Priority' },
-  { key: 'due_date', label: 'Due Date' },
-  { key: 'scheduled_date', label: 'Scheduled' },
+/**
+ * Known block property keys that can become table columns. Holds i18n KEYS,
+ * not literal text — the display label is resolved inside `detectColumns()`
+ * from the `t` the CALLER passes in, not a module-scope import (#4555).
+ */
+const KNOWN_PROPERTY_KEYS: { key: keyof BlockRow; labelKey: string }[] = [
+  { key: 'todo_state', labelKey: 'query.column.status' },
+  { key: 'priority', labelKey: 'query.column.priority' },
+  { key: 'due_date', labelKey: 'query.column.dueDate' },
+  { key: 'scheduled_date', labelKey: 'query.column.scheduled' },
 ]
 
-/** Build the table column set: the fixed Content + known-property columns,
+/**
+ * Build the table column set: the fixed Content + known-property columns,
  * followed by data-driven columns for any custom properties present on the
- * result blocks (sorted alphabetically). */
+ * result blocks (sorted alphabetically).
+ *
+ * #4555 — `t` is a PARAMETER, not a module-scope import, and deliberately
+ * so: the only caller (`QueryResult`, below) reads it from
+ * `useTranslation()` and lists it in the `useMemo` dependency array.
+ * `useTranslation()`'s `t`
+ * changes IDENTITY on `changeLanguage`, so that's what makes the memo
+ * recompute and the column headers actually follow a language change — a
+ * module-scope `t` import has a stable identity forever, so nothing would
+ * ever invalidate the memo and the headers would freeze at whatever
+ * language was active on first render.
+ */
 export function detectColumns(
   results: BlockRow[],
   customProps: Map<string, Map<string, string>>,
+  t: TFunction,
 ): TableColumn[] {
   return [
-    { key: 'content', label: 'Content' },
-    ...KNOWN_PROPERTY_KEYS,
+    { key: 'content', label: t('query.column.content') },
+    ...KNOWN_PROPERTY_KEYS.map(({ key, labelKey }) => ({ key, label: t(labelKey) })),
     ...deriveCustomColumns(results, customProps),
   ]
 }
@@ -242,7 +260,7 @@ export function QueryResult({
     customProps,
   })
 
-  const columns = useMemo(() => detectColumns(results, customProps), [results, customProps])
+  const columns = useMemo(() => detectColumns(results, customProps, t), [results, customProps, t])
 
   // #2663 — the page store's `edit()` action (tolerant of no ambient
   // `PageBlockStoreProvider`, e.g. in isolated tests: falls back to a shared

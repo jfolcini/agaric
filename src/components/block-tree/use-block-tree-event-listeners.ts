@@ -45,6 +45,7 @@ import {
   convertBlockContent,
   stripBlockMarker,
 } from '@/lib/block-type-convert'
+import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import type { PageBlockState } from '@/stores/page-blocks'
@@ -194,9 +195,16 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       openPropertyDrawer: () => {},
     })
 
+    // #4552 slice 2 — sets the `listStyle` property instead of prepending a
+    // `1. ` marker (dead in production today: nothing dispatches
+    // `INSERT_ORDERED_LIST` any more, #1960 replaced the standalone toolbar
+    // button with the Turn-into menu — repointed rather than deleted per the
+    // issue's own call-site table, since the registry entry still exists).
     const onOrderedList: BlockCommandHandler = (blockId) => {
-      const ctx = buildCtx(blockId)
-      void applyContentEdit(ctx, `1. ${readCurrentContent(ctx)}`, 'slash.numberedListFailed')
+      void setListStyle(blockId, 'ordered').catch((err: unknown) => {
+        logger.error('BlockTree', 'setListStyle(ordered) failed', { blockId }, err)
+        notify.error(t('slash.numberedListFailed'))
+      })
     }
     const onDivider: BlockCommandHandler = (blockId) => {
       void applyContentEdit(buildCtx(blockId), '---', 'slash.dividerFailed')
@@ -222,15 +230,22 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     // #1960 — Turn-into menu: convert the focused block to `detail.type`
     // (a BlockTypeToken) via the shared markdown convert + content-edit path,
     // identical to the slash `/turn-*` family and the context-menu Turn-into.
+    // #4552 slice 2 — also writes the `listStyle` property `type` implies
+    // (see `useSlashCommandStructural.handleTurnInto`'s matching comment).
     const onTurnInto: BlockCommandHandler = (blockId, detail) => {
       const type = (detail as { type?: BlockTypeToken } | undefined)?.type
       if (!type) return
       const ctx = buildCtx(blockId)
-      void applyContentEdit(
-        ctx,
-        convertBlockContent(readCurrentContent(ctx), type),
-        'slash.turnIntoFailed',
-      )
+      void (async () => {
+        const newContent = convertBlockContent(readCurrentContent(ctx), type)
+        await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed')
+        try {
+          await setListStyle(blockId, listStyleForBlockType(type))
+        } catch (err) {
+          logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
+          notify.error(t('slash.turnIntoFailed'))
+        }
+      })()
     }
 
     // #1439 — converted clipboard-HTML outline. The editor's HTML-paste handler

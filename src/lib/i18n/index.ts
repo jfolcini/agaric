@@ -65,6 +65,37 @@ i18n.use(initReactI18next).init({
   },
 })
 
+/**
+ * #4555 — keep `document.documentElement.lang` in sync with the resolved
+ * i18next language, instead of the `lang="en"` `index.html` hardcodes at
+ * build time and nothing in `src/` ever updated. Two live bugs this fixes:
+ *   - Every AT announces content with English phonetics regardless of the
+ *     actual page language.
+ *   - `useVoiceInput.ts` derives `SpeechRecognition.lang` from
+ *     `document.documentElement.lang || 'en-US'`, so a stale attribute feeds
+ *     voice dictation the wrong acoustic model.
+ *
+ * Set once immediately below (this module is imported synchronously before
+ * React renders — see `src/main.tsx`) and again on every `languageChanged`
+ * event, mirroring the write-on-change DOM-applying-preference pattern
+ * `useTheme.ts` uses for theme classes (a `useEffect` keyed on the resolved
+ * value). This module can't use that hook shape — it runs before any
+ * component mounts and must own the FIRST paint, not just react to later
+ * ones — so it subscribes directly to i18next's own event bus instead,
+ * which is available immediately after `init()` and needs no React tree.
+ *
+ * Phase 0 keeps `lng` pinned to `'en'` (no language switch exists yet), so
+ * `languageChanged` never actually fires in production today — this
+ * listener is dormant machinery, wired and tested now so it is provably
+ * correct before Phase 1 ever calls `changeLanguage()`.
+ */
+function applyDocumentLang(lng: string): void {
+  if (typeof document === 'undefined') return
+  document.documentElement.lang = lng
+}
+applyDocumentLang(i18n.language)
+i18n.on('languageChanged', applyDocumentLang)
+
 /** Standalone translation function — safe to call outside React components. */
 export const t = i18n.t.bind(i18n)
 

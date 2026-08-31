@@ -14,7 +14,10 @@
  *   - GROUPED: group headers (key label + count + per-group aggregate chips)
  *     over each bucket's previewed member rows.
  *
- * Saved views remain an explicit follow-up.
+ * Saved views have shipped (#1460): `SavedViews` (mounted below) lists and
+ * loads them, and `handleSaveView`'s dialog writes a marker block + its
+ * serialized `query_spec` property (`serializeQuerySpec`,
+ * `src/stores/advancedQuery.ts`) — see `docs/features/views.md`.
  */
 
 import type React from 'react'
@@ -307,6 +310,7 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
               <div className="px-1 pb-2">
                 <AggregateSummary
                   results={aggregateResults}
+                  specs={controls.aggregates}
                   label={t('advancedQuery.aggregate.summaryLabel')}
                 />
               </div>

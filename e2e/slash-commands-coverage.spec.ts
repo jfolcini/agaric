@@ -1,6 +1,8 @@
 import {
   expect,
   focusBlock,
+  getInvokeCalls,
+  installIpcRecorder,
   openPage,
   reopenPage,
   saveBlock,
@@ -20,7 +22,7 @@ import {
  *   - Headings 3–6   → <h3>..<h6>            (1–2 are in slash-commands.spec.ts)
  *   - /quote         → <blockquote>
  *   - /divider       → <hr>
- *   - /numbered-list → <ol>
+ *   - /numbered-list → `listStyle: ordered` + a rendered `list-marker` (#4552)
  *   - /turn …        → turn-into conversions (Text, Heading 1, Code block, Quote)
  *
  * Each test drives the command through the real / picker (type `/`, filter,
@@ -144,7 +146,28 @@ test.describe('Slash structural inserts', () => {
     await expect(page.locator('[data-testid="horizontal-rule"]')).toHaveCount(1)
   })
 
-  test('/numbered-list turns the block into an <ol> and persists', async ({ page }) => {
+  /**
+   * #4552 slice 2 — list-ness is a block PROPERTY (`listStyle`), not an
+   * in-block ProseMirror list node and not a `1. ` prefix in `blocks.content`.
+   * `/numbered-list` writes `listStyle = 'ordered'` and touches no content;
+   * the visible `1.` is drawn by the read pipeline (`ListMarker`, and the
+   * roving editor's decoration plugin on the focused block) from that
+   * property. So the assertions are inverted from the old model: NO `<ol>`
+   * / `<li>` anywhere, NO literal `1. ` in the text, and a `list-marker`
+   * element that survives the reopen.
+   *
+   * The marker is asserted after `reopenPage` rather than immediately: the
+   * batch that feeds `useListStyles` refetches on the backend's
+   * `block:properties-changed` event, and the JS tauri mock does not emit
+   * that event (it emits none) — so in THIS harness a property write only
+   * becomes visible on the next mount. That is a mock↔backend gap, not a
+   * product one; the reopen is also what proves persistence, which is the
+   * half of this test worth keeping either way.
+   */
+  test('/numbered-list sets listStyle=ordered (no <ol>, no `1. ` prefix) and persists', async ({
+    page,
+  }) => {
+    await installIpcRecorder(page)
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
     await page.keyboard.type('first item')
@@ -154,15 +177,28 @@ test.describe('Slash structural inserts', () => {
     await expect(item).toBeVisible()
     await item.click()
 
-    await expect(editor.locator('ol li')).toBeVisible()
+    // The command's only write is the block property.
+    await expect
+      .poll(() => getInvokeCalls(page, 'set_property'))
+      .toMatchObject([{ key: 'listStyle', value: { value_text: 'ordered' } }])
 
-    await saveBlock(page, 'Escape')
-    await expect(firstStatic(page).locator('ol')).toBeVisible()
-    await expect(firstStatic(page).locator('ol li')).toContainText('first item')
+    // The focused block gains no list node and no marker text of its own.
+    await expect(editor.locator('ol, ul, li')).toHaveCount(0)
+    await expect(editor).toHaveText('first item')
+
+    // Enter (not Escape): nothing in the block is a list node to escape from
+    // any more, and Escape *discards* the pending edit — the old `1. `-prefix
+    // handler used to persist it as a side effect of its content write.
+    await saveBlock(page)
+    await expect(firstStatic(page)).toContainText('first item')
+    await expect(firstStatic(page).locator('ol, ul, li')).toHaveCount(0)
 
     await reopenPage(page, 'Getting Started')
-    await expect(firstStatic(page).locator('ol')).toBeVisible()
-    await expect(firstStatic(page).locator('ol li')).toContainText('first item')
+    await expect(firstBlock(page).getByTestId('list-marker')).toHaveText('1.')
+    await expect(firstStatic(page)).toContainText('first item')
+    // The `1.` comes from the marker element, never from the block's text.
+    await expect(firstStatic(page)).not.toContainText('1. first item')
+    await expect(firstStatic(page).locator('ol, ul, li')).toHaveCount(0)
   })
 })
 

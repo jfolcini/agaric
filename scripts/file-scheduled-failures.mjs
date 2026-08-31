@@ -528,13 +528,20 @@ export function escalationThreshold(periodHours) {
  *         of this script already IS one real occurrence, and "new
  *         invocation" and "new run" already coincide;
  *       - `buildResults` (`check-workflow-liveness.mjs`) omits the key
- *         deliberately, and ONLY, for a `stale` verdict (#4456) — the
- *         watched workflow's own schedule has stopped firing, so there is no
- *         run left to name, and this script's own poll becomes the
+ *         deliberately for the verdicts with no run to name: a `stale` one
+ *         (#4456), and — #4478 — a `schedule-disabled` one (GitHub reports
+ *         the watched workflow's state as non-`active`, e.g.
+ *         `disabled_inactivity`, so its schedule is off and no run will
+ *         arrive) or a `schedule-state-unknown` one (that state could not be
+ *         read at all). In each, the watched workflow's schedule is not
+ *         producing runs, so this script's own poll becomes the
  *         distinguishing occurrence instead: three DIFFERENT `fallbackRunId`
  *         values are three distinct daily polls that still observe the lane
- *         stale, standing in for the three distinct runs a genuinely failing
- *         weekly lane would need to escalate.
+ *         dead, standing in for the three distinct runs a genuinely failing
+ *         weekly lane would need to escalate. (A plain `never-ran` — the same
+ *         empty run list, but with GitHub reporting the workflow `active` —
+ *         deliberately stays on the `null` HOLD below: a workflow that is
+ *         merely young must not escalate.)
  *   - `null` (the key IS present but the caller could not name a run — e.g.
  *     `newestCompletedRunId` reporting `never-ran`/`no-completed-run`): the
  *     identity is unknowable, so the counter HOLDS — it neither advances nor

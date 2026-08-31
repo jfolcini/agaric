@@ -3,6 +3,7 @@ import { useCallback, useMemo } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { resolveLegacyQueryToFilterExpr } from '@/lib/inline-query-resolve'
 import { decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
@@ -87,7 +88,7 @@ export async function fetchPropertyQuery(
   spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   if (!params['key']) {
-    throw new QueryValidationError('Property query requires key:NAME parameter')
+    throw new QueryValidationError(t('query.propertyRequiresKey'))
   }
   const resp = await queryByProperty({
     key: params['key'],
@@ -107,7 +108,7 @@ export async function fetchBacklinksQuery(
   spaceId?: string | null,
 ): Promise<QueryFetchResult> {
   if (!params['target']) {
-    throw new QueryValidationError('Backlinks query requires target:ULID parameter')
+    throw new QueryValidationError(t('query.backlinksRequiresTarget'))
   }
   // #2248 — `listBlocks` requires an active space; there is no cross-space
   // listing. With no active space, return an empty page rather than invoking
@@ -207,7 +208,7 @@ export async function dispatchQuery(
       return await fetchBacklinksQuery(parsed.params, pageCursor, spaceId)
     }
     default: {
-      throw new QueryValidationError(`Unknown query type: ${parsed.type}`)
+      throw new QueryValidationError(t('query.unknownType', { type: parsed.type }))
     }
   }
 }
@@ -256,7 +257,7 @@ export async function resolveInlineQuery(
   const parsed = parseQueryExpression(expression)
   const resolved = await resolveLegacyQueryToFilterExpr(parsed, {
     resolveTagPrefix: async (prefix) =>
-      unwrap(await commands.listTagsByPrefix(prefix, null)).map((t) => t.tag_id),
+      unwrap(await commands.listTagsByPrefix(prefix, null)).map((tag) => tag.tag_id),
   })
   if (resolved.filterExpr != null) {
     return await fetchRichInlineQuery(resolved.filterExpr, pageCursor, spaceId)
@@ -375,11 +376,11 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
   //     a failed `fetchNextPage` (load-more) does NOT surface as `error`.
   let error: string | null = null
   if (expression.trim() === '') {
-    error = 'Query expression is empty'
+    error = t('query.expressionEmpty')
   } else if (queryError != null) {
     const isInitialLoadError = (data?.pages.length ?? 0) === 0
     if (isInitialLoadError || queryError instanceof QueryValidationError) {
-      error = queryError instanceof Error ? queryError.message : 'Query failed'
+      error = queryError instanceof Error ? queryError.message : t('query.failed')
     }
   }
 

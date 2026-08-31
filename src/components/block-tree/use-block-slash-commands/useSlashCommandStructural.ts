@@ -23,6 +23,7 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
+import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -37,26 +38,51 @@ async function handleCallout(ctx: SlashCommandContext, calloutType: string): Pro
   await applyContentEdit(ctx, newContent, 'slash.calloutFailed')
 }
 
+/**
+ * #4552 slice 2 — `/numbered-list` and `/bullet-list` set the `listStyle`
+ * block property instead of prepending a `1. ` / `- ` markdown marker: the
+ * marker is now drawn from that property (`ListMarker.tsx` /
+ * `list-marker-decoration.ts`), not from `blocks.content`.
+ */
 async function handleNumberedList(ctx: SlashCommandContext): Promise<void> {
-  const newContent = `1. ${readCurrentContent(ctx)}`
-  await applyContentEdit(ctx, newContent, 'slash.numberedListFailed')
+  try {
+    await setListStyle(ctx.blockId, 'ordered')
+  } catch (err) {
+    logger.error('useSlashCommandStructural', 'setListStyle(ordered) failed', undefined, err)
+    notify.error(ctx.t('slash.numberedListFailed'))
+  }
 }
 
 async function handleBulletList(ctx: SlashCommandContext): Promise<void> {
-  const newContent = `- ${readCurrentContent(ctx)}`
-  await applyContentEdit(ctx, newContent, 'slash.bulletListFailed')
+  try {
+    await setListStyle(ctx.blockId, 'bullet')
+  } catch (err) {
+    logger.error('useSlashCommandStructural', 'setListStyle(bullet) failed', undefined, err)
+    notify.error(ctx.t('slash.bulletListFailed'))
+  }
 }
 
 /**
  * #264 — `/turn <type>` converts the current block to the target block type,
  * reusing the shared `convertBlockContent` so the conversion logic is not
  * duplicated across the slash menu and the context-menu "Turn into" group.
+ *
+ * #4552 slice 2 — additionally writes the `listStyle` property implied by
+ * `type` (`listStyleForBlockType`): `'ordered'`/`'bullet'` for the two list
+ * targets, `'none'` (cleared) for every other target, so converting a styled
+ * block AWAY from a list does not leave it flagged as one.
  */
 async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promise<void> {
   const type = turnIdToBlockType(item.id)
   if (!type) return
   const newContent = convertBlockContent(readCurrentContent(ctx), type)
   await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed')
+  try {
+    await setListStyle(ctx.blockId, listStyleForBlockType(type))
+  } catch (err) {
+    logger.error('useSlashCommandStructural', 'setListStyle (turn-into) failed', undefined, err)
+    notify.error(ctx.t('slash.turnIntoFailed'))
+  }
 }
 
 async function handleDivider(ctx: SlashCommandContext): Promise<void> {

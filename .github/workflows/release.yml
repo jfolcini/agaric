@@ -579,17 +579,48 @@ jobs:
             # evidence is that a real session bus is what fixed the original
             # hang — unconditionally dropping it on the final try would spend
             # that attempt on exactly the configuration that already failed
-            # twice. A cheap, throwaway `dbus-run-session -- true` distinguishes
-            # "present but cannot start a bus" from "present and healthy, the
-            # first two attempts failed for some other reason" directly, so the
+            # twice. A cheap, throwaway probe distinguishes "present but
+            # cannot start a bus" from "present and healthy, the first two
+            # attempts failed for some other reason" directly, so the
             # fallback engages only when the probe itself proves the bus is
             # unusable. `timeout` bounds it: a probe that wedges must degrade
             # to the safe fallback, not hang the step and gate the release the
-            # way this whole retry exists to avoid. This is not a full
-            # guarantee — a probe that passes now does not prove the bus
-            # stays healthy for the rest of the attempt — but it is strictly
-            # more evidence than `command -v` alone, at the cost of at most a
-            # few seconds paid once, on the final attempt only.
+            # way this whole retry exists to avoid.
+            #
+            # The probe runs under `xvfb-run -a dbus-run-session -- true` —
+            # the SAME wrapper the real launch below uses (`setsid xvfb-run
+            # -a "${launcher[@]}" …`), not a bare `dbus-run-session -- true`.
+            # A bus that starts standalone but not inside `xvfb-run`'s
+            # environment would pass a standalone probe and still fail the
+            # real attempt (#4454) — vouching for the bus outside the
+            # environment it is actually asserting about is weaker evidence
+            # than it reads.
+            #
+            # Budget bumped 10s -> 15s for the extra Xvfb startup this wrapper
+            # now pays. NEITHER term is a CI measurement, and the two have
+            # different provenance, so do not read 15 as derived: this probe
+            # has never executed in a release at all (#4454), so no run exists
+            # to measure. `dbus-run-session -- true` was timed off-CI at under
+            # 0.1s (n=3); the `xvfb-run` term — forking Xvfb and waiting for it
+            # to accept a connection — is an ESTIMATE of a few seconds and is
+            # measured nowhere. 15 is a deliberately loose bound, not a budget.
+            # If it turns out too tight the failure is visible and degrades
+            # safely rather than hanging: the probe fails, the `::warning::`
+            # below fires, and the attempt falls back to booting without the
+            # session bus. Re-derive from the first release that actually runs
+            # this rather than trusting the number.
+            #
+            # A probe that PASSES is still not a full guarantee, on two axes:
+            # (1) TIME — a probe that passes now does not prove the bus (or
+            # the X server) stays healthy for the rest of the attempt;
+            # (2) SCOPE — the
+            # probe's `xvfb-run` starts its OWN throwaway Xvfb instance and
+            # tears it down immediately, so it proves the bus works under
+            # `xvfb-run` in general, not that it will keep working under the
+            # SPECIFIC Xvfb instance the real launch starts moments later.
+            # Both are strictly more evidence than `command -v` alone, at the
+            # cost of at most a few seconds paid once, on the final attempt
+            # only.
             if [ "${attempt:-1}" -ge "$MAX_BOOT_ATTEMPTS" ] && [ "$MAX_BOOT_ATTEMPTS" -gt 1 ]; then
               if ! command -v dbus-run-session >/dev/null 2>&1; then
                 # Binary absent: image drift. The apt pin above should make
@@ -597,22 +628,50 @@ jobs:
                 # covers what it claims.
                 echo "::warning::Final attempt: dbus-run-session is NOT INSTALLED (image drift — the apt pin no longer provides it); booting WITHOUT it, so a missing session bus degrades to the previous behaviour instead of gating the release." >&2
                 launcher=()
-              elif timeout -k 5 10 dbus-run-session -- true >/dev/null 2>&1; then
-                echo "Final attempt: dbus-run-session probed healthy (started and tore down a real bus); keeping it for this attempt too."
+              elif timeout -k 5 15 xvfb-run -a dbus-run-session -- true >/dev/null 2>&1; then
+                echo "Final attempt: dbus-run-session probed healthy under xvfb-run (started and tore down a real bus in the same wrapper the launch uses); keeping it for this attempt too."
                 launcher=(dbus-run-session --)
               else
-                # Binary present but cannot start a bus: the #4418 case.
-                # Distinguishing these two is the entire reason the probe
-                # replaced a bare `command -v`, so the annotation a
-                # maintainer actually reads must distinguish them too.
-                echo "::warning::Final attempt: dbus-run-session IS INSTALLED but FAILED a live probe (present, cannot start a bus — the #4418 shape); booting WITHOUT it, so a broken session bus degrades to the previous behaviour instead of gating the release." >&2
+                # Binary present, probe FAILED under xvfb-run. That is the
+                # #4418 case — a bus that cannot start in the environment
+                # that actually matters — but it is NOT the only thing that
+                # lands here: wrapping the probe in `xvfb-run` also means a
+                # broken or absent Xvfb fails it, and the probe cannot tell
+                # the two apart. Dropping `dbus-run-session` is the right
+                # move either way (it is the #4418 mitigation, and a broken
+                # Xvfb fails the launch below regardless), but the annotation
+                # a maintainer actually reads must not assert a cause the
+                # probe did not establish. Distinguishing "present" from
+                # "absent" is the entire reason the probe replaced a bare
+                # `command -v`, so it still says which of those it saw.
+                echo "::warning::Final attempt: dbus-run-session IS INSTALLED but the live probe FAILED under xvfb-run (the same wrapper the launch uses — so either the bus cannot start there, the #4418 shape, or Xvfb itself is unusable, which would fail the launch anyway; the probe cannot separate them); booting WITHOUT dbus-run-session, so a broken session bus degrades to the previous behaviour instead of gating the release." >&2
                 launcher=()
               fi
-            elif command -v dbus-run-session >/dev/null 2>&1; then
-              launcher=(dbus-run-session --)
             else
-              echo "::warning::dbus-run-session unavailable on this runner; booting without a session bus. The a11y/dbus stall this mitigates is unguarded for this run." >&2
-              launcher=()
+              # MAX_BOOT_ATTEMPTS<=1 on the final (only) attempt: the
+              # `[ "$MAX_BOOT_ATTEMPTS" -gt 1 ]` guard above deliberately
+              # keeps that case out of the probe branch (#4454). The probe's
+              # value is comparing a live result against two prior plain
+              # failures; with only one attempt configured there is nothing to
+              # compare against, and paying the xvfb-run + dbus-run-session
+              # startup cost on every single-attempt run (which today means
+              # every manual/debug run — CI's own pin is `'3'`, see
+              # MAX_BOOT_ATTEMPTS above) buys nothing. Silence would still
+              # lose the check without a trace, so say so — but ONLY the
+              # notice is special-cased. The fallback itself is the one shared
+              # `command -v` path below, not a second copy of it: the earlier
+              # version duplicated those five lines, and since this branch
+              # never executes under CI's pinned `'3'`, a drift between the
+              # two copies would have gone uncaught by every release.
+              if [ "${attempt:-1}" -ge "$MAX_BOOT_ATTEMPTS" ]; then
+                echo "::notice::MAX_BOOT_ATTEMPTS=$MAX_BOOT_ATTEMPTS: skipping the live dbus-run-session probe (it only pays for itself as a tiebreaker after prior failed attempts, of which there are none to compare against with only one attempt configured); falling back to a plain command -v check." >&2
+              fi
+              if command -v dbus-run-session >/dev/null 2>&1; then
+                launcher=(dbus-run-session --)
+              else
+                echo "::warning::dbus-run-session unavailable on this runner; booting without a session bus. The a11y/dbus stall this mitigates is unguarded for this run." >&2
+                launcher=()
+              fi
             fi
 
             set +e
@@ -1650,43 +1709,47 @@ jobs:
     needs: [verify-version, validate, build-and-release]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' }}
     runs-on: ubuntu-24.04
-    # PEND-41 R1 set this to 60: ci.yml android-build observations (27.8 min,
-    # run 25966040732, n=1) + ~10 min signing/attest/upload overhead.
+    # MEASURED, n=3 (#3579). Every earlier value here was an estimate standing
+    # in for a measurement: PEND-41 R1's 60 came from ci.yml's 27.8-min WARM
+    # two-arch android-build, and #3542 raised it to 90 by bounding an
+    # explicitly unmeasured cold-`target` term. Three cold tag builds have
+    # since run this job, so both derivations are superseded by observation:
     #
-    # Raised to 90 by #3542, because that 27.8-min figure no longer describes
-    # this job. It was measured on ci.yml's android-build, which runs with a
-    # WARM `rust-android` cache AND a warm `~/.cargo/bin/cargo-tauri`
-    # (`cache-bin: 'true'`) restored from main. #3542 deleted the cache step
-    # here, so this job is now fully COLD. Re-derived from the timings this
-    # file and ci.yml already record:
+    #   release  run          job          wall    tauri-cli  cold aarch64 build
+    #   0.9.7    32002352723  95319398991  26.58   5.60       18.92
+    #   0.9.8    32012152656  95349949245  26.53   5.62       18.65
+    #   0.9.9    33009143339  98330781965  26.73   5.65       19.00
     #
-    #   27.8  ci.yml android-build, warm, n=1 — and generous as a base, since
-    #         it covers TWO builds (x86_64 debug + aarch64 release) where this
-    #         job does one, and already includes JDK + SDK/NDK provisioning.
-    #  + 5-6  `cargo install tauri-cli` now runs unconditionally (the figure
-    #         is recorded on the Install Tauri CLI step below and on ci.yml's
-    #         cache-bin rationale). It used to be skipped on a cache hit.
-    #  + ~10  signing / attest / upload, per the original budget above.
-    #  ≈ 44   warm-equivalent
+    # (Minutes, from each job's `started_at`/`completed_at` and its two dominant
+    # steps, via `/repos/:owner/:repo/actions/runs/:id/jobs`.)
     #
-    # The remaining term — a cold `target/` plus a cold cargo registry for
-    # aarch64-linux-android — is the dominant one and has NO measurement
-    # anywhere in this repo, because nothing has ever built this target cold
-    # in CI. That is the whole problem with keeping 60: the first unmeasured
-    # term already eats the entire 16-min margin. Even bounding it at the cost
-    # of ci.yml's whole warm Android slot (27.8) lands at ~72 min, i.e. over
-    # the old budget, and a cold Rust dependency graph plausibly costs more.
+    # All three `success`, within 0.2 min of each other (a 12-second spread),
+    # and all genuinely cold — the cache removals landed in `7a3aab39f` and
+    # `2cf8829f8` (08-07/08-08), before the earliest of them. The dominant term
+    # #3542 could not measure is the ~19-min cold aarch64 build; the whole job
+    # costs less than the 27.8-min warm figure the old 60 was derived FROM.
     #
-    # 90 applies this repo's standard "+50% headroom on an n=1 estimate"
-    # convention (see ci.yml's 24.3→50 and 27.8→45) to the ~60 min that
-    # bound implies. The asymmetry justifies rounding up hard: GitHub bills
-    # actual minutes, not the budget, so an over-generous timeout costs
-    # nothing, while `finalize-release-notes` and `publish-release` both
-    # `needs:` this job with `result == 'success'` — a timeout here does not
-    # merely lose the APK, it blocks the release from ever being published.
-    # Replace this estimate with a real observation after the first cold tag
-    # build, and re-derive with the same +50% rule.
-    timeout-minutes: 90
+    # 50 — ABOVE the +50% convention's floor (26.73 x 1.5 = 40.1), deliberately.
+    # Sample independence, stated rather than implied: the three runs span nine
+    # days, but 0.9.7 and 0.9.8 ran on the SAME day (07:47Z and 09:53Z,
+    # 2026-08-17), so this is three runs on TWO days. A 12-second spread across
+    # a two-day window measures repeatability, not the runner population — and
+    # the one term here with no upper bound, a cold cargo-registry fetch for
+    # aarch64-linux-android against a slow crates.io mirror, is precisely what
+    # a two-day sample cannot have sampled. The convention's +50% is also
+    # calibrated for an n=1 ESTIMATE; applying it unchanged to a measurement
+    # and then treating the result as a ceiling spends the very margin it
+    # exists to provide.
+    #
+    # The asymmetry decides it. `finalize-release-notes` and `publish-release`
+    # both `needs:` this job with `result == 'success'` (see their `if:` guards
+    # below), so a timeout does not merely lose the APK — it blocks the release
+    # from ever being published. GitHub bills actual minutes rather than the
+    # budget, so headroom costs nothing and a tight budget can cost a release.
+    # 50 is 23 minutes over the observed max; 90 was 63 minutes over an
+    # estimate no measurement supported. Tightening further wants more sample
+    # DAYS, not more arithmetic on these three runs.
+    timeout-minutes: 50
     permissions:
       contents: write # gh release upload attaches the APK to the existing release
       id-token: write # actions/attest-build-provenance — Sigstore OIDC token

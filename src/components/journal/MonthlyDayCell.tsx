@@ -6,6 +6,7 @@
 import { format } from 'date-fns'
 import type React from 'react'
 
+import { getDateLocale } from '@/lib/date-locale'
 import { getSourceColor } from '@/lib/date-property-colors'
 import type { DayEntry } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
@@ -46,7 +47,7 @@ export function MonthlyDayCell({
 }: MonthlyDayCellProps): React.ReactElement {
   const dayNumber = entry.date.getDate()
   const totalCount = agendaCount + backlinkCount
-  const fullDate = format(entry.date, 'EEEE, MMMM d, yyyy')
+  const fullDate = format(entry.date, 'EEEE, MMMM d, yyyy', { locale: getDateLocale() })
 
   // #1730: the decorative dots and total-count badge are aria-hidden, and the
   // explicit aria-label below overrides any inner text, so a screen-reader user

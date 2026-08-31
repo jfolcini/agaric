@@ -1722,6 +1722,43 @@ pass_filenames = false
 files = "^(scripts/(check-session-log-numbering\\.sh|lib/git-scratch-guard\\.sh)|prek\\.toml)$"
 stages = ["pre-commit"]
 
+# WHY: append-only session-log record silently rewritten — #4536
+#
+# docs/session-log/README.md: a merged session log is append-only; a
+# correction goes in the NEW session's log as a back-reference, never an
+# edit, rename or deletion of the merged file (#4530 did exactly that,
+# uncaught locally). `--diff-filter=DMRT`, all four letters, per #4527's
+# lesson: `MR` alone looks complete and is not, because a rename that also
+# rewrites the body drops below git's rename-similarity threshold and is
+# staged as `D`+`A`, which an `MR` filter selects not at all — the same
+# silent-zero this guard exists to prevent. `D` also covers a move out of
+# docs/session-log/ and an outright deletion.
+#
+# `always_run = true` with no `files` key, for the reason
+# `check-sqlx-cache-drift` and `migrations-immutable` (both below) already
+# document: prek's changed-file set excludes deletions, so a `files`-keyed
+# hook is skipped entirely on a commit that only removes a session log
+# (verified against prek 0.3.8). It also puts this guard outside #4501's
+# path-keyed-trigger class for good. `verbose = true` for the same reason
+# as the numbering guard above — prek swallows a passing hook's stdout, and
+# both of this guard's report lines (the count and the "0 … nothing to
+# check") are printed on exit-0 paths.
+#
+# See the script header for the five staged spellings of the operations it
+# must catch, why a pure rename of a merged file is rejected, why no
+# `--self-test` is scoped, why an absent merge target FAILS rather than
+# passing green, and how a same-branch add-then-amend before merge is told
+# apart from an edit to an already-merged file.
+[[repos.hooks]]
+id = "session-log-immutable"
+name = "session-log immutability guard"
+entry = "bash scripts/check-session-log-immutable.sh"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit"]
+verbose = true
+
 # JS: better-npm-audit (security advisories). Pre-push only (#817, #1087):
 # `better-npm-audit audit` shells out to `npm audit`, a network round-trip to
 # the registry advisory endpoint, so a dependency-bump commit would block on
@@ -2409,6 +2446,39 @@ stages = ["pre-commit", "pre-push"]
 id = "check-space-filter-drift-selftest"
 name = "space-filter drift guard self-test (#3997)"
 entry = "python3 scripts/check-space-filter-drift.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
+# The general form of the hook above (#4501). #3255 was the live instance: 11
+# of 15 space-filter baseline entries named files that had moved crates in
+# #2621, so the guard protected 4 files and believed it protected 15 — and the
+# allowlist checkers could not detect a dangling entry AT ALL, because they
+# walked discovered files asking "is this one allowed?" and never "does this
+# entry still name a file?". #4508 closed that for one baseline; this closes it
+# for every baseline, allowlist and DENY_FILES set in the repo (20 sets, 441
+# paths today; the run prints its own denominator). `Path.exists()` only — no
+# parsing of guard logic, no coverage reasoning, no `files:`-trigger analysis.
+# The population comes from `git ls-files`, not a filesystem walk: a walk also
+# sees gitignored build output (`.stryker-tmp/sandbox-*/scripts/` is a verbatim
+# copy of `scripts/`; `src-tauri/gen/**/baseline-prof.txt` is Android's), which
+# measured 36 hard failures in a real checkout while a fresh worktree — having
+# neither — stayed green.
+# Standalone, NOT a feature of scripts/check-hook-deps.mjs, so it survives
+# #4556 either way rather than inheriting a 2,811-line dependency for an
+# `exists()` call. No `--self-test`, deliberately: a defect in a path-existence
+# check is a false POSITIVE, which announces itself — see the script header.
+#
+# `always_run`, like every other `python3 …` hook in this file: an entry goes
+# dangling when a file is DELETED or MOVED, and prek does not pass deleted
+# paths, so a `files:` regex over the baselines would miss the case the check
+# exists for. 0.04s measured (best of three, `/usr/bin/time`, warm cache).
+# WHY: a baseline/allowlist entry naming a moved or deleted file silently protects nothing, and no allowlist checker could see it — #4501
+[[repos.hooks]]
+id = "check-baseline-paths"
+name = "baseline/allowlist paths resolve (#4501)"
+entry = "python3 scripts/check-baseline-paths.py"
 language = "system"
 pass_filenames = false
 always_run = true

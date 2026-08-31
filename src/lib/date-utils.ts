@@ -4,6 +4,7 @@
 
 import { addMonths, eachDayOfInterval, endOfWeek, format, startOfWeek } from 'date-fns'
 
+import { getAppLocaleTag, getDateLocale } from '@/lib/date-locale'
 import { getWeekStartDay } from '@/lib/preferences'
 
 /** Dynamic week options — reads weekStartsOn from user preference. */
@@ -34,12 +35,14 @@ export function formatDate(d: Date): string {
 
 /** Format a Date as a readable string (e.g., "Mon, Jan 15 2025").
  *
- * Uses the runtime locale (`undefined` locale argument) so non-English users
- * get localized weekday/month names and ordering. Pass a concrete locale
- * string only when deterministic output is required (e.g. test fixtures).
+ * #4555 — uses `getAppLocaleTag()` (`i18n.language`, the same source the
+ * UI catalog and every `date-fns` call resolve from), not an implicit
+ * `undefined`/OS-locale guess, so this can never disagree with either.
+ * Pass a concrete locale string only when deterministic output is required
+ * (e.g. test fixtures).
  */
 export function formatDateDisplay(d: Date): string {
-  return d.toLocaleDateString(undefined, {
+  return d.toLocaleDateString(getAppLocaleTag(), {
     weekday: 'short',
     year: 'numeric',
     month: 'short',
@@ -101,7 +104,10 @@ export function formatJournalTitle(isoContent: string, fmt: string): string {
   if (fmt === 'locale') return formatDateDisplay(date)
 
   try {
-    return format(date, fmt)
+    // #4555 — every preset but 'locale' carries textual tokens (MMMM/EEE/…),
+    // so it must resolve through the same single locale point as the rest of
+    // the app's date-fns calls, not the library default (en-US).
+    return format(date, fmt, { locale: getDateLocale() })
   } catch {
     // Unknown/invalid token string — degrade to the raw ISO content.
     return isoContent
@@ -126,26 +132,27 @@ export function getWeekDays(d: Date): Date[] {
 /** Format the week range for display: "Mar 24 - Mar 30, 2025" */
 export function formatWeekRange(d: Date): string {
   const { start, end } = getWeekRange(d)
-  const startStr = format(start, 'MMM d')
-  const endStr = format(end, 'MMM d, yyyy')
+  const locale = getDateLocale()
+  const startStr = format(start, 'MMM d', { locale })
+  const endStr = format(end, 'MMM d, yyyy', { locale })
   return `${startStr} - ${endStr}`
 }
 
-/** Short month names for compact date display. */
-export const MONTH_SHORT = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-]
+/**
+ * Locale-aware short month name ("Jan" in `en`, "ene" in `es`), for compact
+ * date display.
+ *
+ * #4555 — replaces a hardcoded English `MONTH_SHORT` array (mirrors the
+ * #757 precedent in `agenda-sort.ts`'s `formatGroupDate`: no hardcoded
+ * English weekday/month tables — resolve through the app's date locale
+ * instead). `monthIndex1` is 1-12; out-of-range values are clamped to 1
+ * ("Jan") rather than indexing out of bounds.
+ */
+function monthShortLabel(monthIndex1: number): string {
+  const safeIndex =
+    Number.isInteger(monthIndex1) && monthIndex1 >= 1 && monthIndex1 <= 12 ? monthIndex1 : 1
+  return format(new Date(2000, safeIndex - 1, 1), 'MMM', { locale: getDateLocale() })
+}
 
 /**
  * Format a YYYY-MM-DD date string compactly.
@@ -162,9 +169,10 @@ export function formatCompactDate(dateStr: string): string {
   if (y === undefined || m === undefined || d === undefined) return dateStr
   if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
   if (m < 1 || m > 12 || d < 1 || d > 31) return dateStr
-  // The `?? 'Jan'` fallback is live: a fractional month such as "2026-1.5-05"
-  // passes the range check above yet indexes MONTH_SHORT at a non-integer.
-  const month = MONTH_SHORT[m - 1] ?? 'Jan'
+  // The fallback-to-1 branch inside `monthShortLabel` is live: a fractional
+  // month such as "2026-1.5-05" passes the range check above yet is not an
+  // integer month index.
+  const month = monthShortLabel(m)
   const day = d
   const now = new Date()
   if (y === now.getFullYear()) return `${month} ${day}`

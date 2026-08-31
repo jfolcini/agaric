@@ -18,6 +18,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { countWords, PageMetadataBar } from '@/components/pages/PageMetadataBar'
+import { i18n } from '@/lib/i18n'
 
 // A valid ULID encoding 2026-04-09 timestamp.
 // ULID timestamp = first 10 chars of Crockford base32.
@@ -162,6 +163,29 @@ describe('PageMetadataBar', () => {
       // render Jul 30 or Jul 31. Assert the year and "Created" prefix.
       expect(content.textContent).toContain('Created')
       expect(content.textContent).toMatch(/Jul\s+3[01],\s+2016/)
+    })
+
+    // #4555 — `createdDate` used to pass `undefined` (the OS/browser
+    // locale) to `toLocaleDateString`. `getAppLocaleTag()` binds it to the
+    // same source the UI catalog resolves from instead, so this can never
+    // disagree with it. Pins the TRACKING behaviour via a real
+    // `i18n.changeLanguage()` round trip.
+    it('#4555: created date follows i18n.language, not the OS/browser locale', async () => {
+      const user = userEvent.setup()
+      try {
+        await i18n.changeLanguage('es')
+        render(
+          <PageMetadataBar blocks={[makeBlock({ id: '1', content: 'hi' })]} pageId={TEST_ULID} />,
+        )
+        await user.click(screen.getByRole('button', { name: /(expand|collapse) info/i }))
+        const content = screen.getByTestId('metadata-content')
+        // Spanish month abbreviation ("jul") is lowercase, unlike English
+        // "Jul" — distinct enough to fail if the call site stops reading
+        // `getAppLocaleTag()`.
+        expect(content.textContent).toMatch(/3[01]\s+jul\s+2016/)
+      } finally {
+        await i18n.changeLanguage('en')
+      }
     })
 
     it('handles empty blocks array when expanded', async () => {

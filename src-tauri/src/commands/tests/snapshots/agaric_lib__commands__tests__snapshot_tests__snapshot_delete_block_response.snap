@@ -5,3 +5,4 @@ expression: resp
 block_id: SNAP_DEL
 deleted_at: "[TIMESTAMP]"
 descendants_affected: 1
+affected_page_ids: []

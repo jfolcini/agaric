@@ -1,6 +1,7 @@
 /**
- * useBlockLinkResolve — scans loaded blocks for `[[ULID]]` link tokens and
- * batch-resolves any ids not yet in the resolve cache.
+ * useBlockLinkResolve — scans loaded blocks for `[[ULID]]` page-link and
+ * `((ULID))` block-ref tokens and batch-resolves any ids not yet in the
+ * resolve cache.
  *
  * Pages + tags are preloaded by App.tsx via `useResolveStore.preload()`;
  * this hook fills the gap for block-link references (e.g. links to
@@ -19,12 +20,24 @@ import { logger } from '@/lib/logger'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-/** Matches the `[[ULID]]` block-link token. */
-const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
+/**
+ * Matches BOTH the `[[ULID]]` page-link token and the `((ULID))`
+ * block-ref token in one pass, mirroring the backend's own `ULID_LINK_RE`
+ * (`src-tauri/agaric-store/src/cache/mod.rs`), which the link reindexer
+ * uses to populate `block_links` for either delimiter. #4551 — before this,
+ * `((ULID))` references were never scanned on load: a page whose refs are
+ * all `((ULID))` mounted with an empty resolve store rendered every one of
+ * them as broken/unresolved, because only a `[[ULID]]` companion (or a
+ * just-inserted picker seed) would have already been in the cache. Widened
+ * to one shared regex rather than adding a second scan pass so the two
+ * token shapes cannot drift out of sync with each other or with the
+ * backend's.
+ */
+const ULID_LINK_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\]\]|\)\))/g
 
 /**
- * Scan the provided blocks for `[[ULID]]` tokens whose ids are not yet
- * cached for the active space. The cache is keyed by
+ * Scan the provided blocks for `[[ULID]]` / `((ULID))` tokens whose ids are
+ * not yet cached for the active space. The cache is keyed by
  * `${spaceId}::${ulid}` so the membership check has to use
  * the same composite key — a bare-id lookup would treat a previous-
  * space cache hit as "already cached" and skip the (now space-scoped)
@@ -117,8 +130,8 @@ export async function fetchAndCacheLinks(
 }
 
 /**
- * Effect-only hook: scans loaded blocks for uncached `[[ULID]]`
- * references and triggers a batch resolve. Returns nothing — results
+ * Effect-only hook: scans loaded blocks for uncached `[[ULID]]` /
+ * `((ULID))` references and triggers a batch resolve. Returns nothing — results
  * land in `useResolveStore` and are read by chip renderers.
  *
  * Identity invariants (#1266): the effect re-fires only when the

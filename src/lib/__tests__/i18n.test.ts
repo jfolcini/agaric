@@ -5,7 +5,7 @@
  *         key uniqueness, and value type safety.
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { i18n } from '@/lib/i18n'
 // Import every namespace individually so we can detect cross-namespace
@@ -46,6 +46,36 @@ describe('i18n initialisation', () => {
   it('has a non-empty translation bundle', () => {
     const translations = getTranslations()
     expect(Object.keys(translations).length).toBeGreaterThan(0)
+  })
+})
+
+// #4555 — `document.documentElement.lang` used to be a static `lang="en"`
+// baked into `index.html`; nothing in `src/` ever wrote it. This pins the
+// TRACKING behaviour (the attribute follows whatever `i18n.language`
+// resolves to across a `changeLanguage` round trip) rather than asserting a
+// literal `'es'` — Phase 0 ships no `es` resource bundle and no language
+// preference, so nothing in production ever requests `'es'` today; what
+// this proves is that the wiring is correct, not that Spanish is reachable.
+describe('document.documentElement.lang tracking (#4555)', () => {
+  afterEach(async () => {
+    // i18next is a shared singleton across this whole test file — restore
+    // English so no later test observes a changed language.
+    await i18n.changeLanguage('en')
+  })
+
+  it('matches the initial language on load', () => {
+    expect(document.documentElement.lang).toBe(i18n.language)
+  })
+
+  it('updates document.documentElement.lang after changeLanguage, tracking i18n.language exactly', async () => {
+    await i18n.changeLanguage('es')
+    expect(i18n.language).toBe('es')
+    expect(document.documentElement.lang).toBe('es')
+    expect(document.documentElement.lang).toBe(i18n.language)
+
+    await i18n.changeLanguage('en')
+    expect(document.documentElement.lang).toBe('en')
+    expect(document.documentElement.lang).toBe(i18n.language)
   })
 })
 

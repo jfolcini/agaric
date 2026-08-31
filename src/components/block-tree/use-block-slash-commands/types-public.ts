@@ -36,6 +36,8 @@ export interface UseBlockSlashCommandsReturn {
   handleSlashCommand: (item: PickerItem) => Promise<void>
   handleTemplateSelect: (templatePageId: string) => Promise<void>
   handleCheckboxSyntax: (state: 'TODO' | 'DONE') => void
+  /** #4552 — persist a `listStyle` set from the block-level `1. ` / `- ` input rule. */
+  handleListStyleSyntax: (style: 'bullet' | 'ordered') => void
   templatePickerOpen: boolean
   templatePages: Array<{ id: string; content: string; preview: string | null }>
   setTemplatePickerOpen: (open: boolean) => void

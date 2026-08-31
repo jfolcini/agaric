@@ -273,7 +273,19 @@ pub enum AggregateTarget {
     /// Aggregate the numeric value of a typed property (`block_properties`),
     /// keyed by `key`. Non-numeric values are SKIPPED by the numeric guard.
     Property {
-        /// The property key whose `value_text` is read + numeric-coerced.
+        // #4553 Phase 1 — `agg_target_expr` folds `COALESCE(value_num,
+        // <numeric-coerced value_text>)` read off the single `(block_id, key)`
+        // row: migration `0062`'s exactly-one-value-column CHECK puts a
+        // `number`-declared property in `value_num` with a NULL `value_text`,
+        // while a legacy/undeclared text-stored numeric still folds through the
+        // coerced `value_text` fallback. Until that fix, the doc line below
+        // said `value_text` alone — accurate when written, stale afterwards.
+        //
+        // Deliberately a `//` comment and not part of the `///` below:
+        // tauri-specta copies doc comments verbatim into
+        // `src/lib/bindings.ts`, so every `///` edit here is a generated-file
+        // edit too.
+        /// The property key whose stored value is folded (numeric-coerced).
         key: String,
     },
 }

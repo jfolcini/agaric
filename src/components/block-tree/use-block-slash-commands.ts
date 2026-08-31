@@ -44,6 +44,7 @@ import { useSlashCommandStructural } from '@/components/block-tree/use-block-sla
 import { useSlashCommandTemplate } from '@/components/block-tree/use-block-slash-commands/useSlashCommandTemplate'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
+import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
 import { addRecentCommand, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
 
 export type {
@@ -124,6 +125,7 @@ export function useBlockSlashCommands({
     pageStore,
     t,
   })
+  const handleListStyleSyntax = useListStyleSyntax({ focusedBlockId, t })
 
   const tables = useMemo(
     () => mergeSlashHandlerTables(template.tables, date, property, structural, marks),
@@ -186,6 +188,7 @@ export function useBlockSlashCommands({
     handleSlashCommand,
     handleTemplateSelect: template.handleTemplateSelect,
     handleCheckboxSyntax,
+    handleListStyleSyntax,
     templatePickerOpen: template.templatePickerOpen,
     templatePages: template.templatePages,
     setTemplatePickerOpen: template.setTemplatePickerOpen,

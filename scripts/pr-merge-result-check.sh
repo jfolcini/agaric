@@ -537,6 +537,24 @@ run_one_guard() {
   shift 4
   case "$guard" in
     check-raw-tx.py | check-dynamic-sql.py)
+      # `--synthetic-tree` (#4501), on exactly the same terms as the
+      # check-table-ownership arm below — see that arm's comment for the full
+      # reasoning, which applies here unchanged. Both guards now fail when a
+      # declared CRATE_ROOTS entry is absent, because a renamed or misspelled
+      # segment used to make them exempt every file under that crate in
+      # silence (check-raw-tx uses its roots as argv-filter prefixes,
+      # check-dynamic-sql walks them through `SOURCE.list_paths` — two
+      # spellings, one outcome). This script's fixtures are deliberately not
+      # this repository, so there the assertion is inapplicable rather than
+      # violated; dropping the marker from this arm turns 24 assertions red
+      # (measured: this arm reverted to the unconditional call, `--self-test`
+      # re-run, the suite's own tally read — not a `grep -c FAIL`, which
+      # over-counts by two because two PASSING assertions carry "FAILED" in
+      # their descriptions).
+      #
+      # It must NOT be set on a real merge, and is pinned in both directions
+      # in the self-test (section 3l-bis) for all three guards.
+      #
       # `--worktree` is EXPLICIT, never left to the guards' AUTO rule (#4017).
       # A merged tree is a hypothetical: it exists as files in a worktree and
       # was never staged anywhere, so "the staged index" has no meaning for
@@ -546,7 +564,11 @@ run_one_guard() {
       # omitting this flag would be an invocation error rather than a wrong
       # verdict; naming it means this call site does not depend on either
       # behaviour, and reads the same under prek, under CI and by hand.
-      python3 "$workdir/scripts/$guard" --worktree "$@"
+      if [ "$synthetic" = "1" ]; then
+        python3 "$workdir/scripts/$guard" --synthetic-tree --worktree "$@"
+      else
+        python3 "$workdir/scripts/$guard" --worktree "$@"
+      fi
       ;;
     check-table-ownership.py)
       # No source flags: it ignores argv for FILE selection and rescans its
@@ -1842,21 +1864,28 @@ run_self_test() {
   # If these ever start failing, the fixtures stopped being the shape the
   # rest of this file assumes, and everything below would be testing
   # nothing.
+  #
+  # `--synthetic-tree` (#4501) on every DIRECT invocation below, for the same
+  # reason `run_one_guard` passes it: these fixtures hold `src-tauri/src`
+  # alone, and the guard now refuses to judge a tree whose declared crate
+  # roots are absent. These calls bypass `run_one_guard`, so they need the
+  # marker in their own right — and they are sanity checks on the FIXTURE, not
+  # on the roots assertion, which section 3l-bis pins in both directions.
   local clean="$tmp/clean"
   mkdir -p "$clean"
   mr_make_clean_repo "$clean"
   st_expect 'fixture sanity: the CLEAN case, main branch alone passes check-dynamic-sql' \
-    '0' "$(python3 "$clean/scripts/check-dynamic-sql.py" "$clean/src-tauri/src"/*.rs >/dev/null 2>&1; echo $?)"
+    '0' "$(python3 "$clean/scripts/check-dynamic-sql.py" --synthetic-tree "$clean/src-tauri/src"/*.rs >/dev/null 2>&1; echo $?)"
 
   local nearmiss="$tmp/nearmiss"
   mkdir -p "$nearmiss"
   mr_make_near_miss_repo "$nearmiss"
   git -C "$nearmiss" checkout --quiet main
   st_expect 'fixture sanity: the NEAR-MISS main branch alone passes check-dynamic-sql (self-consistent)' \
-    '0' "$(python3 "$nearmiss/scripts/check-dynamic-sql.py" "$nearmiss/src-tauri/src"/*.rs >/dev/null 2>&1; echo $?)"
+    '0' "$(python3 "$nearmiss/scripts/check-dynamic-sql.py" --synthetic-tree "$nearmiss/src-tauri/src"/*.rs >/dev/null 2>&1; echo $?)"
   git -C "$nearmiss" checkout --quiet pr
   st_expect 'fixture sanity: the NEAR-MISS pr branch alone ALSO passes check-dynamic-sql (self-consistent)' \
-    '0' "$(python3 "$nearmiss/scripts/check-dynamic-sql.py" "$nearmiss/src-tauri/src"/*.rs >/dev/null 2>&1; echo $?)"
+    '0' "$(python3 "$nearmiss/scripts/check-dynamic-sql.py" --synthetic-tree "$nearmiss/src-tauri/src"/*.rs >/dev/null 2>&1; echo $?)"
   git -C "$nearmiss" checkout --quiet main
 
   # ── 1. THE FALSIFICATION: this script, run end to end ───────────────────
@@ -1884,6 +1913,17 @@ run_self_test() {
     '1' "$unflagged_rc"
   st_expect 'and it is check-table-ownership that failed, on the MERGED tree' \
     '1' "$(grep -c 'check-table-ownership.py FAILED on the MERGED tree' "$unflagged_err" || true)"
+  # #4501: the SAME end-to-end pin for the two guards that adopted the
+  # assertion later. Named individually rather than counted, because the
+  # existing single-guard grep above stays green if a sibling's marker is
+  # hard-wired on — the failure it would then miss is exactly the one this
+  # section exists for, one guard over. Each is asserted through its own run
+  # so a guard that stops being invoked at all is not read as "suppressed".
+  local ee_guard
+  for ee_guard in check-raw-tx.py check-dynamic-sql.py; do
+    st_expect "and so did $ee_guard, on the MERGED tree — its marker is not hard-wired either" \
+      '1' "$(grep -c "$ee_guard FAILED on the MERGED tree" "$unflagged_err" || true)"
+  done
 
   ( cd "$nearmiss" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/nearmiss.out" 2>"$tmp/nearmiss.err"
   rc=$?
@@ -2463,7 +2503,7 @@ STUB
   mkdir -p "$multi"
   mr_make_multi_target_repo "$multi"
   st_expect 'fixture sanity: the FIRST target alone is clean, so a guard handed only argv[1] would pass' \
-    '0' "$(python3 "$multi/scripts/check-dynamic-sql.py" \
+    '0' "$(python3 "$multi/scripts/check-dynamic-sql.py" --synthetic-tree \
       "$multi/src-tauri/agaric-store/src/first.rs" >/dev/null 2>&1; echo $?)"
   ( cd "$multi" && bash "$SELF" main pr --synthetic-fixture ) >"$tmp/multi.out" 2>"$tmp/multi.err"; rc2=$?
   st_expect 'a violation in a NON-FIRST target is still caught (exit 1) — every target is passed, not just one' \
@@ -2508,17 +2548,36 @@ STUB
   # 1 for a reason that has nothing to do with crate roots, which would make
   # the "marker absent" half of this pair pass for the wrong reason.
   cp "$REPO_ROOT/scripts/check-table-ownership.py" \
+     "$REPO_ROOT/scripts/check-dynamic-sql.py" \
      "$REPO_ROOT/scripts/check-raw-tx.py" "$ro_tree/scripts/"
   cp "$REPO_ROOT/scripts/lib/guard_file_source.py" "$ro_tree/scripts/lib/"
-  local ro_unflagged_rc ro_flagged_rc
-  ro_unflagged_rc=$( run_one_guard 'check-table-ownership.py' "$ro_tree" HEAD 0 \
-    >/dev/null 2>&1; echo $? )
-  ro_flagged_rc=$( run_one_guard 'check-table-ownership.py' "$ro_tree" HEAD 1 \
-    >/dev/null 2>&1; echo $? )
-  st_expect 'WITHOUT the fixture marker, a missing crate root fails the merged-tree check' \
-    '1' "$ro_unflagged_rc"
-  st_expect 'WITH the fixture marker, the same tree is not judged on our crate roots' \
-    '0' "$ro_flagged_rc"
+  # A real `.rs` target under the one root the fixture DOES have, so the
+  # argv-driven guards reach their scan rather than being handed a path that
+  # is not there.
+  #
+  # It is NOT what makes the marker-present half non-vacuous, and an earlier
+  # comment here claimed it was. Measured: delete this line (with or without
+  # the argv still naming it) and the pair still reads unflagged=1 /
+  # flagged=0 for all three guards. What makes that half non-vacuous is its
+  # PARTNER — make `--synthetic-tree` inert inside either guard and the
+  # flagged run goes 0 -> 1, which is the mutant that was actually run.
+  printf 'fn f() {}\n' > "$ro_tree/src-tauri/src/probe.rs"
+  local ro_unflagged_rc ro_flagged_rc ro_guard
+  # #4501: all THREE guards that now carry the assertion, not just the one it
+  # landed on first. `run_one_guard` dispatches check-raw-tx / check-dynamic-sql
+  # through a DIFFERENT case arm from check-table-ownership, so pinning one arm
+  # says nothing about the other — and an arm that forgets the marker is the
+  # 26-red failure, while an arm that hard-wires it is the silent fail-open.
+  for ro_guard in check-table-ownership.py check-raw-tx.py check-dynamic-sql.py; do
+    ro_unflagged_rc=$( run_one_guard "$ro_guard" "$ro_tree" HEAD 0 \
+      src-tauri/src/probe.rs >/dev/null 2>&1; echo $? )
+    ro_flagged_rc=$( run_one_guard "$ro_guard" "$ro_tree" HEAD 1 \
+      src-tauri/src/probe.rs >/dev/null 2>&1; echo $? )
+    st_expect "WITHOUT the fixture marker, a missing crate root fails the merged-tree check ($ro_guard)" \
+      '1' "$ro_unflagged_rc"
+    st_expect "WITH the fixture marker, the same tree is not judged on our crate roots ($ro_guard)" \
+      '0' "$ro_flagged_rc"
+  done
 
   # ── 3m. THE mjs GUARD IS INVOKED cwd-INDEPENDENTLY ───────────────────────
   # The comment on `run_one_guard`'s `*.mjs` arm claims cwd does not matter

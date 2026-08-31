@@ -51,6 +51,8 @@ export interface EditorEventHandlers {
   slashCommand: (item: PickerItem) => void
   /** Persist a checkbox-syntax (`- [ ]` / `- [x]`) toggle detected while typing. */
   checkbox: (state: 'TODO' | 'DONE') => void
+  /** Persist a `listStyle` set from the block-level `1. ` / `- ` input rule (#4552). */
+  listStyle: (style: 'bullet' | 'ordered') => void
   /** Write the property selected from the `::` picker. */
   propertySelect: (item: PickerItem) => void
   /** Rescue focus (flush + clear) before a subtree containing the focused block collapses. */
@@ -65,6 +67,7 @@ type EditorEventName = keyof EditorEventHandlers
 const DEFAULT_HANDLERS: EditorEventHandlers = {
   slashCommand: () => {},
   checkbox: () => {},
+  listStyle: () => {},
   propertySelect: () => {},
   beforeCollapse: () => {},
   flush: () => null,
@@ -123,6 +126,7 @@ export function useEditorEventDispatch(): EditorEventDispatch {
     () => ({
       slashCommand: (item) => refs.current.slashCommand(item),
       checkbox: (state) => refs.current.checkbox(state),
+      listStyle: (style) => refs.current.listStyle(style),
       propertySelect: (item) => refs.current.propertySelect(item),
       beforeCollapse: (blockId) => refs.current.beforeCollapse(blockId),
       flush: () => refs.current.flush(),
@@ -146,6 +150,7 @@ export function useEditorEventDispatch(): EditorEventDispatch {
     const next = staged.current
     refs.current.slashCommand = next.slashCommand ?? DEFAULT_HANDLERS.slashCommand
     refs.current.checkbox = next.checkbox ?? DEFAULT_HANDLERS.checkbox
+    refs.current.listStyle = next.listStyle ?? DEFAULT_HANDLERS.listStyle
     refs.current.propertySelect = next.propertySelect ?? DEFAULT_HANDLERS.propertySelect
     refs.current.beforeCollapse = next.beforeCollapse ?? DEFAULT_HANDLERS.beforeCollapse
     refs.current.flush = next.flush ?? DEFAULT_HANDLERS.flush

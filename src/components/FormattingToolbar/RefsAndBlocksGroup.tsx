@@ -109,6 +109,8 @@ interface TurnIntoButtonProps {
   t: (key: string) => string
   open: boolean
   setOpen: (next: boolean | ((prev: boolean) => boolean)) => void
+  /** The block this toolbar is anchored to (#4552 — feeds the active-state probe). */
+  blockId?: string | undefined
 }
 
 /**
@@ -124,6 +126,7 @@ export function renderTurnIntoButton({
   t,
   open,
   setOpen,
+  blockId,
 }: TurnIntoButtonProps): React.ReactElement {
   if (mode === 'sentinel') {
     return (
@@ -176,7 +179,7 @@ export function renderTurnIntoButton({
         onOpenAutoFocus={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
-        <TurnIntoMenu editor={editor} onClose={() => setOpen(false)} />
+        <TurnIntoMenu editor={editor} blockId={blockId} onClose={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )

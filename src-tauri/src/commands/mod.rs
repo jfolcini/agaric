@@ -440,11 +440,50 @@ where
     result.map(|inner| WithOps { inner, op_refs })
 }
 
+/// Reply of the single-block soft-delete [`delete_block`].
+///
+/// #4523 — [`Self::affected_page_ids`] is the single-delete counterpart of
+/// [`BatchDeleteResponse::affected_page_ids`], and exists for exactly the same
+/// reason one command over: the cascade walks the seed's whole `parent_id`
+/// subtree WITHOUT a page-boundary stop
+/// ([`agaric_store::block_descendants::collect_subtree_ids_unbounded`] filters
+/// on `deleted_at` and depth, never on `block_type`), so trashing one page
+/// tombstones its nested PAGE children too — and the caller only ever knew
+/// about the id it sent.
+///
+/// [`Self::descendants_affected`] is why the count was not enough: it is a
+/// COUNT, and a count cannot drive an eviction. The `[[` picker's per-space
+/// name cache is filled once from `list_all_pages_in_space` (`block_type =
+/// 'page' AND deleted_at IS NULL AND space_id = ?`) and has no other delete
+/// signal, so a cascaded nested page went on being offered — and linking to a
+/// page in the trash — for the rest of the session. #4450 fixed the root,
+/// #4521 fixed the batch cascade, and this closes the single-delete arm, which
+/// is the more common gesture of the two.
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct DeleteResponse {
     pub block_id: String,
     pub deleted_at: i64,
+    /// Number of `blocks` rows whose `deleted_at` flipped NULL → non-NULL.
+    /// Seed-INCLUSIVE despite the name (the cohort's depth-0 anchor is the
+    /// seed), so a lone leaf delete reports `1`.
     pub descendants_affected: u64,
+    /// Every `block_type = 'page'` id inside that same cascade — the deleted
+    /// seed itself when it is a page, plus any nested pages the cascade swept
+    /// with it (#4523). Content blocks are deliberately excluded: the picker
+    /// never offers them, so including them would only inflate the caller's
+    /// fan-out budget (see `NAME_CACHE_FANOUT_MAX_IDS`) with events that
+    /// cannot match anything.
+    ///
+    /// EMPTY is a meaningful, common answer — deleting a content block, or a
+    /// page whose descendants are all content. It never means "unknown".
+    ///
+    /// Unlike [`BatchDeleteResponse::affected_page_ids`] there is no
+    /// skipped-input case to reason about: this command errors on a missing or
+    /// already-deleted seed rather than silently dropping it, so a successful
+    /// reply always has the seed in the cohort. A caller may still union with
+    /// its own id for free — `usePageDeleteAction` does, so the two delete
+    /// paths read the same way.
+    pub affected_page_ids: Vec<String>,
 }
 
 /// Reply of the batch soft-delete [`delete_blocks_by_ids`].

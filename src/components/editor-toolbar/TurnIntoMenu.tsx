@@ -37,6 +37,7 @@ import { useTranslation } from 'react-i18next'
 
 import { CalloutTypeSelector } from '@/components/editor-toolbar/CalloutTypeSelector'
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
+import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -47,6 +48,12 @@ import { cn } from '@/lib/utils'
 
 interface TurnIntoMenuProps {
   editor: Editor
+  /**
+   * The focused block, used to read its `listStyle` for the numbered/bullet
+   * list active-state highlight (#4552). Undefined outside a block context
+   * (falls back to `useListMarker`'s outside-a-provider default, `'none'`).
+   */
+  blockId?: string | undefined
   /** Close the hosting popover after a one-shot turn-into selection. */
   onClose: () => void
 }
@@ -54,8 +61,15 @@ interface TurnIntoMenuProps {
 /** Block-type tokens whose "turn into" row expands an inline variant picker. */
 type DisclosureType = 'code' | 'callout'
 
-export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.ReactElement {
+export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): React.ReactElement {
   const { t } = useTranslation()
+  // #4552 — the numbered/bullet-list active state now reads the `listStyle`
+  // block property (the source of truth for the NEW writer paths) rather than
+  // `editor.isActive('orderedList'/'bulletList')`, which only ever detects
+  // the legacy in-block TipTap list nodes. Outside a `ListMarkerProvider` (or
+  // with no `blockId`), `useListMarker` reports `'none'`, matching a plain
+  // block.
+  const listStyle = useListMarker(blockId ?? '').style
   const state = useEditorState({
     editor,
     // #3056 — `ctx.editor` can be momentarily null during mount/teardown even
@@ -104,6 +118,7 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
         !state.codeBlock &&
         !state.bulletList &&
         !state.orderedList &&
+        listStyle === 'none' &&
         state.headingLevel === 0
       )
     }
@@ -112,8 +127,12 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
     }
     if (blockType === 'quote') return state.blockquote && state.calloutType === null
     if (blockType === 'code') return state.codeBlock
-    if (blockType === 'numbered-list') return state.orderedList
-    if (blockType === 'bullet-list') return state.bulletList
+    // #4552 — `listStyle` is the source of truth for blocks written through
+    // the new writer paths. `state.orderedList`/`state.bulletList` still
+    // covers LEGACY in-block TipTap list content (not yet migrated to
+    // `listStyle` — slice 5, out of scope here), so both are checked.
+    if (blockType === 'numbered-list') return listStyle === 'ordered' || state.orderedList
+    if (blockType === 'bullet-list') return listStyle === 'bullet' || state.bulletList
     if (blockType === 'callout') return state.blockquote && state.calloutType !== null
     return false
   }

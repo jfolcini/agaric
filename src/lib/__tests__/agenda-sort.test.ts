@@ -15,6 +15,8 @@ import {
   sortByPriority,
   sortByState,
 } from '@/lib/agenda-sort'
+import { getAppLocaleTag } from '@/lib/date-locale'
+import { i18n } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 beforeEach(() => {
@@ -367,15 +369,17 @@ describe('groupByDate', () => {
     expect(groups[1]?.label).toBe('Today')
   })
 
-  // #757 — concrete date headers are formatted via the runtime locale
-  // (`toLocaleDateString(undefined, …)`, the formatDateDisplay convention)
-  // instead of hardcoded English weekday/month tables. Compute the
-  // expected labels with the same Intl options so these assertions hold
-  // under any system locale. Weekday is always included; the year only
-  // when it differs from the (fake-timer-pinned 2025) current year.
+  // #757 — concrete date headers are formatted via the app locale
+  // (`getAppLocaleTag()`, #4555 — was `toLocaleDateString(undefined, …)`
+  // i.e. the OS/browser locale, until that was found to disagree with the
+  // pinned-`'en'` UI catalog) instead of hardcoded English weekday/month
+  // tables. Compute the expected labels with the same Intl options so
+  // these assertions hold under any `i18n.language`. Weekday is always
+  // included; the year only when it differs from the (fake-timer-pinned
+  // 2025) current year.
   function expectedHeader(dateStr: string): string {
     const [y, m, d] = dateStr.split('-').map(Number)
-    return new Date(y as number, (m as number) - 1, d).toLocaleDateString(undefined, {
+    return new Date(y as number, (m as number) - 1, d).toLocaleDateString(getAppLocaleTag(), {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
@@ -396,6 +400,23 @@ describe('groupByDate', () => {
     const opts = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' } as const
     expect(date.toLocaleDateString('en-US', opts)).toBe('Mon, Jun 15, 2026')
     expect(date.toLocaleDateString('fr-FR', opts)).toBe('lun. 15 juin 2026')
+  })
+
+  // #4555 — pins the TRACKING behaviour end to end: `groupByDate`'s date
+  // headers must follow a real `i18n.changeLanguage()`, not the OS/browser
+  // locale (nothing here touches `navigator`) and not a hardcoded English
+  // table. Fails if `formatGroupDate` reverts to `toLocaleDateString
+  // (undefined, …)` or a literal.
+  it('#4555: date group headers track i18n.language, and revert when it changes back', async () => {
+    const blocks = [makeBlock({ id: 'mon', due_date: '2026-06-15', todo_state: 'TODO' })]
+    try {
+      await i18n.changeLanguage('es')
+      expect(groupByDate(blocks).map((g) => g.label)).toEqual([expectedHeader('2026-06-15')])
+      expect(groupByDate(blocks)[0]?.label).toBe('lun, 15 jun 2026')
+    } finally {
+      await i18n.changeLanguage('en')
+    }
+    expect(groupByDate(blocks)[0]?.label).toBe('Mon, Jun 15, 2026')
   })
 
   // #719 — date groups beyond Tomorrow were ordered alphabetically by

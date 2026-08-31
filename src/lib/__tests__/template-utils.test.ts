@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
+import { es } from 'date-fns/locale'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { __registerDateLocaleForTests, __unregisterDateLocaleForTests } from '@/lib/date-locale'
+import { i18n } from '@/lib/i18n'
 import {
   expandTemplateVariables,
   insertTemplateBlocks,
@@ -10,6 +13,22 @@ import {
   loadTemplatePages,
   loadTemplatePagesWithPreview,
 } from '@/lib/template-utils'
+
+// #4555 — falsification helper: see the matching comment in
+// `src/lib/__tests__/date-utils.test.ts` for why a plain 'xx' tag (rather
+// than a real locale) proves TRACKING of `i18n.language`, not a literal.
+const TEST_LOCALE_TAG = 'xx'
+
+async function withTestLocale<T>(run: () => T | Promise<T>): Promise<T> {
+  __registerDateLocaleForTests(TEST_LOCALE_TAG, es)
+  await i18n.changeLanguage(TEST_LOCALE_TAG)
+  try {
+    return await run()
+  } finally {
+    await i18n.changeLanguage('en')
+    __unregisterDateLocaleForTests(TEST_LOCALE_TAG)
+  }
+}
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -656,6 +675,38 @@ describe('expandTemplateVariables — resolver map (#1450 Phase 1)', () => {
 
     it('built-ins accept a format argument (weekday:EEE)', () => {
       expect(expandTemplateVariables('<% weekday:EEE %>', { now: NOW })).toBe('Sat')
+    })
+
+    // #4555 — `weekday`/`month` (and any user-supplied FORMAT argument)
+    // used to always render English regardless of `i18n.language`. Pins
+    // the tracking behaviour, not a literal — the app locale is the same
+    // source the UI catalog resolves from, so this can never disagree
+    // with it.
+    describe('resolve through the app date locale', () => {
+      it('<% weekday %> follows the app locale', async () => {
+        await withTestLocale(() => {
+          expect(expandTemplateVariables('<% weekday %>', { now: NOW })).toBe('sábado')
+        })
+        expect(expandTemplateVariables('<% weekday %>', { now: NOW })).toBe('Saturday')
+      })
+
+      it('<% month %> follows the app locale', async () => {
+        await withTestLocale(() => {
+          expect(expandTemplateVariables('<% month %>', { now: NOW })).toBe('marzo')
+        })
+        expect(expandTemplateVariables('<% month %>', { now: NOW })).toBe('March')
+      })
+
+      it('a user FORMAT argument follows the app locale', async () => {
+        await withTestLocale(() => {
+          expect(expandTemplateVariables('<% today:MMMM d, YYYY %>', { now: NOW })).toBe(
+            'marzo 7, 2026',
+          )
+        })
+        expect(expandTemplateVariables('<% today:MMMM d, YYYY %>', { now: NOW })).toBe(
+          'March 7, 2026',
+        )
+      })
     })
   })
 

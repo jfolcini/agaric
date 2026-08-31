@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { doc, listItem, orderedList, paragraph, text } from '@/editor/__tests__/builders'
+import { doc, paragraph, text } from '@/editor/__tests__/builders'
 import { parse } from '@/editor/markdown-parse'
 import { MAX_MARKER_INDENT } from '@/editor/markdown-parse/vocab'
 import {
@@ -119,16 +119,23 @@ describe('convertBlockContent', () => {
     expect(convertBlockContent('> [!INFO] hi', 'h2')).toBe('## hi')
   })
 
-  it('converts to a numbered list and an info callout', () => {
-    expect(convertBlockContent('do this', 'numbered-list')).toBe('1. do this')
+  it('converts to an info callout', () => {
     expect(convertBlockContent('heads up', 'callout')).toBe('> [!INFO] heads up')
   })
 
-  it('converts to a bullet list and round-trips off it', () => {
-    expect(convertBlockContent('do this', 'bullet-list')).toBe('- do this')
-    // bullet → numbered strips the `- ` marker first
-    expect(convertBlockContent('- do this', 'numbered-list')).toBe('1. do this')
-    expect(convertBlockContent('- do this', 'paragraph')).toBe('do this')
+  // #4552 slice 2 — `numbered-list` / `bullet-list` no longer add a `1. ` /
+  // `- ` markdown marker: list-ness moved to the `listStyle` block property
+  // (the caller applies `listStyleForBlockType` + `setListStyle` alongside
+  // this content edit), so the transform is marker-free, identical to
+  // `'paragraph'`.
+  it('numbered-list / bullet-list leave the text bare — no markdown marker', () => {
+    expect(convertBlockContent('do this', 'numbered-list')).toBe('do this')
+    expect(convertBlockContent('do this', 'bullet-list')).toBe('do this')
+  })
+
+  it('numbered-list / bullet-list still strip a PRIOR marker (e.g. converting off a heading)', () => {
+    expect(convertBlockContent('# title', 'numbered-list')).toBe('title')
+    expect(convertBlockContent('> said', 'bullet-list')).toBe('said')
   })
 
   it('wraps content in a fenced code block', () => {
@@ -149,10 +156,13 @@ describe('convertBlockContent — multi-line content is never dropped', () => {
     expect(convertBlockContent(fencedMulti, 'paragraph')).toBe('line1\nline2\nline3')
   })
 
-  it('re-marks only the first line for headings and lists, keeping the rest', () => {
+  it('re-marks only the first line for headings, keeping the rest', () => {
     expect(convertBlockContent(fencedMulti, 'h2')).toBe('## line1\nline2\nline3')
-    expect(convertBlockContent(fencedMulti, 'numbered-list')).toBe('1. line1\nline2\nline3')
-    expect(convertBlockContent(fencedMulti, 'bullet-list')).toBe('- line1\nline2\nline3')
+  })
+
+  it('numbered-list / bullet-list keep every line bare (no marker, #4552 slice 2)', () => {
+    expect(convertBlockContent(fencedMulti, 'numbered-list')).toBe('line1\nline2\nline3')
+    expect(convertBlockContent(fencedMulti, 'bullet-list')).toBe('line1\nline2\nline3')
   })
 
   it('marks every line when converting to quote/callout so the whole block stays quoted', () => {
@@ -194,40 +204,41 @@ describe('turnIdToBlockType', () => {
   })
 })
 
-describe('list button — marker and content land on the SAME line (#2999)', () => {
-  // The toolbar/slash list button (`useSlashCommandStructural`'s
-  // `handleNumberedList`/`handleBulletList`, and the `TurnIntoMenu` /
-  // `TURN_INTO_BLOCK` path via `convertBlockContent`) both funnel through
-  // this exact "prepend the marker to the current content" shape:
-  // `` `1. ${content}` `` / `` `- ${content}` ``. These tests pin that the
-  // generated markdown is a SINGLE line, and that parsing it back produces
-  // exactly ONE list item with exactly ONE paragraph child — i.e. the
-  // marker and the typed text belong to the same node, not two. This rules
-  // out a data-model split as the cause of #2999 (the marker rendering on
-  // its own line above the content): the split was a CSS
-  // `list-style-position: inside` + block-level `<p>` child issue in
-  // `.ProseMirror ol/ul` (src/index.css), not a markdown/doc structure bug.
-  it('numbered-list: turning a plain-text block produces one line, one paragraph', () => {
+describe('list button — content is bare, no in-block list node (#2999, superseded by #4552 slice 2)', () => {
+  // #2999 was the ORIGINAL "marker and content land on the same line" bug in
+  // model A (the marker rendered on its own line above the content — a CSS
+  // issue, not a doc-structure one). #4552 slice 2 supersedes model A for the
+  // list button entirely: `handleNumberedList`/`handleBulletList` now call
+  // `setListStyle` instead of prepending a markdown marker
+  // (`useSlashCommandStructural.ts`), and `convertBlockContent` no longer
+  // marks `numbered-list`/`bullet-list` targets at all — so there is no
+  // longer an in-block list node for #2999's failure mode to reappear in.
+  // These tests pin the NEW contract: the content transform leaves plain text
+  // bare (single line in, single line out), and it parses back to a plain
+  // paragraph, not a list.
+  it('numbered-list: turning a plain-text block leaves the text bare, one line, one paragraph', () => {
     const markdown = convertBlockContent('buy milk', 'numbered-list')
-    expect(markdown).toBe('1. buy milk')
+    expect(markdown).toBe('buy milk')
     expect(markdown.split('\n')).toHaveLength(1)
-    expect(parse(markdown)).toEqual(doc(orderedList(listItem(paragraph(text('buy milk'))))))
+    expect(parse(markdown)).toEqual(doc(paragraph(text('buy milk'))))
   })
 
-  it('bullet-list: turning a plain-text block produces one line, one paragraph', () => {
+  it('bullet-list: turning a plain-text block leaves the text bare, one line', () => {
     const markdown = convertBlockContent('buy milk', 'bullet-list')
-    expect(markdown).toBe('- buy milk')
+    expect(markdown).toBe('buy milk')
     expect(markdown.split('\n')).toHaveLength(1)
   })
 
-  it('numbered-list: clicking on an EMPTY block still yields one line, one item', () => {
+  it('numbered-list: clicking on an EMPTY block yields empty content, no marker', () => {
     // The most common repro path — clicking the list button on a fresh,
     // still-empty block. `readCurrentContent` returns '' here, mirrored by
-    // converting from an empty string.
+    // converting from an empty string. The marker no longer lives in
+    // content, so this is simply empty (`listStyleForBlockType` + the
+    // separate `setListStyle` call carries the 'ordered' write).
     const markdown = convertBlockContent('', 'numbered-list')
-    expect(markdown).toBe('1. ')
+    expect(markdown).toBe('')
     expect(markdown.split('\n')).toHaveLength(1)
-    expect(parse(markdown)).toEqual(doc(orderedList(listItem(paragraph()))))
+    expect(parse(markdown)).toEqual(doc(paragraph()))
   })
   // The `content-regex-allow` markers on ORDERED_RE / BULLET_RE claim these
   // patterns cannot splice into user prose, because they are `^`-anchored with
@@ -246,6 +257,38 @@ describe('list button — marker and content land on the SAME line (#2999)', () 
     // Four spaces is past MAX_MARKER_INDENT, so the parser reads it as text.
     expect(stripBlockMarker('    - x')).toBe('    - x')
     expect(stripBlockMarker('   - x')).toBe('x')
+  })
+})
+
+// -- #4552 slice 1: a real marker's OWN TEXT must not be double-stripped -----
+// `stripBlockMarker` used to chain `.replace()` calls, each running on the
+// PREVIOUS call's output. After the real (first) marker was stripped, a LATER
+// pattern in the chain could match again against the block's own leftover
+// text and strip a second, purely coincidental "marker" that was never
+// structural — silently losing those literal characters. A block's text is
+// legitimately allowed to start with `- ` or `1. ` once its real marker is
+// gone (`list-ergonomics.md:181-188`).
+describe('#4552 slice 1: only the real (first) marker is stripped', () => {
+  it('a heading titled with a literal ordered-list prefix keeps its text intact', () => {
+    expect(stripBlockMarker('# 1. groceries')).toBe('1. groceries')
+    expect(convertBlockContent('# 1. groceries', 'paragraph')).toBe('1. groceries')
+  })
+
+  it('a heading titled with a literal bullet prefix keeps its text intact', () => {
+    expect(stripBlockMarker('# - to buy')).toBe('- to buy')
+    expect(convertBlockContent('# - to buy', 'paragraph')).toBe('- to buy')
+  })
+
+  it('an ordered-list item whose text starts with a literal bullet keeps it', () => {
+    expect(stripBlockMarker('1. - grocery item')).toBe('- grocery item')
+  })
+
+  it('a quote whose body starts with a literal bullet keeps it', () => {
+    expect(stripBlockMarker('> - quoted dash')).toBe('- quoted dash')
+  })
+
+  it('a quote whose body starts with a literal ordered prefix keeps it', () => {
+    expect(stripBlockMarker('> 1. quoted number')).toBe('1. quoted number')
   })
 })
 

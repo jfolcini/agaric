@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { i18n } from '@/lib/i18n'
 import { classify, parse } from '@/lib/search-query/classify'
 import { ensureRegistered } from '@/lib/search-query/register'
 import type { RawToken } from '@/lib/search-query/tokenize'
@@ -131,6 +132,33 @@ describe('classify / parse', () => {
       expect(tok.error).toContain('required')
     } else {
       throw new Error('expected invalid token')
+    }
+  })
+
+  // #4555 — register.ts's parser error strings used to be hardcoded English
+  // literals (`'tag: value required'`, `` `unknown ${noun} '${value}'` ``).
+  // The English catalog value is byte-equal to the old literal, so a test
+  // only checking the rendered English text can't tell "reads the catalog"
+  // from "hardcoded literal" — overriding the catalog value and asserting
+  // the override appears proves the call site actually resolves through
+  // `t()`. This fails if a recogniser reverts to a bare string literal.
+  it('#4555: the empty-tag error resolves through the i18n catalog, not a hardcoded literal', () => {
+    const KEY = 'searchQuery.valueRequired'
+    const original = i18n.t(KEY, { prefix: 'tag:' })
+    i18n.addResource('en', 'translation', KEY, '__OVERRIDDEN__ {{prefix}}')
+    try {
+      const ast = parse('tag:')
+      const tok = ast.filters[0]
+      if (tok && tok.kind === 'invalid') {
+        expect(tok.error).toBe('__OVERRIDDEN__ tag:')
+      } else {
+        throw new Error('expected invalid token')
+      }
+    } finally {
+      // Restore the raw template (not the interpolated `original`) so the
+      // catalog goes back to its real, still-interpolatable shape.
+      i18n.addResource('en', 'translation', KEY, '{{prefix}} value required')
+      expect(i18n.t(KEY, { prefix: 'tag:' })).toBe(original)
     }
   })
 

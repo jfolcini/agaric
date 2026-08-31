@@ -1,6 +1,25 @@
+import { es } from 'date-fns/locale'
 import { describe, expect, it } from 'vitest'
 
 import { substituteTemplateVariables } from '@/editor/template-variables'
+import { __registerDateLocaleForTests, __unregisterDateLocaleForTests } from '@/lib/date-locale'
+import { i18n } from '@/lib/i18n'
+
+// #4555 — falsification helper: see the matching comment in
+// `src/lib/__tests__/date-utils.test.ts` for why a plain 'xx' tag (rather
+// than a real locale) proves TRACKING of `i18n.language`, not a literal.
+const TEST_LOCALE_TAG = 'xx'
+
+async function withTestLocale<T>(run: () => T | Promise<T>): Promise<T> {
+  __registerDateLocaleForTests(TEST_LOCALE_TAG, es)
+  await i18n.changeLanguage(TEST_LOCALE_TAG)
+  try {
+    return await run()
+  } finally {
+    await i18n.changeLanguage('en')
+    __unregisterDateLocaleForTests(TEST_LOCALE_TAG)
+  }
+}
 
 // A fixed clock so date/time assertions are deterministic.
 // 2026-03-07 09:05 local time.
@@ -49,6 +68,18 @@ describe('substituteTemplateVariables', () => {
     it('tolerates whitespace around the format', () => {
       const { text } = substituteTemplateVariables('{{ date : YYYY-MM-DD }}', { now: NOW })
       expect(text).toBe('2026-03-07')
+    })
+
+    // #4555 — a textual-token FORMAT used to always render English
+    // (`format(now, pattern)` with no `locale:`) regardless of `i18n.language`.
+    // Pins the tracking behaviour, not a literal.
+    it('resolves the textual-token format through the app date locale', async () => {
+      await withTestLocale(() => {
+        const { text } = substituteTemplateVariables('{{date:MMM d, yyyy}}', { now: NOW })
+        expect(text).toBe('mar 7, 2026')
+      })
+      const { text } = substituteTemplateVariables('{{date:MMM d, yyyy}}', { now: NOW })
+      expect(text).toBe('Mar 7, 2026')
     })
   })
 

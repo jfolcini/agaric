@@ -26,6 +26,7 @@
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 import type {
@@ -383,7 +384,7 @@ export function useAdvancedQuery(options: UseAdvancedQueryOptions): UseAdvancedQ
   // reliable initial-load signal, so key off `isFetchNextPageError` instead.
   let error: string | null = null
   if (queryError != null && !isFetchNextPageError) {
-    error = queryError instanceof Error ? queryError.message : 'Query failed'
+    error = queryError instanceof Error ? queryError.message : t('query.failed')
   }
 
   const handleLoadMore = useCallback(() => {
