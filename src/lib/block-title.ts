@@ -225,3 +225,18 @@ export function unresolvedBlockLabel(id: string): string {
 export function unresolvedTagLabel(id: string): string {
   return `#${id.slice(0, UNRESOLVED_ID_CHARS)}...`
 }
+
+/**
+ * {@link unresolvedBlockLabel}'s BLOCK-REF-shaped sibling, for a `((ULID))`
+ * target (#4551). `unresolvedBlockLabel` is `[[id…]]`-shaped — correct for a
+ * broken `[[ULID]]` PAGE link, wrong for a broken `((ULID))` BLOCK
+ * reference, which `renderBlockRef` (`@/components/RichContentRenderer/
+ * marks/blockRef`) shows via this shape instead so a broken chip says what
+ * kind of thing broke. Hoisted out of that renderer's former local literal
+ * so both the no-resolver fallback and the resolver's own "nothing resolved
+ * for this id" path (which shares `resolveBlockTitle` with `renderBlockLink`
+ * and would otherwise hand back the page-link shape) render identically.
+ */
+export function unresolvedBlockRefLabel(id: string): string {
+  return `(( ${id.slice(0, UNRESOLVED_ID_CHARS)}... ))`
+}

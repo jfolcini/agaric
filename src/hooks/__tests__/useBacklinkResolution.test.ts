@@ -117,6 +117,31 @@ describe('useBacklinkResolution', () => {
     expect(result.current.resolveBlockStatus(ULID_A)).toBe('active')
   })
 
+  // #4551 — `((ULID))` block-ref tokens must resolve exactly like `[[ULID]]`
+  // page-link tokens here too; empty store precondition (asserted via the
+  // beforeEach reset) is what makes this non-vacuous.
+  it('resolves `((ULID))` block-ref tokens via batchResolve on cache miss', async () => {
+    expect(useResolveStore.getState().cache.size).toBe(0)
+    mockedBatchResolve.mockResolvedValue([
+      { id: ULID_A, title: 'Referenced block', block_type: 'content', deleted: false },
+    ])
+
+    const groups: BacklinkGroup[] = [
+      makeGroup([{ id: 'B1', content: `See ((${ULID_A})) for detail` }]),
+    ]
+
+    const { result } = renderHook(() => useBacklinkResolution(groups))
+
+    await waitFor(() => {
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], { kind: 'global' })
+    })
+
+    await waitFor(() => {
+      expect(result.current.resolveBlockTitle(ULID_A)).toBe('Referenced block')
+    })
+    expect(result.current.resolveBlockStatus(ULID_A)).toBe('active')
+  })
+
   it('writes real resolutions into the shared useResolveStore (single cache)', async () => {
     mockedBatchResolve.mockResolvedValue([
       { id: ULID_A, title: 'Shared Title', block_type: 'page', deleted: false },
@@ -458,9 +483,9 @@ describe('useBacklinkResolution', () => {
  * `batch_resolve` returns the RAW `content` column as `title` for EVERY block
  * type, so what a bound is worth depends entirely on `r.block_type`:
  *
- *   - `content` — normalise. NOT because this hook seeds a `((ULID))` chip
- *     itself (it does not: `collectContentIds` matches only `[[ULID]]` and
- *     `#[ULID]`), but because the resolve store's key is
+ *   - `content` — normalise. Not only because this hook seeds `((ULID))`
+ *     chips itself since #4551 (`collectContentIds` now matches `[[ULID]]`,
+ *     `((ULID))`, and `#[ULID]`), but because the resolve store's key is
  *     `${spaceId}::${ulid}` with NO mark class in it. One content block
  *     reached by `[[id]]` here and by `((id))` through `fetchAndCacheLinks`
  *     is ONE cache entry, so a raw write here IS read by `renderBlockRef` —

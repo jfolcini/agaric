@@ -34,10 +34,17 @@ export interface UseBacklinkResolutionResult {
   clearCache: () => void
 }
 
-const ULID_RE = /\[\[([0-9A-Z]{26})\]\]/g
+// #4551 — matches BOTH `[[ULID]]` page-link and `((ULID))` block-ref tokens
+// in one pass, mirroring the backend's own `ULID_LINK_RE`
+// (`src-tauri/agaric-store/src/cache/mod.rs`). Before this widening, a
+// `((ULID))` reference in backlink content was invisible to this hook, so a
+// block whose only outbound reference was a `((`-inserted block ref never
+// resolved here even though `fetchAndCacheLinks` (the block-tree scanner)
+// already covered it — the two scanners drifting on token shape.
+const ULID_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\]\]|\)\))/g
 const TAG_RE = /#\[([0-9A-Z]{26})\]/g
 
-/** Collect every [[ULID]] and #[ULID] token id present in the groups' content. */
+/** Collect every [[ULID]], ((ULID)), and #[ULID] token id present in the groups' content. */
 function collectContentIds(groups: BacklinkGroup[]): Set<string> {
   const ids = new Set<string>()
   for (const g of groups) {

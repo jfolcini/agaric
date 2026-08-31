@@ -18,7 +18,7 @@ import { axe } from '@/__tests__/helpers/axe'
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderBlockRef } from '@/components/RichContentRenderer/marks/blockRef'
 import type { BlockRefNode } from '@/editor/types'
-import { normalizeBlockRefTitle } from '@/lib/block-title'
+import { normalizeBlockRefTitle, unresolvedBlockLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
 
 function node(id: string): BlockRefNode {
@@ -59,6 +59,35 @@ describe('renderBlockRef — chip label reflects the stored title verbatim', () 
 
     const chip = screen.getByTestId('block-ref-chip')
     expect(chip.textContent).toBe('(( 01ABCDEF... ))')
+  })
+
+  /**
+   * #4551 — `ctx.resolveBlockTitle` is the SAME callback `renderBlockLink`
+   * (the `[[ULID]]` page-link renderer) is wired with, and every real
+   * resolver (`useBacklinkResolution`, `useBlockResolve`) hands back
+   * `unresolvedBlockLabel`'s `[[id…]]` shape for an id nothing resolved —
+   * there is only one "unresolved" shape in the shared resolve machinery,
+   * and it is page-link-shaped. Without the swap in `renderBlockRef`, a
+   * `((`-inserted block ref that fails to resolve renders `[[01H…]]`: the
+   * WRONG kind of broken. A resolver present but genuinely unresolved for
+   * this id must still render the block-ref `(( id… ))` shape, matching the
+   * no-resolver-at-all case above.
+   */
+  it('renders the block-ref-shaped placeholder — not the page-link shape — when the resolver itself reports the id unresolved', () => {
+    const id = '01ABCDEFGH'
+    render(
+      <>
+        {renderBlockRef(
+          node(id),
+          'k',
+          baseCtx({ resolveBlockTitle: () => unresolvedBlockLabel(id) }),
+        )}
+      </>,
+    )
+
+    const chip = screen.getByTestId('block-ref-chip')
+    expect(chip.textContent).toBe('(( 01ABCDEF... ))')
+    expect(chip.textContent).not.toBe(unresolvedBlockLabel(id))
   })
 
   it('does not re-derive a first line or re-cap — renders exactly what resolveBlockTitle returns', () => {

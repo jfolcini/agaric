@@ -2,6 +2,7 @@ import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { BlockRefNode } from '@/editor/types'
+import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
 import { cn } from '@/lib/utils'
 
 /**
@@ -44,7 +45,29 @@ export function renderBlockRef(
   // disagree with the seed or with the TipTap `BlockRef` NodeView
   // (`@/editor/extensions/block-ref.ts`), which renders the same value the
   // same way.
-  const title = ctx.resolveBlockTitle?.(refId) ?? `(( ${refId.slice(0, 8)}... ))`
+  const resolved = ctx.resolveBlockTitle?.(refId)
+  // #4551 — `ctx.resolveBlockTitle` is the SAME callback `renderBlockLink`
+  // uses for `[[ULID]]` page links, so an unresolved id comes back either as
+  // `undefined` (no resolver wired at all) or as `unresolvedBlockLabel`'s
+  // `[[id…]]` PAGE-link shape (every resolver's own "nothing resolved for
+  // this id" fallback — see `unresolvedBlockLabel` in `@/lib/block-title`).
+  // This chip is a BLOCK reference either way, so both cases render the
+  // `(( id… ))` shape instead of quietly showing the wrong kind of broken.
+  //
+  // Known and accepted collision, recorded rather than designed around: the
+  // miss is detected by VALUE, because `resolveBlockTitle` returns a bare
+  // string with no separate "did not resolve" signal. A block whose real
+  // title happens to be exactly `[[<its own first 8 chars>...]]` therefore
+  // renders as `(( … ))` too. Reaching it needs a title matching the
+  // truncation of the very id being resolved; the cost if someone does is a
+  // cosmetically wrong chip label, not a wrong target. The structural fix is
+  // for resolvers to return `undefined` on a miss instead of a formatted
+  // string, which is a change to every caller of `resolveBlockTitle` and is
+  // deliberately not in this diff.
+  const title =
+    resolved === undefined || resolved === unresolvedBlockLabel(refId)
+      ? unresolvedBlockRefLabel(refId)
+      : resolved
   const status = ctx.resolveBlockStatus?.(refId) ?? 'active'
   const deletedProps = status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {}
   // Unified chip interactivity policy (matches tagRef / blockLink):
