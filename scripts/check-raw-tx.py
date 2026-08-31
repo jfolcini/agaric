@@ -761,9 +761,17 @@ def run_self_test() -> int:
             globals()["CRATE_ROOTS"] = _saved_roots
             intact_rc = main(["--synthetic-tree"])
         root_cases += 1
-        if missing_rc == 0:
+        # Exact code, not "not 0": `main` returns 2 for a
+        # `guard_file_source.build` invocation error raised BEFORE the roots
+        # check, so `!= 0` would also pass if the run died for an unrelated
+        # reason — the assertion would be true for two reasons and a dead
+        # guard would look alive.
+        if missing_rc != 1:
             failures += 1
-            print("  [FAIL] a missing CRATE_ROOTS entry did not fail the run")
+            print(
+                "  [FAIL] a missing CRATE_ROOTS entry did not fail the run with "
+                f"the roots code (expected 1, got {missing_rc})"
+            )
         root_cases += 1
         if suppressed_rc != 0:
             failures += 1

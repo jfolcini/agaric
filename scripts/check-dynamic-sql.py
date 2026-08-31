@@ -1069,13 +1069,23 @@ def run_self_test() -> int:
             wrote_after_opt_in = len(_wrote)
             stray_flag_rc = main(["--allow-reductions"])
         root_cases += 1
-        if missing_rc == 0:
-            failures.append("a missing CRATE_ROOTS entry did not fail the run")
+        # Pin the EXACT code, not merely "not 0". `main` returns 2 for a
+        # `guard_file_source.build` invocation error raised BEFORE the roots
+        # check, so a `!= 0` assertion also passes when the run died for an
+        # unrelated reason — an assertion true for two reasons, which is how a
+        # dead guard looks alive. The sibling arms in this block already pin
+        # exact codes; these two now do too.
+        if missing_rc != 1:
+            failures.append(
+                f"a missing CRATE_ROOTS entry did not fail the run with the roots "
+                f"code (expected 1, got {missing_rc})"
+            )
         root_cases += 1
-        if missing_update_rc == 0:
+        if missing_update_rc != 1:
             failures.append(
                 "--update-baseline over a missing root did not refuse — it would "
-                "have re-anchored against the narrowed walk"
+                f"have re-anchored against the narrowed walk (expected 1, got "
+                f"{missing_update_rc})"
             )
         root_cases += 1
         if suppressed_rc != 0:

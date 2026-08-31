@@ -79,6 +79,15 @@ keys come back instead and `Path.exists()` names them, which is the false
 POSITIVE this script's header argues announces itself. Keep these sets to one
 literal with the paths on the left.
 
+The same silence applies to two SYNTAX forms the literal scanner does not
+model: a JavaScript template literal (backtick-quoted) and a `/* ... */` block
+comment inside a declared set. Both would be scanned as code, and a PARTIAL
+mis-parse is silent for the same reason as the multi-literal case above — the
+`unread` arm fires only on ZERO entries, so a set that yields some of its
+paths passes. None of today's eight embedded sources uses either construct;
+this is named alongside the multi-literal limit so the next one that does is
+recognised rather than rediscovered.
+
 Entries that are GLOBS (containing `*` or `?`) are skipped per-entry, not
 per-set: "matches at least one path" is a different assertion with different
 false-positive behaviour (a deliberately forward-looking pattern is legal),
@@ -104,7 +113,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # prose filenames legitimately contain "baseline"
 # (`session-1127-baseline-clippy-knip-e2e-cleanup.md`). Vendor and build trees
 # are excluded for free by being untracked.
-PRUNE = {"session-log"}
+# Anchored to the directory it means, not matched as a bare path SEGMENT: a
+# baseline that ever landed under some other `session-log/` directory would
+# otherwise be silently invisible to discovery, which is the failure mode this
+# whole script exists to end.
+PRUNE_DIRS = ("docs/session-log/",)
 
 # --- The population: data files ------------------------------------------
 # repo-relative path -> (extractor, base directory the entries are relative to)
@@ -404,7 +417,7 @@ def main(argv: list[str]) -> int:
         tracked = []
     found: list[str] = []
     for rel in tracked:
-        if any(seg in PRUNE for seg in rel.split("/")):
+        if any(rel.startswith(d) for d in PRUNE_DIRS):
             continue
         low = rel.rsplit("/", 1)[-1].lower()
         if "baseline" in low or "allowlist" in low or "allow-list" in low:
@@ -414,14 +427,27 @@ def main(argv: list[str]) -> int:
         for rel in stray:
             findings.append((
                 "unknown",
-                f"{rel}: a baseline/allowlist file this script has never been "
-                f"taught to read. Add it to DATA_SOURCES (with the base "
-                f"directory its entries are relative to) or to NO_PATHS with "
-                f"the reason it names no paths.",
+                f"{rel}: a tracked file whose BASENAME matches "
+                f"baseline/allowlist/allow-list, which this script has never "
+                f"been taught to read. Three answers, and the third is the "
+                f"common one for ordinary source: (1) it IS guard data with "
+                f"paths -> DATA_SOURCES, with the base directory its entries "
+                f"are relative to; (2) it IS guard data naming no paths -> "
+                f"NO_PATHS, with the reason; (3) it is NOT guard data at all "
+                f"(app source, a test fixture) -> NO_PATHS is still the right "
+                f"home, and the reason should say so plainly, e.g. "
+                f"'application source, not a guard baseline'. Discovery is "
+                f"basename-based on purpose, so it will keep finding it.",
             ))
-    missing_declared = [r for r in DATA_SOURCES if not (REPO_ROOT / r).is_file()]
-    for rel in missing_declared:
+    # BOTH declaration tables get the existence check, not just DATA_SOURCES.
+    # A NO_PATHS entry whose file was deleted or renamed is a declaration that
+    # nothing notices any more — a stale path in a hand-maintained set, which
+    # is the exact class this guard exists to catch. Leaving one table
+    # unchecked would make this script an instance of its own subject.
+    for rel in [r for r in DATA_SOURCES if not (REPO_ROOT / r).is_file()]:
         findings.append(("unknown", f"{rel}: declared in DATA_SOURCES but not in this checkout"))
+    for rel in [r for r in NO_PATHS if not (REPO_ROOT / r).is_file()]:
+        findings.append(("unknown", f"{rel}: declared in NO_PATHS but not in this checkout"))
 
     # --- data files -------------------------------------------------------
     for rel, (kind, base) in sorted(DATA_SOURCES.items()):
