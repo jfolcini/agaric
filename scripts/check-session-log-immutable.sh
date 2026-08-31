@@ -11,11 +11,16 @@
 #
 # ─── Why diff-filter, not a parser ────────────────────────────────────────
 #
-# "Was this path already in the merge target's tree?" is answered entirely
-# by git's own status classification against `origin/main` — no model of
-# session-log content is needed to answer it.
+# "Was this D/M/R/T path already in the merge target's tree?" is answered
+# entirely by git's own status classification against `origin/main` — no
+# model of session-log content is needed to answer it. Not asked of `A`: a
+# staged add is never checked against the merge target here. In practice
+# that gap is closed by the sibling guard, `check-session-log-numbering.sh`,
+# whose own merge-target check rejects a number that already exists on
+# `origin/main` — so the pair has no hole, but this guard alone does not
+# cover `A`.
 #
-# ─── D, M and R, all three (#4527) ────────────────────────────────────────
+# ─── D, M, R and T, all four (#4527) ──────────────────────────────────────
 #
 # #4527 is the record of `check-session-log-numbering.sh` selecting only
 # `--diff-filter=A` and silently checking nothing on a `git mv` renumber.
@@ -24,7 +29,7 @@
 # so it is not repeated: `M` and `R` look like the complete set of "the
 # file changed but still exists" statuses, and they are — but the
 # operations this guard must catch are not all spelled that way.
-# Verified in a throwaway repo, git 2.43, all four spellings:
+# Verified in a throwaway repo, git 2.43, all five spellings:
 #
 #   M   edit in place of a merged log                    → caught by M
 #   R   `git mv` of a merged log, body untouched (R100)  → caught by R
@@ -37,8 +42,16 @@
 #       turns EVERY rename into this shape.
 #   D   `git mv` of a merged log to a path outside $LOG_DIR, or an
 #       outright `git rm` of it. Inside the pathspec both are a bare `D`.
+#   T   a merged log replaced by a symlink or gitlink at the same path →
+#       NOT caught by DMR at all — staged as neither M nor D. Confirmed
+#       empirically (throwaway repo, `ln -s` over the tracked path, then
+#       `git add`): git stages a bare `T`. This is the fifth instance of
+#       the same silent-selector bug, and the worst one: the parser's
+#       fail-loud `*)` arm below cannot catch a letter the FILTER already
+#       excludes upstream, so the one defence against an unexpected status
+#       is bypassed by the status set itself.
 #
-# So the selector is `--diff-filter=DMR`, and a `D` whose path is in the
+# So the selector is `--diff-filter=DMRT`, and a `D` whose path is in the
 # merge target FAILS like the others. Telling "the D half of a rename"
 # apart from "a deletion" would need a similarity model — the parsing this
 # guard exists to avoid — and both answers are the same anyway: deleting a
@@ -141,6 +154,16 @@ exists_in_target() {
 # Scoped out for now (#4536 asks for a ten-line diff filter), but the gap is
 # real and belongs in the record, not only in a review thread.
 #
+# A second silent gap, in the guard's own silent-zero class: `exists_in_target`
+# asks `git cat-file -e origin/main:$src` against `refs/remotes/origin/main` as
+# it stands LOCALLY. A contributor who has not fetched since the target log
+# merged holds a ref that predates the merge; the lookup misses, and an edit to
+# an already-merged log passes green — reached without `--no-verify`, a GitHub
+# web edit, or an out-of-band commit, just a stale `git fetch`, which makes it
+# the likeliest of these gaps to be hit by accident. `check-session-log-
+# numbering.sh` checks the same local ref, so this is a design limit shared by
+# both guards, not a slip in either one.
+#
 # Staged records, read from a FILE rather than a process substitution: a
 # `git diff` that fails inside `< <(…)` leaves the loop reading an empty
 # stream, which this guard would otherwise report as "0 … nothing to
@@ -199,7 +222,7 @@ fi
 
 target_ref="$(merge_target_ref)"
 if [ -z "$target_ref" ]; then
-  echo "ERROR: session-log-immutable: $total staged modification/rename/deletion(s) under $LOG_DIR, and no merge target to check them against." >&2
+  echo "ERROR: session-log-immutable: $total staged modification/rename/deletion/typechange(s) under $LOG_DIR, and no merge target to check them against." >&2
   echo "  Looked for refs/remotes/origin/main, then refs/heads/main — neither exists in this checkout." >&2
   echo "  This guard's only question is 'is this path already in the merge target's tree?', so with no target it can" >&2
   echo "  answer nothing. Passing here would be a green run that checked zero of $total files (#4527, #4501)." >&2
@@ -227,6 +250,7 @@ for i in "${!statuses[@]}"; do
     D)
       echo "ERROR: $src — already merged into $target_name; deleting a merged session log destroys the record more completely than editing it (docs/session-log/README.md)." >&2
       echo "  If this is the other half of a rename git staged as D+A, the rename itself is the violation." >&2
+      echo "  If this is a \`git revert\` of the commit that added the log, this guard is meant to hard-fail it too — a revert destroys the merged record exactly as a direct deletion would." >&2
       echo "  If this is a deliberate archive compaction, that is the one legitimate case: SKIP=session-log-immutable git commit …" >&2
       ;;
   esac

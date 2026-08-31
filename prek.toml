@@ -1614,7 +1614,7 @@ stages = ["pre-commit"]
 # docs/session-log/README.md: a merged session log is append-only; a
 # correction goes in the NEW session's log as a back-reference, never an
 # edit, rename or deletion of the merged file (#4530 did exactly that,
-# uncaught locally). `--diff-filter=DMR`, all three letters, per #4527's
+# uncaught locally). `--diff-filter=DMRT`, all four letters, per #4527's
 # lesson: `MR` alone looks complete and is not, because a rename that also
 # rewrites the body drops below git's rename-similarity threshold and is
 # staged as `D`+`A`, which an `MR` filter selects not at all — the same
@@ -1631,7 +1631,7 @@ stages = ["pre-commit"]
 # both of this guard's report lines (the count and the "0 … nothing to
 # check") are printed on exit-0 paths.
 #
-# See the script header for the four staged spellings of the operations it
+# See the script header for the five staged spellings of the operations it
 # must catch, why a pure rename of a merged file is rejected, why no
 # `--self-test` is scoped, why an absent merge target FAILS rather than
 # passing green, and how a same-branch add-then-amend before merge is told

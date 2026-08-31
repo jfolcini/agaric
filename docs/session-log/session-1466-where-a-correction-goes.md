@@ -40,10 +40,13 @@ that zero records had been checked:
 `--diff-filter=MR` was the whole bug. #4527 is the record of `--diff-filter=A` silently checking
 nothing on a `git mv`; the brief for this guard quoted that incident and asked for the mirror-image
 case to be handled, and the first implementation still shipped the same shape one letter over.
-The filter is now `DMR`, and a `D` whose path exists in the merge target fails. Telling "the D half
-of a rename" from "a deletion" would need a similarity model — the parsing the issue said to avoid —
-and both answers are the same, so both fail; the one legitimate deletion, archive compaction, is
-named in the error message with its `SKIP=` override.
+The filter is now `DMRT` — a later pass on this same PR found `T` (typechange: a merged log
+replaced by a symlink or gitlink) missing too, staged as neither `M` nor `D` and so caught by
+none of the three, the same silent-selector bug a fifth time. A `D` whose path exists in the
+merge target fails. Telling "the D half of a rename" from "a deletion" would need a similarity
+model — the parsing the issue said to avoid — and both answers are the same, so both fail; the
+one legitimate deletion, archive compaction, is named in the error message with its `SKIP=`
+override.
 
 Two further defects came out of the same pass and are worth recording because neither is about the
 filter. The hook was keyed `files = "^docs/session-log/session-.*\.md$"`, and **prek's changed-file
@@ -64,7 +67,7 @@ the criterion assumes is impossible.
 
 The no-self-test decision stands, because scoping it out is the issue author's explicit call and not
 a reviewer's to overturn. What changed is the header: it no longer asserts something false, and it
-enumerates the four staged spellings with the empirical result for each, so the next person to edit
+enumerates the five staged spellings with the empirical result for each, so the next person to edit
 the filter knows the arms that must be re-driven by hand. If one more selector bug lands here, that
 is the evidence for fixtures.
 
