@@ -132,6 +132,13 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # `.cargo/config.toml` and friends still hit fail-closed. Those change how
 # everything is built, and no per-category suite covers them.
 #
+# DISCOVERABLE COUPLING (#4454): the four toml arms above are UNANCHORED on
+# purpose (see the divergence note near `_vci` further down). Widening,
+# narrowing, or adding one requires updating, in lockstep, the `_tracked=`
+# exclusion, the synthetic unanchored-path loop just above it (`for _p in
+# docs/prek.toml …`), and the `_survivors=` expected-list check just below
+# it — none of which derive from `CI_PATH_RE` automatically.
+#
 # Defined up here so `--self-test` below can drive it directly.
 CI_PATH_RE='^\.github/|^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
 

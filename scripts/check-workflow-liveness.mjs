@@ -55,6 +55,23 @@
 // runs: liveness from the newest scheduled run of ANY status (an in-progress
 // run proves the cron fired), the conclusion from the newest COMPLETED one.
 //
+// ─── Why an empty run list also reads the workflow's STATE (#4478) ───────────
+//
+// "No scheduled run at all" is three situations wearing one face: a workflow
+// added last week whose cron has not come round yet, a workflow whose
+// schedule GitHub has DISABLED (it does that to repositories with no recent
+// activity), and a workflow this script could not ask about. The runs API
+// cannot tell them apart — it returns the same empty list for all three — and
+// the difference decides whether anyone should be woken up.
+//
+// So for that case, and only that case, this script also asks
+// `GET /repos/{owner}/{repo}/actions/workflows/{id}`, which reports `state`
+// directly. Reading the fact GitHub publishes beats approximating it with a
+// clock: a duration threshold can only be tuned, never made correct, because
+// one short enough to catch a dead lane quickly will eventually fire on a
+// young one. The cost is one extra `gh api` call per watched workflow per
+// daily tick.
+//
 // ─── Why this cannot silently pass ───────────────────────────────────────────
 //
 // Every path that cannot answer the question THROWS rather than returning
@@ -81,7 +98,12 @@
 //        [--exclude-run-id <id>]     (this run's id; see § self-watch below)
 //        [--now <iso8601>]           (TEST-ONLY: pin "now")
 //        [--runs-json-file <path>]   (TEST-ONLY: `{ "<file>.yml": [run…] }`
-//                                     instead of calling `gh`)
+//                                     instead of calling `gh`; REQUIRES
+//                                     --states-json-file alongside it)
+//        [--states-json-file <path>] (TEST-ONLY, REQUIRED with
+//                                     --runs-json-file: `{ "<file>.yml":
+//                                     {"state": "active"} | {"error": "…"} }`,
+//                                     the workflow-state read #4478 added)
 //   node scripts/check-workflow-liveness.mjs --self-test
 //
 // Exit codes: 0 = every watched workflow classified and `--out` written;
@@ -317,11 +339,99 @@ function orderedRuns({ runs, workflow, excludeRunId }) {
  * than classifying: `Date.parse('nonsense')` is NaN and every `NaN > limit`
  * is false, so anything swallowed here reads as fresh and healthy.
  */
-export function classifyWorkflow({ runs, nowMs, workflow, maxAgeHours, excludeRunId }) {
+export function classifyWorkflow({
+  runs,
+  nowMs,
+  workflow,
+  maxAgeHours,
+  excludeRunId,
+  scheduleState,
+}) {
   const considered = orderedRuns({ runs, workflow, excludeRunId })
 
   if (considered.length === 0) {
-    return `never-ran (no \`schedule\` run of ${workflow} found at all)`
+    // #4478 — an empty run list is THREE different situations, and they need
+    // opposite handling. Which one it is cannot be read from the run list (it
+    // is empty in all three), so it is read from the workflow's own `state`.
+    //
+    // ─── The defect ───────────────────────────────────────────────
+    //
+    // `stale` is decided from `considered[0]`, so a workflow that has never
+    // produced one `schedule` run could not reach it however long it sat
+    // here: it stayed `never-ran`, kept `runId: null`, and `advanceStreaks`
+    // HELD its count at 1 forever. GitHub disables scheduled workflows in
+    // repositories with no recent activity, and a disabled schedule produces
+    // no runs at all — so the single event most worth noticing arrives here
+    // and was the one thing this watchdog structurally could not report. That
+    // is #4456's frozen-identity exemption, surviving in the one state #4456
+    // deliberately did not reach.
+    //
+    // ─── Why the STATE, and not a clock ──────────────────────────────
+    //
+    // GitHub disabling a schedule for repository inactivity is a STATE, not a
+    // duration, and `GET /repos/{owner}/{repo}/actions/workflows/{id}` reports
+    // it directly as `disabled_inactivity`. The two rejected alternatives both
+    // approximate that state with a clock instead — escalate once the WATCHED
+    // entry has been tracked longer than its own period (which needs a
+    // first-seen timestamp the state does not carry), or escalate on poll
+    // identity immediately — and a clock can only ever be tuned, never made
+    // correct: any threshold that escalates a dead lane fast enough will
+    // eventually page someone about a young one, and any threshold that never
+    // does will eventually sit on a dead one. Reading the fact GitHub already
+    // publishes has no such dial (jfolcini, scoping #4478).
+    //
+    // The cost that made this look invasive is one `gh api` call per WATCHED
+    // entry, ONCE PER WATCHDOG TICK — not per PR, and not per lane per poll.
+    // At this set's size that is not a budget question.
+    //
+    // ─── An unreadable state is its OWN answer ────────────────────────
+    //
+    // The new failure mode the API read adds — the call itself failing — has
+    // the answer the rest of this file already uses: report the uncertainty
+    // rather than resolving it in either direction. So it is a THIRD verdict,
+    // never folded into `never-ran` (which would silently assume "young", the
+    // precise bug being fixed here, reachable by an API outage) and never
+    // folded into `schedule-disabled` (which would assert a fact this process
+    // does not have). A watchdog that says "I could not determine whether
+    // this lane is disabled" is behaving correctly.
+    //
+    // It is a verdict rather than a THROW — the posture `fetchScheduleRuns`
+    // takes — for one specific reason: this is a SECONDARY question. `--out`
+    // is written only after every lane is classified, so throwing here would
+    // discard every other lane's perfectly good answer over a refinement to
+    // one lane's empty case. The run-list throw is not comparable: a failed
+    // run fetch means that lane's health is entirely unknown.
+    //
+    // ─── RESIDUAL: this does not cover a malformed cron ───────────────
+    //
+    // Stated plainly because #4478 names it: a workflow GitHub reports as
+    // `active` which is nevertheless never scheduled — a cron expression
+    // malformed enough that no run is ever created — lands in the `never-ran`
+    // branch below and is held at count 1 exactly as before. The state read
+    // answers "did GitHub turn this off", which is the case #4478 evidences;
+    // it does not answer "is this cron reachable". That second case is NOT
+    // covered here and must not be read as covered.
+    const state =
+      typeof scheduleState?.state === 'string' && scheduleState.state.length > 0
+        ? scheduleState.state
+        : null
+
+    if (state === null) {
+      const why = scheduleState?.error ?? 'no workflow state was read for it at all'
+      return `schedule-state-unknown (no \`schedule\` run of ${workflow} found at all, and whether GitHub has DISABLED its schedule could not be determined: ${why})`
+    }
+
+    // Classified POSITIVELY: `active` is the one state in which a schedule is
+    // enabled, so every other value — `disabled_inactivity`,
+    // `disabled_manually`, `disabled_fork`, and whatever GitHub adds next —
+    // reads as "not running, and not because it is young". A deny-list of
+    // known-bad states would wave through the next value nobody thought of,
+    // which is the fail-open direction, in the one lane whose job is silence.
+    if (state !== 'active') {
+      return `schedule-disabled (no \`schedule\` run of ${workflow} found at all, and GitHub reports its state as \`${state}\` — a disabled schedule produces no runs, so this cannot resolve itself)`
+    }
+
+    return `never-ran (no \`schedule\` run of ${workflow} found at all, but GitHub reports the workflow \`active\` — a schedule that has not fired YET)`
   }
 
   const ageHours = (nowMs - considered[0].startedAtMs) / HOUR_MS
@@ -398,6 +508,23 @@ export function newestCompletedRunId({ runs, workflow, excludeRunId }) {
  * whereas the silent direction costs an unbounded number of unreported weeks.
  * Keep this in sync with `classifyWorkflow`'s returns — the self-test pins
  * every one of them, plus an unknown string, so drift fails closed here.
+ *
+ * #4478 — the `schedule-disabled (…)` this doc named as a HYPOTHETICAL next
+ * verdict is now a real one, and it arrived through exactly the door
+ * described above: it is absent from the list below DELIBERATELY, and that
+ * absence IS its escalation mechanism, not an oversight. Falling through to
+ * no `runId` is what hands the streak to `advanceStreaks`' `fallbackRunId` —
+ * the watchdog's own run URL — so one poll that still finds a disabled
+ * schedule is one occurrence, the identical treatment #4456 gave `stale` for
+ * the identical reason: there is no run to name. `schedule-state-unknown (…)`
+ * is absent for the same reason; see `classifyWorkflow` for why an unreadable
+ * state must not be resolved into either neighbour.
+ *
+ * `never-ran (` — now meaning ONLY "GitHub says `active`, it just has not
+ * fired yet" — stays in the list, keeping its `runId: null` hold, because a
+ * workflow that is merely young must not page anyone (#4440). Those two lines
+ * are the two acceptance arms of #4478, and `selfTestNeverRanScheduleState`
+ * pins them, plus the third.
  */
 export function carriesRunId(result) {
   return (
@@ -460,8 +587,48 @@ export function carriesRunId(result) {
  * alone here deliberately: the null-hold for `never-ran` is the rule the #4440
  * review widened ON PURPOSE (see `advanceStreaks`'s identity-less-prior doc),
  * and reversing it is a second design decision, not a consequence of this one.
+ *
+ * #4478 IS that second decision, and it is now made. The paragraph above is
+ * kept UNEDITED, because it is what made the gap findable and #4478 asks
+ * explicitly that it not be deleted — but it is no longer true end to end,
+ * and saying otherwise here would reproduce the exact defect #4454 names (a
+ * caveat that enumerates one limitation and omits the larger one). One clause
+ * of it is SUPERSEDED: "a schedule GitHub never enabled" no longer stays
+ * `never-ran`, and the "held at count 1 forever" sentence no longer describes
+ * that lane — moving precisely that lane out of the exemption is what this
+ * change does. The rest still holds exactly as written: the `considered[0]`
+ * control flow, the +1d/+30d/+365d verification, and the point that
+ * `never-ran` is not short-lived the way `no-completed-run` is.
+ *
+ * What changed is which lanes the paragraph describes. An empty run list is no
+ * longer one verdict but three, split on the workflow's own `state` as GitHub
+ * reports it rather than on any clock:
+ *
+ *   * `never-ran (` — GitHub says `active`; the schedule simply has not fired
+ *     yet. Still carries `runId: null`, and the held-at-1 behaviour described
+ *     above is still exactly what happens, which is the POINT: a newly added
+ *     workflow legitimately has no runs and must not page anyone.
+ *   * `schedule-disabled (` — GitHub reports a non-`active` state, i.e. it
+ *     turned the schedule off (`disabled_inactivity` is the case #4478
+ *     evidences). Not named by `carriesRunId`, so it takes the same
+ *     key-absent path `stale` takes above and escalates on distinct polls.
+ *   * `schedule-state-unknown (` — the state could not be read. Also
+ *     key-absent, so the unanswered question itself escalates rather than
+ *     being quietly resolved into "young"; see `classifyWorkflow`.
+ *
+ * So the `never-ran`/`stale` asymmetry the paragraph above documents is still
+ * real in `classifyWorkflow`'s control flow — a lane with no runs never
+ * reaches the `stale` branch — but it no longer implies an escalation
+ * exemption, because the states that mean "this will not fix itself" now take
+ * `stale`'s own poll-identity path.
  */
-export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WATCHED }) {
+export function buildResults({
+  runsByWorkflow,
+  statesByWorkflow = {},
+  nowMs,
+  excludeRunId,
+  watched = WATCHED,
+}) {
   const out = {}
   for (const entry of watched) {
     const runs = runsByWorkflow[entry.workflow]
@@ -469,20 +636,29 @@ export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WA
       throw new Error(`${entry.workflow}: no run list was fetched — health is UNKNOWN, not green`)
     }
     const excl = entry.selfExcluded ? excludeRunId : undefined
+    // #4478 — a MISSING state entry is not an error here, unlike a missing
+    // run list above, and the asymmetry is deliberate: `classifyWorkflow`
+    // consults the state only when the run list is EMPTY, so for every lane
+    // that has runs an unread state changes nothing and must not take the
+    // whole tick down. Where it IS consulted, absence is not silently benign
+    // either — it becomes the visible `schedule-state-unknown` verdict.
     const result = classifyWorkflow({
       runs,
       nowMs,
       workflow: entry.workflow,
       maxAgeHours: entry.maxAgeHours,
       excludeRunId: excl,
+      scheduleState: statesByWorkflow[entry.workflow],
     })
     const entryOut = { result, periodHours: entry.periodHours }
-    // #4400 / #4456 — carried through so `file-scheduled-failures.mjs` can key
-    // its consecutive-failure counter on the actual watched run's identity
-    // and pick the right escalation threshold for its cadence — but only for
-    // the verdicts `carriesRunId` names, which `stale` is deliberately not
-    // one of: that key is left off entirely so the filer's own poll identity
-    // takes over instead of a frozen run id.
+    // #4400 / #4456 / #4478 — carried through so `file-scheduled-failures.mjs`
+    // can key its consecutive-failure counter on the actual watched run's
+    // identity and pick the right escalation threshold for its cadence — but
+    // only for the verdicts `carriesRunId` names, which `stale` (#4456),
+    // `schedule-disabled` and `schedule-state-unknown` (#4478) are
+    // deliberately not among: for those the key is left off entirely, so the
+    // filer's own poll identity takes over instead of a frozen run id or an
+    // unknowable-and-therefore-held `null`.
     if (carriesRunId(result)) {
       entryOut.runId = newestCompletedRunId({ runs, workflow: entry.workflow, excludeRunId: excl })
     }
@@ -685,6 +861,69 @@ export function fetchScheduleRuns(repo, workflow) {
   }
 }
 
+/**
+ * #4478 — whether GitHub has this workflow's schedule turned ON, from
+ * `GET /repos/{owner}/{repo}/actions/workflows/{id}`, which reports `state`:
+ * `active`, or one of the `disabled_*` values (`disabled_inactivity` being
+ * the one this ticket exists for — GitHub disables scheduled workflows in
+ * repositories with no recent activity, and a disabled schedule produces no
+ * runs at all, which is indistinguishable from a young one in the runs API).
+ *
+ * The ONE function in this file that does not throw on failure, and the
+ * exception is reasoned rather than convenient. Everything else here refuses
+ * to answer from data it could not read because the alternative is reporting
+ * health it cannot substantiate. This call is different in kind: it refines a
+ * question already answered (the run list, which came back empty), and it is
+ * consulted for one lane at a time while `--out` is written only after ALL of
+ * them are classified. Throwing would therefore discard every other lane's
+ * good answer over a refinement to one lane's edge case — trading a small
+ * unknown for a total one.
+ *
+ * So the failure is CARRIED, in `error`, and becomes the visible
+ * `schedule-state-unknown` verdict rather than either a silent "young" or an
+ * asserted "disabled". `gh` missing or non-zero, output that is not JSON, an
+ * empty read, and the literal `null`/`undefined` that `--jq` prints for a
+ * missing key all land there, each carrying its own reason into the tracking
+ * issue so the reader is told WHY the watchdog could not answer.
+ *
+ * Scope of that claim, stated precisely because the bug this guard closes was
+ * a claim that outran its code: the unusable-payload rejection is an explicit
+ * two-value check on `'null'` and `'undefined'`, NOT a general "anything
+ * unusable". A `.state` that were `false` or numeric would stringify and read
+ * as a state. That is theoretical while GitHub keeps `state` a string enum,
+ * and it is named here rather than papered over with "every way".
+ */
+export function fetchWorkflowState(repo, workflow) {
+  let raw
+  try {
+    raw = execFileSync(
+      'gh',
+      ['api', `repos/${repo}/actions/workflows/${workflow}`, '--jq', '.state'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
+    )
+  } catch (err) {
+    return { error: `\`gh api\` failed (${err.message.split('\n')[0]})` }
+  }
+  const state = raw.trim()
+  if (state.length === 0) {
+    return { error: '`gh api` returned no `state` field for this workflow' }
+  }
+  // `--jq '.state'` on a payload with NO `state` key prints the literal four
+  // characters `null`, not an empty string — gojq marshals a missing key that
+  // way. So the length check above passes and `state` becomes the STRING
+  // "null", which is not `'active'` and would therefore be reported as
+  // ``schedule-disabled (… state as `null` …)``: the watchdog asserting that
+  // GitHub disabled a schedule, on evidence that GitHub said nothing at all.
+  // That is the same overstates-the-evidence shape this file's #4478 work is
+  // about, so it is rejected here rather than classified downstream.
+  if (state === 'null' || state === 'undefined') {
+    return {
+      error: `\`gh api\` returned \`${state}\` for \`.state\` — the payload has no usable state field`,
+    }
+  }
+  return { state }
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -714,6 +953,10 @@ function parseArgs(argv) {
         args.runsJsonFile = argv[++i]
         break
       }
+      case '--states-json-file': {
+        args.statesJsonFile = argv[++i]
+        break
+      }
       case '--self-test': {
         args.selfTest = true
         break
@@ -741,18 +984,48 @@ export function main(argv = process.argv.slice(2)) {
   // `--runs-json-file` is the TEST-ONLY substitute for `gh`, so the
   // classification can be driven against fixtures with no network and no auth.
   let runsByWorkflow
+  let statesByWorkflow
   if (args.runsJsonFile !== undefined) {
+    // `--states-json-file` is REQUIRED alongside it (review of #4562, note
+    // 5): omitting it used to silently default `statesByWorkflow` to `{}`,
+    // which reads as "no state was fetched" for every lane and turns every
+    // empty-run-list lane into `schedule-state-unknown` — a real verdict,
+    // just the wrong one, chosen by a missing flag instead of by data. Every
+    // in-tree fixture already passes both flags, so this is inert today; it
+    // exists so a FUTURE fixture that forgets the flag fails loudly here
+    // instead of quietly mis-verdicting. See selfTestRequiresStatesJsonFile.
+    if (args.statesJsonFile === undefined) {
+      throw new Error(
+        '--states-json-file is required when --runs-json-file is given: omitting it silently defaults statesByWorkflow to {}, which reads as schedule-state-unknown for every empty-run-list lane',
+      )
+    }
     runsByWorkflow = JSON.parse(readFileSync(args.runsJsonFile, 'utf8'))
+    statesByWorkflow = JSON.parse(readFileSync(args.statesJsonFile, 'utf8'))
   } else {
     const repo = args.repo ?? process.env.GITHUB_REPOSITORY
     if (!repo) throw new Error('--repo (or $GITHUB_REPOSITORY) is required outside fixture mode')
     runsByWorkflow = {}
+    statesByWorkflow = {}
     for (const entry of WATCHED) {
       runsByWorkflow[entry.workflow] = fetchScheduleRuns(repo, entry.workflow)
+      // #4478 — unconditionally, one call per watched entry per tick, even
+      // for lanes whose run list will turn out to be non-empty and whose
+      // state is therefore never consulted. Fetching it lazily inside
+      // `buildResults` would save those calls, at the price of putting a
+      // network call inside the pure classifier the whole fixture suite is
+      // built on. The cost being avoided is a handful of `gh api` calls once
+      // a day; the cost being paid would be a classifier that cannot be
+      // driven from a file.
+      statesByWorkflow[entry.workflow] = fetchWorkflowState(repo, entry.workflow)
     }
   }
 
-  const results = buildResults({ runsByWorkflow, nowMs, excludeRunId: args.excludeRunId })
+  const results = buildResults({
+    runsByWorkflow,
+    statesByWorkflow,
+    nowMs,
+    excludeRunId: args.excludeRunId,
+  })
 
   for (const [workflow, { result }] of Object.entries(results)) {
     console.log(`${result === 'success' ? 'OK  ' : 'RED '} ${workflow}: ${result}`)
@@ -783,8 +1056,20 @@ function selfTestClassification({ check }) {
     conclusion,
     createdAt: ISO(now - agoHours * HOUR_MS),
   })
+  // #4478 — the helper supplies `state: 'active'` by default so every
+  // assertion below keeps asking the question it was written to ask (an
+  // empty run list on a LIVE schedule is `never-ran`). The other two states,
+  // and the absence of any state at all, are driven explicitly in
+  // `selfTestNeverRanScheduleState`, which is where that three-way belongs.
   const classify = (runs, extra = {}) =>
-    classifyWorkflow({ runs, nowMs: now, workflow: 'w.yml', maxAgeHours: 40, ...extra })
+    classifyWorkflow({
+      runs,
+      nowMs: now,
+      workflow: 'w.yml',
+      maxAgeHours: 40,
+      scheduleState: { state: 'active' },
+      ...extra,
+    })
 
   check(
     classify([run(7.6, 'completed', 'success')]) === 'success',
@@ -930,6 +1215,7 @@ function selfTestClassification({ check }) {
     )
     const results = buildResults({
       runsByWorkflow: { ...others, ...onlyThisRun },
+      statesByWorkflow: Object.fromEntries(WATCHED.map((w) => [w.workflow, { state: 'active' }])),
       nowMs: now,
       excludeRunId: '4242',
     })
@@ -1274,6 +1560,88 @@ function selfTestGhInvocation({ check }) {
     '`--limit` fetches more than one run, so the conclusion can look BEHIND an in-flight newest run',
     seen,
   )
+
+  // #4478 — and the SECOND query, the one that tells a disabled schedule from
+  // a young one. Same reasoning as the four above: nothing in
+  // `selfTestNeverRanScheduleState` pins the request that produces the state
+  // it classifies, and each part of it fails silently. A path missing the
+  // workflow name lists every workflow in the repo (the first one's state
+  // would then be reported for all of them); a path missing the repo asks
+  // about the wrong repository; losing `.state` returns a JSON blob that is
+  // not a state string, which reads as `schedule-state-unknown` on every lane
+  // forever — a watchdog that has stopped being able to answer the question
+  // while still filing an issue every day.
+  {
+    const stateDir = mkdtempSync(join(tmpdir(), 'workflow-liveness-state-argv-'))
+    const stateArgvFile = join(stateDir, 'argv.txt')
+    const stateStub = join(stateDir, 'gh')
+    writeFileSync(
+      stateStub,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(stateArgvFile)}\nprintf 'active'\n`,
+      'utf8',
+    )
+    chmodSync(stateStub, 0o755)
+    const prev = process.env.PATH
+    process.env.PATH = `${stateDir}:${prev}`
+    let got
+    try {
+      got = fetchWorkflowState('owner/repo', 'codeql.yml')
+    } finally {
+      process.env.PATH = prev
+    }
+    const stateArgv = readFileSync(stateArgvFile, 'utf8')
+      .split('\n')
+      .filter((x) => x.length > 0)
+    const stateSeen = stateArgv.join(' ')
+    check(
+      stateArgv[0] === 'api' && stateArgv.includes('repos/owner/repo/actions/workflows/codeql.yml'),
+      '#4478: the state read asks the workflows API for THE ONE workflow in THE asked-about repo, by path',
+      stateSeen,
+    )
+    check(
+      stateArgv.includes('--jq') && stateArgv[stateArgv.indexOf('--jq') + 1] === '.state',
+      '#4478: the state read extracts `.state` — without it the payload is a JSON blob that is not a state, and every lane reads unknown forever',
+      stateSeen,
+    )
+    check(
+      got.state === 'active' && got.error === undefined,
+      '#4478: a readable state comes back as a state, with no error alongside it',
+      JSON.stringify(got),
+    )
+  }
+
+  // …and every way the state read can fail comes back as an `error` the
+  // classifier can report, never as a thrown tick and never as an invented
+  // `state`. Driven for real against stub `gh`s, like the run-list failure
+  // modes below.
+  for (const [label, script] of [
+    [
+      '`gh api` exits non-zero (404, rate limit, auth)',
+      '#!/bin/sh\necho "[self-test stub] simulated gh api failure" >&2\nexit 1\n',
+    ],
+    ['`gh api` prints nothing (no `state` field in the payload)', '#!/bin/sh\n'],
+  ]) {
+    const failDir = mkdtempSync(join(tmpdir(), 'workflow-liveness-state-fail-'))
+    const failStub = join(failDir, 'gh')
+    writeFileSync(failStub, script, 'utf8')
+    chmodSync(failStub, 0o755)
+    const prev = process.env.PATH
+    process.env.PATH = `${failDir}:${prev}`
+    let got = null
+    let threw = null
+    try {
+      got = fetchWorkflowState('owner/repo', 'codeql.yml')
+    } catch (err) {
+      threw = err
+    } finally {
+      process.env.PATH = prev
+    }
+    check(
+      threw === null && got?.state === undefined && typeof got?.error === 'string',
+      `#4478: ${label} → carried as an \`error\`, not thrown and not guessed`,
+      threw === null ? JSON.stringify(got) : `threw: ${threw.message}`,
+    )
+  }
 }
 
 /**
@@ -1353,6 +1721,30 @@ function selfTestGhFailureModes({ check }) {
     )
   }
 
+  // A payload with NO `state` key: `--jq '.state'` prints the literal four
+  // characters `null`, which clears the empty-string guard and would otherwise
+  // become the STRING "null" — reported as ``schedule-disabled (… state as
+  // `null` …)``, i.e. the watchdog asserting GitHub disabled a schedule on
+  // evidence that GitHub said nothing. Driven against `fetchWorkflowState`
+  // directly, because the point is which BRANCH the value lands in.
+  for (const literal of ['null', 'undefined']) {
+    writeFileSync(stub, `#!/bin/sh\necho ${literal}\n`, 'utf8')
+    chmodSync(stub, 0o755)
+    const prevPath = process.env.PATH
+    process.env.PATH = `${dir}:${prevPath}`
+    let got
+    try {
+      got = fetchWorkflowState('owner/repo', 'w.yml')
+    } finally {
+      process.env.PATH = prevPath
+    }
+    check(
+      got.state === undefined && typeof got.error === 'string' && got.error.includes(literal),
+      `#4478: \`.state\` printed as the literal \`${literal}\` is an ERROR, not a state — it must not read as \`schedule-disabled\``,
+      JSON.stringify(got),
+    )
+  }
+
   // The happy path really does write a file the filer can read, and a stale
   // entry in it really does survive into that file (not silently dropped).
   {
@@ -1370,10 +1762,26 @@ function selfTestGhFailureModes({ check }) {
       WATCHED.map((w) => [w.workflow, w.workflow === 'codeql.yml' ? fresh(400) : fresh(1)]),
     )
     writeFileSync(runsFile, JSON.stringify(fixture), 'utf8')
+    // Every lane above has a non-empty run list, so `statesByWorkflow` is
+    // never actually consulted by `buildResults` here — but `main()` now
+    // REQUIRES `--states-json-file` alongside `--runs-json-file` regardless
+    // (#4562 note 5), so this fixture supplies one even though its content
+    // is moot for this particular case.
+    const statesFile = join(dir, 'states-happy.json')
+    writeFileSync(statesFile, JSON.stringify({}), 'utf8')
     const prevLog = console.log
     console.log = () => {}
     try {
-      main(['--out', out, '--now', now, '--runs-json-file', runsFile])
+      main([
+        '--out',
+        out,
+        '--now',
+        now,
+        '--runs-json-file',
+        runsFile,
+        '--states-json-file',
+        statesFile,
+      ])
     } finally {
       console.log = prevLog
     }
@@ -1464,7 +1872,15 @@ function selfTestStaleRunIdOmission({ check }) {
   })
   const watched = [{ workflow: 'w.yml', periodHours: 168, maxAgeHours: 40 }]
   const classify = (runsByWorkflow) =>
-    buildResults({ runsByWorkflow, nowMs: now, watched })['w.yml']
+    buildResults({
+      runsByWorkflow,
+      // #4478 — `active`, so the empty-run-list case below stays the
+      // `never-ran` it was written to be about. The disabled/unknown states
+      // are `selfTestNeverRanScheduleState`'s subject.
+      statesByWorkflow: { 'w.yml': { state: 'active' } },
+      nowMs: now,
+      watched,
+    })['w.yml']
 
   const stale = classify({ 'w.yml': [run(55.6, 'completed', 'success')] })
   check(
@@ -1515,7 +1931,16 @@ function selfTestStaleRunIdOmission({ check }) {
       carriesRunId('never-ran (x)') &&
       carriesRunId('no-completed-run (x)') &&
       !carriesRunId('stale (x)') &&
-      !carriesRunId('schedule-disabled (a verdict that does not exist yet)') &&
+      // #4478 — the two verdicts that mean "this schedule is not going to
+      // produce a run" are NOT in the allow-list, which is what makes them
+      // escalate. Pinned here beside `stale` because the three now share one
+      // mechanism, and an edit that "tidied" this predicate by collapsing the
+      // `never-ran`/`schedule-*` prefixes would restore the exemption in
+      // silence. `schedule-disabled` used to be this assertion's example of a
+      // verdict that did not exist yet — hence the replacement below.
+      !carriesRunId('schedule-disabled (x)') &&
+      !carriesRunId('schedule-state-unknown (x)') &&
+      !carriesRunId('schedule-drifted (a verdict that does not exist yet)') &&
       !carriesRunId('stale: reworded'),
     '#4456: `carriesRunId` is an ALLOW-LIST — an unrecognised verdict omits `runId` and escalates on polls, rather than silently inheriting the frozen-id exemption',
     JSON.stringify(
@@ -1525,10 +1950,242 @@ function selfTestStaleRunIdOmission({ check }) {
         'never-ran (x)',
         'no-completed-run (x)',
         'stale (x)',
-        'schedule-disabled (?)',
+        'schedule-disabled (x)',
+        'schedule-state-unknown (x)',
+        'schedule-drifted (?)',
         'stale: reworded',
       ].map((r) => `${r}=${carriesRunId(r)}`),
     ),
+  )
+}
+
+/**
+ * #4478 — the three answers an EMPTY run list can have, pinned one by one.
+ *
+ * They have to be separate assertions, and the issue says why: the behaviour
+ * that shipped before this change already satisfied the "a young lane does
+ * not escalate" arm (nothing escalated) and nothing satisfied the other, so a
+ * suite covering only one side would go green on a build with the fix
+ * removed. Each arm below is falsifiable alone — forcing every state to read
+ * as `active` reds ARM A and leaves ARM B green, forcing every state to read
+ * as disabled reds ARM B and leaves ARM A green, and swapping the two reds
+ * both while leaving ARM C untouched.
+ *
+ * `buildResults` is driven, not just `classifyWorkflow`: the escalation is
+ * not the verdict string, it is the ABSENCE of the `runId` key, which is what
+ * hands the streak to `advanceStreaks`' `fallbackRunId` (this watchdog run's
+ * own URL). Asserting only the string would pass on a build where
+ * `carriesRunId` still claimed the new verdicts — i.e. on a build where
+ * nothing escalates.
+ *
+ * Every content assertion is paired with its verdict PREFIX, deliberately.
+ * All three messages talk about the same workflow, the same emptiness and
+ * (two of them) the word "disabled", so a content-only check can go green on
+ * the wrong branch. That trap caught a first draft of this suite: an ARM A
+ * assertion that checked only for the observed detail stayed green with ARM A
+ * unreachable, because the other branch's message carried the same substring.
+ */
+function selfTestNeverRanScheduleState({ check }) {
+  const now = Date.parse('2026-07-31T19:37:00Z')
+  const watched = [{ workflow: 'w.yml', periodHours: 168, maxAgeHours: 200 }]
+  // Empty run list throughout: that is the ONE case the state read refines,
+  // and the case every arm here is about.
+  const build = (statesByWorkflow) =>
+    buildResults({ runsByWorkflow: { 'w.yml': [] }, statesByWorkflow, nowMs: now, watched })[
+      'w.yml'
+    ]
+
+  // ─── ARM A: GitHub has DISABLED the schedule → escalates ──────────────────
+  {
+    const dead = build({ 'w.yml': { state: 'disabled_inactivity' } })
+    check(
+      dead.result.startsWith('schedule-disabled ('),
+      '#4478 ARM A: a lane with no runs whose workflow GitHub reports `disabled_inactivity` is `schedule-disabled`, not `never-ran` — the case #4478 exists for',
+      JSON.stringify(dead),
+    )
+    check(
+      !('runId' in dead),
+      '#4478 ARM A: that lane OMITS `runId` entirely, so `advanceStreaks` falls back to the watchdog run’s own identity and one poll is one occurrence — the #4456 mechanism, reached at last by a never-run lane',
+      JSON.stringify(dead),
+    )
+    check(
+      dead.result.startsWith('schedule-disabled (') && dead.result.includes('disabled_inactivity'),
+      '#4478 ARM A: the verdict names the state GitHub actually reported, so the tracking issue says WHY it fired rather than just that it did',
+      dead.result,
+    )
+    // Positive classification: `active` is the only state that means "live".
+    // A deny-list would wave through the next value GitHub invents.
+    for (const state of ['disabled_manually', 'disabled_fork', 'some_state_github_adds_in_2027']) {
+      const e = build({ 'w.yml': { state } })
+      check(
+        e.result.startsWith('schedule-disabled (') && !('runId' in e),
+        `#4478 ARM A: a non-\`active\` state (\`${state}\`) escalates too — the state test is an ALLOW-LIST on \`active\`, not a deny-list of known-bad values`,
+        JSON.stringify(e),
+      )
+    }
+  }
+
+  // ─── ARM B: the workflow is ACTIVE and merely young → does NOT escalate ───
+  {
+    const young = build({ 'w.yml': { state: 'active' } })
+    check(
+      young.result.startsWith('never-ran ('),
+      '#4478 ARM B: a lane with no runs whose workflow is `active` stays plain `never-ran` — a workflow that is merely young must not page anyone (#4440)',
+      JSON.stringify(young),
+    )
+    check(
+      'runId' in young && young.runId === null,
+      '#4478 ARM B: that lane still writes an explicit `null` `runId`, the identity-unknowable HOLD — so its streak does not advance on watchdog polls',
+      JSON.stringify(young),
+    )
+  }
+
+  // ─── ARM C: the state could not be read → its OWN verdict ────────────────
+  //
+  // Not folded into either neighbour. Folding it into `never-ran` would make
+  // an API outage silently assume "young", which is the exact bug being
+  // fixed; folding it into `schedule-disabled` would assert a fact this
+  // process does not have. Both directions are asserted NEGATIVELY here, not
+  // merely the positive prefix, because "it is its own answer" is a claim
+  // about what it is NOT.
+  {
+    const failed = build({ 'w.yml': { error: '`gh api` failed (HTTP 502)' } })
+    check(
+      failed.result.startsWith('schedule-state-unknown (') &&
+        !failed.result.startsWith('never-ran (') &&
+        !failed.result.startsWith('schedule-disabled ('),
+      '#4478 ARM C: an unreadable workflow state is its OWN verdict — the uncertainty is reported, not resolved into "young" or into "disabled"',
+      JSON.stringify(failed),
+    )
+    check(
+      failed.result.startsWith('schedule-state-unknown (') && failed.result.includes('HTTP 502'),
+      '#4478 ARM C: the verdict carries WHY the state could not be read, so the reader is told what failed rather than just that something did',
+      failed.result,
+    )
+    check(
+      !('runId' in failed),
+      '#4478 ARM C: an unreadable state also omits `runId`, so a question this watchdog has been unable to answer for N polls escalates — the `null` HOLD would be the pre-#4478 silence, reachable by an API outage',
+      JSON.stringify(failed),
+    )
+    // No state entry at all for the lane — the shape a caller produces by
+    // simply not fetching. Must land in the same visible verdict, never in a
+    // healthy or a young one.
+    const absent = build({})
+    check(
+      absent.result.startsWith('schedule-state-unknown (') && !('runId' in absent),
+      '#4478 ARM C: a lane with NO state entry fetched at all reads as unknown too — an unasked question is not an answer',
+      JSON.stringify(absent),
+    )
+  }
+
+  // End to end through `main()`, which is the only place the states actually
+  // reach `buildResults` in production. A mutant that dropped the
+  // `statesByWorkflow` argument from that call leaves every assertion above
+  // green while turning every real never-run lane into `schedule-state-unknown`.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'workflow-liveness-state-'))
+    const out = join(dir, 'out.json')
+    const runsFile = join(dir, 'runs.json')
+    const statesFile = join(dir, 'states.json')
+    const nowIso = '2026-07-31T19:37:00Z'
+    const fresh = [
+      {
+        databaseId: 1,
+        status: 'completed',
+        conclusion: 'success',
+        createdAt: ISO(Date.parse(nowIso) - HOUR_MS),
+      },
+    ]
+    const dead = 'scorecard.yml'
+    writeFileSync(
+      runsFile,
+      JSON.stringify(
+        Object.fromEntries(WATCHED.map((w) => [w.workflow, w.workflow === dead ? [] : fresh])),
+      ),
+      'utf8',
+    )
+    writeFileSync(
+      statesFile,
+      JSON.stringify(
+        Object.fromEntries(
+          WATCHED.map((w) => [
+            w.workflow,
+            w.workflow === dead ? { state: 'disabled_inactivity' } : { state: 'active' },
+          ]),
+        ),
+      ),
+      'utf8',
+    )
+    const prevLog = console.log
+    console.log = () => {}
+    try {
+      main([
+        '--out',
+        out,
+        '--now',
+        nowIso,
+        '--runs-json-file',
+        runsFile,
+        '--states-json-file',
+        statesFile,
+      ])
+    } finally {
+      console.log = prevLog
+    }
+    const written = JSON.parse(readFileSync(out, 'utf8'))
+    check(
+      written[dead].result.startsWith('schedule-disabled (') &&
+        !('runId' in written[dead]) &&
+        Object.entries(written).every(([name, v]) => name === dead || v.result === 'success'),
+      '#4478: end to end, `main()` threads the workflow states into the written file — the disabled lane is `schedule-disabled` with NO `runId`, and every other lane is untouched',
+      JSON.stringify(written),
+    )
+  }
+}
+
+/**
+ * Review of #4562, note 5: `--runs-json-file` without `--states-json-file`
+ * used to default `statesByWorkflow` to `{}` in silence, turning every
+ * empty-run-list lane into `schedule-state-unknown` with no signal that the
+ * flag was ever missing. This pins the refusal end to end through `main()` —
+ * the same entry point production and every other fixture actually calls —
+ * so a future fixture that forgets the flag fails loudly here instead of
+ * shipping a quietly wrong verdict.
+ */
+function selfTestRequiresStatesJsonFile({ check }) {
+  const dir = mkdtempSync(join(tmpdir(), 'workflow-liveness-nostates-'))
+  const out = join(dir, 'out.json')
+  const runsFile = join(dir, 'runs.json')
+  // An empty run list is the exact case the missing flag used to mis-verdict
+  // — it is what makes `schedule-state-unknown` the (wrong) fallback.
+  writeFileSync(
+    runsFile,
+    JSON.stringify(Object.fromEntries(WATCHED.map((w) => [w.workflow, []]))),
+    'utf8',
+  )
+
+  const prevLog = console.log
+  console.log = () => {}
+  let threw = null
+  try {
+    main(['--out', out, '--runs-json-file', runsFile])
+  } catch (err) {
+    threw = err
+  } finally {
+    console.log = prevLog
+  }
+
+  check(
+    threw !== null && !existsSync(out),
+    '#4562 note 5: `--runs-json-file` without `--states-json-file` throws AND writes no results file, instead of silently defaulting every lane to `schedule-state-unknown`',
+    `threw=${threw?.message} wrote=${existsSync(out)}`,
+  )
+  check(
+    threw !== null &&
+      /--states-json-file/.test(threw.message) &&
+      /--runs-json-file/.test(threw.message),
+    '#4562 note 5: the thrown error names BOTH flags, so the fix is obvious from the message alone',
+    `threw=${threw?.message}`,
   )
 }
 
@@ -1547,6 +2204,8 @@ function runSelfTest() {
   selfTestGhInvocation({ check })
   selfTestGhFailureModes({ check })
   selfTestStaleRunIdOmission({ check })
+  selfTestNeverRanScheduleState({ check })
+  selfTestRequiresStatesJsonFile({ check })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)

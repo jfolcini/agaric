@@ -89,8 +89,16 @@ jobs:
   watchdog:
     name: Watch every scheduled workflow
     runs-on: ubuntu-24.04
-    # Two `gh` calls per watched workflow plus a Node process. Observed cost is
-    # seconds; 10 min bounds a wedged API call rather than budgeting real work.
+    # TWO `gh` calls per watched workflow, plus a Node process. It was ONE
+    # until #4478 added the `.state` read beside the run-list fetch
+    # (`check-workflow-liveness.mjs` has exactly two `execFileSync('gh', …)`
+    # sites, both per-lane), so with `WATCHED` at 7 lanes this step went from
+    # ~7 calls to ~14. `file-scheduled-failures.mjs` in the step below makes
+    # its own, but those are per-FINDING, not per-lane, and a quiet week
+    # issues none. This sentence is the stated basis for the bound below, so
+    # it has to move when the call count does. Observed cost is still
+    # seconds; 10 min bounds a wedged API call rather than budgeting real
+    # work.
     timeout-minutes: 10
     permissions:
       contents: read
