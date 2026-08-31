@@ -135,5 +135,23 @@ describe('#3332 — the [[ULID]] link scan has a single owner', () => {
       expect(res[PAGE_A]).toBe(expectedSources(PAGE_A).length)
       expect(res[PAGE_B]).toBe(expectedSources(PAGE_B).length)
     })
+
+    // #4551 — a `((ULID))` block-ref token must derive a backlink edge exactly
+    // like a `[[ULID]]` page-link token: the real `block_links` reindexer
+    // (`reindex_block_links_conn`) scans BOTH delimiters via `ULID_LINK_RE`.
+    // Before widening `scanLinkTargets`/`contentLinksTo` to match, the mock's
+    // `[[ULID]]`-only scan derived no edge for this block, so the app fix
+    // #4551 shipped could not be exercised end-to-end under Playwright.
+    it('a ((ULID)) block-ref token also derives a backlink edge', () => {
+      const BREF = 'BREF'.padStart(26, '0')
+      blocks.set(BREF, makeBlock(BREF, 'content', `see ((${PAGE_B})) for detail`, PAGE_A, 4))
+
+      const res = dispatch('get_backlinks', { blockId: PAGE_B }) as {
+        items: Array<Record<string, unknown>>
+      }
+      expect(res.items.map((b) => b['id'] as string).toSorted()).toEqual(expectedSources(PAGE_B))
+      // Not vacuous: the (( ))-only source joins the pre-existing [[ ]] ones.
+      expect(expectedSources(PAGE_B)).toEqual([A1, A2, BREF].toSorted())
+    })
   })
 })

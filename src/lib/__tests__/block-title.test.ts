@@ -9,6 +9,7 @@ import {
   blockFirstLineOr,
   normalizeBlockRefTitle,
   unresolvedBlockLabel,
+  unresolvedBlockRefLabel,
   unresolvedTagLabel,
   untitledOr,
 } from '@/lib/block-title'
@@ -180,5 +181,28 @@ describe('unresolvedBlockLabel / unresolvedTagLabel (#4238)', () => {
     // the label must stay a label rather than becoming `[[...]]`-shaped noise.
     expect(unresolvedBlockLabel('AB')).toBe('[[AB...]]')
     expect(unresolvedTagLabel('AB')).toBe('#AB...')
+  })
+})
+
+/**
+ * #4551 — `unresolvedBlockRefLabel` is `unresolvedBlockLabel`'s BLOCK-REF
+ * shaped sibling: an unresolved `((ULID))` reference must render as
+ * `(( id… ))`, not the `[[id…]]` page-link shape `unresolvedBlockLabel`
+ * produces. Pinned against literals for the same reason as its sibling
+ * above.
+ */
+describe('unresolvedBlockRefLabel (#4551)', () => {
+  const ULID = '01HAAAAA0000000000000000AA'
+
+  it('shows the first 8 characters of the id in the block-REF shape', () => {
+    expect(unresolvedBlockRefLabel(ULID)).toBe('(( 01HAAAAA... ))')
+  })
+
+  it('is shaped differently from the page-link unresolved label for the same id', () => {
+    expect(unresolvedBlockRefLabel(ULID)).not.toBe(unresolvedBlockLabel(ULID))
+  })
+
+  it('does not pad or throw for an id shorter than the prefix', () => {
+    expect(unresolvedBlockRefLabel('AB')).toBe('(( AB... ))')
   })
 })

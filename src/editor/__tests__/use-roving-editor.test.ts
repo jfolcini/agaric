@@ -29,6 +29,7 @@ import {
   useRovingEditor,
 } from '@/editor/use-roving-editor'
 import { BLOCK_EVENTS } from '@/lib/block-events'
+import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
 import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 
@@ -2604,5 +2605,67 @@ describe('code block node view re-syncs the <pre> after an attribute-only edit',
     // pins the choice.
     editor.commands.updateAttributes('codeBlock', { lateLabel: null })
     expect(pre.hasAttribute('data-late')).toBe(false)
+  })
+})
+
+// #4551/#4568 — an unresolved `((ULID))` block ref must render the SAME
+// `(( id… ))` shape in the editing surface (this NodeView) that
+// `renderBlockRef` (`@/components/RichContentRenderer/marks/blockRef.tsx`)
+// already renders read-only. Exercises the real `useRovingEditor` wiring —
+// NOT `BlockRef.configure({ resolveContent })` directly (`block-ref.test.ts`
+// does that) — because the substitution that turns a resolver's own
+// `[[id…]]` page-link-shaped miss fallback into `(( id… ))` lives in
+// `use-roving-editor.ts`'s `BlockRef.configure` call, not inside the
+// extension itself.
+describe('BlockRef NodeView — unresolved ref shape via useRovingEditor (#4551)', () => {
+  function docWithBlockRef(id: string): Record<string, unknown> {
+    return {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'block_ref', attrs: { id } }] }],
+    }
+  }
+
+  it('renders (( id… )), not [[id…]], for a ref whose resolver returns the page-link miss shape', async () => {
+    const targetId = 'UNRESOLVED00000000000001'
+    // Mirrors what a real resolver (e.g. `use-block-resolve.ts`'s
+    // `resolveBlockTitle`) hands back on a miss: its OWN by-value
+    // "nothing resolved" fallback, `unresolvedBlockLabel`'s `[[id…]]` shape —
+    // never `undefined` for this resolver.
+    const hook = renderHook(() =>
+      useRovingEditor({ resolveBlockTitle: (id) => unresolvedBlockLabel(id) }),
+    )
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+    const editor = hook.result.current.editor as Editor
+
+    act(() => {
+      editor.commands.setContent(docWithBlockRef(targetId))
+    })
+
+    const chip = editor.view.dom.querySelector('[data-type="block-ref"]')
+    expect(chip?.textContent).toBe(unresolvedBlockRefLabel(targetId))
+    expect(chip?.textContent).not.toBe(unresolvedBlockLabel(targetId))
+    expect(chip?.textContent).not.toContain('[[')
+
+    editor.destroy()
+    hook.unmount()
+  })
+
+  it('renders the resolved title verbatim, unaffected by the unresolved substitution', async () => {
+    const targetId = 'RESOLVED000000000000000001'
+    const hook = renderHook(() =>
+      useRovingEditor({ resolveBlockTitle: () => 'A real block title' }),
+    )
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+    const editor = hook.result.current.editor as Editor
+
+    act(() => {
+      editor.commands.setContent(docWithBlockRef(targetId))
+    })
+
+    const chip = editor.view.dom.querySelector('[data-type="block-ref"]')
+    expect(chip?.textContent).toBe('A real block title')
+
+    editor.destroy()
+    hook.unmount()
   })
 })

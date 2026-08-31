@@ -21,6 +21,8 @@
 
 import { mergeAttributes, Node } from '@tiptap/core'
 
+import { unresolvedBlockRefLabel } from '@/lib/block-title'
+
 export interface BlockRefOptions {
   /** Resolve a block ULID to the first line of its content. Falls back to truncated ULID. */
   resolveContent: (id: string) => string
@@ -46,7 +48,12 @@ export const BlockRef = Node.create<BlockRefOptions>({
 
   addOptions() {
     return {
-      resolveContent: (id: string) => `(( ${id.slice(0, 8)}... ))`,
+      // #4551 — was a local `(( id... ))` literal duplicating
+      // `unresolvedBlockRefLabel`; hoisted so this default (used only when a
+      // caller configures the extension without a `resolveContent`) can't
+      // drift from the shape `renderBlockRef`'s unresolved substitution
+      // produces.
+      resolveContent: (id: string) => unresolvedBlockRefLabel(id),
       onNavigate: undefined,
     }
   },

@@ -71,6 +71,7 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import type { DocNode } from '@/editor/types'
 import { dispatchBlockEvent } from '@/lib/block-events'
+import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { curatedLowlight } from '@/lib/lowlight-curated'
@@ -648,7 +649,10 @@ export function replaceDocSilently(editor: Editor, json: Record<string, unknown>
 export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditorHandle {
   const {
     resolveTagName = (id: string) => `#${id.slice(0, 8)}...`,
-    resolveBlockTitle = (id: string) => `[[${id.slice(0, 8)}...]]`,
+    // #4551 — was a local `[[id…]]` literal duplicating `unresolvedBlockLabel`;
+    // now the same helper every real resolver's own miss-fallback calls, so
+    // this default and the app's resolvers can't drift on the shape.
+    resolveBlockTitle = (id: string) => unresolvedBlockLabel(id),
     // / #544: callers own the placeholder text and pass the
     // i18n-keyed translation (e.g. BlockTree → t('block.emptyPlaceholder')).
     // The default is empty rather than a hardcoded English string so a caller
@@ -788,7 +792,19 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       }),
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `resolveBlockTitleRef` resolves the embedded block's rendered content and `onNavigateRef` fires on click; see #4406
       BlockRef.configure({
-        resolveContent: (id: string) => resolveBlockTitleRef.current(id),
+        // #4551 — `resolveBlockTitleRef.current` is the SAME `resolveBlockTitle`
+        // `BlockLink.configure` above hands to `renderBlockLink`'s NodeView
+        // sibling, so a resolver's own "nothing resolved for this id" miss
+        // fallback comes back `unresolvedBlockLabel`-shaped (`[[id…]]`,
+        // PAGE-link shaped) even for a `((ULID))` block ref. Mirrors
+        // `renderBlockRef`'s by-value substitution
+        // (`@/components/RichContentRenderer/marks/blockRef.tsx`) so the
+        // editing surface and the read-only renderer show the same `(( id… ))`
+        // shape for the same broken ref instead of disagreeing on click.
+        resolveContent: (id: string) => {
+          const resolved = resolveBlockTitleRef.current(id)
+          return resolved === unresolvedBlockLabel(id) ? unresolvedBlockRefLabel(id) : resolved
+        },
         onNavigate: (id: string) => onNavigateRef.current?.(id),
       }),
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `searchTagsRef` powers the `@`-tag picker's query and `onCreateTagRef` creates a tag on demand; see #4406
