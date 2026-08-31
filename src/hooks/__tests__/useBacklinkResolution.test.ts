@@ -485,7 +485,7 @@ describe('useBacklinkResolution', () => {
  *
  *   - `content` — normalise. Not only because this hook seeds `((ULID))`
  *     chips itself since #4551 (`collectContentIds` now matches `[[ULID]]`,
- *     `((ULID))`, and `#[ULID]`), but because the resolve store's key is
+ *     `((ULID))`, and `#[ULID]`), but also because the resolve store's key is
  *     `${spaceId}::${ulid}` with NO mark class in it. One content block
  *     reached by `[[id]]` here and by `((id))` through `fetchAndCacheLinks`
  *     is ONE cache entry, so a raw write here IS read by `renderBlockRef` —

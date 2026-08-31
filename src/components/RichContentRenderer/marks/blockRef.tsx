@@ -44,13 +44,29 @@ export function renderBlockRef(
   // seed call site. Render it verbatim: no per-renderer split/cap here to
   // disagree with the seed or with the TipTap `BlockRef` NodeView
   // (`@/editor/extensions/block-ref.ts`), which renders the same value the
-  // same way.
+  // same way. #4551 extends that parity to the UNRESOLVED case too: the
+  // `BlockRef.configure({ resolveContent })` wiring in `use-roving-editor.ts`
+  // runs the identical by-value substitution below, so a broken ref reads
+  // `(( id… ))` whether it is clicked into or not.
   const resolved = ctx.resolveBlockTitle?.(refId)
   // #4551 — `ctx.resolveBlockTitle` is the SAME callback `renderBlockLink`
   // uses for `[[ULID]]` page links, so an unresolved id comes back either as
-  // `undefined` (no resolver wired at all) or as `unresolvedBlockLabel`'s
-  // `[[id…]]` PAGE-link shape (every resolver's own "nothing resolved for
-  // this id" fallback — see `unresolvedBlockLabel` in `@/lib/block-title`).
+  // `undefined` or as `unresolvedBlockLabel`'s `[[id…]]` PAGE-link shape,
+  // depending on which resolver is wired — never on whether a resolver is
+  // wired at all:
+  //
+  //   - `undefined` — either `ctx.resolveBlockTitle` itself is not provided
+  //     (the optional-chaining call above short-circuits), or it IS provided
+  //     but is one like `useRichContentCallbacks.resolveBlockTitle`
+  //     (`@/hooks/useRichContentCallbacks.ts`), which returns `undefined` on
+  //     an ordinary cache miss — a resolver wired and working, just nothing
+  //     cached yet for this id.
+  //   - `unresolvedBlockLabel`'s `[[id…]]` shape — the wired resolver applies
+  //     its OWN by-value "nothing resolved for this id" fallback before
+  //     returning (e.g. `use-block-resolve.ts`'s `resolveBlockTitle`,
+  //     `useBacklinkResolution`'s), so the miss never reaches here as
+  //     `undefined` at all.
+  //
   // This chip is a BLOCK reference either way, so both cases render the
   // `(( id… ))` shape instead of quietly showing the wrong kind of broken.
   //
