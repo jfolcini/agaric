@@ -46,7 +46,7 @@ export type PropertyValueKind = PropertyValue['type']
  * moment `Lt`/`Gt`/`Lte`/`Gte`/`Contains`/`StartsWith` became reachable from
  * the UI: each of those needs a value input exactly as much as `Eq`/`Ne` do.
  */
-export const PROPERTY_OP_ARITY: Readonly<Record<PropertyOpKind, 'nullary' | 'unary'>> = {
+export const PROPERTY_OP_ARITY = {
   Exists: 'nullary',
   NotExists: 'nullary',
   Eq: 'unary',
@@ -57,7 +57,21 @@ export const PROPERTY_OP_ARITY: Readonly<Record<PropertyOpKind, 'nullary' | 'una
   Gte: 'unary',
   Contains: 'unary',
   StartsWith: 'unary',
-}
+  // `as const satisfies` (not a plain type annotation): `satisfies` keeps the
+  // compile-time exhaustiveness guard — a new `PropertyPredicate` variant fails
+  // to type-check until it is classified here — while `as const` preserves the
+  // literal `'nullary'`/`'unary'` types so {@link ValueBearingOpKind} below can
+  // be DERIVED from this table instead of being a second hand-kept list.
+} as const satisfies Readonly<Record<PropertyOpKind, 'nullary' | 'unary'>>
+
+/**
+ * The operators that carry a `PropertyValue` operand, as a TYPE — the
+ * type-level twin of {@link VALUE_BEARING_OPS}, computed from
+ * {@link PROPERTY_OP_ARITY}'s literal values.
+ */
+export type ValueBearingOpKind = {
+  [K in PropertyOpKind]: (typeof PROPERTY_OP_ARITY)[K] extends 'unary' ? K : never
+}[PropertyOpKind]
 
 /** Predicate kinds that compare a value (the value input is required for
  * these) — computed from {@link PROPERTY_OP_ARITY}, not a fixed allow-list. */
@@ -66,6 +80,39 @@ export const VALUE_BEARING_OPS: ReadonlySet<PropertyOpKind> = new Set(
     (op) => PROPERTY_OP_ARITY[op] === 'unary',
   ),
 )
+
+/**
+ * How a value-bearing operator renders in the `{{op}}` slot of a
+ * `HasProperty` filter CHIP (`pageBrowser.filter.summaryProperty`): either a
+ * locale-independent maths `glyph`, or an i18n `labelKey` for the ops that are
+ * words.
+ *
+ * Keyed by {@link ValueBearingOpKind}, so this is a TOTAL map over the
+ * operators the chip renderer can be handed — the nullary `Exists`/`NotExists`
+ * are excluded by type because they render as their own whole sentence
+ * (`summaryHasProperty` / `summaryNotHasProperty`), not as an infix.
+ *
+ * Why a table and not a ternary: the renderer used to pick the glyph inline as
+ * `predicate.type === 'Ne' ? '≠' : '='`, which was complete only while `Eq`/`Ne`
+ * were the sole emittable value-bearing ops. #4553 Phase 1 made six more
+ * emittable and every one of them fell into that `'='` branch, so `estimate > 3`
+ * and `estimate < 3` rendered byte-identical chips. A total `Record` over the
+ * derived key type cannot go stale that way: a ninth operator classified
+ * `'unary'` in {@link PROPERTY_OP_ARITY} widens `ValueBearingOpKind` and this
+ * object stops type-checking until it is given a rendering.
+ */
+export const PROPERTY_OP_CHIP: Readonly<
+  Record<ValueBearingOpKind, { glyph: string } | { labelKey: string }>
+> = {
+  Eq: { glyph: '=' },
+  Ne: { glyph: '≠' },
+  Lt: { glyph: '<' },
+  Lte: { glyph: '≤' },
+  Gt: { glyph: '>' },
+  Gte: { glyph: '≥' },
+  Contains: { labelKey: 'pageBrowser.filter.summaryPropertyOpContains' },
+  StartsWith: { labelKey: 'pageBrowser.filter.summaryPropertyOpStartsWith' },
+}
 
 /**
  * #1280 D2 — the todo-state values offered by the State editor. Mirrors the

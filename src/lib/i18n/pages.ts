@@ -457,6 +457,16 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.summaryHasProperty': 'has: {{key}}',
   'pageBrowser.filter.summaryNotHasProperty': 'no: {{key}}',
   'pageBrowser.filter.summaryProperty': '{{key}} {{op}} {{value}}',
+  // #4553 Phase 1 — the `{{op}}` slot above. The six ordered/equality operators
+  // render as their maths glyph (`= ≠ < ≤ > ≥`), which needs no catalog entry;
+  // `Contains` / `StartsWith` are WORDS, so they get their own keys rather than
+  // hardcoded English. SEPARATE from `propertyOpContains` / `propertyOpStartsWith`
+  // above: those are the <select> option labels, which read as a sentence
+  // fragment for the operator ("is less than"), whereas the chip is a compact
+  // infix. Sharing one key would silently retitle the chip the day the option
+  // label is reworded.
+  'pageBrowser.filter.summaryPropertyOpContains': 'contains',
+  'pageBrowser.filter.summaryPropertyOpStartsWith': 'starts with',
   'pageBrowser.filter.summaryLastEditedRolling': 'edited ≤ {{days}}d',
   'pageBrowser.filter.summaryLastEditedRange': 'edited {{start}}…{{end}}',
   'pageBrowser.filter.summarySpace': 'this space',

@@ -17,6 +17,7 @@ import { X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { PROPERTY_OP_CHIP } from '@/components/PageBrowser/add-filter/vocab'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
@@ -93,27 +94,36 @@ function lastEditedSummary(
 function hasPropertySummary(
   filter: Extract<FilterPrimitive, { type: 'HasProperty' }>,
   t: TFunction,
+  /**
+   * #4553 review — the same page/block-id resolver `pageFilterSummary` already
+   * threads to the relational chips. A `Ref`-valued property operand is a ULID,
+   * so without this the user picks "Roadmap" in `PropertyRefValueInput` and the
+   * chip reads `owner = 01ARZ…`.
+   */
+  refResolver?: (id: string) => string,
 ): string {
   const { key, predicate } = filter
-  switch (predicate.type) {
-    case 'Exists': {
-      return t('pageBrowser.filter.summaryHasProperty', { key })
-    }
-    case 'NotExists': {
-      return t('pageBrowser.filter.summaryNotHasProperty', { key })
-    }
-    default: {
-      // Eq / Ne both carry a value; the operand is `predicate.value.value`
-      // for either Text or Ref (D26 — no Text/Ref ternary needed). D24 ships
-      // the full op selector, so the Pages popover emits both Eq (`=`) and Ne
-      // (`≠`) — the `≠` glyph is no longer Search-only.
-      return t('pageBrowser.filter.summaryProperty', {
-        key,
-        op: predicate.type === 'Ne' ? '≠' : '=',
-        value: predicate.value.value,
-      })
-    }
-  }
+  // The two nullary operators render as their own whole sentence, not as
+  // `{key} {op} {value}`. Narrowing them off first leaves `predicate.type`
+  // exactly `ValueBearingOpKind`, which is what makes the PROPERTY_OP_CHIP
+  // lookup below total at COMPILE time.
+  if (predicate.type === 'Exists') return t('pageBrowser.filter.summaryHasProperty', { key })
+  if (predicate.type === 'NotExists') return t('pageBrowser.filter.summaryNotHasProperty', { key })
+
+  // #4553 Phase 1 made Lt/Gt/Lte/Gte/Contains/StartsWith emittable from the
+  // advanced surface. This used to be `predicate.type === 'Ne' ? '≠' : '='`,
+  // so all six rendered as `=` and `estimate > 3` / `estimate < 3` produced
+  // byte-identical chips. The glyph now comes from the total `PROPERTY_OP_CHIP`
+  // table, which cannot silently absorb a ninth operator (see its doc comment).
+  const chip = PROPERTY_OP_CHIP[predicate.type]
+  const op = 'glyph' in chip ? chip.glyph : t(chip.labelKey)
+  // The operand is `predicate.value.value` for every `PropertyValue` variant
+  // (D26 — no per-variant ternary needed); only `Ref` needs resolving.
+  const value =
+    predicate.value.type === 'Ref' && refResolver
+      ? refResolver(predicate.value.value)
+      : predicate.value.value
+  return t('pageBrowser.filter.summaryProperty', { key, op, value })
 }
 
 /**
@@ -222,10 +232,11 @@ export function pageFilterSummary(
   tagResolver?: (id: string) => string,
   /**
    * #1478 — resolves a page/block ULID to its title for the relational
-   * `LinksTo` / `LinkedFrom` chips. SEPARATE from `tagResolver` because the
-   * relational ids are page/block ids (resolved via the global resolve store),
-   * not tag ids; conflating them would route the `tag:` chip through the wrong
-   * resolver. Falls back to the raw id when absent.
+   * `LinksTo` / `LinkedFrom` chips, and (#4553 Phase 1) for a `Ref`-valued
+   * `HasProperty` operand, which is a page ULID for the same reason. SEPARATE
+   * from `tagResolver` because the relational ids are page/block ids (resolved
+   * via the global resolve store), not tag ids; conflating them would route the
+   * `tag:` chip through the wrong resolver. Falls back to the raw id when absent.
    */
   refResolver?: (id: string) => string,
 ): string {
@@ -243,7 +254,7 @@ export function pageFilterSummary(
         : t('pageBrowser.filter.summaryPath', { pattern: filter.pattern })
     }
     case 'HasProperty': {
-      return hasPropertySummary(filter, t)
+      return hasPropertySummary(filter, t, refResolver)
     }
     case 'LastEdited': {
       return lastEditedSummary(filter.spec, t)

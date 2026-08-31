@@ -906,6 +906,87 @@ describe('AddFilterPopover', () => {
       })
     })
 
+    // #4553 review, note 6 — the operator RECONCILIATION had no test at all
+    // (the PR description claimed one; it did not exist). `propOp` is DERIVED
+    // during render as `propertyOps.some(op => op.value === rawPropOp) ? rawPropOp
+    // : 'Eq'`, so an operator that the newly-typed key's tier does not offer
+    // must fall back to `Eq` — both in the rendered <select> and, crucially, in
+    // what `buildPredicate` emits. Without the fallback the popover emits a
+    // predicate the user cannot see selected: `Contains` against a `number`
+    // key, which the engine compiles to `1=0` (matches nothing, silently).
+    it('reconciles a now-invalid operator to Eq when the key changes tier', async () => {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          list_property_defs: () => ({
+            items: [
+              {
+                key: 'status',
+                value_type: 'text',
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+              {
+                key: 'estimate',
+                value_type: 'number',
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }),
+        }),
+      )
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      const keyInput = screen.getByLabelText('Property key')
+      await user.type(keyInput, 'status')
+
+      // Pick a Text-ONLY operator.
+      const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+      await waitFor(() => {
+        expect(Array.from(select.options).map((o) => o.value)).toContain('Contains')
+      })
+      await user.selectOptions(select, 'Contains')
+      expect(select.value).toBe('Contains')
+
+      // Now retype the key as a `number`-declared one. `Contains` is not in the
+      // Num tier, so it must not survive.
+      await user.clear(keyInput)
+      await user.type(keyInput, 'estimate')
+      await waitFor(() => {
+        expect(Array.from(select.options).map((o) => o.value)).toEqual([
+          'Eq',
+          'Ne',
+          'Lt',
+          'Lte',
+          'Gt',
+          'Gte',
+          'Exists',
+          'NotExists',
+        ])
+      })
+      // The <select> shows Eq — not a stale `Contains` pointing at an <option>
+      // that no longer renders.
+      expect(select.value).toBe('Eq')
+      expect(select.querySelector('option[value="Contains"]')).toBeNull()
+
+      // And the EMITTED predicate agrees with what the user can see: `Eq`,
+      // over the Num variant the new key's tier selects. (Asserting only the
+      // <select> would pass even if `buildPredicate` read the stale operator.)
+      await user.type(screen.getByLabelText('Value'), '3')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'HasProperty',
+        key: 'estimate',
+        predicate: { type: 'Eq', value: { type: 'Num', value: 3 } },
+      })
+    })
+
     // AC7 — the Pages browser (no `showAdvancedFacets`) must keep its classic
     // behaviour EVEN when the registry would say otherwise: this popover never
     // fetches `list_property_defs` at all (an unstubbed call fails the test
