@@ -1505,6 +1505,82 @@ async fn delete_block_reports_cascaded_nested_pages_4523() {
     );
 }
 
+/// #4523 — `DeleteResponse.block_id` echoes the CANONICAL seed id, not the
+/// spelling the caller used.
+///
+/// `usePageDeleteAction` unions the reply's seed with `affected_page_ids` and
+/// hands the set to `notifyPagesRemoved`, which evicts `[[` picker cache
+/// entries by exact id. Those entries are keyed on the canonical uppercase
+/// form, so an echo of the caller's spelling would contribute an event that
+/// matches nothing whenever the caller passed a lowercase ULID — the seed
+/// would silently keep its cache entry while every cascaded page lost theirs.
+///
+/// This is pinned HERE rather than in the hook's own tests because the mock
+/// `delete_block` handler returns `block_id: blockId` verbatim, so
+/// `resp.block_id === id` in the mock by construction and a frontend
+/// assertion would hold whether or not the production command normalises.
+/// Normalisation happens in `BlockId::from`, which is
+/// `to_ascii_uppercase` (`agaric-core/src/ulid.rs:323`), and this is the
+/// nearest test that can actually observe it.
+///
+/// The lowercase argument is what makes the assertion non-vacuous: passing the
+/// canonical spelling would pass against an implementation that echoed the
+/// input unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_block_canonicalises_the_echoed_seed_id_4523() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "DB4523C_SPACE").await;
+    insert_block(&pool, "DB4523C_PAGE", "page", "Parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "DB4523C_KID",
+        "page",
+        "Kid",
+        Some("DB4523C_PAGE"),
+        Some(1),
+    )
+    .await;
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["DB4523C_PAGE".into(), "DB4523C_KID".into()],
+        "DB4523C_SPACE".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // The caller hands in a NON-canonical spelling, which is what the hook
+    // would forward if a call site ever lowercased an id in transit.
+    let resp = delete_block_inner(&pool, DEV, &mat, "db4523c_page".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(
+        resp.block_id, "DB4523C_PAGE",
+        "block_id must be the canonical uppercase seed, not the caller's \
+         spelling — the picker cache is keyed on the canonical form, so an \
+         echoed 'db4523c_page' would evict nothing (got {:?})",
+        resp.block_id
+    );
+
+    // And the cohort it is unioned with is in the same casing, so the set the
+    // hook builds is internally consistent rather than half-normalised.
+    let mut pages = resp.affected_page_ids.clone();
+    pages.sort();
+    assert_eq!(
+        pages,
+        vec!["DB4523C_KID".to_string(), "DB4523C_PAGE".to_string()],
+        "affected_page_ids must carry the same canonical casing as block_id \
+         (got {:?})",
+        resp.affected_page_ids
+    );
+}
+
 /// #4523 error paths — a REFUSED delete must not report a cohort, because the
 /// caller turns a reported cohort straight into `[[` cache evictions and an
 /// eviction for a page that is still live is the mirror-image bug: the picker

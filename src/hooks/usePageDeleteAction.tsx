@@ -177,7 +177,9 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
       const { id, originSpaceId, onDeleted, onFailed } = target
       setDeletingId(id)
       try {
-        const { affected_page_ids: cascadedPageIds } = unwrap(await commands.deleteBlock(id))
+        const { block_id: canonicalSeedId, affected_page_ids: cascadedPageIds } = unwrap(
+          await commands.deleteBlock(id),
+        )
         setResolveDeletedStatus(target, true)
         // #4007 — the `[[` picker's page-name cache is filled once per space
         // and has no other delete signal; without this it keeps offering the
@@ -209,17 +211,23 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // this is purely additive and cannot regress the pre-#4523 eviction if
         // the cohort ever comes back narrower than expected.
         //
-        // Accepted cost of that unconditional union, recorded rather than
-        // fixed: `id` is the caller-supplied string while the cohort carries
-        // the canonical uppercase ids the command normalises to, so a caller
-        // passing a non-canonical case emits one extra `removed` event that
-        // matches nothing. `DeleteResponse` carries no echoed seed id to union
-        // with instead (only `descendants_affected` and `affected_page_ids`),
-        // and the cohort already contains the canonical seed whenever the seed
-        // is a page — so the alternatives are to drop `id` and lose the
-        // narrower-cohort backstop above, or to add a field to the reply for a
-        // no-op event. The extra event is inert; its only cost is one slot
-        // against the fan-out budget.
+        // The seed comes off the REPLY, not the caller's `id`. Both name the
+        // same block, but `id` is whatever string the caller passed while
+        // `block_id` is what the command normalised it to — `BlockId` is
+        // uppercase on construction, so a caller handing in a lowercase ULID
+        // would otherwise contribute an event keyed on a spelling no cache
+        // entry uses, matching nothing. The cohort already carries the
+        // canonical seed whenever the seed is a page; taking `block_id` keeps
+        // the backstop above for the case where it is NOT a page, without the
+        // spelling mismatch.
+        //
+        // No frontend test can tell the two apart: the mock's `delete_block`
+        // handler echoes `block_id: blockId` verbatim
+        // (`tauri-mock/handlers/blocks.ts`), so `resp.block_id === id` there by
+        // construction. Normalisation happens in the command, and that is where
+        // it is pinned — `delete_block_canonicalises_the_echoed_seed_id_4523`.
+        // Asserting it from this hook against the mock would pass whether or
+        // not this line is correct.
         //
         // `notifyPagesRemoved` (#4524, landed in #4534) owns the de-duplication,
         // the `NAME_CACHE_FANOUT_MAX_IDS` budget and the null-space fallback,
@@ -229,7 +237,7 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // caller's: the cascade is what makes this a set, so `1 <= budget`
         // would wave a 200-nested-page delete straight past the threshold the
         // budget exists to enforce.
-        notifyPagesRemoved([id, ...cascadedPageIds], originSpaceId)
+        notifyPagesRemoved([canonicalSeedId, ...cascadedPageIds], originSpaceId)
         // #3626 — a deleted page must stop lighting up the calendar. The
         // journal's own DaySection routes its delete through here too, so this
         // one call covers every surface that can remove a journal page.
