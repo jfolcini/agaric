@@ -78,6 +78,7 @@ import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { convertBlockContent } from '@/lib/block-type-convert'
+import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
@@ -551,6 +552,7 @@ export function BlockTree({
     searchSlashCommands,
     onSlashCommand: dispatch.thunks.slashCommand,
     onCheckbox: dispatch.thunks.checkbox,
+    onListStyle: dispatch.thunks.listStyle,
     searchPropertyKeys,
     onPropertySelect: dispatch.thunks.propertySelect,
     placeholder: editorPlaceholder,
@@ -639,6 +641,7 @@ export function BlockTree({
     handleSlashCommand,
     handleTemplateSelect,
     handleCheckboxSyntax,
+    handleListStyleSyntax,
     templatePickerOpen,
     setTemplatePickerOpen,
     templatePages,
@@ -772,9 +775,20 @@ export function BlockTree({
       const ok = await pageStore.getState().edit(blockId, newContent)
       if (!ok) return
       if (isLive) rovingEditorRef.current?.mount(blockId, newContent)
+      // #4552 slice 2 — write the `listStyle` property `blockType` implies:
+      // 'ordered'/'bullet' for the two list targets, cleared for every other
+      // target, so converting a styled block away from a list does not leave
+      // it flagged as one. See `useSlashCommandStructural.handleTurnInto`'s
+      // matching comment for the full rationale.
+      try {
+        await setListStyle(blockId, listStyleForBlockType(blockType))
+      } catch (err) {
+        logger.error('BlockTree', 'setListStyle (turn-into) failed', { blockId }, err)
+        notify.error(t('slash.turnIntoFailed'))
+      }
       await load()
     },
-    [pageStore, load, handleFlush],
+    [pageStore, load, handleFlush, t],
   )
 
   // #976 (item 13) — Duplicate a block + its subtree, inserting the copy
@@ -865,6 +879,7 @@ export function BlockTree({
   dispatch.on('flush', handleFlush)
   dispatch.on('slashCommand', handleSlashCommand)
   dispatch.on('checkbox', handleCheckboxSyntax)
+  dispatch.on('listStyle', handleListStyleSyntax)
   // #2656 — the `::` picker's extension already inserts the `key:: ` inline
   // text; it no longer fires `setProperty({ valueText: '' })` (the real backend
   // rejects an empty value_text, so that produced a "Failed to set property"

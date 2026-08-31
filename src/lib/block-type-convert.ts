@@ -10,12 +10,16 @@
  *
  * The conversion operates on the block's markdown content — the same
  * read-modify-write the existing structural slash handlers use via
- * `applyContentEdit` (e.g. `# ` for headings, `> ` for quotes, `1. ` for
- * ordered lists). This is NOT a destructive whole-block mass-convert: it
- * strips the leading block marker of the first line and applies the new one,
- * leaving the inline text intact. Code-block conversion uses fenced
- * ``` syntax so it round-trips through the markdown parser/serializer like
- * any other block.
+ * `applyContentEdit` (e.g. `# ` for headings, `> ` for quotes). This is NOT a
+ * destructive whole-block mass-convert: it strips the leading block marker of
+ * the first line and applies the new one, leaving the inline text intact.
+ * Code-block conversion uses fenced ``` syntax so it round-trips through the
+ * markdown parser/serializer like any other block.
+ *
+ * `numbered-list` / `bullet-list` targets do NOT re-mark the text here (#4552
+ * slice 2) — list-ness moved to the `listStyle` block property
+ * (`src/lib/list-style.ts`). Callers apply `listStyleForBlockType` +
+ * `setListStyle` alongside the content edit this function produces.
  */
 
 import { MARKER_INDENT_SRC } from '@/editor/markdown-parse/vocab'
@@ -74,14 +78,30 @@ const FENCE_RE = /^```/
 /**
  * Strip the leading structural marker from a single line of markdown,
  * returning the bare inline text. Idempotent for already-plain text.
+ *
+ * Tries each marker pattern against the ORIGINAL line, in the same priority
+ * order as {@link detectBlockType}, and strips at most ONE — the first that
+ * matches. A block carries exactly one marker (CommonMark's block
+ * productions are mutually exclusive at line start), so once that marker is
+ * identified, everything after it is the block's own text and must be left
+ * alone, even if it happens to start with another marker-like sequence
+ * (`# 1. groceries` is a HEADING titled "1. groceries", not a heading around
+ * an ordered-list item).
+ *
+ * Chaining `.replace()` calls instead — each running on the PREVIOUS call's
+ * output rather than on `line` — was the bug: after stripping a real `# `,
+ * `> `, or `1. ` marker, a later pattern in the chain could match again
+ * against the block's own leftover text and strip a SECOND, coincidental
+ * "marker" that was never structural, silently losing those characters
+ * (#4552 slice 1; `docs/architecture/list-ergonomics.md:181-188`).
  */
 export function stripBlockMarker(line: string): string {
+  if (CALLOUT_RE.test(line)) return line.replace(CALLOUT_RE, '')
+  if (HEADING_RE.test(line)) return line.replace(HEADING_RE, '')
+  if (QUOTE_RE.test(line)) return line.replace(QUOTE_RE, '')
+  if (ORDERED_RE.test(line)) return line.replace(ORDERED_RE, '')
+  if (BULLET_RE.test(line)) return line.replace(BULLET_RE, '')
   return line
-    .replace(CALLOUT_RE, '')
-    .replace(HEADING_RE, '')
-    .replace(QUOTE_RE, '')
-    .replace(ORDERED_RE, '')
-    .replace(BULLET_RE, '')
 }
 
 /**
@@ -143,7 +163,17 @@ export function convertBlockContent(content: string, type: BlockTypeToken): stri
   const [text = '', ...rest] = extractLines(content)
   const tail = rest.length > 0 ? `\n${rest.join('\n')}` : ''
   switch (type) {
-    case 'paragraph': {
+    // #4552 slice 2 — `numbered-list` / `bullet-list` no longer emit a `1. `
+    // / `- ` markdown prefix here. List-ness is now the `listStyle` block
+    // property (`src/lib/list-style.ts`), set separately by the caller
+    // (`listStyleForBlockType` + `setListStyle`) — emitting BOTH a markdown
+    // marker AND the property would double-render the marker (the exact
+    // "two markers, two renderers" stacking problem #4552 documents). The
+    // content transform for these two targets is therefore identical to
+    // `'paragraph'`: strip whatever marker was there, keep the text bare.
+    case 'paragraph':
+    case 'numbered-list':
+    case 'bullet-list': {
       return `${text}${tail}`
     }
     case 'h1':
@@ -157,12 +187,6 @@ export function convertBlockContent(content: string, type: BlockTypeToken): stri
     }
     case 'quote': {
       return [text, ...rest].map((l) => `> ${l}`).join('\n')
-    }
-    case 'numbered-list': {
-      return `1. ${text}${tail}`
-    }
-    case 'bullet-list': {
-      return `- ${text}${tail}`
     }
     case 'callout': {
       return [`> [!INFO] ${text}`, ...rest.map((l) => `> ${l}`)].join('\n')

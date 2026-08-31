@@ -53,6 +53,7 @@ import {
   setListMarkerMeta,
   type ListMarkerState,
 } from '@/editor/extensions/list-marker-decoration'
+import { ListStyleInputRule } from '@/editor/extensions/list-style-input-rule'
 import { MathBlock, MathInline } from '@/editor/extensions/math'
 import { MermaidCodeBlockView } from '@/editor/extensions/MermaidCodeBlockView'
 import { PropertyPicker, propertyPickerPluginKey } from '@/editor/extensions/property-picker'
@@ -551,6 +552,8 @@ export interface RovingEditorOptions {
   onSlashCommand?: (item: PickerItem) => void
   /** Called when checkbox syntax (- [ ] or - [x]) is detected during typing. */
   onCheckbox?: ((state: 'TODO' | 'DONE') => void) | null
+  /** Called when the block-level `1. ` / `- ` list-marker syntax is detected during typing (#4552). */
+  onListStyle?: ((style: 'bullet' | 'ordered') => void) | null
   /** Return property keys matching query (for :: picker). */
   searchPropertyKeys?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Called when a property is selected from the :: picker. */
@@ -667,6 +670,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     searchSlashCommands = () => [],
     onSlashCommand,
     onCheckbox,
+    onListStyle,
     searchPropertyKeys = () => [],
     onPropertySelect,
   } = options
@@ -697,6 +701,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const onSlashCommandRef = useRef(onSlashCommand)
   const onPropertySelectRef = useRef(onPropertySelect)
   const onCheckboxRef = useRef(onCheckbox)
+  const onListStyleRef = useRef(onListStyle)
   const searchBlockRefsRef = useRef(options.searchBlockRefs ?? (async () => [] as PickerItem[]))
   const searchTagsRef = useRef(searchTags)
   const searchPagesRef = useRef(searchPages)
@@ -716,6 +721,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     onSlashCommandRef.current = onSlashCommand
     onPropertySelectRef.current = onPropertySelect
     onCheckboxRef.current = onCheckbox
+    onListStyleRef.current = onListStyle
     searchBlockRefsRef.current = options.searchBlockRefs ?? (async () => [] as PickerItem[])
     searchTagsRef.current = searchTags
     searchPagesRef.current = searchPages
@@ -856,6 +862,15 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `onCheckboxRef` fires when a typed markdown checkbox pattern (`[ ]`/`[x]`) completes; see #4406
       CheckboxInputRule.configure({
         onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
+      }),
+      // #4552 slice 2 — block-level `1. ` / `- ` list-marker syntax. Its
+      // bullet rule excludes a leading `[` precisely so it never competes
+      // with CheckboxInputRule's `- [ ] ` unwrap rules above (see this
+      // extension's own doc comment for why BulletList/OrderedList's stock
+      // input rules stay enabled rather than being replaced outright).
+      // oxlint-disable-next-line react/refs -- same deferred-read pattern as `onCheckboxRef` immediately above; see #4406
+      ListStyleInputRule.configure({
+        onListStyle: (style: 'bullet' | 'ordered') => onListStyleRef.current?.(style),
       }),
       // #1481 — route a pasted single-line GFM task (`- [ ] x`) through the
       // markdown parser so it becomes a task paragraph (carrying `todoState`)
