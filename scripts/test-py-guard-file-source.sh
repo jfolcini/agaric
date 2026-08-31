@@ -98,6 +98,36 @@ _seed_guards() {
   cp "$SCRIPTS_DIR/check-raw-tx.py" "$SCRIPTS_DIR/check-dynamic-sql.py" \
     "$SCRIPTS_DIR/check-command-arity.py" "$dir/scripts/"
   cp "$SCRIPTS_DIR/lib/guard_file_source.py" "$dir/scripts/lib/"
+  # Every declared CRATE_ROOTS directory, empty (#4501). Both seeded guards
+  # now REFUSE a tree in which a declared crate root is absent, because a
+  # renamed or misspelled segment used to make them exempt every file under
+  # that crate in silence; without these, 37 assertions here go red for a
+  # reason that has nothing to do with the file source under test.
+  #
+  # SEEDED, not suppressed with `--synthetic-tree` — the opposite choice from
+  # `pr-merge-result-check.sh`, and the difference is what the fixtures are
+  # FOR. That script's merge fixtures have deliberately foreign roots
+  # (`src-tauri/source`, `src-tauri/extra/src`) because following the merged
+  # tree's own layout is the property under test, so seeding real roots would
+  # destroy it. These fixtures already use the REAL app root `src-tauri/src`
+  # and are about which COPY of a file a guard reads; their crate topology is
+  # incidental, so completing it costs nothing, keeps the roots assertion LIVE
+  # here rather than switched off, and — the deciding reason — adds no second
+  # opt-out surface for something else to have to police. It also keeps
+  # `--update-baseline` usable in a fixture, which the marker cannot: the flag
+  # is mutually exclusive with re-anchoring by design.
+  #
+  # Each root gets a TRACKED `.gitkeep`, not a bare `mkdir`: section 9 builds
+  # linked worktrees with `git worktree add`, which reproduces the committed
+  # tree — and git does not track empty directories, so an unseeded worktree
+  # would have the guards but not the roots and fail for a reason section 9
+  # is not about. `.gitkeep` is not `.rs`, so no scan sees it.
+  local root
+  for root in agaric-store/src agaric-engine/src agaric-sync/src \
+              diagnostics/src src; do
+    mkdir -p "$dir/src-tauri/$root"
+    : > "$dir/src-tauri/$root/.gitkeep"
+  done
 }
 
 # `git_scratch_init` + seed, since every fixture below needs both.

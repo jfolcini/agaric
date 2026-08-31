@@ -62,8 +62,10 @@ Anything left over is printed as `file:line: <code>` with a pointer to
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import importlib.util
+import io
 import os
 import re
 import sys
@@ -352,6 +354,42 @@ def is_bin_file(rel_path: str) -> bool:
 def under_crate_root(rel_path: str) -> bool:
     """True if `rel_path` lives under one of the scanned crate roots (#3110)."""
     return any(rel_path.startswith(root) for root in CRATE_ROOTS)
+
+
+def missing_crate_roots() -> list[str]:
+    """Declared CRATE_ROOTS that are not directories in this checkout (#4501).
+
+    This guard narrows differently from its siblings, which is why a sweep
+    grepping for `is_dir()` reported it clean: it never walks a root. It uses
+    the roots as STRING PREFIXES to decide which of prek's changed files it is
+    willing to police (`under_crate_root`). A renamed or misspelled segment
+    therefore does not shrink a walk — it makes `under_crate_root` reject
+    every real file under that crate, and `main`'s loop `continue`s past all
+    of them. Same outcome as #4508's and #4540's silent narrowing (a green run
+    over a subtree the guard stopped reading), reached by a different route,
+    and with no distinguishing token to search for.
+
+    Reported rather than tolerated: a prefix that names nothing is a broken
+    declaration, not an absent one.
+    """
+    return [
+        root.rstrip("/")
+        for root in CRATE_ROOTS
+        if not (REPO_ROOT / root).is_dir()
+    ]
+
+
+ROOT_MISSING_HINT = (
+    "    -> #4501: a CRATE_ROOTS entry in scripts/check-raw-tx.py names a\n"
+    "       directory that does not exist. These prefixes decide which changed\n"
+    "       files this guard is willing to police, so a stale one silently\n"
+    "       exempts every file under that crate rather than narrowing a walk.\n"
+    "       Fix the LIST, and check the siblings — check-dynamic-sql.py,\n"
+    "       check-table-ownership.py and check-op-log-delete.py each keep their\n"
+    "       own hand-synchronised copy of it.\n"
+    "       If the tree under test is deliberately NOT this repository (a\n"
+    "       fixture repo), the caller says so with `--synthetic-tree`."
+)
 
 
 def cfg_test_line_set(lines: list[str]) -> set[int]:
@@ -694,11 +732,70 @@ def run_self_test() -> int:
             print(f"  [FAIL] is_allowlisted_file({rel!r}) expected {expect}, "
                   f"got {got}")
 
+    # --- #4501 assertion 3: a declared root that names nothing is LOUD ------
+    # Pinned in both directions plus the flag's two arms, because each half
+    # alone passes against a different bug: a one-sided "a misspelled root is
+    # reported" also passes for a guard that reports every root missing, and a
+    # suppression tested only in the "suppressed" direction is how #4540's
+    # review found a flag disabling the assertion on the one path that runs in
+    # production. Driven through `main()`, not `missing_crate_roots()`, so
+    # dropping the WIRING is caught and not just a helper regression.
+    root_cases = 0
+    _saved_roots = CRATE_ROOTS[:]
+    try:
+        # A misspelling ALONGSIDE present siblings — the realistic shape.
+        globals()["CRATE_ROOTS"] = [
+            "src-tauri/agaric-stores/src/",
+            "src-tauri/src/",
+        ]
+        root_cases += 1
+        if missing_crate_roots() != ["src-tauri/agaric-stores/src"]:
+            failures += 1
+            print(
+                f"  [FAIL] a misspelled crate root was not reported: "
+                f"{missing_crate_roots()!r}"
+            )
+        with contextlib.redirect_stderr(io.StringIO()):
+            missing_rc = main([])
+            suppressed_rc = main(["--synthetic-tree"])
+            globals()["CRATE_ROOTS"] = _saved_roots
+            intact_rc = main(["--synthetic-tree"])
+        root_cases += 1
+        # Exact code, not "not 0": `main` returns 2 for a
+        # `guard_file_source.build` invocation error raised BEFORE the roots
+        # check, so `!= 0` would also pass if the run died for an unrelated
+        # reason — the assertion would be true for two reasons and a dead
+        # guard would look alive.
+        if missing_rc != 1:
+            failures += 1
+            print(
+                "  [FAIL] a missing CRATE_ROOTS entry did not fail the run with "
+                f"the roots code (expected 1, got {missing_rc})"
+            )
+        root_cases += 1
+        if suppressed_rc != 0:
+            failures += 1
+            print("  [FAIL] --synthetic-tree did not suppress a MISSING root")
+        root_cases += 1
+        if intact_rc != 0:
+            failures += 1
+            print("  [FAIL] --synthetic-tree changed the verdict on intact roots")
+        root_cases += 1
+        if missing_crate_roots():
+            failures += 1
+            print(
+                f"  [FAIL] the real CRATE_ROOTS reported a missing root: "
+                f"{missing_crate_roots()!r}"
+            )
+    finally:
+        globals()["CRATE_ROOTS"] = _saved_roots
+
     total = (
         len(_SELFTEST_CASES)
         + len(crate_root_cases)
         + len(exclusion_cases)
         + len(allowlist_cases)
+        + root_cases
     )
     if failures:
         print(f"\n{failures} self-test case(s) FAILED", file=sys.stderr)
@@ -717,7 +814,10 @@ def main(argv: list[str]) -> int:
     repo_root = REPO_ROOT
     try:
         src = guard_file_source.build(
-            argv, os.environ, repo_root, extra_flags=("--self-test", "--print-source")
+            argv,
+            os.environ,
+            repo_root,
+            extra_flags=("--self-test", "--print-source", "--synthetic-tree"),
         )
     except (guard_file_source.UsageError, guard_file_source.AmbiguousSourceError) as err:
         print(f"check-raw-tx: invocation error: {err}", file=sys.stderr)
@@ -727,6 +827,35 @@ def main(argv: list[str]) -> int:
             f"check-raw-tx: {guard_file_source.describe_source(src.source)} ({src.why})"
         )
         return 0
+
+    # #4501 assertion 3, before any file is judged. `--synthetic-tree` is how a
+    # caller says "this tree is deliberately not this repository": both
+    # `pr-merge-result-check.sh` (synthetic merge fixtures with roots like
+    # `src-tauri/source`) and `test-py-guard-file-source.sh` (throwaway git
+    # fixtures holding only `src-tauri/src`) drive a SEEDED COPY of this guard
+    # against such a tree, where our crate roots are inapplicable rather than
+    # violated.
+    #
+    # A FLAG, not an env var and not an inferred condition — both dead ends are
+    # recorded in check-table-ownership.py's `main`, which hit them first:
+    # inference cannot tell four genuinely-deleted crates from a foreign tree
+    # that happens to have `src-tauri/src`, and an env var can arrive from a
+    # runner that inherited it by accident. It is also asserted UNREACHABLE on
+    # the real path, in `pr-merge-result-check.sh`'s self-test, because an
+    # opt-out nothing polices is the fail-open this issue is about.
+    if "--synthetic-tree" not in argv:
+        missing = missing_crate_roots()
+        if missing:
+            print(
+                "Raw write-transaction guard (#110) — a declared CRATE_ROOTS "
+                "directory does not exist:\n",
+                file=sys.stderr,
+            )
+            for rel in missing:
+                print(f"  {rel}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print(ROOT_MISSING_HINT, file=sys.stderr)
+            return 1
 
     all_violations: list[str] = []
     try:

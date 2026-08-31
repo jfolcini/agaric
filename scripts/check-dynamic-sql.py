@@ -72,7 +72,9 @@ Stdlib only — no third-party deps.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import os
 import re
 import sys
@@ -168,6 +170,47 @@ EXTRA_TEST_FILE_GLOBS = [
     "**/test_support.rs",
     "**/src/bin/**",
 ]
+
+
+def missing_crate_roots() -> list[str]:
+    """Declared CRATE_ROOTS that are not directories in this checkout (#4501).
+
+    The narrowing here has NO distinguishing token to grep for, which is why
+    the first sweep of these guards reported this file clean: `crate_files()`
+    calls `SOURCE.list_paths(rel_root, ".rs")` on each root, and a root that
+    does not exist simply yields nothing. There is no `is_dir()` anywhere in
+    this file — a mechanical search for the construct removed in #4508 and
+    #4540 finds two carriers of four and reports success, which is this
+    issue's own failure mode applied to the audit of this issue.
+
+    The consequence is the same either way: every file under a renamed or
+    misspelled root drops out of the walk, `_check`'s root-prefix filter
+    rejects the same files on the argv path, and the guard exits 0 over a
+    subtree it stopped reading.
+
+    Reported rather than filtered: a root that vanished is a broken
+    declaration, not an absent one.
+    """
+    return [
+        str(root.relative_to(REPO_ROOT))
+        for root in CRATE_ROOTS
+        if not root.is_dir()
+    ]
+
+
+ROOT_MISSING_HINT = (
+    "    -> #4501: a CRATE_ROOTS entry in scripts/check-dynamic-sql.py names a\n"
+    "       directory that does not exist. Fix the LIST, not the baseline: the\n"
+    "       walk yields nothing for a missing root, so re-anchoring here would\n"
+    "       drop every entry under it and report success — the finding\n"
+    "       destroyed by the command prescribed to fix it. If the crate was\n"
+    "       genuinely retired, remove its root in the same commit, then\n"
+    "       re-anchor. The sibling guards (check-raw-tx.py,\n"
+    "       check-table-ownership.py, check-op-log-delete.py) each keep their\n"
+    "       own hand-synchronised copy of this list — check them too.\n"
+    "       If the tree under test is deliberately NOT this repository (a\n"
+    "       fixture repo), the caller says so with `--synthetic-tree`."
+)
 
 
 def is_excluded_file(rel_path: str) -> bool:
@@ -958,6 +1001,149 @@ def run_self_test() -> int:
             "--update-baseline <path>..."
         )
 
+    # --- #4501 assertion 3 + the re-anchor ratchet -------------------------
+    # Both are driven through `main()`, never through the helpers: a
+    # helper-level assertion cannot notice the WIRING being dropped, and the
+    # flag arms exist precisely to be wired wrong. Pinned in BOTH directions —
+    # a suppression tested only in the "suppressed" direction is how #4540's
+    # review found a flag that disabled the assertion on the one path that runs
+    # in production.
+    #
+    # Everything downstream of the roots check is stubbed, and that is
+    # load-bearing rather than tidiness: `write_baseline` in particular. The
+    # reduction and mutual-exclusion cases below run with a NARROWED walk
+    # installed, and are safe only because the arms under test return before
+    # the write. If one regresses, this hook — which is `always_run` — would
+    # rewrite the tracked `src-tauri/dynamic-sql-baseline.txt` from that
+    # narrowed walk on every commit, with stderr captured: the destruction
+    # these arms exist to prevent, performed silently by the assertion that
+    # tests for it. A test must not depend on the code under test to avoid
+    # doing damage.
+    root_cases = 0
+    _saved_roots = CRATE_ROOTS[:]
+    _saved_read = globals()["read_baseline"]
+    _saved_compute = globals()["compute_baseline"]
+    _saved_write = globals()["write_baseline"]
+    _saved_check = globals()["_check"]
+    _wrote: list[object] = []
+    try:
+        globals()["read_baseline"] = lambda: {"src-tauri/src/kept.rs": 1,
+                                              "src-tauri/agaric-store/src/lost.rs": 2}
+        globals()["compute_baseline"] = lambda: {"src-tauri/src/kept.rs": 1}
+        globals()["write_baseline"] = lambda *a, **k: _wrote.append(a)
+        # `_check` is stubbed for the reason #4540 records: an earlier revision
+        # let `main()` run on into the real drift/orphan comparison against the
+        # stub baseline, which is unconditionally non-zero — so the two
+        # `--synthetic-tree` cases failed, and blamed the flag for a verdict
+        # produced three subsystems downstream of it. A test that names the
+        # wrong subsystem is worse than no test.
+        globals()["_check"] = lambda *a, **k: 0
+        # A misspelling ALONGSIDE present siblings — the realistic shape, and
+        # the one an "at least one root exists" inference would swallow.
+        globals()["CRATE_ROOTS"] = [
+            REPO_ROOT / "src-tauri" / "agaric-stores" / "src",
+            REPO_ROOT / "src-tauri" / "src",
+        ]
+        root_cases += 1
+        if missing_crate_roots() != ["src-tauri/agaric-stores/src"]:
+            failures.append(
+                f"a misspelled crate root was not reported: {missing_crate_roots()!r}"
+            )
+        # stdout redirected as well as stderr: the permitted re-anchor below
+        # prints "Re-anchored …" on success, and that line in the middle of a
+        # passing suite reads like the suite itself rewrote the baseline.
+        with contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            missing_rc = main([])
+            missing_update_rc = main(["--update-baseline", "--all"])
+            suppressed_rc = main(["--synthetic-tree"])
+            both_rc = main(["--synthetic-tree", "--update-baseline", "--all"])
+            globals()["CRATE_ROOTS"] = _saved_roots
+            intact_rc = main(["--synthetic-tree", "src-tauri/src/nothing.rs"])
+            drop_rc = main(["--update-baseline", "--all"])
+            # Snapshotted HERE, not after the whole block: the next call is
+            # supposed to write, so asserting on the final tally would pass
+            # whether or not the refusal above wrote first.
+            wrote_after_refusal = len(_wrote)
+            allowed_rc = main(["--update-baseline", "--all", "--allow-reductions"])
+            wrote_after_opt_in = len(_wrote)
+            stray_flag_rc = main(["--allow-reductions"])
+        root_cases += 1
+        # Pin the EXACT code, not merely "not 0". Two gates in this file
+        # return 2 ahead of the roots check — the `--allow-reductions` misuse
+        # gate and the `--synthetic-tree` mutual-exclusion gate — so a `!= 0`
+        # assertion also passes when the run died for one of those instead,
+        # which is an assertion true for two reasons and how a dead guard
+        # looks alive. (The `guard_file_source.build` error is the same shape
+        # in `check-raw-tx.py`, where the build call really does precede the
+        # roots check; in THIS file it now sits after it, so it is not the
+        # example to cite here.) The sibling arms already pin exact codes.
+        if missing_rc != 1:
+            failures.append(
+                f"a missing CRATE_ROOTS entry did not fail the run with the roots "
+                f"code (expected 1, got {missing_rc})"
+            )
+        root_cases += 1
+        if missing_update_rc != 1:
+            failures.append(
+                "--update-baseline over a missing root did not refuse — it would "
+                f"have re-anchored against the narrowed walk (expected 1, got "
+                f"{missing_update_rc})"
+            )
+        root_cases += 1
+        if suppressed_rc != 0:
+            failures.append("--synthetic-tree did not suppress a MISSING root")
+        root_cases += 1
+        if intact_rc != 0:
+            failures.append("--synthetic-tree changed the verdict on intact roots")
+        root_cases += 1
+        if both_rc != 2:
+            failures.append(
+                f"--synthetic-tree --update-baseline was not refused (exit {both_rc})"
+            )
+        root_cases += 1
+        if drop_rc != 1:
+            failures.append(
+                f"--update-baseline --all that DROPS an entry was not refused "
+                f"(exit {drop_rc})"
+            )
+        root_cases += 1
+        if wrote_after_refusal:
+            failures.append(
+                f"a refused re-anchor reached write_baseline "
+                f"({wrote_after_refusal} call(s)) — it must refuse BEFORE writing, "
+                "or re-running the command absorbs the deletion"
+            )
+        root_cases += 1
+        if allowed_rc != 0:
+            failures.append(
+                f"--allow-reductions did not permit the drop (exit {allowed_rc})"
+            )
+        root_cases += 1
+        if wrote_after_opt_in - wrote_after_refusal != 1:
+            failures.append(
+                f"--allow-reductions did not reach write_baseline exactly once "
+                f"({wrote_after_opt_in - wrote_after_refusal} call(s))"
+            )
+        root_cases += 1
+        if stray_flag_rc != 2:
+            failures.append(
+                "`--allow-reductions` without `--update-baseline --all` was "
+                f"swallowed instead of refused (exit {stray_flag_rc})"
+            )
+        globals()["CRATE_ROOTS"] = _saved_roots
+        root_cases += 1
+        if missing_crate_roots():
+            failures.append(
+                f"the real CRATE_ROOTS reported a missing root: {missing_crate_roots()!r}"
+            )
+    finally:
+        globals()["CRATE_ROOTS"] = _saved_roots
+        globals()["read_baseline"] = _saved_read
+        globals()["compute_baseline"] = _saved_compute
+        globals()["write_baseline"] = _saved_write
+        globals()["_check"] = _saved_check
+
     if failures:
         print("check-dynamic-sql self-test FAILED:", file=sys.stderr)
         for f in failures:
@@ -969,6 +1155,7 @@ def run_self_test() -> int:
         + len(scope_cases)
         + len(test_only_cases)
         + len(marker_cases)
+        + root_cases
         + 14  # scoped-update / drift / orphan / remedy / live-agreement
     )
     print(f"check-dynamic-sql self-test passed ({total} cases).")
@@ -996,6 +1183,62 @@ def update_baseline(argv: list[str]) -> int:
     if "--all" in argv:
         new = compute_baseline()
         scope_label = "the whole tree (--all)"
+        # #4501 ratchet property: a whole-tree rebuild that LOSES ENTRIES
+        # refuses, before writing, unless `--allow-reductions` is typed.
+        #
+        # `--all` is the only path here that can delete an entry nobody named:
+        # it discards the committed baseline and rebuilds from the walk, so a
+        # root that stopped resolving — or any other narrowing — deletes every
+        # entry beneath it and exits 0. That is #3255's 11 dangling entries
+        # with the deletion COMMITTED rather than left dangling, and it is
+        # reached by running the very command the guard's own hint prescribes.
+        # The scoped path below is deliberately NOT gated: `merge_baseline`
+        # carries every unnamed key through untouched, so the operator has
+        # already stated intent per file, and refusing there would break the
+        # orphan-clearing remedy the guard tells you to run.
+        #
+        # ENTRY COUNT, not the sum of the counts. This baseline records sites
+        # that still need justifying, so the SUM dropping is the routine good
+        # news of a runtime query becoming a compile-checked macro — gating on
+        # it would be a false alarm on every improvement. An ENTRY vanishing is
+        # the different claim: a whole file left the baseline, because it was
+        # deleted, moved, or is no longer walked. Only the last is a defect,
+        # and only a human reading the diff can tell which it was — which is
+        # the point of making the flag mandatory rather than printing a warning
+        # nobody has to answer.
+        #
+        # Refused BEFORE the write, not after, so it is idempotent: an earlier
+        # revision of the sibling guard wrote first and was defeated by
+        # pressing up-arrow — the re-run saw before == after, found no drop and
+        # exited 0, absorbing the deletion without the flag ever being typed.
+        lost = sorted(set(existing) - set(new))
+        if lost and "--allow-reductions" not in argv:
+            print(
+                "Refusing to re-anchor: --all would DROP "
+                f"{len(lost)} baseline entr(ies) "
+                f"({len(existing)} -> {len(new)}).\n",
+                file=sys.stderr,
+            )
+            for rel in lost:
+                still_there = (REPO_ROOT / rel).is_file()
+                why = (
+                    "the file is still there — it left the WALK, not the tree"
+                    if still_there
+                    else "the file is gone"
+                )
+                print(f"  {rel}: {existing[rel]} -> removed  ({why})", file=sys.stderr)
+            print(
+                "\n    -> An entry that leaves the walk stops being ratcheted, and a\n"
+                "       rebuild records that as success. Check CRATE_ROOTS and the\n"
+                "       test/fixture globs before deciding this is intended; a file\n"
+                "       marked 'still there' is the case worth stopping for.\n"
+                "       If every removal above is intended, re-run with\n"
+                "       `--allow-reductions`. If you only meant to re-anchor a few\n"
+                "       files, name them instead of passing --all (#3659) — the\n"
+                "       scoped form cannot delete an entry you did not name.",
+                file=sys.stderr,
+            )
+            return 1
     else:
         scope: list[str] = []
         for arg in argv:
@@ -1055,6 +1298,66 @@ def update_baseline(argv: list[str]) -> int:
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
         return run_self_test()
+    # #4501 assertion 3, BEFORE the `--update-baseline` dispatch and before
+    # anything reads the baseline. `--synthetic-tree` is how a caller says
+    # "this tree is deliberately not this repository": `pr-merge-result-check.sh`
+    # and `test-py-guard-file-source.sh` both seed a copy of this guard into a
+    # fixture repo whose roots are `src-tauri/src` alone (or `src-tauri/source`),
+    # where our crate roots are inapplicable rather than violated. A FLAG, not
+    # an env var and not an inferred condition — both dead ends are recorded in
+    # check-table-ownership.py's `main`, which hit them first. It is asserted
+    # UNREACHABLE on the real merge path in `pr-merge-result-check.sh`'s
+    # self-test, because an opt-out nothing polices is a fail-open.
+    # #4501: an opt-in that is silently ignored is not an opt-in. `--all` is
+    # the only path that can refuse for a reduction, and `update_baseline`
+    # drops every `--`-prefixed argument when building its scope, so a
+    # misplaced `--allow-reductions` would otherwise be swallowed without a
+    # word — leaving the operator believing they had overridden something.
+    if "--allow-reductions" in argv and not (
+        "--update-baseline" in argv and "--all" in argv
+    ):
+        print(
+            "check-dynamic-sql: `--allow-reductions` only has meaning with "
+            "`--update-baseline --all`,\nwhich is the only re-anchor that can "
+            "delete an entry you did not name.",
+            file=sys.stderr,
+        )
+        return 2
+    synthetic = "--synthetic-tree" in argv
+    # The two flags together are a hard error, not a quiet re-anchor: the first
+    # says these roots do not apply, the second REBUILDS the baseline from a
+    # walk over them. Together they write a baseline with every entry under the
+    # vanished root deleted, and exit 0 — the destruction ROOT_MISSING_HINT
+    # exists to prevent, reached through the flag that exists to say the roots
+    # are inapplicable. No call site passes both; refusing keeps it that way.
+    if synthetic and "--update-baseline" in argv:
+        print(
+            "check-dynamic-sql: --synthetic-tree and --update-baseline are "
+            "mutually exclusive:\nthe first says this tree's crate roots do not "
+            "apply, the second rewrites the\nbaseline FROM those roots. Together "
+            "they would silently drop every entry under\na root that is missing.",
+            file=sys.stderr,
+        )
+        return 2
+    missing = [] if synthetic else missing_crate_roots()
+    if missing:
+        if "--update-baseline" in argv:
+            print(
+                "Refusing to re-anchor: a declared CRATE_ROOTS entry is "
+                "missing.\n",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Dynamic-SQL justification guard (#646) — a declared "
+                "CRATE_ROOTS directory does not exist:\n",
+                file=sys.stderr,
+            )
+        for rel in missing:
+            print(f"  {rel}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(ROOT_MISSING_HINT, file=sys.stderr)
+        return 1
     if "--update-baseline" in argv:
         return update_baseline([a for a in argv if a != "--update-baseline"])
 
@@ -1064,7 +1367,14 @@ def main(argv: list[str]) -> int:
             argv,
             os.environ,
             REPO_ROOT,
-            extra_flags=("--self-test", "--update-baseline", "--all", "--print-source"),
+            extra_flags=(
+                "--self-test",
+                "--update-baseline",
+                "--all",
+                "--print-source",
+                "--synthetic-tree",
+                "--allow-reductions",
+            ),
         )
     except (guard_file_source.UsageError, guard_file_source.AmbiguousSourceError) as err:
         print(f"check-dynamic-sql: invocation error: {err}", file=sys.stderr)
