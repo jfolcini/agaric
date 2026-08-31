@@ -598,6 +598,11 @@ const DECLARED_WRITERS: Record<
     kind: 'seed',
     note: 'handleNavigate — matrix row',
   },
+  'src/components/editor/embed/use-embed-target.ts': {
+    writes: 2,
+    kind: 'seed',
+    note: '#4550 — an `{{embed}}` seeds the target title and its source-page title from `batch_resolve` rows, so both are fetched content and both go through the gate',
+  },
   'src/components/block-tree/use-block-resolve.ts': {
     writes: 5,
     seedWrites: 3,

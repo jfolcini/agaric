@@ -900,6 +900,29 @@
   --sync-active: oklch(0.81 0.12 80);
 }
 
+/* ── Embed container (#4550) ───────────────────────────────────────── */
+/* Derived from existing semantic tokens rather than restated per theme.
+ * Every theme class (`.dark`, `.theme-*`) is applied to the SAME element as
+ * `:root` (see `useTheme`), so `var()` here substitutes the cascade-winning
+ * value of the referenced token — a new theme picks these up for free, and a
+ * `prefers-contrast` bump to `--block-ref-foreground` flows through
+ * automatically. */
+:root {
+  /* The full-height left rail that says "this is somewhere else". */
+  --embed-rail: var(--block-ref-foreground);
+  /* Low-contrast ground beneath the embedded rows. */
+  --embed-surface: color-mix(in oklab, var(--muted) 45%, transparent);
+}
+@media (prefers-contrast: more) {
+  :root {
+    /* Rail at full foreground contrast, and no tinted ground at all —
+     * a washed-out surface is exactly what high-contrast users asked not
+     * to get, and the rail alone carries the "elsewhere" signal. */
+    --embed-rail: var(--foreground);
+    --embed-surface: transparent;
+  }
+}
+
 /* ── Indent width (responsive) ─────────────────────────────────────── */
 :root {
   --indent-width: 24px;
@@ -1459,6 +1482,38 @@
 .external-link:hover,
 .external-link:active {
   @apply decoration-primary text-primary/80;
+}
+
+/* ── Embed container (#4550) ───────────────────────────────────────── */
+/* An embedded block must be unmistakably NOT part of this page's outline:
+   a left rail plus a low-contrast ground, and a header strip naming where
+   the content actually lives. The embedded subtree re-bases its indentation
+   to depth 0 inside the container (see `selectEmbeddedRows`) — it does not
+   continue the host page's indent guides. */
+.embed-container {
+  @apply my-1 rounded-md;
+  border-left: 2px solid var(--embed-rail);
+  background: var(--embed-surface);
+}
+.embed-container:focus-visible {
+  @apply outline-hidden ring-[3px] ring-ring/50;
+}
+.embed-header {
+  @apply border-b border-border/40;
+}
+/* Nothing inside an embed is a drag handle or a drop target in phase 1: you
+   can drag the HOST block (the embed moves with it), but not a row into or
+   out of an embed. */
+.embed-tree {
+  @apply py-0.5;
+}
+.embed-row-marker {
+  @apply mr-2 inline-block h-1 w-1 shrink-0 rounded-full align-middle bg-muted-foreground/60;
+}
+/* Collapse hides the body and leaves the strip; no height animation, so the
+   `prefers-reduced-motion` case needs no separate rule. */
+.embed-container.embed-collapsed .embed-header {
+  @apply border-b-0;
 }
 
 /* ── Syntax highlighting — dark mode override ──────────────────────── */

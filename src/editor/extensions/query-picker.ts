@@ -1,16 +1,27 @@
 /**
- * TipTap extension: `{{` embed-query picker.
+ * TipTap extension: the `{{` brace picker — embedded queries and embeds.
  *
- * Typing `{{` opens a one-item suggestion popup ("Insert query…") that, on
- * selection, deletes the `{{` and opens the visual query builder for the
- * focused block (via the shared slash-command dispatch — the `query` command
- * id already maps to `openQueryBuilder`). This makes embedded `{{query …}}`
- * blocks discoverable the same way `[[`, `((` and `@` surface their pickers.
+ * Typing `{{` opens a two-item suggestion popup:
+ *   - **Insert query…** — deletes the `{{` and opens the visual query builder
+ *     for the focused block (via the shared slash-command dispatch — the
+ *     `query` command id already maps to `openQueryBuilder`).
+ *   - **Insert embed…** (#4550) — rewrites the trigger to `{{embed ` so the
+ *     same popup re-opens in embed mode, listing block and page targets.
  *
- * Boundary with QueryHint (#907): the item is only offered while the query is
- * empty (immediately after `{{`). Once the user types anything, this picker
- * yields so manual `{{query …}}` syntax + the QueryHint ghost-text completion
- * take over. Selection is always explicit (Enter/click) — no auto-execute.
+ * Typing the literal `{{embed ` reaches embed mode directly. That is the
+ * discoverability path for people arriving from Logseq who type the syntax
+ * from muscle memory, and it is why the `allow` gate below has three shapes
+ * rather than one. Selecting a target writes the finished
+ * `{{embed ((ULID))}}` token into the block's content; `StaticBlock` sniffs
+ * it on the next static render.
+ *
+ * Boundary with QueryHint (#907): the query item is only offered while the
+ * query is empty (immediately after `{{`). Once the user types anything that
+ * is not the embed prefix, the gate DEACTIVATES the plugin so manual
+ * `{{query …}}` syntax + the QueryHint ghost-text completion take over.
+ * Emptying the item list alone would leave a floating generic 'No results'
+ * popup over the typing until the first space/Escape. Selection is always
+ * explicit (Enter/click) — no auto-execute.
  *
  * Follows the same pattern as SlashCommand.
  */
@@ -20,14 +31,34 @@ import { PluginKey } from '@tiptap/pm/state'
 
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 
 export const queryPickerPluginKey = new PluginKey('queryPicker')
 
 /**
- * The single affordance item. Its `id` is `query` so the shared slash-command
+ * The query affordance. Its `id` is `query` so the shared slash-command
  * dispatch routes it to `openQueryBuilder` (see useSlashCommandStructural).
  */
 const QUERY_PICKER_ITEM: PickerItem = { id: 'query', label: 'Insert query…' }
+
+/**
+ * The embed affordance offered alongside it. Selecting it does NOT go through
+ * the slash dispatch: it rewrites the trigger in place so this same picker
+ * re-opens in embed mode, which is the shortest path to "now type what you
+ * want to embed".
+ */
+const EMBED_AFFORDANCE_ITEM: PickerItem = { id: 'embed', label: 'Insert embed…' }
+
+/**
+ * Split `{{`-trigger query text into an embed search, or `null` when the text
+ * is not an embed trigger. `''` → the bare `{{`; `'embed'` / `'embed '` →
+ * embed mode with an empty search; `'embed foo'` → search `foo`.
+ */
+export function parseEmbedPickerQuery(query: string): string | null {
+  const match = /^embed(?:\s+(.*))?$/.exec(query)
+  if (!match) return null
+  return match[1] ?? ''
+}
 
 export interface QueryPickerOptions {
   /**
@@ -37,6 +68,11 @@ export interface QueryPickerOptions {
    * (matching SlashCommand, #1668).
    */
   onCommand: (item: PickerItem) => void
+  /**
+   * #4550 — search embed targets (blocks AND pages; a page IS a block here,
+   * so one list covers both). Called on every keystroke after `{{embed `.
+   */
+  embedItems: (query: string) => PickerItem[] | Promise<PickerItem[]>
 }
 
 export const QueryPicker = Extension.create<QueryPickerOptions>({
@@ -45,6 +81,7 @@ export const QueryPicker = Extension.create<QueryPickerOptions>({
   addOptions() {
     return {
       onCommand: () => {},
+      embedItems: () => [],
     }
   },
 
@@ -57,28 +94,63 @@ export const QueryPicker = Extension.create<QueryPickerOptions>({
         displayName: 'Embed query',
         pluginKey: queryPickerPluginKey,
         char: '{{',
-        // `{{` can open the affordance anywhere (queries usually sit on their
-        // own block, but a mid-text `{{` is harmless). Spaces close it so the
-        // empty-query gate below cleanly hands off to manual syntax.
-        allowSpaces: false,
+        // #4550 — spaces must survive the match, because `{{embed ` HAS one
+        // and an embed search is free text. This does not loosen the
+        // `{{query …}}` handoff: the `allow` gate below is what closes the
+        // popup there, and it rejects anything that is neither the bare `{{`
+        // nor an embed trigger — a space merely reaches the gate sooner.
+        allowSpaces: true,
         allowedPrefixes: null,
-        // Gate activation to the bare `{{` (mirrors the emoji picker's
-        // allow-gate rule): once the user types manual `{{query …}}` syntax
-        // the plugin must DEACTIVATE so the popup closes. Emptying the item
-        // list alone would leave a floating generic 'No results' popup over
-        // the typing until the first space/Escape. U+FFFC is textBetween's
-        // leaf placeholder for non-text nodes.
+        // Gate activation to the bare `{{` or an `{{embed …}}` trigger
+        // (mirrors the emoji picker's allow-gate rule): once the user types
+        // manual `{{query …}}` syntax the plugin must DEACTIVATE so the popup
+        // closes. U+FFFC is textBetween's leaf placeholder for non-text nodes.
         allow: ({ state, range }) => {
           const text = state.doc.textBetween(range.from, range.to, undefined, '\uFFFC')
-          return text === '{{'
+          if (text === '{{') return true
+          return parseEmbedPickerQuery(text.slice(2)) !== null
         },
         editor,
-        // Only offer the affordance right after `{{`; once the user types,
-        // defer to manual `{{query …}}` + QueryHint completion.
-        items: (query) => (query === '' ? [QUERY_PICKER_ITEM] : []),
-        command: ({ editor: cmdEditor, range }) => {
-          cmdEditor.chain().focus().deleteRange(range).run()
-          extensionOptions.onCommand(QUERY_PICKER_ITEM)
+        items: (query) => {
+          if (query === '') return [QUERY_PICKER_ITEM, EMBED_AFFORDANCE_ITEM]
+          const embedQuery = parseEmbedPickerQuery(query)
+          if (embedQuery === null) return []
+          return extensionOptions.embedItems(embedQuery)
+        },
+        command: ({ editor: cmdEditor, range, props }) => {
+          const item = props as PickerItem
+          if (item.id === QUERY_PICKER_ITEM.id) {
+            cmdEditor.chain().focus().deleteRange(range).run()
+            extensionOptions.onCommand(QUERY_PICKER_ITEM)
+            return
+          }
+          if (item.id === EMBED_AFFORDANCE_ITEM.id) {
+            // Re-open THIS picker in embed mode rather than routing through
+            // the slash dispatch — one fewer hop, and the caret lands exactly
+            // where the search query goes.
+            cmdEditor.chain().focus().deleteRange(range).insertContent(EMBED_TOKEN_PREFIX).run()
+            return
+          }
+          // A concrete embed target: `{{embed ` + a real `block_ref` NODE +
+          // `}}`.
+          //
+          // The inner token MUST be a node, not text. `((ULID))` typed as
+          // literal text is deliberately ESCAPED on serialize
+          // (`\((ULID))` — see `markdown-roundtrip-fidelity`'s finding 11,
+          // which is what keeps a literal mention from resurrecting as a live
+          // ref), and the escaped form matches neither `parseEmbedToken` nor
+          // the backend's `ULID_LINK_RE`. Inserting text here would therefore
+          // produce a block that renders as inert text AND contributes no
+          // backlink — silently, on the first blur. The node form serializes
+          // bare and reparses to exactly this doc.
+          cmdEditor
+            .chain()
+            .focus()
+            .deleteRange(range)
+            .insertContent(EMBED_TOKEN_PREFIX)
+            .insertBlockRef(item.id)
+            .insertContent('}}')
+            .run()
         },
       }),
     ]

@@ -11,6 +11,7 @@
 
 import {
   AlertTriangle,
+  Blocks,
   Bold,
   Calendar,
   CalendarClock,
@@ -313,6 +314,24 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'QUERY — Insert embedded query block',
     category: 'slashCommand.categories.queries',
     icon: Search,
+  },
+  {
+    // #4550 — `{{embed ((ULID))}}`. Sits one line below `/query` and mirrors
+    // it: pick a target, the block's content becomes the token, `StaticBlock`
+    // sniffs it on the next static render.
+    //
+    // Deliberately NOT a modifier on the `((` BlockRefPicker. That picker is
+    // a caret-position, INLINE affordance — it inserts an atom into the middle
+    // of a sentence. An embed is a whole-block render: the container replaces
+    // the block's rendered output entirely, the way `{{query …}}` does. A
+    // modifier would make one keystroke sequence produce either an inline atom
+    // or a block-level takeover depending on a key the user may not have
+    // noticed holding, and "I typed a sentence and now my sentence is gone" is
+    // the class of surprise this feature can least afford.
+    id: 'embed',
+    label: 'EMBED — Embed a block or page inline',
+    category: 'slashCommand.categories.references',
+    icon: Blocks,
   },
   {
     id: 'attach',

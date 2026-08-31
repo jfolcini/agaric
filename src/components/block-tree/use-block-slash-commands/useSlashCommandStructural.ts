@@ -23,6 +23,7 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
+import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -132,6 +133,13 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         // #215 — open the visual builder pre-populated instead of dumping raw
         // `{{query …}}` syntax; the builder inserts the generated expression.
         query: (ctx) => ctx.openQueryBuilder(),
+        // #4550 — insert the `{{embed ` trigger to open the embed-target
+        // picker, exactly the way `link` inserts `[[` and `block-ref` inserts
+        // `((`. Selection there writes the finished `{{embed ((ULID))}}`
+        // token; `StaticBlock` sniffs it on the next static render.
+        embed: (ctx) => {
+          ctx.rovingEditor.editor?.chain().focus().insertContent(EMBED_TOKEN_PREFIX).run()
+        },
         // #286 — open the browse-grid emoji picker; on select it inserts the
         // chosen native emoji at the caret (same active-editor insertContent
         // path the command palette uses for `[[Page]]` links).

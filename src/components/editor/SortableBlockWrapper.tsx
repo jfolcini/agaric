@@ -16,6 +16,7 @@
 
 import React, { useCallback, useSyncExternalStore } from 'react'
 
+import { HostRowAriaContext } from '@/components/editor/embed/host-row-aria'
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import { useRowDragState } from '@/components/editor/use-row-drag-state'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -201,21 +202,30 @@ function SortableBlockWrapperInner({
     >
       {/* #923 — drop indicator ABOVE the row when the drop lands before it. */}
       {!dropAfter && dropIndicator}
-      <SortableBlock
-        blockId={block.id}
-        content={block.content ?? ''}
-        isFocused={isFocused}
-        depth={projectedDepth}
-        rovingEditor={rovingEditor}
-        hasChildren={hasChildren}
-        isCollapsed={isCollapsed}
-        todoState={block.todo_state ?? null}
-        priority={block.priority ?? null}
-        dueDate={block.due_date ?? null}
-        scheduledDate={block.scheduled_date ?? null}
-        properties={properties}
-        isSelected={isSelected}
-      />
+      {/* #4550 — publish THIS row's `aria-level` (the same `block.depth + 1`
+          written on the <li> above) so an `{{embed …}}` rendered inside it can
+          announce its own rows relative to the HOST tree instead of inheriting
+          the source page's depths. `projectedDepth` is deliberately not used:
+          it is a transient drag preview, and the announced level must not
+          change while a row is being dragged. A plain number, so the memo on
+          this wrapper is unaffected. */}
+      <HostRowAriaContext.Provider value={block.depth + 1}>
+        <SortableBlock
+          blockId={block.id}
+          content={block.content ?? ''}
+          isFocused={isFocused}
+          depth={projectedDepth}
+          rovingEditor={rovingEditor}
+          hasChildren={hasChildren}
+          isCollapsed={isCollapsed}
+          todoState={block.todo_state ?? null}
+          priority={block.priority ?? null}
+          dueDate={block.due_date ?? null}
+          scheduledDate={block.scheduled_date ?? null}
+          properties={properties}
+          isSelected={isSelected}
+        />
+      </HostRowAriaContext.Provider>
       {/* #923 — drop indicator BELOW the row when the drop lands after it. */}
       {dropAfter && dropIndicator}
     </li>
