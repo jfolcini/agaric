@@ -659,6 +659,17 @@ fn peer_frontier_json(peer_heads: &[DeviceHead]) -> Result<String, AppError> {
 /// this to `+ 1`; doing so would turn a bound into an estimate that can be
 /// wrong in the direction that overflows the cap.
 ///
+/// Scope of that bound, stated because it is narrower than it reads:
+/// `sum(billed_bytes) <= max_bytes` bounds the `records` ARRAY — its commas
+/// and brackets — and **not** the `SyncMessage::OpLogBatch` envelope around
+/// it (the `"type"` tag, the `records` key, the outer braces, `is_last`).
+/// That envelope costs tens of bytes and exceeds the `N-1` surplus for small
+/// N, so a batch passing this cap does not imply the serialized MESSAGE fits
+/// it. Nothing depends on that implication: `collect_op_batches_for_peer`
+/// re-serializes each batch and measures the real thing, failing closed with
+/// `map_or(usize::MAX, ..)`. This function is the partitioning heuristic, not
+/// the wire-size authority.
+///
 /// `pub(crate)` rather than private so `protocol_proptest`'s property tests
 /// can call the exact function `batch_ops_for_wire` bills against, instead of
 /// keeping their own copy of the formula that could silently drift from it
