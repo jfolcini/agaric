@@ -20,6 +20,7 @@ import { PluginKey } from '@tiptap/pm/state'
 
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { t } from '@/lib/i18n'
 
 export const queryPickerPluginKey = new PluginKey('queryPicker')
 
@@ -54,7 +55,7 @@ export const QueryPicker = Extension.create<QueryPickerOptions>({
     return [
       createPickerPlugin({
         loggerComponent: 'QueryPicker',
-        displayName: 'Embed query',
+        displayName: t('editor.suggestion.embedQuery'),
         pluginKey: queryPickerPluginKey,
         char: '{{',
         // `{{` can open the affordance anywhere (queries usually sit on their

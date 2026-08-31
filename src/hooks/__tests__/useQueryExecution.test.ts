@@ -13,6 +13,7 @@ import {
   QueryValidationError,
   useQueryExecution,
 } from '@/hooks/useQueryExecution'
+import { i18n } from '@/lib/i18n'
 import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
@@ -344,6 +345,38 @@ describe('useQueryExecution', () => {
 
     expect(result.current.error).toBe('Backlinks query requires target:ULID parameter')
     expect(result.current.results).toHaveLength(0)
+  })
+
+  // #4555 — these error strings used to be hardcoded English literals. The
+  // English catalog value is byte-equal to the old literal, so the two
+  // tests above can't tell "reads the catalog" from "hardcoded literal" —
+  // overriding the catalog and asserting the override appears proves the
+  // call sites actually resolve through `t()`. Fails if a call site
+  // reverts to a bare string literal.
+  it('#4555: property/empty-expression errors resolve through the i18n catalog, not a hardcoded literal', async () => {
+    const KEYS: [string, string][] = [
+      ['query.propertyRequiresKey', '__OVERRIDDEN_KEY_REQUIRED__'],
+      ['query.expressionEmpty', '__OVERRIDDEN_EMPTY__'],
+    ]
+    for (const [key, value] of KEYS) i18n.addResource('en', 'translation', key, value)
+    try {
+      const { result: propResult } = renderHook(() =>
+        useQueryExecution({ expression: 'type:property' }),
+      )
+      await waitFor(() => expect(propResult.current.loading).toBe(false))
+      expect(propResult.current.error).toBe('__OVERRIDDEN_KEY_REQUIRED__')
+
+      const { result: emptyResult } = renderHook(() => useQueryExecution({ expression: '' }))
+      expect(emptyResult.current.error).toBe('__OVERRIDDEN_EMPTY__')
+    } finally {
+      i18n.addResource(
+        'en',
+        'translation',
+        'query.propertyRequiresKey',
+        'Property query requires key:NAME parameter',
+      )
+      i18n.addResource('en', 'translation', 'query.expressionEmpty', 'Query expression is empty')
+    }
   })
 
   // Stale-fetch guard. When `expression` changes before the previous

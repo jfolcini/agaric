@@ -1,4 +1,5 @@
 import type { BlockRow } from '@/lib/bindings'
+import { getAppLocaleTag } from '@/lib/date-locale'
 import { getPriorityLevels, priorityRank } from '@/lib/priority-levels'
 import {
   isTodoState,
@@ -585,11 +586,13 @@ export function sortAgendaBlocksBy(
  * when it differs from the current year (e.g. "Mon, Jun 15" vs
  * "Mon, Jun 15, 2026" in an en locale).
  *
- * #757 — uses the runtime locale via `toLocaleDateString(undefined, …)`
- * (the `formatDateDisplay` convention in date-utils.ts) instead of
- * hardcoded English weekday/month tables, so concrete date headers are
- * localized like the special labels (Overdue/Today/…) that go through
- * t(). Malformed inputs fall back to the raw string.
+ * #757 — uses the runtime locale (originally via `toLocaleDateString
+ * (undefined, …)`) instead of hardcoded English weekday/month tables, so
+ * concrete date headers are localized like the special labels
+ * (Overdue/Today/…) that go through t(). #4555 — narrowed from the OS/
+ * browser locale to `getAppLocaleTag()` (`i18n.language`), the same source
+ * the UI catalog and every `date-fns` call resolve from, so this can never
+ * disagree with either. Malformed inputs fall back to the raw string.
  */
 function formatGroupDate(dateStr: string): string {
   const parts = dateStr.split('-')
@@ -603,7 +606,7 @@ function formatGroupDate(dateStr: string): string {
   if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
   const date = new Date(y, m - 1, d)
   const sameYear = y === new Date().getFullYear()
-  return date.toLocaleDateString(undefined, {
+  return date.toLocaleDateString(getAppLocaleTag(), {
     weekday: 'short',
     month: 'short',
     day: 'numeric',

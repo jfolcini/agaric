@@ -17,6 +17,7 @@ import { PluginKey } from '@tiptap/pm/state'
 
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { t } from '@/lib/i18n'
 
 export const propertyPickerPluginKey = new PluginKey('propertyPicker')
 
@@ -42,7 +43,7 @@ export const PropertyPicker = Extension.create<PropertyPickerOptions>({
     return [
       createPickerPlugin({
         loggerComponent: 'PropertyPicker',
-        displayName: 'Properties',
+        displayName: t('editor.suggestion.properties'),
         pluginKey: propertyPickerPluginKey,
         char: '::',
         allowedPrefixes: null,

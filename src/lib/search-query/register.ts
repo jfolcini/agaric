@@ -11,6 +11,7 @@
  * (`to-search-filter.ts`) extend in lock-step.
  */
 
+import { t } from '@/lib/i18n'
 import { getPriorityLevels } from '@/lib/priority-levels'
 import { validateGlob } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
@@ -68,7 +69,7 @@ function simpleValueRecogniser<K extends 'state' | 'notState' | 'priority' | 'no
       return {
         kind: 'invalid',
         source: `${prefix}${value}`,
-        error: `${prefix} value required`,
+        error: t('searchQuery.valueRequired', { prefix }),
         span,
       }
     }
@@ -76,7 +77,7 @@ function simpleValueRecogniser<K extends 'state' | 'notState' | 'priority' | 'no
       return {
         kind: 'invalid',
         source: `${prefix}${value}`,
-        error: `unknown ${noun} '${value}'`,
+        error: t('searchQuery.unknownValue', { noun, value }),
         span,
       }
     }
@@ -114,7 +115,7 @@ export function ensureRegistered(): void {
       return {
         kind: 'invalid',
         source: `tag:${value}`,
-        error: 'tag: value required',
+        error: t('searchQuery.valueRequired', { prefix: 'tag:' }),
         span,
       } satisfies FilterToken
     }
@@ -130,7 +131,7 @@ export function ensureRegistered(): void {
       return {
         kind: 'invalid',
         source: `path:${value}`,
-        error: 'path: value required',
+        error: t('searchQuery.valueRequired', { prefix: 'path:' }),
         span,
       } satisfies FilterToken
     }
@@ -154,7 +155,7 @@ export function ensureRegistered(): void {
       return {
         kind: 'invalid',
         source: `not-path:${value}`,
-        error: 'not-path: value required',
+        error: t('searchQuery.valueRequired', { prefix: 'not-path:' }),
         span,
       } satisfies FilterToken
     }
@@ -221,7 +222,7 @@ function parseDateToken(
     return {
       kind: 'invalid',
       source: `${kind}:${value}`,
-      error: `${kind}: value required`,
+      error: t('searchQuery.valueRequired', { prefix: `${kind}:` }),
       span,
     }
   }
@@ -269,7 +270,7 @@ function parseDateToken(
           source: `${kind}:${value}`,
           error: prefixed(
             ValidationCode.InvalidDateFilter,
-            `expected YYYY-MM-DD after '${op}', got '${rest}'`,
+            t('searchQuery.dateExpectedAfterOperator', { op, rest }),
           ),
           span,
         }
@@ -294,7 +295,7 @@ function parseDateToken(
   return {
     kind: 'invalid',
     source: `${kind}:${value}`,
-    error: prefixed(ValidationCode.InvalidDateFilter, `unknown date '${value}'`),
+    error: prefixed(ValidationCode.InvalidDateFilter, t('searchQuery.unknownDate', { value })),
     span,
   }
 }
@@ -320,7 +321,7 @@ function parsePropToken(
     return {
       kind: 'invalid',
       source: `${label}:${value}`,
-      error: `${label}: key=value required`,
+      error: t('searchQuery.propKeyValueRequired', { prefix: label }),
       span,
     }
   }
@@ -329,7 +330,7 @@ function parsePropToken(
     return {
       kind: 'invalid',
       source: `${label}:${value}`,
-      error: `${label}: expected 'key=value'`,
+      error: t('searchQuery.propExpectedKeyEqualsValue', { prefix: label }),
       span,
     }
   }
@@ -339,7 +340,7 @@ function parsePropToken(
     return {
       kind: 'invalid',
       source: `${label}:${value}`,
-      error: `${label}: key cannot be empty`,
+      error: t('searchQuery.propKeyEmpty', { prefix: label }),
       span,
     }
   }

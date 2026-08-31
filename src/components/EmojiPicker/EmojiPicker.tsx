@@ -104,6 +104,37 @@ const GROUP_ICONS: Readonly<Record<string, LucideIcon>> = {
 }
 
 /**
+ * #4555 — i18n key per CLDR group, keyed the same way as `GROUP_ICONS` (the
+ * exact English group names `EMOJI_GROUPS` emits). `bucket.group` itself
+ * stays the raw English string throughout this file — it is the identity
+ * used to look up icons and drive the category-jump index — only the
+ * *displayed* text (tab aria-label/title, sticky label, header row) goes
+ * through `groupLabel()` below.
+ */
+const GROUP_LABEL_KEYS: Readonly<Record<string, string>> = {
+  'Smileys & Emotion': 'emojiPicker.group.smileysEmotion',
+  'People & Body': 'emojiPicker.group.peopleBody',
+  'Animals & Nature': 'emojiPicker.group.animalsNature',
+  'Food & Drink': 'emojiPicker.group.foodDrink',
+  'Travel & Places': 'emojiPicker.group.travelPlaces',
+  Activities: 'emojiPicker.group.activities',
+  Objects: 'emojiPicker.group.objects',
+  Symbols: 'emojiPicker.group.symbols',
+  Flags: 'emojiPicker.group.flags',
+}
+
+/**
+ * Translated display text for a CLDR group name. Falls back to the raw
+ * group string for a renamed/added group with no catalog entry yet — the
+ * same defensive fallback `GROUP_ICONS[row.group] ?? Smile` already uses
+ * above, so a drifted dataset degrades to English rather than blanking.
+ */
+function groupLabel(t: (key: string) => string, group: string): string {
+  const key = GROUP_LABEL_KEYS[group]
+  return key ? t(key) : group
+}
+
+/**
  * Flatten the (optionally searched) emoji into virtualizable rows: a header
  * row per group followed by `COLUMNS`-wide emoji rows. Search results are a
  * single unlabeled section (the match order is the relevance order, so group
@@ -409,8 +440,8 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                 type="button"
                 role="tab"
                 aria-selected={active}
-                aria-label={group}
-                title={group}
+                aria-label={groupLabel(t, group)}
+                title={groupLabel(t, group)}
                 data-active={active}
                 onClick={() => jumpToCategory(index)}
                 className={cn(
@@ -473,7 +504,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             data-testid="emoji-sticky-group"
             className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-popover/95 px-1 pt-2 pb-1 text-xs font-medium text-muted-foreground"
           >
-            {activeGroup}
+            {groupLabel(t, activeGroup)}
           </div>
         )}
         <div
@@ -522,7 +553,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                 >
                   {row.kind === 'header' ? (
                     <p className="px-1 pt-2 text-xs font-medium text-muted-foreground">
-                      {row.group}
+                      {groupLabel(t, row.group)}
                     </p>
                   ) : (
                     /* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells inside a virtualized absolutely-positioned grid; <table>/<tr>/<td> cannot host the transform-positioned rows the virtualizer requires (mirrors MonthlyView) */

@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { MonthlyDayCell } from '@/components/journal/MonthlyDayCell'
 import { useBatchCounts } from '@/hooks/useBatchCounts'
 import { useWeekStart } from '@/hooks/useWeekStart'
+import { getDateLocale } from '@/lib/date-locale'
 import type { DayEntry } from '@/lib/date-utils'
 import { formatDate } from '@/lib/date-utils'
 import { useJournalStore } from '@/stores/journal'
@@ -53,8 +54,9 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
   const dayHeaders = useMemo(() => {
     const headers: string[] = []
     const refDate = startOfWeek(new Date(), { weekStartsOn })
+    const locale = getDateLocale()
     for (let i = 0; i < 7; i++) {
-      headers.push(format(addDays(refDate, i), 'EEE'))
+      headers.push(format(addDays(refDate, i), 'EEE', { locale }))
     }
     return headers
   }, [weekStartsOn])

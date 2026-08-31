@@ -1,10 +1,22 @@
+import { getAppLocaleTag } from '@/lib/date-locale'
+
 /**
  * Format a timestamp for display as an absolute date/time.
  *
  * For relative ("2 hours ago") strings use `formatRelativeTime` from
  * `format-relative-time.ts` — it is i18n-aware (#745). This function only
- * produces absolute, locale-formatted output; the app is pinned to English,
- * so `toLocaleDateString(undefined, …)` resolves consistently.
+ * produces absolute, locale-formatted output.
+ *
+ * #4555 — this used to pass `undefined` as the `toLocaleDateString` locale,
+ * which resolves the OS/browser locale. That disagreed with `date-fns`
+ * call sites (always `en-US`) AND, independent of that mismatch, could
+ * disagree with the i18next UI catalog itself: a non-English-OS user would
+ * see an English UI (the catalog is pinned to `'en'`) next to
+ * OS-language dates — the same "two languages in one view" defect,
+ * relocated rather than fixed. Passing `getAppLocaleTag()`
+ * (`src/lib/date-locale.ts` — `i18n.language` itself) instead of
+ * `undefined` binds this to the SAME source the UI text and every
+ * `date-fns` call resolve from, so none of the three can ever disagree.
  *
  * @param value - either an ISO 8601 string or epoch-milliseconds number
  *   (#109 Phase 2 migrates several columns from ISO TEXT to INTEGER ms;
@@ -14,12 +26,13 @@
 export function formatTimestamp(value: string | number, style: 'full' | 'date' = 'full'): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return String(value)
+  const locale = getAppLocaleTag()
 
   if (style === 'date') {
-    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    return date.toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' })
   }
 
-  return date.toLocaleDateString(undefined, {
+  return date.toLocaleDateString(locale, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

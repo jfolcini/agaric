@@ -19,7 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { type BLOCK_EVENTS, dispatchBlockEvent } from '@/lib/block-events'
-import { dueDateColor, formatCompactDate, MONTH_SHORT } from '@/lib/date-utils'
+import { dueDateColor, formatCompactDate } from '@/lib/date-utils'
 import { capturePreDragFocus } from '@/lib/pre-drag-focus'
 import { priorityColor } from '@/lib/priority-color'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
@@ -38,7 +38,7 @@ export function priorityLabel(priority: string): string {
 // Re-exported from date-utils so existing call sites + tests that import these
 // Names from BlockInlineControls keep working after
 // deduplication.
-export { dueDateColor, formatCompactDate, MONTH_SHORT }
+export { dueDateColor, formatCompactDate }
 
 interface DateChipProps {
   date: string
