@@ -88,13 +88,26 @@ has_matching_signoff() {
     # reasoning applies there, where the consequence is only a re-run.)
     signoffs="$(grep -iE '^[[:space:]]*signed-off-by:[[:space:]]' "$file" 2>/dev/null || true)"
     [ -n "$signoffs" ] || return 1
-    printf '%s\n' "$signoffs" | grep -qiF "<${email}>"
+    # Second stage is bash pattern matching, NOT a second pipeline: `grep -q`
+    # exits on first match, the producer takes EPIPE, and `pipefail` reports
+    # non-zero — read as "no match", which appends a duplicate trailer. `case`
+    # has no producer to kill. Both sides lowercased for the same
+    # case-insensitivity `grep -i` gave, and the needle is a literal
+    # `<address>` substring, so a `+` in the address stays a plus sign.
+    local hay="${signoffs,,}" needle="<${email,,}>"
+    case "$hay" in
+    *"$needle"*) return 0 ;;
+    esac
+    return 1
 }
 
 # True when $1 is shaped like a trailer line (`Token: value`). Necessary
 # for a trailer, nowhere near sufficient — see `joins_trailer_block`.
 looks_like_trailer() {
-    printf '%s' "$1" | grep -qE '^[A-Za-z][A-Za-z-]*:[[:space:]]'
+    # `[[ =~ ]]`, not `printf | grep -q` — same reason as `has_matching_signoff`
+    # above: a pipeline ending in `grep -q` can report a SIGPIPE'd producer
+    # under `pipefail`.
+    [[ $1 =~ ^[A-Za-z][A-Za-z-]*:[[:space:]] ]]
 }
 
 # True when a trailer appended to $1 (a message file) would land INSIDE an
@@ -190,6 +203,13 @@ self_test() {
     local SCRIPT_PATH
     SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
     tmp="$(mktemp -d -t dco-signoff-selftest.XXXXXX)"
+    # Trap installed BEFORE `git_scratch_guard`, which can `exit 3` on a
+    # git variable it cannot unset. Installing it afterwards leaks the temp
+    # dir on exactly the abort path the RETURN-to-EXIT change was reasoning
+    # about. Path expanded at trap-set time: `$tmp` is `local` and already
+    # out of scope when an EXIT trap fires.
+    # shellcheck disable=SC2064
+    trap "rm -rf -- '$tmp'" EXIT
 
     # The `main()` fixtures below run `git init` in $tmp. That looks isolated
     # and is not: when this suite runs from a git hook, git has exported
@@ -206,10 +226,6 @@ self_test() {
     # EXIT, not RETURN: the closing `[ "$fails" -eq 0 ]` trips `set -e` on a
     # failing run, which is exactly the run whose temp dir a RETURN trap does
     # not reliably reap.
-    # Path expanded at trap-set time: `$tmp` is `local` to this function and is
-    # already out of scope when an EXIT trap fires.
-    # shellcheck disable=SC2064
-    trap "rm -rf -- '$tmp'" EXIT
 
     check() {
         local desc="$1" cond="$2"

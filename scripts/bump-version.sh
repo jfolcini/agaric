@@ -674,6 +674,36 @@ u'
     st_fail=1
   fi
 
+  # 9b. The AUTHOR side of the same split (#4561). The trailer is written from
+  #     `GIT_AUTHOR_IDENT`, so an author override produces the identical
+  #     "sign-off asserts a different identity from the one that signed" state
+  #     — and before #4561 this gate read `user.email` and could not see it.
+  #     Without this case the suite passes identically whether the comparison
+  #     reads the author or the config, which is the assertion-true-for-the-
+  #     wrong-reason shape #4561 is itself about.
+  if ! (
+    export GIT_AUTHOR_EMAIL='author-override@example.invalid'
+    st_identity reject 'an AUTHOR address that disagrees with the committer is rejected' 'Signed-off-by'
+    [ "$st_fail" = 0 ]
+  ); then
+    st_fail=1
+  fi
+
+  # 9c. `user.email` disagreeing with the author is its own refusal: the
+  #     release would be cut under an identity the repository config does not
+  #     name. Both author and committer are overridden together here, so the
+  #     9b comparison is SATISFIED and only the config-vs-author branch can
+  #     fire — otherwise this case would pass on 9b's rejection and pin
+  #     nothing of its own.
+  if ! (
+    export GIT_AUTHOR_EMAIL='override@example.invalid'
+    export GIT_COMMITTER_EMAIL='override@example.invalid'
+    st_identity reject 'user.email disagreeing with the overridden author is rejected' 'user.email'
+    [ "$st_fail" = 0 ]
+  ); then
+    st_fail=1
+  fi
+
   # 10. SSH signing has no UID list to compare against, so the gate asserts
   #     only what it can see and leaves the post-push check authoritative.
   st_config 'Javier Folcini' 'jfolcini86@gmail.com' '' 'ssh'
