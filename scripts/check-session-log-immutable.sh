@@ -96,6 +96,20 @@
 # before trusting prose about which statuses git emits.
 set -euo pipefail
 
+# Resolve the repo root and work from it. The pathspec below is
+# repo-relative, so a manual run from any subdirectory would match nothing and
+# print the "0 … nothing to check" line on exit 0 — the silent-zero class this
+# guard exists to end, reachable by running it by hand. prek invokes hooks from
+# the root, so the wired path was never affected; that is exactly why it would
+# have gone unnoticed. Same treatment, and the same reason, as
+# `scripts/check-migrations-immutable.sh`.
+TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$TOPLEVEL" ]; then
+  echo "ERROR: session-log-immutable: not inside a git repository — cannot answer what is staged." >&2
+  exit 1
+fi
+cd "$TOPLEVEL"
+
 LOG_DIR="docs/session-log"
 
 # Merge target this commit is going to join, same fallback chain as
@@ -194,19 +208,11 @@ if [ -z "$target_ref" ]; then
 fi
 
 target_name="${target_ref#refs/remotes/}"
-examined=0
 fail=0
 for i in "${!statuses[@]}"; do
   status="${statuses[$i]}"
   src="${srcs[$i]}"
   dst="${dsts[$i]}"
-  # Counted AFTER the decision that can skip, not before it. Incrementing
-  # here-and-unconditionally is what made the `checked -ne total` assertion
-  # below dead code: it could never fire, while reading like a real
-  # invariant. `examined` is every record this loop reached a verdict on;
-  # `total` is every record the selector produced. The two differing means a
-  # record was silently dropped between selection and judgement.
-  examined=$((examined + 1))
   exists_in_target "$target_ref" "$src" || continue
   case "$status" in
     M)
@@ -227,16 +233,25 @@ for i in "${!statuses[@]}"; do
   fail=1
 done
 
-# #4501: the report must not be able to overstate what was examined. This
-# compares two counters produced at DIFFERENT points — `total` from the
-# selector, `examined` from past the loop's skip — so it can actually fire.
-# Its first version incremented the counter before the only `continue`, which
-# made it arithmetically incapable of failing: a vacuous assertion wearing the
-# shape of an invariant, in the guard written to stop exactly that.
-if [ "$examined" -ne "$total" ]; then
-  echo "ERROR: session-log-immutable: selected $total staged record(s) but reached a verdict on only $examined." >&2
-  fail=1
-fi
+# #4501 asks that a report cannot overstate what was examined. Here that is
+# satisfied by CONSTRUCTION rather than by an assertion, and the history is
+# worth recording because two attempts at an assertion were both vacuous.
+#
+# The loop above iterates every index of `statuses` and has no `break` and no
+# early return, so every selected record is reached. `total` is therefore both
+# the selected count and the judged count, and reporting it is not a claim that
+# can outrun the code.
+#
+# The first version counted with a second variable incremented at the top of
+# the loop and asserted it equalled `total` — arithmetically incapable of
+# failing. The second renamed that variable and added a comment saying it had
+# been moved past the `continue`; it had not, so the assertion stayed dead and
+# the comment was now false as well. And moving it there would have been worse
+# than useless: past the `continue` the counter counts VIOLATIONS, so the check
+# would fire on every legitimate commit that stages a not-yet-merged log.
+#
+# A guard cannot assert its way out of a property it already has. What the
+# report must not do is print a number the loop did not cover, and it cannot.
 
-echo "session-log-immutable: checked $examined staged modification/rename/deletion/typechange(s) against $target_name."
+echo "session-log-immutable: checked $total staged modification/rename/deletion/typechange(s) against $target_name."
 exit "$fail"
