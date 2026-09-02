@@ -21,9 +21,8 @@
 //     survivor count from 22 to 78.
 //
 // This guard is a pure filesystem existence check — cheap enough to run on
-// every commit that touches the config or the frontend libs it names, and it
-// catches a file move at the moment it happens instead of the following
-// Monday's scheduled run.
+// every PR (prek `manual` stage, in CI), so it catches a file move before it
+// merges instead of at the following Monday's scheduled run.
 //
 // Usage:
 //   node scripts/check-stryker-modules.mjs

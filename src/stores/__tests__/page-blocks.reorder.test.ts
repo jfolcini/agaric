@@ -1190,9 +1190,8 @@ describe('PageBlockStore', () => {
     // retired two notes after #3793. The one surviving entry (the
     // `updatedBag` sentinel) and the five controls are re-cited below at
     // their CURRENT `page-blocks-move.ts` line:col (the whole function moved
-    // when `wouldCreateMoveCycle` was inserted above it), and now have a
-    // committed, re-runnable harness:
-    // `scripts/mutation-harnesses/page-blocks-move-reconcile-batch.harness.ts`.
+    // when `wouldCreateMoveCycle` was inserted above it); the harness that
+    // re-ran them was deleted by #4556.
     //
     // Controls (mutants the tests below — or this harness's own generation —
     // DO kill; several distinct mutants share one position, so named by
@@ -1245,10 +1244,8 @@ describe('PageBlockStore', () => {
     //     the verdict does not): 0 / 21,120 differing when restricted to
     //     `rootParentId: 'PAGE_1'`, 9,581 / 42,240 differing when
     //     `rootParentId: null` is allowed in. Both directions of the original
-    //     claim hold under re-run — re-run it yourself with `npx vitest run
-    //     --config scripts/mutation-harnesses/vitest.config.ts
-    //     scripts/mutation-harnesses/page-blocks-move-reconcile-batch.harness.ts`.
-    //     Read that as: the harness pins the VERDICT, not these counts. Its
+    //     claim hold under re-run, with a harness since deleted by #4556.
+    //     Read that as: the harness pinned the VERDICT, not these counts. Its
     //     assertions are directional (`diffSentinel` is 0 when restricted,
     //     > 0 when not); the exact totals come from a `console.log` and hold
     //     only while the seed, generator and shape enumeration are untouched.

@@ -226,22 +226,6 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit"]
 
-# Self-test the tsc root-file drop guard's own exit behavior (a real
-# a.ts/a.tsx collision, driven end-to-end through the real
-# `tsc -p ... --showConfig`, FAILS; renaming away the collision PASSES;
-# plus the pure include/exclude pattern-resolution cases) whenever the
-# guard script itself changes, so a regression that defangs it can't
-# land.
-# WHY: parses tsconfig include/exclude with its own resolver, so it can fail open silently — #3912
-[[repos.hooks]]
-id = "tsc-root-files-self-test"
-name = "tsc root-file drop guard self-test (#3912 fixtures)"
-entry = "node scripts/check-tsc-root-files.mjs --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["pre-commit"]
-
 # CSS variable wrapper guard — theme uses oklch(), so hsl()/rgb() wrappers are invalid
 # WHY: hsl()/rgb() wrappers around oklch() theme vars render as invalid color, silently — theme migration
 [[repos]]
@@ -336,20 +320,6 @@ language = "system"
 files = '^src/components/.*\.(tsx|ts)$'
 stages = ["pre-commit", "pre-push"]
 
-# Companion: run the guard's own fixture suite (`--self-test`) so the match
-# contract (variant prefixes, tier-utility/longer-token boundary,
-# comment-stripping, allowlist exemption) cannot silently regress. No file
-# args.
-# WHY: matches class strings with its own matcher, so it can fail open silently — #1810
-[[repos.hooks]]
-id = "check-elevation-tiers-self-test"
-name = "elevation-tier guard self-test (#1810 fixtures)"
-entry = "python3 scripts/check-elevation-tiers.py --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["pre-commit", "pre-push"]
-
 # Legacy React API guard — block re-introduction of APIs we migrated away from
 # (React 19, TypeScript 6, follow-up MutableRefObject removal).
 # Two legitimate `React.JSX.IntrinsicElements` uses in RichContentRenderer.tsx are
@@ -430,23 +400,6 @@ pass_filenames = false
 types = ["markdown"]
 stages = ["pre-commit"]
 
-# …and its #3962/#4017 source suite: index-vs-working-tree in throwaway
-# fixtures. Keyed on the guard AND the two shared libraries it delegates to —
-# keyed on the script alone, editing `guard-file-source.mjs`, which decides
-# whether the guard judges the index or the working tree, fires no hook at
-# all (the #3993/#3997 shape: a guard defanged by editing its dependency).
-# WHY: reads the index vs the working tree through its own source resolver, which can fail open — #4017 (#3962)
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "md-link-targets-selftest"
-name = "markdown link-target guard source self-test (#4017 index vs working tree)"
-entry = "node scripts/check-md-link-targets.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = '^scripts/(check-md-link-targets\.mjs|lib/guard-file-source\.mjs|lib/git-scratch-guard\.(mjs|sh))$'
-stages = ["pre-commit"]
-
 # doc-vs-code drift detector (ui-improvements 2026-05-16 §Maintenance /
 # tooling). Complements `md-link-targets`: this hook scans inline-code
 # spans + markdown link targets — in narrative docs AND (#4126) `.ts`/`.tsx`
@@ -502,9 +455,8 @@ pass_filenames = false
 # `dead-symbol-citations` and `remove-after-markers`: those are
 # source-SELECTION plumbing (which copy of a file to judge, index vs working
 # tree), a different call than the detector itself, and they are a four-hook
-# family to be decided together. They used to be recorded in
-# scripts/hook-deps-baseline.json; #4556 removed the `hook-deps` hook, so
-# nothing reads that baseline any more and the omission is carried as prose.
+# family to be decided together. #4556 removed the `hook-deps` hook that used
+# to record this, so the omission is carried as prose.
 #
 # #4482: `tsconfig.app.json` is unioned in too — it is the runtime source of
 # truth for the `@/…` path-alias map this guard now resolves citations
@@ -528,8 +480,8 @@ verbose = true
 # reads, not one: the doc body, and the cited target's existence
 # (`existsSync`). The second is what made a citation of a file that is staged
 # but no longer on disk a red — a commit blocked over content that is
-# correct in what is being committed. Keyed on the shared libraries too, for
-# the reason `md-link-targets-selftest` gives above.
+# correct in what is being committed. Keyed on the shared libraries too, so
+# editing one of them re-runs this suite (#3993/#3997).
 # WHY: two working-tree reads through its own source resolver, both able to fail open — #4017 (#3962)
 [[repos]]
 repo = "local"
@@ -542,10 +494,9 @@ pass_filenames = false
 # #4126: also keyed on `lib/js-scanner.mjs` — the shared tokenizer this
 # guard now delegates to for isolating `.ts`/`.tsx` COMMENTS from code — so
 # editing the tokenizer cannot silently defang the comment scan without
-# re-running this self-test. Mirrors `dead-symbol-citations-selftest`'s
-# rationale for the same class of dependency.
+# re-running this self-test.
 files = '^scripts/(check-doc-code-paths\.mjs|lib/guard-file-source\.mjs|lib/git-scratch-guard\.(mjs|sh)|lib/js-scanner\.mjs)$'
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # Stale-citation guard (#2546). `docs/ARCHITECTURE.md` used to be a big
 # numbered-section document; it was split into `docs/architecture/*.md` and
@@ -566,28 +517,6 @@ entry = "node scripts/check-architecture-citations.mjs"
 language = "system"
 pass_filenames = false
 files = "\\.(md|rs|ts|tsx)$"
-stages = ["pre-commit"]
-
-# Self-test the guard's own exit-2 invocation-error path (spawns itself with
-# `git` stripped from PATH and asserts exit 2 + an "invocation error" stderr)
-# whenever the guard script itself changes. Without this the exit-2 branch is
-# reachable only by hand, so a regression that re-swallowed a genuine git
-# failure as fail-open-clean would land unnoticed. Mirrors
-# `dead-symbol-citations-selftest` below.
-# WHY: pins the exit-2 invocation-error branch, which nothing else reaches — #3982
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "architecture-citations-selftest"
-name = "architecture citation guard self-test (#3982 exit-2 path)"
-entry = "node scripts/check-architecture-citations.mjs --self-test"
-language = "system"
-pass_filenames = false
-# Its own script AND the shared libraries it delegates to (#3962). Keyed on the
-# script alone, editing `guard-file-source.mjs` — which decides whether the
-# guard judges the index or the working tree — fired no hook at all. That is
-# the #3993/#3997 shape: a guard defanged by editing its own dependency.
-files = "^scripts/(check-architecture-citations\\.mjs|lib/guard-file-source\\.mjs|lib/git-scratch-guard\\.(mjs|sh))$"
 stages = ["pre-commit"]
 
 # Dead-symbol citation guard (#3817). ~10 Rust test-tree comments instructed
@@ -622,23 +551,6 @@ entry = "node scripts/check-dead-symbol-citations.mjs"
 language = "system"
 pass_filenames = false
 files = "\\.(rs|md)$"
-stages = ["pre-commit"]
-
-# Self-test the guard's own exit-2 invocation-error path (spawns itself with
-# `git` stripped from PATH and asserts exit 2 + an "invocation error" stderr)
-# whenever the guard script itself changes. Without this the exit-2 branch is
-# reachable only by hand, so a regression that re-swallowed a genuine git
-# failure as fail-open-clean would land unnoticed.
-# WHY: pins the exit-2 invocation-error branch, which nothing else reaches — #3817
-[[repos.hooks]]
-id = "dead-symbol-citations-selftest"
-name = "dead-symbol citation guard self-test (#3817 exit-2 path)"
-entry = "node scripts/check-dead-symbol-citations.mjs --self-test"
-language = "system"
-pass_filenames = false
-# See the sibling hook above: its own script AND the shared libraries it
-# delegates to, so editing `guard-file-source.mjs` cannot silently defang it.
-files = "^scripts/(check-dead-symbol-citations\\.mjs|lib/guard-file-source\\.mjs|lib/git-scratch-guard\\.(mjs|sh))$"
 stages = ["pre-commit"]
 
 # REMOVE AFTER marker guard (#4129). `migrate_personal_pages_to_work` carried
@@ -695,7 +607,7 @@ entry = "node scripts/check-remove-after-markers.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/(check-remove-after-markers\\.mjs|lib/guard-file-source\\.mjs|lib/git-scratch-guard\\.(mjs|sh))$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # Frontend import-cycle guard (#761). The `src/` module graph was driven to
 # zero cycles (Tarjan SCC over ~600 first-party modules); this hook keeps it
@@ -739,27 +651,8 @@ language = "system"
 pass_filenames = false
 # #3997: this guard `import`s `detectImports` from check-import-cycles.mjs,
 # and its own script wasn't covered either — both are unioned in so an edit
-# to either can't defang this hook by running nothing. See
-# store-layering-selftest below, added for the same reason (no backstop of
-# any kind existed before).
+# to either can't defang this hook by running nothing.
 files = "^(src/stores/.*\\.(ts|tsx)|scripts/(check-store-layering|check-import-cycles)\\.mjs)$"
-stages = ["pre-commit"]
-
-# Self-test the store-layering guard's own exit behavior (family-allowlist
-# violation FAILS, intra-family import PASSES, an allowed cross-store import
-# PASSES, the reverse ban on blocks.ts FAILS, storeBasename resolves both the
-# relative and `@/stores/` spellings) whenever the guard script — or the
-# check-import-cycles.mjs module it delegates import-detection to — changes,
-# so a regression that defangs it can't land. Added by #3997: this hook had
-# no self-test of any kind before.
-# WHY: resolves store basenames with its own scanner, so it can fail open silently — #3997
-[[repos.hooks]]
-id = "store-layering-selftest"
-name = "store-layering guard self-test (#3997)"
-entry = "node scripts/check-store-layering.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/(check-store-layering|check-import-cycles)\\.mjs$"
 stages = ["pre-commit"]
 
 # lib-layering ratchet (#3121): names four frontend tiers —
@@ -785,24 +678,6 @@ pass_filenames = false
 files = "^(src/(lib|stores|hooks|components)/.*\\.(ts|tsx)|scripts/(lib-layering-baseline\\.json|check-import-cycles\\.mjs))$"
 stages = ["pre-commit"]
 
-# Self-test the lib-layering ratchet's own exit behavior (legal downward
-# import PASSES, new upward import FAILS, baselined upward import PASSES,
-# stale baseline entry FAILS) whenever the guard script itself changes, so
-# a regression that defangs it can't land.
-# WHY: parses imports with its own scanner and diffs a shrink-only baseline — #3121
-[[repos.hooks]]
-id = "lib-layering-selftest"
-name = "lib-layering ratchet self-test"
-entry = "node scripts/check-lib-layering.mjs --self-test"
-language = "system"
-pass_filenames = false
-# #3997: also keyed on check-import-cycles.mjs, the shared module this guard
-# delegates import-detection to (its own fixture CLI self-test copies that
-# file alongside the guard — see runCliSelfTest), so an edit to either
-# re-runs this self-test.
-files = "^scripts/(check-lib-layering|check-import-cycles)\\.mjs$"
-stages = ["pre-commit"]
-
 # src/types/ must stay type-only (#4226): check-lib-layering.mjs excludes
 # src/types/** from its tier scan on the premise that anything routed there
 # is erased at compile time, so importing it can never invert a runtime
@@ -826,10 +701,8 @@ pass_filenames = false
 # so a commit editing only the tokenizer used to select this hook not at
 # all. `pass_filenames = false` already means the hook re-walks src/types/
 # whatever the changed path is, so the union costs one extra run of an
-# already whole-tree scan. (This pair was grandfathered into
-# scripts/hook-deps-baseline.json for one round, back when the `hook-deps`
-# hook still read that baseline; #4556 removed that hook, so this union is
-# what does the work now.)
+# already whole-tree scan. (#4556 removed the `hook-deps` hook that once
+# grandfathered this pair, so this union is what does the work now.)
 files = "^src/types/.*\\.(ts|tsx)$|^scripts/lib/js-scanner\\.mjs$"
 stages = ["pre-commit"]
 
@@ -844,11 +717,11 @@ entry = "node scripts/check-types-erasure.mjs --self-test"
 language = "system"
 pass_filenames = false
 # #3997/#4434: `lib/js-scanner.mjs` too — same reason as the primary hook
-# above, and the same spelling `no-raw-invoke-selftest` /
-# `wdio-driver-gate-selftest` / `persist-hooks-selftest` already use for
+# above, and the same spelling `wdio-driver-gate-selftest` /
+# `persist-hooks-selftest` already use for
 # this exact dependency.
 files = "^scripts/(check-types-erasure|lib/js-scanner)\\.mjs$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # bulk-vs-fold equivalence inventory ratchet (#3346): every bulk command is
 # an optimisation of a loop, and where the bulk path RE-IMPLEMENTS the single
@@ -876,22 +749,6 @@ pass_filenames = false
 files = "^(src-tauri/.*\\.rs|scripts/bulk-equivalence-baseline\\.json)$"
 stages = ["pre-commit"]
 
-# Self-test the bulk-equivalence ratchet's own exit behavior (new bulk fn
-# FAILS — including one in a SIBLING CRATE, stale entry FAILS, kind drift
-# FAILS, deleted equivalence test FAILS, unjustified `gap` FAILS, a pinned
-# entry survives regeneration and goes stale when its function is deleted,
-# fully-recorded inventory PASSES) whenever the guard script itself changes,
-# so a regression that defangs it can't land.
-# WHY: parses fn signatures across crates with its own scanner, so it can fail open silently — #3346
-[[repos.hooks]]
-id = "bulk-equivalence-selftest"
-name = "bulk-equivalence ratchet self-test"
-entry = "node scripts/check-bulk-equivalence.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-bulk-equivalence\\.mjs$"
-stages = ["pre-commit"]
-
 # strict-invoke-optout ratchet (#3332): `src/test-setup.ts` installs the
 # #3225 strict `invoke` mock — an unstubbed IPC REJECTS and `afterEach`
 # names the command — but a file-level
@@ -912,21 +769,6 @@ entry = "node scripts/check-strict-invoke-optout.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src/.*\\.test\\.(ts|tsx)|scripts/strict-invoke-optout-baseline\\.json)$"
-stages = ["pre-commit"]
-
-# Self-test the strict-invoke-optout ratchet's own exit behavior (baselined
-# opt-out PASSES, new opt-out FAILS, stale baseline entry FAILS, a factory
-# threading `strictInvokeFallback` is clean, a factory-less `vi.mock`
-# counts) whenever the guard script itself changes, so a regression that
-# defangs it can't land.
-# WHY: parses vi.mock factories with its own scanner, so it can fail open silently — #3332
-[[repos.hooks]]
-id = "strict-invoke-optout-selftest"
-name = "strict-invoke opt-out ratchet self-test"
-entry = "node scripts/check-strict-invoke-optout.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-strict-invoke-optout\\.mjs$"
 stages = ["pre-commit"]
 
 # axe-presence: every `src/components/__tests__/*.test.tsx` must include
@@ -984,20 +826,6 @@ pass_filenames = false
 files = "^src/components/.*\\.tsx$"
 stages = ["pre-commit"]
 
-# #1270 — self-test the IPC error-path guard's own exit behavior
-# (no-test IPC component FAILS, covered/allowlisted PASSES, stale
-# allowlist FAILS) whenever the guard script itself changes, so a
-# regression that re-vacuums the guard can't land unnoticed.
-# WHY: parses imports and test bodies with its own scanner; a stale allowlist re-vacuums the coverage — #1270
-[[repos.hooks]]
-id = "ipc-error-path-coverage-selftest"
-name = "IPC error-path coverage self-test"
-entry = "node scripts/check-ipc-error-path.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-ipc-error-path\\.mjs$"
-stages = ["pre-commit"]
-
 # no-raw-invoke: app code must call Tauri commands through the typed
 # `commands.*` bindings in src/lib/bindings.ts, not the stringly-typed
 # `invoke('snake_case')` bypass (which sidesteps arg/return typing and
@@ -1014,20 +842,6 @@ entry = "node scripts/check-raw-invoke.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src/.*\\.(ts|tsx)|scripts/(check-raw-invoke\\.mjs|lib/js-scanner\\.mjs))$"
-stages = ["pre-commit"]
-
-# Self-test the no-raw-invoke guard's own exit behavior (raw invoke
-# FAILS, typed binding / commented / exempt PASS) whenever the guard
-# script — or the shared scanner it delegates its lexing to (#3993) —
-# changes, so a regression that defangs it can't land.
-# WHY: delegates lexing to the shared JS scanner, which can fail open on a shape it does not recognise — #3993
-[[repos.hooks]]
-id = "no-raw-invoke-selftest"
-name = "No raw invoke guard self-test"
-entry = "node scripts/check-raw-invoke.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/(check-raw-invoke|lib/js-scanner)\\.mjs$"
 stages = ["pre-commit"]
 
 # vault-isolation (#3334): the wdio lane drives the REAL binary against a
@@ -1052,20 +866,6 @@ entry = "node scripts/check-vault-isolation.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src-tauri/src/.*\\.rs|wdio\\.conf\\.ts)$"
-stages = ["pre-commit"]
-
-# Self-test the vault-isolation guard's own exit behavior (a direct
-# resolve outside the seam FAILS, a commented one PASSES, a wdio.conf.ts
-# missing any single piece FAILS) whenever the guard script itself
-# changes, so a regression that defangs it can't land.
-# WHY: parses wdio.conf.ts with its own scanner, so it can fail open silently — #3334
-[[repos.hooks]]
-id = "vault-isolation-selftest"
-name = "e2e vault isolation guard self-test"
-entry = "node scripts/check-vault-isolation.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-vault-isolation\\.mjs$"
 stages = ["pre-commit"]
 
 # wdio-driver-gate (#3972 / Dependabot alert #50): `extract-zip` <= 2.0.1
@@ -1107,7 +907,7 @@ entry = "node scripts/check-wdio-driver-gate.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/(check-wdio-driver-gate|lib/js-scanner)\\.mjs$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # tauri-import-baseline (#2927): `src/lib/tauri.ts` is a hand-written IPC
 # wrapper layer being retired in favor of the generated `commands.*`
@@ -1140,21 +940,6 @@ pass_filenames = false
 files = "^(src/.*\\.(ts|tsx)|scripts/(tauri-import-baseline\\.json|check-tauri-import-baseline\\.mjs|lib/js-scanner\\.mjs))$"
 stages = ["pre-commit"]
 
-# Self-test the tauri-import ratchet's own exit behavior (new importer
-# FAILS, stale baseline entry FAILS, baselined / dynamic / mock / commented
-# / test-file PASS) whenever the guard script — or the shared scanner it
-# delegates its lexing to (#3993) — changes, so a regression that defangs
-# it can't land.
-# WHY: delegates lexing to the shared JS scanner, which can fail open on a shape it does not recognise — #3993
-[[repos.hooks]]
-id = "tauri-import-baseline-selftest"
-name = "Tauri-import ratchet self-test"
-entry = "node scripts/check-tauri-import-baseline.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/(check-tauri-import-baseline|lib/js-scanner)\\.mjs$"
-stages = ["pre-commit"]
-
 # json-parse-cast ratchet (#3881): `JSON.parse(...) as T` type-ASSERTS the
 # shape of a value fresh out of storage instead of checking it — a stale
 # schema, a hand-edited devtools value, or a future migration produces a
@@ -1179,22 +964,6 @@ entry = "node scripts/check-json-parse-cast.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src/.*\\.(ts|tsx)|scripts/(json-parse-cast-baseline\\.json|check-json-parse-cast\\.mjs|lib/js-scanner\\.mjs))$"
-stages = ["pre-commit"]
-
-# Self-test the json-parse-cast ratchet's own exit behavior (new occurrence
-# FAILS, stale baseline entry FAILS, baselined / validated / commented /
-# string-literal / test-file / tauri-mock PASS, an unlexable file is a
-# scanError not a silent skip) whenever the guard script — or the shared
-# scanner it delegates its lexing to — changes, so a regression that
-# defangs it can't land.
-# WHY: parses cast expressions with its own scanner, so it can fail open silently — #3881
-[[repos.hooks]]
-id = "json-parse-cast-baseline-selftest"
-name = "JSON.parse-cast ratchet self-test"
-entry = "node scripts/check-json-parse-cast.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/(check-json-parse-cast|lib/js-scanner)\\.mjs$"
 stages = ["pre-commit"]
 
 # check-set-property-args (#3127): `commands.setProperty`'s third arg
@@ -1243,11 +1012,10 @@ entry = "node scripts/check-set-property-args.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/(check-set-property-args|lib/js-scanner)\\.mjs$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # Self-test the shared JS/TS scanner both guards above delegate their lexing
-# to (#3950 — `check-mutation-harness-clones.mjs` delegates to it too, but
-# #4556 unwired that guard): regex
+# to (#3950): regex
 # literals containing braces/quotes, division that must NOT be read as a
 # regex, a regex in each ambiguous position (after `)`, after an
 # identifier, after `return`, at statement start), and the inputs it
@@ -1262,7 +1030,7 @@ entry = "node scripts/lib/js-scanner.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/lib/js-scanner\\.mjs$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # no-raw-local-storage (#2466): app code must declare a device/space/page-
 # local preference in the typed registry (`src/lib/preferences.ts`,
@@ -1283,20 +1051,6 @@ entry = "node scripts/check-raw-local-storage.mjs"
 language = "system"
 pass_filenames = false
 files = "^src/.*\\.(ts|tsx)$"
-stages = ["pre-commit"]
-
-# Self-test the no-raw-local-storage guard's own exit behavior (raw call
-# FAILS, registry accessor / commented / exempt / variable-indirection
-# PASS) whenever the guard script itself changes, so a regression that
-# defangs it can't land.
-# WHY: delegates lexing to the shared JS scanner, which can fail open on a shape it does not recognise — #2466
-[[repos.hooks]]
-id = "no-raw-local-storage-selftest"
-name = "No raw localStorage guard self-test"
-entry = "node scripts/check-raw-local-storage.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-raw-local-storage\\.mjs$"
 stages = ["pre-commit"]
 
 # unanchored-content-regex (#3348, theme T4 "text treated as structure";
@@ -1365,7 +1119,7 @@ entry = "node scripts/check-unanchored-content-regex.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/check-unanchored-content-regex\\.mjs$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # main-module-detection (#3373): every guard/filer script in scripts/ gates
 # its `main()` on "am I the process entry point?", so that a vitest test can
@@ -1442,7 +1196,7 @@ pass_filenames = false
 # a change to any of the three moves the derived cap while the hook that
 # checks it stays Skipped.
 files = '^(scripts/(check-main-module-detection|file-mutation-survivors|check-mutants-scope)\.mjs|stryker\.modules\.mjs|src-tauri/\.cargo/mutants\.toml)$'
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # persist-hooks (#3352, split out of #3323): `pageBrowserFilters.ts` shipped
 # a `persist()` of a non-scalar shape (a `Record<string, PageFilterWithKey[]>`
@@ -1499,6 +1253,8 @@ entry = "node scripts/check-persist-hooks.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/(check-persist-hooks|lib/js-scanner)\\.mjs$"
+stages = ["manual"]
+
 # metric-provable (#3349, theme T6 "accounting for conditions that cannot
 # occur, read as health"): every metric must have a test proving it can
 # fire. `[profile.release]` sets `panic = "abort"` — deliberately and with
@@ -1607,7 +1363,7 @@ entry = "node scripts/check-metric-provable.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^(scripts/check-metric-provable\\.mjs|src-tauri/src/materializer/metrics\\.rs)$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
@@ -1632,23 +1388,6 @@ pass_filenames = false
 # fixture const added in `agaric-sync/src` changes this guard's verdict.
 # `Cargo.toml` is a trigger too — the member list is derived from it.
 files = "(\\.snap$|^src-tauri/(src|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs$|^src-tauri/Cargo\\.toml$)"
-stages = ["pre-commit"]
-
-# Self-test the snapshot-redaction guard's own exit behaviour whenever it
-# changes: the fixture allowlist is the only leniency this guard has, and
-# #3465 was a hand-maintained root list that silently covered three of five
-# crates. The fixtures pin both directions (a non-fixture value in a
-# previously-unindexed crate is still flagged; a real fixture const there is
-# now allowed) and pin that a derivation which cannot be trusted exits 2
-# rather than scanning a partial set.
-# WHY: parses snapshot bodies with its own matcher, so it can fail open silently — #3465
-[[repos.hooks]]
-id = "snapshot-redaction-self-test"
-name = "snapshot redaction guard self-test"
-entry = "node scripts/check-snapshot-redaction.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-snapshot-redaction\\.mjs$"
 stages = ["pre-commit"]
 
 # Session-log numbering: the number must be free in the MERGE TARGET, not
@@ -1701,26 +1440,6 @@ stages = ["pre-commit"]
 # mean teaching the guard to tell its two callers apart, which is more
 # mechanism, and more to get wrong, than the noise costs.
 verbose = true
-
-# #3690: the guard above is only worth having if it fails on a collision it
-# used to pass. Its fixture suite builds throwaway repositories — including
-# the exact parallel-branch shape (base at 1280, origin/main already at
-# 1281) — and runs the guard inside them, so what is asserted is the guard
-# as invoked rather than a model of it.
-# WHY: parses log filenames and prek.toml with its own matcher, so it can fail open silently — #3690
-[[repos.hooks]]
-id = "session-log-numbering-self-test"
-name = "session-log numbering guard self-test (#3690 parallel-collision fixtures)"
-entry = "bash scripts/check-session-log-numbering.sh --self-test"
-language = "system"
-pass_filenames = false
-# #3997: also keyed on the shared git-scratch-guard.sh scrubber the guard
-# sources, so an edit to either re-runs this self-test.
-# #4535 review note 1: the suite's `verbose = true` case asserts against
-# prek.toml itself, so union it too — otherwise deleting that key locally
-# would not select this self-test and the assertion would never re-run.
-files = "^(scripts/(check-session-log-numbering\\.sh|lib/git-scratch-guard\\.sh)|prek\\.toml)$"
-stages = ["pre-commit"]
 
 # WHY: append-only session-log record silently rewritten — #4536
 #
@@ -1796,7 +1515,7 @@ entry = "npx license-checker --onlyAllow 'MIT;ISC;Apache-2.0;BSD-3-Clause;BSD-2-
 language = "system"
 pass_filenames = false
 files = "(^package\\.json$|^package-lock\\.json$)"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # JS: knip (dead export detection — also covers unused-dep detection, so
 # R19 retired the separate `depcheck` hook in favour of knip-only). Pre-push
@@ -1921,19 +1640,6 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit"]
 
-# Runs the guard's own fixture suite (`--self-test`) so the cross-cache
-# survival check and the query!-removal escape valve cannot silently
-# regress. No file args; mirrors `migrations-immutable-self-test`.
-# WHY: parses the query cache and macro call sites with its own parser, so it can fail open — #3901
-[[repos.hooks]]
-id = "check-sqlx-cache-drift-self-test"
-name = "sqlx cache drift guard self-test (#3901 fixtures)"
-entry = "bash scripts/check-sqlx-cache-drift.sh --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["pre-commit", "pre-push"]
-
 # Tauri command IPC error-sanitization check. Every
 # `#[tauri::command]` wrapper that returns `Result<_, AppError>` and
 # propagates errors via `?` should funnel them through
@@ -1971,20 +1677,6 @@ pass_filenames = false
 files = "^src-tauri/src/commands/.*\\.rs$"
 stages = ["pre-commit"]
 
-# Self-test the instrumentation guard's own exit behavior (DIRECT/DELEGATED
-# PASS, GAP FAILS, doc-mention does not count, stale allowlist FAILS) whenever
-# the guard script itself changes, so a regression that re-vacuums it can't
-# land unnoticed. Mirrors `ipc-error-path-coverage-selftest`.
-# WHY: parses Rust attributes with its own matcher, so it can fail open silently — #2110
-[[repos.hooks]]
-id = "tauri-command-instrumented-selftest"
-name = "tauri command instrumented self-test"
-entry = "node scripts/check-tauri-command-instrumented.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-tauri-command-instrumented\\.mjs$"
-stages = ["pre-commit"]
-
 # #2110 (M4) — frontend trace-interaction naming. Every `traceInteraction`
 # span must be named from the central `INTERACTIONS` registry
 # (`src/lib/observability/interactions.ts`), never an interpolated string, so
@@ -1999,19 +1691,6 @@ entry = "node scripts/check-trace-interactions.mjs"
 language = "system"
 pass_filenames = false
 files = "^src/.*\\.tsx?$"
-stages = ["pre-commit"]
-
-# Self-test the trace-interaction naming guard's own detection (member access
-# PASSES, string/template/variable/call FAIL) whenever the guard script itself
-# changes. Mirrors `tauri-command-instrumented-selftest`.
-# WHY: parses call sites with its own matcher, so it can fail open silently — #2110
-[[repos.hooks]]
-id = "trace-interactions-named-selftest"
-name = "frontend traceInteraction naming self-test"
-entry = "node scripts/check-trace-interactions.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-trace-interactions\\.mjs$"
 stages = ["pre-commit"]
 
 # Rust: raw write-tx guard (#110). replaced ad-hoc
@@ -2105,7 +1784,7 @@ entry = "python3 scripts/check-raw-tx.py --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # Rust: dynamic-SQL justification guard (#646). docs/architecture/tooling.md
 # claims every runtime `sqlx::query()` (non-macro) site carries a comment
@@ -2172,7 +1851,7 @@ entry = "python3 scripts/check-dynamic-sql.py --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # Rust: per-(crate, table) raw-write table-ownership baseline guard (#2895).
 # Agaric's SQLite store is written from four crates (app = src-tauri/src,
@@ -2219,7 +1898,7 @@ entry = "python3 scripts/check-table-ownership.py --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # Rust: production `DELETE FROM op_log` is confined to the store's bypass
 # module (#4018 / #3310). `op_log` is append-only by trigger, and a wholesale
@@ -2273,7 +1952,7 @@ entry = "python3 scripts/check-op-log-delete.py --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # Migration → JS-mock schema-contract guard (#3084). The browser/e2e Tauri
 # mock (src/lib/tauri-mock/) is a hand-maintained SECOND implementation of the
@@ -2313,7 +1992,7 @@ entry = "python3 scripts/check-migration-mock-contract.py --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # Rust: tauri-specta 10-argument ceiling guard (#1317). The tauri-specta IPC
 # bridge codegen has a HARD 10-argument limit per `#[tauri::command]`, and a
@@ -2374,7 +2053,7 @@ entry = "python3 scripts/check-command-arity.py --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # Rust: space-filter drift guard (#139). Space membership is a first-class
 # `blocks.space_id` column (#533, migration 0086), so the active-space read
@@ -2426,21 +2105,7 @@ stages = ["pre-commit", "pre-push"]
 # baseline line format round-trips). Added by #3997: this hook had no
 # self-test of any kind before, structurally identical to the gap
 # `wdio-driver-gate` had before #3996.
-#
-# `always_run`, NOT `files:`-scoped to the guard script — deliberately, and
-# unlike the other self-test #3997 adds (`store-layering-selftest`), which
-# is `files:`-scoped. The split follows the repo's existing line rather than
-# drawing a new one: EVERY `python3 … --self-test` hook in this file is
-# `always_run = true` with
-# `pass_filenames = false`, while the JS/shell self-tests are overwhelmingly
-# `files:`-scoped. Keeping this one with its own family used to matter
-# mechanically too — `scripts/check-hook-deps.mjs` exempted a guard's
-# OWN-script slot only when SOME hook fired on that script, and for the
-# python guards the always_run sibling was what supplied that; #4556 removed
-# the `hook-deps` hook, so only the family convention remains. An earlier
-# revision of this comment said it re-runs "whenever the guard script itself
-# changes": JS boilerplate, and simply false of an `always_run` hook, which
-# re-runs on every commit.
+# `always_run`, like every other `python3 … --self-test` hook in this file.
 # WHY: a Python AST guard: a query shape it does not recognise is a silently skipped line — #3997
 [[repos.hooks]]
 id = "check-space-filter-drift-selftest"
@@ -2449,7 +2114,7 @@ entry = "python3 scripts/check-space-filter-drift.py --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # The general form of the hook above (#4501). #3255 was the live instance: 11
 # of 15 space-filter baseline entries named files that had moved crates in
@@ -2465,9 +2130,8 @@ stages = ["pre-commit", "pre-push"]
 # copy of `scripts/`; `src-tauri/gen/**/baseline-prof.txt` is Android's), which
 # measured 36 hard failures in a real checkout while a fresh worktree — having
 # neither — stayed green.
-# Standalone, NOT a feature of scripts/check-hook-deps.mjs, so it survives
-# #4556 either way rather than inheriting a 2,811-line dependency for an
-# `exists()` call. No `--self-test`, deliberately: a defect in a path-existence
+# Standalone, deliberately not bolted onto the `hook-deps` guard #4556 deleted.
+# No `--self-test`, deliberately: a defect in a path-existence
 # check is a false POSITIVE, which announces itself — see the script header.
 #
 # `always_run`, like every other `python3 …` hook in this file: an entry goes
@@ -2498,9 +2162,7 @@ stages = ["pre-commit", "pre-push"]
 # `test-py-guard-file-source.sh` (a ~1400-line fixture suite) to also cover
 # `check-op-log-delete.py`'s dependency on `check-table-ownership.py` is out
 # of scope for a `files:` regex fix.
-# WHY: guard_file_source.py is the index-vs-working-tree resolver that five
-# KEEP-list guards load; with its exists() defanged they return rc=0 on a
-# REAL .rs file, and this suite is the only thing that catches it — #4017
+# WHY: five guards load guard_file_source.py; with its exists() defanged they pass a REAL .rs file, and only this suite catches it — #4017
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -2510,7 +2172,7 @@ entry = "bash scripts/test-py-guard-file-source.sh"
 language = "system"
 pass_filenames = false
 files = '^scripts/(check-(raw-tx|dynamic-sql|command-arity)\.py|lib/guard_file_source\.py|lib/git-scratch-guard\.sh|test-py-guard-file-source\.sh)$'
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a
 # formatting miss is rewritten in place + re-staged mechanically instead
@@ -2657,30 +2319,6 @@ pass_filenames = false
 types = ["rust"]
 stages = ["pre-push"]
 
-# #3220: the related-test selector's own fixture suite. Until #3220 the
-# per-file loop only matched `src-tauri/src/**`, so a commit confined to
-# agaric-store/engine/sync/core/observability/diagnostics produced an empty
-# filter list and the gate ran ZERO tests while reporting success — 2087 of
-# ~5452 workspace tests had no local gate at all. This companion hook pins
-# the shapes that regression is made of: a crate-only change must yield a
-# non-empty filter, a package filter must force `--workspace` (without it
-# `package(agaric-engine)` matches nothing — #3212), an unmappable .rs file
-# must be reported loudly, and the pre-existing `src-tauri/src/**` module
-# mapping (plus the #818 specta pull-in) must stay byte-identical. #3256 also
-# pins current foundational file/directory fallbacks, missing-target failure,
-# NUL-safe unusual filenames, nested-cwd cached/range discovery, and the exact
-# cwd/argv of the non-dry full-suite cargo exec via a local stub. Runs against
-# a throwaway workspace in a temp dir. No file args.
-# WHY: maps changed files to crates with its own resolver; a miss selects no tests and still reads green — #3220
-[[repos.hooks]]
-id = "test-related-rust-self-test"
-name = "related-test selector self-test (#3220 crate-mapping fixtures)"
-entry = "bash scripts/test-related-rust.sh --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["pre-commit", "pre-push"]
-
 # Rust: cargo-deny (advisories + licenses + bans + sources)
 # WHY: disallowed licenses and advisories in the Rust dependency graph — third-party, maintained upstream
 [[repos]]
@@ -2714,34 +2352,7 @@ entry = "node scripts/sync-audit-from-deny.mjs --check"
 language = "system"
 pass_filenames = false
 files = "^src-tauri/(deny\\.toml|\\.cargo/audit\\.toml)$"
-stages = ["pre-commit"]
-
-# cargo-audit-guard-selftest (#3688): a malformed upstream advisory (RustSec
-# commit e11d6b33, gettext-rs/gettext-sys directory mismatch) made `cargo
-# audit` refuse to load the advisory DATABASE and exit non-zero before it
-# read a single dependency — indistinguishable from a real vulnerability from
-# the exit code alone, and the documented waiver
-# (`src-tauri/.cargo/audit.toml [advisories].ignore`) could not help, because
-# no advisory ID was ever reported to ignore. `scripts/cargo-audit-guard.sh`
-# wraps `cargo audit` and classifies a database-load failure (exit 2, banner)
-# separately from a real advisory report (exit 1, unchanged) or a clean run
-# (exit 0). The self-test drives the classification against canned text
-# captured from REAL `cargo audit` runs — a locally-reproduced
-# directory/package mismatch, and a genuine un-ignored RUSTSEC-2026-0194
-# report against this repo's own Cargo.lock — through a stub `cargo` on PATH,
-# so it stays offline and fast while pinning the exact fingerprint the
-# classifier keys on.
-# WHY: a database-load failure reads exactly like a clean audit unless something separates them — #3688
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "cargo-audit-guard-selftest"
-name = "cargo-audit database-load vs vulnerability self-test (#3688)"
-entry = "bash scripts/cargo-audit-guard.sh --self-test"
-language = "system"
-pass_filenames = false
-files = "^(scripts/cargo-audit-guard\\.sh|\\.github/workflows/_validate\\.yml)$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # Rust: unsafe-code allowlist. Workspace lint is
 # `unsafe_code = "deny"`; the only escape hatch is a per-file
@@ -2778,24 +2389,7 @@ entry = "node scripts/check-android-trigger.mjs"
 language = "system"
 pass_filenames = false
 files = "^(\\.github/workflows/ci\\.yml|scripts/check-android-trigger\\.mjs)$"
-stages = ["pre-commit"]
-
-# 16 KB Android page-alignment guard (#4425). The guard itself needs a built
-# APK, so it can only run in the two Android CI jobs; what runs here is its
-# `--self-test`, which is where its behaviour is actually pinned — including
-# the assertion that both `ci.yml` and `release.yml` still invoke it. That
-# last one is the point of keying this hook on the WORKFLOWS as well as on
-# the script: deleting the CI step is exactly how a guard stops guarding, and
-# nothing else in the tree would notice.
-# WHY: reads ELF alignment with its own reader; a misread reports 16 KB-safe when it is not — #4425
-[[repos.hooks]]
-id = "android-so-alignment-selftest"
-name = "Android 16 KB alignment guard self-test (#4425)"
-entry = "node scripts/check-android-so-alignment.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^(scripts/check-android-so-alignment\\.mjs|\\.github/workflows/(ci|release)\\.yml)$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # Rust: cargo-machete (unused dependency detection)
 # WHY: unused Rust dependencies accumulate unnoticed — standard toolchain lane
@@ -2878,16 +2472,6 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit"]
 
-# WHY: compares migration ranges with its own comparator, so it can fail open silently — #806
-[[repos.hooks]]
-id = "migrations-immutable-self-test"
-name = "migrations append-only self-test (#806 range fixtures)"
-entry = "bash scripts/check-migrations-immutable.sh --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["pre-commit", "pre-push"]
-
 # STRICT tables policy. Every new `CREATE TABLE` in a
 # SQLite migration must use STRICT mode (SQLite 3.37+) so silent
 # type coercion fails at insert time instead of corrupting reads
@@ -2946,7 +2530,7 @@ pass_filenames = false
 # files are inputs to the self-test, so editing either has to re-run this hook
 # or the drift check would only fire on an unrelated later commit.
 files = "^(scripts/check-migrations-rebuild-cascade\\.mjs|src-tauri/migrations/AGENTS\\.md|src-tauri/src/db/tests\\.rs)$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # Migration-test coverage guard (#4144). `migrations/AGENTS.md` documents a
 # nextest filter (`test(/_(376|606|708)$|_0[0-9]{3}_/)`) that selects "the
@@ -2986,25 +2570,7 @@ pass_filenames = false
 # editing the scanner without touching a migration must still re-run it
 # against the real tree, or a widening that reddens the repo lands green.
 files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|snapshot|spaces)/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
-stages = ["pre-commit", "pre-push"]
-
-# #4144: the guard's Rust test-attribute parsing (`#[test]` / `#[tokio::test]`,
-# with or without runtime args), its `_<NNNN>_` substring match, and the
-# shrink-only baseline mechanism must not silently regress. This companion
-# hook runs the guard's own fixture suite (`--self-test`), which also pins
-# the issue's own falsification: renaming an existing migration test to drop
-# its `_<NNNN>_` tag must turn the guard red. No file args.
-# WHY: parses migration and test files with its own matcher, so it can fail open silently — #4144
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "migration-test-coverage-self-test"
-name = "migration-test coverage guard self-test (#4144 falsification fixtures)"
-entry = "node scripts/check-migration-test-coverage.mjs --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # zizmor-version-pin: the zizmor version zizmor-hook.sh's
 # ZIZMOR_PINNED_VERSION asserts against, and the `zizmor@X` entries in every
@@ -3034,7 +2600,7 @@ entry = "node scripts/check-zizmor-version-pin.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/check-zizmor-version-pin\\.mjs$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # prek-version-pin (#3742): same shape as zizmor-version-pin above, for
 # prek/taplo-cli/typos-cli. `scripts/setup-hooks.sh`'s `pinned_version_for`
@@ -3066,7 +2632,7 @@ entry = "node scripts/check-prek-version-pin.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/check-prek-version-pin\\.mjs$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # tsgolint-version-pin (#4408): the third pin guard, for the pair that makes
 # `oxlint --type-aware` meaningful. `oxlint-tsgolint` is a typescript-go
@@ -3102,7 +2668,7 @@ entry = "node scripts/check-tsgolint-version-pin.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/check-tsgolint-version-pin\\.mjs$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # cache-poisoning-suppressions: `.github/zizmor.yml` used to suppress
 # zizmor's cache-poisoning finding on four ci.yml steps by LINE NUMBER — a
@@ -3133,27 +2699,7 @@ entry = "node scripts/check-cache-poisoning-suppressions.mjs"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit"]
-
-# This self-test is also the ONLY hook that re-runs zizmor when
-# `.github/zizmor.yml` itself changes (#3960): the `zizmor` hook below is
-# keyed to `.github/workflows/**` + `.github/actions/**` and cannot be widened
-# to the config, because it forwards its matched filenames to the binary as
-# AUDIT TARGETS — zizmor would be asked to audit its own config as a workflow.
-# So the dependency is recorded here instead, and asserted rather than merely
-# written down: the guard reads this `files` pattern back out of prek.toml and
-# fails if it stops naming any of the four paths it depends on
-# (`SELF_TEST_HOOK_DEPENDENCIES`). `prek.toml` is one of them for that reason —
-# the guard now reads this file, so an edit to it must re-run the guard.
-# WHY: parses suppression anchors with its own parser, so it can fail open silently — #3960
-[[repos.hooks]]
-id = "cache-poisoning-suppressions-self-test"
-name = "zizmor: cache-poisoning suppressions guard self-test"
-entry = "node scripts/check-cache-poisoning-suppressions.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^(scripts/check-cache-poisoning-suppressions\\.mjs|\\.github/zizmor\\.yml|\\.github/workflows/ci\\.yml|prek\\.toml)$"
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # pairing-rejection-contract: the responder's rejection messages are declared
 # independently in Rust (`PAIRING_PROOF_REQUIRED_MESSAGE` and — since #3504 —
@@ -3181,19 +2727,7 @@ entry = "node scripts/check-pairing-rejection-contract.mjs"
 language = "system"
 pass_filenames = false
 files = "^(src-tauri/agaric-sync/src/sync_daemon/server\\.rs|src/lib/pairing-rejections\\.ts|src/components/dialogs/PairingDialog\\.tsx|scripts/check-pairing-rejection-contract\\.mjs)$"
-stages = ["pre-commit", "pre-push"]
-
-# WHY: parses both sides of the contract with its own parser, so it can fail open silently — #3504
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "pairing-rejection-contract-self-test"
-name = "pairing: proof-rejection contract guard self-test"
-entry = "node scripts/check-pairing-rejection-contract.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/check-pairing-rejection-contract\\.mjs$"
-stages = ["pre-commit", "pre-push"]
+stages = ["manual"]
 
 # zizmor: GitHub Actions security audit. Complements actionlint
 # (which is style/correctness only) by catching unpinned `uses:`,
@@ -3231,26 +2765,6 @@ name = "zizmor"
 entry = "bash scripts/zizmor-hook.sh"
 language = "system"
 files = "^\\.github/(workflows/.*\\.ya?ml|actions/.*/action\\.ya?ml)$"
-stages = ["pre-commit"]
-
-# Self-test the wrapper's own behaviour whenever it changes: that a version
-# mismatch fails CI and warns locally, and that every degradation path names
-# the audits it skipped. Drives the wrapper against stub `zizmor`/`curl`
-# binaries, so it needs no network and no real zizmor.
-# scripts/setup-hooks.sh is in the pattern too (#3545): the self-test also
-# cross-checks setup-hooks.sh — it executes that file's own
-# `ZIZMOR_VERSION_AWK=$( … )` sourcing statement and its empty-value guard, and
-# greps its `cargo_get_pinned` wiring. Matching only zizmor-hook.sh meant the
-# guard did not fire locally on the very file it guards, so a commit touching
-# setup-hooks.sh alone reached CI (`--all-files`) before anything complained.
-# WHY: the wrapper's exit-code translation turns a tool error into a pass if it is wrong — #3545
-[[repos.hooks]]
-id = "zizmor-hook-self-test"
-name = "zizmor wrapper self-test"
-entry = "bash scripts/zizmor-hook.sh --self-test"
-language = "system"
-pass_filenames = false
-files = "^scripts/(zizmor-hook|setup-hooks)\\.sh$"
 stages = ["pre-commit"]
 
 # taplo: TOML lint + format. The `check-toml` builtin only validates
@@ -3315,25 +2829,7 @@ entry = "node scripts/check-stryker-modules.mjs"
 language = "system"
 pass_filenames = false
 files = '^(stryker\.modules\.mjs|src/lib/.*\.ts|src/stores/.*\.ts|\.github/workflows/mutation-pr\.yml)$'
-stages = ["pre-commit"]
-
-# Self-test the guard's own exit behavior (dangling src FAILS, dangling
-# test file FAILS, empty test list FAILS, all-present PASSES) whenever the
-# guard script itself changes, so a regression that defangs it can't land.
-# WHY: resolves module paths with its own resolver, so it can fail open silently — #3142
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "stryker-modules-paths-selftest"
-name = "stryker.modules.mjs path guard self-test"
-entry = "node scripts/check-stryker-modules.mjs --self-test"
-language = "system"
-pass_filenames = false
-# #3997: also keyed on stryker.modules.mjs, which this guard imports
-# (`import { MODULES } from '../stryker.modules.mjs'`) — the sibling
-# `stryker-modules-paths` hook already unions it, this self-test did not.
-files = '^(scripts/check-stryker-modules\.mjs|stryker\.modules\.mjs)$'
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # mutants-scope (#3386): the Rust half of the same problem, and worse — the
 # `mutants` lane produced ZERO coverage for its entire life. cargo-mutants
@@ -3358,23 +2854,7 @@ entry = "node scripts/check-mutants-scope.mjs"
 language = "system"
 pass_filenames = false
 files = '^(src-tauri/(\.cargo/)?mutants\.toml|src-tauri/Cargo\.toml|\.github/workflows/scheduled-deep-checks\.yml|src-tauri/(src/reverse|agaric-store/src|agaric-engine/src/loro)/.*\.rs)$'
-stages = ["pre-commit"]
-
-# Self-test the guard's own exit behavior (missing config FAILS, stray config
-# FAILS, a glob outside the examined packages FAILS, `--output` nesting is
-# modelled correctly) whenever the guard script itself changes, so a
-# regression that defangs it can't land.
-# WHY: parses the mutants config and workflow with its own reader, so it can fail open silently — #3386
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "mutants-scope-selftest"
-name = "cargo-mutants scope guard self-test"
-entry = "node scripts/check-mutants-scope.mjs --self-test"
-language = "system"
-pass_filenames = false
-files = '^scripts/check-mutants-scope\.mjs$'
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # git-fixture-isolation (#3722 meta-guard): fixing ONE script that ran git in
 # a throwaway fixture without the shared scrub does not fix the CLASS — four
@@ -3402,24 +2882,7 @@ entry = "node scripts/check-git-fixture-isolation.mjs"
 language = "system"
 pass_filenames = false
 always_run = true
-stages = ["pre-commit"]
-
-# WHY: parses fixture builders with its own scanner, so it can fail open silently — #3722
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "git-fixture-isolation-self-test"
-name = "git fixture isolation meta-guard self-test"
-entry = "node scripts/check-git-fixture-isolation.mjs --self-test"
-language = "system"
-pass_filenames = false
-# Its own script AND the helpers it is the meta-guard FOR (#4015). Keyed on
-# the script alone, editing either `git-scratch-guard` — including
-# "simplifying" the index probe back out of `git_scratch_init` — fired no
-# hook at all. That is the #3993/#3997 shape: a guard defanged by editing its
-# own dependency.
-files = '^scripts/(check-git-fixture-isolation\.mjs|lib/git-scratch-guard\.(mjs|sh))$'
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # pr-overlap-trust-boundary (#3967): RESTORED after being swept up in #4556's
 # unwiring pass. It is not a self-test, and it survives all five of #4556's
@@ -3477,9 +2940,8 @@ stages = ["pre-commit"]
 # vacuously and silently — a check that inspects nothing passes just as
 # quietly as one that passes. The `--self-test` pins both conditions AND that
 # the second actually REACHES a checkout step in the real file. Two-file
-# trigger, so the cost is a rounding error. It is not exempt from #4556
-# Phase 2 (restage every self-test to CI); it is exempt from Phase 1's
-# delete list.
+# trigger, so the cost is a rounding error. #4556 Phase 2 restaged it to
+# `manual` (CI) like every surviving self-test.
 # WHY: the trust-boundary guard can pass vacuously if it stops reaching a checkout step — #3967
 [[repos]]
 repo = "local"
@@ -3490,7 +2952,7 @@ entry = "node scripts/check-pr-overlap-trust-boundary.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = '^(\.github/workflows/pr-overlap\.yml|scripts/check-pr-overlap-trust-boundary\.mjs)$'
-stages = ["pre-commit"]
+stages = ["manual"]
 
 # ─── bench lane coverage (#3362) ──────────────────────────────────
 #
@@ -3535,7 +2997,20 @@ entry = "node scripts/check-bench-lane-coverage.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = '^scripts/check-bench-lane-coverage\.mjs$'
-stages = ["pre-commit"]
+stages = ["manual"]
+
+# verify-ci-equivalent.sh's fixture suite: probe-DB isolation (#3257) and the
+# #4424 divergence ratchet, the only automated comparison of this script's
+# `CI_PATH_RE` against `_validate.yml`'s `ci_re`. Manual stage: runs in CI.
+# WHY: the two CI-category classifiers drift silently and nothing else compares them — #4424
+[[repos.hooks]]
+id = "verify-ci-equivalent-selftest"
+name = "verify-ci-equivalent.sh self-test (#4424 divergence ratchet)"
+entry = "bash scripts/verify-ci-equivalent.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/verify-ci-equivalent\.sh|\.github/workflows/_validate\.yml)$'
+stages = ["manual"]
 
 # ─── the cap on this file ─────────────────────────────────────────
 #

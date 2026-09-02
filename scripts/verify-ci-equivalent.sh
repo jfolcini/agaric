@@ -126,12 +126,13 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # It IS attributable — but read the next paragraph before relying on how
 # much. `scripts/*.sh` is covered by Phase A.
 #
-# WEAKENED BY #4556 Phase 1, and this is a LIVE routing decision rather than
-# a stale note, so it is corrected here rather than deferred to Phase 4. That
-# coverage used to be shellcheck PLUS the per-script self-test hooks
-# (`push-sh-selftest`, `verify-ci-equivalent-selftest`, `skip-ci-verify-guard`
-# and the rest). All of those are now UNWIRED, so today a `scripts/*.sh` edit
-# is covered by shellcheck ALONE until #4556 Phase 2 restages them into CI.
+# NARROWED BY #4556, and this is a LIVE routing decision rather than a stale
+# note. That coverage used to be shellcheck PLUS the per-script self-test
+# hooks (`push-sh-selftest`, `skip-ci-verify-guard` and the rest). Those are
+# gone, and the surviving self-tests — this file's own
+# `verify-ci-equivalent-selftest` included — sit in the `manual` stage, which
+# runs only in CI. Phase A runs the pre-commit stage, so here a
+# `scripts/*.sh` edit is covered by shellcheck ALONE.
 #
 # The narrow `CI_PATH_RE` is kept anyway: the fail-closed arm's cost is
 # unchanged and remains the thing that made four consecutive pushes unusable,
@@ -154,7 +155,7 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 CI_PATH_RE='^\.github/|^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
 
 # Shell scripts the RUST phases depend on. These are CI-attributable for
-# Phase A purposes (shellcheck + their self-tests still run), but a change to
+# Phase A purposes (shellcheck still runs), but a change to
 # one also has to re-run the Rust phases, because each determines what those
 # phases DO:
 #
@@ -168,11 +169,9 @@ CI_PATH_RE='^\.github/|^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$
 # that provisions dev.db.
 RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.sh$'
 
-# Scripts whose ONLY prek hook lives in a category the SKIP list can drop, and
-# which have no `--self-test` hook of their own. `CI_PATH_RE`'s rationale is
-# "covered by Phase A: shellcheck plus the per-script self-tests" — true for
-# most of `scripts/`, but NOT for these three: editing one would otherwise
-# run shellcheck alone, where the old fail-closed arm ran its hook.
+# Scripts whose ONLY prek hook lives in a category the SKIP list can drop:
+# editing one would otherwise run shellcheck alone, where the old fail-closed
+# arm ran its hook.
 # (Careful reflowing this: a comment line STARTING with the word after `# `
 #  being "shellcheck" is parsed as a shellcheck DIRECTIVE, and prose then
 #  fails SC1072/SC1073. That is how this very comment broke a commit.)
@@ -181,8 +180,9 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 #   check-axe-presence.sh       -> hook `axe-presence`      (dropped when HAS_TS=0)
 #   check-test-file-naming.sh   -> hook `test-file-naming`  (dropped when HAS_TS=0)
 #
-# Others are fine: check-migrations-immutable.sh, check-session-log-numbering.sh
-# and cargo-audit-guard.sh each have a self-test hook outside every skip list.
+# check-migrations-immutable.sh, check-session-log-numbering.sh and
+# cargo-audit-guard.sh used to be covered by self-test hooks outside every
+# skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
 HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$'
 
@@ -917,19 +917,14 @@ phase_a_skip_extra() {
 }
 
 # ── self-test ──────────────────────────────────────────────────────
-# Fixture suite for the probe-DB isolation above (#3257). It USED to run as
-# the `verify-ci-equivalent-selftest` prek hook, catching a regression back
-# to a fixed /tmp path at commit time rather than as a non-deterministic
-# Phase E failure that blames sqlx; #4556 Phase 1 unwired that hook, so it
-# runs only when invoked by hand until Phase 2 restages it. It also carries
-# the #4424 divergence ratchet, which compares this file's `CI_PATH_RE`
-# against `_validate.yml`'s `ci_re` (and the `_tracked` exclusion that
-# derives from it) — so THAT comparison no longer runs at commit time.
-# It does NOT cover the two files' skip arrays, and never did: nothing has
-# ever ratcheted those against each other, before this PR or after. Runs
-# BEFORE the
-# bypass guard and the multi-minute verifier body, so it is fast and
-# side-effect free.
+# Fixture suite for the probe-DB isolation above (#3257), run as the
+# `verify-ci-equivalent-selftest` prek hook — `manual` stage, so in CI on
+# every PR rather than at commit time (#4556 Phase 2). It also carries the
+# #4424 divergence ratchet, which compares this file's `CI_PATH_RE` against
+# `_validate.yml`'s `ci_re` (and the `_tracked` exclusion that derives from
+# it). It does NOT cover the two files' skip arrays, and never did: nothing
+# has ever ratcheted those against each other. Runs BEFORE the bypass guard
+# and the multi-minute verifier body, so it is fast and side-effect free.
 if [ "${1:-}" = "--self-test" ]; then
     st_fail=0
     st_ok() { printf '  ok   - %s\n' "$1"; }
@@ -1049,8 +1044,8 @@ if [ "${1:-}" = "--self-test" ]; then
     st_hook 'scripts/check-unsafe-allowlist.sh'  "$HOOK_OWNER_RS_RE" yes 'unsafe-allowlist re-enables HAS_RS'
     st_hook 'scripts/check-axe-presence.sh'      "$HOOK_OWNER_TS_RE" yes 'axe-presence re-enables HAS_TS'
     st_hook 'scripts/check-test-file-naming.sh'  "$HOOK_OWNER_TS_RE" yes 'test-file-naming re-enables HAS_TS'
-    st_hook 'scripts/push.sh'                    "$HOOK_OWNER_RS_RE" no  'a self-tested script does not'
-    st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor one with its own self-test hook'
+    st_hook 'scripts/push.sh'                    "$HOOK_OWNER_RS_RE" no  'push.sh is not a hook owner'
+    st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor is check-migrations-immutable.sh'
 
     # RATCHET the documented divergence from `_validate.yml`'s `ci_re`. The
     # comment this replaces ("mirrors _validate.yml's classifier") went stale
@@ -1193,7 +1188,7 @@ if [ "${1:-}" = "--self-test" ]; then
             # survives. (An earlier version of this check built a throwaway
             # `git init` fixture to get a "real" tracked path; #3722's
             # git-fixture-isolation guard correctly rejected that — a
-            # self-test run as a prek hook executes inside the commit's own
+            # self-test run as a prek hook executes inside the invoking
             # git environment, where GIT_DIR/GIT_INDEX_FILE/GIT_WORK_TREE
             # outrank `git -C <dir>`, so that fixture's `git init`/`add`/
             # `commit` would have landed on the real repository, not a
@@ -2004,7 +1999,7 @@ con.close()
     fi
 
     # ── ambient-environment isolation (#4330 review) ──────────────────
-    # This self-test file is wired as a pre-commit hook, so it must be
+    # This self-test is wired as a prek hook (manual stage, CI), so it must be
     # hermetic: a developer who happens to `export DATABASE_URL` in their
     # shell (for sqlx-cli, say) must not turn any of the fixture-driven
     # cases above red. Regression-guards the isolation added to cases
@@ -2705,22 +2700,17 @@ skip_items=(vitest cargo-test)
 if [ "$HAS_TS" = "0" ]; then
     skip_items+=(oxlint oxfmt tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
         no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
-        check-elevation-tiers-self-test import-cycles store-layering axe-presence \
-        test-file-naming ipc-error-path-coverage ipc-error-path-coverage-selftest \
-        no-raw-invoke no-raw-invoke-selftest no-raw-local-storage \
-        no-raw-local-storage-selftest trace-interactions-named \
-        trace-interactions-named-selftest license-checker)
+        import-cycles store-layering axe-presence test-file-naming \
+        ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
+        trace-interactions-named)
 fi
 # Backend absent → skip the Rust/cargo/SQL/migration hooks.
 if [ "$HAS_RS" = "0" ]; then
     skip_items+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
-        tauri-command-sanitize tauri-command-instrumented \
-        tauri-command-instrumented-selftest check-raw-tx check-raw-tx-self-test \
-        check-dynamic-sql check-dynamic-sql-self-test check-command-arity \
-        check-command-arity-self-test check-space-filter-drift unsafe-allowlist \
-        audit-toml-in-sync migrations-immutable migrations-strict-tables \
-        migrations-rebuild-cascade migrations-rebuild-cascade-self-test \
-        check-sqlx-cache-drift check-sqlx-cache-drift-self-test)
+        tauri-command-sanitize tauri-command-instrumented check-raw-tx \
+        check-dynamic-sql check-command-arity check-space-filter-drift \
+        unsafe-allowlist migrations-immutable migrations-strict-tables \
+        migrations-rebuild-cascade check-sqlx-cache-drift)
 fi
 # CI/tooling absent → skip the workflow/shell lint hooks.
 if [ "$HAS_CI" = "0" ]; then

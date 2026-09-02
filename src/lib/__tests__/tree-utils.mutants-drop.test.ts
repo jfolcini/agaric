@@ -225,13 +225,10 @@ describe('SENTINEL_ID preconditions (#3794)', () => {
  * than its start position lost from `simulateProjection`'s edit above it).
  * Corrected above. This is exactly the fragility #3804 was filed about — line
  * numbers drift even in the SAME commit that supposedly re-derived them, with
- * no gate to catch it. The fix there is a committed, re-runnable harness, not
- * another one-off hand count:
- * `scripts/mutation-harnesses/tree-utils-compute-drop-index.harness.ts`
- * reproduces both "0 differing inputs" claims (539:16, 545:23) over 352,000
- * generated inputs, with three known-Killed mutants (533:7, 552:19, 554:50)
- * firing as controls, and the 539 canary confirmed reachable (52,000 hits)
- * but never at the line itself (0 hits) — see that file's header for the
- * exact numbers and how they compare to this ledger's original figures (a
- * different generator, so the raw counts differ; the verdicts agree).
+ * no gate to catch it. A harness since deleted by #4556 reproduced both
+ * "0 differing inputs" claims (539:16, 545:23) over 352,000 generated inputs,
+ * with three known-Killed mutants (533:7, 552:19, 554:50) firing as controls,
+ * and the 539 canary confirmed reachable (52,000 hits) but never at the line
+ * itself (0 hits); its generator differed from this ledger's original, so the
+ * raw counts differ and the verdicts agree.
  */

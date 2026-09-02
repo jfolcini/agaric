@@ -789,9 +789,8 @@ def run_cli_self_test(record) -> None:
     exit verifies the half that was never in doubt, and the failure mode being
     defended against is a guard that quietly stops failing.
 
-    Mirrors what #4434 did for `check-hook-deps.mjs`'s `runGuard()` and
-    `check-store-layering.mjs`: spawn the CLI with `sys.executable` and an
-    argv array, and assert the exit code.
+    Mirrors what #4434 did for `check-store-layering.mjs`: spawn the CLI
+    with `sys.executable` and an argv array, and assert the exit code.
 
     BOTH directions are asserted, and that is not symmetry for its own sake:
     a suite that only checked "a finding exits non-zero" would pass just as

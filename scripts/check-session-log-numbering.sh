@@ -464,7 +464,7 @@ run_guard() {
 }
 
 # ── self-test ──────────────────────────────────────────────────────────
-# Wired as the `session-log-numbering-self-test` prek hook. Each case
+# Run by hand with --self-test (no prek hook since #4556). Each case
 # builds a throwaway repository and runs THIS script inside it, so what is
 # tested is the guard as invoked, not a model of it.
 if [ "${1:-}" = "--self-test" ]; then

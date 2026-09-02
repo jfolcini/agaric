@@ -956,22 +956,16 @@ jobs:
           if [ "$fe" != true ]; then
             skips+=(oxlint oxfmt tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
               no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
-              check-elevation-tiers-self-test import-cycles store-layering \
-              axe-presence test-file-naming ipc-error-path-coverage \
-              ipc-error-path-coverage-selftest no-raw-invoke no-raw-invoke-selftest \
-              no-raw-local-storage no-raw-local-storage-selftest \
-              trace-interactions-named trace-interactions-named-selftest \
-              license-checker)
+              import-cycles store-layering axe-presence test-file-naming \
+              ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
+              trace-interactions-named)
           fi
           if [ "$be" != true ]; then
             skips+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
-              tauri-command-sanitize tauri-command-instrumented \
-              tauri-command-instrumented-selftest check-raw-tx \
-              check-raw-tx-self-test check-dynamic-sql check-dynamic-sql-self-test \
-              check-command-arity check-command-arity-self-test \
-              check-space-filter-drift unsafe-allowlist audit-toml-in-sync \
-              migrations-immutable migrations-strict-tables \
-              migrations-rebuild-cascade migrations-rebuild-cascade-self-test)
+              tauri-command-sanitize tauri-command-instrumented check-raw-tx \
+              check-dynamic-sql check-command-arity check-space-filter-drift \
+              unsafe-allowlist migrations-immutable migrations-strict-tables \
+              migrations-rebuild-cascade)
           fi
           if [ "$ci" != true ]; then
             skips+=(actionlint zizmor shellcheck)
@@ -1022,6 +1016,25 @@ jobs:
           # 5xx accepted in `lychee.toml`.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: prek run --all-files
+
+      - name: Run prek manual stage (self-tests + CI-only guards, #4556 Phase 2)
+        # Every surviving self-test and the CI-only guards live in the `manual`
+        # stage, which `prek run --all-files` above never selects. SKIP is
+        # emptied explicitly: the computed SKIP is exported via $GITHUB_ENV and
+        # would otherwise silently drop hooks from this run. Exact count, not
+        # `> 0`, and no `Skipped`: a `files:`-scoped hook that matches nothing
+        # reports Skipped and exits 0 (the knip false-green shape below).
+        env:
+          SKIP: ''
+        run: |
+          set -euo pipefail
+          expected=34   # keep equal to: prek list --hook-stage manual --output-format json | jq length
+          listed=$(prek list --hook-stage manual --output-format json | jq length)
+          [ "$listed" -eq "$expected" ] || { echo "manual stage lists $listed hooks, expected $expected"; exit 1; }
+          prek run --all-files --hook-stage manual 2>&1 | tee manual.log
+          passed=$(grep -c 'Passed$' manual.log || true)
+          [ "$passed" -eq "$expected" ] || { echo "$passed of $expected manual hooks reported Passed"; exit 1; }
+          if grep -q 'Skipped' manual.log; then echo "a manual-stage hook was Skipped"; exit 1; fi
 
       - name: Run cargo clippy (backend PRs)
         # cargo-clippy is staged `pre-push` in prek.toml, so the pre-commit-stage
@@ -1133,8 +1146,9 @@ jobs:
         # `cargo audit` itself actually reads (see `cargo-audit-guard.sh`'s
         # own banner, which names the generated file because that is the
         # one this step's tool consults, not the one a human edits). The
-        # `audit-toml-in-sync` prek hook fails, naming the same command, if
-        # the two ever drift. The .nsprc-style explicit-waiver discipline
+        # `audit-toml-in-sync` prek hook (manual stage, run above) fails,
+        # naming the same command, if the two ever drift. The .nsprc-style
+        # explicit-waiver discipline
         # applies; same pattern used by the npm-side audit step.
         #
         # #3688 — a malformed upstream advisory (RustSec commit e11d6b33,

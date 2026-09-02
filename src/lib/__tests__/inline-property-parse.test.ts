@@ -288,9 +288,7 @@ describe('stripPropertyLines', () => {
   // construction). Originally verified over a 100k random-string sweep (0
   // diffs from the original with an empty set; 8,569/8,569 identical results
   // on non-empty sets too, confirming it isn't trivially vacuous) that was
-  // never committed. #3804 — re-verified with a committed, re-runnable
-  // harness:
-  // `scripts/mutation-harnesses/inline-property-parse-strip-lines.harness.ts`.
+  // never committed. #3804 — re-verified with a harness since deleted by #4556.
 
   it('stripping the only line yields an empty string', () => {
     expect(stripPropertyLines('status:: active', new Set([0]))).toBe('')
@@ -336,8 +334,7 @@ describe('stripPropertyLines', () => {
   // all here — this codepath was the only one where a difference from the
   // original ever appeared; a same-family `true`-replacement mutant produced
   // zero diffs anywhere, see the ledger below). #3804 — re-verified with a
-  // committed, re-runnable harness:
-  // `scripts/mutation-harnesses/inline-property-parse-strip-lines.harness.ts`.)
+  // harness since deleted by #4556.)
   it('drops the marker on a lone backslash line only when the run truly reaches index 0', () => {
     expect(stripPropertyLines('\\\ncontext:: home', new Set([1]))).toBe('')
   })
@@ -354,8 +351,7 @@ describe('stripPropertyLines', () => {
   // committed (0 diffs from the original in all cases, vs. the `i>0` mutant
   // just above, caught 442/200k times at random and on 12/many edge cases —
   // confirming the harness does detect a real divergence in this same
-  // family). #3804 — re-verified with a committed, re-runnable harness:
-  // `scripts/mutation-harnesses/inline-property-parse-strip-lines.harness.ts`.
+  // family). #3804 — re-verified with a harness since deleted by #4556.
 })
 
 describe('buildInlinePropertySetParams', () => {

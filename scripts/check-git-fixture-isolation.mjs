@@ -200,10 +200,9 @@ export const SCANNED_EXTENSIONS = new Map([
  * file walked IN ORDER, so a delimiter can only ever be read in the role it
  * actually plays.
  *
- * Exported (unchanged otherwise) so `check-hook-deps.mjs` can run its own
- * `blankRemainingPyTripleQuoted` second pass on this function's OUTPUT
- * directly, before `stripLineComments`'s `#`-comment-line filter runs — see
- * that pass's doc comment (#4477 note 4) for why the ORDER matters.
+ * Exported so a caller can run a second blanking pass on this function's
+ * OUTPUT directly, before `stripLineComments`'s `#`-comment-line filter
+ * runs — the ORDER matters (#4477 note 4).
  *
  * A docstring is a triple-quoted literal that OPENS a statement: at the start
  * of a line, after indentation and after any of the `r`/`b`/`u`/`f` prefixes.

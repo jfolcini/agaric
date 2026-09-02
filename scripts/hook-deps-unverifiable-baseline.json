@@ -1,9 +1,0 @@
-[
-  "cargo-test",
-  "md-link-targets",
-  "test-file-naming",
-  "verify-ci-equivalent",
-  "vitest",
-  "zizmor",
-  "zizmor-hook-self-test"
-]
