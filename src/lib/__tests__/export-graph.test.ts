@@ -778,6 +778,53 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
     expect(report).toContain('Page One.md')
   })
 
+  it('does not re-read an attachment whose read already failed on an earlier page', async () => {
+    // `emittedAssets` caches the FAILURE (`null`), not just the success path.
+    // Without that entry a later page re-reads the same attachment, and a read
+    // that succeeds the second time produces a self-contradictory export: one
+    // page reports the attachment as missing while another links to its bytes.
+    const attId = '01HZX9P3QABCDEF0123456789'
+    let metaCalls = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          { id: 'P1', content: 'Page One' },
+          { id: 'P2', content: 'Page Two' },
+        ]
+      }
+      if (cmd === 'export_page_markdown') return `[missing](attachment:${attId})`
+      if (cmd === 'read_attachment_meta') {
+        metaCalls += 1
+        if (metaCalls === 1) throw new Error('transient')
+        return {
+          id: attId,
+          block_id: 'B1',
+          filename: 'logo.png',
+          mime_type: 'image/png',
+          size_bytes: 1,
+          fs_path: 'x',
+          created_at: 0,
+          content_hash: null,
+        }
+      }
+      if (cmd === 'read_attachment') return new Uint8Array([1]).buffer
+      return null
+    })
+
+    const result = await exportGraphAsZip(SPACE_ID)
+
+    expect(metaCalls).toBe(1)
+    expect(result.skippedAttachments).toBe(1)
+
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    expect(Object.keys(unzipped.files)).not.toContain(`assets/${attId}__logo.png`)
+    // Both pages keep the original ref — neither links to bytes the other
+    // was told were unreadable.
+    for (const page of ['Page One.md', 'Page Two.md']) {
+      expect(await unzipped.file(page)?.async('string')).toBe(`[missing](attachment:${attId})`)
+    }
+  })
+
   it('omits export-report.txt and reports zero skips on the happy path (behavior unchanged)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_all_pages_in_space') {
@@ -1393,16 +1440,18 @@ describe('downloadBlob', () => {
  * Mutants below survive the Stryker run and CANNOT be killed: each provably
  * produces output identical to the original for every input. Recorded here so
  * the next triage pass does not re-derive them. Format: line:col [mutator]
- * verbatim replacement → argument.
+ * verbatim replacement → argument. Line numbers are from the 2026-08-31
+ * Stryker run (#3753 re-file); they were three higher when first written and
+ * will drift again — the col/mutator/replacement triple is the stable id.
  *
  * Two structural lemmas do most of the work:
  *
  *   L1. `sanitizeSegment` NEVER returns an empty/falsy string. It has three
- *       `return` statements — `'Untitled'` (line 108), `'Untitled'` (line 111)
- *       and `escapeReservedDeviceName(cleaned)` (line 113) — but FOUR distinct
+ *       `return` statements — `'Untitled'` (line 105), `'Untitled'` (line 108)
+ *       and `escapeReservedDeviceName(cleaned)` (line 110) — but FOUR distinct
  *       exit values, because the third delegates: `escapeReservedDeviceName`
  *       itself returns either its own argument (`return name`) or
- *       `` `${basename}_${rest}` `` (≥ 1 char). Line 111 guarantees
+ *       `` `${basename}_${rest}` `` (≥ 1 char). Line 108 guarantees
  *       `cleaned.length > 0` before the delegation, so `return name` is
  *       non-empty too. Note the delegated exit is safe for EVERY argument,
  *       including `.`-leading ones: `'.md'` gives `basename === ''`, which is
@@ -1429,18 +1478,18 @@ describe('downloadBlob', () => {
  * of them showed a difference (0 blind spots), so its null results below are
  * meaningful.
  *
- * 108:7  [ConditionalExpression] "false"
- * 108:7  [LogicalOperator]       "cleaned.length === 0 && /^\.+$/.test(cleaned)"
- * 108:7  [ConditionalExpression] "false"   (the `cleaned.length === 0` operand)
- * 108:31 [Regex]                 "/^\.$/"
+ * 105:7  [ConditionalExpression] "false"
+ * 105:7  [LogicalOperator]       "cleaned.length === 0 && /^\.+$/.test(cleaned)"
+ * 105:7  [ConditionalExpression] "false"   (the `cleaned.length === 0` operand)
+ * 105:31 [Regex]                 "/^\.$/"
  *      All four weaken or delete the `cleaned.length === 0 || /^\.+$/` guard,
- *      and all four are subsumed by lines 110-111:
+ *      and all four are subsumed by lines 107-108:
  *      `cleaned.replace(/[. ]+$/, '')` erases a dots-only string entirely, and
  *      the `cleaned.length === 0` re-check two lines later then returns the same
  *      `'Untitled'` the guard would have returned. (For the `&&` variant
  *      specifically: it can never fire at all, since `/^\.+$/.test('')` is
  *      false — an empty string has no dots — so it degenerates to the
- *      deleted-guard case.) Line 108 is thus REDUNDANT with 110-111. It is kept
+ *      deleted-guard case.) Line 105 is thus REDUNDANT with 107-108. It is kept
  *      deliberately as an explicit, documented Zip-Slip guard rather than
  *      relying on a coincidence of the trailing-trim regex; #3798 annotated it
  *      in place so the next reader does not re-derive this.
@@ -1452,7 +1501,7 @@ describe('downloadBlob', () => {
  *      deleted, so these six mutants are gone from the population rather than
  *      surviving in it.)
  *
- * 329:65 [StringLiteral] "\"\""  (NoCoverage — `page.content ?? 'Untitled'`)
+ * 326:65 [StringLiteral] "\"\""  (`page.content ?? 'Untitled'`)
  *      Only reachable when a page has no content, and then
  *      `titleToZipPath('Untitled')` and `titleToZipPath('')` both return
  *      `'Untitled'` (the empty title splits to `['']`, which `sanitizeSegment`
@@ -1460,7 +1509,7 @@ describe('downloadBlob', () => {
  *      "falls back to an Untitled path for a page with no content" test above,
  *      which converts this from NoCoverage to covered-but-equivalent.
  *
- * 494:43 [StringLiteral] "\"Stryker was here!\""  (NoCoverage — `m[3] ?? ''`)
+ * 491:43 [StringLiteral] "\"Stryker was here!\""  (NoCoverage — `m[3] ?? ''`)
  *      Capture group 3 of `ATTACHMENT_REF_RE` is neither optional nor inside an
  *      alternation, so it always participates in a successful match and `m[3]`
  *      is always a string — the `?? ''` arm is unreachable. Originally checked
@@ -1468,12 +1517,12 @@ describe('downloadBlob', () => {
  *      0 times) via a sweep that was never committed. #3804 — re-verified over
  *      50,000 cases (0 differing) with a harness since deleted by #4556.
  *
- * 532:22 [StringLiteral] "\"Stryker was here!\""  (NoCoverage)
+ * 529:22 [StringLiteral] "\"Stryker was here!\""  (NoCoverage)
  *      The `assetsPathPrefix = ''` DEFAULT parameter of `rewriteAttachmentRefs`.
- *      The function has exactly one call site (line 335) and it always passes
+ *      The function has exactly one call site (line 332) and it always passes
  *      the argument explicitly, so the default is never evaluated.
  *
- * 535:7  [ConditionalExpression] "false"  (`if (ids.size === 0) return …`)
+ * 532:7  [ConditionalExpression] "false"  (`if (ids.size === 0) return …`)
  *      A pure fast path. When `ids` is empty, every ref the regex finds must
  *      have failed `parseAttachmentRef` (that is exactly why it is not in
  *      `ids`), so the rewrite callback hits `if (id == null) return match` for
@@ -1482,18 +1531,33 @@ describe('downloadBlob', () => {
  *      empty. Both branches therefore return `{ md, skippedAttachmentIds: [] }`
  *      with identical values.
  *
- * 557:53 [StringLiteral] "\"\""  (NoCoverage — `sanitizeSegment(flatName) || 'attachment'`)
+ * 554:53 [StringLiteral] "\"\""  (NoCoverage — `sanitizeSegment(flatName) || 'attachment'`)
  *      Unreachable by L1: `sanitizeSegment` never returns a falsy value, so the
  *      `||` right operand is never evaluated.
  *
- * 625:7  [ConditionalExpression] "false"  (`if (!md.includes(ATTACHMENT_REF_SCHEME)) return md`)
+ * 622:7  [ConditionalExpression] "false"  (`if (!md.includes(ATTACHMENT_REF_SCHEME)) return md`)
  *      Another pure fast path. `ATTACHMENT_REF_SCHEME` is the literal
  *      `'attachment:'`, which appears verbatim inside `ATTACHMENT_REF_RE`, so a
  *      string lacking the substring cannot match the regex: `collectAttachmentIds`
  *      returns an empty set and `md.replace` with no matches returns the input
  *      string. Verified over 11,111 scheme-free generated inputs: 0 matches.
  *
- * 645:9  [ConditionalExpression] "false"  (`if (id == null) return alt`)
+ * 636:7  [CallExpression] ";"  (`resolved.set(id, null)` in the catch arm of
+ *      `resolveAttachmentRefsForCopy`)
+ *      Deleting the call leaves the id absent from `resolved` instead of
+ *      mapped to `null`. `resolved` is a function-local Map with exactly one
+ *      reader — `const filename = resolved.get(id)` followed by
+ *      `filename == null ? alt : …` — and `Map.get` returns `undefined` for a
+ *      missing key, which `== null` treats identically to `null`. Nothing else
+ *      reads the map (no `has`, no `size`) and `ids` is a Set, so no id is
+ *      visited twice. Both forms therefore yield the bare `alt` text.
+ *      (Contrast the same-shaped `emittedAssets.set(id, null)` at 560:7, which
+ *      is NOT equivalent and is killed by the "does not re-read an attachment
+ *      whose read already failed on an earlier page" test above: that map is
+ *      threaded ACROSS pages and is read with `.has()`, so dropping the entry
+ *      makes a later page retry the failed read.)
+ *
+ * 642:9  [ConditionalExpression] "false"  (`if (id == null) return alt`)
  *      Falling through is indistinguishable: `resolved`'s keys all come from
  *      `parseAttachmentRef` and are therefore non-null strings, so
  *      `resolved.get(null)` is `undefined`, and the very next line's
@@ -1519,16 +1583,16 @@ describe('downloadBlob', () => {
  *    title has no empty segment, it exercises the dots-only branch.) The
  *    behavior is safe, so #3798 took the docs-follow-code option: both comments
  *    now describe the `Untitled` mapping and the dead filter/ternary are gone.
- * 2. RESOLVED by #3798 (annotated, deliberately NOT removed). Line 108's
- *    traversal guard is subsumed by the trailing-dot trim on lines 110-111 for
+ * 2. RESOLVED by #3798 (annotated, deliberately NOT removed). Line 105's
+ *    traversal guard is subsumed by the trailing-dot trim on lines 107-108 for
  *    ALL inputs, not merely the tested ones — the argument is total, not
- *    empirical: line 108 fires iff `cleaned` is `''` or matches `/^\.+$/`, and
+ *    empirical: line 105 fires iff `cleaned` is `''` or matches `/^\.+$/`, and
  *    in BOTH of those cases `cleaned.replace(/[. ]+$/, '')` erases the whole
  *    string (a string of only dots is matched end-to-end by `[. ]+$`), so line
- *    111 returns the identical `'Untitled'`. There is no input for which the two
+ *    108 returns the identical `'Untitled'`. There is no input for which the two
  *    paths differ. It is kept as explicit security intent — belt-and-braces, not
  *    load-bearing — and now says so in a comment at the guard itself.
- * 3. STILL OPEN. `rewriteAttachmentRefs`'s `assetsPathPrefix = ''` default (532)
- *    and `collectAttachmentIds`'s `m[3] ?? ''` (494) are both unreachable
- *    defensive code, as is the `|| 'attachment'` fallback on 557.
+ * 3. STILL OPEN. `rewriteAttachmentRefs`'s `assetsPathPrefix = ''` default (529)
+ *    and `collectAttachmentIds`'s `m[3] ?? ''` (491) are both unreachable
+ *    defensive code, as is the `|| 'attachment'` fallback on 554.
  */
