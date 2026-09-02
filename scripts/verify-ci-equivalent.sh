@@ -7,15 +7,16 @@
 #
 # Strategy (re-scoped from full CI mirror to fast-feedback):
 #
-#   Phase A — `prek run --all-files --hook-stage pre-commit`
-#             Runs every pre-commit hook against the WHOLE tree, not just
-#             staged files. Catches the "latent breach in an untouched
-# File" class ('s `useAppKeyboardShortcuts`
-#             cognitive-complexity drift that the staged-only pre-commit
-#             missed). Tests are skipped here because the prek vitest /
-#             cargo-test hooks read `--cached` and there's nothing staged
-#             at push time — the SKIP= env var below silences their
-#             "no staged files" log noise.
+#   Phase A — `prek run --from-ref <merge-base> --to-ref HEAD --hook-stage pre-commit`
+#             Every pre-commit hook over the files this push changes (the
+#             union of its commits), the same file-scoping a commit gets;
+#             whole-tree ratchets (`pass_filenames = false`) still run whole
+#             tree when triggered. CI runs the same hooks over the whole tree
+#             in `lint`, which is the gate; this is the fast local pass.
+#             Tests are skipped here because the prek vitest / cargo-test
+#             hooks read `--cached` and there's nothing staged at push time
+#             — the SKIP= env var below silences their "no staged files" log
+#             noise.
 #
 #   Phase B/C/D — vitest + cargo nextest scoped to the **commit range**
 #                 being pushed (`@{upstream}..HEAD`, override with
@@ -114,31 +115,18 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 
 # ── CI/tooling change classifier ────────────────────────────────────
 # Workflows, the lint-tool configs the CI `lint` job keys on, and the
-# repo's own shell tooling under `scripts/`.
+# repo's own tooling under `scripts/` and `.claude/`.
 #
-# `^scripts/.*\.sh$` is deliberate. Without it a shell-only change fell
-# through to the fail-closed arm below — "a build/toolchain change we
-# cannot attribute to a suite" — which pins frontend+backend+ci and makes
-# a two-file YAML+shell diff pay the FULL Rust suite. That is not merely
-# slow: it made four consecutive pushes of exactly such a diff unusable
-# (2026-08-26).
-#
-# It IS attributable — but read the next paragraph before relying on how
-# much. `scripts/*.sh` is covered by Phase A.
-#
-# NARROWED BY #4556, and this is a LIVE routing decision rather than a stale
-# note. That coverage used to be shellcheck PLUS the per-script self-test
-# hooks (`push-sh-selftest`, `skip-ci-verify-guard` and the rest). Those are
-# gone, and the surviving self-tests — this file's own
-# `verify-ci-equivalent-selftest` included — sit in the `manual` stage, which
-# runs only in CI. Phase A runs the pre-commit stage, so here a
-# `scripts/*.sh` edit is covered by shellcheck ALONE.
-#
-# The narrow `CI_PATH_RE` is kept anyway: the fail-closed arm's cost is
-# unchanged and remains the thing that made four consecutive pushes unusable,
-# and shellcheck is still a real suite for this category. But the
-# justification is now thinner than it reads, and whoever revisits this
-# should know the difference.
+# `^scripts/` and `^\.claude/` are deliberate, and mirror `_validate.yml`'s
+# `ci_re`. Without them a tooling-only change fell through to the
+# fail-closed arm below — "a build/toolchain change we cannot attribute to a
+# suite" — which pins frontend+backend+ci and makes a two-file YAML+script
+# diff pay the FULL Rust suite (four consecutive unusable pushes on
+# 2026-08-26 for `scripts/*.sh`; a 25-minute `cargo check --tests` for a
+# `scripts/*.mjs` edit on 2026-09-02). Tooling IS attributable: its guards
+# run in Phase A, and CI's `lint` job runs the guards, their manual-stage
+# self-tests and `scripts/*.test.mjs`. The scripts a SUITE consumes are
+# routed to that suite by `RS_SCRIPT_RE` / `HOOK_OWNER_*_RE` below.
 #
 # Deliberately NOT widened: a ROOT-level `*.sh`, `rust-toolchain.toml`,
 # `.cargo/config.toml` and friends still hit fail-closed. Those change how
@@ -152,7 +140,7 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # it — none of which derive from `CI_PATH_RE` automatically.
 #
 # Defined up here so `--self-test` below can drive it directly.
-CI_PATH_RE='^\.github/|^scripts/.*\.sh$|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
+CI_PATH_RE='^\.github/|^scripts/|^\.claude/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
 
 # Shell scripts the RUST phases depend on. These are CI-attributable for
 # Phase A purposes (shellcheck still runs), but a change to
@@ -1168,15 +1156,19 @@ if [ "${1:-}" = "--self-test" ]; then
                 "found $_vci_count (expected 1)"
         else
             _vci="$_vci_matches"
-            _ours=no; _theirs=no
-            printf 'scripts/push.sh\n' | grep -qE "$CI_PATH_RE" && _ours=yes
-            printf 'scripts/push.sh\n' | grep -qE "$_vci" && _theirs=yes
-            if [ "$_ours" = yes ] && [ "$_theirs" = no ]; then
-                st_ok "divergence ratchet: scripts/*.sh is CI here and NOT in _validate.yml (documented, safe direction)"
-            else
-                st_bad "divergence ratchet: scripts/*.sh is CI here and NOT in _validate.yml" \
-                    "ours=$_ours theirs=$_theirs — if _validate.yml gained a scripts/ arm, update the divergence note"
-            fi
+            # Tooling paths are CI on BOTH sides (a `scripts/*.mjs`-only push
+            # used to fail closed into the full Rust suite; 2026-09-02).
+            for _p in scripts/push.sh scripts/coverage-ratchet.mjs .claude/skills/batch-issues/SKILL.md; do
+                _ours=no; _theirs=no
+                printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _ours=yes
+                printf '%s\n' "$_p" | grep -qE "$_vci" && _theirs=yes
+                if [ "$_ours" = yes ] && [ "$_theirs" = yes ]; then
+                    st_ok "divergence ratchet: $_p is CI here AND in _validate.yml (tooling is attributable)"
+                else
+                    st_bad "divergence ratchet: $_p is CI here AND in _validate.yml" \
+                        "ours=$_ours theirs=$_theirs — keep CI_PATH_RE and _validate.yml's ci_re in step"
+                fi
+            done
             # The four toml arms are unanchored here but anchored there, so
             # ANY path merely ENDING in one of the four filenames must
             # diverge the same documented way scripts/*.sh does above — not
@@ -1234,7 +1226,7 @@ if [ "${1:-}" = "--self-test" ]; then
             # here would make this loop flag that exact documented case as
             # "wider than documented" and tell you to update a note that
             # already says it — the failure this fix (#4424) closes.
-            _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '^scripts/.*\.sh$|.+prek\.toml$|.+\.taplo\.toml$|.+lychee\.toml$|.+\.gitleaks\.toml$')
+            _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '.+prek\.toml$|.+\.taplo\.toml$|.+lychee\.toml$|.+\.gitleaks\.toml$')
             if [ -z "$_tracked" ]; then
                 st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with _validate.yml" \
                     "git ls-files returned no tracked paths — the comparison would silently pass having checked zero"
@@ -1290,23 +1282,24 @@ if [ "${1:-}" = "--self-test" ]; then
             _tracked_excl=${_tracked_line#*grep -vE \'}
             _tracked_excl=${_tracked_excl%\'*}
             if [ -z "$_tracked_excl" ] || [ "$_tracked_excl" = "$_tracked_line" ]; then
-                st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths like scripts/*.sh" \
+                st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths" \
                     "could not extract the grep -vE pattern from the _tracked= line"
             else
                 # The eight unanchored-toml shapes from the loop above, PLUS
-                # a scripts/*.sh path (divergence (a)) and two ordinary
-                # tracked paths that must NOT be swept up by an
-                # over-broad pattern.
+                # a scripts/*.sh path (CI on both sides since the tooling
+                # widening, so it must SURVIVE the exclusion and be compared)
+                # and two ordinary tracked paths that must NOT be swept up by
+                # an over-broad pattern.
                 _survivors=$(printf '%s\n' \
                     docs/prek.toml sub/.taplo.toml nested/lychee.toml deep/dir/.gitleaks.toml \
                     myprek.toml custom.taplo.toml oldlychee.toml backup.gitleaks.toml \
                     scripts/push.sh src-tauri/src/lib.rs README.md \
                     | grep -vE "$_tracked_excl")
-                if [ "$_survivors" = "$(printf 'src-tauri/src/lib.rs\nREADME.md')" ]; then
-                    st_ok "divergence ratchet: _tracked excludes nested/prefixed toml paths like scripts/*.sh (and only those)"
+                if [ "$_survivors" = "$(printf 'scripts/push.sh\nsrc-tauri/src/lib.rs\nREADME.md')" ]; then
+                    st_ok "divergence ratchet: _tracked excludes nested/prefixed toml paths (and only those)"
                 else
-                    st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths like scripts/*.sh (and only those)" \
-                        "expected only src-tauri/src/lib.rs and README.md to survive; got: $(printf '%s' "$_survivors" | tr '\n' ' ')"
+                    st_bad "divergence ratchet: _tracked excludes nested/prefixed toml paths (and only those)" \
+                        "expected scripts/push.sh, src-tauri/src/lib.rs and README.md to survive; got: $(printf '%s' "$_survivors" | tr '\n' ' ')"
                 fi
             fi
         fi
@@ -1511,7 +1504,7 @@ if [ "${1:-}" = "--self-test" ]; then
             "rc=$st_rc out=$st_out"
     fi
 
-    printf 'if ! SKIP="$PHASE_A_SKIP" prek run --all-files\nif ! node_deps_problem_out="x"\n' \
+    printf 'if ! SKIP="$PHASE_A_SKIP" prek run --from-ref\nif ! node_deps_problem_out="x"\n' \
         >"$st_fixture_root/swapped.sh"
     st_rc=0
     st_out="$(st_order_check "$st_fixture_root/swapped.sh" "$ST_CALL_ANCHOR" "$ST_PHASE_A_ANCHOR")" || st_rc=$?
@@ -2595,6 +2588,15 @@ RANGE_COUNT="$(git rev-list --count --right-only "$RANGE" 2>/dev/null \
     || git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
 echo "→ Pre-push verifier: range '$RANGE' ($RANGE_COUNT commit(s))"
 
+# Phase A feeds prek the range's left side as `--from-ref`. For the
+# three-dot default that is the merge-base (what this branch changed); a
+# two-dot PRE_PUSH_RANGE is taken as given.
+case "$RANGE" in
+    *...*) RANGE_BASE="$(git merge-base "${RANGE%%...*}" HEAD)" ;;
+    *..*)  RANGE_BASE="${RANGE%%..*}" ;;
+    *)     RANGE_BASE="$RANGE" ;;
+esac
+
 # Fail-closed change detection: keep the git-diff exit status so we can tell a
 # genuinely EMPTY diff apart from a diff that could not be computed. If the
 # command fails we cannot know what changed, so we run EVERY category below.
@@ -2740,7 +2742,12 @@ if [ "$HAS_RS" = "1" ]; then
     fi
 fi
 
-# ── Phase A: prek run --all-files (pre-commit hooks against whole tree) ──
+# ── Phase A: prek run over the push range (pre-commit hooks) ────────
+# `--from-ref/--to-ref` hands prek the files this push changes, exactly as a
+# commit hands it the staged set, so a docs or tooling push does not pay tsc
+# or the whole-tree lints. Hooks with `pass_filenames = false` still run
+# whole-tree when one of their trigger files is in the range. CI's `lint`
+# job runs the same hooks with `--all-files` and is the gate.
 # SKIP silences the vitest/cargo-test hooks (they'd read `--cached` and log
 # "no staged files — skipping" — wasted noise since Phase C/D run them with
 # --range below) AND, category-aware, the hooks whose category did NOT change.
@@ -2751,9 +2758,9 @@ fi
 # a hook is skipped only when the category it guards is absent from this push.
 # The nightly `full-suite` job in
 # .github/workflows/scheduled-deep-checks.yml runs the FULL unskipped prek
-# suite over the whole tree as the backstop, so this trades per-push
-# whole-tree coverage of the ABSENT categories for a faster push; a latent
-# breach in an untouched, unchanged-category file is caught nightly instead.
+# suite over the whole tree as the backstop, and CI's `lint` job runs the
+# pre-commit stage over the whole tree on every PR; a latent breach in an
+# untouched file is caught there, not here.
 #
 # Never skipped BY CATEGORY (no HAS_* branch below removes them, so they run
 # on every push whatever changed): trailing-whitespace, end-of-file-fixer,
@@ -2789,15 +2796,15 @@ if [ -n "$CALLER_SKIP_EXTRA" ]; then
 fi
 
 echo ""
-echo "→ Phase A: prek run --all-files (pre-commit stage)"
+echo "→ Phase A: prek run over '$RANGE_BASE..HEAD' (pre-commit stage)"
 echo "  SKIP=$PHASE_A_SKIP"
-if ! SKIP="$PHASE_A_SKIP" prek run --all-files --hook-stage pre-commit; then
+if ! SKIP="$PHASE_A_SKIP" prek run --from-ref "$RANGE_BASE" --to-ref HEAD --hook-stage pre-commit; then
     echo ""
-    echo "✗ Pre-push verification FAILED at Phase A (prek --all-files)."
+    echo "✗ Pre-push verification FAILED at Phase A (prek over the push range)."
     echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
     exit 1
 fi
-echo "  ✓ prek --all-files"
+echo "  ✓ prek over the push range"
 
 # Migrations append-only backstop (#806): the migrations-immutable hook
 # scans the STAGED index, which is empty at push time, so a commit made
