@@ -194,20 +194,14 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     ).resolves.toBeUndefined()
   })
 
-  // #4577 — the PAIR. `/numbered-list` writes only a block property, so
-  // unlike every other structural command it never routes through
-  // `applyContentEdit` and never commits the text the user just typed. That
-  // text sits in the editor's commit debounce until something flushes it;
-  // Escape discards it, so the block kept the PRE-command content while
-  // wearing the new list style. Both halves have to be asserted together:
-  // asserting only `setListStyle` passes on the broken code, and asserting
-  // only the content passes on a handler that flushed and then forgot to
-  // write the style.
+  // #4577 — the PAIR; `handleListStyle`'s docblock is the defect.
   //
-  // The registration below stands in for `useDebouncedContentCommit`'s (the
-  // synthetic ctx has no live TipTap instance): it is the same
-  // `registerActiveDraftFlush` bridge, committing through the page store's
-  // `edit` exactly as the real one does.
+  // Both halves have to be asserted together: asserting only `setListStyle`
+  // passes on the broken code, and asserting only the content passes on a
+  // handler that flushed and then forgot to write the style. The registration
+  // below stands in for `useDebouncedContentCommit`'s (the synthetic ctx has
+  // no live TipTap instance): it is the same `registerActiveDraftFlush`
+  // bridge, committing through the page store's `edit` as the real one does.
   it('flushes the pending in-editor content before writing listStyle (#4577)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'edit_block') {

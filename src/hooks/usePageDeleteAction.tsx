@@ -207,9 +207,15 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // `PageBrowserBatchToolbar.handleTrash` (#4480/#4521) one command over
         // — the single delete is the more common gesture of the two.
         //
-        // UNION, not replacement: `id` stays in the set unconditionally so
-        // this is purely additive and cannot regress the pre-#4523 eviction if
-        // the cohort ever comes back narrower than expected.
+        // The seed is published UNCONDITIONALLY. #4523 got that by unioning it
+        // into the reported cohort; since #4558 split the call in two it is
+        // structural instead — the seed IS the scoped cohort, so it goes out
+        // whether or not the backend echoed it back inside
+        // `affected_page_ids`, and a cohort that ever comes back narrower than
+        // expected still cannot cost the seed its eviction. In the usual case,
+        // where the backend does echo it, `notifyPagesRemoved` de-duplicates
+        // the space-less cohort against the scoped one, so it is published
+        // once rather than twice under two different scopes.
         //
         // The seed comes off the REPLY, not the caller's `id`. Both name the
         // same block, but `id` is whatever string the caller passed while

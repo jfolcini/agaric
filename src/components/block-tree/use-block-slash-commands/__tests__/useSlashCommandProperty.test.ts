@@ -229,22 +229,18 @@ describe('useSlashCommandProperty — effort', () => {
   // fixed-option SELECT, so a free-text custom value can never persist. Only
   // the fixed buckets remain (covered by the it.each above).
 
-  // #4577 — the PAIR, on the same defect the list slash commands had. Every
-  // handler in this module writes a block PROPERTY and commits no content, so
-  // none of them route through `applyContentEdit` and none of them persist the
-  // text the user typed just before running the command. That text sits in the
-  // editor's commit debounce until something flushes it; Escape DISCARDS it,
-  // so the block kept the pre-command content while wearing the new property.
+  // #4577 — the PAIR; `useSlashCommandStructural.handleListStyle`'s docblock
+  // is the defect, which every handler in this module shares.
+  //
   // Both halves have to be asserted together: asserting only `set_property`
   // passes on the broken code, and asserting only the content passes on a
-  // handler that flushed and then forgot to write the property.
-  //
-  // `/effort` stands in for the whole module — the flush is one line at the
-  // top of each handler's `try`, so a per-handler copy of this test would pin
-  // nine copies of one decision. The registration below stands in for
+  // handler that flushed and then forgot to write the property. `/effort`
+  // stands in for the whole module — the flush is one line at the top of each
+  // handler's `try`, so a per-handler copy would pin nine copies of one
+  // decision. The registration below stands in for
   // `useDebouncedContentCommit`'s (the synthetic ctx has no live TipTap
   // instance): it is the same `registerActiveDraftFlush` bridge, committing
-  // through the page store's `edit` exactly as the real one does.
+  // through the page store's `edit` as the real one does.
   it('flushes the pending in-editor content before writing the property (#4577)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'edit_block') {
