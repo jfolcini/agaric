@@ -24,6 +24,34 @@ export const references: Record<string, string> = {
   'references.filtersAppliedBadge': '{{count}}',
   'references.filtersAppliedAriaLabel_one': '{{count}} filter applied',
   'references.filtersAppliedAriaLabel_other': '{{count}} filters applied',
+  // ── Embeds (#4550) ────────────────────────────────────────────────
+  // `{{embed ((ULID))}}` renders the target's subtree inline. Read-only in
+  // phase 1: the two exits are `embed.openSource` and the block-ref chips
+  // inside the embedded content.
+  'embed.containerLabel': 'Embedded from {{page}}: {{title}}',
+  'embed.breadcrumbLabel': 'Embed source',
+  'embed.sourcePrefix': 'Embedded from {{page}}',
+  'embed.openSource': 'Open source',
+  'embed.collapse': 'Collapse embed',
+  'embed.expand': 'Expand embed',
+  'embed.loading': 'Loading embedded content\u2026',
+  'embed.loadingLabel': 'Loading embedded content',
+  'embed.sourceDeleted': 'Source deleted',
+  'embed.deletedLabel': 'Embedded block deleted: {{title}}',
+  'embed.restore': 'Restore from Trash',
+  'embed.unresolved': 'Source unavailable',
+  'embed.unresolvedLabel': 'Embedded block unavailable',
+  'embed.unresolvedChip': 'Unresolved embed',
+  // The cycle / depth stubs are real text, not a `::before`, so a screen
+  // reader announces where the loop closes.
+  'embed.cycleStub': 'Already shown above',
+  'embed.depthStub': 'Nested too deep',
+  'embed.emptySource': 'The embedded block has no content.',
+  'embed.missingInSource': 'The embedded block is no longer on this page.',
+  'embed.showAllInSource_one': '{{count}} more block \u2014 show all in source',
+  'embed.showAllInSource_other': '{{count}} more blocks \u2014 show all in source',
+  'embed.pickerItem': 'Insert embed\u2026',
+  'embed.pickerHeader': 'Embed a block or page',
   'unlinkedRefs.headerNone': 'No Unlinked References',
   'unlinkedRefs.headerOne': '1 Unlinked Reference',
   'unlinkedRefs.header': '{{count}} Unlinked References',

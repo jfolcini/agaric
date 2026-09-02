@@ -1551,7 +1551,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(33)
+    expect(results).toHaveLength(34)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1584,6 +1584,8 @@ describe('BlockTree slash command wiring', () => {
       'turn',
       'duplicate',
       'query',
+      // #4550 — `/embed` sits directly below `/query` and mirrors it.
+      'embed',
       'attach',
       'emoji',
     ])

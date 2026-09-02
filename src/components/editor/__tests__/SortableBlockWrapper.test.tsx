@@ -27,6 +27,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { useHostRowAriaLevel } from '@/components/editor/embed/host-row-aria'
 
 // Mock SortableBlock — record props so we can assert on them
 const sortableBlockProps: Array<Record<string, unknown>> = []
@@ -34,11 +35,16 @@ const sortableBlockProps: Array<Record<string, unknown>> = []
 vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: (props: Record<string, unknown>) => {
     sortableBlockProps.push(props)
+    // #4550 — read the host-row aria level the wrapper publishes, so the test
+    // below can assert an `{{embed}}` rendered inside this row would announce
+    // its own rows relative to the HOST tree.
+    const hostAriaLevel = useHostRowAriaLevel()
     return (
       <button
         type="button"
         data-testid={`sortable-block-${props['blockId']}`}
         data-depth={String(props['depth'])}
+        data-host-aria-level={String(hostAriaLevel)}
         data-is-selected={String(props['isSelected'])}
       >
         SortableBlock {String(props['blockId'])}
@@ -162,6 +168,29 @@ describe('SortableBlockWrapper', () => {
     expect(li).toHaveAttribute('aria-level', '3') // depth 2 → level 3
     expect(li).toHaveAttribute('aria-setsize', '5')
     expect(li).toHaveAttribute('aria-posinset', '3')
+  })
+
+  // #4550 — an `{{embed}}` rendered inside this row needs the row's OWN level
+  // to announce its embedded rows host-relatively. Nothing under `StaticBlock`
+  // receives depth, so the wrapper — the single component that writes
+  // `aria-level` — publishes it. Without the provider the embed falls back to
+  // level 0 and announces its rows as if they were page roots.
+  it('publishes the row aria-level for an embed rendered inside it', () => {
+    renderInList(makeProps({ block: makeBlock({ id: 'BLK001', depth: 2 }) }))
+    expect(screen.getByTestId('sortable-block-BLK001')).toHaveAttribute('data-host-aria-level', '3')
+  })
+
+  it('publishes the STORED depth, not the transient drag-projected depth', () => {
+    // A row being dragged previews its projected indent, but what a screen
+    // reader announces must not change mid-drag.
+    renderInList(
+      makeProps({
+        block: makeBlock({ id: 'BLK001', depth: 1 }),
+        activeId: 'BLK001',
+        projected: { depth: 4, parentId: null, maxDepth: 4, minDepth: 0 },
+      }),
+    )
+    expect(screen.getByTestId('sortable-block-BLK001')).toHaveAttribute('data-host-aria-level', '2')
   })
 
   it('omits aria-setsize / aria-posinset when sibling props are undefined', () => {

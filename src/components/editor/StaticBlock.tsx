@@ -10,6 +10,7 @@
  * StaticBlock is a thin dispatcher over three render concerns:
  *   - {@link useRichContent}         — the rich-text tree (inline chips + block nodes)
  *   - {@link StaticQueryBlock}       — `{{query …}}` blocks
+ *   - {@link EmbedContainer}         — `{{embed ((ULID))}}` blocks (#4550)
  *   - {@link StaticBlockAttachments} — attachments + PDF viewer + image lightbox/props
  */
 
@@ -18,6 +19,8 @@ import type React from 'react'
 import { memo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmbedContainer } from '@/components/editor/embed/EmbedContainer'
+import { useHostRowAriaLevel } from '@/components/editor/embed/host-row-aria'
 import { ListMarker } from '@/components/editor/ListMarker'
 import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlockAttachments } from '@/components/editor/StaticBlockAttachments'
@@ -25,6 +28,7 @@ import { StaticQueryBlock } from '@/components/editor/StaticQueryBlock'
 import { useRichContent } from '@/components/editor/useRichContent'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBatchAttachments, useBatchAttachmentsLoading } from '@/hooks/useBatchAttachments'
+import { parseEmbedToken } from '@/lib/embed-token'
 import { cn } from '@/lib/utils'
 
 export interface StaticBlockProps {
@@ -65,6 +69,12 @@ function StaticBlockInner({
   // resolved from ListMarkerContext by id. `'none'` renders nothing.
   const { style: listStyle, ordinal: listOrdinal } = useListMarker(blockId)
 
+  // #4550 — the enclosing row's `aria-level`, published by
+  // `SortableBlockWrapper`. An embed's rows are announced relative to the
+  // HOST tree, not to the source page's depths; this is the base they count
+  // from. `0` outside a BlockTree (standalone renders / unit tests).
+  const hostAriaLevel = useHostRowAriaLevel()
+
   const richContent = useRichContent(content, {
     onNavigate,
     resolveBlockTitle,
@@ -104,6 +114,23 @@ function StaticBlockInner({
     },
     [blockId, onFocus, onSelect],
   )
+
+  // #4550 — detect `{{embed ((ULID))}}` / `{{embed [[ULID]]}}` and render the
+  // target's subtree inline instead of the literal token. Same content-sniff
+  // dispatch as the `{{query …}}` branch below: an embed is stored as
+  // block-content markup, which is what buys it backlinks, sync, undo,
+  // history and markdown round-trip with no backend work at all.
+  const embed = parseEmbedToken(content)
+  if (embed) {
+    return (
+      <EmbedContainer
+        hostBlockId={blockId}
+        targetId={embed.targetId}
+        baseAriaLevel={hostAriaLevel}
+        onNavigate={onNavigate}
+      />
+    )
+  }
 
   // Detect {{query ...}} blocks and render QueryResult instead of the text
   if (content?.startsWith('{{query ') && content.endsWith('}}')) {

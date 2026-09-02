@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Tags & Links
 
-Agaric has three kinds of inline reference: **tags** (lightweight categorisation), **page / block links** (typed cross-references), and **inline query blocks** (live, filtered lists embedded in pages). Inline references store the target's ULID and resolve its display name when rendering, so renaming a target doesn't break the reference.
+Agaric has four kinds of reference: **tags** (lightweight categorisation), **page / block links** (typed cross-references), **embeds** (a block's real content, transcluded from wherever it lives), and **inline query blocks** (live, filtered lists embedded in pages). Inline references store the target's ULID and resolve its display name when rendering, so renaming a target doesn't break the reference.
 
 ## Tags
 
@@ -29,9 +29,33 @@ A pill-based UI lets you toggle each clause; advanced users can type the express
 
 - **Insert a page link**: type `[[` to open the **BlockLinkPicker**. Pick a page or paste a title.
 - **Page chip**: links render as a chip with the target's title. Click to navigate; the page opens in the active tab.
-- **Insert a block reference (transclusion)**: type `((` to open the **BlockRefPicker**. Pick the block whose content you want to embed.
-- **Block reference**: renders the target block's content inline, kept live. Editing the source updates every reference.
+- **Insert a block reference**: type `((` to open the **BlockRefPicker**. Pick the block you want to point at.
+- **Block reference**: renders as a one-line **chip** carrying the target block's title. It is a link with a nicer label — it shows no children and no live content. To pull a block's actual content onto another page, use an **embed** (below).
 - **Aliases**: a page can declare aliases (via the **PageAliasSection** in the **PageHeader**). Picker results include the alias as a breadcrumb. Typing the alias matches the target page.
+
+## Embeds
+
+An **embed** is transclusion: one source of truth rendered in many places. Where a `((block reference))` shows a title chip, an embed renders the target block **and its whole subtree** inline, in a bordered container, kept live.
+
+- **Insert**: `/embed`, or type `{{embed` and search. Either way one list covers both kinds of target — a page is a block here — and the block's content becomes the token `{{embed ((ULID))}}`. The `{{embed [[ULID]]}}` form is also accepted when written by hand.
+- **A block embed** renders the target block and every descendant. **A page embed** renders that page's top-level blocks; its header strip shows the page title alone.
+- **The whole block becomes the embed.** Like `{{query …}}`, the token has to be the block's entire content — a mention of the syntax mid-sentence stays text.
+- **Header strip**: reads *Embedded from {page}*, with a collapse chevron and an **Open source** control. The container is one tab stop: **Enter** opens the source, **Space** collapses.
+- **The embedded subtree re-bases its indentation to depth 0** inside the container. It does not continue the host page's indent guides, and screen readers announce its rows relative to the host outline, not to the source page's depths.
+- **Live**: editing the source updates every mounted embed of it, including when the source page is open in another tab.
+- **Backlinks**: an embed produces a link edge like any other reference. It is currently *indistinguishable* from a plain reference in the backlinks panel — both read "referenced by".
+- **Degraded targets**: the container never silently disappears — the block's content still holds the token. A soft-deleted target shows *Source deleted* with a Restore control; a purged target, or one in another space, shows a non-navigating broken chip. Moving the target changes nothing: the token is a ULID.
+- **Cycles and depth**: A embedding B embedding A renders an *Already shown above* stub exactly where the loop closes, with a chip and a route to the source. An unrepeated chain stops at three levels with a *Nested too deep* stub.
+
+### Current limitations
+
+- **Read-only.** Edit the source through **Open source**; editing in place is not yet supported.
+- **Arrow-key navigation does not descend into an embed** — Down from the row above lands on the row below it.
+- **Collapse applies to the whole container**, not to branches inside it. Container collapse is stored per host block, so it never touches the source page's own saved layout.
+- Only the first 32 rows of an embed render; the rest are one click away in the source.
+- **Embedded rows render content only.** No todo checkbox, no priority or date chips, no list markers, no properties, and no attachments — just the row's rich text. Embed a page of tasks and you'll see the text with no checkboxes; open the source to interact with any of that.
+- Embedding a block from a very large page loads that page's blocks to render the few you asked for.
+- Embedded blocks do **not** count toward the host page's block count or its truncation notice — they are not that page's blocks.
 
 ## Cross-space links
 

@@ -1129,6 +1129,45 @@ const BLOCK_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
 }
 
 /**
+ * `embed_collapsed:<hostPageKey>` — the HOST BLOCK ids whose `{{embed …}}`
+ * containers are collapsed to their header strip (#4550).
+ *
+ * Shaped exactly like `blockCollapse` above — one entry per page holding a
+ * list of ids — and for the same two reasons. **Prunability:** a
+ * boolean-per-embed (`embed_collapsed:embed:<hostBlockId>`) would leave one
+ * localStorage key per embedded block behind forever, with nothing able to
+ * sweep them; a per-page list PERMITS pruning against the ids the page still
+ * holds, which is precisely what `useBlockCollapse` does with its own list.
+ * That sweep is NOT implemented here, though: unlike `useBlockCollapse`
+ * (which prunes its own set against its own live `blocks` prop on every
+ * write), `EmbedContainer`'s collapse toggle has no cheap access to "every
+ * id the host page currently holds" at write time, so a collapsed-then-
+ * deleted host block id is left behind in `embed_collapsed:<hostPageKey>`
+ * indefinitely. The shape does not forbid adding that sweep later; it just
+ * doesn't have one yet.
+ * **Validation (#3881):** the list shape reuses {@link parseStringArray},
+ * which drops a non-array stored value and every non-string entry instead of
+ * asserting `JSON.parse`'s result into shape — a stale entry from an older
+ * schema or a hand-edited devtools value cannot reach a consumer typed
+ * `string[]`.
+ *
+ * Deliberately its OWN definition rather than `blockCollapse` with a
+ * different `keyArg`. Writing into the SOURCE page's `collapsed_ids` would
+ * mean collapsing an embed silently rewrites the source page's saved layout
+ * for every other view of it; writing into the HOST page's `collapsed_ids`
+ * would collide with the host outline's own collapsed block ids. A separate
+ * key under a separate name can do neither.
+ */
+const EMBED_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
+  key: 'embed_collapsed',
+  scope: 'page',
+  version: 1,
+  defaultValue: [] as string[],
+  parse: parseStringArray,
+  serialize: jsonSerialize<string[]>,
+}
+
+/**
  * Central registry of every localStorage-backed app preference. New keys go
  * here (see module docstring) so preferences stay discoverable in one place.
  */
@@ -1163,4 +1202,5 @@ export const PREFERENCES = {
   recentCommandsPalette: RECENT_COMMANDS_PALETTE_PREFERENCE,
   recentCommandsSlash: RECENT_COMMANDS_SLASH_PREFERENCE,
   blockCollapse: BLOCK_COLLAPSE_PREFERENCE,
+  embedCollapse: EMBED_COLLAPSE_PREFERENCE,
 } as const

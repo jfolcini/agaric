@@ -518,9 +518,91 @@ interface PageBlockRegistrySlot {
    * `refCount`.
    */
   liveStores: StoreApi<PageBlockState>[]
+  /**
+   * #4550 — one Zustand unsubscribe per entry in {@link liveStores}, so
+   * {@link unregisterPageStore} can detach the fan-out listener for exactly
+   * the store that unmounted. Keyed by store rather than index-aligned:
+   * `liveStores` is spliced by `lastIndexOf`, and a parallel array would
+   * silently drift the first time an out-of-order unmount hit it.
+   */
+  mirrorUnsubscribes: Map<StoreApi<PageBlockState>, () => void>
 }
 
 const pageBlockSlots = new Map<string, PageBlockRegistrySlot>()
+
+/**
+ * #4550 — re-entrancy guard for {@link mirrorToSiblings}, keyed by pageId.
+ *
+ * The fan-out writes into sibling stores, and each of those writes fires that
+ * sibling's OWN subscription. The identity checks inside `mirrorToSiblings`
+ * would terminate the bounce after one extra hop anyway; this makes "one hop,
+ * then stop" a property of the code rather than of the data.
+ */
+const mirroringPages = new Set<string>()
+
+/**
+ * #4550 — fan a page store's post-write block state out to every OTHER
+ * provider mounted for the same pageId.
+ *
+ * **Why this is needed at all.** The slot registry is ref-counted and
+ * tolerates several providers for one pageId, but a slot shares a SLOT, not
+ * state: each provider constructs its own store (`createPageBlockStore` in a
+ * `useRef`), and `getPageStore` / `forEachPageStore` expose only `slot.store`
+ * — the most-recently-mounted one. Two providers for one pageId are two
+ * independent Zustand stores with two independent `blocksById`. Without this,
+ * editing a page in its own tab left an `{{embed}}` of that same page
+ * rendering pre-edit content until something remounted it, and an embed is
+ * precisely the case that makes a second provider for one pageId ordinary
+ * rather than a transient race.
+ *
+ * **Why it cannot disturb the journal week / month views.** Those mount one
+ * provider per DAY page — DISTINCT pageIds, one slot each, `refCount === 1`.
+ * The `liveStores.length < 2` bail below is therefore taken on every write in
+ * those views and the whole mechanism is inert for them. The only slots that
+ * ever hold two stores are a genuine same-pageId overlap: the #1560 transient
+ * remount, and an embed of a page that is also mounted elsewhere.
+ *
+ * Only the block payload is mirrored — never `loading`. A freshly-mounted
+ * embed store setting `loading: true` must not flash a skeleton over a source
+ * page sitting there fully rendered.
+ */
+function mirrorToSiblings(
+  pageId: string,
+  source: StoreApi<PageBlockState>,
+  state: PageBlockState,
+  prev: PageBlockState,
+): void {
+  if (state.blocks === prev.blocks && state.truncatedTotal === prev.truncatedTotal) return
+  const slot = pageBlockSlots.get(pageId)
+  if (!slot || slot.liveStores.length < 2) return
+  if (mirroringPages.has(pageId)) return
+  mirroringPages.add(pageId)
+  try {
+    for (const target of slot.liveStores) {
+      if (target === source) continue
+      const targetState = target.getState()
+      // Already identical (the common case once one hop has run) — skip
+      // rather than churn a fresh reference through every subscriber.
+      if (
+        targetState.blocks === state.blocks &&
+        targetState.truncatedTotal === state.truncatedTotal
+      ) {
+        continue
+      }
+      // `blocksById` is passed explicitly so the mirrored store SHARES the
+      // source's map reference instead of rebuilding an equal-but-distinct
+      // one — `augmentBlocksUpdate` would otherwise derive a fresh Map and
+      // memo-miss rows that did not actually change.
+      target.setState({
+        blocks: state.blocks,
+        blocksById: state.blocksById,
+        truncatedTotal: state.truncatedTotal,
+      })
+    }
+  } finally {
+    mirroringPages.delete(pageId)
+  }
+}
 
 /**
  * Register a provider's store under `pageId`, returning the canonical store
@@ -531,6 +613,12 @@ const pageBlockSlots = new Map<string, PageBlockRegistrySlot>()
  * the slot ADOPTS this newest provider's store and bumps the count — so
  * `getPageStore` tracks the most-recently-mounted (active) provider while the
  * count keeps the slot alive for any older provider still mounted.
+ *
+ * #4550 — every registered store also gets a subscription that fans its block
+ * writes out to the slot's other stores ({@link mirrorToSiblings}). Nothing
+ * else about the registration changes: no seeding, no timing change, and for
+ * the overwhelmingly common `refCount === 1` slot the subscription's body
+ * bails on its first line.
  */
 function registerPageStore(pageId: string, store: StoreApi<PageBlockState>): void {
   const slot = pageBlockSlots.get(pageId)
@@ -538,8 +626,19 @@ function registerPageStore(pageId: string, store: StoreApi<PageBlockState>): voi
     slot.store = store
     slot.refCount += 1
     slot.liveStores.push(store)
+    slot.mirrorUnsubscribes.set(
+      store,
+      store.subscribe((state, prev) => mirrorToSiblings(pageId, store, state, prev)),
+    )
   } else {
-    pageBlockSlots.set(pageId, { store, refCount: 1, liveStores: [store] })
+    pageBlockSlots.set(pageId, {
+      store,
+      refCount: 1,
+      liveStores: [store],
+      mirrorUnsubscribes: new Map([
+        [store, store.subscribe((state, prev) => mirrorToSiblings(pageId, store, state, prev))],
+      ]),
+    })
   }
 }
 
@@ -560,6 +659,10 @@ function unregisterPageStore(pageId: string, store: StoreApi<PageBlockState>): v
   if (!slot) return
   const idx = slot.liveStores.lastIndexOf(store)
   if (idx !== -1) slot.liveStores.splice(idx, 1)
+  // #4550 — detach this store's fan-out listener. An unmounted provider's
+  // store must not keep mirroring into (or being mirrored from) the slot.
+  slot.mirrorUnsubscribes.get(store)?.()
+  slot.mirrorUnsubscribes.delete(store)
   slot.refCount -= 1
   if (slot.refCount > 0) {
     // If the slot owner just unmounted out of order, adopt the newest
@@ -596,6 +699,25 @@ export function forEachPageStore(
   fn: (pageId: string, store: StoreApi<PageBlockState>) => void,
 ): void {
   for (const [pageId, slot] of pageBlockSlots) fn(pageId, slot.store)
+}
+
+/**
+ * #4550 — iterate every mounted pageId with ALL of its live provider stores,
+ * not just `slot.store`.
+ *
+ * `forEachPageStore` hands out the most-recently-mounted store per pageId,
+ * which is the right shape for "give me THE store for this page" but the
+ * wrong shape for an out-of-band reload: if a page is open in a tab AND
+ * embedded somewhere, only one of the two stores is the slot's, and the other
+ * would keep serving the pre-sync snapshot for the rest of the session. The
+ * per-pageId callback shape (rather than one call per store) is deliberate —
+ * callers that must run a page-scoped side effect exactly once, such as
+ * `reanchorAfterRemoteOps`, need the pageId boundary.
+ */
+export function forEachLivePageStoreGroup(
+  fn: (pageId: string, stores: readonly StoreApi<PageBlockState>[]) => void,
+): void {
+  for (const [pageId, slot] of pageBlockSlots) fn(pageId, slot.liveStores)
 }
 
 // ── React context ────────────────────────────────────────────────────────

@@ -9,8 +9,8 @@ Inline pickers let you reference other content or insert structure without leavi
 | --- | --- | --- | --- |
 | `[[` | **BlockLinkPicker** | A page-link chip pointing at the page or block you pick. | "Link to my project plan" / cross-reference |
 | `@` | **AtTagPicker** | An inline tag-reference chip (e.g. `@urgent`). | Lightweight tagging inline in a sentence |
-| `((` | **BlockRefPicker** | A *block reference* — embeds the contents of another block, kept live (edit-in-place). | Quote yourself; pull a definition into context |
-| `{{` | **QueryPicker** | A single *Insert query…* item that opens the visual **QueryBuilder**. Type anything after `{{` and it yields to hand-written `{{query …}}` syntax with ghost-text completion. | Discover embedded queries without the slash menu |
+| `((` | **BlockRefPicker** | A *block reference* — a one-line chip carrying the target block's title. A link with a nicer label: no children, no live content. For the block's actual content, use `/embed`. | Point at a definition or a decision |
+| `{{` | **QueryPicker** | *Insert query…* (opens the visual **QueryBuilder**) and *Insert embed…*. Typing `{{embed` searches blocks and pages and writes the embed token; anything else after `{{` yields to hand-written `{{query …}}` syntax with ghost-text completion. | Discover embedded queries and embeds without the slash menu |
 | `/` | **SlashCommand** | Varies — task, date, structure, formatting, property, query, repeat-rule. See full catalog below. | Insert structure or quickly set metadata |
 | `::` | **PropertyPicker** | Inserts `key::` text (plus a trailing space); type the value after it — when the block is saved (blur/focus switch), a line that is exactly `key:: value` is committed to the property system and stripped from the text. See [properties.md](properties.md) → Inline syntax. | Set a custom property in flow |
 | `:` | **EmojiPicker** | The matching Unicode emoji, replacing the `:shortcode`. Needs at least two word characters after the colon and whitespace before it, so `3:30`, `http://` and the `::` property trigger stay dormant. Can be turned off in Settings → Editor. | `:tada` → 🎉 |
@@ -33,7 +33,7 @@ Typing `/` opens the slash menu. Commands are fuzzy-matched as you type — the 
 | --- | --- |
 | **Tasks** | `todo`, `doing`, `done`, `cancelled`; priorities `priority-high`, `priority-medium`, `priority-low` (P1 / P2 / P3) |
 | **Dates** | `date`, `due`, `schedule` — open the date picker for the matching property |
-| **References** | `link`, `tag`, `block-ref` — insert a page link, tag, or block reference inline (sub-menu picker); `attach` a file; `emoji` opens the emoji picker |
+| **References** | `link`, `tag`, `block-ref` — insert a page link, tag, or block reference inline (sub-menu picker); `embed` — transclude a block or page's content inline, read-only (see [tags-and-links.md](tags-and-links.md) → *Embeds*); `attach` a file; `emoji` opens the emoji picker |
 | **Formatting** | `bold`, `italic`, `code-mark`, `strike`, `highlight` — apply a mark without reaching for the chord |
 | **Structure** | `h1`–`h6`, `quote`, `code`, `callout` (sub-menu: tip / note / info / warning / error), `table` and `table-no-header` (with an optional dimension suffix — `table 4x6` is 4 rows × 6 columns), `numbered-list`, `bullet-list`, `divider`, `turn` (convert this block to another type), `duplicate` |
 | **Properties** | `effort`, `assignee`, `location` — sub-menus offer presets and a custom-value entry; `/property` opens **AddPropertyPopover** for any key |
