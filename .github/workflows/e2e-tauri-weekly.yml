@@ -227,8 +227,7 @@ jobs:
         # own onPrepare build. xvfb-run gives the WebKitWebView a display and
         # dbus-run-session a session bus (#4444: without one every worker boot
         # stalled a flat 30 s, consistent with the 25 s dbus default timeout),
-        # the composition
-        # release.yml uses for its boot smoke.
+        # the composition release.yml uses for its boot smoke.
         #
         # #3334 — no vault isolation is configured HERE on purpose. The runner
         # being ephemeral used to be the only thing keeping this lane off a real
