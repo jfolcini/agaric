@@ -1449,7 +1449,7 @@ jobs:
       # attest + upload steps can reference them by predictable name; the
       # rust target triple keeps the per-matrix-cell filenames unique.
       - name: Generate SBOM (SPDX-JSON)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: src-tauri/target/${{ matrix.target }}/release/bundle
           format: spdx-json
@@ -1458,7 +1458,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate SBOM (CycloneDX-JSON)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           path: src-tauri/target/${{ matrix.target }}/release/bundle
           format: cyclonedx-json
@@ -2080,7 +2080,7 @@ jobs:
       # archive (Syft understands JAR/APK structure). Same per-platform
       # pattern as the desktop matrix above.
       - name: Generate SBOM (SPDX-JSON, Android)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           file: ${{ steps.sign_apk.outputs.apk }}
           format: spdx-json
@@ -2089,7 +2089,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate SBOM (CycloneDX-JSON, Android)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           file: ${{ steps.sign_apk.outputs.apk }}
           format: cyclonedx-json
