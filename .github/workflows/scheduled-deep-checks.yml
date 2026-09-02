@@ -1031,11 +1031,11 @@ jobs:
         # baseline "runs the tests from all and only the packages for which
         # mutants will be generated", and "each mutant runs only the tests
         # from the package that's being mutated". That is what makes a shard
-        # affordable — the workspace baseline cost 1088 s and re-ran the whole
-        # `agaric` suite for every mutant of every package. The union of the
-        # matrix's packages is what keeps every
-        # `examine_globs` entry reachable; `check-mutants-scope.mjs` asserts
-        # that union, not this one job's slice.
+        # affordable: the workspace baseline runs all three suites (1088 s) and
+        # every shard would pay it, where a package-scoped one pays only its
+        # own — 164 s for `agaric-store`. The union of the matrix's packages is
+        # what keeps every `examine_globs` entry reachable;
+        # `check-mutants-scope.mjs` asserts that union, not this one job's slice.
         #
         # `--shard k/n --sharding round-robin`: shards are `k/n` with k in
         # 0..n-1 and n the denominator every shard of a package repeats;
@@ -1212,9 +1212,9 @@ jobs:
         with:
           # NOT `merge-multiple: true`: every shard writes the same file names,
           # so a flat merge would silently keep one shard's missed.txt and drop
-          # the rest. One directory per shard, concatenated below — except for
-          # a lone surviving shard, which the action extracts flat; the merge
-          # `find`s by file name so both layouts read the same.
+          # the rest. One directory per shard, concatenated below; the merge
+          # `find`s by file name, so it does not depend on how the action lays
+          # the extraction out.
           pattern: mutants-out-*
           path: shards
 
