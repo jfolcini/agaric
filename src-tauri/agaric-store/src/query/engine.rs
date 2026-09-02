@@ -1200,7 +1200,25 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
             // when the key is absent, which `COALESCE(…, 'none')` renders as the
             // `none` bucket. The key stays a BOUND `?{pos}` in the ON clause —
             // never interpolated as an identifier, so grouping cannot inject SQL.
-            "gp.value_text".to_string(),
+            //
+            // #4570 — read `value_num` too, same shape as `agg_target_expr`'s
+            // #4553 fix. Migration `0062`'s exactly-one-value-column CHECK means
+            // a genuinely `number`-declared property has `value_text IS NULL` on
+            // its row, so `gp.value_text` alone bucketed EVERY such block under
+            // `none`. Both branches read the same joined row, so the key is
+            // still bound exactly once.
+            //
+            // Grouping is IDENTITY, not arithmetic, so the bucket LABEL is the
+            // number's canonical string form: `value_num` is REAL, and a bare
+            // `CAST(3.0 AS TEXT)` renders `3.0` — not how the value was written
+            // or how it is displayed anywhere else. An integral value casts
+            // through INTEGER first (`3`); a fractional one keeps its REAL
+            // rendering (`3.5`). A NULL `value_num` makes the `WHEN` comparison
+            // NULL → the ELSE arm → NULL → the `none` bucket, as before.
+            "COALESCE(gp.value_text, CASE WHEN gp.value_num = CAST(gp.value_num AS INTEGER) \
+             THEN CAST(CAST(gp.value_num AS INTEGER) AS TEXT) \
+             ELSE CAST(gp.value_num AS TEXT) END)"
+                .to_string(),
             format!(" LEFT JOIN block_properties gp ON gp.block_id = b.id AND gp.key = ?{pos}"),
             Some(Bind::Text(key.clone())),
         ),

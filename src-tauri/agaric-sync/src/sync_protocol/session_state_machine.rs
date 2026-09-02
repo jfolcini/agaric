@@ -1504,7 +1504,8 @@ impl SyncOrchestrator {
                     && let Some(bytes) =
                         agaric_store::peer_refs::get_loro_vv_bytes(&self.pool, &peer_id).await?
                 {
-                    floor = crate::sync_protocol::types::decode_persisted_loro_vvs(&bytes);
+                    floor =
+                        crate::sync_protocol::types::decode_persisted_loro_vvs(&bytes, &peer_id);
                 }
                 floor
             };

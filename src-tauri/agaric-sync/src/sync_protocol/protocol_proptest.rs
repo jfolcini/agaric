@@ -832,7 +832,7 @@ proptest! {
     #[test]
     fn persisted_vvs_round_trip(vvs in space_vvs()) {
         let wire = to_wire(&vvs);
-        prop_assert_eq!(decode_persisted_loro_vvs(&encode_persisted_loro_vvs(&wire)), wire);
+        prop_assert_eq!(decode_persisted_loro_vvs(&encode_persisted_loro_vvs(&wire), "PEERPROP"), wire);
     }
 
     /// The decoder is **total** over arbitrary bytes: it returns, for anything.
@@ -845,7 +845,7 @@ proptest! {
     /// string.
     #[test]
     fn persisted_vv_decode_is_total(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
-        let _ = decode_persisted_loro_vvs(&bytes);
+        let _ = decode_persisted_loro_vvs(&bytes, "PEERPROP");
     }
 
     /// Decoding is a **fixed point**: whatever arbitrary bytes decode to,
@@ -860,8 +860,8 @@ proptest! {
     fn persisted_vv_decode_is_a_fixed_point(
         bytes in prop::collection::vec(any::<u8>(), 0..256),
     ) {
-        let once = decode_persisted_loro_vvs(&bytes);
-        let twice = decode_persisted_loro_vvs(&encode_persisted_loro_vvs(&once));
+        let once = decode_persisted_loro_vvs(&bytes, "PEERPROP");
+        let twice = decode_persisted_loro_vvs(&encode_persisted_loro_vvs(&once), "PEERPROP");
         prop_assert_eq!(twice, once);
     }
 }

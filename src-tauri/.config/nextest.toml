@@ -101,8 +101,13 @@ setup = "iroh-no-proxy-windows"
 #     in a full-suite run at load 39, TRY 2 passing at 36.5s). Its slow peers
 #     above were given overrides and this one was not — no reason in its content,
 #     it just never happened to be noticed.
+#   * loro::engine_proptest::n_way::n_way_concurrent_mixed_streams_all_to_all_converges
+#     (#4474) — same shape, same omission: 3..=5 peers each run an independent
+#     mixed-op stream through an all-to-all snapshot sweep. Measured 15.2s
+#     nominal against the same 2×30s=60s window, and observed TMT at 60.021s in
+#     a full-workspace run.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 # The weekly deep-checks lane (#4282). `scheduled-deep-checks.yml`'s `bench-slo`
@@ -164,12 +169,13 @@ leak-timeout = "30s"
 # llvm-cov `cargo-coverage` build (2-3× slower) can never terminate one on the
 # first attempt and lose its coverage: apply_reproject_proptest,
 # replay_streams_all_rows…_1574,
-# issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path, and
-# find_lca_terminates_on_any_graph.
+# issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path,
+# find_lca_terminates_on_any_graph, and
+# n_way_concurrent_mixed_streams_all_to_all_converges (#4474).
 # (perf26_draft_recovery dropped in #3612 — see the default-profile note above:
 # it runs in ~0.7s now, so even a 3× coverage build stays far under 30s.)
 [[profile.ci.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # The SQL-only-fallback / reproject / recompute observability counters

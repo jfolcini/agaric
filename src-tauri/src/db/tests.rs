@@ -6131,3 +6131,68 @@ async fn peer_refs_0114_remote_device_name_add_preserves_existing_rows_4298() {
          truncated id"
     );
 }
+
+/// #3270 / migration 0115 — `idx_agenda_cache_block` exists and is what a
+/// `block_id` lookup actually uses.
+///
+/// The index is the whole migration, so "does it exist" is only half the
+/// subject: `agenda_cache`'s `PRIMARY KEY (date, block_id)` also mentions
+/// `block_id`, and a reader could reasonably assume it already serves this.
+/// It cannot — SQLite range-scans a leading-column prefix only — which is why
+/// the purge `DELETE FROM agenda_cache WHERE block_id IN (…)` and the
+/// `blocks` FK cascade both scanned the table before this. The plan assertion
+/// is what distinguishes the fixed schema from the pre-fix one; the row
+/// read-back is the representative-data half.
+#[tokio::test]
+async fn agenda_cache_0115_block_id_index_serves_block_id_lookup_3270() {
+    let (pool, _dir) = test_pool().await;
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master \
+         WHERE type = 'index' AND name = 'idx_agenda_cache_block'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "migration 0115 must create idx_agenda_cache_block exactly once"
+    );
+
+    let block = "01HZ0000000000000000003270";
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'agenda')")
+        .bind(block)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, 'scheduled')")
+        .bind("2026-03-01")
+        .bind(block)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let date: String = sqlx::query_scalar("SELECT date FROM agenda_cache WHERE block_id = ?")
+        .bind(block)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        date, "2026-03-01",
+        "the seeded row must read back by block_id"
+    );
+
+    let plan: Vec<(i64, i64, i64, String)> =
+        sqlx::query_as("EXPLAIN QUERY PLAN SELECT date FROM agenda_cache WHERE block_id = ?")
+            .bind(block)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        plan.iter()
+            .any(|(_, _, _, d)| d.contains("idx_agenda_cache_block")),
+        "a lookup keyed on block_id alone must use idx_agenda_cache_block — the \
+         (date, block_id) PRIMARY KEY cannot serve it, which is the whole reason \
+         0115 exists; plan was {plan:?}"
+    );
+}

@@ -51,8 +51,34 @@ pub fn encode_persisted_loro_vvs(vvs: &[SpaceVersionVector]) -> Vec<u8> {
 /// (#2502). A malformed/legacy blob yields an empty list — the caller then
 /// falls back to a full snapshot per space, exactly as if nothing were
 /// persisted, so a decode failure is degraded-but-safe rather than fatal.
-pub fn decode_persisted_loro_vvs(bytes: &[u8]) -> Vec<SpaceVersionVector> {
-    serde_json::from_slice(bytes).unwrap_or_default()
+///
+/// The failure is silent in the return type by design, so it is logged instead
+/// (#4512): a row that never decodes costs this peer a full snapshot on every
+/// session, and without the warn there is nothing to see it by.
+pub fn decode_persisted_loro_vvs(bytes: &[u8], peer_id: &str) -> Vec<SpaceVersionVector> {
+    match try_decode_persisted_loro_vvs(bytes) {
+        Ok(vvs) => vvs,
+        Err(e) => {
+            tracing::warn!(
+                peer = %peer_id,
+                error = %e,
+                len = bytes.len(),
+                "sync: persisted loro VV row failed to decode; treating the export floor as \
+                 absent (degraded-but-safe), which costs this peer a full snapshot instead of \
+                 an incremental update"
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// The fallible half of [`decode_persisted_loro_vvs`], split out so the parse
+/// outcome is assertable without a tracing capture (this crate wires no
+/// `tracing-test` / `TestWriter` fixture, so the warn line itself is not).
+pub(crate) fn try_decode_persisted_loro_vvs(
+    bytes: &[u8],
+) -> Result<Vec<SpaceVersionVector>, serde_json::Error> {
+    serde_json::from_slice(bytes)
 }
 
 /// The maximum length, in Unicode scalar values, of a device name on the wire
@@ -922,3 +948,52 @@ pub struct SyncSession {
 // The Loro-side push/apply path (`sync_protocol::loro_sync`) does not
 // return per-op counts; the engine import is opaque from the
 // orchestrator's view.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vv(space: &str, bytes: &[u8]) -> SpaceVersionVector {
+        SpaceVersionVector {
+            space_id: agaric_store::space::SpaceId::from_trusted(space),
+            vv: bytes.to_vec(),
+        }
+    }
+
+    /// #4512 — the inner parse reports the failure the public wrapper has to
+    /// swallow. Without a `Result` arm there is nothing to log and nothing to
+    /// assert on.
+    #[test]
+    fn try_decode_persisted_loro_vvs_reports_malformed_blob() {
+        let err = try_decode_persisted_loro_vvs(b"not json at all")
+            .expect_err("a non-JSON blob must decode as Err");
+        assert!(
+            !err.to_string().is_empty(),
+            "the decode error must carry a message to log: {err}"
+        );
+    }
+
+    /// The Ok arm: a blob this module itself wrote reads back unchanged.
+    #[test]
+    fn try_decode_persisted_loro_vvs_round_trips() {
+        let wire = vec![
+            vv("01HZ0000000000000000004512", &[1, 2, 3]),
+            vv("01HZ0000000000000000004513", &[]),
+        ];
+        let decoded = try_decode_persisted_loro_vvs(&encode_persisted_loro_vvs(&wire))
+            .expect("our own encoding must decode");
+        assert_eq!(decoded, wire, "round-trip must be lossless");
+    }
+
+    /// The wrapper keeps the total signature: garbage in, empty floor out —
+    /// which is what makes the peer fall back to a full snapshot.
+    #[test]
+    fn decode_persisted_loro_vvs_returns_empty_on_garbage() {
+        let out = decode_persisted_loro_vvs(b"\xff\xfe\x00garbage", "PEER4512");
+        assert_eq!(
+            out.len(),
+            0,
+            "a malformed row must read as no persisted frontier: {out:?}"
+        );
+    }
+}

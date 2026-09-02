@@ -1,0 +1,42 @@
+-- #3270 — index `agenda_cache(block_id)`: the one column two hot delete
+-- paths key on, and the only one the table cannot already answer.
+--
+-- ## The two scans
+--
+-- 1. Purge. `agaric-store/src/cache/purge.rs`
+--    (`purge_block_satellite_caches`) runs
+--
+--        DELETE FROM agenda_cache WHERE block_id IN (<member_subquery>)
+--
+--    where the member set is a whole subtree (a recursive CTE, a
+--    `json_each` multi-root set, or the flat soft-deleted set). With no
+--    index on `block_id`, SQLite has one full `agenda_cache` scan per
+--    purge, and the multi-root form re-tests every row against the whole
+--    member set.
+--
+-- 2. The FK cascade. `agenda_cache.block_id` carries
+--    `REFERENCES blocks(id) ON DELETE CASCADE` (migration 0061). SQLite
+--    implements a cascade as a lookup of the child rows for EACH deleted
+--    parent row, so an unindexed child key turns one `DELETE FROM blocks`
+--    over N rows into N full scans of `agenda_cache` — the quadratic term,
+--    and the one the purge path hits immediately after its own DELETE.
+--
+-- ## This is NOT the index migration 0045 dropped
+--
+-- 0045 dropped `idx_agenda_date` (migration 0001), which led on `date` and
+-- was redundant with `agenda_cache`'s `PRIMARY KEY (date, block_id)` — the
+-- PK already indexes `date` as its leading column. That reasoning does not
+-- reach here and does not reverse: the PK is ordered `(date, block_id)`,
+-- and SQLite can only range-scan a leading-column prefix, so a lookup by
+-- `block_id` alone cannot use it at any point. `block_id` has been the
+-- table's unindexed column since 0001; this migration adds the index for
+-- it, it does not recreate the one 0045 removed.
+--
+-- Index-only: no table is created or altered, so STRICT does not apply
+-- (it is a CREATE TABLE property) and no data is rewritten.
+--
+-- mock-unaffected: an index changes no table shape, column or row the
+-- browser/e2e Tauri mock (`src/lib/tauri-mock/`) models — it is a query-plan
+-- change alone.
+
+CREATE INDEX IF NOT EXISTS idx_agenda_cache_block ON agenda_cache(block_id);
