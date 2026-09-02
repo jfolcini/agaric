@@ -251,9 +251,11 @@ jobs:
           # `cfg(target_os = "android")` / `cfg(mobile)` gate. Move one of those
           # files and move its entry here in the same commit;
           # `scripts/check-android-trigger.mjs` asserts every literal path
-          # listed still exists.
-          desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'
-          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/build\.rs$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|android_network_block|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/check-android-so-alignment\.mjs$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
+          # listed still exists. Both name `.github/actions/`: the build jobs
+          # run their toolchain preamble through the composites there, so a
+          # SHA bump inside one is a change to the bundle job and must run it.
+          desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$|\.github/actions/)'
+          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/build\.rs$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|android_network_block|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/check-android-so-alignment\.mjs$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$|\.github/actions/)'
 
           # Single pass over the changed set. docs_only stays true only while
           # EVERY path matches the docs allowlist; the three category flags are
@@ -1464,9 +1466,10 @@ jobs:
         # numbers instead of a guess.
         #
         # Backgrounded: the reclaim measured 1:37-1:48 per shard on the
-        # critical path (2026-09-02) and touches nothing the apt / toolchain /
-        # cache / `npm ci` steps below need, so they overlap it. The "Wait for
-        # disk reclaim" step before the compile joins it and checks its exit.
+        # critical path (2026-09-02); the apt / rust-toolchain / rust-cache
+        # steps overlap it. "Wait for disk reclaim" sits before "Install
+        # Node.js" on purpose: `$AGENT_TOOLSDIRECTORY` is the last tree the
+        # `rm` walks and the one setup-node installs into.
         run: |
           set -euo pipefail
           echo "Before:" && df -h /
@@ -1477,8 +1480,8 @@ jobs:
                         /usr/local/share/boost \
                         /usr/local/share/powershell \
                         /usr/share/swift \
-                        "$AGENT_TOOLSDIRECTORY"
-            echo $? > "$RUNNER_TEMP/free-disk.exit"
+                        "$AGENT_TOOLSDIRECTORY" || status=$?
+            echo "${status:-0}" > "$RUNNER_TEMP/free-disk.exit"
           ) > "$RUNNER_TEMP/free-disk.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/free-disk.pid"
 
@@ -1541,6 +1544,18 @@ jobs:
           shared-key: rust-cov
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Wait for disk reclaim
+        # Must precede "Install Node.js": setup-node populates
+        # `$AGENT_TOOLSDIRECTORY`, which the backgrounded `rm` is still
+        # walking on a warm-cache run.
+        run: |
+          set -euo pipefail
+          pid=$(cat "$RUNNER_TEMP/free-disk.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 2; done
+          cat "$RUNNER_TEMP/free-disk.log"
+          [ "$(cat "$RUNNER_TEMP/free-disk.exit")" = "0" ] || { echo "disk reclaim failed"; exit 1; }
+          echo "After:" && df -h /
+
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -1568,15 +1583,6 @@ jobs:
         uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
         with:
           tool: cargo-nextest,cargo-llvm-cov
-
-      - name: Wait for disk reclaim
-        run: |
-          set -euo pipefail
-          pid=$(cat "$RUNNER_TEMP/free-disk.pid")
-          while kill -0 "$pid" 2>/dev/null; do sleep 2; done
-          cat "$RUNNER_TEMP/free-disk.log"
-          [ "$(cat "$RUNNER_TEMP/free-disk.exit")" = "0" ] || { echo "disk reclaim failed"; exit 1; }
-          echo "After:" && df -h /
 
       - name: Cargo test (nextest, shard ${{ matrix.shard }}/2, with llvm-cov)
         working-directory: src-tauri

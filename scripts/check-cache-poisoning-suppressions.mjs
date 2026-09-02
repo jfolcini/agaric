@@ -17,8 +17,8 @@
 // `finding/location.rs`). That anchors to the step's CONTENT — the comment
 // travels with the step through any number of unrelated edits elsewhere in
 // the file — so `.github/zizmor.yml` no longer carries a `cache-poisoning`
-// `ignore:` list at all; the four suppressions live as inline comments on
-// the four steps themselves.
+// `ignore:` list at all; each suppression lives as an inline comment on the
+// step it covers (`EXPECTED_INLINE_SUPPRESSIONS` below counts them).
 //
 // This guard protects that invariant two ways:
 //   1. `.github/zizmor.yml` must never regain a line-anchored
