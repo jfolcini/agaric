@@ -10,17 +10,13 @@ on:
   pull_request_review:
     types: [submitted]
 
-# Least-privilege default token (Scorecard Token-Permissions): the job below
-# sets its own explicit `permissions:` block; this read-only baseline locks
-# down any job that doesn't.
+# Read-only baseline; the job grants only what it needs.
 permissions:
   contents: read
 
-# One in-flight run per issue/PR (issue #814): a burst of `@claude` mentions
-# on the same thread otherwise stacks parallel agent runs, burning tokens and
-# runner minutes. `issue.number` covers issue_comment + issues (PR comments
-# arrive as issue_comment too); `pull_request.number` covers the two review
-# events.
+# One in-flight run per issue/PR; a new @claude mention on the same thread
+# cancels the previous run. `issue.number` covers issue_comment + issues (PR
+# comments arrive as issue_comment too); `pull_request.number` covers reviews.
 concurrency:
   group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: true
@@ -33,15 +29,15 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
-    # Issue #814: cap the agent run — without this a hung run holds the
-    # runner for the 360-min default.
     timeout-minutes: 30
+    # Read-only: even a prompt injection via an @claude comment cannot push
+    # code or write issues/PRs with this token.
     permissions:
       contents: read
       pull-requests: read
       issues: read
       id-token: write
-      actions: read # Required for Claude to read CI results on PRs
+      actions: read # read CI results on PRs
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,27 +47,11 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        # SECURITY (claude-code-action GHSA, fixed v1.0.94 — checkHumanActor
-        # write-permission validation, env scrubbing, gh-arg validation). We
-        # pin a patched version by commit SHA. This job is read-only
-        # defence-in-depth: every `permissions:` is read except the OIDC
-        # `id-token: write`, so even a prompt-injection via an `@claude`
-        # comment can't push code or write issues/PRs with the workflow token.
         uses: anthropics/claude-code-action@a874e9ecd7bb36efdad65429c6b35815f5a08f10 # v1.0.210
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-          # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
-
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # The `opus[1m]` alias tracks the latest available Opus model while
-          # retaining its 1M-token context window, so the agent can read large
-          # PRs and CI logs without truncation.
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
+          # `opus[1m]` is the latest Opus with the 1M-token context window.
           claude_args: >-
             --model opus[1m]

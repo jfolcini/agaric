@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────
 # Test file naming convention check.
 #
-# Per src/__tests__/AGENTS.md:81:
+# Per src/__tests__/AGENTS.md § Test file naming:
 #   - Vitest files use .test.ts / .test.tsx
 #   - Playwright files use .spec.ts
 #   - Property-based tests insert .property before .test
@@ -41,7 +41,7 @@ violations=0
 
 emit() {
   if [ "$violations" -eq 0 ]; then
-    echo "ERROR: test file naming convention violations (see src/__tests__/AGENTS.md:81):"
+    echo "ERROR: test file naming convention violations (see src/__tests__/AGENTS.md § Test file naming):"
   fi
   echo "  $1"
   violations=$((violations + 1))

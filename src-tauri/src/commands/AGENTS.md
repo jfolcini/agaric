@@ -1,13 +1,13 @@
 # `src-tauri/src/commands/` — Tauri command handlers
 
-> Rules for writing Tauri IPC handlers. Root [`AGENTS.md`](../../../AGENTS.md) covers cross-cutting invariants (error shape, IPC arg ceiling, materializer); this file covers patterns load-bearing in `commands/`.
+Root [`AGENTS.md`](../../../AGENTS.md) covers cross-cutting invariants (error shape, materializer). This file covers what `commands/` code and guards depend on.
 
 ## The `_inner` / Tauri-wrapper split
 
-Every command has TWO functions:
+Every command is two functions:
 
-1. **`*_inner`** — the load-bearing logic. Takes `&SqlitePool` (NOT `tauri::State<'_, SqlitePool>`). Returns `Result<T, AppError>`. **No `#[tauri::command]` decorator.** Testable from `src-tauri/src/commands/tests/`.
-2. **`*` (the Tauri command)** — thin wrapper. `#[tauri::command] #[specta::specta]`. Resolves the `State` argument and delegates to `*_inner`. Does not contain business logic.
+1. **`*_inner`** — the logic. Takes `&SqlitePool` (not `State`), returns `Result<T, AppError>`, no `#[tauri::command]`. Tested from `src-tauri/src/commands/tests/`.
+2. **`*`** — thin wrapper with `#[tauri::command] #[specta::specta]`. Resolves `State`, delegates, ends with `.map_err(sanitize_internal_error)`. No business logic.
 
 ```rust
 pub async fn delete_block_inner(
@@ -23,21 +23,20 @@ pub async fn delete_block(
     ctx: tauri::State<'_, WriteCtx>,
     block_id: String,
 ) -> Result<(), AppError> {
-    delete_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), BlockId::from_trusted(&block_id)).await
+    delete_block_inner(ctx.pool(), ctx.device_id(), ctx.materializer(), BlockId::from_trusted(&block_id))
+        .await
+        .map_err(sanitize_internal_error)
 }
 ```
 
-Tests call `*_inner` directly with a `test_pool() + TempDir` fixture. The wrapper is exercised only by the Tauri runtime; we don't need to test it.
-
 ## `tauri-specta` 10-argument ceiling
 
-The IPC bridge codegen has a hard 10-argument limit per Tauri command. **Tauri `State<'_, T>` params are injected by the runtime, not part of the specta IPC arg list** — so they cost a Rust signature slot but do NOT appear in `bindings.ts` / the TS wrapper. They still count toward the 10-arg Rust ceiling, though.
+The IPC bridge codegen silently truncates a command past 10 params. `State<'_, T>` params do not appear in `bindings.ts` but still occupy a Rust signature slot, and `scripts/check-command-arity.py` (prek hook `check-command-arity`) counts them: any `#[tauri::command]` under `src-tauri/src/commands/` with more than 10 params fails the hook.
 
-This ceiling is now mechanically enforced by `scripts/check-command-arity.py` (the `check-command-arity` prek hook): it scans every `#[tauri::command]` under `src-tauri/src/commands/` and fails if any declares more than 10 params (counting `State<'_, T>` conservatively). An over-ceiling command no longer compiles-clean-then-fails-at-export — the guard catches it at commit/push time and points back here.
+Fix by collapsing, never by `#[allow(clippy::too_many_arguments)]`:
 
-**#1056 — write commands take ONE `ctx: State<'_, WriteCtx>` (not the old `pool` + `device_id` + `materializer` triple).** `WriteCtx` (`db/pool.rs`) bundles the write pool, device id, and materializer behind cheap `Arc`-backed accessors `ctx.pool()` / `ctx.device_id()` / `ctx.materializer()`, which return exactly the `&SqlitePool` / `&str` / `&Materializer` an `*_inner` core expects. This collapses the 3 base slots to 1, leaving ~9 for user args (and removes the `#[allow(clippy::too_many_arguments)]` the triple used to force on real commands). It is `app.manage()`'d once in `lib.rs::register_managed_state` alongside the standalone `WritePool` / `DeviceId` / `Materializer` states, which are kept for the read-only and partial-triple consumers (`get_device_id`, `sync_cmds`, `link_metadata`/`aliases`/`links`).
-
-When you still need more, bundle args into a request struct with `#[serde(default)]` on every optional field:
+- Write commands take one `ctx: State<'_, WriteCtx>` (`src-tauri/src/db/pool.rs`) instead of `pool` + `device_id` + `materializer`; `ctx.pool()` / `ctx.device_id()` / `ctx.materializer()` return exactly what an `*_inner` expects. Read-only commands take `pool: State<'_, ReadPool>` and pass `&pool.0`.
+- Still too many: bundle user args into a request struct with `#[serde(default)]` on every optional field so new fields stay wire-compatible. Precedents: `SearchFilter`, `ListBlocksRequest`, `QueryByPropertyRequest`, `ListPagesWithMetadataFilter` in `src-tauri/src/commands/mod.rs`.
 
 ```rust
 #[derive(Debug, Clone, Default, Deserialize, Type)]
@@ -45,40 +44,41 @@ When you still need more, bundle args into a request struct with `#[serde(defaul
 pub struct ListBlocksFilter {
     pub parent_id: Option<String>,
     pub tag_ids: Vec<String>,
-    pub space_id: Option<String>,
     pub cursor: Option<String>,
     pub limit: Option<u32>,
-    // future fields here — `#[serde(default)]` keeps wire compat
 }
 ```
 
-Precedents: `SearchFilter`, `ListBlocksRequest`, `QueryByPropertyRequest`, `ListPagesWithMetadataFilter`. See `src-tauri/src/commands/mod.rs` for the established naming.
+## `CommandTx` for multi-row writes
 
-## `CommandTx` for atomic multi-row writes
-
-When a command needs to write multiple rows atomically (the user pressed one button, but the database needs to mutate N rows + emit N op log entries):
+Any write touching more than one row goes through `CommandTx` (`src-tauri/src/db/command_tx.rs`), never a bare `pool.acquire()`:
 
 ```rust
 let mut tx = CommandTx::begin_immediate(pool, "command_label").await?;
-// All writes ride the tx
-// tx.enqueue_background(op_record) — for materializer dispatch after commit
+// all writes ride the tx
 tx.commit_and_dispatch(&materializer).await?;
 ```
 
-- `BEGIN IMMEDIATE` (not `BEGIN DEFERRED`) — acquires the writer lock immediately, eliminating the "begin a tx, do read work, fail to escalate" deadlock surface.
-- The label is used in tracing spans + lock-wait diagnostics.
-- `commit_and_dispatch` does one `COMMIT` then enqueues pending `BatchApplyOps` for the materializer in one shot.
-- **Cancellation safety**: once `begin_immediate` returns, the body up to `commit` is one cancellation-safe unit. If the future is dropped mid-execution (Tauri's IPC cancellation, panic, etc.), the tx rolls back. **No partial writes observable to other readers.**
+- `BEGIN IMMEDIATE` takes the writer lock up front, so a tx cannot deadlock escalating from a read.
+- The label appears in tracing spans and lock-wait diagnostics.
+- `commit_and_dispatch` commits once, then hands pending `BatchApplyOps` to the materializer.
+- A dropped future (Tauri cancels IPC futures) rolls the tx back — no partial writes are observable.
 
-## `*_by_ids` bulk commands: the `MAX_BATCH_BLOCK_IDS = 1000` cap
+### `_in_tx` variants
 
-Bulk commands operating on a list of block IDs (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`, etc.) MUST:
+A command needed both standalone and inside a larger tx (e.g. a `bootstrap_*` path) gets `do_thing_in_tx(tx, …)` (no commit, returns its effects) and `do_thing_inner(pool, …)` wrapping it in its own `CommandTx`. Do not duplicate the logic.
 
-1. Handle empty input by **kind**: bulk **writes** reject an empty `Vec` with `AppError::validation` (mutating nothing is a caller bug); bulk **reads** return the empty collection (`Ok(Vec::new())` / `Ok(HashMap::new())`) because an empty request (a page with zero blocks, an empty agenda window) is a legitimate state, not an error. Construct the error via the lowercase `AppError::validation(msg.into())` ctor — `AppError::Validation` is a struct variant (`#2251`), not a tuple, so `AppError::Validation(..)` does not compile.
-2. Reject `len() > MAX_BATCH_BLOCK_IDS` (`MAX_BATCH_BLOCK_IDS = 1000`). The constant and its shared guard helper `ensure_batch_within_cap(subject, len)` are the single source of truth — they live in the store layer (`pagination/mod.rs`); the guard is re-exported as `crate::commands::ensure_batch_within_cap` (the constant is cited directly as `crate::pagination::MAX_BATCH_BLOCK_IDS`); prefer the helper for the canonical `"{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"` message — all `*_by_ids` sites (including `restore_blocks_by_ids` / `purge_blocks_by_ids`) now route through it.
-3. Normalise ULIDs to uppercase via `BlockId::from_trusted` or the appropriate parser.
-4. Resolve in **one query** via `json_each(?1)` — never N+1 loops.
-5. Open exactly **one** `CommandTx::begin_immediate` per logical bulk op. Never chunk; one logical user action = one tx = one op-log seq range = one activity-feed entry.
+`create_block_in_tx` (`src-tauri/agaric-engine/src/block_ops.rs`) takes a trailing `client_id: Option<BlockId>`: `None` mints a server ULID; `Some(id)` (optimistic create via `create_block_inner_with_id`) is used verbatim if it is a valid ULID and collides with no live or tombstoned row, else `AppError::Ulid` / `AppError::Conflict`. Never fall back to a generated id — the frontend already spliced the block in under the client id.
+
+## `*_by_ids` bulk commands and `MAX_BATCH_BLOCK_IDS`
+
+Every bulk command over a list of block ids (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`, …):
+
+1. Empty input by kind: bulk **writes** reject with `AppError::validation(...)` (mutating nothing is a caller bug); bulk **reads** return the empty collection (an empty page or agenda window is a legitimate state).
+2. `crate::commands::ensure_batch_within_cap(subject, len)?` — the cap `MAX_BATCH_BLOCK_IDS = 1000` and the helper live in `src-tauri/agaric-store/src/pagination/mod.rs`; use the helper so the message stays canonical.
+3. Normalise ids to uppercase (`BlockId::from_trusted` or the appropriate parser).
+4. Resolve in one query via `json_each(?1)`, never an N+1 loop.
+5. Exactly one `CommandTx::begin_immediate` per logical bulk op. Never chunk: one user action = one tx = one op-log seq range = one activity-feed entry.
 
 ```rust
 pub async fn restore_blocks_by_ids_inner(
@@ -93,84 +93,50 @@ pub async fn restore_blocks_by_ids_inner(
     crate::commands::ensure_batch_within_cap("block_ids", block_ids.len())?;
     let normalized: Vec<String> = block_ids.iter().map(|id| id.to_uppercase()).collect();
     let id_json = serde_json::to_string(&normalized)?;
-    // one tx, one json_each resolve, one commit
     let mut tx = CommandTx::begin_immediate(pool, "restore_blocks_by_ids").await?;
-    // …writes…
+    // one json_each resolve, writes, one commit
     tx.commit_and_dispatch(materializer).await?;
     Ok(response)
 }
 ```
 
-## `OpRef` chains via `LAST_APPEND` task-local
+## `OpRef` chains via `LAST_APPEND`
 
-Multi-op commands (bulk delete, bulk tag, etc.) need the activity feed (`src-tauri/src/mcp/activity.rs`) to see ONE entry with N `additionalOpRefs`, not N entries. This is automatic if you:
+The activity feed (`src-tauri/src/mcp/activity.rs`) drains the `LAST_APPEND` task-local after a command returns and builds one entry: first `OpRef` primary, the rest as `additionalOpRefs`. Only `append_local_op_in_tx(...)` populates the task-local, so emit every op through it inside the one `CommandTx`. A bare `INSERT INTO op_log` produces no activity entry.
 
-1. Open one `CommandTx`.
-2. Emit each op via `append_local_op_in_tx(...)` (the helper that pokes every fresh `OpRef` into the `LAST_APPEND` task-local).
-3. Commit.
+## `AppError` and `ValidationCode`
 
-The dispatcher in `mcp/activity.rs` drains `LAST_APPEND` after the command returns and assembles the activity entry with the first op as the primary `OpRef` + the rest as `additionalOpRefs`. **Do not emit ops outside the tx; the task-local is only populated by `append_local_op_in_tx`.**
+`AppError` serialises as `{ kind, message, code? }` (manual `Serialize` in `src-tauri/agaric-core/src/error.rs`); `code` is present only on coded `Validation` errors, never `null`.
 
-## `AppError` and typed validation codes
-
-`AppError` serialises as `{ kind, message, code? }` (manual `Serialize` at [`src-tauri/agaric-core/src/error.rs`](../../agaric-core/src/error.rs)). `kind` is the `AppErrorKind` enum; `code` is present only on coded `Validation` errors and is omitted (never `null`) otherwise.
-
-For **validation errors the frontend must discriminate** (invalid glob, invalid regex, stale cursor, …), the sub-kind is a structured `ValidationCode` field — **#2251 replaced the old `"<Code>: <reason>"` message prefix**. Never hand-format a code into `message`; `message` carries only the human-readable reason.
+`AppError::Validation` is a struct variant, so `AppError::Validation(msg)` does not compile. Use the ctors:
 
 ```rust
-// emit
-return Err(AppError::validation_coded(ValidationCode::InvalidRegex, reason));
-// read (Rust tests)
-assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));
+AppError::validation(msg)                                    // uncoded
+AppError::validation_coded(ValidationCode::InvalidRegex, reason) // frontend must discriminate
+assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob)); // tests
 ```
 
-Note the ctor casing: `AppError::Validation` is a **struct** variant, so `AppError::Validation(msg)` does not compile — use `AppError::validation(msg)` (uncoded) or `AppError::validation_coded(code, msg)`.
+`message` carries only the human-readable reason; never format a code into it. The Rust `ValidationCode` enum is the source of truth: specta projects it into `bindings.ts`, and `src/lib/search-query/validation-codes.ts` mirrors it pinned by `satisfies`, so a Rust-side rename fails `tsc` after bindings regeneration. Frontend reads it with `validationCode(err)` from `@/lib/app-error`.
 
-The Rust `ValidationCode` enum is the single source of truth. Specta projects it into a string-literal union in `bindings.ts`; [`src/lib/search-query/validation-codes.ts`](../../../src/lib/search-query/validation-codes.ts) is a runtime mirror pinned to that union by a `satisfies` clause, so adding or renaming a variant on the Rust side fails TypeScript compilation after bindings regeneration — the cross-language check is by construction, not by paired string tests. Frontend consumers discriminate with `validationCode(err)` from `@/lib/app-error`.
-
-**Adding a sub-kind:** add the variant in Rust, regenerate bindings, add the mirror entry in `validation-codes.ts`, and document it in [`docs/architecture/search.md`](../../../docs/architecture/search.md) if it is search-facing.
-
-## Cancellation safety inside async commands
-
-Tauri command futures can be dropped by the runtime (the user closes the app, navigates away). Anywhere you have a `.await` between a write and a commit, the drop point is a potential partial-write hazard. `CommandTx::begin_immediate` solves this by holding the lock + rolling back on drop. **Do not write directly to `pool.acquire()` without a tx for multi-row writes.**
-
-## `_in_tx` variants
-
-Some commands need to be callable both standalone AND as part of a larger transaction (e.g. inside a `bootstrap_*` path). The convention:
-
-- `do_thing_inner(pool, …)` — standalone.
-- `do_thing_in_tx(tx, …)` — takes an existing tx; doesn't commit. Returns the operation's effects so the caller can decide.
-
-The inner-pool version usually wraps the in-tx version with its own `CommandTx::begin_immediate` + commit. Don't duplicate logic.
-
-**#2849 PR2 — client-supplied block ids on the create path.** `create_block_in_tx` (in `agaric-engine::block_ops`) takes a trailing `client_id: Option<BlockId>`. `None` (every non-optimistic caller — journal, spaces, bibliography, markdown import, recurrence, batch) mints a server ULID as before. `Some(id)` is the optimistic-create path (`create_block` IPC → `create_block_inner_with_id`): the frontend generates a ULID client-side, splices the block in *before* the round-trip, and passes it here so the id is stable from insertion (no focus/selection relocation to a server id). The id is used verbatim **only** if it parses as a well-formed ULID (`BlockId::from_string`, else `AppError::Ulid`) AND does not collide with any existing row — live or tombstoned (else `AppError::Conflict`). A malformed or colliding id is a hard error, never a silent fallback to a generated id (a silent swap would defeat the stable-id UX and hide bugs). The IPC-level `BlockId` `Deserialize` is lenient, so the ULID re-validation must happen here, not at the wire boundary. The legacy 7-arg `create_block_inner` stays a thin `client_id = None` wrapper so the dozens of existing callers are untouched.
-
-## `_local` / `record_append` helpers
-
-When a command emits ops that need to participate in the activity-feed entry (`LAST_APPEND` task-local), use the `append_local_op_in_tx` helper. It writes to `op_log` AND records the `OpRef` in the task-local. The bare `INSERT INTO op_log` path skips the task-local; activity-feed entries are NOT emitted.
+**Adding a variant:** add it in Rust, regenerate bindings, add the mirror entry in `validation-codes.ts`, document it in `docs/architecture/search.md` if search-facing.
 
 ## Testing
 
-Every `_inner` function gets a unit test in `src-tauri/src/commands/tests/`:
+Every `_inner` gets a test in `src-tauri/src/commands/tests/` using `test_pool()` + `TempDir` (see [`src-tauri/tests/AGENTS.md`](../../tests/AGENTS.md)):
 
 - Happy path
-- Empty-list rejection (for bulk commands)
-- Oversize-list rejection (for bulk commands)
+- Bulk commands: empty-list rejection, oversize-list rejection, op-log seq range contiguity
 - Atomic rollback on tx failure
-- Op-log seq range contiguity (for bulk commands — the materializer's `BatchApplyOps` consumes ranges)
-- Activity-feed contract (the OpRef chain has the right shape)
-- Cross-space rejection (when the command takes a `space_id`)
-- Missing-id tolerance (silent skip vs explicit error — match the command's documented behaviour)
+- Activity-feed contract (OpRef chain shape)
+- Cross-space rejection when the command takes a `space_id`
+- Missing-id behaviour (skip vs error, per the command's docs)
 
-See [`src-tauri/tests/AGENTS.md`](../../tests/AGENTS.md) for the test fixture patterns (`test_pool()`, `TempDir`, materializer setup).
+The Tauri wrapper is not unit-tested.
 
-## How to add a new Tauri command (end-to-end)
+## Add a new command
 
-The sequence below is the full path from "I wrote some Rust" to "the frontend can call it". Steps 4–6 are the ones that bite — the Rust compiles green while the bindings / `.sqlx` cache silently drift, and CI fails instead.
-
-1. **Write `*_inner(...)` in the handler module.** This is the testable core (see [§The `_inner` / Tauri-wrapper split](#the-_inner--tauri-wrapper-split)). It takes `&SqlitePool` (not `State`), returns `Result<T, AppError>`, carries no `#[tauri::command]` decorator, and is what the unit tests in `src-tauri/src/commands/tests/` exercise. Pick the module by domain — e.g. block CRUD lives in `src-tauri/src/commands/blocks/crud.rs`, properties in `src-tauri/src/commands/properties.rs`.
-
-2. **Write the thin Tauri wrapper** in the same module. Decorate with `#[tauri::command]` + `#[specta::specta]`, resolve the `State` args, and delegate to `*_inner`. A write command that needs the pool + device id + materializer takes the bundled `ctx: State<'_, WriteCtx>` (#1056) and forwards `ctx.pool()` / `ctx.device_id()` / `ctx.materializer()`; a read-only command takes `pool: State<'_, ReadPool>` and passes `&pool.0`. It ends with `.map_err(sanitize_internal_error)`. Any multi-row write inside `*_inner` opens `CommandTx::begin_immediate(pool, "label")` (see [§`CommandTx` for atomic multi-row writes](#commandtx-for-atomic-multi-row-writes)) — verify the helper name against an existing command rather than guessing.
+1. Write `*_inner(...)` in the domain module (block CRUD: `src-tauri/src/commands/blocks/crud.rs`; properties: `src-tauri/src/commands/properties.rs`).
+2. Write the wrapper in the same module:
 
    ```rust
    #[tauri::command]
@@ -185,31 +151,20 @@ The sequence below is the full path from "I wrote some Rust" to "the frontend ca
    }
    ```
 
-3. **Register the command** in the `agaric_commands!` macro in `src-tauri/src/lib.rs` (the single source of truth for the command list — both `run()` and the specta export expand it). Add a `$crate::commands::<module>::<path>::my_command,` line. **Editing the macro is the only place a command is registered**; forgetting it means the IPC handler never sees the command at runtime.
-
-4. **Regenerate the specta TypeScript bindings** → `src/lib/bindings.ts`. **This is the step most often missed.** The bindings are checked in, and the `ts_bindings_up_to_date` test (in `src-tauri/src/lib.rs`, mod `specta_tests`) compares the committed file against a fresh export — CI fails the moment they drift. Regenerate with:
+3. Register it in the `agaric_commands!` macro in `src-tauri/src/lib.rs` (`$crate::commands::<module>::my_command,`). This is the only registration point; both `run()` and the specta export expand it.
+4. Regenerate `src/lib/bindings.ts` — the `ts_bindings_up_to_date` test fails CI on drift. Rerun after any change to a command signature, arg/return struct, or the command list:
 
    ```bash
    cd src-tauri && cargo test -- specta_tests --ignored
    ```
 
-   This runs the `#[ignore]`'d `regenerate_ts_bindings` test, which writes `src/lib/bindings.ts` (with the `// @ts-nocheck` header). Re-run it after any change to a command signature, an arg/return struct, or the command list — not just new commands.
+   (The test's own hint suggests `-p agaric-lib`; that package name does not exist, drop the flag. #569.)
 
-   > **Note:** the test's own assert message suggests `cargo test -p agaric-lib …`, but `agaric-lib` is not a valid package name (the package is `agaric`; `agaric_lib` is only the lib *target*), so `-p agaric-lib` fails. Drop the `-p` flag as shown. Tracked in #569.
-
-5. **Call it from the frontend via `@/lib/bindings`.** The generated `commands.myCommand(...)` is the IPC surface (positional args, `{ status: 'ok' | 'error' }` result); unwrap it at the call site so it throws like the rest of the frontend expects. **Do not add a new wrapper to `src/lib/tauri.ts` or `src/lib/tauri/`** — that layer is being retired (#2927) and the `tauri-import-baseline` prek hook rejects new `@/lib/tauri` importers. See root [`AGENTS.md` §TypeScript Bindings](../../../AGENTS.md#typescript-bindings-specta).
-
-6. **If the command adds or changes a `query!` / `query_as!` / `query_scalar!` macro**, regenerate the offline `.sqlx` cache (compile-time-checked queries need it; runtime `sqlx::query(...)` strings do not):
-
-   ```bash
-   just gen-sqlx
-   ```
-
-   Use the recipe, not a bare `cargo sqlx prepare` — the workspace has four `.sqlx/` caches that must stay in lockstep, and the bare command silently drops leaf-crate queries (root [`AGENTS.md` invariant #6](../../../AGENTS.md#key-architectural-invariants)). It needs `DATABASE_URL` pointing at a migrated SQLite DB (no `.env` is checked in — see `src-tauri/.env.example` and [`src-tauri/migrations/AGENTS.md`](../../migrations/AGENTS.md)). CI runs `cargo sqlx prepare --check -- --tests` per lane and fails on drift. Commit `src/lib/bindings.ts` and every regenerated `.sqlx/` file in the **same PR** as the Rust change.
+5. Call it from the frontend via `@/lib/bindings` (`commands.myCommand(...)` returns `{ status: 'ok' | 'error' }`; unwrap at the call site). No new wrappers in `src/lib/tauri.ts` or `src/lib/tauri/` — the `tauri-import-baseline` hook rejects new importers.
+6. If you added or changed a `query!` / `query_as!` / `query_scalar!` macro, run `just gen-sqlx` (bare `cargo sqlx prepare` drops leaf-crate queries from the four `.sqlx/` caches). It needs `DATABASE_URL` pointing at a migrated SQLite DB — see `src-tauri/.env.example`. Commit `src/lib/bindings.ts` and every `.sqlx/` file in the same PR.
 
 ## Cross-references
 
-- Root [`AGENTS.md`](../../../AGENTS.md) §Backend Architecture — top-level command surface map.
-- [`src-tauri/migrations/AGENTS.md`](../../migrations/AGENTS.md) — when a command needs a schema change.
-- [`src-tauri/src/mcp/AGENTS.md`](../mcp/AGENTS.md) — when a command also surfaces as an MCP tool.
+- [`src-tauri/migrations/AGENTS.md`](../../migrations/AGENTS.md) — schema changes.
+- [`src-tauri/src/mcp/AGENTS.md`](../mcp/AGENTS.md) — commands that also surface as MCP tools.
 - [`docs/architecture/search.md`](../../../docs/architecture/search.md) — `SearchFilter` as the canonical extension struct.
