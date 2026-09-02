@@ -240,9 +240,10 @@ jobs:
           # the intent is legible and robust to future anchor tweaks.
           backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust|check-unsafe-allowlist)\.sh$|^scripts/coverage-ratchet\.mjs$)'
           frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$)'
-          # `scripts/` and `.claude/` are tooling: the guards, their manual-stage
-          # self-tests and `scripts/*.test.mjs` all run in `lint`, so a
-          # tooling-only PR is `ci` and pays no suite. The few scripts a suite
+          # `scripts/` and `.claude/` are tooling: the guards and their manual-stage
+          # self-tests run in `lint` (a `scripts/*.test.mjs` runs wherever it is
+          # named: `pr-diff-base` in `lint`, `check-bundle-budget` in `vitest`),
+          # so a tooling-only PR is `ci` and pays no suite. The few scripts a suite
           # consumes are routed to that suite above (the Rust phases' helpers
           # and the unsafe allowlist to backend; the axe/test-naming hook
           # owners, the bundle-budget guard and the two coverage scripts to
