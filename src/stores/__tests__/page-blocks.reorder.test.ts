@@ -1228,13 +1228,10 @@ describe('PageBlockStore', () => {
     //   113:7 ConditionalExpression `wantParent == null` -> `false`
     //         (in `wouldCreateMoveCycle`, which this suite drives via `moveBlocks`)
     //     Pure fast path, equivalent by the types alone: a null `wantParent`
-    //     then falls through to `orderedIds.includes(null)` — false,
-    //     `orderedIds` is `readonly string[]` — and to
-    //     `getDragDescendants(...).has(null)`, whose `Set<string>` can never
-    //     hold `null`, so the function returns the same `false` the guard
-    //     returns directly. Only the skipped O(m*n) walk differs. Reported as
-    //     a Timeout rather than Survived — see the #3765 note in
-    //     page-blocks.move-reparent.test.ts.
+    //     falls through to `orderedIds.includes(null)` and
+    //     `getDragDescendants(...).has(null)`, which a `readonly string[]` and
+    //     a `Set<string>` can never satisfy, so the function returns the same
+    //     `false` the guard returns directly.
     //
     //   217:35 ArrayDeclaration `const updatedBag: FlatBlock[] = []` ->
     //          `['Stryker was here']`

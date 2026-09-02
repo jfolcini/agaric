@@ -586,18 +586,16 @@ describe('formatJournalTitle (#1448 — display-only journal date format)', () =
     // the end of 2011, so local 2011-12-30 never existed: `new Date(2011, 11,
     // 30)` lands on Dec 31 while getMonth() still agrees, and without the
     // getDate() arm the title renders "December 31, 2011" for a page keyed
-    // "2011-12-30". The expectation is derived from the probe because a worker
-    // thread cannot change its timezone: the stub takes effect under the
-    // default (forks) pool, where this kills the mutant, and is inert under the
-    // `pool: 'threads'` the Stryker vitest runner forces.
+    // "2011-12-30".
     vi.stubEnv('TZ', 'Pacific/Apia')
     try {
       const probe = new Date(2011, 11, 30)
+      // A worker thread ignores `process.env.TZ`: under the `pool: 'threads'`
+      // the Stryker vitest runner forces, there is no skipped day to reject.
+      if (probe.getDate() === 30) return
       // Pins that this input isolates the getDate() arm, not the getMonth() one.
       expect(probe.getMonth()).toBe(11)
-      expect(formatJournalTitle('2011-12-30', 'MMMM d, yyyy')).toBe(
-        probe.getDate() === 30 ? 'December 30, 2011' : '2011-12-30',
-      )
+      expect(formatJournalTitle('2011-12-30', 'MMMM d, yyyy')).toBe('2011-12-30')
     } finally {
       vi.unstubAllEnvs()
     }

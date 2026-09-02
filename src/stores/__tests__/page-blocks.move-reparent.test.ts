@@ -1130,18 +1130,11 @@ describe('PageBlockStore', () => {
     //
     //   361:9  ConditionalExpression `!cur` -> `false`
     //   361:15 BlockStatement `{ needsReload = true; return {} }` -> `{}`
-    //     ACCEPTED GAP (#3765) — unkilled, and not an equivalence claim: the
-    //     `!cur` branch guards a real concurrent-delete race (the doc comment
-    //     on `reconcileProvisionalMoveSuccess`), and reaching it is not
-    //     killing it. In every reachable state `!cur` implies the id is gone
-    //     from `blocks` too — every writer moves `blocks` and `blocksById`
-    //     together — so `stillInPlace` is false and short-circuits before
-    //     `cur` is dereferenced, and the same `load()` runs anyway. Only a
-    //     forged store (a `blocksById` missing the id while `state.blocks` is
-    //     still reference-equal to `provBlocks`) dereferences `cur`; both
-    //     mutants then throw, but that pins a state no writer produces and
-    //     would pass for the crash rather than for the race, so it is not
-    //     added.
+    //     ACCEPTED GAP (#3765) — unkilled, and not an equivalence claim.
+    //     Every writer moves `blocks` and `blocksById` together, so a missing
+    //     `cur` also makes `stillInPlace` false, which short-circuits before
+    //     `cur` is dereferenced; only a forged store reaches either mutant,
+    //     and a test for one would pin a state no writer produces.
     //
     //   366:7 ConditionalExpression `state.blocks === handle.provBlocks` -> `false`
     //     The reference-equality fast path is a pure optimisation: whenever it
@@ -1156,11 +1149,8 @@ describe('PageBlockStore', () => {
     //   254:9 ConditionalExpression `seen.has(id)` -> `false`  (deriveTouched)
     //   255:5 CallExpression       `seen.add(id)`  -> `;`      (deriveTouched)
     //   257:9 ConditionalExpression `b` -> `true`               (deriveTouched)
-    //     Only these directions survive: `254:9 -> true`, `257:9 -> false` and
-    //     `257:12 touched.push(b) -> ;` all leave `touched` empty and are
-    //     killed. 255:5 is the same claim as 254:9 — with `seen` never
-    //     populated, `seen.has(id)` is always false and the dedup is off
-    //     either way.
+    //     255:5 is the same claim as 254:9: with `seen` never populated,
+    //     `seen.has(id)` is always false and the dedup is off either way.
     //     Every `touchedIds` list is derived from ids present in the `blocks`
     //     array returned alongside it, and none repeats: canary
     //     `MISSING_FROM_BLOCKS` = 0 and `DUPLICATE` = 0 of 74. The dedup is
