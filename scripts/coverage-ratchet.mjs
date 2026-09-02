@@ -23,7 +23,8 @@
 //   node scripts/coverage-ratchet.mjs --summary <path> --key vitest --update
 //
 // Exit: 0 by default; 1 when `--gate` is set AND (coverage dropped beyond
-// tolerance OR the report carried no data).
+// tolerance OR the report carried no data OR the invocation was malformed:
+// no `--key`, no input path).
 // ─────────────────────────────────────────────────────────────────────
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
