@@ -1494,10 +1494,11 @@ describe('runWalker', () => {
  * named alongside it; find it with grep.
  *
  * The 2026-08-17 pass mapped all 25 findings back onto this ledger that way and
- * every one landed. Seventeen matched constructs already recorded here — the
- * table below, because a single construct can carry more than one mutant (see
- * SUB-MUTANT AMBIGUITY, following). The remaining eight were newly triaged and
- * are in section F.
+ * every one landed. Seventeen matched constructs already recorded here (the
+ * table below lists the eight still surviving; #3757 killed the other six rows
+ * and deleted them), because a single construct can carry more than one mutant
+ * (see SUB-MUTANT AMBIGUITY, following). The remaining eight were newly triaged
+ * and are in section F.
  *
  *   err instanceof Error ? ... : ''        A (was 193:81, now 193:81)
  *   while (from <= haystack.length)        C (was 251:10, now 367:10)

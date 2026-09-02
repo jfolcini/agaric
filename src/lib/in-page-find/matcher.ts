@@ -311,10 +311,12 @@ function scanLiteral(
   // U+0130-specific so that it keeps holding if the fold ever gains another
   // expanding mapping.
   //
-  // This branch is a pure OPTIMISATION and nothing else: since #4507 both
-  // sides fold through `foldForMatch`, so the slow path computes the same
-  // spans as the fast one for every input reaching here. It selects the
-  // cheaper route, never a different answer (#4507, session-1425).
+  // This branch is an OPTIMISATION for every query made of whole code
+  // points: since #4507 both sides fold through `foldForMatch`, so the slow
+  // path computes the same spans as the fast one for all of them. The two
+  // differ only for a query that is itself an unpaired surrogate (`indexOf`
+  // is code-unit based; the slow path maps a hit inside a pair back to the
+  // pair), which the toolbar cannot produce (#3757).
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
