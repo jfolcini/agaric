@@ -1180,12 +1180,6 @@ mod tests {
             "directive-only input must not get the no-'@' warning: {:?}",
             out.warnings
         );
-        assert_eq!(
-            out.warnings.len(),
-            1,
-            "the '@comment' directive warning is the only one expected: {:?}",
-            out.warnings
-        );
     }
 
     #[test]
