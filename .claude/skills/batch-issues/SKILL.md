@@ -35,15 +35,17 @@ Use a read-only Explore agent for discovery (`docs/FEATURE-MAP.md`, `docs/featur
 
 ## Model selection
 
-Score each item on cost (files, diff size, toolchain) and risk (migrations, materializer/concurrency, security paths, cross-cutting refactors, ambiguous scope). Risk wins.
+Delegate to the cheapest model that can do the item well: subagents keep the orchestrator's context small, run faster, and cost less. Score each item on cost (files, diff size, toolchain) and risk (migrations, materializer/concurrency, security paths, cross-cutting refactors, ambiguous scope). Risk wins.
 
 | Item | Builder | Reviewer |
 | --- | --- | --- |
-| Low risk, mechanical (docs, rename, copy, small UI polish, dep bump) | `haiku` | `sonnet` |
-| Typical scoped fix or feature in one domain | `sonnet` | `sonnet` |
+| Mechanical (docs, rename, copy, small UI polish, dep bump, comment sweep) | `sonnet` | `sonnet` |
+| Typical scoped fix or feature in one domain | `opus` | `opus` |
 | High risk (migration, materializer, security, cross-cutting, ambiguous) | inherit | inherit |
 
-The reviewer is never a weaker tier than the builder. Unsure: inherit. A builder that keeps failing gets relaunched one tier up, not retried.
+The tiers follow Artificial Analysis (Sept 2026, Anthropic provider page), not vendor guidance: Fable 5.1 leads intelligence (62 at high effort, 66 at max) but is the slowest and dearest; Opus 5 sits within a few points (59-61 at medium-high) at roughly half the blended price, so it is the default builder; Sonnet 5 (43 non-reasoning, 55 at max) is the fast, cheap tier at about a third of Opus's price; Haiku 4.5 (30) is only faster per token, not cheaper per task, and is not intelligent enough to be trusted with repo conventions, so it is not used. Re-check the numbers when a new release shifts them.
+
+The reviewer is never a weaker tier than the builder. Unsure: inherit. A builder that keeps failing gets relaunched one tier up, not retried. Research and read-only discovery go to `sonnet` (Explore agent) regardless of the item's tier.
 
 ## 2. Build
 
