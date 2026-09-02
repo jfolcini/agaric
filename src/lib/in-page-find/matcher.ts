@@ -313,8 +313,8 @@ function scanLiteral(
   //
   // OPTIMISATION for every query made of whole code points: since #4507 both
   // sides fold through `foldForMatch`, so both paths compute the same spans.
-  // Only a query that is itself an unpaired surrogate differs (`indexOf` is
-  // code-unit based), and the toolbar cannot produce one (#3757).
+  // Outside that population they can differ (a query that is itself an
+  // unpaired surrogate does); the toolbar produces no such query (#3757).
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
