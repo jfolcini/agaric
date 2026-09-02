@@ -1229,10 +1229,11 @@ jobs:
         # file against the tracking issue's marker block, its only cross-run
         # memory, so the absent lines report as "Resolved since last run",
         # leave the tracked set and come back as new next week (#3364).
-        # Hence: count the shards, publish either way, and export the counts so
-        # the filer job below can force `--dry-run` (every read, no `gh` write)
-        # when they disagree. Only a merge with NOTHING in it still fails —
-        # there is no artifact to publish and no summary to render.
+        # Hence: count the shards that actually produced results, publish
+        # either way, and export the counts so the filer job below can force
+        # `--dry-run` (every read, no `gh` write) when they disagree. Only a
+        # merge with nothing USABLE in it still fails — there is no artifact
+        # worth publishing and no summary to render.
         #
         # The expected count is read from the matrix itself by
         # `check-mutants-scope.mjs`, the guard that already parses it; a second
@@ -1242,17 +1243,34 @@ jobs:
           set -euo pipefail
           expected=$(node scripts/check-mutants-scope.mjs --shard-count)
           mapfile -t outcomes < <(find shards -type f -name outcomes.json | sort)
-          merged=${#outcomes[@]}
+          # Uploading is not the same as having results. The per-shard upload
+          # is `if: always()`, and a shard whose BASELINE failed or timed out
+          # still writes an outcomes.json (carrying that Baseline verdict) and
+          # an empty missed.txt. Counting files would therefore read the exact
+          # week this gate exists to catch — the `agaric` suite outgrowing
+          # `--timeout`, all 27 of its shards aborting on a Timeout baseline —
+          # as a FULL merge, and let the filer resolve away every `agaric`
+          # survivor (#3364). Usable means what the per-shard zero-coverage
+          # guard means by it: `Baseline` summary == Success.
+          merged=0
+          for outcome in "${outcomes[@]}"; do
+            summary=$(jq -r '([.outcomes[]? | select(.scenario == "Baseline") | .summary] | first) // "MISSING"' "$outcome" 2>/dev/null || echo MISSING)
+            if [ "$summary" = "Success" ]; then
+              merged=$((merged + 1))
+            else
+              echo "::warning::shard '$(dirname "$outcome")' tested nothing (baseline summary=$summary) — it uploaded output but its slice is uncovered, so it does not count toward the merged total."
+            fi
+          done
           {
             echo "merged=$merged"
             echo "expected=$expected"
           } >> "$GITHUB_OUTPUT"
           if [ "$merged" -eq 0 ]; then
-            echo "::error::no shard uploaded an outcomes.json — all $expected mutants shards died before producing output. Nothing to merge; the filer's \`--require-rust\` will red rather than read an absent missed.txt as 'no rust survivors' (#3364)."
+            echo "::error::no shard produced usable results (${#outcomes[@]} of $expected uploaded an outcomes.json, none of them with a successful baseline). Nothing to merge; the filer's \`--require-rust\` will red rather than read an empty missed.txt as 'no rust survivors' (#3364)."
             exit 1
           fi
           if [ "$merged" -lt "$expected" ]; then
-            echo "::warning::SHORT MERGE: only $merged of $expected mutants shards uploaded an outcomes.json. The missing shards' survivors are absent from this week's missed.txt, so \`file-mutation-survivors\` runs --dry-run: it would otherwise report them as resolved, drop them from the tracking issue's marker block and re-report them as new next week (#3364). The merged artifact and summary below cover only the $merged shards that ran; re-run the failed ones for a full week."
+            echo "::warning::SHORT MERGE: only $merged of $expected mutants shards produced usable results. The missing shards' survivors are absent from this week's missed.txt, so \`file-mutation-survivors\` runs --dry-run: it would otherwise report them as resolved, drop them from the tracking issue's marker block and re-report them as new next week (#3364). The merged artifact and summary below cover only the $merged shards that ran; re-run the failed ones for a full week."
           fi
           mkdir -p mutants.out
           # The four lists are one finding per line, and the shards partition

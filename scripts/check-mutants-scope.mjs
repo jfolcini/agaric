@@ -94,6 +94,14 @@ const WORKFLOW_PATH = '.github/workflows/scheduled-deep-checks.yml'
 const JOB_ID = 'mutants'
 /** The downstream consumer of `JOB_ID`'s artifact — see header note 4. */
 const FILER_JOB_ID = 'file-mutation-survivors'
+/**
+ * Since #3393 `JOB_ID` is a matrix and uploads one artifact PER SHARD; this
+ * job is what reassembles them into the single `ARTIFACT_NAME` the filer
+ * downloads. It is therefore the producer half of that handoff, and checking
+ * only `JOB_ID`'s uploads would leave it unguarded — the #3386/#3387 shape,
+ * where the guard stays green and the filer reds a week later.
+ */
+const MERGE_JOB_ID = 'mutants-merge'
 /** The artifact name the two jobs hand off through. */
 const ARTIFACT_NAME = 'mutants-out'
 
@@ -414,6 +422,65 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
 }
 
 /**
+ * The producer of `ARTIFACT_NAME` (#3393). Before sharding, `JOB_ID` uploaded
+ * it directly and `checkOutputPlumbing` covered it. Now `JOB_ID` uploads
+ * `mutants-out-<package>-<shard>` and `MERGE_JOB_ID` produces the single
+ * artifact the filer names — so without this, renaming or re-pathing THAT
+ * upload leaves every check green and reds `FILER_JOB_ID` on the next cron,
+ * a week later, with a message about the filer.
+ *
+ * `writeDir` is cargo-mutants' own output directory name, which the merge
+ * reassembles into and must upload as-is: the filer reads `missed.txt` flat
+ * off the artifact root, so uploading a parent buries it one level down.
+ */
+export function checkMergeProducer({ lines, writeDir, push }) {
+  if (!lines) {
+    push(
+      'merge-job-missing',
+      `no \`${MERGE_JOB_ID}\` job in ${WORKFLOW_PATH}. Since #3393 the \`${JOB_ID}\` matrix uploads one artifact per shard and nothing else produces \`${ARTIFACT_NAME}\`, so \`${FILER_JOB_ID}\` would download an artifact that no job writes (#3387).`,
+    )
+    return
+  }
+
+  // The artifact `name:` and the step `name:` are the same key at different
+  // indentation, so tell them apart by the list dash rather than by value —
+  // a step legitimately called "Upload merged mutants report" must not read
+  // as an artifact named that.
+  let artifactName
+  let path
+  let inUpload = false
+  for (const line of lines) {
+    if (/^\s*-\s+(name|uses):/.test(line)) inUpload = false
+    if (/uses:\s*actions\/upload-artifact/.test(line)) inUpload = true
+    if (!inUpload) continue
+    const nameLine = /^\s+name:\s*(\S+)\s*$/.exec(line)
+    if (nameLine && !/^\s*-/.test(line) && artifactName === undefined) artifactName = nameLine[1]
+    const pathLine = /^\s+path:\s*(\S+)\s*$/.exec(line)
+    if (pathLine && path === undefined) path = pathLine[1]
+    if (artifactName !== undefined && artifactName !== ARTIFACT_NAME) {
+      artifactName = undefined
+      path = undefined
+      inUpload = false
+    }
+  }
+
+  if (artifactName === undefined) {
+    push(
+      'merge-upload-missing',
+      `the \`${MERGE_JOB_ID}\` job uploads no artifact named \`${ARTIFACT_NAME}\`. That is the name \`${FILER_JOB_ID}\` downloads, and since #3393 no other job produces it: with \`--require-rust\` the filer throws every run, and without it it reports "no rust survivors" and clears every tracked one (#3364).`,
+    )
+    return
+  }
+  const normalized = path?.replace(/^src-tauri\//, '').replace(/\/$/, '')
+  if (normalized !== writeDir) {
+    push(
+      'merge-upload-path-mismatch',
+      `the \`${MERGE_JOB_ID}\` job uploads \`${ARTIFACT_NAME}\` from '${path ?? '<no path:>'}', but the merge reassembles the shards into '${writeDir}'. \`${FILER_JOB_ID}\` reads missed.txt flat off the artifact root, so any other directory buries it and \`--require-rust\` throws (#3387).`,
+    )
+  }
+}
+
+/**
  * The consumer half of the same plumbing (#3394): `file-mutation-survivors`
  * downloads this lane's artifact and reads `missed.txt` FLAT off the download
  * directory, so the download step's `path:` and the filer's `--rust-missed`
@@ -586,6 +653,13 @@ export function analyzeMutantsScope({ root, overrideArgv }) {
   // self-test's `scripts/` case) already reports `no-invocation`, and piling a
   // second "the filer job is missing" on top of that would be noise.
   if (workflow) checkFilerPlumbing({ lines: jobLines(workflow, FILER_JOB_ID), push })
+  if (workflow && invocation) {
+    checkMergeProducer({
+      lines: jobLines(workflow, MERGE_JOB_ID),
+      writeDir: outputDirFor(invocation.argv),
+      push,
+    })
+  }
 
   return { problems, globs, matched, examinedDirs: examinedDirs ?? [] }
 }
@@ -732,6 +806,48 @@ function selfTestPlumbing(ok, fail) {
   const deleted = kinds(job('outcomes=mutants.out/outcomes.json', []))
   if (deleted.includes('artifact-upload-missing')) ok('a deleted upload-artifact step is flagged')
   else fail('missing upload step is flagged', JSON.stringify(deleted))
+}
+
+/**
+ * The merge-producer checks (#3393). Sharding moved the `mutants-out` upload
+ * out of `JOB_ID` and into `MERGE_JOB_ID`; all three of these fired GREEN in
+ * between, which is the whole reason the check exists.
+ */
+function selfTestMergeProducer(ok, fail) {
+  const kinds = (lines) => {
+    const found = []
+    checkMergeProducer({ lines, writeDir: 'mutants.out', push: (kind) => found.push(kind) })
+    return found
+  }
+  const job = ({ name = ARTIFACT_NAME, path = 'mutants.out/' } = {}) => [
+    `  ${MERGE_JOB_ID}:`,
+    '    steps:',
+    '      - name: Upload merged mutants report',
+    '        uses: actions/upload-artifact@0000',
+    '        with:',
+    `          name: ${name}`,
+    ...(path === undefined ? [] : [`          path: ${path}`]),
+  ]
+
+  const clean = kinds(job())
+  if (clean.length === 0) ok('a correctly plumbed merge upload reports no problem')
+  else fail('clean merge upload is clean', JSON.stringify(clean))
+
+  // The step name must not be mistaken for the artifact name: this job's step
+  // is literally called "Upload merged mutants report".
+  const renamed = kinds(job({ name: 'mutants-merged' }))
+  if (renamed.includes('merge-upload-missing'))
+    ok('a merged artifact renamed away from mutants-out is flagged')
+  else fail('renamed merged artifact is flagged', JSON.stringify(renamed))
+
+  const parent = kinds(job({ path: '.' }))
+  if (parent.includes('merge-upload-path-mismatch'))
+    ok('a merged artifact uploaded from a parent directory is flagged')
+  else fail('merged artifact parent path is flagged', JSON.stringify(parent))
+
+  const gone = kinds(undefined)
+  if (gone.includes('merge-job-missing')) ok('a deleted mutants-merge job is flagged')
+  else fail('missing merge job is flagged', JSON.stringify(gone))
 }
 
 /**
@@ -896,6 +1012,7 @@ function runSelfTest() {
   selfTestReaders(ok, fail)
   selfTestPlumbing(ok, fail)
   selfTestFilerPlumbing(ok, fail)
+  selfTestMergeProducer(ok, fail)
 
   // 5. End-to-end on a root with no config at all → config-missing.
   const empty = analyzeMutantsScope({ root: resolve(REPO_ROOT, 'scripts') })
