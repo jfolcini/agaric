@@ -71,7 +71,7 @@ regex = "1"
 # `agaric_sync::sync_daemon::peer_lock_key_from_stored` exists); that edge is
 # untouched here.
 #
-# Pinned EXACTLY, matching `agaric-sync`'s `iroh = "=1.0.3"`. Two independent
+# Pinned EXACTLY, matching `agaric-sync`'s `iroh = "=1.1.0"`. Two independent
 # ranges could resolve two `iroh-base` builds, and then the store's `EndpointId`
 # would be a *different type* from the transport's, validating against a second
 # copy of the parser. `default-features = false` drops `relay`'s share of the
