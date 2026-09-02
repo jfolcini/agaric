@@ -116,7 +116,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   if (!args.key) {
     console.error('ERROR: --key <vitest|rust> is required.')
-    return 0 // a usage error in the workflow, not a coverage verdict
+    return args.gate ? 1 : 0 // under --gate a usage error must not pass the job having evaluated nothing
   }
 
   let pct = null
@@ -124,7 +124,7 @@ function main() {
   else if (args.summary) pct = lineCoverageFromSummary(args.summary)
   else {
     console.error('ERROR: one of --lcov / --summary is required.')
-    return 0
+    return args.gate ? 1 : 0
   }
 
   if (pct === null) {
