@@ -517,7 +517,9 @@ install_sqlx_cli() {
 #             for every real crate now that sqruff moved off it) still
 #             works, via a TEST-ONLY table entry.
 # Stubs `cargo` / `cargo-binstall` on an isolated PATH — no network, no real
-# installs, no repo mutation. Wired as the `setup-hooks-selftest` prek hook
+# installs, no repo mutation. It USED to run as the `setup-hooks-selftest`
+# prek hook; #4556 Phase 1 unwired that hook, so this suite runs only
+# when invoked by hand until Phase 2 restages it
 # (mirrors the established `push.sh --self-test` /
 # `verify-ci-equivalent.sh --self-test` convention) so a regression in any of
 # these reddens instead of silently re-diverging.

@@ -75,7 +75,11 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 /** Where cargo-mutants looks, and the pre-#3386 path that nothing reads. */
 export const CONFIG_PATH = 'src-tauri/.cargo/mutants.toml'
 export const STRAY_CONFIG_PATH = 'src-tauri/mutants.toml'
-const WORKSPACE_DIR = 'src-tauri'
+// Exported so `file-mutation-survivors.mjs` can resolve the same workspace
+// root rather than keeping its own copy of the literal (#4557 review). The
+// two files must agree on where the mutation workspace lives; a duplicated
+// literal is a drift axis that nothing compares.
+export const WORKSPACE_DIR = 'src-tauri'
 const WORKSPACE_MANIFEST = 'src-tauri/Cargo.toml'
 const WORKFLOW_PATH = '.github/workflows/scheduled-deep-checks.yml'
 const JOB_ID = 'mutants'

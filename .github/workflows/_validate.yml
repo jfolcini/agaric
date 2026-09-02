@@ -974,7 +974,7 @@ jobs:
               migrations-rebuild-cascade migrations-rebuild-cascade-self-test)
           fi
           if [ "$ci" != true ]; then
-            skips+=(actionlint zizmor shellcheck skip-ci-verify-guard)
+            skips+=(actionlint zizmor shellcheck)
           fi
           if [ "$docs" != true ]; then
             skips+=(markdownlint md-link-targets session-log-numbering)

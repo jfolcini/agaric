@@ -136,9 +136,11 @@
 //
 // `--max-children` caps CHILD CREATES IN ONE RUN and throws past it, in the
 // same spirit as the `--require-*` gates: refuse with a diagnosis rather than
-// do something unrecoverable. The default is the MEASURED size of the area
-// universe (see DEFAULT_MAX_CHILDREN), so it cannot bite on real data and can
-// only bite if `survivorArea` starts fragmenting.
+// do something unrecoverable. The default is DERIVED, at import time, from
+// the actual size of the area universe (see DEFAULT_MAX_CHILDREN and #3667 —
+// a pinned copy of that size silently went stale once already), so it
+// cannot bite on real data and can only bite if `survivorArea` starts
+// fragmenting.
 //
 // ── Accepted-equivalent mutants (#4173) ──────────────────────────────────
 //
@@ -204,6 +206,7 @@ import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
+  globSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -213,7 +216,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 // Stable title: the ONLY thing the find-or-file logic matches on. Never
 // rename an existing issue with this title — the script would stop finding
@@ -246,22 +249,199 @@ const ACCEPTED_MARKER_END = '<!-- mutation-accepted:end -->'
 // `gh issue create` that nobody can act on.
 export const MAX_TITLE_CHARS = 256
 
-// Blast-radius cap on child CREATES in a single run — MEASURED, not chosen.
-// The area universe these two lanes can produce, as of 2026-08-09:
-//   frontend  21  `MODULE_NAMES.length` in `stryker.modules.mjs` (one area per
-//                 enrolled Stryker module)
-//   rust      22  non-test `.rs` files under the four `examine_globs` in
-//                 `src-tauri/.cargo/mutants.toml` (`agaric-store/src/op.rs`
-//                 plus `op_log/**`, `src/reverse/**`,
-//                 `agaric-engine/src/loro/engine/**`, minus the `exclude_globs`
-//                 test/proptest files) — one area per source FILE, which is
-//                 the only grouping cargo-mutants' ids expose.
-// So 43 is the whole universe: a run asking to create more children than that
-// cannot be reporting real areas, it is `survivorArea` fragmenting (an id shape
-// change collapsing everything into `(unparsed)`, say). Raising this is a
-// deliberate, reviewed step — the same posture as the repo's baseline files —
-// and enrolling more Stryker modules is exactly when to do it.
-export const DEFAULT_MAX_CHILDREN = 43
+// Blast-radius cap on child CREATES in a single run — DERIVED at import
+// time, not pinned, from the same two sources the area universe is actually
+// made of:
+//   frontend  `MODULE_NAMES.length` in `stryker.modules.mjs` — one area per
+//             enrolled Stryker module.
+//   rust      non-test `.rs` files reachable through `examine_globs` minus
+//             `exclude_globs` in `src-tauri/.cargo/mutants.toml` — one area
+//             per source FILE, which is the only grouping cargo-mutants' ids
+//             expose. Enumerated the way `check-mutants-scope.mjs` does for
+//             the GLOB half (its exported `tomlStringArray` / `globMatches`,
+//             `globSync` per glob filtered to `.rs`, deduped across globs in
+//             a `Set` since globs can overlap) — reused from there rather
+//             than reimplemented here.
+//
+//             TWO DELIBERATE DIVERGENCES, stated because the two counts
+//             agreeing today (both 23) is not the same as them being the
+//             same computation: that guard additionally drops files that
+//             exist but sit OUTSIDE the packages the lane examines
+//             (`insideAny(p, examinedDirs, workspace.members)`, its
+//             `glob-outside-examined-packages` arm). This cap does not. A
+//             file inside `examine_globs` but outside the examined package
+//             set would inflate the cap here while that guard reports the
+//             surface as collapsed — the #2621 arch-wave shape. Not fixed
+//             here because the cap wants an UPPER bound on plausible area
+//             count and over-counting fails safe, whereas that guard wants
+//             the true mutable surface; but this is the axis on which the
+//             two copies can drift, so it is named rather than left to be
+//             re-discovered.
+//
+//             SECOND: this dedupes across globs in a `Set`, while that guard
+//             sums `live.length - unreachable.length` PER GLOB with no dedup.
+//             Overlapping `examine_globs` entries therefore count once here
+//             and twice there. The `Set` is right for a per-FILE area count
+//             — the cap is a count of areas, and an area is a file — but the
+//             two numbers can differ for that reason alone, and an earlier
+//             version of this comment claimed to enumerate the divergences
+//             while naming only the first. That reuse is a LAZY `import()`
+//             inside `countRustAreaFiles`, never a top-level one: the #3373
+//             `main-module-detection` assertions copy THIS FILE ALONE to a
+//             detached path and run `--self-test` there, and a static
+//             `./check-mutants-scope.mjs` specifier makes that copy die at
+//             module load with ERR_MODULE_NOT_FOUND before any assertion
+//             runs. Keep it lazy.
+//
+// This used to be a pinned constant: 43 = 21 + 22, exactly right the day it
+// was written (2026-08-09). It went silently wrong when
+// `agaric-store/src/op_log/high_water.rs` landed on 2026-08-16 (`fbdebb6a1`,
+// #4016) and grew the rust half to 23 — a commit with no reason to think
+// about a mutation-triage cap, which is exactly why a pinned number is the
+// wrong shape here. Re-pinning to 44 would only restart the same clock for
+// the next unrelated file to land in `examine_globs`'s scope; deriving means
+// there is no clock. (#3667)
+//
+// A run asking to create more children than the derived universe still
+// cannot be reporting real areas — it is `survivorArea` fragmenting (an id
+// shape change collapsing everything into `(unparsed)`, say). Raising the
+// cap by enrolling more Stryker modules or widening `examine_globs` is still
+// the deliberate, reviewed step the pinned comment described; it now simply
+// takes effect by editing those sources instead of this number.
+//
+// Degrades LOUDLY, and generously. Every path resolution below is anchored
+// on `import.meta.dirname`, never on `process.cwd()` — the weekly job's cwd
+// is not guaranteed to be the repo root.
+//
+// A HALF that derives to zero is a broken derivation, not a small universe:
+// `examine_globs` present-but-empty (or renamed, or the file re-sectioned so
+// the regex misses it) yields `rust 0` and would otherwise quietly halve the
+// cap to 21 — the same silent-staleness failure this change exists to kill,
+// one branch over. So each half must be a positive integer or the whole
+// derivation is declared failed, and a failed derivation WARNS on stderr
+// naming the reason before falling back. A cap that reverts to a constant
+// without saying so is the bug, not the fix.
+const REPO_ROOT = resolve(import.meta.dirname, '..')
+const MUTANTS_TOML_PATH = resolve(REPO_ROOT, 'src-tauri/.cargo/mutants.toml')
+const STRYKER_MODULES_PATH = resolve(REPO_ROOT, 'stryker.modules.mjs')
+
+// Named fallback, used ONLY when the derivation cannot run. Deliberately
+// NOT today's universe (44).
+//
+// Pinning the fallback to the current measurement re-creates exactly the
+// drift #3667 removes: derivation breaks + universe has since grown to 50 →
+// cap 44 → the guard refuses a legitimate run, and a throw in this weekly
+// job wedges it red with no self-healing path. The two errors are not
+// symmetric. Too LOW wedges the job on a healthy run; too HIGH only means
+// the fragmentation backstop does not fire during a window in which the
+// derivation is already broken and already warning on stderr — and junk
+// child issues are recoverable, a wedged weekly job is not.
+//
+// 150 is chosen against both bounds, not measured: ~3.4x today's universe of
+// 44, which no plausible near-term growth reaches (the universe grows by
+// single files and single enrolled modules), while staying under a real
+// `survivorArea` fragmentation event — that produces one area per SURVIVOR,
+// and the current wave alone carries ~222 (see `stryker.modules.mjs`). So
+// the backstop still catches the thing it is for. This number does not need
+// re-measuring when the universe grows; if it ever needs raising, the
+// derivation is what should have caught it.
+export const FALLBACK_MAX_CHILDREN = 150
+
+// Set when the derivation gave up, so the cap's own error message can say
+// "fallback" instead of claiming a measurement it never made — a triager
+// told "the derived universe is 150" would go hunting for a fragmentation
+// bug that is not there.
+let maxChildrenIsFallback = false
+
+function warnDerivationFailed(reason) {
+  maxChildrenIsFallback = true
+  console.error(
+    `warning: could not derive DEFAULT_MAX_CHILDREN (${reason}); falling back to ${FALLBACK_MAX_CHILDREN}. The child-creation cap is NOT tracking the real area universe — fix the derivation rather than living with the fallback.`,
+  )
+}
+
+/**
+ * Non-test `.rs` files the rust lane's `examine_globs` actually reach, minus
+ * `exclude_globs`. The `check-mutants-scope.mjs` helpers are imported lazily
+ * on purpose — see the block comment above.
+ */
+async function countRustAreaFiles() {
+  // WORKSPACE_DIR comes from the SIBLING, not a local copy. Both files must
+  // agree on where the mutation workspace lives, and nothing compares two
+  // duplicated literals — it is a drift axis the self-test below explicitly
+  // cannot catch, so it is removed rather than documented (#4557 review).
+  const { globMatches, tomlStringArray, WORKSPACE_DIR } = await import('./check-mutants-scope.mjs')
+  const workspaceDir = resolve(REPO_ROOT, WORKSPACE_DIR)
+  // BEFORE the `readFileSync` below, not after, which is what makes this
+  // branch do its job instead of being dead code. `MUTANTS_TOML_PATH` is
+  // `src-tauri/.cargo/mutants.toml` — strictly INSIDE the workspace dir — so
+  // reading the config first meant a missing workspace threw ENOENT on the
+  // TOML and this check could never fire. Checked first, a missing workspace
+  // is reported as the missing workspace, rather than as a missing config
+  // file inside it or as the caller's "examine_globs matched no .rs file"
+  // arm, which would point a triager at globs in a directory that is not
+  // there. `check-mutants-scope.mjs:245` guards the same globSync.
+  if (!existsSync(workspaceDir)) {
+    throw new Error(`workspace directory ${workspaceDir} does not exist`)
+  }
+  const config = readFileSync(MUTANTS_TOML_PATH, 'utf8')
+  const examine = tomlStringArray(config, 'examine_globs')
+  const exclude = tomlStringArray(config, 'exclude_globs')
+  const files = new Set()
+  for (const glob of examine) {
+    for (const path of globSync(glob, { cwd: workspaceDir })) {
+      if (!path.endsWith('.rs')) continue
+      if (exclude.some((e) => globMatches(e, path))) continue
+      files.add(path)
+    }
+  }
+  return files.size
+}
+
+/** A derived half is only usable if it is a positive integer. */
+function isUsableCount(n) {
+  return Number.isInteger(n) && n > 0
+}
+
+export async function computeDefaultMaxChildren() {
+  let frontendCount
+  try {
+    // Relative to THIS module's URL (not cwd); same file as
+    // `STRYKER_MODULES_PATH` by construction, since `REPO_ROOT` is `../`.
+    const { MODULE_NAMES } = await import('../stryker.modules.mjs')
+    // Guard the SHAPE, not just the import: a non-array `MODULE_NAMES` gives
+    // `.length` of `undefined` (silently NaN) or a string's length (silently
+    // wrong), neither of which throws.
+    if (!Array.isArray(MODULE_NAMES)) {
+      warnDerivationFailed('stryker.modules.mjs did not export MODULE_NAMES as an array')
+      return FALLBACK_MAX_CHILDREN
+    }
+    frontendCount = MODULE_NAMES.length
+  } catch (err) {
+    warnDerivationFailed(`could not import ${STRYKER_MODULES_PATH}: ${err.message}`)
+    return FALLBACK_MAX_CHILDREN
+  }
+  let rustCount
+  try {
+    rustCount = await countRustAreaFiles()
+  } catch (err) {
+    warnDerivationFailed(`could not enumerate the rust lane's area files: ${err.message}`)
+    return FALLBACK_MAX_CHILDREN
+  }
+  if (!isUsableCount(frontendCount)) {
+    warnDerivationFailed(`the frontend half derived to ${frontendCount}`)
+    return FALLBACK_MAX_CHILDREN
+  }
+  if (!isUsableCount(rustCount)) {
+    warnDerivationFailed(
+      `the rust half derived to ${rustCount} — examine_globs in ${MUTANTS_TOML_PATH} matched no non-excluded .rs file`,
+    )
+    return FALLBACK_MAX_CHILDREN
+  }
+  return frontendCount + rustCount
+}
+
+export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
 
 // #3257 — a GitHub issue body maxes out at 65536 characters; past that
 // `gh issue edit` 422s, node exits non-zero, and this weekly non-gating job
@@ -1026,7 +1206,11 @@ export function decideChildActions({
   const creates = actions.filter((a) => a.action === 'create').length
   if (creates > maxChildren) {
     throw new Error(
-      `refusing to open ${creates} child issues in one run (cap: ${maxChildren}). The measured area universe of both lanes is ${DEFAULT_MAX_CHILDREN} (see DEFAULT_MAX_CHILDREN), so a batch this large means survivorArea() is fragmenting rather than grouping — check the survivor id shapes before raising --max-children.`,
+      `refusing to open ${creates} child issues in one run (cap: ${maxChildren}). ${
+        maxChildrenIsFallback
+          ? `The area universe could not be derived, so DEFAULT_MAX_CHILDREN fell back to FALLBACK_MAX_CHILDREN = ${DEFAULT_MAX_CHILDREN}`
+          : `DEFAULT_MAX_CHILDREN is the derived area universe of both lanes, ${DEFAULT_MAX_CHILDREN}`
+      }, so a batch this large means survivorArea() is fragmenting rather than grouping — check the survivor id shapes before raising --max-children.`,
     )
   }
   return actions.toSorted((a, b) => a.area.localeCompare(b.area))
@@ -2141,7 +2325,10 @@ function printDryRun({
 //   #3257 — the rendered body must never exceed MAX_BODY_CHARS, and the
 //           machine-readable marker block must never be cut mid-way (a
 //           truncated block silently shrinks the tracked set).
-// Wired as the `mutation-survivors-filer-selftest` prek hook.
+// USED to run as the `mutation-survivors-filer-selftest` prek hook; #4556
+// Phase 1 unwired it. These assertions still execute, but only transitively,
+// via `main-module-detection-selftest` — see the note on that hook's stanza
+// in prek.toml before re-keying either.
 // #3364 fixtures, split out of `runSelfTest` to keep its cyclomatic
 // complexity under the repo lint budget.
 // #3350 fixtures — survivor AGE, which is what makes "long-standing" and
@@ -4296,7 +4483,105 @@ function selfTestReanchorNoteCannotParseBack({ ok, fail }) {
   }
 }
 
-function runSelfTest() {
+/**
+ * #3667 — `DEFAULT_MAX_CHILDREN` must track the REAL area universe, not a
+ * pinned copy of it (43 = 21 + 22 was exactly right on 2026-08-09 and
+ * silently wrong from 2026-08-16 on, once `agaric-store/src/op_log/high_water.rs`
+ * landed in #4016 and nobody had reason to revisit this constant).
+ *
+ * This recomputes both halves independently of `computeDefaultMaxChildren`
+ * — reading `stryker.modules.mjs` and `mutants.toml` itself rather than
+ * calling that function again — so a bug that makes the derivation drop or
+ * miscount one half is actually caught here instead of the test and the
+ * code agreeing on the same wrong number. The existing child-planning
+ * fixtures above all pass `maxChildren` explicitly and so never exercised
+ * this default at all, which is how it drifted unnoticed for two weeks
+ * (2026-08-16 → 2026-08-30, 14 days).
+ *
+ * That independence has a KNOWN LIMIT, and the non-zero checks below exist
+ * because of it. The two sides duplicate the enumeration, but they share
+ * `MUTANTS_TOML_PATH`, the workspace root, and the `tomlStringArray` /
+ * `globMatches` / `globSync` semantics — so a change to any of THOSE moves
+ * both sides together and cannot be caught by comparing them. Measured:
+ * dropping the `exclude_globs` filter from `countRustAreaFiles` alone
+ * reddens this (44 vs 54), but repointing the workspace root at the
+ * repo root left it green at `frontend 21 + rust 0 = 21`. The half-is-zero
+ * assertions are what close that class, since every shared-surface break
+ * found so far collapses a half to zero rather than perturbing it.
+ */
+async function selfTestDefaultMaxChildren({ ok, fail }) {
+  // #3373 copies this file ALONE to a detached path and runs `--self-test`
+  // there, asserting exit 0. There is no repo to measure against in that
+  // run, so the derivation legitimately took the fallback; asserting the
+  // derived number would redden a healthy guard. Skip explicitly (and
+  // visibly) rather than failing or silently passing.
+  //
+  // The skip is keyed on the SIBLING SCRIPT, not on the two files being
+  // measured. Keying it on `mutants.toml` would turn "the config was moved
+  // or deleted" — the #3386 failure mode this whole lane exists to catch —
+  // into a silent skip. A detached single-file copy has no sibling; a real
+  // checkout that lost its config still runs the assertion and reddens.
+  if (!existsSync(resolve(import.meta.dirname, 'check-mutants-scope.mjs'))) {
+    ok(
+      `DEFAULT_MAX_CHILDREN derivation not checked — running detached from a checkout at ${REPO_ROOT} (#3373); cap took FALLBACK_MAX_CHILDREN=${FALLBACK_MAX_CHILDREN}`,
+    )
+    return
+  }
+  let frontendCount
+  let rustCount
+  // Declared out here, NOT inside the `try`: the `rustCount <= 0` branch below
+  // names it, and that branch sits after the `catch`. A `const` inside the try
+  // is out of scope there, and module code is strict — so the one message that
+  // reports a stale `examine_globs` would throw ReferenceError instead of
+  // printing, exiting 1 with a stack trace rather than 2 with the diagnosis.
+  let workspaceDir
+  try {
+    const { globMatches, tomlStringArray, WORKSPACE_DIR } =
+      await import('./check-mutants-scope.mjs')
+    const { MODULE_NAMES } = await import('../stryker.modules.mjs')
+    workspaceDir = resolve(REPO_ROOT, WORKSPACE_DIR)
+    frontendCount = MODULE_NAMES.length
+    const config = readFileSync(MUTANTS_TOML_PATH, 'utf8')
+    const examine = tomlStringArray(config, 'examine_globs')
+    const exclude = tomlStringArray(config, 'exclude_globs')
+    const files = new Set()
+    for (const glob of examine) {
+      for (const path of globSync(glob, { cwd: workspaceDir })) {
+        if (path.endsWith('.rs') && !exclude.some((e) => globMatches(e, path))) files.add(path)
+      }
+    }
+    rustCount = files.size
+  } catch (err) {
+    fail('DEFAULT_MAX_CHILDREN can be independently verified against the real config', err.message)
+    return
+  }
+  const expected = frontendCount + rustCount
+  const detail = `frontend ${frontendCount} + rust ${rustCount} = ${expected}, got ${DEFAULT_MAX_CHILDREN}`
+  const name = `DEFAULT_MAX_CHILDREN is derived from the measured area universe (${detail})`
+
+  // Each half must be non-zero IN ITS OWN RIGHT. Without this, the two
+  // failure modes that break BOTH sides identically pass green: an empty or
+  // renamed `examine_globs`, and a wrong workspace root (both sides
+  // share that constant). Either one yields `rust 0`, and `21 === 21` agrees
+  // itself into a silently halved cap. Measured: pointing
+  // the workspace root at the repo root instead of `src-tauri/` used to
+  // leave this assertion green at `frontend 21 + rust 0 = 21`.
+  if (frontendCount <= 0) {
+    fail(name, `the frontend half derived to ${frontendCount} — stryker.modules.mjs enrols nothing`)
+    return
+  }
+  if (rustCount <= 0) {
+    fail(
+      name,
+      `the rust half derived to ${rustCount} — examine_globs matched no non-excluded .rs file under ${workspaceDir}`,
+    )
+    return
+  }
+  if (DEFAULT_MAX_CHILDREN === expected) ok(name)
+  else fail(name, detail)
+}
+
+async function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
   const fail = (name, detail) => {
@@ -4464,6 +4749,10 @@ function runSelfTest() {
   selfTestAcceptedBlockShape({ ok, fail })
   selfTestAcceptedReanchorTrace({ ok, fail })
 
+  // 15. #3667 — the default child-creation cap is DERIVED, not pinned, so it
+  //     cannot silently go stale the way the hardcoded 43 did.
+  await selfTestDefaultMaxChildren({ ok, fail })
+
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
     process.exit(2)
@@ -4478,7 +4767,7 @@ const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   if (process.argv.slice(2).includes('--self-test')) {
-    runSelfTest()
+    await runSelfTest()
   } else {
     try {
       main()

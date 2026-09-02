@@ -50,7 +50,9 @@
  * changes with nothing to catch it (this file is out of CI and outside
  * every tsconfig project). If a pin fires, re-sync every hand-copied clone
  * against the current source, then recompute and update the hash. See
- * `scripts/check-mutation-harness-clones.mjs`, wired into prek.toml.
+ * `scripts/check-mutation-harness-clones.mjs` — UNWIRED by #4556, so
+ * nothing enforces these pins today; run it by hand after touching the
+ * source, until #4556 Phase 2 restages it.
  *
  * The module-level `WORD_RE` regex constant `isWordCodePoint` reads is
  * pinned too (last marker below, #3953). `isWordCodePoint`'s clone here
