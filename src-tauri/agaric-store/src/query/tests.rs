@@ -1314,6 +1314,141 @@ async fn group_by_property_declared_number_buckets_by_value() {
     );
 }
 
+/// #4607 — group by a property DECLARED `date`, which migration `0062`'s
+/// exactly-one-value-column CHECK puts in `value_date` alone, so the pre-fix
+/// key read NULL and swept every such block into `none`. The label is the
+/// stored ISO text verbatim, as the UI shows it — no CAST, no `strftime`.
+#[tokio::test]
+async fn group_by_property_declared_date_buckets_by_value() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    set_property_date(&pool, "01B1000000000000000000000", "deadline", "2026-03-01").await;
+    set_property_date(&pool, "01B2000000000000000000000", "deadline", "2026-03-01").await;
+    set_property_date(&pool, "01B3000000000000000000000", "deadline", "2026-04-15").await;
+
+    let resp = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::Property {
+                key: "deadline".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let counts = group_counts(&resp);
+    assert_eq!(
+        counts.get("2026-03-01"),
+        Some(&2),
+        "a value_date labels as its stored ISO text: {counts:?}"
+    );
+    assert_eq!(counts.get("2026-04-15"), Some(&1), "got {counts:?}");
+    // B4 + the two tag blocks carry no `deadline`. Pre-fix this held all six.
+    assert_eq!(counts.get("none"), Some(&3), "got {counts:?}");
+    assert_eq!(counts.len(), 3, "no stray bucket: {counts:?}");
+}
+
+/// #4607 — group by a property DECLARED `boolean`, which lives in `value_bool`
+/// (INTEGER 0/1) alone, so the pre-fix key bucketed all of these under `none`.
+/// Both labels are pinned: `false` is a stored `0`, which a CASE arm must
+/// spell out (handling only the truthy side drops it back into `none`).
+#[tokio::test]
+async fn group_by_property_declared_bool_buckets_by_value() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    set_property_bool(&pool, "01B1000000000000000000000", "starred", true).await;
+    set_property_bool(&pool, "01B2000000000000000000000", "starred", true).await;
+    set_property_bool(&pool, "01B3000000000000000000000", "starred", false).await;
+
+    let resp = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::Property {
+                key: "starred".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let counts = group_counts(&resp);
+    assert_eq!(
+        counts.get("true"),
+        Some(&2),
+        "value_bool 1 labels as `true`, as the UI renders it: {counts:?}"
+    );
+    assert_eq!(
+        counts.get("false"),
+        Some(&1),
+        "value_bool 0 is a VALUE, not an absence — it labels as `false`: {counts:?}"
+    );
+    // B4 + the two tag blocks carry no `starred`. Pre-fix this held all six.
+    assert_eq!(counts.get("none"), Some(&3), "got {counts:?}");
+    assert_eq!(
+        counts.len(),
+        3,
+        "no stray bucket (e.g. `1`/`0`): {counts:?}"
+    );
+
+    // Pinned once for the three new columns, and here because `true` is the
+    // only one of their labels the CASE SYNTHESISES rather than reading from
+    // the column: the member preview re-selects by that rendered label
+    // (`gkey IN (…)`), so a label that did not compare equal to its own bucket
+    // key would leave the bucket populated but memberless.
+    let truthy: BTreeSet<&str> = find_group(&resp, "true")
+        .members
+        .iter()
+        .map(|m| m.block.id.as_str())
+        .collect();
+    assert_eq!(
+        truthy,
+        ["01B1000000000000000000000", "01B2000000000000000000000"]
+            .into_iter()
+            .collect::<BTreeSet<&str>>(),
+        "the `true` bucket's member preview must re-select the same two blocks"
+    );
+}
+
+/// #4607 — group by a property DECLARED `ref`, which lives in `value_ref`
+/// alone, so the pre-fix key bucketed all of these under `none`. The label is
+/// the raw referenced block id, as the UI shows it — no title JOIN.
+#[tokio::test]
+async fn group_by_property_declared_ref_buckets_by_value() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    // `value_ref` is an FK to `blocks(id)`; the seeded tag blocks are targets
+    // that already exist.
+    set_property_ref(&pool, "01B1000000000000000000000", "owner", TAG_RED).await;
+    set_property_ref(&pool, "01B2000000000000000000000", "owner", TAG_RED).await;
+    set_property_ref(&pool, "01B3000000000000000000000", "owner", TAG_BLUE).await;
+
+    let resp = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::Property {
+                key: "owner".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let counts = group_counts(&resp);
+    assert_eq!(
+        counts.get(TAG_RED),
+        Some(&2),
+        "a value_ref labels as the referenced block id: {counts:?}"
+    );
+    assert_eq!(counts.get(TAG_BLUE), Some(&1), "got {counts:?}");
+    // B4 + the two tag blocks carry no `owner`. Pre-fix this held all six.
+    assert_eq!(counts.get("none"), Some(&3), "got {counts:?}");
+    assert_eq!(counts.len(), 3, "no stray bucket: {counts:?}");
+}
+
 #[tokio::test]
 async fn group_member_preview_is_bounded() {
     let (pool, _d) = test_pool().await;
@@ -1616,6 +1751,41 @@ async fn seed_estimates(pool: &SqlitePool) {
 /// folds `value_num` at all).
 async fn set_property_num(pool: &SqlitePool, block_id: &str, key: &str, value: f64) {
     sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #4607 — set a `date`-declared property: ISO text in `value_date`, the only
+/// value column migration `0062` lets such a row populate (as below).
+async fn set_property_date(pool: &SqlitePool, block_id: &str, key: &str, value: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #4607 — set a `boolean`-declared property: INTEGER 0/1 in `value_bool`.
+async fn set_property_bool(pool: &SqlitePool, block_id: &str, key: &str, value: bool) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_bool) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #4607 — set a `ref`-declared property: the referenced block id in
+/// `value_ref`, an FK to `blocks(id)`.
+async fn set_property_ref(pool: &SqlitePool, block_id: &str, key: &str, value: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)")
         .bind(block_id)
         .bind(key)
         .bind(value)
