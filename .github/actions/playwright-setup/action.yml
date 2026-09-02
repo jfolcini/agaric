@@ -1,0 +1,149 @@
+name: Playwright setup
+description: >-
+  Node + npm deps + Playwright browser binaries + Playwright system deps.
+  Assumes the repository is already checked out.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+        cache: npm
+
+    - name: Install npm dependencies
+      shell: bash
+      run: npm ci
+
+    - name: Restore Playwright browser cache
+      # Browser binaries are stable for a given Playwright version, so
+      # package-lock.json's hash is the key; `playwright install` below is
+      # idempotent, so a `restore-keys` partial hit is a safe base layer.
+      # The warm-up job this replaced only paid on a lockfile bump (an
+      # exact-key MISS) — on any other run this restore is already warm.
+      id: playwright-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+        restore-keys: |
+          playwright-${{ runner.os }}-
+
+    - name: Prepare apt (free dpkg lock, bound downloads)
+      uses: ./.github/actions/prepare-apt
+
+    - name: Cache apt archives (Playwright system deps)
+      # `install-deps` apt-pulls ~33 MB of libs/fonts each run (#1464); on a
+      # hit apt resolves them locally. `id` is load-bearing: the install step
+      # bounds itself only on an exact-key hit.
+      id: apt-deb-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /var/cache/apt/archives/*.deb
+        key: apt-playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+        restore-keys: apt-playwright-${{ runner.os }}-
+
+    - name: Install Playwright system deps
+      shell: bash
+      env:
+        APT_CACHE_HIT: ${{ steps.apt-deb-cache.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        # #4185: a HUNG install-deps must fail attributably instead of burning
+        # the job cap in silence. A composite step takes no `timeout-minutes`,
+        # so that 25-minute bound is an outer `timeout` around the retry loop.
+        cat >"${RUNNER_TEMP}/pw-install-deps.sh" <<'DEPS'
+        # Bound attempt 1 only when the .debs are already local (#4163/#4170):
+        # on a cache MISS a healthy-but-slow mirror legitimately takes ~760s, so
+        # a cap there reds a passing run. Attempt 2 is unbounded and decides.
+        if [ "${APT_CACHE_HIT}" = "true" ]; then
+          bound="300"
+        else
+          bound=""
+          echo "::notice::apt .deb cache miss -- install-deps left unbounded (#4163)"
+        fi
+
+        # Sticky across attempts, so the exit code below can tell "the mirror
+        # stalled" (infra) from "apt said no" (a real failure).
+        timed_out=0
+
+        for attempt in 1 2; do
+          status=0
+          if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ]; then
+            # -k: plain `timeout` SIGTERMs and then waits on the child forever.
+            timeout -k 30 "${bound}" npx playwright install-deps chromium || status=$?
+          else
+            npx playwright install-deps chromium || status=$?
+          fi
+          if [ "${status}" -eq 0 ]; then
+            if [ "${timed_out}" -eq 1 ]; then
+              echo "::notice::install-deps completed on the unbounded attempt; the mirror was slow, not the diff."
+            fi
+            exit 0
+          fi
+          if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ] \
+             && { [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; }; then
+            # 137 as well as 124: `timeout -k` exits 137 when the child needs
+            # the SIGKILL. `timeout` reaches only its direct child (npx), so the
+            # root `apt-get` grandchild survives holding the lock — clear it.
+            timed_out=1
+            echo "::warning::playwright install-deps attempt ${attempt} exceeded ${bound}s (mirror stall); clearing strays, the final attempt is unbounded"
+            sudo pkill -TERM -x apt-get 2>/dev/null || true
+            sleep 5
+            sudo pkill -KILL -x apt-get 2>/dev/null || true
+            sudo pkill -KILL -x dpkg 2>/dev/null || true
+          else
+            echo "::warning::playwright install-deps attempt ${attempt} failed (exit ${status}); waiting for apt lock before retry"
+          fi
+          # All three locks: killing `apt-get` by name does not reap a `dpkg`
+          # child, which holds /var/lib/dpkg/lock.
+          for _ in $(seq 1 60); do
+            sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock \
+                   /var/lib/apt/lists/lock >/dev/null 2>&1 || break
+            sleep 3
+          done
+          sudo dpkg --configure -a || true
+        done
+
+        # Mirror-stalled and still failing is INFRA, not a red diff. 75 is
+        # sysexits.h EX_TEMPFAIL and is not 1, so the exit code is the
+        # diagnosis — same marker and code as `.github/actions/apt-install`.
+        if [ "${timed_out}" -eq 1 ]; then
+          echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: playwright install-deps stalled on the Ubuntu mirror and then failed (exit ${status}). Rerun the job. (#4170)"
+          {
+            echo "### Playwright system deps could not install (infra, not this diff)"
+            echo
+            echo "\`npx playwright install-deps chromium\` exceeded its \`${bound}s\` bound inside its own \`apt-get update\`, and the unbounded retry then failed with exit \`${status}\`."
+            echo "Marker: \`AGARIC_APT_INFRA\`. Step exit: \`75\` (EX_TEMPFAIL), deliberately not \`1\`."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          exit 75
+        fi
+
+        # The mirror was fine and install-deps still failed: an ordinary
+        # failure, reported with its own status and nothing invented.
+        echo "::error::playwright install-deps failed after 2 attempts (exit ${status})"
+        exit "${status}"
+        DEPS
+
+        status=0
+        timeout -k 30 1500 bash "${RUNNER_TEMP}/pw-install-deps.sh" || status=$?
+        if [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; then
+          echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: playwright install-deps hung past its 25-minute bound. Rerun the job. (#4185)"
+          exit 75
+        fi
+        exit "${status}"
+
+    - name: Install Playwright browser binaries (on cache miss)
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          if timeout 360 npx playwright install chromium; then
+            exit 0
+          fi
+          echo "::warning::playwright install chromium attempt ${attempt} stalled/failed; retrying"
+          sleep 15
+        done
+        echo "::error::playwright install chromium failed after 3 attempts"
+        exit 1

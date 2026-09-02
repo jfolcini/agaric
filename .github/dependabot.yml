@@ -3,6 +3,7 @@ version: 2
 # Dependabot keeps three ecosystems fresh on a single weekly cadence:
 #
 #   1. github-actions  — SHA-pinned action references in `.github/workflows/`
+#                        and `.github/actions/*`
 #                        (workflows pin to a 40-char commit SHA + a `# vX`
 #                        comment per the PEND-37 security baseline; without
 #                        this entry SHA-pinning becomes "pin once and
@@ -64,7 +65,12 @@ version: 2
 
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # `/` covers `.github/workflows/` only; the composite actions under
+    # `.github/actions/*` carry their own SHA-pinned `uses:` and would
+    # otherwise never be bumped.
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
       day: monday

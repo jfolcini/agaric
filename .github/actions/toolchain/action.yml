@@ -1,0 +1,100 @@
+name: Toolchain preamble
+description: >-
+  The apt → mold → Rust → Node preamble shared by `_validate.yml`'s `lint`,
+  `scheduled-deep-checks.yml`'s `full-suite` and `ci.yml`'s `build`.
+  Assumes the repository is already checked out.
+
+inputs:
+  rust-shared-key:
+    description: >-
+      `Swatinem/rust-cache` `shared-key`. One per job class (#813): rust-cache
+      keeps a single entry per (os, shared-key, lockfile), so two job classes
+      sharing a key means only the first finisher's `target/` tree survives.
+    required: true
+  rust:
+    description: >-
+      Install the Rust half (system deps, mold, toolchain, cargo cache). `lint`
+      passes its `backend` classifier flag so a backend-less PR skips all of it.
+    required: false
+    default: 'true'
+  bundle-deps:
+    description: >-
+      Also install the AppImage bundling deps (patchelf, libappindicator3-dev).
+      Such a lane skips the shared `.deb` cache: its package superset must not
+      land under the `apt-tauri-*-v1` key the other lanes share.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare apt (free dpkg lock, bound downloads)
+      uses: ./.github/actions/prepare-apt
+
+    - name: Cache apt archives (Tauri system deps)
+      # Bump the `-v1` suffix when the package list below changes.
+      if: inputs.rust == 'true' && inputs.bundle-deps != 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /var/cache/apt/archives/*.deb
+        key: apt-tauri-${{ runner.os }}-v1
+
+    - name: Install system dependencies
+      # webkit/gtk/ssl/rsvg/soup compile the Tauri crates; mold links them.
+      # #4163: `apt-get update` is ADVISORY inside this action — only the
+      # INSTALL decides whether the step reds.
+      if: inputs.rust == 'true'
+      uses: ./.github/actions/apt-install
+      with:
+        packages: >-
+          libwebkit2gtk-4.1-dev
+          libgtk-3-dev
+          libssl-dev
+          librsvg2-dev
+          libsoup-3.0-dev
+          pkg-config
+          mold
+          ${{ inputs.bundle-deps == 'true' && 'libappindicator3-dev patchelf' || '' }}
+
+    - name: Enable mold linker (CI-only .cargo/config.toml)
+      # Shipped as `.example` so a dev box without mold still builds; CI always
+      # has it (installed above), so materialise the active config here.
+      if: inputs.rust == 'true'
+      shell: bash
+      run: |
+        mkdir -p .cargo
+        cp .cargo/config.toml.example .cargo/config.toml
+
+    - name: Install Rust toolchain
+      if: inputs.rust == 'true'
+      uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+      with:
+        # #640: exact pin, kept in lockstep with rust-toolchain.toml and
+        # src-tauri/Cargo.toml `rust-version`. Without it this SHA-pinned
+        # action installs the floating latest stable.
+        toolchain: 1.95.0
+        # dtolnay installs `--profile minimal`, which ships neither component;
+        # the cargo-fmt / clippy prek hooks need both.
+        components: clippy,rustfmt
+
+    - name: Rust cache
+      if: inputs.rust == 'true'
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        workspaces: src-tauri
+        # Keep `~/.cargo/bin/` so cargo-installed plugins (sqlx-cli, tauri-cli)
+        # survive across runs.
+        cache-bin: 'true'
+        shared-key: ${{ inputs.rust-shared-key }}
+        # Only `main` writes, so feature-branch churn cannot evict the baseline.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - name: Install Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 24
+        cache: npm
+
+    - name: Install npm dependencies
+      shell: bash
+      run: npm ci

@@ -2378,17 +2378,17 @@ pass_filenames = false
 files = "^(src-tauri/.*\\.rs|src-tauri/unsafe-allowlist\\.txt)$"
 stages = ["pre-commit"]
 
-# `android_re` liveness: every literal path in ci.yml's android-build
+# `android_re` liveness: every literal path in _validate.yml's android-build
 # trigger must still exist. A dead path matches nothing and silently
 # stops the Android build from running (#3847).
-# WHY: a ci.yml android path filter naming a file that no longer exists silently stops triggering — #3847
+# WHY: an android path filter naming a file that no longer exists silently stops triggering — #3847
 [[repos.hooks]]
 id = "android-trigger-paths"
-name = "ci.yml android_re paths exist"
+name = "_validate.yml android_re paths exist"
 entry = "node scripts/check-android-trigger.mjs"
 language = "system"
 pass_filenames = false
-files = "^(\\.github/workflows/ci\\.yml|scripts/check-android-trigger\\.mjs)$"
+files = "^(\\.github/workflows/_validate\\.yml|scripts/check-android-trigger\\.mjs)$"
 stages = ["manual"]
 
 # Rust: cargo-machete (unused dependency detection)

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // #3737 — `.github/zizmor.yml` used to suppress zizmor's `cache-poisoning`
-// finding on four steps (two `Swatinem/rust-cache`, two `actions/setup-node`,
-// all in ci.yml's build-only jobs) by LINE NUMBER: `ci.yml:318`, etc. A line
+// finding on ci.yml's build-only cache steps (`Swatinem/rust-cache` and
+// `actions/setup-node`) by LINE NUMBER: `ci.yml:318`, etc. A line
 // number is not a key for "this step" — it is a key for "whatever text is on
 // this line today". Four times in one day, an unrelated comment added
 // anywhere above those anchors in ci.yml shifted every line below it, so a
@@ -17,8 +17,8 @@
 // `finding/location.rs`). That anchors to the step's CONTENT — the comment
 // travels with the step through any number of unrelated edits elsewhere in
 // the file — so `.github/zizmor.yml` no longer carries a `cache-poisoning`
-// `ignore:` list at all; the four suppressions live as inline comments on
-// the four steps themselves.
+// `ignore:` list at all; each suppression lives as an inline comment on the
+// step it covers (`EXPECTED_INLINE_SUPPRESSIONS` below counts them).
 //
 // This guard protects that invariant two ways:
 //   1. `.github/zizmor.yml` must never regain a line-anchored
@@ -54,17 +54,19 @@ const ZIZMOR_CONFIG_PATH = join(REPO_ROOT, '.github', 'zizmor.yml')
 
 /**
  * How many inline `# zizmor: ignore[cache-poisoning]` suppressions the repo
- * is expected to carry — the four #3737 introduced (two `Swatinem/rust-cache`,
- * two `actions/setup-node`, all in ci.yml's build-only jobs).
+ * is expected to carry — the two on ci.yml's `android-build` cache steps.
+ * The `build` job's pair went with those steps into
+ * `.github/actions/toolchain`, where the audit does not fire: cache-poisoning
+ * keys off a workflow's publishing triggers, and a composite action has none.
  *
  * EXACT on purpose, and the strictness is the point: `checkHygiene` only
  * notices zero, so without an exact count a suppression appearing in some
  * other workflow — a decision nobody reviewed as a cache-poisoning decision —
- * lands silently. Adding a fifth is a legitimate thing to do; it just has to
+ * lands silently. Adding a third is a legitimate thing to do; it just has to
  * be a deliberate edit here, which is why the failure detail says so instead
  * of reading like a defect report.
  */
-export const EXPECTED_INLINE_SUPPRESSIONS = 4
+export const EXPECTED_INLINE_SUPPRESSIONS = 2
 
 // ---------------------------------------------------------------------------
 // (1) The regression this guard exists to catch: a line-anchored
@@ -204,7 +206,7 @@ export function findInlineCachePoisoningSuppressions(dir = WORKFLOWS_DIR) {
  * `expectedInlineSuppressions` is OPTIONAL and undefined by default: the
  * count check only runs when a caller supplies it, so the unit tests below
  * that construct small `inlineHits` fixtures (one hit, two hits) are not
- * accidentally asserting against the real repo's count of four. The one
+ * accidentally asserting against the real repo's count. The one
  * caller that DOES supply it is `assertCachePoisoningSuppressionHygiene`
  * (via `main()`) — see its comment for why that is where an exact-count
  * check must live to actually be reachable (#3987).

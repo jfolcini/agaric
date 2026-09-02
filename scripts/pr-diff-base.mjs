@@ -29,7 +29,7 @@
 // Not every `github.event.pull_request.base.sha` reader has this bug, and
 // "fixing" the ones that don't would introduce a real one. The defect needs
 // BOTH halves: `base.sha` AND a diff against the merge ref. The
-// `detect-changes` steps in `_validate.yml` and `ci.yml` diff
+// `detect-changes` step in `_validate.yml` diffs
 // `base.sha...head.sha` — the PR BRANCH tip, not `refs/pull/N/merge` — and
 // the merge base of a base-branch tip with the branch tip IS the true fork
 // point, regardless of how far the base branch has since advanced. Those

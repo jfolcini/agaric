@@ -133,8 +133,7 @@ jobs:
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         # Same composite action `_validate.yml` (lint / playwright / cargo-tests
-        # / mcp-tests) and `scheduled-deep-checks.yml` (prek-all-files /
-        # full-suite) use: stops the runner's boot-time `unattended-upgrades`
+        # / mcp-tests) and `scheduled-deep-checks.yml` (full-suite) use: stops the runner's boot-time `unattended-upgrades`
         # / `apt-daily` jobs that hold the dpkg lock, bounds mirror stalls, and
         # — load-bearing for the cache step below — sets
         # `APT::Keep-Downloaded-Packages "true"` + makes

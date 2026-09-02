@@ -11,8 +11,10 @@
 #    "required_signatures", "required_status_checks"]
 #
 # Beyond rule types, the job also asserts the required status-check
-# CONTEXTS (`dco`, `validate-all`) and the strict up-to-date-branch flag
-# (#819 (1)) — type-only asserting passed even after a context removal.
+# CONTEXTS (`dco`, `validate-all`), the strict up-to-date-branch flag
+# (#819 (1)), and the `pull_request` rule's four review parameters —
+# type-only asserting passed even after a context removal, and passes with
+# every review toggle off.
 #
 # If a maintainer intentionally changes the ruleset, update the EXPECTED
 # lists below in the same PR that adjusts the ruleset.
@@ -91,5 +93,27 @@ jobs:
             failed=1
             echo "ERROR: strict_required_status_checks_policy drifted (expected true, got ${ACTUAL_STRICT})." >&2
           fi
+
+          # The `pull_request` rule's parameters are the whole review gate
+          # (`docs/architecture/ci-and-tooling.md` § Asymmetric
+          # branch-protection convention): one approving review, stale
+          # reviews dismissed on push, last-push approval, every thread
+          # resolved. Rule-type equality passes with all four toggled off.
+          EXPECTED_PR='{"dismiss_stale_reviews_on_push":true,"require_last_push_approval":true,"required_approving_review_count":1,"required_review_thread_resolution":true}'
+          ACTUAL_PR="$(jq -c '[.[] | select(.type == "pull_request") | .parameters | {dismiss_stale_reviews_on_push, require_last_push_approval, required_approving_review_count, required_review_thread_resolution}] | first' <<<"${RULES}")"
+          if [ "${ACTUAL_PR}" = "${EXPECTED_PR}" ]; then
+            echo "OK: pull_request rule parameters match: ${EXPECTED_PR}"
+          else
+            failed=1
+            echo "ERROR: pull_request rule parameters have drifted." >&2
+            echo "  expected: ${EXPECTED_PR}" >&2
+            echo "  actual:   ${ACTUAL_PR}" >&2
+          fi
+
+          # Not asserted: the ruleset's `bypass_actors` (one Admin actor, per
+          # the same doc section). They are visible only through
+          # `repos/{repo}/rulesets/{id}`, which needs Administration: read —
+          # a scope a workflow `permissions:` block cannot grant GITHUB_TOKEN;
+          # `rules/branches/main` (metadata only) does not carry them.
 
           exit "${failed}"

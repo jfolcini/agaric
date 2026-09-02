@@ -21,11 +21,14 @@
 //     machete) so tauri-build's validation passes without actually
 //     compiling the stub.
 //
-//   node scripts/prepare-external-bins.mjs
-//     Build the release binary (if not already built) and overwrite the
-//     placeholder with it. Use as Tauri's `beforeBuildCommand` so the real
-//     binary is in place by the time the bundler packages the app, and as
-//     a CI smoke check that the stub still compiles on every run.
+//   node scripts/prepare-external-bins.mjs [--profile dev|release]
+//     Build the binary (if not already built) and overwrite the placeholder
+//     with it. Default profile is `release`: use as Tauri's
+//     `beforeBuildCommand` so the real binary is in place by the time the
+//     bundler packages the app. `--profile dev` builds `target/debug/` and
+//     is for the CI smoke check only: it shares its artifacts with the
+//     nextest smoke that follows and skips the thin-LTO release compile that
+//     the `build` job does anyway.
 
 import { execSync, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
@@ -61,8 +64,9 @@ function detectTargetTriple(hostTriple) {
   )
 }
 
-function buildMcp(targetOverride) {
-  const args = ['build', '--bin', 'agaric-mcp', '--release', '--locked']
+function buildMcp(targetOverride, profile) {
+  const args = ['build', '--bin', 'agaric-mcp', '--locked']
+  if (profile === 'release') args.push('--release')
   // For cross-compilation we have to be explicit; CARGO_BUILD_TARGET in env
   // is also respected by cargo, but passing --target makes it deterministic
   // even if the env var is stripped along the way.
@@ -90,6 +94,12 @@ function ensurePlaceholder(dstBinary) {
 
 function main() {
   const placeholderOnly = process.argv.includes('--placeholder-only')
+  const profileIdx = process.argv.indexOf('--profile')
+  const profile = profileIdx === -1 ? 'release' : process.argv[profileIdx + 1]
+  if (profile !== 'release' && profile !== 'dev') {
+    throw new Error(`prepare-external-bins: --profile must be dev or release, got ${profile}`)
+  }
+  const profileDir = profile === 'release' ? 'release' : 'debug'
 
   const hostTriple = detectHostTriple()
   const triple = detectTargetTriple(hostTriple)
@@ -108,14 +118,14 @@ function main() {
   const isAndroid = triple.includes('android')
   const ext = isWin ? '.exe' : ''
 
-  // Cargo puts output in `target/<triple>/release/` whenever a target is
+  // Cargo puts output in `target/<triple>/<profile>/` whenever a target is
   // selected — either via `--target` (which we pass on cross-compile) or
   // via `CARGO_BUILD_TARGET` in env (which CI sets even for native builds
   // so the path layout is uniform across the matrix).
   const cargoOutputDir =
     isCrossCompile || process.env.CARGO_BUILD_TARGET
-      ? join(SRC_TAURI, 'target', triple, 'release')
-      : join(SRC_TAURI, 'target', 'release')
+      ? join(SRC_TAURI, 'target', triple, profileDir)
+      : join(SRC_TAURI, 'target', profileDir)
 
   const srcBinary = join(cargoOutputDir, `agaric-mcp${ext}`)
   const dstBinary = join(BINARIES_DIR, `agaric-mcp-${triple}${ext}`)
@@ -139,7 +149,7 @@ function main() {
 
   // Build agaric-mcp for release (the placeholder makes this pass). Cargo's
   // own incremental cache short-circuits when nothing has changed.
-  buildMcp(isCrossCompile ? triple : null)
+  buildMcp(isCrossCompile ? triple : null, profile)
 
   if (!existsSync(srcBinary)) {
     throw new Error(`prepare-external-bins: expected ${srcBinary} after build, but it is missing`)
