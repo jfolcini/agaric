@@ -1190,41 +1190,18 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
         GroupKey::BlockType => ("b.block_type".to_string(), String::new(), None),
         GroupKey::Priority => ("b.priority".to_string(), String::new(), None),
         GroupKey::Property { key } => (
-            // Materialised 1:1 via a LEFT JOIN (`block_properties`'s PRIMARY KEY
-            // is `(block_id, key)`, so at most one row matches) so the property
-            // value is looked up ONCE per candidate row and reused wherever the
-            // group key appears (SELECT / GROUP BY / PARTITION BY / IN) instead
-            // of re-running a correlated subquery up to 3× per row (#2269).
-            // Identical to the former `(SELECT value_text FROM block_properties
-            // WHERE block_id = b.id AND key = ?{pos})` — `gp.value_text` is NULL
-            // when the key is absent, which `COALESCE(…, 'none')` renders as the
-            // `none` bucket. The key stays a BOUND `?{pos}` in the ON clause —
-            // never interpolated as an identifier, so grouping cannot inject SQL.
-            //
-            // #4570 — read `value_num` too, same shape as `agg_target_expr`'s
-            // #4553 fix. Migration `0062`'s exactly-one-value-column CHECK means
-            // a genuinely `number`-declared property has `value_text IS NULL` on
-            // its row, so `gp.value_text` alone bucketed EVERY such block under
-            // `none`. Both branches read the same joined row, so the key is
-            // still bound exactly once.
-            //
-            // Grouping is IDENTITY, not arithmetic, so the bucket LABEL is the
-            // number's canonical string form: `value_num` is REAL, and a bare
-            // `CAST(3.0 AS TEXT)` renders `3.0` — not how the value was written
-            // or how it is displayed anywhere else. An integral value casts
-            // through INTEGER first (`3`); a fractional one keeps its REAL
-            // rendering (`3.5`). A NULL `value_num` makes the `WHEN` comparison
-            // NULL → the ELSE arm → NULL → the `none` bucket, as before.
-            //
-            // #4607 — the same gap for the remaining three typed columns: a
-            // `date`-, `boolean`- or `ref`-declared property populates none of
-            // the columns read above. The labels match the UI's own property
-            // rendering (`propertyRowDisplay`,
-            // `src/lib/query-result-columns.ts`): `value_date` is already the
-            // ISO text it displays and `value_ref` the raw referenced block id
-            // (Property group keys are NOT id-resolved — see
-            // `GroupedResults.headerLabel` — so no title JOIN), while
-            // `value_bool` is INTEGER 0/1 and the UI shows `true`/`false`.
+            // One LEFT JOIN (`block_properties` is keyed `(block_id, key)`, so at
+            // most one row matches), looked up once per candidate row and reused
+            // wherever the key appears (SELECT / GROUP BY / PARTITION BY / IN);
+            // the key stays a bound `?{pos}` in the ON clause, never an
+            // interpolated identifier. Migration 0062 lets exactly one value
+            // column be non-NULL, so the COALESCE yields whichever is set,
+            // rendered as `propertyRowDisplay` shows it: `value_text` and
+            // `value_date` as stored, `value_ref` as the raw block id (group
+            // headers do not id-resolve property keys), `value_num` in canonical
+            // form (`3`, not REAL `3.0`; `3.5` stays), `value_bool` as
+            // `true`/`false`. An absent key falls through to the `none` bucket
+            // (#4607).
             "COALESCE(gp.value_text, CASE WHEN gp.value_num = CAST(gp.value_num AS INTEGER) \
              THEN CAST(CAST(gp.value_num AS INTEGER) AS TEXT) \
              ELSE CAST(gp.value_num AS TEXT) END, gp.value_date, gp.value_ref, \

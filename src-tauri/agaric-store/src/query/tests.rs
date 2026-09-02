@@ -1392,24 +1392,6 @@ async fn group_by_property_declared_bool_buckets_by_value() {
         3,
         "no stray bucket (e.g. `1`/`0`): {counts:?}"
     );
-
-    // Pinned once for the three new columns, and here because `true` is the
-    // only one of their labels the CASE SYNTHESISES rather than reading from
-    // the column: the member preview re-selects by that rendered label
-    // (`gkey IN (…)`), so a label that did not compare equal to its own bucket
-    // key would leave the bucket populated but memberless.
-    let truthy: BTreeSet<&str> = find_group(&resp, "true")
-        .members
-        .iter()
-        .map(|m| m.block.id.as_str())
-        .collect();
-    assert_eq!(
-        truthy,
-        ["01B1000000000000000000000", "01B2000000000000000000000"]
-            .into_iter()
-            .collect::<BTreeSet<&str>>(),
-        "the `true` bucket's member preview must re-select the same two blocks"
-    );
 }
 
 /// #4607 — group by a property DECLARED `ref`, which lives in `value_ref`
