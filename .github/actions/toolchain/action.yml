@@ -24,12 +24,6 @@ inputs:
       land under the `apt-tauri-*-v1` key the other lanes share.
     required: false
     default: 'false'
-  external-bin:
-    description: >-
-      Create the Tauri `externalBin` placeholders that `build.rs` validates on
-      every cargo invocation.
-    required: false
-    default: 'false'
 
 runs:
   using: composite
@@ -104,8 +98,3 @@ runs:
     - name: Install npm dependencies
       shell: bash
       run: npm ci
-
-    - name: Prepare externalBin placeholder (FEAT-4f)
-      if: inputs.external-bin == 'true'
-      shell: bash
-      run: node scripts/prepare-external-bins.mjs --placeholder-only

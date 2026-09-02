@@ -27,10 +27,12 @@ export default defineConfig({
   // `timeout-minutes`). At the ceiling Playwright aborts itself and still runs
   // the reporter, so the per-shard report uploads BEFORE the runner kills the
   // job — making any future cascade diagnosable instead of self-obscuring.
-  // Shards measure 4–5 min (2026-09-02); 15 min is 3× that, so a wedged shard
-  // reports in 15 min instead of 25. Effectively unbounded locally for a full
-  // unsharded run, so only the CI path is constrained.
-  globalTimeout: process.env['CI'] ? 15 * 60_000 : 0,
+  // Sized for the weekly UNSHARDED run (`scheduled-deep-checks.yml`
+  // `full-suite`, also under CI=1): three shards of 4–5 min each (2026-09-02)
+  // run back to back there at the same `workers`, plus the `webServer` build,
+  // so 25 min keeps about 10 min of margin for it; the sharded PR lane never
+  // gets near it. Unbounded locally.
+  globalTimeout: process.env['CI'] ? 25 * 60_000 : 0,
   // File-level parallelism via `fullyParallel: true`, with
   // per-suite `test.describe.configure({ mode: 'serial' })` annotations on
   // the specs whose tests share global state (op-log, pairing mock, kebab

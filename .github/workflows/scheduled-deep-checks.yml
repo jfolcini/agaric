@@ -2301,9 +2301,11 @@ jobs:
         uses: ./.github/actions/toolchain
         with:
           rust-shared-key: rust-full-suite
-          # Tauri's build.rs validates externalBin paths on every cargo
-          # invocation (clippy hook, nextest, doc-tests).
-          external-bin: 'true'
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation (clippy hook, nextest, doc-tests).
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install prek + non-Rust lint tools via prebuilt binaries
         # Mirrors the lint job's first (ungated) tool install: prek runs the

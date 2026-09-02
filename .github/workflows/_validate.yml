@@ -1799,76 +1799,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Prepare apt (free dpkg lock, bound downloads)
-        uses: ./.github/actions/prepare-apt
-
-      # Shared with the other Tauri-dep jobs (lint, cargo-tests, mcp-tests) and
-      # reused across runs (#1464): on a hit `apt-get install` resolves from the
-      # cached .debs instead of the slow Ubuntu mirror. Bump `-v1` if the list
-      # below changes.
-      - name: Cache apt archives (Tauri system deps)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Toolchain (apt, mold, Rust, Node, npm ci)
+        uses: ./.github/actions/toolchain
         with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-tauri-${{ runner.os }}-v1
-
-      - name: Install system dependencies
-        # Same apt list as cargo-tests / lint — the agaric-mcp crate
-        # links against the webkit/gtk/ssl/rsvg/soup stack via its
-        # transitive deps, and mold accelerates the link step.
-        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
-        # that cannot serve the index no longer reds this job as a code
-        # failure; the INSTALL decides. Measured trace + exit codes in
-        # .github/actions/apt-install/action.yml.
-        uses: ./.github/actions/apt-install
-        with:
-          packages: >-
-            libwebkit2gtk-4.1-dev
-            libgtk-3-dev
-            libssl-dev
-            librsvg2-dev
-            libsoup-3.0-dev
-            pkg-config
-            mold
-
-      - name: Enable mold linker (CI-only .cargo/config.toml)
-        run: |
-          mkdir -p .cargo
-          cp .cargo/config.toml.example .cargo/config.toml
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          # Without an explicit `toolchain:` this SHA-pinned action
-          # installs the floating latest stable, and rustup would then
-          # re-download the rust-toolchain.toml pin at first cargo run.
-          toolchain: 1.95.0
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          cache-bin: 'true'
-          # Per-job-class key (issue #813): this job compiles a release
-          # `agaric-mcp` plus a debug nextest smoke tree — neither matches
-          # the lint tree nor cargo-tests' llvm-cov instrumented tree, so
-          # sharing one `rust-deps` slot just meant the first finisher
-          # evicted everyone else. See the matching comment in `lint`.
-          shared-key: rust-mcp
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install npm dependencies
-        # Needed for `scripts/prepare-external-bins.mjs` (it imports from
-        # node_modules to resolve the host triple for the released binary).
-        run: npm ci
+          # Per-job-class key (#813): this job compiles a dev-profile
+          # `agaric-mcp` plus the nextest smoke tree, neither of which matches
+          # the lint tree or cargo-tests' llvm-cov instrumented tree, so
+          # sharing one slot just meant the first finisher evicted everyone
+          # else. See the matching comment in `lint`.
+          rust-shared-key: rust-mcp
 
       - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
         # nextest is the test runner for the UDS smoke test below. Prebuilt
