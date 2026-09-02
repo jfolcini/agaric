@@ -73,185 +73,14 @@ jobs:
     uses: ./.github/workflows/_validate.yml
 
   # ---------------------------------------------------------------------------
-  # Skip-the-heavy-bits gate. Inspects the diff and emits two booleans —
-  # `desktop` (Linux bundle-relevant paths changed) and `android`
-  # (Android-package-relevant paths changed). The `build` and
-  # `android-build` jobs path-gate on these so frontend-only / docs-only
-  # PRs stop paying the ~24 min Linux slot and ~28 min Android slot.
-  # Logic correctness is already covered by `validate`; these two jobs
-  # only add value for bundling / packaging / cross-compile drift, and
-  # `release.yml` is the full-matrix catch-all at tag time. Skipped jobs
-  # count as success for branch protection per GitHub's docs, so this
-  # is safe to wire on required checks.
-  #
-  # Implemented inline with `git diff` (no extra action dependency) so
-  # the workflow has no new SHA-pin to maintain. The base ref for the
-  # comparison comes from the pull-request payload or `github.event.before`
-  # for push events; new-branch / force-push / unreachable-base edge cases
-  # fall back to "assume both changed" to avoid masking real bundling drift.
-  # ---------------------------------------------------------------------------
-  detect-changes:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 3
-    outputs:
-      desktop: ${{ steps.diff.outputs.desktop }}
-      android: ${{ steps.diff.outputs.android }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # Full history so the three-dot `base...head` diff below can resolve
-          # the merge-base. A shallow clone (the old `fetch-depth: 2`) lacks the
-          # branch point for PRs whose head is behind `main`, which would make
-          # the symmetric-difference diff fail or fall back to a stale base.
-          fetch-depth: 0
-          persist-credentials: false
-      - id: diff
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          PUSH_AFTER: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            base="$PR_BASE_SHA"
-            head="$PR_HEAD_SHA"
-          else
-            base="$PUSH_BEFORE"
-            head="$PUSH_AFTER"
-          fi
-
-          # New-branch / orphan-push: github.event.before is all-zeros and
-          # there's nothing to diff against. Assume both bundles relevant so
-          # we never silently skip the first push of a new branch.
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-            echo "Base sha unresolved — assuming desktop+android changed."
-            echo "desktop=true" >> "$GITHUB_OUTPUT"
-            echo "android=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Force-pushes can leave `base` unreachable in the runner clone
-          # (the old tip was rewritten upstream). `git cat-file -e` confirms
-          # the object is reachable; if not, conservatively run both builds.
-          if ! git cat-file -e "$base" 2>/dev/null; then
-            echo "Base sha $base unreachable in shallow clone — assuming desktop+android changed."
-            echo "desktop=true" >> "$GITHUB_OUTPUT"
-            echo "android=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Three-dot (symmetric-difference) diff: compare from the
-          # merge-base of base..head to head, i.e. ONLY the files this branch
-          # changed — not files where `main` (base) moved ahead while the
-          # branch sat behind. A two-dot `git diff base head` reports those
-          # base-side changes too, so a frontend-only PR that was branched
-          # before an unrelated `src-tauri/` merge would spuriously match
-          # `desktop_re` and run the ~24 min build. (Bug from the original
-          # path-gate; fixed here.)
-          # Capture into a variable and check the exit code explicitly — a
-          # `mapfile < <(git diff ...)` process substitution swallows diff
-          # failures under `set -euo pipefail`, which previously converted a
-          # transient git error into an empty array and the "skip both
-          # builds" branch below. Only an empty diff that exited 0 may skip;
-          # a failed diff must fail the job (the bundle gates depend on it).
-          if ! diff_out=$(git diff --name-only "$base"..."$head"); then
-            echo "::error::git diff $base...$head failed — cannot determine changed paths."
-            exit 1
-          fi
-
-          changed=()
-          if [ -n "$diff_out" ]; then
-            mapfile -t changed <<< "$diff_out"
-          fi
-
-          if [ "${#changed[@]}" -eq 0 ]; then
-            echo "Empty diff — skipping both bundle jobs."
-            echo "desktop=false" >> "$GITHUB_OUTPUT"
-            echo "android=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "Changed files:"
-          printf '  %s\n' "${changed[@]}"
-
-          # Path sets, anchored at repo root. A changed file matching
-          # `desktop_re` makes the Linux `build` run; one matching
-          # `android_re` makes `android-build` run (push-to-main only).
-          # Logic correctness lives in `validate`; these jobs guard only
-          # bundling/packaging/cross-compile drift, so the sets are narrow.
-          #
-          # Android is deliberately NOT triggered by every `src-tauri/**`
-          # change — host-side Rust that compiles almost always cross-
-          # compiles, and triggering on all backend PRs would defeat the
-          # gate. Android breakage comes from the scaffold/override/conf
-          # files, the cross-compile dependency graph (`Cargo.toml` +
-          # `Cargo.lock` — the `[target.'cfg(target_os = "android")']` deps
-          # live in the manifest), the Rust files carrying
-          # `cfg(target_os = "android")` / `cfg(mobile)` gates — as of
-          # 2026-08-13 that is exactly: `src/lib.rs`, `src/android_jni.rs`,
-          # `agaric-store/src/db/mod.rs`, `agaric-sync/src/android_context.rs`,
-          # and `agaric-sync/src/sync_daemon/{android_multicast,
-          # session_supervisor}.rs` — and the patch script; `release.yml`
-          # covers the rest at tag time.
-          #
-          # #4425 added two more: `src-tauri/build.rs`, which is where the
-          # Android 16 KB link flag is emitted (an edit there changes how the
-          # shipped `.so` is linked and nothing else in this list would
-          # notice), and `scripts/check-android-so-alignment.mjs`, the guard
-          # that asserts it — a change to a guard must re-run the job that
-          # runs it.
-          #
-          # Two matched files carry NO android gate today and stay anyway:
-          # `src/lifecycle.rs` and `agaric-sync/src/sync_daemon/mod.rs`
-          # (the latter only references one in a comment). Over-triggering
-          # costs one build; under-triggering misses a break. Listed
-          # explicitly so the set above reads as exhaustive because it IS,
-          # rather than by omitting its own exceptions.
-          #
-          # #3847: the sync_daemon paths below were STALE — they still
-          # named `src-tauri/src/sync_daemon/…`, which the #2621 crate
-          # split moved to `src-tauri/agaric-sync/src/sync_daemon/…`. So a
-          # PR touching only the Android multicast shim silently skipped
-          # `android-build` entirely. A path-keyed trigger whose paths no
-          # longer exist does not fail — it just stops firing, which is why
-          # this went unnoticed. Anything matching an android-only source
-          # file MUST be listed here; if you move one of these files, move
-          # its entry in the same commit.
-          #
-          # The first cut of THIS repair was itself incomplete in the same
-          # way: it verified only the alternatives it added and left `db`
-          # (moved to `agaric-store/src/db/mod.rs`, which carries two real
-          # android gates) and `orchestrator` (deleted outright) pointing at
-          # nothing. `scripts/check-android-trigger.mjs` now asserts every
-          # literal path here still exists, so the class is closed rather
-          # than this instance of it.
-          desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'
-          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/build\.rs$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|android_network_block|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/check-android-so-alignment\.mjs$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
-
-          desktop=false
-          android=false
-          for f in "${changed[@]}"; do
-            [[ "$f" =~ $desktop_re ]] && desktop=true
-            [[ "$f" =~ $android_re ]] && android=true
-          done
-
-          echo "desktop=$desktop"
-          echo "android=$android"
-          echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
-          echo "android=$android" >> "$GITHUB_OUTPUT"
-
-  # ---------------------------------------------------------------------------
   # Linux smoke build. Catches Tauri-config drift early without burning
   # macOS/Windows runner minutes (~10× the Linux cost) on every PR. The
   # full desktop matrix is built only at release time by `release.yml`
   # on tag push, which is the only place macOS/Windows artifacts must
   # actually ship.
   #
-  # Path-gated on `detect-changes.outputs.desktop == 'true'` — only diffs
+  # Path-gated on `validate.outputs.desktop == 'true'` (the classifier lives
+  # in `_validate.yml` and rides out as a `workflow_call` output) — only diffs
   # touching desktop bundle-relevant paths (`src-tauri/**`, bundling
   # scripts, JS manifests, this workflow) pay the ~24 min runner slot.
   # Frontend-only and docs-only PRs skip it entirely.
@@ -273,8 +102,8 @@ jobs:
   # feedback latency starts hurting.
   # ---------------------------------------------------------------------------
   build:
-    needs: [validate, detect-changes]
-    if: needs.detect-changes.outputs.desktop == 'true'
+    needs: validate
+    if: needs.validate.outputs.desktop == 'true'
     # PEND-41 R1 — observed Linux wall-clock 24.3 min (run 25966040732,
     # 2026-05-16, n=1). +50% headroom + round up → 50.
     timeout-minutes: 50
@@ -284,91 +113,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Prepare apt (free dpkg lock, bound downloads)
-        uses: ./.github/actions/prepare-apt
-
-      - name: Install system dependencies
-        # patchelf and libappindicator3-dev are required for the AppImage
-        # bundling step (linuxdeploy uses patchelf to rewrite RPATH on the
-        # bundled .so files). Without patchelf, tauri-bundler fails the
-        # AppImage step with a generic "failed to run linuxdeploy" error
-        # after ~60s of churn — match the apt list in release.yml so both
-        # workflows produce identical bundles.
-        # `mold` is added for faster linking on the cargo tauri build below
-        # (PEND-37). Activated via `.cargo/config.toml.example` copy below.
-        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
-        # that cannot serve the index no longer reds this job as a code
-        # failure; the INSTALL decides. Measured trace + exit codes in
-        # .github/actions/apt-install/action.yml.
-        uses: ./.github/actions/apt-install
+      - name: Toolchain (apt, mold, Rust, Node, npm ci)
+        uses: ./.github/actions/toolchain
         with:
-          packages: >-
-            libwebkit2gtk-4.1-dev
-            libgtk-3-dev
-            libssl-dev
-            librsvg2-dev
-            libsoup-3.0-dev
-            libappindicator3-dev
-            patchelf
-            pkg-config
-            mold
-
-      - name: Enable mold linker (CI-only .cargo/config.toml)
-        run: |
-          mkdir -p .cargo
-          cp .cargo/config.toml.example .cargo/config.toml
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          # Without an explicit `toolchain:` this SHA-pinned action
-          # installs the floating latest stable, and rustup would then
-          # re-download the rust-toolchain.toml pin at first cargo run.
-          toolchain: 1.95.0
-
-      - name: Rust cache
-        # zizmor: ignore[cache-poisoning] — this `build` job only compiles and
-        # tests; it never signs or publishes the cached target/ tree (release.yml
-        # does the signing/publishing and is cache-free — see .github/zizmor.yml).
-        # Anchored here, on the step itself, rather than by line number in
-        # .github/zizmor.yml, so an unrelated comment edit elsewhere in this file
-        # cannot invalidate it (#3737).
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          # Per-job-class key (issue #813): rust-cache keeps ONE immutable
-          # entry per (os, shared-key, lockfile), so sharing `rust-deps`
-          # with the validate-side jobs meant whichever job finished first
-          # on main won the save and everyone else's `target/` tree was
-          # rebuilt from scratch every run. This job's release-profile
-          # `cargo tauri build` tree gets its own `rust-release` key. The
-          # Android job below keeps its separate `rust-android` key
-          # (different cross-compile targets).
-          shared-key: rust-release
-          # `cache-bin: 'true'` so this job's main-only `save-if` writes
-          # `~/.cargo/bin/` — including the cargo-installed `tauri-cli`
-          # below — into the `rust-release` entry. Without this, every warm
-          # run would pay the ~5-6 min tauri-cli source compile again.
-          cache-bin: 'true'
-          # Only `main` writes to the cache (other branches read it
-          # without saving) to stop feature-branch churn from evicting
-          # the canonical baseline.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install Node.js
-        # zizmor: ignore[cache-poisoning] — same rationale as the `build` job's
-        # Rust cache step above: this job only compiles and tests, never signs
-        # or publishes. Anchored on the step itself (#3737); see
-        # .github/zizmor.yml.
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install npm dependencies
-        run: npm ci
+          # patchelf + libappindicator3-dev back the AppImage bundling step
+          # (linuxdeploy rewrites RPATH on the bundled .so files) — matching
+          # release.yml's apt list so both workflows produce identical bundles.
+          bundle-deps: 'true'
+          rust-shared-key: rust-release
 
       - name: Install Tauri CLI
         # Reuse the cached binary only when it matches the exact npm CLI pin.
@@ -441,15 +193,15 @@ jobs:
   # ~28-min Android slot dominates PR wall-clock and the typical PR never
   # touches Android-specific paths. On push (the merge commit on `main`,
   # feature-branch pushes) it additionally path-gates on
-  # `detect-changes.outputs.android`, so it only runs when an
+  # `validate.outputs.android`, so it only runs when an
   # Android-relevant path changed (scaffold/override/conf files, the
   # cross-compile dependency graph, the multicast shim, the patch script,
   # or this workflow). `release.yml` builds the signed Android artifact at
   # tag time independently, covering everything this gate skips.
   # ---------------------------------------------------------------------------
   android-build:
-    needs: [validate, detect-changes]
-    if: github.event_name != 'pull_request' && needs.detect-changes.outputs.android == 'true'
+    needs: validate
+    if: github.event_name != 'pull_request' && needs.validate.outputs.android == 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
     # n=1). +50% headroom + round up → 45 min.
@@ -494,8 +246,8 @@ jobs:
       - name: Rust cache
         # zizmor: ignore[cache-poisoning] — this `android-build` job only
         # compiles and tests; it never signs or publishes the cached target/
-        # tree. Anchored on the step itself, not by line number in
-        # .github/zizmor.yml (#3737); see that file for the full rationale.
+        # tree. Anchored on the step itself, not by line number (#3737);
+        # guarded by scripts/check-cache-poisoning-suppressions.mjs.
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
@@ -530,8 +282,7 @@ jobs:
       - name: Install Node.js
         # zizmor: ignore[cache-poisoning] — same rationale as the
         # `android-build` job's Rust cache step above: build/test only, never
-        # signs or publishes. Anchored on the step itself (#3737); see
-        # .github/zizmor.yml.
+        # signs or publishes. Anchored on the step itself (#3737).
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
