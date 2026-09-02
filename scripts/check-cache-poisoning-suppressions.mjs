@@ -62,7 +62,7 @@ const ZIZMOR_CONFIG_PATH = join(REPO_ROOT, '.github', 'zizmor.yml')
  * EXACT on purpose, and the strictness is the point: `checkHygiene` only
  * notices zero, so without an exact count a suppression appearing in some
  * other workflow — a decision nobody reviewed as a cache-poisoning decision —
- * lands silently. Adding a fifth is a legitimate thing to do; it just has to
+ * lands silently. Adding a third is a legitimate thing to do; it just has to
  * be a deliberate edit here, which is why the failure detail says so instead
  * of reading like a defect report.
  */
@@ -206,7 +206,7 @@ export function findInlineCachePoisoningSuppressions(dir = WORKFLOWS_DIR) {
  * `expectedInlineSuppressions` is OPTIONAL and undefined by default: the
  * count check only runs when a caller supplies it, so the unit tests below
  * that construct small `inlineHits` fixtures (one hit, two hits) are not
- * accidentally asserting against the real repo's count of four. The one
+ * accidentally asserting against the real repo's count. The one
  * caller that DOES supply it is `assertCachePoisoningSuppressionHygiene`
  * (via `main()`) — see its comment for why that is where an exact-count
  * check must live to actually be reachable (#3987).

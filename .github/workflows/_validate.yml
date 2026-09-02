@@ -866,7 +866,7 @@ jobs:
           # code+docs PR reaches this job and must still lint its markdown.
           flag() { if [ "$1" = "true" ]; then echo 1; else echo 0; fi; }
           skip_csv="no-commit-to-branch,$(bash scripts/verify-ci-equivalent.sh --print-skip \
-            "docs=$(flag "$DOCS"),frontend=$(flag "$FRONTEND"),backend=$(flag "$BACKEND"),ci=$(flag "$CI")")"
+            "$(flag "$DOCS")" "$(flag "$FRONTEND")" "$(flag "$BACKEND")" "$(flag "$CI")")"
           printf 'Computed prek SKIP: %s\n' "$skip_csv"
           printf 'SKIP=%s\n' "$skip_csv" >> "$GITHUB_ENV"
 

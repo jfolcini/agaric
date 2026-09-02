@@ -974,29 +974,21 @@ prek_skip_list() {
 }
 
 # ── --print-skip ───────────────────────────────────────────────────
-# `--print-skip docs=<0|1>,frontend=<0|1>,backend=<0|1>,ci=<0|1>` prints the
-# SKIP list for those categories and exits. How CI reads the list above.
+# `--print-skip <docs> <frontend> <backend> <ci>` (each 0 or 1, in that order)
+# prints the SKIP list for those categories and exits. How CI reads the list
+# above.
 if [ "${1:-}" = "--print-skip" ]; then
-    ps_spec="${2:-}"
-    ps_docs=""; ps_fe=""; ps_be=""; ps_ci=""
-    IFS=',' read -r -a ps_pairs <<< "$ps_spec"
-    for ps_pair in ${ps_pairs+"${ps_pairs[@]}"}; do
-        case "$ps_pair" in
-            docs=0|docs=1)         ps_docs="${ps_pair#*=}" ;;
-            frontend=0|frontend=1) ps_fe="${ps_pair#*=}" ;;
-            backend=0|backend=1)   ps_be="${ps_pair#*=}" ;;
-            ci=0|ci=1)             ps_ci="${ps_pair#*=}" ;;
-            *)
-                echo "✗ --print-skip: bad category '$ps_pair'" >&2
-                exit 1
-                ;;
-        esac
-    done
-    if [ -z "$ps_docs" ] || [ -z "$ps_fe" ] || [ -z "$ps_be" ] || [ -z "$ps_ci" ]; then
-        echo "✗ --print-skip needs all four: docs=<0|1>,frontend=<0|1>,backend=<0|1>,ci=<0|1>" >&2
+    if [ "$#" -ne 5 ]; then
+        echo "✗ --print-skip takes exactly four flags: <docs> <frontend> <backend> <ci>, each 0 or 1" >&2
         exit 1
     fi
-    prek_skip_list "$ps_docs" "$ps_fe" "$ps_be" "$ps_ci"
+    for ps_flag in "$2" "$3" "$4" "$5"; do
+        case "$ps_flag" in
+            0|1) ;;
+            *) echo "✗ --print-skip: flags must be 0 or 1, got '$ps_flag'" >&2; exit 1 ;;
+        esac
+    done
+    prek_skip_list "$2" "$3" "$4" "$5"
     echo ""
     exit 0
 fi

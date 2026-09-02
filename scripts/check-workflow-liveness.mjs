@@ -363,6 +363,9 @@ export function classifyWorkflow({
   // Both rules below answer "has the CRON stopped firing", so neither applies
   // to a push-watched lane: it runs when someone merges, and no merges is not
   // a defect. Such a lane is judged on its newest completed run's conclusion.
+  // (An EMPTY push list falls through to `no-completed-run` below; that needs
+  // no push run inside GitHub's 90-day run retention, i.e. no merge to `main`
+  // in three months, which is worth a red row.)
   if (event === 'schedule' && considered.length === 0) {
     // #4478 — an empty run list is THREE different situations, and they need
     // opposite handling. Which one it is cannot be read from the run list (it
