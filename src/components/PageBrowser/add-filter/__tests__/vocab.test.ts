@@ -237,14 +237,6 @@ describe('propertyValueKindForType', () => {
   })
 })
 
-// #4571 item 2 — `propertyOpsForValueType` exists ONLY because the operator
-// question and the `PropertyValue`-variant question stopped having the same
-// answer. `propertyValueKindForType('boolean')` is `'Text'` (above), so a
-// boolean-declared key inherits Text's `PropertyValue` variant — but must NOT
-// inherit Text's comparisons, which compile against a `value_text` that is
-// NULL for a `value_bool` row. The whole contract of this function is that
-// those two disagree for exactly one declared type, so both arms are pinned
-// here: the boolean one, and the delegation every other type still takes.
 describe('propertyOpsForValueType (#4571 item 2)', () => {
   it('offers a boolean-declared key existence only', () => {
     expect(propertyOpsForValueType('boolean').map((o) => o.value)).toEqual(['Exists', 'NotExists'])

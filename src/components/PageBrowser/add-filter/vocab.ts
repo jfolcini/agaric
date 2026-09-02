@@ -255,15 +255,10 @@ export function propertyOpsForValueType(
  * bare-text-box behaviour the popover has always had for a key nobody has
  * typed a definition for yet.
  *
- * `boolean` also returns `Text`, but that is now a placeholder rather than a
- * policy: #4571 item 2. The old defence — "an imperfect comparison the user
- * can see and correct beats one that vanishes" — was wrong about the
- * comparison being visible. A boolean property's value lives in `value_bool`,
- * so `key = "true"` compiled against a NULL `value_text` and matched nothing,
- * with nothing on screen to say why. {@link propertyOpsForValueType} is the
- * fix: a `boolean`-declared key is offered `Exists`/`NotExists` only, which
- * never reads a value column, so this return value is never used to build one.
- * Give `boolean` its own variant here the day `PropertyValue::Bool` exists.
+ * `boolean` also returns `Text` as a placeholder; the value is never read
+ * because {@link propertyOpsForValueType} offers a boolean key
+ * existence-only (#4571 item 2); give it its own variant the day
+ * `PropertyValue::Bool` exists.
  */
 export function propertyValueKindForType(valueType: string | null | undefined): PropertyValueKind {
   switch (valueType) {

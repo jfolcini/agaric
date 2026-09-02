@@ -897,7 +897,7 @@ export function useBlockActionOrchestration({
     }
     // If the block was just created and the user made no edits (changed === null),
     // delete the empty block instead of leaving it around.
-    // #4603 — `changed === null` alone does not mean "untouched": any commit that
+    // #4577 companion — `changed === null` alone does not mean "untouched": any commit that
     // ran while the block was mounted (the content debounce, or the
     // `flushActiveDraft()` the slash commands await) rebases the delta baseline
     // through `markCommitted`, so `unmount()` reports null for a block the user

@@ -98,18 +98,6 @@ export interface AddFilterPopoverProps {
   }) => React.ReactNode
 }
 
-/**
- * The has-property editor's operand at rest (#4571 item 1). The `kind` is the
- * tier the text was typed under; `'Text'` is the tier an empty box belongs to
- * on both surfaces (the Pages browser is pinned to it, and the advanced
- * surface starts on it before a key is typed), so an untouched editor derives
- * the empty string either way.
- */
-const EMPTY_PROP_VALUE = { text: '', kind: 'Text' } as const satisfies {
-  text: string
-  kind: PropertyValueKind
-}
-
 export function AddFilterPopover({
   onAddFilter,
   warnManyFilters,
@@ -132,10 +120,10 @@ export function AddFilterPopover({
   // #4571 item 1 — the typed operand is stored WITH the `PropertyValueKind` it
   // was typed under, so a key change that moves the key to another tier can
   // discard it by derivation (see `propValue` below) instead of by an effect.
-  const [rawPropValue, setRawPropValue] = useState<{
-    text: string
-    kind: PropertyValueKind
-  }>(EMPTY_PROP_VALUE)
+  const [rawPropValue, setRawPropValue] = useState<{ text: string; kind: PropertyValueKind }>({
+    text: '',
+    kind: 'Text',
+  })
   const [rawPropOp, setPropOp] = useState<PropertyOpKind>('Eq')
   // #1280 D2 — advanced facet editor state.
   const [stateValues, setStateValues] = useState<ReadonlyArray<string>>([])
@@ -196,14 +184,8 @@ export function AddFilterPopover({
   // both are pinned to the historical Text/4-op pair regardless of the
   // registry, matching acceptance criterion 7.
   //
-  // ONE memo, not two: they are two answers to the same registry lookup, and
-  // #4571 item 2 made those answers diverge — `propertyOpsForValueType` keys
-  // on the DECLARED `value_type` while `propertyValueKindForType` maps it to a
-  // `PropertyValue` variant, and `boolean` is the type where the two disagree
-  // (it maps to `Text` because there is no `Bool` variant, but must not
-  // inherit Text's comparisons, which compile against a `value_text` that is
-  // NULL for a boolean row). Divergent ANSWERS from one lookup is the design;
-  // divergent LOOKUPS would be a bug, so there is only one to keep in step.
+  // ONE memo, not two, since both are answers to the same registry lookup.
+  // #4571 item 2 — boolean keys are existence-only, see propertyOpsForValueType.
   const { kind: propertyValueKind, ops: propertyOps } = useMemo((): {
     kind: PropertyValueKind
     ops: ReadonlyArray<{ value: PropertyOpKind; labelKey: string }>
@@ -258,7 +240,7 @@ export function AddFilterPopover({
     setPathValue('')
     setPathExclude(false)
     setPropKey('')
-    setRawPropValue(EMPTY_PROP_VALUE)
+    setRawPropValue({ text: '', kind: 'Text' })
     setPropOp('Eq')
     setStateValues([])
     setStateIsNull(false)

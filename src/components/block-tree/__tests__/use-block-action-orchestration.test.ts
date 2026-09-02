@@ -1722,7 +1722,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
       focusedBlockId: 'B',
       collapsedVisible: emptyB,
       // The untouched stub: empty in the STORE too, which is what the removal
-      // is gated on (#4603).
+      // is gated on (#4577).
       blocks: emptyB,
     })
     params.justCreatedBlockIds.current.add('B')
@@ -1768,7 +1768,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     const params = makeDefaultParams({
       focusedBlockId: 'B',
       collapsedVisible: typedB,
-      // #4603 — the typed text is in the STORE (an earlier debounced commit
+      // #4577 — the typed text is in the STORE (an earlier debounced commit
       // put it there), not only in the unmount delta.
       blocks: typedB,
     })
@@ -1786,7 +1786,7 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     expect(params.setFocused).toHaveBeenCalledWith(null)
   })
 
-  // #4603 — the flushing slash commands (`/todo`, `/numbered-list`, `/effort`,
+  // #4577 — the flushing slash commands (`/todo`, `/numbered-list`, `/effort`,
   // …) await `flushActiveDraft()`, whose `commitNow()` calls `markCommitted(md)`
   // and so REBASES the roving editor's delta baseline. `unmount()` then reports
   // null for a block the user filled in. Gating the removal on the unmount delta

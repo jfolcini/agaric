@@ -1053,12 +1053,8 @@ describe('AddFilterPopover', () => {
       expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
     })
 
-    // #4571 item 2 — a `boolean`-declared key. `propertyValueKindForType` maps
-    // it to `Text` because there is no `PropertyValue::Bool`, and the operator
-    // list used to follow that mapping — offering Eq/Ne/Contains/StartsWith
-    // over a `value_text` that is NULL for a boolean row, so every one of them
-    // compiled to a silent no-match. Existence is the only thing that can be
-    // asked of the property until a `Bool` variant exists.
+    // #4571 item 2 — a `boolean`-declared key is existence-only, see
+    // `propertyOpsForValueType`.
     //
     // This also pins the operator FALLBACK: `Eq` is not in this tier, so the
     // pre-#4571 `: 'Eq'` landing spot would leave the <select> pointing at an
