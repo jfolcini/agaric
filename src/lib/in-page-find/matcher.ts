@@ -311,10 +311,10 @@ function scanLiteral(
   // U+0130-specific so that it keeps holding if the fold ever gains another
   // expanding mapping.
   //
-  // This branch is a pure OPTIMISATION and nothing else: since #4507 both
-  // sides fold through `foldForMatch`, so the slow path computes the same
-  // spans as the fast one for every input reaching here. It selects the
-  // cheaper route, never a different answer (#4507, session-1425).
+  // OPTIMISATION for every query made of whole code points: since #4507 both
+  // sides fold through `foldForMatch`, so both paths compute the same spans.
+  // Outside that population they can differ (a query that is itself an
+  // unpaired surrogate does); the toolbar produces no such query (#3757).
   if (haystack.length === text.length) {
     return scanIndexOf(text, haystack, needle, wholeWord)
   }
@@ -718,8 +718,8 @@ export function collectTextNodes(host: HTMLElement): Text[] {
 /**
  * Walk text nodes synchronously and collect matches.
  *
- * Used by tests (deterministic, no async) and as the inner loop of the
- * chunked runner. Returns a {@link FindResult} with the match list and
+ * Test oracle only (deterministic, no async): {@link runWalker} inlines the
+ * same loop. Returns a {@link FindResult} with the match list and
  * the count of text nodes skipped for exceeding {@link REGEX_NODE_MAX}.
  *
  * `compiled` is consumed verbatim — callers must pre-compile via
@@ -771,7 +771,7 @@ export function walkSync(
 }
 
 /**
- * Cooperative chunked walker — runs {@link walkSync} 50 nodes at a time,
+ * Cooperative chunked walker — walks 50 nodes at a time,
  * yielding via `requestIdleCallback` (fallback `setTimeout(0)`) between
  * chunks so a 10k-node page doesn't freeze the UI on first keypress.
  *

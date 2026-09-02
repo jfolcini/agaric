@@ -1,0 +1,9 @@
+# Session 1484 — In-page find matcher: the one lane with uncovered lines
+
+Of the twelve areas on the weekly Stryker survivor list (#3142), in-page-find-matcher (#3757) was the only one with mutants no test executed at all: thirteen no-coverage lines alongside twenty-two survivors. This session takes that area.
+
+Six mutants died to five new tests in `matcher.test.ts`: a Document as the walk host (no owner document, so no tree walker), a DocumentFragment host whose text child has no parent element, the two `?? ''` fallbacks fed a node with a null `nodeValue`, and a sparse node list. Each was shown red by splicing the mutation into a copy of `matcher.ts`, running the suite, and restoring the copy.
+
+The other twenty-nine are recorded as equivalent, each with a one-clause proof in the file's ledger and in the parent issue's accepted block: unreachable DEV-assertion throws and their message fragments, boundary operators that coincide at the one value they disagree on, a fold guard whose replacement is the identity on strings without a final sigma, and lookups bounded so that neither side is ever undefined. One ledger claim was corrected rather than kept: the fast-path selector is equivalent only for queries made of whole code points; an unpaired-surrogate query gets a different span from each path, and no test pins which, because half a surrogate pair is not a span this module means to emit. The single empty-reason Stryker timeout in this lane is a genuine hang, a non-global regex whose `exec` restarts at index 0 forever.
+
+Verified: `npx vitest run src/lib/in-page-find/__tests__/`, 106 passed and 1 expected fail; oxlint, `oxfmt --check` and `tsc -b --noEmit` clean; the Stryker run for this module, 297 killed, 21 hit-limit timeouts, 18 survived, 11 no coverage, all 29 unkilled on the accepted list.
