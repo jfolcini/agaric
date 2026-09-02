@@ -1375,7 +1375,7 @@ jobs:
   # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
   # fuzz crate (src-tauri/fuzz) builds under stable for compile-checking but
   # `cargo fuzz run` needs nightly (libFuzzer instrumentation). Each weekly
-  # run continues from the corpus the previous one saved (#4529), so the
+  # run continues from the corpus the previous one saved (#4496), so the
   # per-target budget below is how far each week explores past the last;
   # a longer campaign still runs out-of-band. Non-blocking.
   # ---------------------------------------------------------------------------
@@ -1412,9 +1412,8 @@ jobs:
     #
     # History: #4497 took the count from five to eight, this bound from 90 to
     # 110, and then to 130 once the build term was scaled by arithmetic rather
-    # than by assumption; the per-target budget then went from 120s to 300s
-    # (the corpus persists across runs since #4529, so a longer run explores
-    # past the frontier the previous one reached), and this bound to 155.
+    # than by assumption, and to 155 when the per-target budget went from
+    # 120s to 300s.
     timeout-minutes: 155
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1603,10 +1602,10 @@ jobs:
         with:
           tool: cargo-fuzz
 
-      - name: Fuzz each parser target (smoke length)
+      - name: Fuzz each parser target
         working-directory: src-tauri/fuzz
-        # `-max_total_time` keeps each target to a smoke budget so the weekly
-        # lane stays bounded; a crash exits non-zero and the artifact upload
+        # `-max_total_time` bounds each target so the weekly lane stays
+        # bounded; a crash exits non-zero and the artifact upload
         # below preserves the reproducer. The starting corpus is the checked-in
         # seeds under fuzz/corpus/<target>/ UNIONED with whatever the restore
         # step above recovered from previous runs (#4496) — the seeds are the
