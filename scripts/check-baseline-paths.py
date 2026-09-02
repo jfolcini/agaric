@@ -16,9 +16,8 @@ whether an entry sits inside its owner's scan roots (assertion 2, unbuilt
 outside `check-space-filter-drift`), or about `files:` triggers (assertion 4,
 likewise). Those need judgement; this needs `Path.exists()`.
 
-Deliberately standalone rather than a feature of `scripts/check-hook-deps.mjs`
-(#4556 proposes deleting that 2,811-line script): a directory walk must not
-inherit a 2,811-line dependency, and this survives that decision either way.
+Deliberately standalone rather than a feature of a larger hook-dependency
+guard: a directory walk must not inherit that dependency.
 
 NO `--self-test`, deliberately (#4501, #4556's corollary). A guard earns a
 self-test when it parses source text with its own parser and can therefore
@@ -142,8 +141,6 @@ DATA_SOURCES: dict[str, tuple[str, str]] = {
     # a `ref` that no longer resolves is the very thing this baseline
     # grandfathers, so asserting it here would fail on the file's purpose.
     "scripts/doc-code-paths-baseline.json": ("json:file", "."),
-    # JSON array of objects; `dep` is the script/module the hook depends on.
-    "scripts/hook-deps-baseline.json": ("json:dep", "."),
     # JSON object; the keys are paths.
     "scripts/json-parse-cast-baseline.json": ("json:keys", "."),
     # JSON arrays of bare path strings.
@@ -163,7 +160,6 @@ DATA_SOURCES: dict[str, tuple[str, str]] = {
 # reader can tell "checked and found nothing to check" from "never looked".
 NO_PATHS: dict[str, str] = {
     "scripts/coverage-baseline.json": "two coverage percentages, no paths",
-    "scripts/hook-deps-unverifiable-baseline.json": "prek hook ids, not paths",
     "scripts/metric-firing-baseline.json": "metric symbol names (`Type::field`)",
     "src-tauri/migrations-test-coverage-baseline.txt": (
         "bare migration NUMBERS (`0001`), not filenames — the guard resolves "

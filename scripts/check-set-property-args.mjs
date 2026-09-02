@@ -81,7 +81,7 @@
 //      top-level commas and each entry's key is extracted.
 //
 // The scanner used to live here, hand-rolled, and was copy-pasted into
-// `check-mutation-harness-clones.mjs`. Neither copy knew about REGEX
+// a sibling guard since deleted. Neither copy knew about REGEX
 // LITERALS, so a regex containing a bare `}` closed a bracket scan early
 // and a regex containing a quote (`/['"]/`) was read as a string opener,
 // desyncing everything after it (#3950 — one root cause, two symptoms).

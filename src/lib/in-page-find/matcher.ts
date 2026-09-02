@@ -248,11 +248,9 @@ export function compileQuery(query: string, opts: FindOptions): CompiledQuery {
       foldedNeedle += foldCodePoint(ch)
     }
     // ...and THIS is what notices if it stops being true. One comparison per
-    // compile (compile-once, not per text node). The committed sweep in
-    // `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`
-    // proves the premise exhaustively but lives outside vitest's `include`
-    // globs by the #3804 convention, so this assertion is the only guard on it
-    // that runs in CI.
+    // compile (compile-once, not per text node). A sweep since deleted by
+    // #4556 proved the premise exhaustively but never ran in CI, so this
+    // assertion is the only guard on it that does.
     //
     // It must compare `foldedNeedle` against `needle`, not merely check that
     // either is non-empty: a broken premise shows up as the two folds
@@ -446,14 +444,8 @@ const FINAL_SIGMA_RE = /ς/g
  * Length-preserving, so the `{start,end}` offsets stay valid: `ς` (U+03C2) and
  * `σ` (U+03C3) are both a single UTF-16 code unit.
  *
- * **Cost.** Re-run this rather than re-arguing a row — the experiment is
- * committed:
- *
- * ```
- * npx vitest run --config scripts/mutation-harnesses/vitest.config.ts \
- *   scripts/mutation-harnesses/in-page-find-fold-cost.harness.ts \
- *   --disable-console-intercept
- * ```
+ * **Cost.** The experiment behind this table lived in a harness deleted by
+ * #4556; the numbers below are the record it left.
  *
  * One experiment, three variants, eleven interleaved repetitions per
  * variant with rotating order, medians, and the observed spread on each row as

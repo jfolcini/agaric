@@ -12,7 +12,7 @@
 // implementations of that one job, and every one written outside this file
 // was wrong:
 //
-//   `check-mutation-harness-clones.mjs` + `check-set-property-args.mjs`
+//   `check-set-property-args.mjs` and a since-deleted sibling guard
 //     shipped the SAME copy-pasted trio, both blind to regex literals
 //     (#3950) — which is why this module exists at all;
 //   `check-wdio-driver-gate.mjs`'s `stripTsComments` had no string
@@ -58,8 +58,8 @@
 //
 // ─── Why this module exists ─────────────────────────────────────────
 //
-// Two guards — `check-mutation-harness-clones.mjs` and
-// `check-set-property-args.mjs` — need to walk TS/TSX source and match
+// Two guards — `check-set-property-args.mjs` and a sibling since
+// deleted — needed to walk TS/TSX source and match
 // brackets, split argument lists, and blank comments/strings, without a
 // real parser. Both shipped the SAME hand-rolled `skipString` /
 // `stripComments` / `findMatchingBracket` trio, copy-pasted, and both

@@ -1465,10 +1465,8 @@ describe('downloadBlob', () => {
  *      alternation, so it always participates in a successful match and `m[3]`
  *      is always a string — the `?? ''` arm is unreachable. Originally checked
  *      over 636 real matches from 1,008 ref-shaped inputs (group 3 was nullish
- *      0 times) via a sweep that was never committed. #3804 — re-verified with
- *      a committed, re-runnable harness:
- *      `scripts/mutation-harnesses/export-graph-collect-attachment-ids.harness.ts`
- *      (0/50,000 differing on its own independently-generated sweep).
+ *      0 times) via a sweep that was never committed. #3804 — re-verified over
+ *      50,000 cases (0 differing) with a harness since deleted by #4556.
  *
  * 532:22 [StringLiteral] "\"Stryker was here!\""  (NoCoverage)
  *      The `assetsPathPrefix = ''` DEFAULT parameter of `rewriteAttachmentRefs`.

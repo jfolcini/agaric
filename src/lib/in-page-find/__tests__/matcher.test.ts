@@ -1496,11 +1496,10 @@ describe('runWalker', () => {
  *    letters produced zero undefined lookups. The same harness detects 1,160
  *    differences for a mutant the suite already kills (`from = idx + 1` →
  *    `+ needle.length`), so it is not blind" — via a sweep that was never
- *    committed. #3804 — re-verified with a committed, re-runnable harness:
- *    `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`
+ *    committed. #3804 — re-verified with a harness since deleted by #4556
  *    (0 differing / 47,943 cases on every equivalence claim below, on its own
- *    independently-generated sweep; both controls fire — 3,652 and 29
- *    differences respectively — proving the harness has power).
+ *    independently-generated sweep; both controls fired — 3,652 and 29
+ *    differences respectively — proving the harness had power).
  *
  *    #3804 — line refreshed (was 301, drifted): the condition below is
  *    currently at matcher.ts:430 (verify with `grep -n 'start !== undefined
@@ -1597,8 +1596,7 @@ describe('runWalker', () => {
  *      context — but "13,344,768 cases" reads wider than the population it
  *      measured, which is the error this ledger warns about two sections up.
  *      The in-CI assertion in `compileQuery` is the guard that does not depend
- *      on a sweep's coverage at all. See
- *      `scripts/mutation-harnesses/in-page-find-matcher-folded-scan.harness.ts`.
+ *      on a sweep's coverage at all; that sweep's harness was deleted by #4556.
  *      `→ true` (always fast) stays KILLED (5 tests) — that direction really
  *      does break the İ offset mapping.
  *
