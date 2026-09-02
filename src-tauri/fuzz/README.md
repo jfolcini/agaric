@@ -104,9 +104,9 @@ the cheaper way to catch a target that stopped building. It needs
 workspace cannot open, and fail with errors that look nothing like a database
 problem.
 
-The scheduled `scheduled-deep-checks.yml` `fuzz` lane runs every target at a
-smoke-length budget weekly and uploads any crash reproducer plus the minimised
-corpus.
+The scheduled `scheduled-deep-checks.yml` `fuzz` lane runs every target for
+300 seconds weekly, continuing from the corpus the previous run saved, and
+uploads any crash reproducer plus the minimised corpus.
 
 ## Corpora
 
