@@ -1012,15 +1012,18 @@ jobs:
         #      letting one hung mutant silently eat the job's 120-minute
         #      budget.
         # Both numbers were sized against the PRE-#3386 baseline, which ran
-        # `cargo test` because the config file was inert. What a healthy run
-        # measured (run 30981051402, 2026-08-05): baseline BUILD 350 s against
-        # the 600 s `--build-timeout` (1.7x), baseline TEST 604 s against the
-        # 900 s `--timeout` (1.49x — NOT the 3x above, which is 900 measured
-        # against the 300 that failed, not against what the phase costs). Both
-        # are still the `agaric` shards' numbers, because `-p agaric` runs that
-        # same suite; the other two packages' baselines are far smaller. The
-        # `agaric` suite grows every week, so 1.49x is the headroom that will
-        # bite first — and it now bites 27 shards at once.
+        # `cargo test` because the config file was inert, and against a
+        # WORKSPACE baseline: run 30981051402 (2026-08-05) measured BUILD
+        # 350 s and TEST 604 s, both covering all three packages, and by
+        # run 33384085834 (2026-08-31) that test phase was 718 s. Since #3393
+        # each shard is `-p "$PACKAGE"`, so the phase `--timeout` now applies
+        # to is that ONE package's suite: 473 s for `agaric` (1.90x under the
+        # 900 s `--timeout`), 87 s for `agaric-store`. Sharding therefore
+        # widened this headroom rather than spending it — but `agaric`'s suite
+        # grows every week and is still the one that will bite first, now
+        # across 27 shards at once. Do not read 604 s as `agaric`'s number:
+        # the derivation in the session log spends 473 s, and the two differ
+        # by the other packages' suites.
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
         # can't expand into the shell as code (zizmor template-injection);
         # the matrix values ride the same way for the same reason.

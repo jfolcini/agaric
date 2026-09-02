@@ -346,6 +346,41 @@ function checkGlobReachability({ root, globs, excludes, examinedDirs, workspace,
 }
 
 /**
+ * Every `actions/upload-artifact` step in one job, as `{step, name, path}`.
+ *
+ * Both plumbing checks need this, and they used to scan for it separately with
+ * subtly different regexes — two things to keep correct where one will do. The
+ * one subtlety worth stating: `name:` is BOTH the step name and the artifact
+ * name, at different indentation, so they are told apart by the list dash and
+ * not by value. A step legitimately called "Upload merged mutants report" must
+ * not read as an artifact of that name.
+ */
+function uploadsIn(lines) {
+  const uploads = []
+  let step = '<unnamed step>'
+  let current
+  for (const line of lines) {
+    const stepName = /^\s*-\s+name:\s*(.+?)\s*$/.exec(line)
+    if (/^\s*-\s+(name|uses):/.test(line)) current = undefined
+    if (stepName) step = `step '${stepName[1]}'`
+    if (/uses:\s*actions\/upload-artifact/.test(line)) {
+      current = { step, name: undefined, path: undefined }
+      uploads.push(current)
+      continue
+    }
+    if (!current) continue
+    const artifactName = /^\s+name:\s*(\S+)\s*$/.exec(line)
+    if (artifactName && current.name === undefined) current.name = artifactName[1]
+    const pathLine = /^\s+path:\s*(\S+)\s*$/.exec(line)
+    if (pathLine && current.path === undefined) current.path = pathLine[1]
+  }
+  return uploads
+}
+
+/** `path:` as cargo-mutants' output dir names it: no `src-tauri/`, no trailing slash. */
+const normalizeUploadPath = (path) => path?.replace(/^src-tauri\//, '').replace(/\/$/, '')
+
+/**
  * Every path the lane's own steps read must be where cargo-mutants writes.
  * `-o/--output DIR` creates `DIR/mutants.out`, so a reader pointed at `DIR`
  * finds nothing however healthy the run was.
@@ -368,21 +403,11 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   // used to slip through, since the inline check only ran on a `path:` that
   // already looked roughly right — a guard that validates a value only when
   // it is nearly correct cannot fail on the cases that matter.
-  const uploads = []
+  const uploads = uploadsIn(lines)
   let step = '<unnamed step>'
-  let currentUpload
   for (let i = 0; i < lines.length; i++) {
-    if (/^\s*-\s+(name|uses):/.test(lines[i])) currentUpload = undefined
     const stepName = /^\s*-\s+name:\s*(.+?)\s*$/.exec(lines[i])
     if (stepName) step = `step '${stepName[1]}'`
-    if (/uses:\s*actions\/upload-artifact/.test(lines[i])) {
-      currentUpload = { step, path: undefined }
-      uploads.push(currentUpload)
-    }
-    const pathLine = /^\s*path:\s*(\S+)\s*$/.exec(lines[i])
-    if (pathLine && currentUpload && currentUpload.path === undefined) {
-      currentUpload.path = pathLine[1]
-    }
     if (i >= from && i <= to) continue
     // `name:` values are step names and the upload-artifact ARTIFACT name —
     // never paths. Scanning them would flag `name: mutants-out` as a reader.
@@ -401,7 +426,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   if (uploads.length === 0) {
     push(
       'artifact-upload-missing',
-      `the \`${JOB_ID}\` job uploads no artifact at all (no \`actions/upload-artifact\` step). \`file-mutation-survivors --require-rust\` downloads that artifact and throws when missed.txt is not in it, so the survivor-filing job goes red with a message about the filer rather than about this job (#3387).`,
+      `the \`${JOB_ID}\` job uploads no artifact at all (no \`actions/upload-artifact\` step). Since #3393 it uploads one per shard for \`${MERGE_JOB_ID}\` to reassemble into the \`${ARTIFACT_NAME}\` that \`file-mutation-survivors --require-rust\` downloads, so with none of them the merge has nothing to merge and the filer throws on an absent missed.txt — red on the filer, with a message about the filer rather than about this job (#3387).`,
     )
   }
   for (const upload of uploads) {
@@ -412,7 +437,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
       )
       continue
     }
-    if (upload.path.replace(/^src-tauri\//, '').replace(/\/$/, '') !== writeDir) {
+    if (normalizeUploadPath(upload.path) !== writeDir) {
       push(
         'artifact-path-mismatch',
         `${upload.step} uploads '${upload.path}', but the artifact must be cargo-mutants' output directory ITSELF ('${WORKSPACE_DIR}/${writeDir}'). \`file-mutation-survivors\` reads missed.txt flat off the artifact root; uploading a parent directory buries it one level down and the filer's --require-rust throws (#3387).`,
@@ -442,40 +467,19 @@ export function checkMergeProducer({ lines, writeDir, push }) {
     return
   }
 
-  // The artifact `name:` and the step `name:` are the same key at different
-  // indentation, so tell them apart by the list dash rather than by value —
-  // a step legitimately called "Upload merged mutants report" must not read
-  // as an artifact named that.
-  let artifactName
-  let path
-  let inUpload = false
-  for (const line of lines) {
-    if (/^\s*-\s+(name|uses):/.test(line)) inUpload = false
-    if (/uses:\s*actions\/upload-artifact/.test(line)) inUpload = true
-    if (!inUpload) continue
-    const nameLine = /^\s+name:\s*(\S+)\s*$/.exec(line)
-    if (nameLine && !/^\s*-/.test(line) && artifactName === undefined) artifactName = nameLine[1]
-    const pathLine = /^\s+path:\s*(\S+)\s*$/.exec(line)
-    if (pathLine && path === undefined) path = pathLine[1]
-    if (artifactName !== undefined && artifactName !== ARTIFACT_NAME) {
-      artifactName = undefined
-      path = undefined
-      inUpload = false
-    }
-  }
+  const upload = uploadsIn(lines).find((u) => u.name === ARTIFACT_NAME)
 
-  if (artifactName === undefined) {
+  if (upload === undefined) {
     push(
       'merge-upload-missing',
       `the \`${MERGE_JOB_ID}\` job uploads no artifact named \`${ARTIFACT_NAME}\`. That is the name \`${FILER_JOB_ID}\` downloads, and since #3393 no other job produces it: with \`--require-rust\` the filer throws every run, and without it it reports "no rust survivors" and clears every tracked one (#3364).`,
     )
     return
   }
-  const normalized = path?.replace(/^src-tauri\//, '').replace(/\/$/, '')
-  if (normalized !== writeDir) {
+  if (normalizeUploadPath(upload.path) !== writeDir) {
     push(
       'merge-upload-path-mismatch',
-      `the \`${MERGE_JOB_ID}\` job uploads \`${ARTIFACT_NAME}\` from '${path ?? '<no path:>'}', but the merge reassembles the shards into '${writeDir}'. \`${FILER_JOB_ID}\` reads missed.txt flat off the artifact root, so any other directory buries it and \`--require-rust\` throws (#3387).`,
+      `the \`${MERGE_JOB_ID}\` job uploads \`${ARTIFACT_NAME}\` from '${upload.path ?? '<no path:>'}', but the merge reassembles the shards into '${writeDir}'. \`${FILER_JOB_ID}\` reads missed.txt flat off the artifact root, so any other directory buries it and \`--require-rust\` throws (#3387).`,
     )
   }
 }
