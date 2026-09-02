@@ -23,14 +23,14 @@ export default defineConfig({
   // 60s fails such a test fast instead of letting it (and its retry) drift
   // toward the job cap. Generous enough for the heaviest legitimate spec.
   timeout: 60_000,
-  // #1458: global ceiling BELOW the 30-min CI job cap (`_validate.yml`
-  // playwright `timeout-minutes: 30`). At ~25 min Playwright aborts itself and
-  // still runs the reporter, so the per-shard report uploads BEFORE the runner
-  // kills the job — making any future cascade diagnosable instead of
-  // self-obscuring. Budget accounts for the per-shard prod build (~30-60s) +
-  // browser install that share the 30-min cell. Effectively unbounded locally
-  // for a full unsharded run, so only the CI path is constrained.
-  globalTimeout: process.env['CI'] ? 25 * 60_000 : 0,
+  // #1458: global ceiling BELOW the CI job cap (`_validate.yml` playwright
+  // `timeout-minutes`). At the ceiling Playwright aborts itself and still runs
+  // the reporter, so the per-shard report uploads BEFORE the runner kills the
+  // job — making any future cascade diagnosable instead of self-obscuring.
+  // Shards measure 4–5 min (2026-09-02); 15 min is 3× that, so a wedged shard
+  // reports in 15 min instead of 25. Effectively unbounded locally for a full
+  // unsharded run, so only the CI path is constrained.
+  globalTimeout: process.env['CI'] ? 15 * 60_000 : 0,
   // File-level parallelism via `fullyParallel: true`, with
   // per-suite `test.describe.configure({ mode: 'serial' })` annotations on
   // the specs whose tests share global state (op-log, pairing mock, kebab

@@ -22,7 +22,8 @@
 //   node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust --gate
 //   node scripts/coverage-ratchet.mjs --summary <path> --key vitest --update
 //
-// Exit: 0 by default; 1 when `--gate` is set AND coverage dropped beyond tolerance.
+// Exit: 0 by default; 1 when `--gate` is set AND (coverage dropped beyond
+// tolerance OR the report carried no data).
 // ─────────────────────────────────────────────────────────────────────
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -126,10 +127,13 @@ function main() {
   }
 
   if (pct === null) {
+    // Under `--gate` an empty report is a failure, not a skip: lcov's
+    // `--ignore-errors empty` upstream accepts a tracefile with no records, so
+    // instrumentation producing nothing would otherwise pass the hard gate.
     appendStepSummary(
-      `### Coverage ratchet (${args.key}): no data (artifact missing or empty) — skipped.`,
+      `### Coverage ratchet (${args.key}): no data (artifact missing or empty) — ${args.gate ? '**HARD GATE (`--gate`) — failing the job.**' : 'skipped.'}`,
     )
-    return 0
+    return args.gate ? 1 : 0
   }
 
   const rounded = Math.round(pct * 100) / 100
