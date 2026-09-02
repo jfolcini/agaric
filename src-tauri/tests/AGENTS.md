@@ -155,7 +155,7 @@ npx vitest run src/lib/tauri-mock     # from the repo root; red means the mock d
 
 Pattern: one `TempDir` + DB per bench, `Runtime::block_on` for setup, `b.to_async(&rt).iter(...)`, `materializer.shutdown()` after each group, `BenchmarkId::from_parameter` for size sweeps. Bench files are separate crates, so `*_inner` may need `pub`.
 
-Run the bench before committing, not just `cargo check --bench`: a hand-seeded raw-SQL fixture that has drifted from the schema compiles fine and panics on execution (#1233). No PR gate runs benches; `.github/workflows/scheduled-deep-checks.yml` runs them weekly, so a break surfaces a week later on someone else's PR. `src-tauri/benches/AGENTS.md` § "Run the smoke gate locally before pushing" has the exact loop.
+Run the bench before committing, not just `cargo check --bench`: a hand-seeded raw-SQL fixture that has drifted from the schema compiles fine and panics on execution (#1233). No PR gate runs benches; `.github/workflows/scheduled-deep-checks.yml` runs them weekly, so a break surfaces a week later on someone else's PR. `src-tauri/benches/AGENTS.md` § "Run benches without the E0308 build race" has the exact loop.
 
 ## Before committing
 

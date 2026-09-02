@@ -61,7 +61,7 @@ CREATE TABLE example (
 - Write with `crate::db::now_ms()` (`src-tauri/agaric-store/src/db/mod.rs`); never open-code `chrono::Utc::now().timestamp_millis()`. `crate::now_rfc3339()` is for logs and display only.
 - Exception: a column that is half of an existing unsuffixed pair stays unsuffixed (`peer_refs.streamed_at` pairs with `synced_at`, 0111), because suffixing one half implies the two encodings differ. No hook enforces the suffix.
 
-The root [`AGENTS.md`](../../AGENTS.md) §Database lists the legacy TEXT columns already migrated; keep the two in sync.
+The root [`AGENTS.md`](../../AGENTS.md) §Database states the rule; the legacy TEXT columns are already migrated (migrations 0074–0082).
 
 ### Calendar dates stay TEXT `YYYY-MM-DD` (#588)
 

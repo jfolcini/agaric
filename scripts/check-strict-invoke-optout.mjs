@@ -49,9 +49,8 @@
 //
 // A blanket `vi.mocked(invoke).mockResolvedValue(undefined)` opts a file
 // out just as effectively — an explicit stub is honoured, so the strict
-// fallback never fires. `src/__tests__/AGENTS.md` documents that class
-// separately and calls it deliberate. It is textual to detect and easy to
-// spell differently, so it is left to review rather than mechanized into a
+// fallback never fires. That opt-out is deliberate and left to review: it is
+// textual to detect and easy to spell differently, so it is left to review rather than mechanized into a
 // guard that would be simultaneously noisy and easy to evade.
 //
 // ─── Scope ────────────────────────────────────────────────────────────
