@@ -233,18 +233,10 @@ export function useBlockMultiSelect({
         // #4558 — the cascaded half goes in the SPACE-LESS cohort, the page
         // subset of the selection stays scoped, matching the two delete arms
         // the issue names (`usePageDeleteAction.handleConfirm` and
-        // `PageBrowserBatchToolbar.handleTrash`). A page's `space_id` is
-        // authoritative and `move_blocks_to_space` moves a page WITHOUT
-        // re-parenting it (pinned by
-        // `move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480`),
-        // so a nested page swept by a `parent_id` walk can live in a space
-        // this delete never touched; scoping its removal to `currentSpaceId`
-        // left that other space's `[[` cache offering a trashed page. The
-        // selection keeps its scope — those are the rows the user acted on,
-        // in the space they acted from, and the store that classified them as
-        // pages is this space's store. `notifyPagesRemoved` de-duplicates the
-        // space-less cohort against the scoped one, so a root the backend
-        // echoes back inside `affected_page_ids` is still published once.
+        // `PageBrowserBatchToolbar.handleTrash`). Why a cascaded child's space
+        // is unknowable here: `notifyPageRemoved`'s `spaceId: null` section.
+        // The selection keeps its scope — the store that classified those rows
+        // as pages is this space's store.
         //
         // The PAGE SUBSET, not `ids` wholesale — and this is where the hook
         // must NOT copy `handleTrash`. The toolbar's selection is pages by

@@ -220,32 +220,23 @@ export function propertyOpsForValueKind(
 }
 
 /**
- * The declared `value_type` for which no comparison is offerable at all
- * (#4571 item 2). `boolean` properties are stored in `value_bool`, and there
- * is no `PropertyValue::Bool` variant to compare it with; see
- * {@link propertyOpsForValueType}.
- */
-const NULLARY_ONLY_VALUE_TYPE = 'boolean'
-
-/**
  * The operators offered for a property key from its DECLARED `value_type`,
  * rather than from the `PropertyValue` variant that type maps to.
  *
- * The two are the same question for every type but one. A `boolean`-declared
- * key has no `PropertyValue` variant to compare against
- * ({@link propertyValueKindForType} maps it to `Text` only so the emit path
- * has something to name), and a `boolean` property is stored in `value_bool`
- * — so every `Text` comparison the operator list used to offer for it
- * (`Eq`, `Ne`, `Contains`, `StartsWith`) compiled against a `value_text` that
- * is NULL for that row and silently matched nothing. Offer existence only
- * until a `Bool` variant exists: `Exists`/`NotExists` test the property ROW,
- * which is the one thing that is true of a boolean property regardless of
- * which column holds its value.
+ * The two are the same question for every type but one. A `boolean` property
+ * is stored in `value_bool` and has no `PropertyValue::Bool` variant to
+ * compare against ({@link propertyValueKindForType} maps it to `Text` only so
+ * the emit path has something to name), so every `Text` comparison the
+ * operator list used to offer it — `Eq`, `Ne`, `Contains`, `StartsWith` —
+ * compiled against a `value_text` that is NULL for that row and silently
+ * matched nothing (#4571 item 2). Offer existence only until a `Bool` variant
+ * exists: `Exists`/`NotExists` test the property ROW, the one thing that is
+ * true of a boolean property regardless of which column holds its value.
  */
 export function propertyOpsForValueType(
   valueType: string | null | undefined,
 ): ReadonlyArray<{ value: PropertyOpKind; labelKey: string }> {
-  if (valueType === NULLARY_ONLY_VALUE_TYPE) {
+  if (valueType === 'boolean') {
     return ALL_PROPERTY_OPS.filter((op) => PROPERTY_OP_ARITY[op.value] === 'nullary')
   }
   return propertyOpsForValueKind(propertyValueKindForType(valueType))

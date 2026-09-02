@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash-commands/useSlashCommandProperty'
+import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { logger } from '@/lib/logger'
 import { useUndoStore } from '@/stores/undo'
 
@@ -227,6 +228,62 @@ describe('useSlashCommandProperty — effort', () => {
   // #2656 — `effort-custom` was removed from EFFORT_COMMANDS: effort is a
   // fixed-option SELECT, so a free-text custom value can never persist. Only
   // the fixed buckets remain (covered by the it.each above).
+
+  // #4577 — the PAIR, on the same defect the list slash commands had. Every
+  // handler in this module writes a block PROPERTY and commits no content, so
+  // none of them route through `applyContentEdit` and none of them persist the
+  // text the user typed just before running the command. That text sits in the
+  // editor's commit debounce until something flushes it; Escape DISCARDS it,
+  // so the block kept the pre-command content while wearing the new property.
+  // Both halves have to be asserted together: asserting only `set_property`
+  // passes on the broken code, and asserting only the content passes on a
+  // handler that flushed and then forgot to write the property.
+  //
+  // `/effort` stands in for the whole module — the flush is one line at the
+  // top of each handler's `try`, so a per-handler copy of this test would pin
+  // nine copies of one decision. The registration below stands in for
+  // `useDebouncedContentCommit`'s (the synthetic ctx has no live TipTap
+  // instance): it is the same `registerActiveDraftFlush` bridge, committing
+  // through the page store's `edit` exactly as the real one does.
+  it('flushes the pending in-editor content before writing the property (#4577)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'edit_block') {
+        return {
+          id: 'BLOCK_1',
+          content: (args as { toText: string }).toText,
+          op_refs: [{ device_id: 'dev1', seq: 4 }],
+        }
+      }
+      if (cmd === 'set_property') {
+        return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 5 }] }
+      }
+      return undefined
+    })
+    const { result } = renderHook(() => useSlashCommandProperty())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    const unregister = registerActiveDraftFlush('BLOCK_1', async () => {
+      await pageStore.getState().edit('BLOCK_1', 'buy milk')
+    })
+    try {
+      const handler = result.current.prefix.find(([p]) => p === 'effort-')?.[1]
+      expect(handler).toBeDefined()
+      await handler?.(ctx, { id: 'effort-1h', label: 'EFFORT 1h' })
+    } finally {
+      unregister()
+    }
+
+    // Re-read the store rather than asserting the call shape: this is the
+    // content a subsequent Escape would leave behind.
+    expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('buy milk')
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'set_property',
+      expect.objectContaining({
+        blockId: 'BLOCK_1',
+        key: 'effort',
+        value: expect.objectContaining({ value_text: '1h' }),
+      }),
+    )
+  })
 
   it('toasts on effort failure', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('fail'))

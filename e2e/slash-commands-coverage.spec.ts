@@ -187,8 +187,8 @@ test.describe('Slash structural inserts', () => {
     await expect(editor).toHaveText('first item')
 
     // Enter (not Escape): nothing in the block is a list node to escape from
-    // any more, and Escape *discards* the pending edit — the old `1. `-prefix
-    // handler used to persist it as a side effect of its content write.
+    // any more. The Escape route is its own test below (#4577), where the
+    // handler's `flushActiveDraft` is what keeps the typed text.
     await saveBlock(page)
     await expect(firstStatic(page)).toContainText('first item')
     await expect(firstStatic(page).locator('ol, ul, li')).toHaveCount(0)

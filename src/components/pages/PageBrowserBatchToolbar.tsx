@@ -279,14 +279,10 @@ export function PageBrowserBatchToolbar({
       // internally (#4524), so building one here would be redundant work
       // that also hides the shared function's own contract at the call site.
       //
-      // #4558 — the cascaded ids go in the space-less cohort. `handleMoveToSpace`
-      // below establishes the fact this rests on: a page's `space_id` is
-      // authoritative and a move does not re-parent, so a nested page can sit
-      // in a different space from its parent. The trash cascade reaches it
-      // anyway (it walks `parent_id`), so scoping its removal to
-      // `currentSpaceId` left its OWN space's cache offering a trashed page.
-      // The selected roots keep their scope — they are what the user acted on,
-      // in the space they acted from.
+      // #4558 — the cascaded ids go in the space-less cohort, the selected
+      // roots keep `currentSpaceId`. Why a cascaded child's space is
+      // unknowable here: `notifyPageRemoved`'s `spaceId: null` section, whose
+      // premise `handleMoveToSpace` below restates for the move case.
       notifyPagesRemoved(ids, currentSpaceId, cascadedPageIds)
       onClearSelection()
       onMutated()
