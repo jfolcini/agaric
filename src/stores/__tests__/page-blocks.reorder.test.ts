@@ -1224,7 +1224,15 @@ describe('PageBlockStore', () => {
     //     unconditionally (Finding 3, #3799), exactly the outcome this
     //     equivalence note predicted (the arm was dead code) made literal.
     //
-    // SURVIVING equivalence claim:
+    // SURVIVING equivalence claims:
+    //   113:7 ConditionalExpression `wantParent == null` -> `false`
+    //         (in `wouldCreateMoveCycle`, which this suite drives via `moveBlocks`)
+    //     Pure fast path, equivalent by the types alone: a null `wantParent`
+    //     falls through to `orderedIds.includes(null)` and
+    //     `getDragDescendants(...).has(null)`, which a `readonly string[]` and
+    //     a `Set<string>` can never satisfy, so the function returns the same
+    //     `false` the guard returns directly.
+    //
     //   217:35 ArrayDeclaration `const updatedBag: FlatBlock[] = []` ->
     //          `['Stryker was here']`
     //     The injected sentinel has no `parent_id`, so it is a child of `null`.
