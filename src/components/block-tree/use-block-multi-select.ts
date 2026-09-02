@@ -215,7 +215,8 @@ export function useBlockMultiSelect({
         // fall back to a full invalidation with no active space) is
         // `notifyPagesRemoved`, shared with that toolbar rather than copied.
         //
-        // The cohort is the UNION of two halves, and BOTH are needed:
+        // The cohort is the UNION of two halves, and BOTH are needed — but
+        // they are published under DIFFERENT scopes (#4558, see below):
         //
         //  - `cascadedPageIds` — the backend's page membership of the cascade.
         //    The recursive CTE walks `parent_id` with no page-boundary stop, so
@@ -228,6 +229,22 @@ export function useBlockMultiSelect({
         //    (missing, or soft-deleted by a concurrent write) is absent from
         //    the reported cohort but was in the user's selection and is not a
         //    live page either way.
+        //
+        // #4558 — the cascaded half goes in the SPACE-LESS cohort, the page
+        // subset of the selection stays scoped, matching the two delete arms
+        // the issue names (`usePageDeleteAction.handleConfirm` and
+        // `PageBrowserBatchToolbar.handleTrash`). A page's `space_id` is
+        // authoritative and `move_blocks_to_space` moves a page WITHOUT
+        // re-parenting it (pinned by
+        // `move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480`),
+        // so a nested page swept by a `parent_id` walk can live in a space
+        // this delete never touched; scoping its removal to `currentSpaceId`
+        // left that other space's `[[` cache offering a trashed page. The
+        // selection keeps its scope — those are the rows the user acted on,
+        // in the space they acted from, and the store that classified them as
+        // pages is this space's store. `notifyPagesRemoved` de-duplicates the
+        // space-less cohort against the scoped one, so a root the backend
+        // echoes back inside `affected_page_ids` is still published once.
         //
         // The PAGE SUBSET, not `ids` wholesale — and this is where the hook
         // must NOT copy `handleTrash`. The toolbar's selection is pages by
@@ -257,11 +274,11 @@ export function useBlockMultiSelect({
         // reach by accident: a block-tree selection is mostly content rows, so
         // it is the page-subset filter above — not the cap — that keeps an
         // everyday 30-block content delete from clearing the tag cache.
-        const removedPageIds = new Set<string>(cascadedPageIds)
+        const selectedPageIds = new Set<string>()
         for (const id of ids) {
-          if (blocksById.get(id)?.block_type === 'page') removedPageIds.add(id)
+          if (blocksById.get(id)?.block_type === 'page') selectedPageIds.add(id)
         }
-        notifyPagesRemoved(removedPageIds, currentSpaceId)
+        notifyPagesRemoved(selectedPageIds, currentSpaceId, cascadedPageIds)
         // #2653 — the backend soft-deletes every selected root AND its whole
         // subtree (recursive CTE), but the selection only ever holds the
         // explicitly-clicked ids (never their hidden/collapsed descendants).

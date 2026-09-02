@@ -162,8 +162,12 @@ export type NameChange =
   | { kind: 'added'; entity: NameChangeEntity; id: string; name: string; spaceId: string }
   /** `id` now displays as `name` (rename / title edit) in `spaceId` (#4391). */
   | { kind: 'renamed'; entity: NameChangeEntity; id: string; name: string; spaceId: string }
-  /** `id` is gone (soft-delete, purge) from `spaceId` (#4391) and must stop being offered. */
-  | { kind: 'removed'; entity: NameChangeEntity; id: string; spaceId: string }
+  /**
+   * `id` is gone (soft-delete, purge) from `spaceId` (#4391) and must stop
+   * being offered. `spaceId: null` means gone from EVERY space (#4558) — see
+   * {@link notifyPageRemoved}.
+   */
+  | { kind: 'removed'; entity: NameChangeEntity; id: string; spaceId: string | null }
   /**
    * Unknown-shape change — subscribers must drop everything they cached.
    * Deliberately carries no `spaceId` (#4391) — see the module docblock.
@@ -283,8 +287,31 @@ export function notifyPageRenamed(pageId: string, title: string, spaceId: string
 /**
  * A page was deleted (soft-delete or purge) from `spaceId` (#4391). Call
  * AFTER the write commits.
+ *
+ * ── `spaceId: null` — removed EVERYWHERE (#4558) ─────────────────────────
+ *
+ * A publisher passes `null` when it knows the page is gone but does NOT know
+ * which space it was in. That is not a hypothetical: `delete_block`'s cascade
+ * walks `parent_id` with no page-boundary stop, and a page's `space_id` is
+ * authoritative and independent of its parent (`move_blocks_to_space` moves a
+ * page without re-parenting it — pinned by
+ * `move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480`), so a
+ * cascaded CHILD page can live in a different space from the root the user
+ * deleted. Scoping its removal to the root's space left the child's OWN
+ * space's cache offering a page that is now in the trash.
+ *
+ * What it means for a subscriber that keys on space: apply it regardless of
+ * which space is live. A removal is not a claim about relevance the way
+ * 'added'/'renamed' are — those must be dropped on a space mismatch because
+ * applying one would INSERT a foreign-space row. A removal can only drop a
+ * row that is already there, and a row that is in the live cache is by
+ * construction one the live space was offering, so honouring a space-less
+ * removal can never evict something that should have stayed. On a cache that
+ * does not hold the id it is a no-op. The scoped form stays the default:
+ * publish `null` only when the space genuinely is not known, so a
+ * space-scoped event is still the thing a reviewer expects to see.
  */
-export function notifyPageRemoved(pageId: string, spaceId: string): void {
+export function notifyPageRemoved(pageId: string, spaceId: string | null): void {
   emit({ kind: 'removed', entity: 'page', id: pageId, spaceId })
 }
 
@@ -390,6 +417,14 @@ export const NAME_CACHE_FANOUT_MAX_IDS = 25
  * conservative half of the "When the caller has NO active space" section
  * above; it is what both toolbar handlers already did.
  *
+ * `everywhereIds` (#4558) is the sub-cohort whose space the caller does NOT
+ * know — a delete cascade's page children, which can live in other spaces
+ * (see {@link notifyPageRemoved}'s `spaceId: null` section). They are
+ * published space-lessly so every registered cache honours them, while the
+ * ids the caller CAN scope stay scoped. A move publishes nothing here: its
+ * pages still exist, in the destination space, and a space-less removal would
+ * evict them from the destination's cache too.
+ *
  * `pageIds` is `readonly string[] | ReadonlySet<string>`, not the more
  * permissive `Iterable<string>` it started as: `string` is itself an
  * `Iterable<string>` (it iterates its own characters), so a slipped
@@ -413,12 +448,23 @@ export const NAME_CACHE_FANOUT_MAX_IDS = 25
 export function notifyPagesRemoved(
   pageIds: readonly string[] | ReadonlySet<string>,
   spaceId: string | null,
+  everywhereIds: readonly string[] | ReadonlySet<string> = [],
 ): void {
-  const unique: ReadonlySet<string> = pageIds instanceof Set ? pageIds : new Set(pageIds)
-  if (unique.size === 0) return
-  if (spaceId == null || unique.size > NAME_CACHE_FANOUT_MAX_IDS) {
+  const scoped: ReadonlySet<string> = pageIds instanceof Set ? pageIds : new Set(pageIds)
+  // The two cohorts are disjoint by construction: an id the caller can scope
+  // wins, so a delete cascade that echoes the roots back inside its reported
+  // cohort does not publish them twice under two different scopes.
+  const everywhere = new Set(everywhereIds)
+  for (const id of scoped) everywhere.delete(id)
+  const total = scoped.size + everywhere.size
+  if (total === 0) return
+  // The budget is measured over BOTH cohorts: they are one synchronous
+  // fan-out to the same listeners, and a per-cohort check would wave through
+  // twice the cap.
+  if (spaceId == null || total > NAME_CACHE_FANOUT_MAX_IDS) {
     invalidateNameCaches()
     return
   }
-  for (const id of unique) notifyPageRemoved(id, spaceId)
+  for (const id of scoped) notifyPageRemoved(id, spaceId)
+  for (const id of everywhere) notifyPageRemoved(id, null)
 }

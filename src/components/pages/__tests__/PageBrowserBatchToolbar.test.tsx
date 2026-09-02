@@ -671,7 +671,13 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
   //     3 events, because the backend echoes the roots back inside
   //     `affected_page_ids`. Duplicate events are O(listeners x pages) of
   //     wasted synchronous work each.
-  //   * an event scoped to anything but the origin → `spaceId` mismatch.
+  //   * the selected roots scoped to anything but the origin → `spaceId`
+  //     mismatch.
+  //
+  // #4558 — the CASCADED id is published space-lessly (`spaceId: null`) while
+  // the selected root keeps `SPACE_TEST`. A nested page's `space_id` is
+  // authoritative and a move does not re-parent it, so the cascade can reach a
+  // child that lives in another space entirely.
   it('evicts the nested pages the cascade swept, and nothing else', async () => {
     const { changes, unsubscribe } = recordChanges()
     try {
@@ -683,7 +689,7 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
       })
       expect(changes).toEqual([
         { kind: 'removed', entity: 'page', id: 'P_ROOT', spaceId: 'SPACE_TEST' },
-        { kind: 'removed', entity: 'page', id: 'P_NESTED', spaceId: 'SPACE_TEST' },
+        { kind: 'removed', entity: 'page', id: 'P_NESTED', spaceId: null },
       ] satisfies NameChange[])
     } finally {
       unsubscribe()
@@ -760,6 +766,70 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
   // because the list refetches synchronously from the static
   // `list_all_pages_in_space` mock and brings everything back. Narrowness is
   // pinned by the event-count test at the top of this describe. Keep both.
+  // #4558 — the cascaded child in ANOTHER SPACE, the batch arm of the same
+  // defect the single delete has.
+  //
+  // `handleMoveToSpace` (below) establishes the fact this rests on:
+  // `move_blocks_to_space` writes a page's authoritative `space_id` and does
+  // NOT re-parent it, so `P_MOVED` can sit under `P_ROOT` in SPACE_TEST while
+  // itself belonging to SPACE_OTHER. The trash cascade walks `parent_id` and
+  // sweeps it anyway. Publishing it scoped to the TOOLBAR's space meant the
+  // subscriber — live on SPACE_OTHER — dropped it on the space check, and
+  // SPACE_OTHER's `[[` cache went on offering a page that is now in the trash.
+  //
+  // `P_STAYS_OTHER` present alongside `P_MOVED` absent rules out both the
+  // vacuous reading ("the cache was never warm") and the wholesale
+  // `invalidateNameCaches()` shortcut, which would empty the cache and let the
+  // next read re-fetch `P_MOVED` back out of the static mock.
+  it("a cascaded child in another space is evicted from THAT space's [[ cache", async () => {
+    const user = userEvent.setup()
+    function pageRow(id: string, content: string) {
+      return {
+        id,
+        content,
+        todo_state: null,
+        priority: null,
+        due_date: null,
+        scheduled_date: null,
+      }
+    }
+    // The user is looking at SPACE_OTHER; these are its pages.
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_OTHER' })
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return Promise.resolve([
+          pageRow('P_MOVED', 'Moved Page'),
+          pageRow('P_STAYS_OTHER', 'Stays Page'),
+        ])
+      }
+      if (cmd === 'delete_blocks_by_ids') {
+        return Promise.resolve(trashReply(['P_ROOT'], ['P_MOVED']))
+      }
+      return strictInvokeFallback(cmd)
+    })
+
+    const { result: resolveResult } = renderHook(() => useBlockResolve())
+    const before = await resolveResult.current.searchPages('')
+    expect(before.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(
+      expect.arrayContaining(['P_MOVED', 'P_STAYS_OTHER']),
+    )
+
+    // The batch itself belongs to SPACE_TEST, where the selected root lives.
+    renderToolbar({ selectedIds: ['P_ROOT'], currentSpaceId: 'SPACE_TEST' })
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['P_ROOT'] })
+    })
+
+    const after = await resolveResult.current.searchPages('')
+    const idsAfter = after.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(idsAfter).not.toContain('P_MOVED')
+    expect(idsAfter).toContain('P_STAYS_OTHER')
+  })
+
   it('a cascaded nested page stops being offered by the [[ cache, with no space switch', async () => {
     const user = userEvent.setup()
     function pageRow(id: string, content: string) {

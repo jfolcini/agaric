@@ -987,6 +987,108 @@ describe('AddFilterPopover', () => {
       })
     })
 
+    // #4571 item 1 — the OPERAND is reconciled alongside the operator. The
+    // operator reconciliation above landed in #4553; the value box was left
+    // alone, so `3` typed against a `number`-declared key survived into a
+    // `date`-declared one. `<input type="date">` renders a value it cannot
+    // parse as BLANK, so the user saw an empty date field while the state
+    // behind it was still `"3"` — Apply stayed enabled and emitted
+    // `Date("3")`, a comparison against a date nobody typed.
+    //
+    // Both assertions below redden on the unfixed derivation, but only one of
+    // them does so in EVERY environment. `<input type="date">` value
+    // sanitization is what makes the bug invisible in a real browser, and
+    // happy-dom does not implement it (it hands back the raw `"3"`), so the
+    // value assertion is a happy-dom-specific bonus — verified red, not
+    // assumed. The disabled Apply button is the environment-independent half:
+    // it distinguishes "the operand is gone" from "the operand is merely
+    // unrenderable", which is exactly the distinction the browser hides.
+    it('clears the operand when the key changes tier (#4571)', async () => {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          list_property_defs: () => ({
+            items: [
+              {
+                key: 'estimate',
+                value_type: 'number',
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+              {
+                key: 'deadline',
+                value_type: 'date',
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }),
+        }),
+      )
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      const keyInput = screen.getByLabelText('Property key')
+      await user.type(keyInput, 'estimate')
+
+      // A DECLARED number key: numeric value control, and a complete operand.
+      await waitFor(() => {
+        expect(screen.getByLabelText('Value')).toHaveAttribute('type', 'number')
+      })
+      await user.type(screen.getByLabelText('Value'), '3')
+      expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled()
+
+      // Retype it as a DECLARED date key — another tier, another control.
+      await user.clear(keyInput)
+      await user.type(keyInput, 'deadline')
+      await waitFor(() => {
+        expect(screen.getByLabelText('Value')).toHaveAttribute('type', 'date')
+      })
+      expect(screen.getByLabelText('Value')).toHaveValue('')
+      // The operand really is gone, not merely unrenderable: Apply is gated on
+      // a non-blank value for a value-bearing operator.
+      expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
+    })
+
+    // #4571 item 2 — a `boolean`-declared key. `propertyValueKindForType` maps
+    // it to `Text` because there is no `PropertyValue::Bool`, and the operator
+    // list used to follow that mapping — offering Eq/Ne/Contains/StartsWith
+    // over a `value_text` that is NULL for a boolean row, so every one of them
+    // compiled to a silent no-match. Existence is the only thing that can be
+    // asked of the property until a `Bool` variant exists.
+    //
+    // This also pins the operator FALLBACK: `Eq` is not in this tier, so the
+    // pre-#4571 `: 'Eq'` landing spot would leave the <select> pointing at an
+    // <option> that does not render.
+    it('offers a boolean-declared key existence only, and emits Exists (#4571)', async () => {
+      mockPropertyDef('archived', 'boolean')
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      await user.type(screen.getByLabelText('Property key'), 'archived')
+
+      const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+      await waitFor(() => {
+        expect(Array.from(select.options).map((o) => o.value)).toEqual(['Exists', 'NotExists'])
+      })
+      expect(select.value).toBe('Exists')
+      // A nullary operator takes no operand, so there is no value control at all.
+      expect(screen.queryByLabelText('Value')).toBeNull()
+
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'HasProperty',
+        key: 'archived',
+        predicate: { type: 'Exists' },
+      })
+    })
+
     // AC7 — the Pages browser (no `showAdvancedFacets`) must keep its classic
     // behaviour EVEN when the registry would say otherwise: this popover never
     // fetches `list_property_defs` at all (an unstubbed call fails the test

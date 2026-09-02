@@ -1239,7 +1239,17 @@ export function useBlockResolve(): UseBlockResolveReturn {
         // 'invalidated' carries no `spaceId` and is intentionally exempt —
         // see the name-change-bus module docblock for why a full clear does
         // not need a space to compare against.
-        if (change.kind !== 'invalidated') {
+        //
+        // #4558 — so is a 'removed' event carrying `spaceId: null`, the
+        // space-less removal a publisher emits when it knows a page is gone
+        // but not which space it was in (a delete cascade's page children,
+        // which a move can have left in another space). It is honoured here
+        // whatever space is live: unlike 'added'/'renamed', applying a
+        // removal cannot INSERT a foreign-space row — it can only drop a row
+        // this cache is already offering, which is by construction one that
+        // belongs to the live space. On a cache that does not hold the id it
+        // is a no-op.
+        if (change.kind !== 'invalidated' && change.spaceId !== null) {
           const activeSpaceId = useSpaceStore.getState().currentSpaceId
           if (change.spaceId !== activeSpaceId) {
             // Log the event's SHAPE, not the event: `change.name` is a

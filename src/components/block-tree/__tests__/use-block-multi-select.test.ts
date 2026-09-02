@@ -796,7 +796,13 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
   //     `[{kind:'invalidated'}]` — a warm cache thrown away on every delete.
   //   * an ARRAY fan-out instead of a `Set` → 3 events, because
   //     `affected_page_ids` echoes the selected root back.
-  //   * an event scoped to anything but the origin space → `spaceId` mismatch.
+  //   * the selected roots scoped to anything but the origin space →
+  //     `spaceId` mismatch.
+  //
+  // #4558 — the CASCADED id is published space-lessly (`spaceId: null`) while
+  // the selected root keeps `SPACE_TEST`. A nested page's `space_id` is
+  // authoritative and a move does not re-parent it, so the cascade can reach a
+  // child that lives in another space entirely.
   it('evicts the selected page roots AND the nested pages the cascade swept, and nothing else', async () => {
     pageStore.setState({
       blocks: [
@@ -818,7 +824,7 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
       })
       expect(changes).toEqual([
         { kind: 'removed', entity: 'page', id: 'P_ROOT', spaceId: 'SPACE_TEST' },
-        { kind: 'removed', entity: 'page', id: 'P_NESTED', spaceId: 'SPACE_TEST' },
+        { kind: 'removed', entity: 'page', id: 'P_NESTED', spaceId: null },
       ] satisfies NameChange[])
     } finally {
       unsubscribe()
@@ -1134,6 +1140,70 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
     // page store either — only `affected_page_ids` can reach it.
     expect(idsAfter).not.toContain('P_NESTED')
     expect(idsAfter).toContain('P_STAYS')
+  })
+
+  // #4558 — the cascaded child in ANOTHER SPACE, the block-tree arm of the
+  // defect the two delete arms the issue names share.
+  //
+  // `move_blocks_to_space` moves a page by writing its authoritative
+  // `space_id` and does NOT re-parent it (pinned backend-side by
+  // `move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480`), so
+  // `P_MOVED` can sit under `P_ROOT` in SPACE_TEST while itself belonging to
+  // SPACE_OTHER. The delete cascade walks `parent_id` and sweeps it anyway.
+  // Publishing it scoped to the HOOK's `currentSpaceId` meant the subscriber —
+  // live on SPACE_OTHER — dropped it on the space check, and SPACE_OTHER's
+  // `[[` cache went on offering a page that is now in the trash.
+  //
+  // `P_STAYS_OTHER` present alongside `P_MOVED` absent rules out both the
+  // vacuous reading ("the cache was never warm") and the wholesale
+  // `invalidateNameCaches()` shortcut, which would empty the cache and let the
+  // next read re-fetch `P_MOVED` back out of the static mock.
+  it("a cascaded child in another space is evicted from THAT space's [[ cache", async () => {
+    // The user is looking at SPACE_OTHER; these are its pages.
+    useSpaceStore.setState({
+      currentSpaceId: 'SPACE_OTHER',
+      availableSpaces: [
+        { id: 'SPACE_TEST', name: 'Test', accent_color: null },
+        { id: 'SPACE_OTHER', name: 'Other', accent_color: null },
+      ],
+      isReady: true,
+    })
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return Promise.resolve([
+          pageRow('P_MOVED', 'Moved Page'),
+          pageRow('P_STAYS_OTHER', 'Stays Page'),
+        ])
+      }
+      if (cmd === 'delete_blocks_by_ids') {
+        return Promise.resolve({ deleted_count: 2, affected_page_ids: ['P_ROOT', 'P_MOVED'] })
+      }
+      return strictInvokeFallback(cmd)
+    })
+
+    const { result: resolveResult } = renderHook(() => useBlockResolve())
+    const before = await resolveResult.current.searchPages('')
+    expect(before.filter((i) => !i.isCreate).map((i) => i.id)).toEqual(
+      expect.arrayContaining(['P_MOVED', 'P_STAYS_OTHER']),
+    )
+
+    // The delete itself belongs to SPACE_TEST, where the selected root lives.
+    pageStore.setState({
+      blocks: [makeBlock({ id: 'P_ROOT', block_type: 'page', depth: 0 })],
+    })
+    const params = makeDefaultParams({
+      selectedBlockIds: ['P_ROOT'],
+      currentSpaceId: 'SPACE_TEST',
+    })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    const after = await resolveResult.current.searchPages('')
+    const idsAfter = after.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(idsAfter).not.toContain('P_MOVED')
+    expect(idsAfter).toContain('P_STAYS_OTHER')
   })
 
   // ── The restore half of the pair (#4534) ────────────────────────────────
