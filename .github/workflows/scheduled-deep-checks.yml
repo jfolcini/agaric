@@ -2705,7 +2705,10 @@ jobs:
           SKIP: ''
         run: |
           set -euo pipefail
-          expected=34   # keep equal to: prek list --hook-stage manual --output-format json | jq length
+          # Counted from prek.toml at run time, the independent source: every
+          # manual hook is that line. `|| true` because grep -c exits 1 on none.
+          expected=$(grep -cE '^stages = \["manual"\]$' prek.toml || true)
+          [ "$expected" -gt 0 ] || { echo "no manual-stage hooks found in prek.toml"; exit 1; }
           listed=$(prek list --hook-stage manual --output-format json | jq length)
           [ "$listed" -eq "$expected" ] || { echo "manual stage lists $listed hooks, expected $expected"; exit 1; }
           prek run --all-files --hook-stage manual 2>&1 | tee manual.log

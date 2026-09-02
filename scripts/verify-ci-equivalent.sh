@@ -916,15 +916,100 @@ phase_a_skip_extra() {
     printf '%s' "$out"
 }
 
+# ── the prek SKIP list (one copy, read by CI too) ───────────────────
+# Which hooks a diff's ABSENT categories make pointless to run. This is the
+# single source: `_validate.yml`'s "Compute prek SKIP" step calls
+# `--print-skip` below instead of carrying its own hand-mirrored copy, and
+# appends the CI-only `no-commit-to-branch` itself.
+# Args: <docs> <frontend> <backend> <ci>, each 1 (present) or 0 (absent).
+prek_skip_list() {
+    local has_docs="$1" has_ts="$2" has_rs="$3" has_ci="$4"
+    # Base: the two test hooks (always scoped in Phases C/D, never here).
+    local -a skip_items=(vitest cargo-test)
+
+    # Frontend absent → skip the FE lint/type/architecture hooks.
+    if [ "$has_ts" = "0" ]; then
+        skip_items+=(oxlint oxfmt tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
+            no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
+            import-cycles store-layering axe-presence test-file-naming \
+            ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
+            trace-interactions-named)
+    fi
+    # Backend absent → skip the Rust/cargo/SQL/migration hooks. No
+    # check-sqlx-cache-drift: CI is the gate and never skipped it (#3901's
+    # guard is `always_run`, and a stale cache is not a Rust-diff-only defect).
+    if [ "$has_rs" = "0" ]; then
+        skip_items+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
+            tauri-command-sanitize tauri-command-instrumented check-raw-tx \
+            check-dynamic-sql check-command-arity check-space-filter-drift \
+            unsafe-allowlist migrations-immutable migrations-strict-tables \
+            migrations-rebuild-cascade)
+    fi
+    # CI/tooling absent → skip the workflow/shell lint hooks.
+    if [ "$has_ci" = "0" ]; then
+        skip_items+=(actionlint zizmor shellcheck)
+    fi
+    # Docs absent → skip the Markdown/doc hooks.
+    if [ "$has_docs" = "0" ]; then
+        skip_items+=(markdownlint md-link-targets session-log-numbering)
+    fi
+
+    # Compound guards: skip only when EVERY category they straddle is absent,
+    # so a binding-boundary / cross-cutting hook still runs if ANY adjacent
+    # category changed.
+    [ "$has_ci" = "0" ] && [ "$has_rs" = "0" ] && skip_items+=(taplo-fmt taplo-lint)
+    # tauri-mock-parity / snapshot-redaction / retired-pending guard the FE↔BE
+    # binding boundary — they MUST run if frontend OR backend changed.
+    [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
+        skip_items+=(tauri-mock-parity snapshot-redaction no-retired-pending-doc-refs)
+    # doc-vs-code-paths reads BOTH docs and code, so it is a 3-way compound and
+    # not a docs-only hook: CI's placement, and CI is the gate.
+    [ "$has_docs" = "0" ] && [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
+        skip_items+=(architecture-citations doc-vs-code-paths)
+    [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-json)
+    [ "$has_rs" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-toml)
+    [ "$has_ci" = "0" ] && skip_items+=(check-yaml)
+
+    (IFS=,; printf '%s' "${skip_items[*]}")
+}
+
+# ── --print-skip ───────────────────────────────────────────────────
+# `--print-skip docs=<0|1>,frontend=<0|1>,backend=<0|1>,ci=<0|1>` prints the
+# SKIP list for those categories and exits. How CI reads the list above.
+if [ "${1:-}" = "--print-skip" ]; then
+    ps_spec="${2:-}"
+    ps_docs=""; ps_fe=""; ps_be=""; ps_ci=""
+    IFS=',' read -r -a ps_pairs <<< "$ps_spec"
+    for ps_pair in ${ps_pairs+"${ps_pairs[@]}"}; do
+        case "$ps_pair" in
+            docs=0|docs=1)         ps_docs="${ps_pair#*=}" ;;
+            frontend=0|frontend=1) ps_fe="${ps_pair#*=}" ;;
+            backend=0|backend=1)   ps_be="${ps_pair#*=}" ;;
+            ci=0|ci=1)             ps_ci="${ps_pair#*=}" ;;
+            *)
+                echo "✗ --print-skip: bad category '$ps_pair'" >&2
+                exit 1
+                ;;
+        esac
+    done
+    if [ -z "$ps_docs" ] || [ -z "$ps_fe" ] || [ -z "$ps_be" ] || [ -z "$ps_ci" ]; then
+        echo "✗ --print-skip needs all four: docs=<0|1>,frontend=<0|1>,backend=<0|1>,ci=<0|1>" >&2
+        exit 1
+    fi
+    prek_skip_list "$ps_docs" "$ps_fe" "$ps_be" "$ps_ci"
+    echo ""
+    exit 0
+fi
+
 # ── self-test ──────────────────────────────────────────────────────
 # Fixture suite for the probe-DB isolation above (#3257), run as the
 # `verify-ci-equivalent-selftest` prek hook — `manual` stage, so in CI on
 # every PR rather than at commit time (#4556 Phase 2). It also carries the
 # #4424 divergence ratchet, which compares this file's `CI_PATH_RE` against
 # `_validate.yml`'s `ci_re` (and the `_tracked` exclusion that derives from
-# it). It does NOT cover the two files' skip arrays, and never did: nothing
-# has ever ratcheted those against each other. Runs BEFORE the bypass guard
-# and the multi-minute verifier body, so it is fast and side-effect free.
+# it). It does not cover the skip list: there is only one now, and CI reads it
+# through `--print-skip` above. Runs BEFORE the bypass guard and the
+# multi-minute verifier body, so it is fast and side-effect free.
 if [ "${1:-}" = "--self-test" ]; then
     st_fail=0
     st_ok() { printf '  ok   - %s\n' "$1"; }
@@ -2668,10 +2753,11 @@ fi
 # "no staged files — skipping" — wasted noise since Phase C/D run them with
 # --range below) AND, category-aware, the hooks whose category did NOT change.
 #
-# This mirrors the CI `lint` job's per-category plan (an audit produced the
-# exact lists), with the documented `scripts/*.sh` divergence — see the note
-# on CI_PATH_RE: a hook is skipped only when the category it guards is absent
-# from this push. The nightly `full-suite` job in
+# The per-category plan is `prek_skip_list` above, which CI's `lint` job reads
+# through `--print-skip` — one list, not two. The documented `scripts/*.sh`
+# divergence is in the CLASSIFIER, not the list — see the note on CI_PATH_RE:
+# a hook is skipped only when the category it guards is absent from this push.
+# The nightly `full-suite` job in
 # .github/workflows/scheduled-deep-checks.yml runs the FULL unskipped prek
 # suite over the whole tree as the backstop, so this trades per-push
 # whole-tree coverage of the ABSENT categories for a faster push; a latent
@@ -2693,49 +2779,7 @@ fi
 # caller. A green run whose banner declares caller skips is not quotable as a
 # clean gate.
 
-# Base: the two test hooks (always scoped in Phases C/D, never here).
-skip_items=(vitest cargo-test)
-
-# Frontend absent → skip the FE lint/type/architecture hooks.
-if [ "$HAS_TS" = "0" ]; then
-    skip_items+=(oxlint oxfmt tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
-        no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
-        import-cycles store-layering axe-presence test-file-naming \
-        ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
-        trace-interactions-named)
-fi
-# Backend absent → skip the Rust/cargo/SQL/migration hooks.
-if [ "$HAS_RS" = "0" ]; then
-    skip_items+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
-        tauri-command-sanitize tauri-command-instrumented check-raw-tx \
-        check-dynamic-sql check-command-arity check-space-filter-drift \
-        unsafe-allowlist migrations-immutable migrations-strict-tables \
-        migrations-rebuild-cascade check-sqlx-cache-drift)
-fi
-# CI/tooling absent → skip the workflow/shell lint hooks.
-if [ "$HAS_CI" = "0" ]; then
-    skip_items+=(actionlint zizmor shellcheck)
-fi
-# Docs absent → skip the Markdown/doc hooks.
-if [ "$HAS_DOCS" = "0" ]; then
-    skip_items+=(markdownlint md-link-targets doc-vs-code-paths session-log-numbering)
-fi
-
-# Compound guards: skip only when EVERY category they straddle is absent, so a
-# binding-boundary / cross-cutting hook still runs if ANY adjacent category
-# changed.
-[ "$HAS_CI" = "0" ] && [ "$HAS_RS" = "0" ] && skip_items+=(taplo-fmt taplo-lint)
-# tauri-mock-parity / snapshot-redaction / retired-pending guard the FE↔BE
-# binding boundary — they MUST run if frontend OR backend changed.
-[ "$HAS_TS" = "0" ] && [ "$HAS_RS" = "0" ] && \
-    skip_items+=(tauri-mock-parity snapshot-redaction no-retired-pending-doc-refs)
-[ "$HAS_DOCS" = "0" ] && [ "$HAS_TS" = "0" ] && [ "$HAS_RS" = "0" ] && \
-    skip_items+=(architecture-citations)
-[ "$HAS_TS" = "0" ] && [ "$HAS_CI" = "0" ] && skip_items+=(check-json)
-[ "$HAS_RS" = "0" ] && [ "$HAS_CI" = "0" ] && skip_items+=(check-toml)
-[ "$HAS_CI" = "0" ] && skip_items+=(check-yaml)
-
-PHASE_A_REQUIRED_SKIP="$(IFS=,; printf '%s' "${skip_items[*]}")"
+PHASE_A_REQUIRED_SKIP="$(prek_skip_list "$HAS_DOCS" "$HAS_TS" "$HAS_RS" "$HAS_CI")"
 
 # #3968 — compose, don't clobber. See phase_a_skip_compose above for why
 # this is a union rather than a refusal, and why the result is announced.

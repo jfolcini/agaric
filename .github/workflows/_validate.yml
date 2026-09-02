@@ -919,18 +919,14 @@ jobs:
             lychee-${{ runner.os }}-
 
       - name: Compute prek SKIP (per changed category)
-        # ci/path-conditional-jobs: build the prek SKIP list from the
-        # detect-changes category flags so each hook runs ONLY when its
-        # category is in the diff. A category is ABSENT when its output is not
-        # exactly 'true' (fail-closed: detect-changes pins frontend=backend=true
-        # on any unrecognized non-docs path, so those hooks stay ON in doubt).
-        # Security / hygiene hooks (gitleaks, typos, trailing-whitespace,
-        # detect-private-key, large-files, shebang/exec, line-ending,
-        # merge-conflict) are NEVER added — they run on every non-docs PR.
-        # The binding-boundary guards (tauri-*-parity, snapshot-redaction,
-        # no-retired-pending-doc-refs) skip ONLY when BOTH frontend and backend
-        # are absent, so any change to either side of the IPC surface re-runs
-        # them.
+        # ci/path-conditional-jobs: the per-category list lives in
+        # `prek_skip_list` in scripts/verify-ci-equivalent.sh — the pre-push
+        # verifier and this gate read the one list. `no-commit-to-branch` is
+        # appended here because it is CI-only (the verifier runs pre-push,
+        # where the guard is the point). A category is ABSENT when its output
+        # is not exactly 'true' (fail-closed: detect-changes pins
+        # frontend=backend=true on any unrecognized non-docs path, so those
+        # hooks stay ON in doubt).
         env:
           FRONTEND: ${{ needs.detect-changes.outputs.frontend }}
           BACKEND: ${{ needs.detect-changes.outputs.backend }}
@@ -939,64 +935,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Present-flags. `docs` is the ANY-docs-changed flag (not docs_only):
-          # a mixed code+docs PR reaches this job (docs_only != 'true') and must
-          # still lint its markdown, so the doc hooks are skipped only when NO
-          # doc file changed.
-          fe=false; be=false; ci=false; docs=false
-          if [ "$FRONTEND" = "true" ]; then fe=true; fi
-          if [ "$BACKEND" = "true" ]; then be=true; fi
-          if [ "$CI" = "true" ]; then ci=true; fi
-          if [ "$DOCS" = "true" ]; then docs=true; fi
-
-          # Base: pre-push-only / dedicated-sibling-job hooks. Always skipped.
-          skips=(no-commit-to-branch vitest cargo-test)
-
-          # Single-category: skip a category's hooks when it is ABSENT.
-          if [ "$fe" != true ]; then
-            skips+=(oxlint oxfmt tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
-              no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
-              import-cycles store-layering axe-presence test-file-naming \
-              ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
-              trace-interactions-named)
-          fi
-          if [ "$be" != true ]; then
-            skips+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
-              tauri-command-sanitize tauri-command-instrumented check-raw-tx \
-              check-dynamic-sql check-command-arity check-space-filter-drift \
-              unsafe-allowlist migrations-immutable migrations-strict-tables \
-              migrations-rebuild-cascade)
-          fi
-          if [ "$ci" != true ]; then
-            skips+=(actionlint zizmor shellcheck)
-          fi
-          if [ "$docs" != true ]; then
-            skips+=(markdownlint md-link-targets session-log-numbering)
-          fi
-
-          # Compound (AND) rules: a shared hook is skipped only when EVERY
-          # category that can dirty its inputs is absent.
-          if [ "$ci" != true ] && [ "$be" != true ]; then
-            skips+=(taplo-fmt taplo-lint)
-          fi
-          if [ "$fe" != true ] && [ "$be" != true ]; then
-            skips+=(tauri-mock-parity snapshot-redaction \
-              no-retired-pending-doc-refs)
-          fi
-          if [ "$docs" != true ] && [ "$fe" != true ] && [ "$be" != true ]; then
-            skips+=(architecture-citations doc-vs-code-paths)
-          fi
-          if [ "$fe" != true ] && [ "$ci" != true ]; then
-            skips+=(check-json)
-          fi
-          if [ "$be" != true ] && [ "$ci" != true ]; then
-            skips+=(check-toml)
-          fi
-          if [ "$ci" != true ]; then
-            skips+=(check-yaml)
-          fi
-
-          skip_csv=$(IFS=,; printf '%s' "${skips[*]}")
+          # `docs` is the ANY-docs-changed flag (not docs_only): a mixed
+          # code+docs PR reaches this job and must still lint its markdown.
+          flag() { if [ "$1" = "true" ]; then echo 1; else echo 0; fi; }
+          skip_csv="no-commit-to-branch,$(bash scripts/verify-ci-equivalent.sh --print-skip \
+            "docs=$(flag "$DOCS"),frontend=$(flag "$FRONTEND"),backend=$(flag "$BACKEND"),ci=$(flag "$CI")")"
           printf 'Computed prek SKIP: %s\n' "$skip_csv"
           printf 'SKIP=%s\n' "$skip_csv" >> "$GITHUB_ENV"
 
@@ -1006,7 +949,8 @@ jobs:
           # exported via $GITHUB_ENV. It always carries the pre-push-only /
           # sibling-job hooks (no-commit-to-branch, vitest, cargo-test) and
           # appends a category's hooks only when that category is absent from
-          # the diff (see that step for the per-category + compound AND rules).
+          # the diff (`prek_skip_list` in scripts/verify-ci-equivalent.sh has
+          # the per-category + compound AND rules).
           # Security / hygiene hooks are never in it, so they always run here.
           SKIP: ${{ env.SKIP }}
           # Lychee reads GITHUB_TOKEN automatically. Without this, lychee
@@ -1028,7 +972,10 @@ jobs:
           SKIP: ''
         run: |
           set -euo pipefail
-          expected=34   # keep equal to: prek list --hook-stage manual --output-format json | jq length
+          # Counted from prek.toml at run time, the independent source: every
+          # manual hook is that line. `|| true` because grep -c exits 1 on none.
+          expected=$(grep -cE '^stages = \["manual"\]$' prek.toml || true)
+          [ "$expected" -gt 0 ] || { echo "no manual-stage hooks found in prek.toml"; exit 1; }
           listed=$(prek list --hook-stage manual --output-format json | jq length)
           [ "$listed" -eq "$expected" ] || { echo "manual stage lists $listed hooks, expected $expected"; exit 1; }
           prek run --all-files --hook-stage manual 2>&1 | tee manual.log
@@ -2518,11 +2465,13 @@ jobs:
         # nextest (the step above) does NOT run doc-tests — they compile as
         # their own per-example binaries outside the nextest harness. Without
         # this step a broken `/// ```` example on a pure helper would rot
-        # silently (#2555). Run only on shard 1 (doc-tests aren't partitioned,
-        # so running on both shards would just duplicate the work). Cheap while
-        # there are few doc-tests; the per-example binary is the real cost as
-        # adoption grows, which is why the convention is pure helpers only.
-        if: matrix.shard == 1
+        # silently (#2555). Doc-tests aren't partitioned, so one shard is
+        # enough: shard 2, the shorter of the two, so the ~5 min lands on the
+        # lane that finishes first instead of extending the job's critical
+        # path. Cheap while there are few doc-tests; the per-example binary is
+        # the real cost as adoption grows, which is why the convention is pure
+        # helpers only.
+        if: matrix.shard == 2
         working-directory: src-tauri
         run: cargo test --doc --workspace
 

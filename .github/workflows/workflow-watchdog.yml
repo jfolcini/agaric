@@ -11,7 +11,9 @@
 #
 # A workflow cannot report its own non-existence. This one is the out-of-band
 # observer that can. It runs on its own cron, asks GitHub's runs API about
-# every scheduled workflow in the repo, and answers two questions per workflow:
+# every scheduled workflow in the repo — plus `ci.yml`'s post-merge run on
+# `main`, which has no cron and is judged on question 2 alone — and answers
+# two questions per workflow:
 #
 #   1. LIVENESS  — did a `schedule`-event run start inside the window its cron
 #                  implies?  ("the checking machinery did not run")
@@ -43,10 +45,10 @@
 #   06:00 Mon, 06:00 Tue, 12:00 daily) already went stale once, missing the
 #   Thu 16:17 `fuzz-corpus-refresh.yml` slot #4504 added to `WATCHED` — the
 #   exact staleness class this workflow exists to catch, just in its own
-#   header. Nothing here `needs:` a watched workflow, downloads its
-#   artifacts, or shares code with it. A watched workflow that is invalid,
-#   disabled, starved of runners, or cancelled before its own reporter is
-#   scheduled is still reported.
+#   header — as is the one PUSH-watched lane, `ci.yml` on `main`. Nothing
+#   here `needs:` a watched workflow, downloads its artifacts, or shares code
+#   with it. A watched workflow that is invalid, disabled, starved of runners,
+#   or cancelled before its own reporter is scheduled is still reported.
 # * No `concurrency:` group, deliberately. Any concurrency control is a way for
 #   this run to be CANCELLED by a later trigger, and a cancelled watchdog is a
 #   silent watchdog. The job is one Node process and two `gh` calls per watched
@@ -92,9 +94,9 @@ jobs:
     # TWO `gh` calls per watched workflow, plus a Node process. It was ONE
     # until #4478 added the `.state` read beside the run-list fetch
     # (`check-workflow-liveness.mjs` has exactly two `execFileSync('gh', …)`
-    # sites, both per-lane), so with `WATCHED` at 7 lanes this step went from
-    # ~7 calls to ~14. `file-scheduled-failures.mjs` in the step below makes
-    # its own, but those are per-FINDING, not per-lane, and a quiet week
+    # sites, both per-lane), so with `WATCHED` at 8 lanes this step makes ~16
+    # calls. `file-scheduled-failures.mjs` in the step below makes its own,
+    # but those are per-FINDING, not per-lane, and a quiet week
     # issues none. This sentence is the stated basis for the bound below, so
     # it has to move when the call count does. Observed cost is still
     # seconds; 10 min bounds a wedged API call rather than budgeting real
@@ -203,7 +205,7 @@ jobs:
             "" \
             "Run: $RUN_URL" \
             "" \
-            "Open that run, then check by hand that \`branch-protection-assert\`, \`codeql\`, \`scorecard\`, \`e2e-tauri-weekly\`, \`scheduled-deep-checks\` and \`fuzz-corpus-refresh\` have all run recently and green.")"
+            "Open that run, then check by hand that \`branch-protection-assert\`, \`codeql\`, \`scorecard\`, \`e2e-tauri-weekly\`, \`scheduled-deep-checks\` and \`fuzz-corpus-refresh\` have all run recently and green, and that \`ci\` is green on the latest \`main\` commit.")"
           number="$(gh issue list --repo "$TARGET_REPO" \
             --search "in:title \"$title\"" --state all \
             --json number,title,state --limit 20 \
