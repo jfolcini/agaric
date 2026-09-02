@@ -52,7 +52,7 @@ expression: wire
         description: ULID of the target block.
         type: string
       key:
-        description: Property key (see list_property_defs).
+        description: "Property key (see list_property_defs). The reserved key `space` is rejected — space membership is not a content property."
         type: string
       space_id:
         description: "ULID of the space the agent is operating in. The write is rejected with a Validation error if `block_id`'s owning page lives in a different space."

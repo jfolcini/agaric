@@ -54,7 +54,7 @@ After every `tools/call`, `RmcpAdapter::call_tool` calls `emit_tool_completion(c
 `app_error_to_rmcp` (`rmcp_adapter.rs`) is the single `AppError → wire` mapping; keep its three arms in sync with this list:
 
 - `AppError::NotFound` → `-32001` (`JSONRPC_RESOURCE_NOT_FOUND`, `server.rs`): the tool or resource named in the arguments doesn't exist. rmcp's `-32601` means the JSON-RPC method doesn't exist.
-- `AppError::Validation` and `AppError::InvalidOperation` → `-32602`, keeping the agent-actionable `Display` message.
+- `AppError::Validation`, `AppError::InvalidOperation` and `AppError::Ulid` → `-32602`, keeping the agent-actionable `Display` message. A malformed ULID is a bad argument, not a server fault (#3301).
 - Everything else → `-32603` with the generic `INTERNAL_ERROR_WIRE_MESSAGE`; the real chain goes to `tracing::error!(target: "mcp", …)`. Internal variants embed sqlx / OS detail that must not reach a client, so never put `err.to_string()` on the catch-all arm.
 
 ## Disconnect grace period

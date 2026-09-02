@@ -77,6 +77,7 @@ use crate::commands::{
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -851,8 +852,8 @@ fn tool_desc_list_spaces() -> ToolDescription {
 // `[1, cap]` advertised range, (3) delegate to `*_inner`,
 // (4) serialise result to `serde_json::Value`. Errors from `*_inner`
 // propagate as `AppError` — the server translates them to JSON-RPC codes
-// (`-32001` for `NotFound`, `-32602` for `Validation`/`InvalidOperation`,
-// `-32603` otherwise).
+// (`-32001` for `NotFound`, `-32602` for `Validation`/`InvalidOperation`/
+// `Ulid`, `-32603` otherwise).
 // ---------------------------------------------------------------------------
 
 /// Reject `limit` values outside the documented `[1, cap]` range with
@@ -1010,10 +1011,24 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     validate_search_term_budget(&args)?;
     // Normalise ULID-shaped IDs (parent, each tag, and space) at the
     // MCP boundary so a lowercase ULID matches the canonical uppercase store.
-    let parent_id = args.parent_id.as_deref().map(normalize_ulid_arg);
+    // #3301 — and *parse* them, like `space_id` below: a malformed or
+    // truncated id must error rather than bind a string that matches
+    // nothing, which would make an agent wrongly conclude no block carries
+    // that tag. This runs after `validate_search_term_budget` so an
+    // oversized vector still gets its own actionable message.
+    let parent_id = args
+        .parent_id
+        .as_deref()
+        .map(|s| BlockId::from_string(normalize_ulid_arg(s)).map(BlockId::into_string))
+        .transpose()?;
     let tag_ids = args
         .tag_ids
-        .map(|v| v.iter().map(|s| normalize_ulid_arg(s)).collect());
+        .map(|v| {
+            v.iter()
+                .map(|s| BlockId::from_string(normalize_ulid_arg(s)).map(BlockId::into_string))
+                .collect::<Result<Vec<String>, AppError>>()
+        })
+        .transpose()?;
     // Fold the optional structured `filter` arg into the
     // `SearchFilter` passed to `search_blocks_inner`. Omitting `filter`
     // Preserves the pre-existing contract (no metadata / glob / toggle
@@ -1041,11 +1056,10 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             // #2956 — validate the id via the strict `from_string` constructor
             // like every sibling tool (`list_backlinks`, `list_property_defs`,
             // `create_page`): a malformed / truncated / empty `space_id` must
-            // error (`AppError::Ulid`, which `app_error_to_rmcp`'s catch-all
-            // maps to JSON-RPC -32603) rather than silently become an `Active`
-            // id that matches nothing (which would make an agent wrongly
-            // conclude the vault is empty). Kept consistent with the siblings,
-            // which surface the same `AppError::Ulid` → -32603.
+            // error (`AppError::Ulid`, which `app_error_to_rmcp` maps to
+            // JSON-RPC -32602 invalid-params, #3301) rather than silently
+            // become an `Active` id that matches nothing (which would make an
+            // agent wrongly conclude the vault is empty).
             scope: SpaceScope::Active(SpaceId::from_string(normalize_ulid_arg(&args.space_id))?),
             include_page_globs: f.include_page_globs,
             exclude_page_globs: f.exclude_page_globs,

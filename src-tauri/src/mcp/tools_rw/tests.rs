@@ -1566,6 +1566,52 @@ async fn set_property_cross_space_rejected() {
     );
 }
 
+/// #3301 — `space` is the column-backed space-membership key, not a
+/// content property: `set_property_in_tx_with_declaration` exempts it from
+/// the cross-space ref guard and projects it as
+/// `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`, i.e. the
+/// canonical cross-space move of a page and every descendant.
+/// `validate_block_in_space` cannot catch it — the block *is* still in the
+/// declared space at check time. The tool must reject the key outright,
+/// and the page must stay where it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_reserved_space_key_rejected() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let page_a = mk_page(&pool, &mat, &space_a, "PageA").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "set_property",
+            json!({
+                "block_id": page_a.clone(),
+                "key": "space",
+                "value_ref": space_b,
+                "space_id": space_a.clone(),
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("the reserved `space` key must be rejected");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "the reserved `space` key must surface as Validation, got {err:?}",
+    );
+    settle(&mat).await;
+
+    let still: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(&page_a)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        still.as_deref(),
+        Some(space_a.as_str()),
+        "the page must not have been re-homed into space B",
+    );
+}
+
 /// Agent in space A, target block in space B, tag is
 /// global → reject. Verifies the helper checks the *target* block
 /// (`block_id`) and not the global `tag_id`.

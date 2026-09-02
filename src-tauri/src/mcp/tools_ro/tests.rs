@@ -535,6 +535,81 @@ async fn search_malformed_space_id_errors_not_empty() {
     );
 }
 
+/// #3301 — the same asymmetry #2956 closed for `space_id`, for the other
+/// two id arguments: a malformed `parent_id` or `tag_ids` entry was only
+/// `normalize_ulid_arg`-ed, so it bound a string that matched nothing and
+/// the tool answered `{items: []}`. An agent that dropped a character off
+/// a tag ULID would conclude no block carries that tag. Both must now
+/// error; the control call proves the vault is not in fact empty.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_malformed_parent_and_tag_ids_error_not_empty() {
+    let (tools, mat, _dir) = mk_tools().await;
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle in the haystack".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "parent_id": "NOT-A-VALID-ULID",
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a malformed parent_id must be rejected, not return empty results");
+    assert!(
+        matches!(err, AppError::Ulid(_)),
+        "malformed parent_id must surface as AppError::Ulid, got {err:?}"
+    );
+
+    // A truncated (25-char) tag ULID — the realistic copy/paste slip.
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "tag_ids": ["01ARZ3NDEKTSV4RRFFQ69G5FA"],
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a malformed tag_ids entry must be rejected, not return empty results");
+    assert!(
+        matches!(err, AppError::Ulid(_)),
+        "malformed tag_ids entry must surface as AppError::Ulid, got {err:?}"
+    );
+
+    // Control: the same query with neither id still finds the seeded hit,
+    // so the rejections above were about the bad ids, not an empty vault.
+    let ok = tools
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
+        .await
+        .expect("valid args must still return the seeded match");
+    assert_eq!(
+        ok["items"].as_array().expect("items").len(),
+        1,
+        "the vault is non-empty once the malformed ids are gone"
+    );
+}
+
 // -------------------------------------------------------------------
 // Explicit `limit` validation (rejects out-of-range values
 // instead of silently clamping). Six tools advertise a min/max in
