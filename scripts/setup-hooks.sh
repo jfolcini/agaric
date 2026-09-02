@@ -356,6 +356,18 @@ cargo_get_pinned() {
   if cargo install --locked "${crate}@${version}" >/dev/null 2>&1; then
     ok "$bin $version (cargo install)"; return
   fi
+  # zizmor also ships prebuilt wheels on PyPI. That is the route on a box
+  # where binstall cannot reach GitHub (a proxy that blocks its GraphQL
+  # lookup) and the source build needs a newer rustc than the one installed.
+  if [ "$crate" = zizmor ] && have python3 \
+    && python3 -m pip install --user --quiet "zizmor==${version}" >/dev/null 2>&1; then
+    local wheel_bin
+    wheel_bin="$(python3 -m site --user-base)/bin/zizmor"
+    if [ -x "$wheel_bin" ]; then
+      mkdir -p "$HOME/.cargo/bin" && ln -sf "$wheel_bin" "$HOME/.cargo/bin/zizmor"
+      ok "$bin $version (pip wheel, linked into ~/.cargo/bin)"; return
+    fi
+  fi
   warn "could not install ${crate}@${version} — run: cargo install --locked ${crate}@${version}"
 }
 
