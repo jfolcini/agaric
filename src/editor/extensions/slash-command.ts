@@ -20,6 +20,7 @@ import { PluginKey } from '@tiptap/pm/state'
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
 import { createSuggestionRenderer } from '@/editor/suggestion-renderer'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { t } from '@/lib/i18n'
 
 export const slashCommandPluginKey = new PluginKey('slashCommand')
 
@@ -50,7 +51,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
     return [
       createPickerPlugin({
         loggerComponent: 'SlashCommand',
-        displayName: 'Slash commands',
+        displayName: t('editor.suggestion.slashCommands'),
         pluginKey: slashCommandPluginKey,
         char: '/',
         // #1344 — only open the slash menu when `/` is at the start of the

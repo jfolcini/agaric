@@ -18,6 +18,7 @@ import {
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { t } from '@/lib/i18n'
 
 export const blockLinkPickerPluginKey = new PluginKey('blockLinkPicker')
 
@@ -142,7 +143,7 @@ export const BlockLinkPicker = Extension.create<BlockLinkPickerOptions>({
     return [
       createPickerPlugin({
         loggerComponent: 'BlockLinkPicker',
-        displayName: 'Block links',
+        displayName: t('editor.suggestion.blockLinks'),
         pluginKey: blockLinkPickerPluginKey,
         char: '[[',
         allowedPrefixes: null,

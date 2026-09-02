@@ -16,6 +16,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
 import {
   HasParentMatchingEditor,
@@ -735,6 +736,342 @@ describe('AddFilterPopover', () => {
         expect(await axe(document.body)).toHaveNoViolations()
         await user.click(screen.getByRole('button', { name: 'Back' }))
       }
+    })
+  })
+
+  // ── #4553 Phase 1 — tiered property-predicate exposure: the operator set +
+  // `PropertyValue` variant are DERIVED from the key's declared `value_type`
+  // (via `listPropertyDefs`) on the advanced surface, and pinned to the
+  // classic 4-op/Text pair on the Pages browser. ─────────────────────────────
+  describe('tiered property-predicate exposure (#4553 Phase 1)', () => {
+    function mockPropertyDef(key: string, valueType: string) {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          list_property_defs: () => ({
+            items: [
+              { key, value_type: valueType, options: null, created_at: '2026-01-01T00:00:00Z' },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }),
+        }),
+      )
+    }
+
+    // AC1 — a `number`-declared key offers exactly Eq/Ne/Lt/Lte/Gt/Gte/
+    // Exists/NotExists, and the emitted primitive carries `PropertyValue::Num`.
+    it('AC1 — offers all 8 ordered-comparison ops for a number-declared key and emits Num', async () => {
+      mockPropertyDef('estimate', 'number')
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      await user.type(screen.getByLabelText('Property key'), 'estimate')
+
+      const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+      await waitFor(() => {
+        const values = Array.from(select.options).map((o) => o.value)
+        expect(values).toEqual(['Eq', 'Ne', 'Lt', 'Lte', 'Gt', 'Gte', 'Exists', 'NotExists'])
+      })
+
+      await user.selectOptions(select, 'Gt')
+      const valueInput = screen.getByLabelText('Value') as HTMLInputElement
+      expect(valueInput).toHaveAttribute('type', 'number')
+      await user.type(valueInput, '3')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'HasProperty',
+        key: 'estimate',
+        predicate: { type: 'Gt', value: { type: 'Num', value: 3 } },
+      })
+    })
+
+    // AC2 — text / select / undeclared all offer exactly Eq/Ne/Contains/
+    // StartsWith/Exists/NotExists; ordered comparisons are absent from the DOM
+    // (not merely unselected — the <option> itself is not rendered).
+    it('AC2 — offers exactly 6 ops (no ordered comparisons) for text/select/undeclared', async () => {
+      mockPropertyDef('status', 'select')
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      const keyInput = screen.getByLabelText('Property key')
+      await user.type(keyInput, 'status')
+
+      const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+      const expectedOps = ['Eq', 'Ne', 'Contains', 'StartsWith', 'Exists', 'NotExists']
+      await waitFor(() => {
+        expect(Array.from(select.options).map((o) => o.value)).toEqual(expectedOps)
+      })
+      expect(select.querySelector('option[value="Lt"]')).toBeNull()
+      expect(select.querySelector('option[value="Gt"]')).toBeNull()
+      expect(select.querySelector('option[value="Lte"]')).toBeNull()
+      expect(select.querySelector('option[value="Gte"]')).toBeNull()
+
+      // An undeclared key (no registry entry at all) behaves identically.
+      await user.clear(keyInput)
+      await user.type(keyInput, 'totallyUnknownKey')
+      await waitFor(() => {
+        expect(Array.from(select.options).map((o) => o.value)).toEqual(expectedOps)
+      })
+    })
+
+    // AC3 — a `date`-declared key gets a native date value control, and emits
+    // `PropertyValue::Date`.
+    it('AC3 — date-declared key gets a date value input and emits Date', async () => {
+      mockPropertyDef('deadline', 'date')
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      await user.type(screen.getByLabelText('Property key'), 'deadline')
+
+      const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+      await waitFor(() => expect(Array.from(select.options).map((o) => o.value)).toContain('Lte'))
+      await user.selectOptions(select, 'Lte')
+
+      const valueInput = screen.getByLabelText('Value') as HTMLInputElement
+      expect(valueInput).toHaveAttribute('type', 'date')
+      await user.type(valueInput, '2026-03-01')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'HasProperty',
+        key: 'deadline',
+        predicate: { type: 'Lte', value: { type: 'Date', value: '2026-03-01' } },
+      })
+    })
+
+    // AC4 — a `ref`-declared key offers only Eq/Ne/Exists/NotExists, and its
+    // value control is the SHARED page/block picker (not a bare text box) —
+    // emits `PropertyValue::Ref` carrying the picked page's ULID.
+    it('AC4 — ref-declared key uses the page/block picker and emits Ref', async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_REF' })
+      useResolveStore.setState({ cache: new Map(), version: 0 })
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          list_property_defs: () => ({
+            items: [
+              {
+                key: 'owner',
+                value_type: 'ref',
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }),
+          list_all_pages_in_space: () => [{ id: 'PAGE_A', content: 'Roadmap' }],
+        }),
+      )
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      await user.type(screen.getByLabelText('Property key'), 'owner')
+
+      const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+      await waitFor(() => {
+        expect(Array.from(select.options).map((o) => o.value)).toEqual([
+          'Eq',
+          'Ne',
+          'Exists',
+          'NotExists',
+        ])
+      })
+
+      // The picker, not a bare text box: no plain "Value" text input, and the
+      // shared page-search UI (same testid `LinkTargetEditor` builds on) mounts.
+      expect(screen.getByTestId('property-ref-value-input')).toBeInTheDocument()
+      await screen.findByText('Roadmap')
+      await user.click(screen.getByText('Roadmap'))
+      // The "you picked this" readout appears once a page is chosen.
+      expect(screen.getByTestId('property-ref-selected')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'HasProperty',
+        key: 'owner',
+        predicate: { type: 'Eq', value: { type: 'Ref', value: 'PAGE_A' } },
+      })
+    })
+
+    // #4553 review, note 6 — the operator RECONCILIATION had no test at all
+    // (the PR description claimed one; it did not exist). `propOp` is DERIVED
+    // during render as `propertyOps.some(op => op.value === rawPropOp) ? rawPropOp
+    // : 'Eq'`, so an operator that the newly-typed key's tier does not offer
+    // must fall back to `Eq` — both in the rendered <select> and, crucially, in
+    // what `buildPredicate` emits. Without the fallback the popover emits a
+    // predicate the user cannot see selected: `Contains` against a `number`
+    // key, which the engine compiles to `1=0` (matches nothing, silently).
+    it('reconciles a now-invalid operator to Eq when the key changes tier', async () => {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          list_property_defs: () => ({
+            items: [
+              {
+                key: 'status',
+                value_type: 'text',
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+              {
+                key: 'estimate',
+                value_type: 'number',
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }),
+        }),
+      )
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      render(<AddFilterPopover onAddFilter={onAddFilter} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      const keyInput = screen.getByLabelText('Property key')
+      await user.type(keyInput, 'status')
+
+      // Pick a Text-ONLY operator.
+      const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+      await waitFor(() => {
+        expect(Array.from(select.options).map((o) => o.value)).toContain('Contains')
+      })
+      await user.selectOptions(select, 'Contains')
+      expect(select.value).toBe('Contains')
+
+      // Now retype the key as a `number`-declared one. `Contains` is not in the
+      // Num tier, so it must not survive.
+      await user.clear(keyInput)
+      await user.type(keyInput, 'estimate')
+      await waitFor(() => {
+        expect(Array.from(select.options).map((o) => o.value)).toEqual([
+          'Eq',
+          'Ne',
+          'Lt',
+          'Lte',
+          'Gt',
+          'Gte',
+          'Exists',
+          'NotExists',
+        ])
+      })
+      // The <select> shows Eq — not a stale `Contains` pointing at an <option>
+      // that no longer renders.
+      expect(select.value).toBe('Eq')
+      expect(select.querySelector('option[value="Contains"]')).toBeNull()
+
+      // And the EMITTED predicate agrees with what the user can see: `Eq`,
+      // over the Num variant the new key's tier selects. (Asserting only the
+      // <select> would pass even if `buildPredicate` read the stale operator.)
+      await user.type(screen.getByLabelText('Value'), '3')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'HasProperty',
+        key: 'estimate',
+        predicate: { type: 'Eq', value: { type: 'Num', value: 3 } },
+      })
+    })
+
+    // AC7 — the Pages browser (no `showAdvancedFacets`) must keep its classic
+    // behaviour EVEN when the registry would say otherwise: this popover never
+    // fetches `list_property_defs` at all (an unstubbed call fails the test
+    // per the strict-invoke harness), so a leak across the boundary would fail
+    // loudly rather than silently widening.
+    it('AC7 — the Pages browser never widens, and never calls list_property_defs', async () => {
+      const user = userEvent.setup()
+      const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
+      // No invoke mock installed at all — an unstubbed `list_property_defs`
+      // call would fail this test via the global afterEach in test-setup.ts.
+      render(<AddFilterPopover onAddFilter={onAddFilter} />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      await user.type(screen.getByLabelText('Property key'), 'estimate')
+
+      const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+      expect(Array.from(select.options).map((o) => o.value)).toEqual([
+        'Eq',
+        'Ne',
+        'Exists',
+        'NotExists',
+      ])
+      await user.type(screen.getByLabelText('Value'), '3')
+      await user.click(screen.getByRole('button', { name: 'Apply' }))
+
+      expect(onAddFilter).toHaveBeenCalledWith({
+        type: 'HasProperty',
+        key: 'estimate',
+        predicate: { type: 'Eq', value: { type: 'Text', value: '3' } },
+      })
+    })
+
+    // AC8 — vitest-axe over the widened editor: empty, populated, and the
+    // Ref picker's error (load-rejected) state.
+    it('AC8 — no a11y violations in the widened property editor (empty + populated)', async () => {
+      mockPropertyDef('estimate', 'number')
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      // Empty state: key untyped, default Eq/Text.
+      expect(await axe(document.body)).toHaveNoViolations()
+
+      await user.type(screen.getByLabelText('Property key'), 'estimate')
+      await waitFor(() => {
+        const select = screen.getByLabelText('Comparison') as HTMLSelectElement
+        expect(Array.from(select.options).map((o) => o.value)).toContain('Lt')
+      })
+      await user.selectOptions(screen.getByLabelText('Comparison'), 'Gt')
+      await user.type(screen.getByLabelText('Value'), '3')
+      // Populated state: number key, ordered comparison + value filled.
+      expect(await axe(document.body)).toHaveNoViolations()
+    })
+
+    it('AC8 — no a11y violations in the Ref picker error (load-rejected) state', async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_REF' })
+      useResolveStore.setState({ cache: new Map(), version: 0 })
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          list_property_defs: () => ({
+            items: [
+              {
+                key: 'owner',
+                value_type: 'ref',
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+          }),
+          list_all_pages_in_space: () => Promise.reject(new Error('backend down')),
+        }),
+      )
+      const user = userEvent.setup()
+      render(<AddFilterPopover onAddFilter={vi.fn()} showAdvancedFacets />)
+      await openPopover(user)
+
+      await user.click(screen.getByText('Has property'))
+      await user.type(screen.getByLabelText('Property key'), 'owner')
+      // The rejected load recovers to the picker's empty state without crashing.
+      await screen.findByText('No matching pages')
+      expect(await axe(document.body)).toHaveNoViolations()
     })
   })
 

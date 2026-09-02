@@ -5,8 +5,10 @@
 //! sort + cursor + limit), runs it on the READ pool, and returns a
 //! cursor-paginated [`AdvancedQueryResponse`].
 //!
-//! Structural-only: no full-text, grouping, or aggregation — those are
-//! fast-follows (see `agaric_store::query` module docs).
+//! Full-text, grouping and aggregation have all shipped: `AdvancedQueryRequest`
+//! carries `fulltext`, `group_by` and `aggregates` (see `agaric_store::query`
+//! module docs) and this command needs no signature change to serve any of
+//! them — they ride along in the request struct.
 
 use tauri::State;
 

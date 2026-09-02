@@ -273,6 +273,15 @@ vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
+// #4552 slice 2 — stub the real IPC-backed `setListStyle` write (already
+// covered by `list-style.test.ts`) so Turn-into tests can assert the CALL
+// without needing to plumb a `delete_property`/`set_property` mock through
+// `mockedInvoke`'s many per-test implementations.
+vi.mock('@/lib/list-style', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/list-style')>()
+  return { ...actual, setListStyle: vi.fn().mockResolvedValue(undefined) }
+})
+
 // #1016 — wrap the real QueryBuilderModal so a test can drive its `onSave`
 // with controlled timing (re-open the builder for a different block while the
 // save promise is still in flight) and read back `open` to assert whether the
@@ -359,6 +368,7 @@ import { BlockTree } from '@/components/editor/BlockTree'
 import { announce } from '@/lib/announcer'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { guessMimeType } from '@/lib/file-utils'
+import { setListStyle } from '@/lib/list-style'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -4535,6 +4545,50 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     // The mounted editor (on b2) is untouched.
     expect(mockUnmount).not.toHaveBeenCalled()
     expect(mockMount).not.toHaveBeenCalledWith('b1', expect.anything())
+  })
+
+  // #4552 slice 2 — the context-menu Turn-into path additionally writes the
+  // `listStyle` property `blockType` implies, alongside its content edit
+  // (bare — no `1. ` marker; see `block-type-convert.ts`).
+  it('Turn into numbered-list writes content bare AND sets listStyle=ordered', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'hello' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'b1' })
+    mockActiveBlockId = 'b1'
+    mockUnmountReturn = 'hello'
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onTurnInto).toBeDefined()
+    })
+
+    await act(async () => {
+      await capturedBlockActions?.onTurnInto?.('b1', 'numbered-list')
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'b1', toText: 'hello' })
+    })
+    expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('b1', 'ordered')
+  })
+
+  it('Turn into a non-list type (h1) clears listStyle (setListStyle none)', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'hello' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'b1' })
+    mockActiveBlockId = 'b1'
+    mockUnmountReturn = 'hello'
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onTurnInto).toBeDefined()
+    })
+
+    await act(async () => {
+      await capturedBlockActions?.onTurnInto?.('b1', 'h1')
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('b1', 'none')
+    })
   })
 
   // #2662 — Turn into must notify the undo store the same way every other

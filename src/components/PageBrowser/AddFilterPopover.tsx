@@ -19,7 +19,7 @@
 
 import { Plus } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -37,13 +37,26 @@ import {
   type DateOpKind,
   type EditorKey,
   LAST_EDITED_BUCKETS,
+  PROPERTY_OPS,
   type PropertyOpKind,
+  propertyOpsForValueKind,
+  propertyValueKindForType,
+  type PropertyValueKind,
   VALUE_BEARING_OPS,
 } from '@/components/PageBrowser/add-filter/vocab'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-import type { DatePredicate, FilterExpr, FilterPrimitive, PropertyPredicate } from '@/lib/bindings'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type {
+  DatePredicate,
+  FilterExpr,
+  FilterPrimitive,
+  PropertyPredicate,
+  PropertyValue,
+} from '@/lib/bindings'
+import { logger } from '@/lib/logger'
 
 export interface AddFilterPopoverProps {
   /** Emits the chosen primitive. The parent appends it to its chip set. */
@@ -105,7 +118,7 @@ export function AddFilterPopover({
   const [pathExclude, setPathExclude] = useState(false)
   const [propKey, setPropKey] = useState('')
   const [propValue, setPropValue] = useState('')
-  const [propOp, setPropOp] = useState<PropertyOpKind>('Eq')
+  const [rawPropOp, setPropOp] = useState<PropertyOpKind>('Eq')
   // #1280 D2 — advanced facet editor state.
   const [stateValues, setStateValues] = useState<ReadonlyArray<string>>([])
   const [stateIsNull, setStateIsNull] = useState(false)
@@ -123,7 +136,72 @@ export function AddFilterPopover({
   // #1478 — relational link picker state (shared by the links-to / linked-from
   // editors; `linkKind` says which primitive the open editor emits).
   const [linkKind, setLinkKind] = useState<'LinksTo' | 'LinkedFrom'>('LinksTo')
+  // #4553 Phase 1 — `key -> value_type` from the schema registry
+  // (`listPropertyDefs`), fetched lazily (see the effect below) so the
+  // operator set + `PropertyValue` variant the property editor offers can be
+  // DERIVED from the property's declared type instead of hardcoded to Text.
+  const [propertyValueTypes, setPropertyValueTypes] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  )
   const triggerRef = useRef<HTMLButtonElement>(null)
+
+  // #4553 Phase 1 — fetch the property-defs registry once the has-property
+  // editor opens, but ONLY on the advanced surface (`showAdvancedFacets`):
+  // the Pages browser's `+ Filter` popover must keep its classic
+  // 4-operator/Text-only behaviour untouched (acceptance criterion 7), and
+  // never issue this IPC call at all. `listPropertyDefs` is paginated; this
+  // popover is single-page-by-design (mirrors `QueryBuilderModal`'s datalist
+  // fetch) — the seeded vocabulary fits well under a single page, and a key
+  // beyond the first page simply falls back to the undeclared (Text)
+  // behaviour rather than blocking on a full walk.
+  useEffect(() => {
+    if (!showAdvancedFacets || editor !== 'property') return
+    let cancelled = false
+    commands
+      .listPropertyDefs(null, null)
+      .then(unwrap)
+      .then(({ items }) => {
+        if (!cancelled)
+          setPropertyValueTypes(new Map(items.map((def) => [def.key, def.value_type])))
+      })
+      .catch((err: unknown) => {
+        logger.warn('AddFilterPopover', 'failed to load property definitions', undefined, err)
+        if (!cancelled) setPropertyValueTypes(new Map())
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [showAdvancedFacets, editor])
+
+  // The `PropertyValue` variant + operator set the has-property editor
+  // offers for the CURRENTLY TYPED key. On the Pages browser
+  // (`!showAdvancedFacets`) these are pinned to the historical Text/4-op
+  // pair regardless of the registry, matching acceptance criterion 7.
+  const propertyValueKind: PropertyValueKind = useMemo(
+    () =>
+      showAdvancedFacets
+        ? propertyValueKindForType(propertyValueTypes.get(propKey.trim()))
+        : 'Text',
+    [showAdvancedFacets, propKey, propertyValueTypes],
+  )
+  const propertyOps = useMemo(
+    () => (showAdvancedFacets ? propertyOpsForValueKind(propertyValueKind) : PROPERTY_OPS),
+    [showAdvancedFacets, propertyValueKind],
+  )
+
+  // Reconcile `propOp` when the derived operator set no longer contains it —
+  // e.g. the user had `Lt` selected for a `number` key, then edited the key to
+  // one declared `ref`, which only offers Eq/Ne/Exists/NotExists. `Eq` is in
+  // every set, so it is always a valid landing spot.
+  //
+  // DERIVED during render rather than reconciled in an effect. The effect form
+  // (which `QueryControlsBar`'s Relevance-sort reconciliation still uses) needs
+  // a second render to settle, so for one commit the native `<select>` is
+  // pointed at an option that no longer renders AND `buildPredicate` can read
+  // the stale operator. Deriving makes the invalid state unrepresentable
+  // instead of transient, and drops the `react(set-state-in-effect)` warning
+  // this file did not have before.
+  const propOp = propertyOps.some((op) => op.value === rawPropOp) ? rawPropOp : 'Eq'
 
   const reset = useCallback(() => {
     setEditor(null)
@@ -165,10 +243,15 @@ export function AddFilterPopover({
     [onAddFilter, close],
   )
 
-  // D14/D24: the property editor's key is always required. For Eq/Ne the value
-  // is required too; for Exists/NotExists there is no value. Centralise the
-  // emit so both the Apply button and Enter-to-apply share one guard, and so
-  // the predicate shape (D8) is built in one place.
+  // D14/D24: the property editor's key is always required. For a value-bearing
+  // op the value is required too; for Exists/NotExists there is no value.
+  // Centralise the emit so both the Apply button and Enter-to-apply share one
+  // guard, and so the predicate shape (D8) is built in one place.
+  //
+  // #4553 Phase 1 — the emitted `PropertyValue` variant is `propertyValueKind`
+  // (derived above from the key's declared `value_type`), NOT hardcoded to
+  // Text. On the Pages browser `propertyValueKind` is pinned to `'Text'`, so
+  // this reduces to the exact predicate the popover always emitted there.
   const applyProperty = useCallback(() => {
     const k = propKey.trim()
     if (!k) return
@@ -176,13 +259,38 @@ export function AddFilterPopover({
     if (VALUE_BEARING_OPS.has(propOp)) {
       const v = propValue.trim()
       if (!v) return
-      // The Pages UI only emits Text values; Ref is reserved for saved-views.
-      predicate = { type: propOp as 'Eq' | 'Ne', value: { type: 'Text', value: v } }
+      let value: PropertyValue
+      switch (propertyValueKind) {
+        case 'Num': {
+          const n = Number(v)
+          // Guards the same case the editor's `canApply` already blocks
+          // (e.g. a bare "-" or "."); belt-and-braces against emitting a
+          // non-finite `f64` if this is ever called from elsewhere.
+          if (!Number.isFinite(n)) return
+          value = { type: 'Num', value: n }
+          break
+        }
+        case 'Date': {
+          value = { type: 'Date', value: v }
+          break
+        }
+        case 'Ref': {
+          value = { type: 'Ref', value: v }
+          break
+        }
+        default: {
+          value = { type: 'Text', value: v }
+        }
+      }
+      predicate = {
+        type: propOp as 'Eq' | 'Ne' | 'Lt' | 'Gt' | 'Lte' | 'Gte' | 'Contains' | 'StartsWith',
+        value,
+      }
     } else {
       predicate = { type: propOp as 'Exists' | 'NotExists' }
     }
     emit({ type: 'HasProperty', key: k, predicate })
-  }, [propKey, propValue, propOp, emit])
+  }, [propKey, propValue, propOp, propertyValueKind, emit])
 
   // #1280 D2 — State: emit the multi-value membership leaf. At least one value
   // OR the is-null toggle must be set (an empty, non-null State is a no-op the
@@ -477,6 +585,8 @@ export function AddFilterPopover({
             propKey={propKey}
             propValue={propValue}
             propOp={propOp}
+            ops={propertyOps}
+            valueKind={propertyValueKind}
             onKeyChange={setPropKey}
             onValueChange={setPropValue}
             onOpChange={setPropOp}

@@ -1028,6 +1028,34 @@ pub async fn export_page_markdown_inner(
     // `agaric-engine/src/import.rs`; (4) `INLINE_PROPERTY_RESERVED_KEYS` in
     // `src/lib/inline-property-parse.ts`. Copies (1) and (2) are literal SQL,
     // so grepping for either constant name will NOT find them.
+    //
+    // ASYMMETRY (#4552 slice 4) — `listStyle` is added to the two EXPORT
+    // copies (this one and the descendant-property query below) and
+    // DELIBERATELY NOT to the two import/parse copies
+    // (`FRONTMATTER_RESERVED_KEYS`, `INLINE_PROPERTY_RESERVED_KEYS`). The four
+    // copies are not one set with four spellings; they answer two different
+    // questions, and `listStyle` answers them differently:
+    //
+    //   * EXPORT ("may this key be written as a `key:: value` line?") — NO.
+    //     A styled block already exports its list-ness as the `- ` / `N. `
+    //     marker emitted by the descendant walk below. Emitting the property
+    //     line as well would render the marker twice on re-import (once as
+    //     structure, once as a visible property row) — the exact
+    //     double-emission the DRIFT WARNING's `repeat*` keys avoid.
+    //   * IMPORT ("must this key be refused when it appears in a file?") — NO,
+    //     it must be accepted. `listStyle` is an ordinary user-settable
+    //     `select` property (migration 0103): typing `listStyle:: bullet`
+    //     inline, or hand-writing it in a markdown file, must keep working.
+    //     The reserved keys are excluded there because they are column-backed
+    //     or lifecycle-managed and would FAIL `set_property_in_tx`;
+    //     `listStyle` has no such constraint.
+    //
+    // So this is an export-only suppression of a REDUNDANT line, not a
+    // reservation of the key — and adding `listStyle` to the other two copies
+    // would be a regression, not a consistency fix.
+    // `src/lib/__tests__/inline-property-parse.test.ts` pins its absence from
+    // `INLINE_PROPERTY_RESERVED_KEYS` so a later "add it everywhere" edit
+    // fails loudly.
     let property_rows = sqlx::query!(
         r#"SELECT key AS "key!", value_text, value_date, value_num, value_ref,
                   value_bool AS "value_bool: i64"
@@ -1036,7 +1064,7 @@ pub async fn export_page_markdown_inner(
              AND key NOT IN (
                 'space', 'is_space', 'created_at', 'completed_at',
                 'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',
-                'repeat-origin', 'template'
+                'repeat-origin', 'template', 'listStyle'
              )"#,
         page_id,
     )
@@ -1077,13 +1105,49 @@ pub async fn export_page_markdown_inner(
     // `INLINE_PROPERTY_RESERVED_KEYS` in `src/lib/inline-property-parse.ts`.
     // Copies (1) and (2) are literal SQL, so grepping for either constant name
     // will NOT find them.
+    //
+    // #4552 slice 4 — `listStyle` is excluded HERE (and in the page query
+    // above) but NOT from the two import-side copies; the full rationale for
+    // that deliberate asymmetry is on the page-property query above. In short:
+    // the descendant walk below emits this block's list-ness as a `- ` / `N. `
+    // MARKER, so a `listStyle:: ordered` line here would be a duplicate
+    // rendering of the same fact — while an inline / hand-written
+    // `listStyle:: bullet` must still IMPORT, which is why the import copies
+    // are left alone. This one is NOT belt-and-braces symmetry with the import
+    // filter (unlike the `repeat*` keys): it is load-bearing, because the
+    // importer does write `listStyle` rows.
     let descendant_ids: Vec<String> = descendants
         .iter()
         .map(|b| b.id.clone().into_string())
         .collect();
     let mut descendant_properties: HashMap<String, Vec<FrontmatterRow>> = HashMap::new();
+    // #4552 slice 4 — `listStyle` per descendant, read SEPARATELY because the
+    // query above now excludes it (see the asymmetry comment there). It is not
+    // a `key:: value` property line in the export; it is the input to the
+    // `- ` / `N. ` MARKER the descendant walk emits, so it needs its own map
+    // rather than a row in `descendant_properties`. Only the `value_text`
+    // column is read: `listStyle` is a `select`-typed definition (migration
+    // 0103) whose values are the plain strings `bullet` / `ordered`.
+    let mut list_styles: HashMap<String, String> = HashMap::new();
     if !descendant_ids.is_empty() {
         let ids_json = serde_json::to_string(&descendant_ids)?;
+        let style_rows = sqlx::query!(
+            r#"SELECT block_id AS "block_id!", value_text
+               FROM block_properties
+               WHERE block_id IN (SELECT value FROM json_each(?1))
+                 AND key = 'listStyle'"#,
+            ids_json,
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for r in style_rows {
+            // Absent / unrecognised means `none` — mirrors `asListStyle` in
+            // `src/lib/list-style.ts`, so a stray row never emits a marker the
+            // renderer would not draw.
+            if let Some(v) = r.value_text.filter(|v| v == "bullet" || v == "ordered") {
+                list_styles.insert(r.block_id, v);
+            }
+        }
         let rows = sqlx::query!(
             r#"SELECT block_id AS "block_id!", key AS "key!", value_text, value_date,
                       value_num, value_ref, value_bool AS "value_bool: i64"
@@ -1092,7 +1156,7 @@ pub async fn export_page_markdown_inner(
                  AND key NOT IN (
                     'space', 'is_space', 'created_at', 'completed_at',
                     'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',
-                    'repeat-origin', 'template'
+                    'repeat-origin', 'template', 'listStyle'
                  )
                ORDER BY block_id ASC, key ASC"#,
             ids_json,
@@ -1341,6 +1405,15 @@ pub async fn export_page_markdown_inner(
         });
     }
 
+    // #4552 slice 4 — positional ordinals for `ordered` blocks. Computed HERE,
+    // once `children_by_parent` is grouped and sibling-sorted, because an
+    // ordinal is a function of a block's NEIGHBOURS, which only this assembler
+    // knows (`markdown-serialize.ts` sees one block in isolation). Nothing
+    // numeric is stored: the number is re-derived on every export, so a
+    // reorder renumbers and a hand-written `3.` / `7.` normalises on the first
+    // round trip.
+    let list_ordinals = compute_list_ordinals(&children_by_parent, &list_styles);
+
     // Iterative DFS pre-order from the page root. A visited set guards against
     // a pathological parent cycle (a block whose ancestor chain loops back) so
     // export can never infinite-loop on corrupt data.
@@ -1370,7 +1443,8 @@ pub async fn export_page_markdown_inner(
             &page_titles,
         );
         let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
-        push_block_bullet(&mut output, &indent, &resolved);
+        let list_marker = list_marker_for(&id, &list_styles, &list_ordinals);
+        push_block_bullet(&mut output, &indent, &list_marker, &resolved);
 
         // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
         // dates) lives in the reserved `blocks` columns, not in
@@ -1456,7 +1530,12 @@ pub async fn export_page_markdown_inner(
             &page_titles,
         );
         let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
-        push_block_bullet(&mut output, "", &resolved);
+        // #4552 slice 4 — an orphan keeps its own marker. Its ordinal comes
+        // from the same sibling group it was grouped into above (keyed by its
+        // out-of-subtree `parent_id`), so a run of orphaned `ordered` strays
+        // still numbers 1, 2, 3 rather than all reading `1.`
+        let list_marker = list_marker_for(&id, &list_styles, &list_ordinals);
+        push_block_bullet(&mut output, "", &list_marker, &resolved);
         for (key, value) in [
             ("todo_state", block.todo_state.as_deref()),
             ("priority", block.priority.as_deref()),
@@ -1518,6 +1597,64 @@ fn attachment_link_label(filename: &str) -> String {
         .collect()
 }
 
+/// #4552 slice 4 — derive each `ordered` block's POSITIONAL ordinal from its
+/// sibling group.
+///
+/// A run of consecutive `ordered` same-parent siblings numbers `1, 2, 3, …`;
+/// ANY non-`ordered` sibling (a `bullet`, or a plain block) ends the run, so
+/// the next `ordered` sibling restarts at `1`. This is the same rule as
+/// `computeListOrdinals` (`src/lib/list-ordinals.ts`), so the exported number
+/// matches the one the editor draws, and it matches CommonMark, where a
+/// changed marker type starts a new list.
+///
+/// `children_by_parent`'s vectors are already sibling-sorted by
+/// `(position, id)` — the same order the DFS emits them in — so a single pass
+/// per group is enough. Blocks with no entry in the returned map are not
+/// `ordered` and take no number.
+fn compute_list_ordinals(
+    children_by_parent: &HashMap<String, Vec<&BlockRow>>,
+    list_styles: &HashMap<String, String>,
+) -> HashMap<String, usize> {
+    let mut ordinals: HashMap<String, usize> = HashMap::new();
+    for children in children_by_parent.values() {
+        let mut run: usize = 0;
+        for child in children {
+            let id = child.id.clone().into_string();
+            if list_styles.get(&id).map(String::as_str) == Some("ordered") {
+                run += 1;
+                ordinals.insert(id, run);
+            } else {
+                run = 0;
+            }
+        }
+    }
+    ordinals
+}
+
+/// #4552 slice 4 — the markdown list marker a block's `listStyle` projects to,
+/// written between the outline bullet and the block's text.
+///
+/// `"- "` for `bullet` (the canonical bullet char, matching
+/// `serializeBulletList`), `"<n>. "` for `ordered` (the positional ordinal
+/// from [`compute_list_ordinals`], never a stored number), and `""` for a
+/// block with no `listStyle` row — `none` is the absence of the property and
+/// is never written.
+fn list_marker_for(
+    id: &str,
+    list_styles: &HashMap<String, String>,
+    ordinals: &HashMap<String, usize>,
+) -> String {
+    match list_styles.get(id).map(String::as_str) {
+        Some("bullet") => "- ".to_string(),
+        // An `ordered` block always has an ordinal (it is in exactly one
+        // sibling group, and every `ordered` member of a group is numbered);
+        // the `1` fallback keeps a marker on the line rather than silently
+        // dropping the block's list-ness if that ever stops holding.
+        Some("ordered") => format!("{}. ", ordinals.get(id).copied().unwrap_or(1)),
+        _ => String::new(),
+    }
+}
+
 /// #2716 — append a block's (already ULID-resolved) `content` as a Logseq
 /// bullet. The first line is written after the `- ` marker; every subsequent
 /// line is a CONTINUATION line indented two spaces under the bullet (never
@@ -1530,14 +1667,40 @@ fn attachment_link_label(filename: &str) -> String {
 /// Lines inside a fenced code block (```` ``` ````) are emitted verbatim: the
 /// importer's #2725 fence guard folds them without an escape, and code must not
 /// gain stray backslashes.
-fn push_block_bullet(output: &mut String, indent: &str, resolved: &str) {
+///
+/// #4552 slice 4 — `list_marker` (from [`list_marker_for`]) is the block's
+/// `listStyle` marker, written between the outline `- ` and the first line:
+/// `""`, `"- "`, or `"<n>. "`. When it is EMPTY, a first line that would
+/// itself read as a marker is backslash-escaped, the first-line analogue of
+/// the continuation-line escape above.
+fn push_block_bullet(output: &mut String, indent: &str, list_marker: &str, resolved: &str) {
     use super::markdown_yaml::content_line_is_ambiguous;
 
     let mut lines = resolved.split('\n');
     let first = lines.next().unwrap_or("");
     output.push_str(indent);
     output.push_str("- ");
-    output.push_str(first);
+    if list_marker.is_empty() {
+        // #4552 slice 4 — this block has no `listStyle`, so a first line that
+        // itself OPENS a list marker must be escaped: unescaped, `- - foo`
+        // would re-import as a `bullet` block whose text is `foo` instead of a
+        // plain block whose text is `- foo`. `\- ` / `\1. ` is the same
+        // escape shape the TS serializer uses for a paragraph
+        // (`docs/architecture/list-ergonomics.md`), and
+        // `import::split_block_list_marker` reverses it.
+        if import::needs_list_marker_escape(first) {
+            output.push('\\');
+        }
+        output.push_str(first);
+    } else if first.is_empty() {
+        // A styled but EMPTY block: emit the bare marker (`- -`, `- 1.`)
+        // rather than a line with trailing whitespace. Both forms re-import
+        // identically, but only this one is a byte-level fixpoint.
+        output.push_str(list_marker.trim_end());
+    } else {
+        output.push_str(list_marker);
+        output.push_str(first);
+    }
     output.push('\n');
 
     // The first line can itself open a fence (`- ```rust`); track the state so

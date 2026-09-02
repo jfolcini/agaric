@@ -212,6 +212,7 @@ export function FormattingToolbar({
           t,
           open: turnIntoPopoverOpen,
           setOpen: setTurnIntoPopoverOpen,
+          blockId,
         })
       }
       case 'toolbar.tableOps': {

@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
+import { i18n } from '@/lib/i18n'
 
 // ── Fake-timer anchor ────────────────────────────────────────────────────
 // All relative-time tests pin "now" to this instant so diffs are deterministic.
@@ -73,6 +74,32 @@ describe('full style (default)', () => {
     const withFull = formatTimestamp(iso, 'full')
     const withDefault = formatTimestamp(iso)
     expect(withDefault).toBe(withFull)
+  })
+})
+
+// #4555 — `formatTimestamp` used to pass `undefined` (the OS/browser
+// locale) to `toLocaleDateString`. `getAppLocaleTag()` binds it to the same
+// source the UI catalog resolves from instead, so this can never disagree
+// with it. Pins the TRACKING behaviour via a real `i18n.changeLanguage()`
+// round trip (Intl reads the runtime's own ICU data directly — it doesn't
+// consult `date-locale.ts`'s `DATE_LOCALES` map — so a real BCP-47 tag is
+// used rather than a synthetic registered one).
+describe('locale tracking (#4555)', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+  })
+
+  it('renders English under the app default locale', () => {
+    const iso = '2025-03-15T14:30:00Z'
+    expect(formatTimestamp(iso, 'date')).toBe('Mar 15, 2025')
+  })
+
+  it('tracks a changed app locale, and reverts when it changes back', async () => {
+    const iso = '2025-03-15T14:30:00Z'
+    await i18n.changeLanguage('es')
+    expect(formatTimestamp(iso, 'date')).toBe('15 mar 2025')
+    await i18n.changeLanguage('en')
+    expect(formatTimestamp(iso, 'date')).toBe('Mar 15, 2025')
   })
 })
 

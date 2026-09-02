@@ -12,12 +12,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import {
+  ALL_PROPERTY_OPS,
+  PROPERTY_OP_ARITY,
+  type PropertyOpKind,
+} from '@/components/PageBrowser/add-filter/vocab'
+import {
   MAX_PAGE_FILTERS,
   PageBrowserFilterRow,
   type PageFilterWithKey,
   pageFilterChipTitle,
   pageFilterSummary,
 } from '@/components/PageBrowser/PageBrowserFilterRow'
+import type { PropertyPredicate } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import type { FilterPrimitive } from '@/lib/tauri'
 
@@ -114,6 +120,75 @@ describe('pageFilterSummary', () => {
       },
       'status ≠ done',
     ],
+    // #4553 Phase 1 (review) — the six operators the advanced surface made
+    // emittable. These all used to fall into the renderer's `default` arm and
+    // render as `=`, so `estimate > 3` and `estimate < 3` were byte-identical
+    // chips. One row per operator, with the glyph/word spelled out, so a
+    // TRANSPOSED mapping (`>` where `<` belongs) fails too — distinctness
+    // alone would not catch that.
+    [
+      'HasProperty Lt (Num)',
+      {
+        type: 'HasProperty',
+        key: 'estimate',
+        predicate: { type: 'Lt', value: { type: 'Num', value: 3 } },
+      },
+      'estimate < 3',
+    ],
+    [
+      'HasProperty Lte (Num)',
+      {
+        type: 'HasProperty',
+        key: 'estimate',
+        predicate: { type: 'Lte', value: { type: 'Num', value: 3 } },
+      },
+      'estimate ≤ 3',
+    ],
+    [
+      'HasProperty Gt (Num)',
+      {
+        type: 'HasProperty',
+        key: 'estimate',
+        predicate: { type: 'Gt', value: { type: 'Num', value: 3 } },
+      },
+      'estimate > 3',
+    ],
+    [
+      'HasProperty Gte (Num)',
+      {
+        type: 'HasProperty',
+        key: 'estimate',
+        predicate: { type: 'Gte', value: { type: 'Num', value: 3 } },
+      },
+      'estimate ≥ 3',
+    ],
+    [
+      'HasProperty Lte (Date)',
+      {
+        type: 'HasProperty',
+        key: 'deadline',
+        predicate: { type: 'Lte', value: { type: 'Date', value: '2026-03-01' } },
+      },
+      'deadline ≤ 2026-03-01',
+    ],
+    [
+      'HasProperty Contains (Text)',
+      {
+        type: 'HasProperty',
+        key: 'status',
+        predicate: { type: 'Contains', value: { type: 'Text', value: 'ship' } },
+      },
+      'status contains ship',
+    ],
+    [
+      'HasProperty StartsWith (Text)',
+      {
+        type: 'HasProperty',
+        key: 'status',
+        predicate: { type: 'StartsWith', value: { type: 'Text', value: 'ship' } },
+      },
+      'status starts with ship',
+    ],
     // LastEdited — Range, every Rolling bucket, OlderThan.
     [
       'LastEdited Range',
@@ -204,6 +279,93 @@ describe('pageFilterSummary', () => {
       id === 'tag-1' ? 'Work' : id,
     )
     expect(summary).toBe('tag: Work')
+  })
+
+  // #4553 review, note 1 — a `Ref`-valued property operand is a page ULID, the
+  // same kind of id the relational `LinksTo`/`LinkedFrom` chips already resolve.
+  // `PropertyRefValueInput` emits the picked page's id, so without the resolver
+  // the chip for "owner is Roadmap" reads `owner = 01ARZ…`.
+  it('resolves a Ref-valued property operand through refResolver (4th arg)', () => {
+    const filter: FilterPrimitive = {
+      type: 'HasProperty',
+      key: 'owner',
+      predicate: { type: 'Eq', value: { type: 'Ref', value: 'PAGE_A' } },
+    }
+    const refResolver = (id: string): string => (id === 'PAGE_A' ? 'Roadmap' : id)
+    expect(pageFilterSummary(filter, t, undefined, refResolver)).toBe('owner = Roadmap')
+    // The resolver is the REF one, not the tag one: passing only a tagResolver
+    // must not reach the property operand.
+    expect(pageFilterSummary(filter, t, () => 'WRONG')).toBe('owner = PAGE_A')
+  })
+
+  // A Text operand that happens to look like an id is NOT a Ref and must not be
+  // resolved — the variant, not the shape, decides.
+  it('leaves a Text-valued property operand unresolved', () => {
+    const filter: FilterPrimitive = {
+      type: 'HasProperty',
+      key: 'owner',
+      predicate: { type: 'Eq', value: { type: 'Text', value: 'PAGE_A' } },
+    }
+    expect(pageFilterSummary(filter, t, undefined, () => 'Roadmap')).toBe('owner = PAGE_A')
+  })
+})
+
+/**
+ * #4553 review — the BLOCKING finding's class guard.
+ *
+ * `vocab.test.ts` pins the operator TABLE (`ALL_PROPERTY_OPS` is exhaustive
+ * over the bindings union, arity is classified for every member). Nothing
+ * pinned the operator RENDERER, which is how six operators shipped rendering
+ * as `=`: the table grew, the chip's `predicate.type === 'Ne' ? '≠' : '='`
+ * ternary did not, and every suite stayed green.
+ *
+ * This walks the TABLE and renders each operator through the production
+ * summary function, so it is not a snapshot of today's eight — a ninth
+ * operator added to `ALL_PROPERTY_OPS` is picked up automatically and must
+ * earn its own distinct rendering to pass.
+ */
+describe('HasProperty chip renderer — exhaustive over ALL_PROPERTY_OPS', () => {
+  /** A representative predicate for `op`, shaped by its DECLARED arity. */
+  function predicateFor(op: PropertyOpKind): PropertyPredicate {
+    return PROPERTY_OP_ARITY[op] === 'nullary'
+      ? ({ type: op } as PropertyPredicate)
+      : ({ type: op, value: { type: 'Text', value: 'ship' } } as PropertyPredicate)
+  }
+
+  it('renders every operator in the table, each distinctly', () => {
+    const seen = new Map<string, PropertyOpKind>()
+    for (const { value: op } of ALL_PROPERTY_OPS) {
+      const label = pageFilterSummary(
+        { type: 'HasProperty', key: 'status', predicate: predicateFor(op) },
+        t,
+      )
+      // A collision means two different filters are indistinguishable in the
+      // UI — exactly the shipped bug (`>` and `<` both rendering as `=`).
+      expect(
+        seen.get(label),
+        `${op} renders as "${label}", which ${seen.get(label) ?? '—'} already claims`,
+      ).toBeUndefined()
+      // And it must actually SAY something: an unmapped operator that fell
+      // through to an empty/undefined glyph would still be "distinct".
+      expect(label).toContain('status')
+      expect(label.trim()).not.toBe('status')
+      expect(label).not.toContain('undefined')
+      seen.set(label, op)
+    }
+    expect(seen.size).toBe(ALL_PROPERTY_OPS.length)
+  })
+
+  // The value-bearing ops must also SHOW the operand — a rendering that dropped
+  // the value would still be distinct from its siblings via the glyph.
+  it('every value-bearing operator renders its operand', () => {
+    for (const { value: op } of ALL_PROPERTY_OPS) {
+      if (PROPERTY_OP_ARITY[op] === 'nullary') continue
+      const label = pageFilterSummary(
+        { type: 'HasProperty', key: 'status', predicate: predicateFor(op) },
+        t,
+      )
+      expect(label, `${op} dropped its operand`).toContain('ship')
+    }
   })
 })
 

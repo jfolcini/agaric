@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { CompactionCard } from '@/components/templates/CompactionCard'
+import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 
 vi.mock('@/lib/logger', () => ({
@@ -79,6 +80,29 @@ describe('CompactionCard', () => {
     expect(screen.getByTestId('compaction-oldest-date')).toBeInTheDocument()
     // Should show a formatted date, not the raw ISO string
     expect(screen.getByTestId('compaction-oldest-date')).not.toHaveTextContent('N/A')
+  })
+
+  // #4555 — `formattedDate` used to call a bare `.toLocaleDateString()`
+  // (implicit `undefined`, the OS/browser locale). `getAppLocaleTag()`
+  // binds it to the same source the UI catalog resolves from instead, so
+  // this can never disagree with it. Pins the TRACKING behaviour via a
+  // real `i18n.changeLanguage()` round trip — Spanish's D/M/Y digit order
+  // ("15/6/2024") is distinguishable from English's M/D/Y ("6/15/2024"),
+  // so this fails if the call site reverts to a locale-less call.
+  it('#4555: oldest-date follows i18n.language, not the OS/browser locale', async () => {
+    // `mockResolvedValue` (not `-Once`) — `fetchStatus`'s `useCallback` deps
+    // on `t`, and `i18n.changeLanguage` gives `t` a new identity, so the
+    // mount effect can re-fire `fetchStatus` more than once here.
+    mockedInvoke.mockResolvedValue(defaultStatus)
+    try {
+      await i18n.changeLanguage('es')
+      render(<CompactionCard />)
+      await waitFor(() => {
+        expect(screen.getByTestId('compaction-oldest-date')).toHaveTextContent('15/6/2024')
+      })
+    } finally {
+      await i18n.changeLanguage('en')
+    }
   })
 
   it('shows N/A when oldest_op_date is null', async () => {

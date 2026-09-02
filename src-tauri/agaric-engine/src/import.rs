@@ -149,6 +149,96 @@ const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
     "template",
 ];
 
+/// The `block_properties` key under which a block's list style is stored
+/// (#4552). Mirrors `LIST_STYLE_KEY` in `src/lib/list-style.ts`.
+///
+/// Deliberately NOT a member of `FRONTMATTER_RESERVED_KEYS`: the exporter
+/// suppresses the `listStyle:: …` property LINE (because the emitted `- ` /
+/// `N. ` marker already carries it), but a hand-written or pasted
+/// `listStyle:: bullet` line must still import as an ordinary property. See
+/// the asymmetry comment on the exporter's two `key NOT IN (…)` lists in
+/// `agaric_lib::commands::pages::markdown::export_page_markdown_inner`.
+pub const LIST_STYLE_KEY: &str = "listStyle";
+
+/// The `listStyle` value a `- ` marker implies (mirrors `STORED_LIST_STYLES`
+/// in `src/lib/list-style.ts`).
+pub const LIST_STYLE_BULLET: &str = "bullet";
+
+/// The `listStyle` value an `N. ` marker implies.
+pub const LIST_STYLE_ORDERED: &str = "ordered";
+
+/// #4552 slice 4 — split a leading markdown list marker off a block's text,
+/// returning the [`LIST_STYLE_BULLET`] / [`LIST_STYLE_ORDERED`] value it
+/// implies and the remaining text.
+///
+/// The grammar is exactly what the exporter emits: `-` / `- text` for a
+/// bullet, and `<digits>.` / `<digits>. text` for an ordered item. The literal
+/// ORDINAL is discarded — numbering is positional on export and re-derived
+/// from sibling order, never stored (`docs/architecture/list-ergonomics.md`),
+/// so `3.` and `1.` both import as plain `ordered`.
+///
+/// Returns `None` when `text` opens no marker.
+fn split_list_marker(text: &str) -> Option<(&'static str, &str)> {
+    if text == "-" {
+        return Some((LIST_STYLE_BULLET, ""));
+    }
+    if let Some(rest) = text.strip_prefix("- ") {
+        return Some((LIST_STYLE_BULLET, rest));
+    }
+    let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    // `digits` counts ASCII bytes from the start, so it is always a char
+    // boundary.
+    let after = &text[digits..];
+    if after == "." {
+        return Some((LIST_STYLE_ORDERED, ""));
+    }
+    if let Some(rest) = after.strip_prefix(". ") {
+        return Some((LIST_STYLE_ORDERED, rest));
+    }
+    None
+}
+
+/// #4552 slice 4 — `true` when the exporter must backslash-escape `text` (a
+/// block's FIRST line) so it does not re-import as a list marker.
+///
+/// A `listStyle: none` block whose content literally begins with `- ` or
+/// `1. ` is indistinguishable, once written after the outline bullet, from a
+/// styled block — `- - foo` would mean both "plain block whose text is `- foo`"
+/// and "bullet block whose text is `foo`". The exporter therefore writes
+/// `- \- foo`, and [`split_block_list_marker`] reverses it.
+///
+/// The predicate looks PAST a leading run of backslashes so the escape is
+/// injective: `\- foo` (a literal backslash-dash the user typed) is itself
+/// escaped, to `\\- foo`, and one backslash is removed on the way back in.
+/// Without that, `- foo` and `\- foo` would both export as `- \- foo`.
+pub fn needs_list_marker_escape(text: &str) -> bool {
+    split_list_marker(text.trim_start_matches('\\')).is_some()
+}
+
+/// #4552 slice 4 — classify a block line's text (already stripped of the
+/// outline `- ` bullet) into its [`LIST_STYLE_KEY`] value and its bare text.
+///
+/// Reverses [`needs_list_marker_escape`]'s escape first: a leading `\` whose
+/// payload would otherwise read as a marker is an EXPORTER escape and is
+/// removed, yielding a style-less block whose text keeps its literal marker.
+/// Only then is a real marker consumed. An ordinary line beginning with `\`
+/// (a LaTeX command, say) is left verbatim, exactly as the continuation-line
+/// un-escape (#2716) does.
+pub fn split_block_list_marker(text: &str) -> (Option<&'static str>, &str) {
+    if let Some(rest) = text.strip_prefix('\\')
+        && needs_list_marker_escape(rest)
+    {
+        return (None, rest);
+    }
+    match split_list_marker(text) {
+        Some((style, rest)) => (Some(style), rest),
+        None => (None, text),
+    }
+}
+
 /// Streaming progress payload for a single `import_markdown` call (#128).
 ///
 /// Carried over a Tauri `Channel<ImportProgressUpdate>` so a long import
@@ -732,6 +822,20 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 block_anchor: None,
             });
         } else if !in_code_body && let Some(text) = trimmed.strip_prefix("- ") {
+            // #4552 slice 4 — a SECOND list marker right after the outline
+            // bullet is the block's `listStyle`, not its content: the exporter
+            // writes `- - foo` / `- 1. foo` for a `bullet` / `ordered` block
+            // and `- \- foo` for a plain block whose text merely begins with a
+            // marker. Consume the marker into a property row and keep
+            // `blocks.content` bare — the marker is a document-assembly
+            // concern, not a block-content one. The literal ordinal is
+            // discarded; export re-derives it positionally.
+            let (list_style, text) = split_block_list_marker(text);
+            let mut properties: Vec<(String, String)> = Vec::new();
+            if let Some(style) = list_style {
+                properties.push((LIST_STYLE_KEY.to_string(), style.to_string()));
+            }
+
             // Strip ((uuid)) block references -> plain text
             let (cleaned, removed) = strip_block_refs_counted(text);
             stripped_block_ref_count += removed;
@@ -739,7 +843,10 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             blocks.push(ParsedBlock {
                 content: cleaned,
                 depth,
-                properties: Vec::new(),
+                // A body `listStyle:: value` line further down the file is
+                // appended AFTER this seed and therefore wins — an explicit
+                // property line overrides the marker, not the other way round.
+                properties,
                 is_code: line_is_code,
                 block_anchor: None,
             });
@@ -3366,6 +3473,193 @@ mod tests_attachment_ref_order_3675 {
             got,
             vec!["e1.png", "e2.png", "i1.png", "i2.png"],
             "both embeds (in source order) then both images (in source order)"
+        );
+    }
+}
+
+/// #4552 slice 4 — the importer half of the `listStyle` markdown round trip.
+///
+/// The exporter writes a block's list-ness as a marker BETWEEN the outline
+/// bullet and the text (`- - foo`, `- 1. foo`), and backslash-escapes a plain
+/// block whose text merely looks like one (`- \- foo`). These tests pin the
+/// consuming half: the marker becomes a `listStyle` property and leaves
+/// `blocks.content` bare, the escape is reversed, and the literal ordinal is
+/// discarded.
+#[cfg(test)]
+mod tests_list_style_4552 {
+    use super::{
+        LIST_STYLE_BULLET, LIST_STYLE_KEY, LIST_STYLE_ORDERED, needs_list_marker_escape,
+        parse_logseq_markdown, split_block_list_marker,
+    };
+
+    /// The `listStyle` value a parsed block carries, or `None` for a plain one.
+    fn style_of(block: &super::ParsedBlock) -> Option<&str> {
+        block
+            .properties
+            .iter()
+            .find(|(k, _)| k == LIST_STYLE_KEY)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// A bullet / ordered marker is consumed into the property and never left
+    /// in the content. Non-tautological: pre-fix `content` was `"- Buy milk"`
+    /// and `properties` was empty.
+    #[test]
+    fn marker_becomes_a_property_and_leaves_content_bare() {
+        let out = parse_logseq_markdown("- - Buy milk\n- 1. Step one\n- Plain prose\n");
+        let blocks = &out.blocks;
+        assert_eq!(blocks.len(), 3, "three blocks; got {blocks:?}");
+
+        assert_eq!(blocks[0].content, "Buy milk");
+        assert_eq!(style_of(&blocks[0]), Some(LIST_STYLE_BULLET));
+
+        assert_eq!(blocks[1].content, "Step one");
+        assert_eq!(style_of(&blocks[1]), Some(LIST_STYLE_ORDERED));
+
+        assert_eq!(blocks[2].content, "Plain prose");
+        assert_eq!(style_of(&blocks[2]), None, "a plain block stays plain");
+    }
+
+    /// The literal ordinal is DISCARDED — `3.` / `7.` / `1.` all import as the
+    /// same `ordered` style, which is what makes a non-canonical file
+    /// normalise to `1. 2. 3.` on the first export.
+    #[test]
+    fn ordinals_are_never_stored() {
+        let out = parse_logseq_markdown("- 3. a\n- 7. b\n- 1. c\n- 12. d\n");
+        for (block, text) in out.blocks.iter().zip(["a", "b", "c", "d"]) {
+            assert_eq!(block.content, text);
+            assert_eq!(style_of(block), Some(LIST_STYLE_ORDERED));
+        }
+        for block in &out.blocks {
+            assert!(
+                !block
+                    .content
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_digit()),
+                "no literal ordinal may survive into content: {:?}",
+                block.content
+            );
+        }
+    }
+
+    /// A marker-less block whose text merely BEGINS with a marker arrives
+    /// backslash-escaped and must come back as plain text — a paragraph, not a
+    /// list. This is the import half of acceptance criterion 11.
+    #[test]
+    fn exporter_escape_is_reversed_into_plain_text() {
+        let out = parse_logseq_markdown("- \\- not a list\n- \\1. also not a list\n");
+        assert_eq!(out.blocks[0].content, "- not a list");
+        assert_eq!(style_of(&out.blocks[0]), None);
+        assert_eq!(out.blocks[1].content, "1. also not a list");
+        assert_eq!(style_of(&out.blocks[1]), None);
+    }
+
+    /// A leading backslash that does NOT guard a marker is ordinary content
+    /// (a LaTeX command, say) and keeps its backslash — the same discipline
+    /// the #2716 continuation-line un-escape follows.
+    #[test]
+    fn a_non_guarding_backslash_is_preserved() {
+        let out = parse_logseq_markdown("- \\alpha + \\beta\n");
+        assert_eq!(out.blocks[0].content, "\\alpha + \\beta");
+        assert_eq!(style_of(&out.blocks[0]), None);
+    }
+
+    /// The escape/un-escape pair is INJECTIVE: `escape` then `split` is the
+    /// identity for every shape, including text that already starts with
+    /// backslashes. Without the "look past the backslash run" rule in
+    /// `needs_list_marker_escape`, `- foo` and `\- foo` would both export as
+    /// `\- foo` and collapse to one value on the way back.
+    #[test]
+    fn escape_then_unescape_is_the_identity() {
+        for text in [
+            "- foo",
+            "-",
+            "1. foo",
+            "12.",
+            "\\- foo",
+            "\\\\- foo",
+            "\\1. foo",
+            "\\alpha",
+            "plain prose",
+            "",
+            "-nospace",
+            "1.nospace",
+            "2026. was a year",
+        ] {
+            let wire = if needs_list_marker_escape(text) {
+                format!("\\{text}")
+            } else {
+                text.to_string()
+            };
+            let (style, back) = split_block_list_marker(&wire);
+            assert_eq!(
+                (style, back),
+                (None, text),
+                "escape/un-escape must round-trip {text:?} (wire {wire:?})"
+            );
+        }
+    }
+
+    /// A marker is recognised only in the exact shapes the exporter emits;
+    /// `-nospace` / `1.nospace` are ordinary text, so they are neither
+    /// escaped nor consumed.
+    #[test]
+    fn marker_grammar_boundaries() {
+        assert_eq!(
+            split_block_list_marker("-nospace"),
+            (None, "-nospace"),
+            "a dash with no following space is not a marker"
+        );
+        assert_eq!(split_block_list_marker("1.nospace"), (None, "1.nospace"));
+        assert_eq!(
+            split_block_list_marker("-"),
+            (Some(LIST_STYLE_BULLET), ""),
+            "a bare dash is an EMPTY bullet block"
+        );
+        assert_eq!(
+            split_block_list_marker("7."),
+            (Some(LIST_STYLE_ORDERED), "")
+        );
+        assert!(!needs_list_marker_escape("-nospace"));
+        assert!(!needs_list_marker_escape("plain"));
+        assert!(needs_list_marker_escape("- x"));
+        assert!(needs_list_marker_escape("9. x"));
+    }
+
+    /// An explicit body `listStyle:: …` line still imports, and WINS over the
+    /// marker — the property line is appended after the marker-derived seed,
+    /// so the apply loop's last write is the explicit one. This is the
+    /// behaviour the deliberate exclusion-list asymmetry exists to preserve
+    /// (`listStyle` is export-suppressed but never import-reserved).
+    #[test]
+    fn an_explicit_property_line_still_imports_and_wins() {
+        let out = parse_logseq_markdown("- - Buy milk\n  listStyle:: ordered\n");
+        let props = &out.blocks[0].properties;
+        assert_eq!(
+            props.last(),
+            Some(&(LIST_STYLE_KEY.to_string(), LIST_STYLE_ORDERED.to_string())),
+            "the explicit line must be applied last; got {props:?}"
+        );
+    }
+
+    /// Marker consumption must not fire inside a fenced code block: a `- x`
+    /// line in a code sample is literal code (#2725) and never reaches the
+    /// bullet branch at all.
+    #[test]
+    fn a_bullet_inside_a_code_fence_is_not_a_marker() {
+        let out = parse_logseq_markdown("- ```sh\n  - not a list item\n  ```\n");
+        assert_eq!(
+            out.blocks.len(),
+            1,
+            "one fenced block; got {:?}",
+            out.blocks
+        );
+        assert_eq!(style_of(&out.blocks[0]), None);
+        assert!(
+            out.blocks[0].content.contains("- not a list item"),
+            "fenced content stays verbatim; got {:?}",
+            out.blocks[0].content
         );
     }
 }

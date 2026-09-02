@@ -16,6 +16,7 @@ import { PluginKey } from '@tiptap/pm/state'
 
 import { createPickerPlugin, resolveAndInsertPickerToken } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { t } from '@/lib/i18n'
 
 export const blockRefPickerPluginKey = new PluginKey('blockRefPicker')
 
@@ -121,7 +122,7 @@ export const BlockRefPicker = Extension.create<BlockRefPickerOptions>({
     return [
       createPickerPlugin({
         loggerComponent: 'BlockRefPicker',
-        displayName: 'Block references',
+        displayName: t('editor.suggestion.blockReferences'),
         pluginKey: blockRefPickerPluginKey,
         char: '((',
         allowSpaces: true,

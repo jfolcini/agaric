@@ -8,6 +8,21 @@
 
 export const properties: Record<string, string> = {
   'query.noResults': 'No results',
+  // #4555 — table-mode column headers (`detectColumns` in QueryResult.tsx).
+  'query.column.content': 'Content',
+  'query.column.status': 'Status',
+  'query.column.priority': 'Priority',
+  'query.column.dueDate': 'Due Date',
+  'query.column.scheduled': 'Scheduled',
+  // #4555 — inline-query validation/error text (`useQueryExecution.ts`,
+  // `useAdvancedQuery.ts`), rendered inline in QueryResult's error state.
+  // `key:NAME` / `target:ULID` are the inline-query mini-language's own
+  // literal parameter syntax (not the search-DSL glossary) — kept verbatim.
+  'query.propertyRequiresKey': 'Property query requires key:NAME parameter',
+  'query.backlinksRequiresTarget': 'Backlinks query requires target:ULID parameter',
+  'query.unknownType': 'Unknown query type: {{type}}',
+  'query.expressionEmpty': 'Query expression is empty',
+  'query.failed': 'Query failed',
   // #1743 — inline query result count. When more pages remain unloaded
   // (`hasMore`), the loaded-so-far count is NOT the true total, so it is
   // labelled as partial ("first N loaded…") rather than presented as the
@@ -73,6 +88,21 @@ export const properties: Record<string, string> = {
   'advancedQuery.aggregate.target.none': 'Rows',
   'advancedQuery.aggregate.target.priority': 'Priority',
   'advancedQuery.aggregate.target.position': 'Position',
+  // #4553 Phase 1 — `AggregateTarget::Property`: sum/avg/min/max over a
+  // named property's numeric value, not just the two fixed columns above.
+  'advancedQuery.aggregate.target.property': 'Property',
+  'advancedQuery.aggregate.propertyKeyLabel': 'Property key to aggregate',
+  'advancedQuery.aggregate.propertyKeyPlaceholder': 'Property key',
+  // #4553 Phase 1 — the contributing NUMERIC count beside a sum/avg/min/max
+  // chip, when the request also asked for a matching Count over the same
+  // target (`avg` divides by this, not the total row count).
+  // Interpolated as `{{n}}`, deliberately NOT `{{count}}`. i18next keys its
+  // plural machinery on the option name `count`, and this is a bare number in
+  // mathematical notation with no surrounding noun to inflect — there is no
+  // singular wording for it to select. Naming it `count` would opt into
+  // pluralisation for a string that can never pluralise, and then need an
+  // entry in `PRE_EXISTING_COUNT_EXEMPT` to say so (#3860/#3882).
+  'advancedQuery.aggregate.contributingCount': '(n={{n}})',
   'advancedQuery.aggregate.summaryLabel': 'Aggregate summary',
   'advancedQuery.group.summaryLabel': 'Group results',
   'advancedQuery.group.noneKey': '(none)',

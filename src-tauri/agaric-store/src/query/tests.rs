@@ -1538,6 +1538,36 @@ async fn seed_estimates(pool: &SqlitePool) {
     set_property(pool, "01B4000000000000000000000", "estimate", "big").await;
 }
 
+/// #4553 — set a numeric `value_num` property on a block: the column a
+/// GENUINELY `number`-declared property is written to
+/// (`src/lib/property-save-utils.ts`; migration `0062`'s
+/// exactly-one-value-column CHECK forbids also populating `value_text` on the
+/// same row). Deliberately distinct from `set_property` above (which writes
+/// `value_text`), so a test built on this helper proves the engine reads the
+/// column a typed numeric property ACTUALLY occupies — not a text property
+/// that happens to hold digits, which the issue's own acceptance criteria
+/// calls out as a vacuous test (it passes whether or not `agg_target_expr`
+/// folds `value_num` at all).
+async fn set_property_num(pool: &SqlitePool, block_id: &str, key: &str, value: f64) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #4553 — seed a `points` property DECLARED numeric (stored in `value_num`,
+/// never `value_text`): B1=3, B2=5, B3=8. Same shape/expected totals as
+/// `seed_estimates` (sum=16, avg=16/3, min=3, max=8, numeric-count=3) but via
+/// the column a `number`-declared property actually uses.
+async fn seed_points_num(pool: &SqlitePool) {
+    set_property_num(pool, "01B1000000000000000000000", "points", 3.0).await;
+    set_property_num(pool, "01B2000000000000000000000", "points", 5.0).await;
+    set_property_num(pool, "01B3000000000000000000000", "points", 8.0).await;
+}
+
 /// Build an aggregate spec over a property key.
 fn agg_prop(op: AggOp, key: &str) -> AggregateSpec {
     AggregateSpec {
@@ -1630,6 +1660,81 @@ async fn global_folds_all_non_numeric_is_none() {
     assert_eq!(agg_at(&resp, 3).value, None, "max: {resp:?}");
     // Count-with-target over an all-non-numeric set = 0.
     assert_eq!(agg_at(&resp, 4).count, Some(0), "count: {resp:?}");
+}
+
+/// #4553 Phase 1 — `agg_target_expr` must fold `value_num`, not just
+/// `value_text`. `points` is seeded via `set_property_num` — the column a
+/// GENUINELY `number`-declared property is written to — so this is the
+/// non-vacuous version of `global_folds_skip_non_numeric`: before the fix,
+/// `agg_target_expr` read `(SELECT value_text …)` only, which is NULL on
+/// every row here (migration `0062` forbids populating both columns on one
+/// row), so every fold would silently see an all-NULL set and this assertion
+/// is exactly the one that goes RED without the fix (see the falsification
+/// run in the PR description / session notes for the verbatim RED output).
+#[tokio::test]
+async fn global_folds_number_declared_property_reads_value_num() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    seed_points_num(&pool).await;
+
+    let mut request = req(default_filter());
+    request.aggregates = vec![
+        agg_prop(AggOp::Sum, "points"),
+        agg_prop(AggOp::Avg, "points"),
+        agg_prop(AggOp::Min, "points"),
+        agg_prop(AggOp::Max, "points"),
+        // Count WITH a target = the NUMERIC count (all 3 rows here qualify).
+        agg_prop(AggOp::Count, "points"),
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+
+    assert!(
+        approx(agg_at(&resp, 0).value.unwrap(), 16.0),
+        "sum: {resp:?}"
+    );
+    assert!(
+        approx(agg_at(&resp, 1).value.unwrap(), 16.0 / 3.0),
+        "avg must divide by the numeric count (3): {resp:?}"
+    );
+    assert!(
+        approx(agg_at(&resp, 2).value.unwrap(), 3.0),
+        "min: {resp:?}"
+    );
+    assert!(
+        approx(agg_at(&resp, 3).value.unwrap(), 8.0),
+        "max: {resp:?}"
+    );
+    assert_eq!(agg_at(&resp, 4).count, Some(3), "count: {resp:?}");
+}
+
+/// #4553 Phase 1 — the `COALESCE(value_num, <coerced value_text>)` must read
+/// BOTH columns under the SAME key: two rows store a genuinely
+/// `number`-declared value (`value_num`), one row is a legacy/undeclared
+/// text-stored numeric (`value_text`). Mirrors how `property_value_column`
+/// already picks its compared column per-row from the value's variant on the
+/// FILTER side (`HasProperty`) — the aggregate side must not regress to
+/// "declared-numeric only".
+#[tokio::test]
+async fn global_aggregate_property_coalesces_value_num_and_value_text() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+    set_property_num(&pool, "01B1000000000000000000000", "mixed", 3.0).await;
+    set_property_num(&pool, "01B2000000000000000000000", "mixed", 5.0).await;
+    // A legacy/undeclared row: numeric-looking TEXT, not `value_num`.
+    set_property(&pool, "01B3000000000000000000000", "mixed", "8").await;
+
+    let mut request = req(default_filter());
+    request.aggregates = vec![
+        agg_prop(AggOp::Sum, "mixed"),
+        agg_prop(AggOp::Count, "mixed"),
+    ];
+    let resp = compile_and_run(&pool, request).await.unwrap();
+
+    assert!(
+        approx(agg_at(&resp, 0).value.unwrap(), 16.0),
+        "sum: {resp:?}"
+    );
+    assert_eq!(agg_at(&resp, 1).count, Some(3), "count: {resp:?}");
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key AS \"key!\", value_text, value_date, value_num, value_ref,\n                  value_bool AS \"value_bool: i64\"\n           FROM block_properties\n           WHERE block_id = ?1\n             AND key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',\n                'repeat-origin', 'template'\n             )",
+  "query": "SELECT key AS \"key!\", value_text, value_date, value_num, value_ref,\n                  value_bool AS \"value_bool: i64\"\n           FROM block_properties\n           WHERE block_id = ?1\n             AND key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',\n                'repeat-origin', 'template', 'listStyle'\n             )",
   "describe": {
     "columns": [
       {
@@ -82,5 +82,5 @@
       true
     ]
   },
-  "hash": "f46075530e293af73305a5b0ca935f24ae2f1975655aca64525e782bb1c473e4"
+  "hash": "fa9be196f848dfbf5328a35066c732f17655eaa8c4d2ae63b7de8864a8f19d3d"
 }

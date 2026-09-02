@@ -438,8 +438,18 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.propertyOpLabel': 'Comparison',
   'pageBrowser.filter.propertyOpEq': 'is',
   'pageBrowser.filter.propertyOpNe': 'is not',
+  // #4553 Phase 1 — the six comparison operators the advanced surface adds
+  // on top of the Pages browser's classic Eq/Ne/Exists/NotExists (D24).
+  'pageBrowser.filter.propertyOpLt': 'is less than',
+  'pageBrowser.filter.propertyOpLte': 'is at most',
+  'pageBrowser.filter.propertyOpGt': 'is greater than',
+  'pageBrowser.filter.propertyOpGte': 'is at least',
+  'pageBrowser.filter.propertyOpContains': 'contains',
+  'pageBrowser.filter.propertyOpStartsWith': 'starts with',
   'pageBrowser.filter.propertyOpExists': 'exists',
   'pageBrowser.filter.propertyOpNotExists': "doesn't exist",
+  // #4553 Phase 1 — the Ref-valued property picker's "you picked this page" readout.
+  'pageBrowser.filter.propertyRefSelected': 'Selected: {{title}}',
   'pageBrowser.filter.pathExcludeLabel': 'Exclude matching pages',
   'pageBrowser.filter.summaryTag': 'tag: {{tag}}',
   'pageBrowser.filter.summaryPath': 'path: {{pattern}}',
@@ -447,6 +457,16 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.summaryHasProperty': 'has: {{key}}',
   'pageBrowser.filter.summaryNotHasProperty': 'no: {{key}}',
   'pageBrowser.filter.summaryProperty': '{{key}} {{op}} {{value}}',
+  // #4553 Phase 1 — the `{{op}}` slot above. The six ordered/equality operators
+  // render as their maths glyph (`= ≠ < ≤ > ≥`), which needs no catalog entry;
+  // `Contains` / `StartsWith` are WORDS, so they get their own keys rather than
+  // hardcoded English. SEPARATE from `propertyOpContains` / `propertyOpStartsWith`
+  // above: those are the <select> option labels, which read as a sentence
+  // fragment for the operator ("is less than"), whereas the chip is a compact
+  // infix. Sharing one key would silently retitle the chip the day the option
+  // label is reworded.
+  'pageBrowser.filter.summaryPropertyOpContains': 'contains',
+  'pageBrowser.filter.summaryPropertyOpStartsWith': 'starts with',
   'pageBrowser.filter.summaryLastEditedRolling': 'edited ≤ {{days}}d',
   'pageBrowser.filter.summaryLastEditedRange': 'edited {{start}}…{{end}}',
   'pageBrowser.filter.summarySpace': 'this space',

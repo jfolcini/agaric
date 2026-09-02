@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PickerItem } from '@/editor/SuggestionList'
+import { i18n } from '@/lib/i18n'
 
 // --- Mocks ---
 
@@ -139,6 +140,23 @@ describe('slash-command — explicit selection only (no auto-execute)', () => {
     expect(capturedPickerConfig['allowedPrefixes']).toEqual([' ', ' ', '\n'])
     // Guard against a regression back to the unrestricted (mid-word) config.
     expect(capturedPickerConfig['allowedPrefixes']).not.toBeNull()
+  })
+
+  // #4555 — `displayName` used to be the hardcoded literal 'Slash commands'.
+  // The English catalog value is byte-equal to that literal, so overriding
+  // the catalog and asserting the override is what `createPickerPlugin`
+  // received proves this is resolved through `t()` at
+  // `addProseMirrorPlugins()` call time, not a hardcoded string — fails if
+  // the call site reverts to a bare literal.
+  it('#4555: displayName resolves through the i18n catalog, not a hardcoded literal', () => {
+    const KEY = 'editor.suggestion.slashCommands'
+    i18n.addResource('en', 'translation', KEY, '__OVERRIDDEN_SLASH_LABEL__')
+    try {
+      setup()
+      expect(capturedPickerConfig['displayName']).toBe('__OVERRIDDEN_SLASH_LABEL__')
+    } finally {
+      i18n.addResource('en', 'translation', KEY, 'Slash commands')
+    }
   })
 
   it('lifecycle has no timer side effects — onKeyDown/onExit are inert pass-throughs', () => {

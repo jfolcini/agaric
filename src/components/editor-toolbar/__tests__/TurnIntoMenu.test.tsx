@@ -28,7 +28,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { TurnIntoMenu } from '@/components/editor-toolbar/TurnIntoMenu'
+import { ListMarkerProvider } from '@/components/editor/ListMarkerContext'
 import { t } from '@/lib/i18n'
+import type { ListStyle } from '@/lib/list-style'
 
 // Controlled editor state — TurnIntoMenu's `useEditorState(selector)` is mocked
 // to return this object wholesale (the selector is ignored). Each test sets the
@@ -84,6 +86,24 @@ function codeRow(): HTMLElement {
 }
 function calloutRow(): HTMLElement {
   return screen.getByRole('menuitem', { name: t('contextMenu.turnIntoType.callout') })
+}
+function numberedListRow(): HTMLElement {
+  return screen.getByRole('menuitemradio', { name: t('contextMenu.turnIntoType.numberedList') })
+}
+function bulletListRow(): HTMLElement {
+  return screen.getByRole('menuitemradio', { name: t('contextMenu.turnIntoType.bulletList') })
+}
+function paragraphRow(): HTMLElement {
+  return screen.getByRole('menuitemradio', { name: t('contextMenu.turnIntoType.paragraph') })
+}
+
+/** Wrap in a `ListMarkerProvider` reporting a fixed style for `BLOCK_1`. */
+function renderWithListStyle(style: ListStyle) {
+  return render(
+    <ListMarkerProvider value={{ styleOf: () => style, ordinalOf: () => undefined }}>
+      <TurnIntoMenu editor={makeEditor()} blockId="BLOCK_1" onClose={vi.fn()} />
+    </ListMarkerProvider>,
+  )
 }
 
 afterEach(() => {
@@ -203,5 +223,40 @@ describe('TurnIntoMenu — single-step disclosures (#3001)', () => {
 
       expect(await axe(container)).toHaveNoViolations()
     })
+  })
+})
+
+// #4552 slice 2 — the numbered/bullet-list active-state probe reads the
+// `listStyle` block property (via `useListMarker`), not
+// `editor.isActive('orderedList'/'bulletList')`, which only ever detects
+// legacy in-block TipTap list nodes. `mockEditorState` (orderedList/
+// bulletList false throughout this describe) stands in for a block written
+// through the NEW model, which never creates those nodes at all.
+describe('TurnIntoMenu — numbered/bullet-list active state reads listStyle (#4552)', () => {
+  it('highlights Numbered list when listStyle=ordered, even though editor.isActive(orderedList) is false', () => {
+    renderWithListStyle('ordered')
+    expect(numberedListRow()).toHaveAttribute('aria-checked', 'true')
+    expect(bulletListRow()).toHaveAttribute('aria-checked', 'false')
+    expect(paragraphRow()).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('highlights Bullet list when listStyle=bullet', () => {
+    renderWithListStyle('bullet')
+    expect(bulletListRow()).toHaveAttribute('aria-checked', 'true')
+    expect(numberedListRow()).toHaveAttribute('aria-checked', 'false')
+    expect(paragraphRow()).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('highlights Text (paragraph) when listStyle=none', () => {
+    renderWithListStyle('none')
+    expect(paragraphRow()).toHaveAttribute('aria-checked', 'true')
+    expect(numberedListRow()).toHaveAttribute('aria-checked', 'false')
+    expect(bulletListRow()).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('defaults to listStyle=none (paragraph active) with no blockId / no provider', () => {
+    render(<TurnIntoMenu editor={makeEditor()} onClose={vi.fn()} />)
+    expect(paragraphRow()).toHaveAttribute('aria-checked', 'true')
+    expect(numberedListRow()).toHaveAttribute('aria-checked', 'false')
   })
 })

@@ -21,8 +21,17 @@ import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tr
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { __resetBlockCommandBus } from '@/lib/block-command-bus'
 import { dispatchBlockEvent } from '@/lib/block-events'
+import { setListStyle } from '@/lib/list-style'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
+
+// #4552 slice 2 — `setListStyle` is a real IPC-backed write; stub it so
+// INSERT_ORDERED_LIST / TURN_INTO_BLOCK tests exercise the dispatch wiring
+// only (the IPC path itself is covered by `list-style.test.ts`).
+vi.mock('@/lib/list-style', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/list-style')>()
+  return { ...actual, setListStyle: vi.fn().mockResolvedValue(undefined) }
+})
 
 /**
  * #713 — minimal page-store stub that "owns" the given block ids: the bus
@@ -319,7 +328,6 @@ describe('useBlockTreeEventListeners', () => {
 
     it.each([
       ['INSERT_DIVIDER', '---'],
-      ['INSERT_ORDERED_LIST', '1. hello'],
       ['INSERT_CALLOUT', '> [!INFO] hello'],
     ] as const)('%s edits the focused block to "%s"', async (event, toText) => {
       const { invoke } = await import('@tauri-apps/api/core')
@@ -341,6 +349,51 @@ describe('useBlockTreeEventListeners', () => {
       )
       // The block is re-mounted with the new content (matches the slash path).
       await vi.waitFor(() => expect(mount).toHaveBeenCalledWith('BLOCK_1', toText))
+    })
+
+    // #4552 slice 2 — INSERT_ORDERED_LIST (dead in production: nothing
+    // dispatches it any more, #1960) now sets `listStyle` instead of
+    // prepending a `1. ` marker, matching the slash/Turn-into repoint.
+    it('INSERT_ORDERED_LIST sets listStyle=ordered and does NOT edit content', async () => {
+      const { opts } = structuralOpts('hello')
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockEvent('INSERT_ORDERED_LIST')
+
+      await vi.waitFor(() =>
+        expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('BLOCK_1', 'ordered'),
+      )
+      const { invoke } = await import('@tauri-apps/api/core')
+      expect(vi.mocked(invoke)).not.toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: 'BLOCK_1' }),
+      )
+    })
+
+    // #4552 slice 2 — TURN_INTO_BLOCK also writes the `listStyle` property the
+    // target type implies, alongside the existing content edit.
+    it('TURN_INTO_BLOCK { type: numbered-list } edits content bare AND sets listStyle=ordered', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      mockedInvoke.mockImplementation(async (cmd: string) =>
+        cmd === 'edit_block'
+          ? { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
+          : undefined,
+      )
+      const { opts } = structuralOpts('hello')
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockEvent('TURN_INTO_BLOCK', { type: 'numbered-list' })
+
+      await vi.waitFor(() =>
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+          blockId: 'BLOCK_1',
+          toText: 'hello',
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('BLOCK_1', 'ordered'),
+      )
     })
 
     it.each([

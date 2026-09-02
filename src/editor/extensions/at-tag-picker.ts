@@ -17,6 +17,7 @@ import {
   resolveAndInsertPickerToken,
 } from '@/editor/extensions/picker-plugin'
 import type { PickerItem } from '@/editor/SuggestionList'
+import { t } from '@/lib/i18n'
 
 export const atTagPickerPluginKey = new PluginKey('atTagPicker')
 
@@ -76,7 +77,7 @@ export const AtTagPicker = Extension.create<AtTagPickerOptions>({
     return [
       createPickerPlugin({
         loggerComponent: 'AtTagPicker',
-        displayName: 'Tags',
+        displayName: t('editor.suggestion.tags'),
         pluginKey: atTagPickerPluginKey,
         char: '@',
         // Only open the tag picker when `@` is preceded by whitespace or is

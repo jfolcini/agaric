@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { getDateLocale } from '@/lib/date-locale'
 import {
   formatDate,
   formatDateDisplay,
@@ -166,7 +167,7 @@ export function JournalControls(): React.ReactElement {
     if (mode === 'agenda') return t('journal.tasks')
     if (mode === 'daily') return formatDateDisplay(currentDate)
     if (mode === 'weekly') return formatWeekRange(currentDate)
-    return format(currentDate, 'MMMM yyyy')
+    return format(currentDate, 'MMMM yyyy', { locale: getDateLocale() })
   }
 
   /**
@@ -185,16 +186,17 @@ export function JournalControls(): React.ReactElement {
    */
   function getCompactDateDisplay(): string {
     if (mode === 'agenda') return t('journal.tasks')
-    if (mode === 'daily') return format(currentDate, 'MMM d')
+    const locale = getDateLocale()
+    if (mode === 'daily') return format(currentDate, 'MMM d', { locale })
     if (mode === 'weekly') {
       const { start, end } = getWeekRange(currentDate)
       // Same-month weeks collapse to "Aug 24–30"; only a week that straddles
       // two months pays for the second month name.
       return isSameMonth(start, end)
-        ? `${format(start, 'MMM d')}–${format(end, 'd')}`
-        : `${format(start, 'MMM d')}–${format(end, 'MMM d')}`
+        ? `${format(start, 'MMM d', { locale })}–${format(end, 'd', { locale })}`
+        : `${format(start, 'MMM d', { locale })}–${format(end, 'MMM d', { locale })}`
     }
-    return format(currentDate, 'MMM yyyy')
+    return format(currentDate, 'MMM yyyy', { locale })
   }
 
   const navLabels = {

@@ -931,8 +931,22 @@ struct AggTerm {
 /// * [`AggregateColumn::Priority`] → `b.priority` (TEXT) numeric-coerced.
 /// * [`AggregateColumn::Position`] → `b.position` (INTEGER) numeric-coerced
 ///   (harmless for an already-numeric column; keeps one code path).
-/// * [`AggregateTarget::Property`] → the correlated `value_text` lookup keyed
-///   by the BOUND `?{pos}`, numeric-coerced.
+/// * [`AggregateTarget::Property`] → #4553 Phase 1 — `COALESCE(value_num,
+///   <numeric-coerced value_text>)`, computed INSIDE one correlated
+///   `block_properties` lookup keyed by a SINGLE bound `?{pos}` (the table's
+///   PK is `(block_id, key)`, so at most one row matches — `value_num` and
+///   `value_text` are read from that SAME row, not two separate subqueries,
+///   so the key bind is consumed exactly once). Migration `0062`'s
+///   exactly-one-value-column CHECK guarantees a `number`-declared property
+///   (written to `value_num` by `src/lib/property-save-utils.ts`) has a NULL
+///   `value_text` on that row, so the two `COALESCE` branches never both
+///   contribute — this prefers the already-numeric `value_num` when present
+///   and falls back to coercing `value_text` for a legacy/undeclared
+///   text-stored numeric, matching how `HasProperty`'s
+///   `property_value_column` already picks its compared column from the
+///   value's declared type. Previously this read `value_text` ONLY, so
+///   `sum`/`avg`/`min`/`max` over a properly `number`-declared key folded
+///   nothing but NULLs (#4553).
 fn agg_target_expr(target: &AggregateTarget, pos: usize) -> (String, Option<Bind>) {
     match target {
         AggregateTarget::Column { name } => {
@@ -943,10 +957,11 @@ fn agg_target_expr(target: &AggregateTarget, pos: usize) -> (String, Option<Bind
             (numeric_coerce(col), None)
         }
         AggregateTarget::Property { key } => {
+            let coalesced = format!("COALESCE(value_num, {})", numeric_coerce("value_text"));
             let lookup = format!(
-                "(SELECT value_text FROM block_properties WHERE block_id = b.id AND key = ?{pos})"
+                "(SELECT {coalesced} FROM block_properties WHERE block_id = b.id AND key = ?{pos})"
             );
-            (numeric_coerce(&lookup), Some(Bind::Text(key.clone())))
+            (lookup, Some(Bind::Text(key.clone())))
         }
     }
 }

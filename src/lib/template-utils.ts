@@ -1,6 +1,7 @@
 import { format as formatDateFns, addDays, getISOWeek } from 'date-fns'
 
 import { substituteTemplateVariables } from '@/editor/template-variables'
+import { getDateLocale } from '@/lib/date-locale'
 import { logger } from '@/lib/logger'
 import type { BlockRow, CreateBlockSpec } from '@/lib/tauri'
 import {
@@ -146,7 +147,12 @@ function legacyToDateFnsPattern(userFormat: string): string {
 function formatWithFallback(date: Date, userFormat: string | null, fallback: string): string {
   if (userFormat == null || userFormat.length === 0) return fallback
   try {
-    const out = formatDateFns(date, legacyToDateFnsPattern(userFormat))
+    // #4555 — a user FORMAT string can carry textual month/weekday tokens
+    // (`<% today: MMMM d, yyyy %>`), so it must resolve through the same
+    // single locale point as every other date-fns call.
+    const out = formatDateFns(date, legacyToDateFnsPattern(userFormat), {
+      locale: getDateLocale(),
+    })
     // `date-fns/format` can return '' for a pathological pattern; treat that
     // as a failure and fall back so a token never silently vanishes.
     return out.length > 0 ? out : fallback
@@ -197,8 +203,10 @@ const LEGACY_RESOLVERS: Readonly<Record<string, LegacyResolver>> = {
   'page title': (_arg, _now, ctx) => ctx.pageTitle ?? '',
 
   // --- New built-ins (#1450 Phase 1). ---
-  weekday: (arg, now) => formatWithFallback(now, arg, formatDateFns(now, 'EEEE')),
-  month: (arg, now) => formatWithFallback(now, arg, formatDateFns(now, 'MMMM')),
+  weekday: (arg, now) =>
+    formatWithFallback(now, arg, formatDateFns(now, 'EEEE', { locale: getDateLocale() })),
+  month: (arg, now) =>
+    formatWithFallback(now, arg, formatDateFns(now, 'MMMM', { locale: getDateLocale() })),
   isoweek: (_arg, now) => String(getISOWeek(now)),
 }
 

@@ -9,6 +9,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
+import { getAppLocaleTag } from '@/lib/date-locale'
 import { ulidToDate } from '@/lib/format'
 import type { FlatBlock } from '@/lib/tree-utils'
 
@@ -37,16 +38,21 @@ export function PageMetadataBar({ blocks, pageId }: PageMetadataBarProps) {
   const wordCount = useMemo(() => countWords(blocks), [blocks])
   const blockCount = blocks.length
 
+  // #4555 — `getAppLocaleTag()` (`i18n.language`) instead of an implicit
+  // `undefined`/OS-locale guess, so this can never disagree with the UI
+  // catalog it renders next to. Read outside the memo and listed as a dep
+  // so a future `changeLanguage()` re-formats this (this component already
+  // re-renders on language change via `useTranslation()` above).
+  const appLocale = getAppLocaleTag()
   const createdDate = useMemo(() => {
     const date = ulidToDate(pageId)
     if (!date) return null
-    // Use runtime locale so non-English users get localized date formatting.
-    return date.toLocaleDateString(undefined, {
+    return date.toLocaleDateString(appLocale, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
     })
-  }, [pageId])
+  }, [pageId, appLocale])
 
   const handleToggle = useCallback(() => {
     setCollapsed((prev) => !prev)

@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlock } from '@/__tests__/fixtures'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
+import { setListStyle } from '@/lib/list-style'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -20,8 +21,17 @@ vi.mock('@/lib/logger', () => ({
 vi.mock('@/editor/markdown-serializer', () => ({
   serialize: vi.fn(() => 'serialized'),
 }))
+// #4552 slice 2 — `setListStyle` is a real IPC-backed write (`setProperty`);
+// stub it so these tests exercise ONLY the dispatch wiring, not the property
+// IPC path (already covered by `list-style.test.ts`). `listStyleForBlockType`
+// stays real (a pure function).
+vi.mock('@/lib/list-style', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/list-style')>()
+  return { ...actual, setListStyle: vi.fn().mockResolvedValue(undefined) }
+})
 
 const mockedInvoke = vi.mocked(invoke)
+const mockedSetListStyle = vi.mocked(setListStyle)
 const originalOnNewAction = useUndoStore.getState().onNewAction
 
 afterEach(() => {
@@ -139,8 +149,11 @@ describe('useSlashCommandStructural — callouts', () => {
   })
 })
 
-describe('useSlashCommandStructural — list, divider', () => {
-  it('numbered-list prefixes existing content with `1. `', async () => {
+describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
+  // `/numbered-list` and `/bullet-list` now set the `listStyle` block
+  // property instead of prepending a `1. ` / `- ` markdown marker — the
+  // marker is drawn from that property (`ListMarker.tsx`), not from content.
+  it('numbered-list sets listStyle=ordered and does NOT edit content', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx } = makeSyntheticCtx()
     ctx.pageStore.setState({
@@ -152,10 +165,32 @@ describe('useSlashCommandStructural — list, divider', () => {
       id: 'numbered-list',
       label: 'Numbered list',
     })
-    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-      blockId: 'BLOCK_1',
-      toText: '1. item',
-    })
+    expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'ordered')
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'edit_block',
+      expect.objectContaining({ blockId: 'BLOCK_1' }),
+    )
+  })
+
+  it('bullet-list sets listStyle=bullet and does NOT edit content', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx()
+    await result.current.exact['bullet-list']?.(ctx, { id: 'bullet-list', label: 'Bullet list' })
+    expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'bullet')
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'edit_block',
+      expect.objectContaining({ blockId: 'BLOCK_1' }),
+    )
+  })
+
+  it('numbered-list reports the failure toast when setListStyle rejects', async () => {
+    mockedSetListStyle.mockRejectedValueOnce(new Error('boom'))
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx()
+    // Must not throw — the handler catches and reports via `notify.error`.
+    await expect(
+      result.current.exact['numbered-list']?.(ctx, { id: 'numbered-list', label: 'Numbered list' }),
+    ).resolves.toBeUndefined()
   })
 
   it('divider replaces content with `---`', async () => {
@@ -293,7 +328,10 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     })
   })
 
-  it('turn-numbered-list prepends an ordered-list marker', async () => {
+  // #4552 slice 2 — Turn-into no longer prepends a markdown marker for the
+  // two list targets: content stays bare, and the `listStyle` property
+  // carries the list-ness instead (`listStyleForBlockType`).
+  it('turn-numbered-list leaves content bare and sets listStyle=ordered', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, pageStore } = makeSyntheticCtx()
     setContent(pageStore, 'first')
@@ -301,8 +339,31 @@ describe('useSlashCommandStructural — turn into (#264)', () => {
     await handler?.(ctx, { id: 'turn-numbered-list', label: 'Ordered list' })
     expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
       blockId: 'BLOCK_1',
-      toText: '1. first',
+      toText: 'first',
     })
+    expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'ordered')
+  })
+
+  it('turn-bullet-list leaves content bare and sets listStyle=bullet', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, 'first')
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    await handler?.(ctx, { id: 'turn-bullet-list', label: 'Bullet list' })
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: 'first',
+    })
+    expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'bullet')
+  })
+
+  it('turn-paragraph clears listStyle (converting AWAY from a list)', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, 'first')
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    await handler?.(ctx, { id: 'turn-paragraph', label: 'Text' })
+    expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'none')
   })
 
   it('ignores an unknown turn- id (no edit)', async () => {

@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { CompactionStatus } from '@/lib/bindings'
+import { getAppLocaleTag } from '@/lib/date-locale'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -74,8 +75,12 @@ export function CompactionCard(): React.ReactElement {
     }
   }, [status, fetchStatus, t])
 
+  // #4555 — pass the app locale (not implicit `undefined`/OS locale) so
+  // this can never disagree with the i18next UI catalog it renders next to.
   const formattedDate =
-    status?.oldest_op_date != null ? new Date(status.oldest_op_date).toLocaleDateString() : null
+    status?.oldest_op_date != null
+      ? new Date(status.oldest_op_date).toLocaleDateString(getAppLocaleTag())
+      : null
 
   return (
     <div className="compaction-card rounded-lg border border-border/40 bg-muted/30">

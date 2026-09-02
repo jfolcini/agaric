@@ -24,12 +24,14 @@ describe('useEditorEventDispatch', () => {
   it('routes an event to the handler registered during render', () => {
     const slashCommand = vi.fn()
     const flush = vi.fn(() => 'flushed')
+    const listStyle = vi.fn()
     // Registration happens DURING render (the renderHook callback is the render
     // body), mirroring how BlockTree calls `.on(...)` inline.
     const { result } = renderHook(() => {
       const dispatch = useEditorEventDispatch()
       dispatch.on('slashCommand', slashCommand)
       dispatch.on('flush', flush)
+      dispatch.on('listStyle', listStyle)
       return dispatch
     })
 
@@ -41,6 +43,10 @@ describe('useEditorEventDispatch', () => {
     expect(result.current.thunks.flush()).toBe('flushed')
     // flushRef mirrors the flush thunk (used by useBlockNavigateToLink).
     expect(result.current.flushRef.current()).toBe('flushed')
+
+    // #4552 — the `listStyle` event (ListStyleInputRule → useListStyleSyntax).
+    result.current.thunks.listStyle('ordered')
+    expect(listStyle).toHaveBeenCalledWith('ordered')
   })
 
   it('falls back to the DEFAULT no-op when a handler is not registered (no crash)', () => {
@@ -50,6 +56,7 @@ describe('useEditorEventDispatch', () => {
     // A no-op call must not throw on an undefined handler...
     expect(() => result.current.thunks.slashCommand(ITEM)).not.toThrow()
     expect(() => result.current.thunks.checkbox('DONE')).not.toThrow()
+    expect(() => result.current.thunks.listStyle('bullet')).not.toThrow()
     expect(() => result.current.thunks.beforeCollapse('BLK_1')).not.toThrow()
     // ...and the default flush returns null (the documented "no content" value).
     expect(result.current.thunks.flush()).toBeNull()
