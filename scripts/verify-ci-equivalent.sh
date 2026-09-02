@@ -118,11 +118,12 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # repo's own tooling under `scripts/` and `.claude/`.
 #
 # `^scripts/` and `^\.claude/` are deliberate, and mirror `_validate.yml`'s
-# `ci_re`. (The two coverage scripts are frontend-only here via
-# `HOOK_OWNER_TS_RE`, so Phase A lints them; CI also routes
-# `coverage-ratchet.mjs` to backend because `cargo-coverage` executes it,
-# which no local phase does. That is the one routing the two sides do not
-# share, and it is in the safe direction.) Without them a tooling-only change fell through to the
+# `ci_re`. (The coverage and bundle-budget scripts and their JSON baselines
+# are `ci` alone here, so Phase A lints them and nothing else runs; CI
+# routes them to the suites that execute them, `vitest` and
+# `cargo-coverage`, which no local phase does. That is the one routing the
+# two sides do not share, and it is in the safe direction.) Without them a
+# tooling-only change fell through to the
 # fail-closed arm below — "a build/toolchain change we cannot attribute to a
 # suite" — which pins frontend+backend+ci and makes a two-file YAML+script
 # diff pay the FULL Rust suite (four consecutive unusable pushes on
@@ -176,7 +177,7 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 # cargo-audit-guard.sh used to be covered by self-test hooks outside every
 # skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
-HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a

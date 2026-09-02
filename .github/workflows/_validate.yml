@@ -238,23 +238,26 @@ jobs:
           # root anchor is meaningful. Note `^src-tauri/` already subsumes the
           # Cargo/migrations alternatives, but they are listed explicitly so
           # the intent is legible and robust to future anchor tweaks.
-          backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust|check-unsafe-allowlist)\.sh$|^scripts/coverage-ratchet\.mjs$)'
-          frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$)'
+          backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(check-sqlx-cache-drift|check-unsafe-allowlist)\.sh$|^scripts/coverage-ratchet\.mjs$|^scripts/coverage-baseline\.json$)'
+          frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$|^scripts/(bundle-budgets|coverage-baseline)\.json$)'
           # `scripts/` and `.claude/` are tooling: the guards and their manual-stage
           # self-tests run in `lint` (a `scripts/*.test.mjs` runs wherever it is
           # named: `pr-diff-base` in `lint`, `check-bundle-budget` in `vitest`),
-          # so a tooling-only PR is `ci` and pays no suite. The few scripts a suite
-          # consumes are routed to that suite above (the Rust phases' helpers
-          # and the unsafe allowlist to backend; the axe/test-naming hook
-          # owners, the bundle-budget guard and the two coverage scripts to
-          # frontend; the coverage ratchet also to backend, since
-          # `cargo-coverage` runs it with `--gate`). A script that no suite
-          # executes is linted by `lint`'s oxlint/oxfmt, which the shared SKIP
-          # list keeps on whenever `ci` is present.
+          # so a tooling-only PR is `ci` and pays no suite. The few files a suite
+          # consumes are routed to that suite above, data files included, so a
+          # re-baseline PR still runs the gate that reads it: the sqlx drift
+          # check and the unsafe allowlist to backend; the axe/test-naming hook
+          # owners, the bundle-budget guard with its `bundle-budgets.json` and
+          # the two coverage scripts to frontend; the coverage ratchet and its
+          # `coverage-baseline.json` also to backend, since `cargo-coverage`
+          # runs it with `--gate`. A script that no suite executes is linted by
+          # `lint`'s oxlint/oxfmt, which the shared SKIP list keeps on whenever
+          # `ci` is present.
           # `scripts/verify-ci-equivalent.sh` keeps the same `ci` set
           # (`CI_PATH_RE`; its self-test ratchets the two against each other)
-          # and routes the coverage scripts to frontend only, since no local
-          # phase runs the Rust coverage gate.
+          # but leaves the coverage/bundle scripts and their baselines as `ci`
+          # alone: no local phase runs either coverage gate or the bundle
+          # budget, so there is no suite to route them to.
           ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
 
           # Bundle/packaging gates for `ci.yml`'s two build jobs. Narrow on
