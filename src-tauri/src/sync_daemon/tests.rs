@@ -3421,33 +3421,29 @@ async fn two_daemons_start_on_different_ports() {
 ///
 /// The key is freshly generated, so nothing is listening on it. That is deliberate: the
 /// dial must fail, and it must fail as a recorded failure rather than a silent skip.
-async fn seed_unreachable_peer(pool: &sqlx::SqlitePool, peer_id: &str) {
+///
+/// `exclude_from_resync` stamps `synced_at` so Branch C's round
+/// (`peers_due_for_resync`, which gates on it) cannot claim the peer and a dial
+/// against it is Branch B's — the attribution the Branch B tests used to buy
+/// with a fixed 300 ms sleep, before #4025 let them delete it. The stamp lands
+/// *before* the key bind on purpose: the row is unresolvable until the key
+/// arrives, so no tick can find it due in between.
+async fn seed_unreachable_peer(pool: &sqlx::SqlitePool, peer_id: &str, exclude_from_resync: bool) {
     peer_refs::upsert_peer_ref(pool, peer_id).await.unwrap();
     sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = ?")
         .bind(peer_id)
         .execute(pool)
         .await
         .unwrap();
+    if exclude_from_resync {
+        sqlx::query("UPDATE peer_refs SET synced_at = ? WHERE peer_id = ?")
+            .bind(agaric_store::db::now_ms())
+            .bind(peer_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
     peer_refs::bind_endpoint_id(pool, peer_id, &SecretKey::generate().public().to_string())
-        .await
-        .unwrap();
-}
-
-/// Put `peer_id` out of Branch C's reach, so a dial against it is Branch B's.
-///
-/// Branch C's round is `peers_due_for_resync`, which gates on `synced_at`;
-/// Branch B's [`peers_for_change_round`] ignores it. A peer stamped as synced
-/// just now is not overdue for the test's 60 s resync interval, so Branch B is
-/// the only branch left that can reach it.
-///
-/// The Branch B tests used to buy this attribution with a fixed 300 ms sleep
-/// that let Branch C's immediate first tick pass over a still-empty table
-/// — the sleep #4025 removed.
-async fn exclude_from_resync_round(pool: &sqlx::SqlitePool, peer_id: &str) {
-    sqlx::query("UPDATE peer_refs SET synced_at = ? WHERE peer_id = ?")
-        .bind(agaric_store::db::now_ms())
-        .bind(peer_id)
-        .execute(pool)
         .await
         .unwrap();
 }
@@ -3490,9 +3486,9 @@ const BRANCH_SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_
 /// unreachable peer the dial fails and the scheduler records a failure.
 ///
 /// Approach: start the daemon with NO peer refs, then insert a peer ref that is
-/// resolvable but unreachable (see [`seed_unreachable_peer`]) and stamped out of
-/// Branch C's round (see [`exclude_from_resync_round`]), fire `notify_change()`,
-/// and verify a failure is recorded.
+/// resolvable but unreachable and stamped out of Branch C's round (see
+/// [`seed_unreachable_peer`]), fire `notify_change()`, and verify a failure is
+/// recorded.
 ///
 /// #4025: the `notify_change()` deliberately lands in the startup window where
 /// Branch C's immediate first tick cancels Branch B's debounce. There is no
@@ -3530,8 +3526,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     // round when the loop comes back to Branch B.
 
     // Insert a peer ref with an unreachable last_address (port 1).
-    seed_unreachable_peer(&pool, "REMOTE_PEER").await;
-    exclude_from_resync_round(&pool, "REMOTE_PEER").await;
+    seed_unreachable_peer(&pool, "REMOTE_PEER", true).await;
 
     // Trigger Branch B by notifying a local change.
     scheduler.notify_change();
@@ -3617,8 +3612,7 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     // JoinSet visits them concurrently.  Either way, both must
     // accumulate a failure.
     for peer_id in ["REMOTE_PEER_1", "REMOTE_PEER_2"] {
-        seed_unreachable_peer(&pool, peer_id).await;
-        exclude_from_resync_round(&pool, peer_id).await;
+        seed_unreachable_peer(&pool, peer_id, true).await;
     }
 
     // Trigger Branch B by notifying a local change.
@@ -3686,7 +3680,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
 
     // Insert a peer ref that has NEVER synced (synced_at IS NULL → always due)
     // with a last_address so resolve_peer_address can find it.
-    seed_unreachable_peer(&pool, "OVERDUE_PEER").await;
+    seed_unreachable_peer(&pool, "OVERDUE_PEER", false).await;
 
     // Start daemon — the first resync tick fires immediately.
     let daemon = SyncDaemon::start(
@@ -4154,7 +4148,7 @@ async fn daemon_branch_b_ignores_discovered_unpaired_peer_outside_pairing_window
     // `seed_unreachable_peer` binds a freshly generated key, while
     // `discovered_entry` announces `test_endpoint_id(peer_id)` — two different
     // keys for one device, which is exactly the pinned-identity refusal.
-    seed_unreachable_peer(&pool, PAIRED_MISMATCH).await;
+    seed_unreachable_peer(&pool, PAIRED_MISMATCH, false).await;
     assert!(
         !peer_refs::is_pending_pairing(&pool).await.unwrap(),
         "precondition: no pairing window is open"

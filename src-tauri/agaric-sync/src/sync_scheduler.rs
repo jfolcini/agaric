@@ -1010,10 +1010,7 @@ impl SyncScheduler {
         // Keep waiting while changes keep arriving within the window.
         loop {
             tokio::select! {
-                result = changes.changed() => {
-                    if result.is_err() {
-                        break;
-                    }
+                _ = changes.changed() => {
                     // Another change arrived — restart the window.
                     count = *changes.borrow_and_update();
                 }
