@@ -71,21 +71,6 @@ name: Scheduled deep checks
 #                    — see #3330 and `mutants-frontend` above. Findings feed
 #                    the per-rule burn-down; promote a rule to `error` in
 #                    `.oxlintrc.json` once its count reaches zero.
-#   prek-all-files — #3058: `prek run --all-files` (pre-commit stage, whole
-#                    tree), HARD-FAILING — unlike every other lane above,
-#                    this one gates. No cargo build/clippy/test (the
-#                    pre-commit stage doesn't need them) so hook drift gets a
-#                    clean, undiluted signal instead of being buried inside
-#                    `full-suite`'s much slower everything-job — it still
-#                    needs the Tauri system deps + toolchain to back its 4
-#                    `cargo sqlx prepare --check` compile passes (see below).
-#                    `full-suite` below separately covers the pre-push-staged
-#                    hooks (fmt-check/clippy/knip/npm-audit/lychee) as part
-#                    of its own broader backstop; this lane's `sqlx offline
-#                    cache check` steps are the pre-push `verify-ci-equivalent`
-#                    hook's Phase E equivalent, run directly (not via that
-#                    hook) to avoid the recursion `full-suite` documents
-#                    avoiding for the same reason.
 #   report-scheduled-failures — #3359: the NOTIFICATION path for this whole
 #                    workflow. Every lane above is non-blocking, so before
 #                    this job a red lane was visible only to whoever opened
@@ -2267,193 +2252,6 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
-  # prek-all-files (#3058) — the whole-tree pre-commit-stage prek backstop.
-  # Unlike every other lane in this workflow, this one GATES: these are the
-  # same hooks that block a local push, so a scheduled whole-tree finding on
-  # `main` is the strongest signal this workflow can produce.
-  #
-  # Scoped to the pre-commit stage (`prek run --all-files`, no
-  # `--hook-stage`): the pre-push-staged hooks (`cargo-fmt-check`,
-  # `cargo-clippy`, `cargo-test`, `knip`, `npm-audit`, `lychee`,
-  # `verify-ci-equivalent`) are already covered, unskipped bar the four
-  # exceptions it documents, by `full-suite` below — duplicating that here
-  # would just re-run the same slow compile+clippy work twice. This lane's
-  # own value-add on top of the literal pre-commit stage is the `sqlx
-  # offline cache check` steps: the pre-push `verify-ci-equivalent` hook's
-  # Phase E (`cargo sqlx prepare --check`, one lane per crate carrying a
-  # committed `.sqlx/` cache) equivalent, invoked directly via the same
-  # composite action `_validate.yml` uses per-PR — NOT via the
-  # `verify-ci-equivalent` hook itself, which `full-suite` documents SKIPping
-  # for the same reason we don't invoke it here either: it recurses into a
-  # nested whole-tree Phase A prek run and fail-exits on the empty push
-  # range a scheduled on-`main` run always has. The `manual` stage (self-tests
-  # and CI-only guards, #4556 Phase 2) is likewise left to `full-suite`.
-  # ---------------------------------------------------------------------------
-  prek-all-files:
-    runs-on: ubuntu-24.04
-    # No cargo build/clippy/test/vitest/playwright/nextest here (unlike
-    # `full-suite`) — just the pre-commit hook suite + 4
-    # `cargo sqlx prepare --check` compile passes (which is why the Tauri
-    # system deps + Rust toolchain below are still needed).
-    timeout-minutes: 45
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # gitleaks (a pre-commit-stage hook) inspects git history.
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Prepare apt (free dpkg lock, bound downloads)
-        uses: ./.github/actions/prepare-apt
-
-      - name: Cache apt archives (Tauri system deps)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-tauri-${{ runner.os }}-v1
-
-      - name: Install system dependencies
-        # Needed for the `cargo sqlx prepare --check` compile passes below
-        # (Tauri crates pull in the webkit/gtk stack) — the pre-commit prek
-        # hooks themselves don't compile anything.
-        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
-        # that cannot serve the index no longer reds this job as a code
-        # failure; the INSTALL decides. Measured trace + exit codes in
-        # .github/actions/apt-install/action.yml.
-        uses: ./.github/actions/apt-install
-        with:
-          packages: >-
-            libwebkit2gtk-4.1-dev
-            libgtk-3-dev
-            libssl-dev
-            librsvg2-dev
-            libsoup-3.0-dev
-            pkg-config
-            mold
-
-      - name: Enable mold linker (CI-only .cargo/config.toml)
-        run: |
-          mkdir -p .cargo
-          cp .cargo/config.toml.example .cargo/config.toml
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          toolchain: 1.95.0
-          # rustfmt backs the `cargo-fmt` hook (pre-commit); clippy isn't
-          # invoked by anything in this job (that hook is pre-push-staged,
-          # see `full-suite`) but matches every other lane's toolchain step.
-          components: clippy,rustfmt
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          # Cache ~/.cargo/bin so sqlx-cli (installed below) persists.
-          cache-bin: 'true'
-          # Own per-job-class key (issue #813): this tree (cargo-fmt/
-          # deny/machete + 4 sqlx-prepare compiles, no clippy/test) matches
-          # none of the other lanes' caches.
-          shared-key: rust-prek-all-files
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install npm dependencies
-        # oxlint/oxfmt/tsc and most of the local JS/TS pre-commit hooks need
-        # node_modules present.
-        run: npm ci
-
-      - name: Prepare externalBin placeholder (FEAT-4f)
-        # Tauri's build.rs validates externalBin paths on every cargo
-        # invocation, including the sqlx-prepare compile passes below.
-        run: node scripts/prepare-external-bins.mjs --placeholder-only
-
-      - name: Install prek + non-Rust lint tools via prebuilt binaries
-        # Mirrors the lint job's ungated tool install: prek runs the whole
-        # suite; zizmor/taplo/typos/sqruff are invoked by prek hooks.
-        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
-        with:
-          # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
-          # pins 1.95.0 — bump in lockstep with the lint job / `full-suite`.
-          # zizmor pinned (#3476) to `ZIZMOR_PINNED_VERSION` in
-          # scripts/zizmor-hook.sh; the wrapper fails the run on a mismatch.
-          # prek/taplo-cli/typos-cli pinned (#3742) — must match
-          # `pinned_version_for` in scripts/setup-hooks.sh and the other
-          # tool: lists in this repo. Verified by
-          # scripts/check-prek-version-pin.mjs.
-          tool: prek@0.3.8,zizmor@1.28.0,taplo-cli@0.10.0,typos-cli@1.46.0,sqruff@0.38.0
-
-      - name: Install cargo plugins via prebuilt binaries
-        # Back the `cargo-deny` / `cargo-machete` pre-commit hooks.
-        # cargo-nextest/cargo-audit are NOT needed: `cargo-test` and
-        # `cargo audit` are pre-push-staged, not run by this job.
-        uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
-        with:
-          tool: cargo-deny,cargo-machete
-
-      - name: Install sqlx-cli (custom features, cargo fallback)
-        # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's
-        # binary list, so compile from source (cached via rust-cache
-        # cache-bin above). Backs the 4 sqlx offline-cache-check steps below
-        # — none of which is itself a prek hook (see the job header).
-        run: |
-          if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
-
-      # sqlx offline cache checks (4 lanes) — mirror `_validate.yml`'s lint
-      # job exactly, one per crate carrying a committed `.sqlx/` cache. This
-      # is the `verify-ci-equivalent` pre-push hook's Phase E, run directly
-      # via the same composite action instead of through that hook (see the
-      # job header comment for why). `sqlite:dev.db` matches the local-dev
-      # convention (`src-tauri/.env`); the other three crates use unique
-      # per-crate throwaway DBs under `runner.temp` so their absolute paths
-      # resolve outside the workspace root (a relative sqlite path resolves
-      # against the workspace root, not the crate dir — see
-      # `_validate.yml`'s agaric-store lane comment for the failure mode
-      # that taught us this). The composite action itself creates + migrates
-      # each DB before `cargo sqlx prepare --check`, so a missing/absent DB
-      # file never false-fails this — it's created fresh every run.
-      - name: sqlx offline cache check (root, dev.db)
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri
-          database-url: 'sqlite:dev.db'
-
-      - name: sqlx offline cache check (agaric-store)
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-store
-          database-url: 'sqlite:${{ runner.temp }}/agaric-store-sqlx-prepare.db'
-
-      - name: sqlx offline cache check (agaric-engine)
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-engine
-          database-url: 'sqlite:${{ runner.temp }}/agaric-engine-sqlx-prepare.db'
-
-      - name: sqlx offline cache check (agaric-sync)
-        uses: ./.github/actions/sqlx-offline-check
-        with:
-          working-directory: src-tauri/agaric-sync
-          database-url: 'sqlite:${{ runner.temp }}/agaric-sync-sqlx-prepare.db'
-
-      - name: Run prek — pre-commit stage, whole tree, HARD-FAIL (#3058)
-        # No `|| true`, no SKIP: unlike every other lane in this workflow,
-        # this one gates. These are the same hooks that block a local push
-        # (`prek run --all-files` with no `--hook-stage` runs the
-        # pre-commit-staged hooks), so a finding here means the whole tree —
-        # not just this week's PR diffs — has drifted.
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: prek run --all-files
-
-  # ---------------------------------------------------------------------------
   # full-suite — the WHOLE-TREE BACKSTOP that makes per-PR category gating safe.
   #
   # ci/path-conditional-jobs: the per-PR `_validate.yml` lint job and the local
@@ -2471,7 +2269,9 @@ jobs:
     runs-on: ubuntu-24.04
     # The slow exhaustive lane: cold-ish compile + the full prek suite (both
     # stages) + full vitest + full playwright + full nextest + doc-tests.
-    timeout-minutes: 60
+    # 60 -> 75: the 4 sqlx-prepare compile passes and the Node 22 floor run,
+    # each previously a lane of its own, now sit inside this one budget.
+    timeout-minutes: 75
     permissions:
       contents: read
     steps:
@@ -2497,73 +2297,13 @@ jobs:
                       "$AGENT_TOOLSDIRECTORY"
           echo "After:" && df -h /
 
-      - name: Prepare apt (free dpkg lock, bound downloads)
-        uses: ./.github/actions/prepare-apt
-
-      - name: Cache apt archives (Tauri system deps)
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Toolchain (apt, mold, Rust, Node, npm ci)
+        uses: ./.github/actions/toolchain
         with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-tauri-${{ runner.os }}-v1
-
-      - name: Install system dependencies
-        # Same Tauri stack as the lint / cargo-tests / mcp-tests jobs in
-        # _validate.yml — webkit/gtk/ssl/rsvg/soup + mold for fast linking.
-        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
-        # that cannot serve the index no longer reds this job as a code
-        # failure; the INSTALL decides. Measured trace + exit codes in
-        # .github/actions/apt-install/action.yml.
-        uses: ./.github/actions/apt-install
-        with:
-          packages: >-
-            libwebkit2gtk-4.1-dev
-            libgtk-3-dev
-            libssl-dev
-            librsvg2-dev
-            libsoup-3.0-dev
-            pkg-config
-            mold
-
-      - name: Enable mold linker (CI-only .cargo/config.toml)
-        run: |
-          mkdir -p .cargo
-          cp .cargo/config.toml.example .cargo/config.toml
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
-        with:
-          # #640: exact toolchain pin — keep in lockstep with
-          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
-          toolchain: 1.95.0
-          # The prek cargo hooks run `cargo clippy -- -D warnings` and
-          # `cargo fmt --check`; dtolnay installs `--profile minimal`, which
-          # ships neither component, so request them explicitly (mirrors lint).
-          components: clippy,rustfmt
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          # Cache ~/.cargo/bin so the cargo-installed plugins (sqlx-cli) persist.
-          cache-bin: 'true'
-          # Own per-job-class key (issue #813): the full unskipped prek + plain
-          # nextest tree matches none of the lint/cov/mcp/bench trees.
-          shared-key: rust-full-suite
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Prepare externalBin placeholder (FEAT-4f)
-        # Tauri's build.rs validates externalBin paths on every cargo
-        # invocation (clippy hook, nextest, doc-tests).
-        run: node scripts/prepare-external-bins.mjs --placeholder-only
+          rust-shared-key: rust-full-suite
+          # Tauri's build.rs validates externalBin paths on every cargo
+          # invocation (clippy hook, nextest, doc-tests).
+          external-bin: 'true'
 
       - name: Install prek + non-Rust lint tools via prebuilt binaries
         # Mirrors the lint job's first (ungated) tool install: prek runs the
@@ -2592,6 +2332,39 @@ jobs:
         # list, so compile from source (cached via rust-cache cache-bin).
         run: |
           if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
+
+      # sqlx offline cache checks (4 lanes) — one per crate carrying a
+      # committed `.sqlx/` cache, mirroring `_validate.yml`'s lint job. This is
+      # the pre-push `verify-ci-equivalent` hook Phase E, invoked directly: the
+      # hook itself recurses into a nested whole-tree prek run and fail-exits
+      # on the empty push range a scheduled on-`main` run always has. The three
+      # non-root crates get absolute throwaway DBs under `runner.temp`, since a
+      # relative sqlite path resolves against the workspace root, not the crate
+      # dir. The action creates + migrates each DB, so an absent file never
+      # false-fails this.
+      - name: sqlx offline cache check (root, dev.db)
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri
+          database-url: 'sqlite:dev.db'
+
+      - name: sqlx offline cache check (agaric-store)
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-store
+          database-url: 'sqlite:${{ runner.temp }}/agaric-store-sqlx-prepare.db'
+
+      - name: sqlx offline cache check (agaric-engine)
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-engine
+          database-url: 'sqlite:${{ runner.temp }}/agaric-engine-sqlx-prepare.db'
+
+      - name: sqlx offline cache check (agaric-sync)
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-sync
+          database-url: 'sqlite:${{ runner.temp }}/agaric-sync-sqlx-prepare.db'
 
       - name: Install lychee (prebuilt binary)
         # The `lychee` prek hook is a `local` hook calling the system binary;
@@ -2736,6 +2509,27 @@ jobs:
           cargo nextest run --workspace --profile ci
           cargo test --doc --workspace
 
+      - name: Install Node 22 (the `engines.node` floor)
+        # The Node floor is checked weekly here, not per PR. Pinned to the
+        # exact floor of `engines.node` (^22.22.2), not a floating 22, so the
+        # lane tests the lowest version we claim to support — keep in lockstep
+        # with package.json. Last in the job: it replaces the Node 24 every
+        # step above ran on.
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.22.2
+          cache: npm
+
+      - name: Install npm dependencies (Node 22)
+        # `.npmrc` sets engine-strict=true, so this step is itself part of the
+        # test: npm refuses to install if `engines.node` excludes 22.22.2.
+        run: npm ci
+
+      - name: Typecheck + vitest on Node 22 (no coverage)
+        run: |
+          npm run typecheck
+          npx vitest run
+
   # ---------------------------------------------------------------------------
   # report-scheduled-failures (#3359) — the notification path for THIS
   # workflow. Every lane above is non-blocking triage signal, and #3365 spent
@@ -2817,7 +2611,6 @@ jobs:
       - fuzz
       - file-fuzz-findings
       - type-aware-lint
-      - prek-all-files
       - full-suite
     if: always()
     runs-on: ubuntu-24.04

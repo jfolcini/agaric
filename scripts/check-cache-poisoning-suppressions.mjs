@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // #3737 — `.github/zizmor.yml` used to suppress zizmor's `cache-poisoning`
-// finding on four steps (two `Swatinem/rust-cache`, two `actions/setup-node`,
-// all in ci.yml's build-only jobs) by LINE NUMBER: `ci.yml:318`, etc. A line
+// finding on ci.yml's build-only cache steps (`Swatinem/rust-cache` and
+// `actions/setup-node`) by LINE NUMBER: `ci.yml:318`, etc. A line
 // number is not a key for "this step" — it is a key for "whatever text is on
 // this line today". Four times in one day, an unrelated comment added
 // anywhere above those anchors in ci.yml shifted every line below it, so a
@@ -54,8 +54,10 @@ const ZIZMOR_CONFIG_PATH = join(REPO_ROOT, '.github', 'zizmor.yml')
 
 /**
  * How many inline `# zizmor: ignore[cache-poisoning]` suppressions the repo
- * is expected to carry — the four #3737 introduced (two `Swatinem/rust-cache`,
- * two `actions/setup-node`, all in ci.yml's build-only jobs).
+ * is expected to carry — the two on ci.yml's `android-build` cache steps.
+ * The `build` job's pair went with those steps into
+ * `.github/actions/toolchain`, where the audit does not fire: cache-poisoning
+ * keys off a workflow's publishing triggers, and a composite action has none.
  *
  * EXACT on purpose, and the strictness is the point: `checkHygiene` only
  * notices zero, so without an exact count a suppression appearing in some
@@ -64,7 +66,7 @@ const ZIZMOR_CONFIG_PATH = join(REPO_ROOT, '.github', 'zizmor.yml')
  * be a deliberate edit here, which is why the failure detail says so instead
  * of reading like a defect report.
  */
-export const EXPECTED_INLINE_SUPPRESSIONS = 4
+export const EXPECTED_INLINE_SUPPRESSIONS = 2
 
 // ---------------------------------------------------------------------------
 // (1) The regression this guard exists to catch: a line-anchored
