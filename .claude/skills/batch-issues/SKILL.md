@@ -102,7 +102,8 @@ One file per session at `docs/session-log/session-NNNN-<slug>.md`; never edit a 
 
 - Run the formatters on your changed files first (`cargo fmt`; `npx oxfmt --write <files>`, never `oxfmt --write .`), then commit once. If a hook still rewrites a file, re-stage and retry.
 - Stage by path (`git add -A -- <paths>`), never bare `git add -A`.
-- Confirm HEAD advanced (`git log --oneline -1`) before pushing; a hook abort can be masked. Read the named failing hook and fix its cause; never `--no-verify`.
+- Confirm HEAD advanced (`git log --oneline -1`) before pushing; a hook abort can be masked. Read the named failing hook and fix its cause. Pre-commit hooks always run (file-scoped, seconds).
+- The pre-push verifier is scoped to the push range and classifies it like CI. Let it run for a Rust or frontend range you have not otherwise verified. Skip it with `SKIP_CI_VERIFY='<reason>' git push` when it would only repeat what CI runs on the PR anyway: a docs, CI or tooling-only range, a re-push after a review nit, or a range whose full suite the reviewer subagent just ran. CI is the merge gate; the hook is a convenience, and a box already running a heavy build is a reason on its own.
 - After a Rust change, regenerate codegen (`references/codegen-and-sql.md`) and verify with `cargo check --all-targets`. Doc-comment-only Rust changes still regenerate `src/lib/bindings.ts` (`just gen-bindings`, backgrounded: it exceeds the 10-minute foreground limit).
 - `SQLX_OFFLINE=true cargo check --workspace` is the check CI runs; a plain `cargo check` passes with a stale `.sqlx`.
 - Push with `scripts/push.sh` for anything touching `.rs`.

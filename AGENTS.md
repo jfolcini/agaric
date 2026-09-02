@@ -55,7 +55,7 @@ Four commands have a wrong-but-plausible form. Use the right one:
 - **`npm run typecheck`, never `npx tsc --noEmit`.** The root tsconfig is solution-style, and `--noEmit` without `-b` checks an empty program and exits 0 (#3805).
 - **`cargo nextest run --workspace`, never the bare form.** Bare `cargo nextest run` is scoped to the `agaric` package and silently skips `agaric-store`, `agaric-engine`, `agaric-sync`, `agaric-core` (#3212). Same for `cargo mutants --workspace`.
 - **`just gen-sqlx`, never `cargo sqlx prepare`.** Four `.sqlx/` caches must move together (invariant 6).
-- **`scripts/push.sh` for anything touching `.rs`, not raw `git push`.** Raw push holds the connection open through the multi-minute pre-push verify and GitHub drops it. `SKIP_CI_VERIFY='<real reason>' git push` is the escape hatch for docs-only changes.
+- **`scripts/push.sh` for anything touching `.rs`, not raw `git push`.** Raw push holds the connection open through the multi-minute pre-push verify and GitHub drops it. `SKIP_CI_VERIFY='<real reason>' git push` skips the verify when it would only repeat what CI runs on the PR (docs, CI or tooling-only ranges, a re-push after a review nit, a range already run through the full suite); CI is the merge gate.
 
 Setup auto-runs on Claude Code on the web via [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh).
 

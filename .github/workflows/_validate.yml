@@ -238,9 +238,18 @@ jobs:
           # root anchor is meaningful. Note `^src-tauri/` already subsumes the
           # Cargo/migrations alternatives, but they are listed explicitly so
           # the intent is legible and robust to future anchor tweaks.
-          backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/)'
-          frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$)'
-          ci_re='(^\.github/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
+          backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust|check-unsafe-allowlist)\.sh$)'
+          frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-bundle-budget(\.test)?\.mjs$)'
+          # `scripts/` and `.claude/` are tooling: the guards, their manual-stage
+          # self-tests and `scripts/*.test.mjs` all run in `lint`, so a
+          # tooling-only PR is `ci` and pays no suite. The few scripts a suite
+          # consumes are routed to that suite above (the Rust phases' helpers
+          # and the unsafe allowlist to backend; the axe/test-naming hook
+          # owners and the bundle-budget guard, whose test runs in `vitest`,
+          # to frontend). `scripts/verify-ci-equivalent.sh` keeps the same
+          # routing (`CI_PATH_RE`, `RS_SCRIPT_RE`, `HOOK_OWNER_*_RE`) and its
+          # self-test ratchets the two `ci` sets against each other.
+          ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
 
           # Bundle/packaging gates for `ci.yml`'s two build jobs. Narrow on
           # purpose: logic correctness lives in the suites above, so these only
