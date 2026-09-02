@@ -7,7 +7,7 @@ description: Work the GitHub backlog in batches — pick an issue (plan-labelled
 
 Plan → build (parallel) → test → review → log → commit → PR → next batch. Reconcile open PRs at batch boundaries, never by polling.
 
-The bar for everything below is `AGENTS.md` § How we work: pragmatic, simple, no speculative work, no gold-plating. Climb its ladder before writing a line: not needed, already here, stdlib or platform, installed dependency, one plain line, then the minimum that works. A batch that ships three small real fixes beats one that ships a framework.
+The bar for everything below is `AGENTS.md` § How we work: pragmatic, simple, no speculative work, no gold-plating. A batch that ships three small real fixes beats one that ships a framework.
 
 References, loaded only when needed:
 
@@ -127,7 +127,7 @@ When the planned list is empty and only CI-pending PRs remain, pull the next bac
 
 ## Principles
 
-- The best code is the code never written; the second best already existed. Three deletions and a one-line fix is a good batch.
+- Three deletions and a one-line fix is a good batch.
 - Fix what is there. Do not refactor beyond scope. Keep refactors and features in separate commits.
 - Out-of-scope improvements become a code comment or an issue per §4, never a TODO.
 - Every quantitative claim names its population ("94% of mutants" over which files?). A relayed claim (reviewer, changelog, subagent) is unverified until you check it.
