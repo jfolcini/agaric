@@ -118,20 +118,14 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # repo's own tooling under `scripts/` and `.claude/`.
 #
 # `^scripts/` and `^\.claude/` are deliberate, and mirror `_validate.yml`'s
-# `ci_re`. (The coverage and bundle-budget scripts and their JSON baselines
-# are `ci` alone here, so Phase A lints them and nothing else runs; CI
-# routes them to the suites that execute them, `vitest` and
-# `cargo-coverage`, which no local phase does. That is the one routing the
-# two sides do not share, and it is in the safe direction.) Without them a
-# tooling-only change fell through to the
-# fail-closed arm below — "a build/toolchain change we cannot attribute to a
-# suite" — which pins frontend+backend+ci and makes a two-file YAML+script
-# diff pay the FULL Rust suite (four consecutive unusable pushes on
-# 2026-08-26 for `scripts/*.sh`; a 25-minute `cargo check --tests` for a
-# `scripts/*.mjs` edit on 2026-09-02). Tooling IS attributable: its guards
-# run in Phase A, and CI's `lint` job runs the guards, their manual-stage
-# self-tests and `scripts/*.test.mjs`. The scripts a SUITE consumes are
-# routed to that suite by `RS_SCRIPT_RE` / `HOOK_OWNER_*_RE` below.
+# `ci_re`; the rationale (tooling is attributable: its guards run in Phase
+# A and CI's `lint` job; the scripts a suite consumes are routed to that
+# suite) lives once, in the comment above `ci_re` in `_validate.yml`. The
+# scripts a local phase depends on are routed by `RS_SCRIPT_RE` /
+# `HOOK_OWNER_*_RE` below. The one routing the two sides do not share: the
+# coverage and bundle-budget scripts and their JSON baselines are `ci`
+# alone here, since no local phase runs those gates, while CI routes them
+# to `vitest` and `cargo-coverage`. Safe direction: CI does more.
 #
 # Deliberately NOT widened: a ROOT-level `*.sh`, `rust-toolchain.toml`,
 # `.cargo/config.toml` and friends still hit fail-closed. Those change how
@@ -173,11 +167,17 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 #   check-axe-presence.sh       -> hook `axe-presence`      (dropped when HAS_TS=0)
 #   check-test-file-naming.sh   -> hook `test-file-naming`  (dropped when HAS_TS=0)
 #
+# The TS list also carries every script a `src/**/*.test.ts` imports or
+# spawns (the six `check-*.mjs` guards with unit tests in `src/__tests__/`,
+# and `scripts/lib/js-scanner.mjs`): their tests run only in Phase C, so a
+# guard-only edit must flip HAS_TS or its own tests never execute. Mirrors
+# `_validate.yml`'s `frontend_re`; add to both when a script gains a test.
+#
 # check-migrations-immutable.sh, check-session-log-numbering.sh and
 # cargo-audit-guard.sh used to be covered by self-test hooks outside every
 # skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
-HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
@@ -1116,6 +1116,9 @@ if [ "${1:-}" = "--self-test" ]; then
     st_hook 'scripts/check-unsafe-allowlist.sh'  "$HOOK_OWNER_RS_RE" yes 'unsafe-allowlist re-enables HAS_RS'
     st_hook 'scripts/check-axe-presence.sh'      "$HOOK_OWNER_TS_RE" yes 'axe-presence re-enables HAS_TS'
     st_hook 'scripts/check-test-file-naming.sh'  "$HOOK_OWNER_TS_RE" yes 'test-file-naming re-enables HAS_TS'
+    st_hook 'scripts/check-store-layering.mjs'   "$HOOK_OWNER_TS_RE" yes 'a guard with a vitest unit test re-enables HAS_TS'
+    st_hook 'scripts/lib/js-scanner.mjs'         "$HOOK_OWNER_TS_RE" yes 'js-scanner (imported by a vitest test) re-enables HAS_TS'
+    st_hook 'scripts/check-type-aware-liveness.mjs' "$HOOK_OWNER_TS_RE" no 'a guard only mentioned in a test comment stays CI-only'
     st_hook 'scripts/push.sh'                    "$HOOK_OWNER_RS_RE" no  'push.sh is not a hook owner'
     st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor is check-migrations-immutable.sh'
 
