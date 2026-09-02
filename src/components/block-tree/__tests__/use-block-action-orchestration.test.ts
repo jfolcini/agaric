@@ -1713,13 +1713,17 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
   })
 
   it('removes just-created empty block on Escape', () => {
+    const emptyB = [
+      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 0, content: '' }),
+      makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
+    ]
     const params = makeDefaultParams({
       focusedBlockId: 'B',
-      collapsedVisible: [
-        makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
-        makeBlock({ id: 'B', depth: 0, content: '' }),
-        makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
-      ],
+      collapsedVisible: emptyB,
+      // The untouched stub: empty in the STORE too, which is what the removal
+      // is gated on (#4603).
+      blocks: emptyB,
     })
     params.justCreatedBlockIds.current.add('B')
     params.rovingEditor.unmount = vi.fn(() => null)
@@ -1756,10 +1760,21 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
   })
 
   it('does not remove just-created block when user has typed content', () => {
-    const params = makeDefaultParams({ focusedBlockId: 'B' })
+    const typedB = [
+      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 0, content: 'buy milk' }),
+      makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
+    ]
+    const params = makeDefaultParams({
+      focusedBlockId: 'B',
+      collapsedVisible: typedB,
+      // #4603 — the typed text is in the STORE (an earlier debounced commit
+      // put it there), not only in the unmount delta.
+      blocks: typedB,
+    })
     params.justCreatedBlockIds.current.add('B')
-    // unmount returns non-null → user typed content that was discarded
-    params.rovingEditor.unmount = vi.fn(() => 'some content')
+    // unmount returns non-null → the tail typed since that commit is discarded
+    params.rovingEditor.unmount = vi.fn(() => 'buy milk and eggs')
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
@@ -1767,6 +1782,37 @@ describe('useBlockActionOrchestration handleEscapeCancel', () => {
     })
 
     // Block should NOT be removed because user had typed content
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.setFocused).toHaveBeenCalledWith(null)
+  })
+
+  // #4603 — the flushing slash commands (`/todo`, `/numbered-list`, `/effort`,
+  // …) await `flushActiveDraft()`, whose `commitNow()` calls `markCommitted(md)`
+  // and so REBASES the roving editor's delta baseline. `unmount()` then reports
+  // null for a block the user filled in. Gating the removal on the unmount delta
+  // alone soft-deleted the whole block — text and the property the command had
+  // just written.
+  it('does not remove a just-created block whose content the flush already committed', () => {
+    const committedB = [
+      makeBlock({ id: 'A', depth: 0, content: 'Alpha' }),
+      makeBlock({ id: 'B', depth: 0, content: 'buy milk' }),
+      makeBlock({ id: 'C', depth: 0, content: 'Charlie' }),
+    ]
+    const params = makeDefaultParams({
+      focusedBlockId: 'B',
+      collapsedVisible: committedB,
+      blocks: committedB,
+    })
+    params.justCreatedBlockIds.current.add('B')
+    // The flush already committed 'buy milk' and rebased the baseline, so the
+    // unmount delta is empty — exactly as it is after `/todo`.
+    params.rovingEditor.unmount = vi.fn(() => null)
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    act(() => {
+      result.current.handleEscapeCancel()
+    })
+
     expect(params.remove).not.toHaveBeenCalled()
     expect(params.setFocused).toHaveBeenCalledWith(null)
   })

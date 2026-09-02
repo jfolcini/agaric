@@ -897,7 +897,15 @@ export function useBlockActionOrchestration({
     }
     // If the block was just created and the user made no edits (changed === null),
     // delete the empty block instead of leaving it around.
-    if (justCreatedBlockIds.current.has(focusedBlockId) && changed === null) {
+    // #4603 — `changed === null` alone does not mean "untouched": any commit that
+    // ran while the block was mounted (the content debounce, or the
+    // `flushActiveDraft()` the slash commands await) rebases the delta baseline
+    // through `markCommitted`, so `unmount()` reports null for a block the user
+    // filled in. Confirm against the store, the same predicate BlockTree's
+    // focus-change cleanup uses.
+    const storeBlock = blocks.find((b) => b.id === focusedBlockId)
+    const emptyInStore = storeBlock != null && (storeBlock.content ?? '').trim() === ''
+    if (justCreatedBlockIds.current.has(focusedBlockId) && changed === null && emptyInStore) {
       justCreatedBlockIds.current.delete(focusedBlockId)
       remove(focusedBlockId).catch((err: unknown) => {
         logger.warn(
@@ -909,7 +917,7 @@ export function useBlockActionOrchestration({
       })
     }
     setFocused(null)
-  }, [focusedBlockId, setFocused, justCreatedBlockIds, remove, discardDraft, t])
+  }, [focusedBlockId, blocks, setFocused, justCreatedBlockIds, remove, discardDraft, t])
 
   return {
     handleFocusPrev,

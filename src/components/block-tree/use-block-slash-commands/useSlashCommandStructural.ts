@@ -113,8 +113,14 @@ async function handleDivider(ctx: SlashCommandContext): Promise<void> {
  * `serializeBlockSubtree` → `pasteBlocks` path the context-menu "Duplicate" row
  * (`BlockTree.handleDuplicate`) and the `duplicateBlock` keyboard binding fire —
  * no separate clone op.
+ *
+ * #4577 — the clone is serialized from the STORE, so it needs the same
+ * `flushActiveDraft()` the property-writing handlers take (see
+ * {@link handleListStyle}): without it, duplicating inside the commit debounce
+ * copies the block's pre-typing content.
  */
 async function handleDuplicate(ctx: SlashCommandContext): Promise<void> {
+  await flushActiveDraft()
   const state = ctx.pageStore.getState()
   if (!state.blocksById.has(ctx.blockId)) return
   const markdown = serializeBlockSubtree(state.blocks, [ctx.blockId])
