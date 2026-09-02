@@ -123,10 +123,21 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # slow: it made four consecutive pushes of exactly such a diff unusable
 # (2026-08-26).
 #
-# It IS attributable. `scripts/*.sh` is covered by Phase A: shellcheck
-# plus the per-script self-test hooks (`push.sh self-test`,
-# `verify-ci-equivalent-selftest`, `SKIP_CI_VERIFY bypass guard test`,
-# and the rest), which are precisely the suite for this category.
+# It IS attributable — but read the next paragraph before relying on how
+# much. `scripts/*.sh` is covered by Phase A.
+#
+# WEAKENED BY #4556 Phase 1, and this is a LIVE routing decision rather than
+# a stale note, so it is corrected here rather than deferred to Phase 4. That
+# coverage used to be shellcheck PLUS the per-script self-test hooks
+# (`push-sh-selftest`, `verify-ci-equivalent-selftest`, `skip-ci-verify-guard`
+# and the rest). All of those are now UNWIRED, so today a `scripts/*.sh` edit
+# is covered by shellcheck ALONE until #4556 Phase 2 restages them into CI.
+#
+# The narrow `CI_PATH_RE` is kept anyway: the fail-closed arm's cost is
+# unchanged and remains the thing that made four consecutive pushes unusable,
+# and shellcheck is still a real suite for this category. But the
+# justification is now thinner than it reads, and whoever revisits this
+# should know the difference.
 #
 # Deliberately NOT widened: a ROOT-level `*.sh`, `rust-toolchain.toml`,
 # `.cargo/config.toml` and friends still hit fail-closed. Those change how
@@ -906,10 +917,17 @@ phase_a_skip_extra() {
 }
 
 # ── self-test ──────────────────────────────────────────────────────
-# Fixture suite for the probe-DB isolation above (#3257), wired as the
-# `verify-ci-equivalent-selftest` prek hook so a regression back to a
-# fixed /tmp path is caught at commit time rather than as a
-# non-deterministic Phase E failure that blames sqlx. Runs BEFORE the
+# Fixture suite for the probe-DB isolation above (#3257). It USED to run as
+# the `verify-ci-equivalent-selftest` prek hook, catching a regression back
+# to a fixed /tmp path at commit time rather than as a non-deterministic
+# Phase E failure that blames sqlx; #4556 Phase 1 unwired that hook, so it
+# runs only when invoked by hand until Phase 2 restages it. It also carries
+# the #4424 divergence ratchet, which compares this file's `CI_PATH_RE`
+# against `_validate.yml`'s `ci_re` (and the `_tracked` exclusion that
+# derives from it) — so THAT comparison no longer runs at commit time.
+# It does NOT cover the two files' skip arrays, and never did: nothing has
+# ever ratcheted those against each other, before this PR or after. Runs
+# BEFORE the
 # bypass guard and the multi-minute verifier body, so it is fast and
 # side-effect free.
 if [ "${1:-}" = "--self-test" ]; then
@@ -2706,7 +2724,7 @@ if [ "$HAS_RS" = "0" ]; then
 fi
 # CI/tooling absent → skip the workflow/shell lint hooks.
 if [ "$HAS_CI" = "0" ]; then
-    skip_items+=(actionlint zizmor shellcheck skip-ci-verify-guard)
+    skip_items+=(actionlint zizmor shellcheck)
 fi
 # Docs absent → skip the Markdown/doc hooks.
 if [ "$HAS_DOCS" = "0" ]; then
