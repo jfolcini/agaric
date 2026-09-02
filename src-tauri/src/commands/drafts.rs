@@ -185,33 +185,29 @@ pub struct FlushAllDraftsResult {
 /// transaction. The materializer fires per-block cache tasks once the
 /// outer commit succeeds.
 ///
-/// # Atomicity contract — all-or-nothing
+/// # Failure contract — skip the offender, flush the rest
 ///
-/// This is a **deliberate change** from `flush_draft_inner`'s per-call
-/// semantics. The single tx covers every draft, so:
+/// A draft this loop knows it cannot flush is skipped, not propagated:
+/// the batch commits the others and the skipped row stays in
+/// `block_drafts` for the next flush. Only an unanticipated error (a
+/// `prev_edit` lookup failure, a `block_drafts` DELETE error) escapes the
+/// loop, and the single tx then rolls the whole batch back — no drafts
+/// flushed, no op_log rows appended. The frontend caller (boot recovery,
+/// `useAppBootRecovery`) treats any error as "log warn, continue boot",
+/// and a user-driven `flush_draft` on one block still succeeds alone.
 ///
-/// - If **any** draft's flush errors (e.g. an oversized-content
-///   `AppError::Validation`, a `prev_edit` lookup failure, a
-///   `block_drafts` DELETE error), the entire transaction rolls back —
-///   **no** drafts are flushed and **no** op_log rows are appended.
-/// - The frontend caller (boot recovery, `useAppBootRecovery`) treats
-///   any error as "log warn, continue boot"; the next user-driven
-///   `flush_draft` on a specific block is unaffected and can still
-///   succeed in isolation.
-///
-/// The alternative — savepoint-per-draft for partial recovery — was
-/// Considered and rejected per the audit: this command only
-/// fires at boot with a small N of orphans, and a savepoint loop would
-/// re-introduce the per-draft round-trip cost the consolidation is
-/// designed to eliminate.
+/// Savepoint-per-draft was considered and rejected: this command fires at
+/// boot with a small N, and a savepoint loop re-introduces the per-draft
+/// round-trip the consolidation exists to eliminate.
 ///
 /// # Per-draft behaviour
 ///
 /// Mirrors [`flush_draft_inner`] modulo the surrounding tx:
 ///
-/// - **H-12b: oversized content** — propagates `AppError::Validation`,
-///   which rolls back the entire batch. The user can edit the offender
-///   down and the next boot retries.
+/// - **H-12b: oversized content** — logged at `warn` and skipped, with
+///   the draft row left in place. Unlike H-12a the target block still
+///   exists, so the row is the only copy of text the user typed; it
+///   flushes normally once edited down, and no other draft is affected.
 /// - **H-12a: target block missing or soft-deleted** — the orphan draft
 ///   row is deleted in the same tx with a `warn` log, and the loop
 ///   continues to the next draft. No op_log row is appended for the
@@ -220,9 +216,9 @@ pub struct FlushAllDraftsResult {
 ///   chained from the most-recent `edit_block`/`create_block` for that
 ///   block) and deletes the draft row.
 ///
-/// Returns the number of draft rows processed (= number of drafts that
-/// existed when the tx opened — the H-12a branch still counts toward
-/// `flushed` because the draft row itself was consumed).
+/// Returns the number of draft rows consumed — flushed, dropped as an
+/// orphan (H-12a) or dropped as stale. A skipped oversized row is not
+/// consumed and does not count.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn flush_all_drafts_inner(
     pool: &SqlitePool,
@@ -279,16 +275,18 @@ pub async fn flush_all_drafts_inner(
         let draft_anchor_seq = row.draft_anchor_seq;
         let draft_anchor_device = row.draft_anchor_device;
 
-        // H-12b: enforce MAX_CONTENT_LENGTH. Returning Err here drops
-        // `tx` without commit, so every draft row stays — the user can
-        // edit the offender down and retry on next boot. All-or-nothing
-        // by design (see doc comment).
+        // H-12b: enforce MAX_CONTENT_LENGTH. Skip the offender so the rest
+        // of the batch still flushes (#3262). The row is KEPT, unlike the
+        // H-12a orphan below: the target block still exists, so this row is
+        // the only copy of text the user typed. It flushes once edited down.
         if content.len() > super::MAX_CONTENT_LENGTH {
-            return Err(AppError::validation(format!(
-                "draft content {} exceeds maximum {}",
-                content.len(),
-                super::MAX_CONTENT_LENGTH,
-            )));
+            tracing::warn!(
+                block_id = %block_id,
+                content_len = content.len(),
+                max = super::MAX_CONTENT_LENGTH,
+                "flush_all_drafts: draft content exceeds the maximum; skipped, row kept"
+            );
+            continue;
         }
 
         // H-12a: verify the target block exists and is not soft-deleted.

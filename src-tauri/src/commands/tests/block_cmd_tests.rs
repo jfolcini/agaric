@@ -6676,14 +6676,14 @@ async fn flush_all_drafts_writes_one_op_log_row_per_draft() {
     mat.shutdown();
 }
 
-/// All-or-nothing: a single draft that errors during flush rolls back the
-/// entire batch — no op_log rows added, **no** drafts deleted.
+/// #3262: one oversized draft is skipped — every other draft in the batch
+/// still flushes, and the offender's row survives so its text is not lost.
 ///
-/// Trigger: oversized content (H-12b path) on one draft. The other two
-/// drafts in the batch are perfectly valid but must remain untouched
-/// because the tx rolls back on the validation error.
+/// Trigger: oversized content (H-12b path) on one of three drafts. The two
+/// valid drafts must land their `edit_block` ops and lose their draft rows;
+/// the oversized row must keep its content and gain no op.
 #[tokio::test]
-async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
+async fn flush_all_drafts_skips_oversized_draft_and_flushes_the_rest_3262() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -6711,9 +6711,7 @@ async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
         .unwrap();
 
     // Third draft seeded directly with oversized content so it slips past
-    // any future cap on `save_draft`. `flush_all_drafts_inner` will hit
-    // the H-12b guard and propagate `AppError::Validation`, rolling back
-    // the outer tx.
+    // any future cap on `save_draft`.
     let oversized = "x".repeat(crate::commands::MAX_CONTENT_LENGTH + 1);
     sqlx::query(
         "INSERT INTO block_drafts (block_id, content, updated_at) \
@@ -6725,40 +6723,59 @@ async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
     .await
     .unwrap();
 
-    let baseline_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
     let baseline_drafts: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(baseline_drafts, 3, "fixture must seed exactly three drafts");
 
-    let err = flush_all_drafts_inner(&pool, DEV, &mat)
+    let result = flush_all_drafts_inner(&pool, DEV, &mat)
         .await
-        .expect_err("oversized draft must propagate AppError::Validation");
-    match err {
-        AppError::Validation { .. } => {}
-        other => panic!("expected AppError::Validation, got {other:?}"),
+        .expect("an oversized draft must not fail the batch");
+    assert_eq!(
+        result.flushed, 2,
+        "only the two valid drafts are consumed; the skipped row is not"
+    );
+
+    // Both valid drafts flushed: one edit_block op each, draft rows gone.
+    for id in [valid_a, valid_b] {
+        let ops: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block' AND block_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ops, 1, "block {id} must receive exactly one edit_block op");
     }
 
-    // Outer tx rolled back: drafts table unchanged, no op_log rows added.
-    let after_ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    // The oversized draft: no op appended, row intact with its content.
+    let oversized_ops: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block' AND block_id = ?",
+    )
+    .bind(oversized_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(
-        after_ops, baseline_ops,
-        "all-or-nothing: a single draft failure must add zero op_log rows"
+        oversized_ops, 0,
+        "the oversized draft must not append an over-cap op"
     );
-    let after_drafts: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+
+    let remaining: Vec<(String, String)> =
+        sqlx::query_as("SELECT block_id, content FROM block_drafts")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(
-        after_drafts, baseline_drafts,
-        "all-or-nothing: a single draft failure must leave every draft row in place"
+        remaining.len(),
+        1,
+        "only the oversized draft row may survive the batch"
+    );
+    assert_eq!(remaining[0].0, oversized_id);
+    assert_eq!(
+        remaining[0].1, oversized,
+        "the skipped row must keep the user's text verbatim"
     );
 
     mat.shutdown();

@@ -450,6 +450,81 @@ async fn recover_single_draft_returns_err_when_enqueue_fails_1322() {
     );
 }
 
+/// #3262: a draft whose content exceeds `MAX_CONTENT_LENGTH` must not be
+/// recovered — boot recovery would otherwise append an over-cap `edit_block`
+/// op that `edit_block_inner` and the flush paths both reject, and replicate
+/// it to peers. `recover_single_draft` returns `Err` rather than `Ok(false)`
+/// so `recover_at_boot` keeps the `block_drafts` row: the target block still
+/// exists, so that row is the only copy of the text the user typed.
+#[tokio::test]
+async fn recover_single_draft_rejects_oversized_draft_and_keeps_row_3262() {
+    use std::collections::HashSet;
+
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-3262";
+    let block_id = "BLOCK000000000000000000326";
+
+    insert_test_block(&pool, block_id, "old content").await;
+    let oversized = "x".repeat(crate::commands::MAX_CONTENT_LENGTH + 1);
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(&oversized)
+        .bind(FAR_FUTURE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
+    let draft = drafts.into_iter().next().expect("one draft");
+
+    let materializer = Materializer::new(pool.clone());
+    let mut existing_block_ids = HashSet::new();
+    existing_block_ids.insert(block_id.to_string());
+
+    let result = super::draft_recovery::recover_single_draft(
+        &pool,
+        device_id,
+        &materializer,
+        &draft,
+        &existing_block_ids,
+    )
+    .await;
+    materializer.shutdown();
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "an over-cap draft must surface as Err(Validation), got: {result:?}"
+    );
+
+    // No op was appended: the cap holds on the recovery path too.
+    let ops: i64 = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM op_log"#)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ops, 0, "recovery must not append an over-cap op");
+
+    // The row survives with the user's text — `Err` is what keeps it.
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT content FROM block_drafts WHERE block_id = ?")
+            .bind(block_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored.as_deref(),
+        Some(oversized.as_str()),
+        "the draft row must keep the user's unflushed text verbatim"
+    );
+
+    // `blocks.content` is untouched — nothing half-applied.
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(content.as_deref(), Some("old content"));
+}
+
 /// #2540: a draft whose `recover_single_draft` FAILS before commit must NOT
 /// be deleted — the `block_drafts` row is the only surviving copy of the
 /// user's unflushed text, and a transient DB error (WAL-lock contention,

@@ -13,6 +13,12 @@ use agaric_store::op_log::append_local_op_in_tx;
 /// Process a single draft: returns `Ok(true)` if the draft was recovered
 /// (synthetic op created), `Ok(false)` if it was already flushed.
 ///
+/// A draft whose content exceeds [`crate::commands::MAX_CONTENT_LENGTH`]
+/// returns `Err` (#3262): `recover_at_boot` deletes the `block_drafts` row on
+/// either `Ok`, and that text — for a block that still exists — is only stored
+/// there, so `Err` is the one return that keeps it. Boot logs the failure and
+/// carries on with the other drafts.
+///
 /// When recovering, both the op_log append and the `blocks.content` update
 /// are wrapped in a single IMMEDIATE transaction — mirroring the production
 /// path in `commands::edit_block_inner`. This ensures `blocks.content` is
@@ -145,6 +151,26 @@ pub(super) async fn recover_single_draft(
     let matching_ops = row;
 
     if matching_ops == 0 {
+        // #3262: never append an over-cap op. `edit_block_inner` and the flush
+        // paths reject this content, so recovery must not smuggle it into the
+        // op log and on to peers. `Err`, not `Ok(false)`: the caller deletes
+        // the draft row on `Ok`, and for a block that still exists that row is
+        // the only copy of the text the user typed. Boot reports the failure
+        // and keeps the row, so an edit down to size makes it recoverable.
+        if draft.content.len() > crate::commands::MAX_CONTENT_LENGTH {
+            tracing::warn!(
+                block_id = %draft.block_id,
+                content_len = draft.content.len(),
+                max = crate::commands::MAX_CONTENT_LENGTH,
+                "skipping draft: content exceeds the maximum; draft row kept"
+            );
+            return Err(AppError::validation(format!(
+                "draft content {} exceeds maximum {}",
+                draft.content.len(),
+                crate::commands::MAX_CONTENT_LENGTH,
+            )));
+        }
+
         // Draft was NOT flushed — recover it.
         let prev_edit = find_prev_edit(pool, draft.block_id.as_str(), device_id).await?;
 
