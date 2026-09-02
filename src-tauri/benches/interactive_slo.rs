@@ -1482,9 +1482,10 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 /// no `page_id`. The scale parameter is *children of the exported page*.
 ///
 /// 30 ms is evidenced by CI, not a developer box (#3441): the `bench-slo`
-/// runs of 2026-08-17 and 2026-08-24 measured 21.39 ms and 16.44 ms on the
-/// runner (1.40× / 1.83× headroom). Rebaseline only from CI observations; a
-/// dev-box sample says nothing about the runner the budget is enforced on.
+/// lane measured 21.39 ms on 2026-08-17 (run 31996097300, job 95287893266)
+/// and 16.44 ms on 2026-08-24 (run 32691919690, job 97326992053), 1.40× and
+/// 1.83× headroom. Rebaseline only from CI observations; a dev-box sample
+/// says nothing about the runner the budget is enforced on.
 fn bench_export_page_markdown(c: &mut Criterion) {
     const BUDGET_MS: f64 = 30.0;
     // Must be a valid ULID (Crockford base32, no I/L/O/U): export_page_markdown_inner
