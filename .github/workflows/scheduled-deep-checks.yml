@@ -833,7 +833,7 @@ jobs:
         #   agaric-engine  383 mutants, deliberately unmeasured: its tests
         #                  still live in the app crate (#3443), so a
         #                  package-scoped run costs little more than its ~90 s
-        #                  build                                 → 58/shard →  7
+        #                  build                                 → 59/shard →  7
         #
         # Every mutant is assumed viable, which is the conservative side (an
         # unviable one stops at the build and costs ~6x less). `agaric-engine`

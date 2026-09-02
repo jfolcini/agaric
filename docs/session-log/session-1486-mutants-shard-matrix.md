@@ -14,7 +14,7 @@ A shard's capacity is `floor((wall budget − baseline) / cost of one viable mut
 |---|--:|--:|--:|--:|--:|
 | `agaric` | 183 | ~600 s | 600 s | 8 | 23 |
 | `agaric-store` | 125 | 164 s | 117 s | 44 | 3 |
-| `agaric-engine` | 383 | ~90 s | ~90 s | 58 | 7 |
+| `agaric-engine` | 383 | ~90 s | ~90 s | 59 | 7 |
 
 33 shard jobs, which on a public repo cost nothing but wall-clock. `agaric-engine` is the one row not measured, deliberately: its tests still live in the app crate (#3443), so a package-scoped run there tests almost nothing and its cost is bounded by its build. That also means its survivors are the least trustworthy of the three — a "survivor" in `agaric-engine` may be a relocation artefact of the #2621 arch waves rather than a real coverage gap, and should be read that way until #3443 moves its tests. The workflow comment says so at the matrix, which is where someone triaging the survivor list will be.
 
