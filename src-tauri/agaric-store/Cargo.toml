@@ -76,7 +76,7 @@ regex = "1"
 # would be a *different type* from the transport's, validating against a second
 # copy of the parser. `default-features = false` drops `relay`'s share of the
 # surface; `key` is the feature `FromStr` lives on.
-iroh-base = { version = "=1.0.3", default-features = false, features = ["key"] }
+iroh-base = { version = "=1.1.0", default-features = false, features = ["key"] }
 # `test_support` (temp-file WAL `test_pool`) needs `tempfile` for its `TempDir`.
 # Optional + gated by the `test-util` feature so downstream test builds
 # (agaric-engine) can compile it; the store's own `cargo test` reaches the same
