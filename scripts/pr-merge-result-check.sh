@@ -532,68 +532,22 @@ count_examined() {
 #                                    import resolves the same way, so both
 #                                    must exist together in the merged tree.
 run_one_guard() {
-  local guard="$1" workdir="$2" base_tip="$3" synthetic="${4:-0}"
-  shift 4
+  local guard="$1" workdir="$2" base_tip="$3"
+  shift 3
   case "$guard" in
     check-raw-tx.py | check-dynamic-sql.py)
-      # `--synthetic-tree` (#4501), on exactly the same terms as the
-      # check-table-ownership arm below — see that arm's comment for the full
-      # reasoning, which applies here unchanged. Both guards now fail when a
-      # declared CRATE_ROOTS entry is absent, because a renamed or misspelled
-      # segment used to make them exempt every file under that crate in
-      # silence (check-raw-tx uses its roots as argv-filter prefixes,
-      # check-dynamic-sql walks them through `SOURCE.list_paths` — two
-      # spellings, one outcome). A synthetic fixture tree is deliberately not
-      # this repository, so there the assertion is inapplicable rather than
-      # violated.
-      #
-      # It must NOT be set on a real merge.
-      #
       # `--worktree` is EXPLICIT, never left to the guards' AUTO rule (#4017).
-      # A merged tree is a hypothetical: it exists as files in a worktree and
-      # was never staged anywhere, so "the staged index" has no meaning for
-      # it. AUTO keys on `GIT_INDEX_FILE`, which under a commit hook names
-      # the COMMITTING repository's index — a different tree entirely. The
-      # guards now refuse that combination (exit 2) rather than guess, so
-      # omitting this flag would be an invocation error rather than a wrong
-      # verdict; naming it means this call site does not depend on either
-      # behaviour, and reads the same under prek, under CI and by hand.
-      if [ "$synthetic" = "1" ]; then
-        python3 "$workdir/scripts/$guard" --synthetic-tree --worktree "$@"
-      else
-        python3 "$workdir/scripts/$guard" --worktree "$@"
-      fi
+      # A merged tree exists only as files in a worktree and was never staged,
+      # so "the staged index" has no meaning for it; AUTO keys on
+      # `GIT_INDEX_FILE`, which under a commit hook names the COMMITTING
+      # repository's index. The guards refuse that combination (exit 2).
+      python3 "$workdir/scripts/$guard" --worktree "$@"
       ;;
     check-table-ownership.py)
       # No source flags: it ignores argv for FILE selection and rescans its
       # own crate roots off the filesystem, so it only ever reads the
       # worktree in the first place.
-      #
-      # `--synthetic-tree` (#4501) ONLY for a tree marked with
-      # `--synthetic-fixture`. That guard now fails when a declared CRATE_ROOTS
-      # directory is absent, because a renamed or misspelled segment used to
-      # narrow its walk to nothing in silence. A synthetic tree is deliberately
-      # not this repository, so there the assertion is inapplicable rather than
-      # violated.
-      #
-      # It must NOT be set on a real merge. `run_one_guard` has ONE call site
-      # and `run_merge_check` is what the workflow invokes per PR, so passing
-      # it unconditionally — as the first revision of this change did — leaves
-      # the merged-tree verifier permanently unable to see the very thing it
-      # exists for: a base that renames `agaric-store/` while the PR does not
-      # touch CRATE_ROOTS.
-      #
-      # That revision also claimed a compensating control that does not exist:
-      # the exit-3 "verified nothing" branch fires only when `targets` is
-      # EMPTY — every root barren — so one missing root among five leaves it
-      # non-empty and the merge is reported as verified. `targets` is also
-      # derived from check-raw-tx.py's roots, not this guard's, and the two
-      # lists are known to differ.
-      if [ "$synthetic" = "1" ]; then
-        python3 "$workdir/scripts/$guard" --synthetic-tree "$@"
-      else
-        python3 "$workdir/scripts/$guard" "$@"
-      fi
+      python3 "$workdir/scripts/$guard" "$@"
       ;;
     *.py)
       python3 "$workdir/scripts/$guard" "$@"
@@ -883,8 +837,7 @@ process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)
 # ratchet guards against it, and report. Never touches the caller's own
 # working tree or index.
 run_merge_check() {
-  # $3 is the fixture marker (see main()); absent/0 on every real invocation.
-  local base_ref="$1" head_sha="$2" mr_synthetic="${3:-0}"
+  local base_ref="$1" head_sha="$2"
   local base_tip parent workdir
 
   # Checked BEFORE any work: the guards are stdlib-only Python, so without
@@ -1080,7 +1033,7 @@ run_merge_check() {
       missing="${missing:+$missing }$guard"
       continue
     fi
-    if ! run_one_guard "$guard" "$workdir" "$base_tip" "$mr_synthetic" "${targets[@]}"; then
+    if ! run_one_guard "$guard" "$workdir" "$base_tip" "${targets[@]}"; then
       echo "pr-merge-result-check: $guard FAILED on the MERGED tree" >&2
       failures=$((failures + 1))
     fi
@@ -1225,22 +1178,6 @@ run_merge_check() {
 # ---------------------------------------------------------------------------
 
 main() {
-  # `--synthetic-fixture` marks a synthetic fixture tree — deliberately not
-  # this repository (e.g. `src-tauri/source`, `src-tauri/extra/src`).
-  # Scanned out of argv rather than read from the environment, and never
-  # defaulted on: an assertion that a stray exported variable can switch off is
-  # the class of failure #4501 exists to end, and this one guards a check whose
-  # whole job is noticing that a walk stopped reaching anything.
-  local synthetic=0
-  local -a positional=()
-  local arg
-  for arg in "$@"; do
-    case "$arg" in
-      --synthetic-fixture) synthetic=1 ;;
-      *) positional+=("$arg") ;;
-    esac
-  done
-  set -- "${positional[@]+"${positional[@]}"}"
   local base_ref="${1:-}" head_sha="${2:-}"
   if [ -z "$base_ref" ] || [ -z "$head_sha" ]; then
     echo "pr-merge-result-check: usage: $0 <base-ref> <head-sha>" >&2
@@ -1249,7 +1186,7 @@ main() {
     # invocation must be red.
     exit 3
   fi
-  run_merge_check "$base_ref" "$head_sha" "$synthetic"
+  run_merge_check "$base_ref" "$head_sha"
 }
 
 main "$@"

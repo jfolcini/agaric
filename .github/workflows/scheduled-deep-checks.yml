@@ -2846,8 +2846,7 @@ jobs:
           # changed what the lanes test (#3960, fourth pass — see the `run:`).
           # `|| '<default>'` mirrors the lanes' own idiom above and means these
           # are never empty, on any event, so `set -u` is safe. Every input
-          # must appear here: `findDispatchInputEnvMapping` reads this block,
-          # so a new input added to `on:` cannot quietly escape the gate.
+          # must appear here.
           MUTANTS_TIMEOUT_INPUT: ${{ github.event.inputs.mutants_timeout || '900' }}
           FUZZ_SECONDS_INPUT: ${{ github.event.inputs.fuzz_seconds || '120' }}
           SLO_INCLUDE_PROBLEM_INPUT: ${{ github.event.inputs.slo_include_problem || 'false' }}
