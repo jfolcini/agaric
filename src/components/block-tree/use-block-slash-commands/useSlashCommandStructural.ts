@@ -60,6 +60,11 @@ async function handleCallout(ctx: SlashCommandContext, calloutType: string): Pro
  * a no-op for a block carrying an inline `key:: value` line (`commitNow`'s
  * #2675 carve-out), so Escape after a slash command still discards typed
  * text there.
+ *
+ * This is the one place that argument is written out. Every property-writing
+ * slash command has the same shape and carries the same line against this
+ * docblock: `useSlashCommandProperty`'s nine handlers, and the two tests that
+ * pin the pair.
  */
 async function handleListStyle(
   ctx: SlashCommandContext,

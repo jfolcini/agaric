@@ -7,26 +7,11 @@
  * `setPriorityCmd`) and notify the undo store. Pure ctx-driven — empty
  * `useMemo` dep array, no `oxlint-disable react-hooks/exhaustive-deps`.
  *
- * #4577 — every mutating handler below opens with `await flushActiveDraft()`,
- * and that line is load-bearing rather than defensive. A property write is not
- * a content edit: the structural commands that DO edit content serialize the
- * live editor through `applyContentEdit`, so the text the user typed a moment
- * earlier is persisted as a side effect, while these commands commit nothing
- * of their own and leave it sitting in the editor's commit debounce
- * (`useDebouncedContentCommit`, `CONTENT_COMMIT_DEBOUNCE_MS`). Escape discards
- * a pending edit, so `buy milk` + `/effort 1h` + Escape reverted the text and
- * kept the property — a block wearing metadata for content it no longer has.
- * `flushActiveDraft` is the editor's OWN commit path (`debounced.cancel()` +
- * `commitNow()`, the #2969 bridge the export flow uses), not a second
- * mechanism, and a no-op when nothing is pending. It is also a no-op for a
- * block carrying an inline `key:: value` line (`commitNow`'s #2675 carve-out),
- * so Escape after a slash command still discards typed text there.
- * `useSlashCommandStructural.handleListStyle` carries the identical line for
- * the identical reason.
- *
- * The handlers that write nothing need no flush: `handleAssigneeOrLocation`,
- * the `custom` assignee/location presets and `handleAttach` open a drawer or a
- * file dialog, which moves focus out of the editor — and blur flushes.
+ * #4577 — every mutating handler below opens with `await flushActiveDraft()`;
+ * `useSlashCommandStructural.handleListStyle`'s docblock is why. The handlers
+ * that write nothing need no flush: `handleAssigneeOrLocation`, the `custom`
+ * assignee/location presets and `handleAttach` open a drawer or a file dialog,
+ * which moves focus out of the editor — and blur flushes.
  */
 
 import { useMemo } from 'react'

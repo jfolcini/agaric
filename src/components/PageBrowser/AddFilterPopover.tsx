@@ -191,28 +191,30 @@ export function AddFilterPopover({
     }
   }, [showAdvancedFacets, editor])
 
-  // The `PropertyValue` variant + operator set the has-property editor
-  // offers for the CURRENTLY TYPED key. On the Pages browser
-  // (`!showAdvancedFacets`) these are pinned to the historical Text/4-op
-  // pair regardless of the registry, matching acceptance criterion 7.
-  const propertyValueKind: PropertyValueKind = useMemo(
-    () =>
-      showAdvancedFacets
-        ? propertyValueKindForType(propertyValueTypes.get(propKey.trim()))
-        : 'Text',
-    [showAdvancedFacets, propKey, propertyValueTypes],
-  )
-  // #4571 item 2 — keyed on the DECLARED `value_type`, not on the
-  // `PropertyValue` variant it maps to: `boolean` maps to `Text` (there is no
-  // `Bool` variant) but must not inherit Text's comparisons, which compile
-  // against a `value_text` that is NULL for a boolean row.
-  const propertyOps = useMemo(
-    () =>
-      showAdvancedFacets
-        ? propertyOpsForValueType(propertyValueTypes.get(propKey.trim()))
-        : PROPERTY_OPS,
-    [showAdvancedFacets, propKey, propertyValueTypes],
-  )
+  // The `PropertyValue` variant + operator set the has-property editor offers
+  // for the CURRENTLY TYPED key. On the Pages browser (`!showAdvancedFacets`)
+  // both are pinned to the historical Text/4-op pair regardless of the
+  // registry, matching acceptance criterion 7.
+  //
+  // ONE memo, not two: they are two answers to the same registry lookup, and
+  // #4571 item 2 made those answers diverge — `propertyOpsForValueType` keys
+  // on the DECLARED `value_type` while `propertyValueKindForType` maps it to a
+  // `PropertyValue` variant, and `boolean` is the type where the two disagree
+  // (it maps to `Text` because there is no `Bool` variant, but must not
+  // inherit Text's comparisons, which compile against a `value_text` that is
+  // NULL for a boolean row). Divergent ANSWERS from one lookup is the design;
+  // divergent LOOKUPS would be a bug, so there is only one to keep in step.
+  const { kind: propertyValueKind, ops: propertyOps } = useMemo((): {
+    kind: PropertyValueKind
+    ops: ReadonlyArray<{ value: PropertyOpKind; labelKey: string }>
+  } => {
+    if (!showAdvancedFacets) return { kind: 'Text', ops: PROPERTY_OPS }
+    const valueType = propertyValueTypes.get(propKey.trim())
+    return {
+      kind: propertyValueKindForType(valueType),
+      ops: propertyOpsForValueType(valueType),
+    }
+  }, [showAdvancedFacets, propKey, propertyValueTypes])
 
   // Reconcile `propOp` when the derived operator set no longer contains it —
   // e.g. the user had `Lt` selected for a `number` key, then edited the key to
