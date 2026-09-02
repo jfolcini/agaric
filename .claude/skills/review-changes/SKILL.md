@@ -11,4 +11,4 @@ Needs the optional `code-review-graph` MCP server (declared in `.mcp.json`, star
 2. `get_affected_flows` and `get_impact_radius` for what the change reaches.
 3. `query_graph` with `pattern="tests_for"` on each high-risk function.
 
-Report blocking defects first (a concrete failure), then what can be simplified or deleted. Follow the review posture in `AGENTS.md` § How we work: no speculative hardening, no tests for unreachable cases. Use `detail_level="minimal"`.
+Report blocking defects first (a concrete failure), then what the ladder would have skipped: helpers, options, abstractions, and paragraphs the change did not need. Both follow `AGENTS.md` § How we work: no speculative hardening, no tests for unreachable cases. Use `detail_level="minimal"`.

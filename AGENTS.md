@@ -8,11 +8,14 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 
 Read this section first. It outranks everything below it and every nested `AGENTS.md`.
 
-- **Be pragmatic. Simplicity is a value in itself.** The smallest change that solves the actual problem wins.
+- **Be pragmatic. Simplicity is a value in itself.** The smallest change that solves the actual problem wins. Boring beats clever.
+- **Climb the ladder before writing.** Stop at the first rung that holds: it does not need to exist; the codebase already does it; the standard library or the platform does it; an installed dependency does it; one plain line does it; only then the minimum that works. The best code is the code never written.
+- **Lazy about the solution, never about reading.** Read the code you touch and trace the real path before picking a rung. A small change you do not understand is a bug with a delay.
+- **Lazy, not negligent.** Trust-boundary validation, data-loss handling, security, accessibility, and a test shown red are the floor under the ladder, not rungs on it.
 - **Work and code earn their keep.** A guard, test, abstraction, rule, comment, or issue exists because it prevents a real problem someone hit. If it does not, do not add it; if it already exists, delete it.
 - **Do not engineer for speculative situations.** "Could happen" is not a defect. Fix what broke, not what might. Threat model: one user, their own devices, no adversaries (see [Threat Model](#threat-model)).
-- **No gold-plating.** No scope creep, no refactor-because-we-were-here, no second guard for the first guard, no observability for the observability.
-- **Reviews judge impact.** A finding needs a concrete failure and a named victim. Otherwise fix it if trivial, or let it go. Filing an issue is the last resort, not the default.
+- **No gold-plating.** No scope creep, no refactor-because-we-were-here, no second guard for the first guard, no observability for the observability, no helper for a one-off, no option nobody asked for.
+- **Reviews judge impact.** A finding needs a concrete failure and a named victim. Otherwise fix it if trivial, or let it go. Filing an issue is the last resort, not the default. Over-building is a finding too: a helper, option, abstraction, or paragraph the fix did not need is deleted, not defended.
 - **Say it once.** A rule and its one reason, in the same breath. No war stories, no archaeology. An issue number is a pointer, not a justification.
 - **Prefer deleting.** Removing a hook, a fallback, a config knob, or a paragraph needs no more justification than this section.
 

@@ -63,6 +63,7 @@ Subagent prompt skeleton:
 **Working directory:** /home/javier/dev/agaric
 **Setup:** . "$HOME/.cargo/env"   (Rust only)
 **Files to create/modify:** path — what
+**Ladder:** read the code you touch first, then stop at the first rung that holds — not needed / already in the codebase / stdlib or platform / installed dependency / one plain line / the minimum that works. Validation, data loss, security, a11y and a red test are never the corner you cut.
 **Do NOT modify:** AGENTS.md; anything outside the list above.
 **Do NOT run any git command** (stash/reset/checkout/add/commit); only edit files.
 **NEVER use background execution or monitors**; run every command in the foreground and read the output before your final message.
@@ -84,11 +85,13 @@ As each build finishes, launch its reviewer (a different subagent) while other b
 
 Two dimensions when a change has user-facing impact: technical (correctness, tests, `AGENTS.md` conventions, stays within existing abstractions) and UX (discoverability, consistency, touch parity, empty states, keyboard). Skip UX for backend-only changes.
 
+In both, the reviewer reads the diff against the ladder: a helper, option, branch, abstraction, or paragraph the fix did not need is a finding whose disposition is delete. The diff is the evidence, not the builder's report of it.
+
 ### Disposing of a finding
 
 Exactly one of three, and filing is the last resort:
 
-1. **Fix it in this PR** — anything with a concrete failure, plus any mechanical cleanup. Size is not the test.
+1. **Fix it in this PR** — anything with a concrete failure, any mechanical cleanup, and anything the ladder would have skipped. Size is not the test.
 2. **A code comment** — a deliberate trade, a non-obvious invariant, a "why not X".
 3. **An issue** — only with a user-visible failure you are deferring, something that blocks planned work, or a design decision a reviewer cannot make. Name who is hurt and how.
 
@@ -124,6 +127,7 @@ When the planned list is empty and only CI-pending PRs remain, pull the next bac
 
 ## Principles
 
+- Three deletions and a one-line fix is a good batch.
 - Fix what is there. Do not refactor beyond scope. Keep refactors and features in separate commits.
 - Out-of-scope improvements become a code comment or an issue per §4, never a TODO.
 - Every quantitative claim names its population ("94% of mutants" over which files?). A relayed claim (reviewer, changelog, subagent) is unverified until you check it.
