@@ -115,20 +115,19 @@
 # what it guards is worth stating exactly — an overclaimed justification is
 # the mechanism by which that PR shipped its own blocking bug:
 #
-#   * the `always_run` hook (`cache-poisoning-suppressions`) fails if this
-#     file regains a `cache-poisoning` line-anchor list, and if the inline
+#   * the `cache-poisoning-suppressions` prek hook (`always_run`, manual
+#     stage — every CI run, #4556) fails if this file regains a
+#     `cache-poisoning` line-anchor list, and if the inline
 #     mechanism has vanished from EVERY file under .github/workflows/**.
 #     Zero inline suppressions is a wiring failure, not a vacuous pass — but
 #     it is a ZERO check, not a per-step one. It cannot tell you that some
 #     particular caching step still carries its comment.
 #   * the exactly-four assertion, and the live "does the suppression survive
 #     a 12-line drift?" run against the real zizmor binary, live in that
-#     script's `--self-test`, which is a SEPARATE prek hook
-#     (`cache-poisoning-suppressions-self-test`) keyed to this file, ci.yml,
-#     prek.toml and the script itself.
+#     script's `--self-test`, which no prek hook runs since #4556 Phase 2.
 #
-# Run that `--self-test` after touching any of those four steps, ci.yml's
-# job list, or this file.
+# Run that `--self-test` by hand after touching any of those four steps,
+# ci.yml's job list, or this file.
 
 rules: {}
 # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every

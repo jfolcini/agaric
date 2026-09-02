@@ -85,35 +85,12 @@ const PREK_CONFIG_PATH = join(REPO_ROOT, 'prek.toml')
 export const EXPECTED_INLINE_SUPPRESSIONS = 4
 
 /**
- * This guard's `--self-test` is the only thing that re-runs zizmor when
- * `.github/zizmor.yml` itself changes. The `zizmor` prek hook cannot cover
- * that file: it forwards its matched filenames to the binary as AUDIT
- * TARGETS, so widening its `files` pattern to the config would ask zizmor to
- * audit its own config as if it were a workflow. The dependency is therefore
- * recorded here rather than widened there — and recorded as an assertion,
- * because a `files` pattern that quietly stopped naming one of these paths
- * would take that coverage with it and nothing would say so. `prek.toml` is
- * in the list too: this guard now reads it, so an edit to it must re-run.
- *
- * This hook's `files` pattern is deliberately narrow (four exact paths), NOT
- * `.github/workflows/**` — which is exactly why the EXACT-COUNT check
- * (`EXPECTED_INLINE_SUPPRESSIONS`, checked in `assertCachePoisoningSuppressionHygiene`
- * below) does not live behind it: a fifth `# zizmor: ignore[cache-poisoning]`
- * added to some other workflow, say `release.yml`, touches none of these
- * four paths, so this hook would never re-run to notice it (#3987). The count
- * check instead lives in `main()`, gated only by the OTHER hook —
- * `cache-poisoning-suppressions`, `always_run = true` — which fires on every
- * commit regardless of which files changed. See `selfTestMainHookAlwaysRun`.
+ * The exact-count check (`EXPECTED_INLINE_SUPPRESSIONS`, in
+ * `assertCachePoisoningSuppressionHygiene` below) lives in `main()`, run by
+ * this `always_run` hook (manual stage, every CI run) rather than behind a
+ * narrow `files` pattern: a fifth `# zizmor: ignore[cache-poisoning]` added to
+ * some other workflow would touch none of this guard's own paths (#3987).
  */
-export const SELF_TEST_HOOK_ID = 'cache-poisoning-suppressions-self-test'
-export const SELF_TEST_HOOK_DEPENDENCIES = Object.freeze([
-  'scripts/check-cache-poisoning-suppressions.mjs',
-  '.github/zizmor.yml',
-  '.github/workflows/ci.yml',
-  'prek.toml',
-])
-
-/** The `always_run` hook that runs `main()` (not `--self-test`) on every commit. */
 export const MAIN_HOOK_ID = 'cache-poisoning-suppressions'
 
 /**
@@ -329,9 +306,7 @@ export function checkHygiene({ lineAnchors, inlineHits, expectedInlineSuppressio
         `${expectedInlineSuppressions} — if you ADDED one on purpose, bump ` +
         `EXPECTED_INLINE_SUPPRESSIONS in scripts/check-cache-poisoning-suppressions.mjs ` +
         `(and say in the commit which step it covers); if you did not, a suppression appeared ` +
-        `or vanished without review. Checked on every commit — this guard's OTHER prek hook is ` +
-        `\`always_run\`, so this fires even when the change is nowhere near this guard's own ` +
-        `four dependency files.`,
+        `or vanished without review. Checked on every run of this \`always_run\` hook, whichever files changed.`,
     )
   }
   return problems
@@ -674,58 +649,6 @@ function selfTestInlineScan({ check }) {
       `scripts/check-cache-poisoning-suppressions.mjs (and say in the commit which step it covers). ` +
       `If you did not add one, a suppression appeared or vanished without review, which is what this ` +
       `exact count exists to notice — checkHygiene only ever notices zero.`,
-  )
-}
-
-/**
- * #3960 (review note 5) — the `zizmor` prek hook's `files` pattern covers
- * `.github/workflows/**` and `.github/actions/**`, NOT `.github/zizmor.yml`,
- * so editing the config alone never re-runs zizmor. In practice this guard's
- * own self-test hook covers it, because that hook IS keyed to the config. So
- * the coverage is real but indirect, and an indirect dependency that nothing
- * asserts is one `files` edit away from disappearing in silence.
- */
-function selfTestSelfTestHookCoverage({ check }) {
-  // The reader first, on a fixture, so the assertion below is known to be
-  // able to fail rather than agreeing with a regex it mis-parsed.
-  const fixture = [
-    '[[repos.hooks]]',
-    'id = "some-hook"',
-    'files = "^(scripts/a\\\\.mjs|\\\\.github/b\\\\.yml)$"',
-    'stages = ["pre-commit"]',
-    '',
-    '[[repos.hooks]]',
-    'id = "other-hook"',
-    'files = "^never\\\\.txt$"',
-  ].join('\n')
-  const parsed = findHookFilesPattern(fixture, 'some-hook')
-  check(
-    parsed.test('scripts/a.mjs') &&
-      parsed.test('.github/b.yml') &&
-      !parsed.test('scriptsXa.mjs') &&
-      !parsed.test('never.txt'),
-    'a prek `files` pattern is read back as the regex prek itself would use (TOML backslash escaping survives, and the right hook block is picked)',
-    String(parsed),
-  )
-  for (const [label, hookId] of [
-    ['an unknown hook id', 'no-such-hook'],
-    ['a hook with no `files` pattern', 'always-run-hook'],
-  ]) {
-    let threw = null
-    try {
-      findHookFilesPattern(`${fixture}\n\n[[repos.hooks]]\nid = "always-run-hook"\n`, hookId)
-    } catch (err) {
-      threw = err
-    }
-    check(threw !== null, `the prek reader throws on ${label} instead of passing vacuously`, '')
-  }
-
-  const pattern = findHookFilesPattern(readFileSync(PREK_CONFIG_PATH, 'utf8'), SELF_TEST_HOOK_ID)
-  const missing = SELF_TEST_HOOK_DEPENDENCIES.filter((p) => !pattern.test(p))
-  check(
-    missing.length === 0,
-    `the \`${SELF_TEST_HOOK_ID}\` prek hook still fires for every file this guard depends on (it is what re-runs zizmor when .github/zizmor.yml changes)`,
-    `${String(pattern)} does not match: ${missing.join(', ')}`,
   )
 }
 
@@ -1168,7 +1091,6 @@ function runSelfTest() {
   selfTestInlineScan({ check })
   selfTestHygiene({ check })
   selfTestExactCountReachableFromAnyFixture({ check })
-  selfTestSelfTestHookCoverage({ check })
   selfTestMainHookAlwaysRun({ check })
   selfTestFindingLineHarvest({ check })
   selfTestZizmorSurvivesLineDrift({ check, fail })

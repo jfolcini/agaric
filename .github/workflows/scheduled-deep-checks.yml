@@ -896,8 +896,7 @@ jobs:
         #   * the paths the steps below read drifting away from where
         #     cargo-mutants actually writes (`--output DIR` creates
         #     `DIR/mutants.out`, not `DIR`).
-        # Same guard runs as a prek hook on every commit that touches the
-        # config, this workflow, or the invariant-core sources.
+        # Same guard runs as a `manual`-stage prek hook on every PR (#4556).
         run: node scripts/check-mutants-scope.mjs
 
       - name: Run cargo-mutants (scoped to invariant core)
@@ -2287,7 +2286,8 @@ jobs:
   # `verify-ci-equivalent` hook itself, which `full-suite` documents SKIPping
   # for the same reason we don't invoke it here either: it recurses into a
   # nested whole-tree Phase A prek run and fail-exits on the empty push
-  # range a scheduled on-`main` run always has.
+  # range a scheduled on-`main` run always has. The `manual` stage (self-tests
+  # and CI-only guards, #4556 Phase 2) is likewise left to `full-suite`.
   # ---------------------------------------------------------------------------
   prek-all-files:
     runs-on: ubuntu-24.04
@@ -2694,6 +2694,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SKIP: no-commit-to-branch,verify-ci-equivalent,vitest,cargo-test
         run: prek run --all-files --hook-stage pre-push
+
+      - name: Run prek manual stage (self-tests + CI-only guards, #4556 Phase 2)
+        # Every surviving self-test and the CI-only guards live in the `manual`
+        # stage, which `prek run --all-files` above never selects. SKIP is
+        # emptied explicitly, mirroring the `lint` job in `_validate.yml`.
+        # Exact count, not `> 0`, and no `Skipped`: a `files:`-scoped hook that
+        # matches nothing reports Skipped and exits 0 (the knip false-green shape).
+        env:
+          SKIP: ''
+        run: |
+          set -euo pipefail
+          expected=34   # keep equal to: prek list --hook-stage manual --output-format json | jq length
+          listed=$(prek list --hook-stage manual --output-format json | jq length)
+          [ "$listed" -eq "$expected" ] || { echo "manual stage lists $listed hooks, expected $expected"; exit 1; }
+          prek run --all-files --hook-stage manual 2>&1 | tee manual.log
+          passed=$(grep -c 'Passed$' manual.log || true)
+          [ "$passed" -eq "$expected" ] || { echo "$passed of $expected manual hooks reported Passed"; exit 1; }
+          if grep -q 'Skipped' manual.log; then echo "a manual-stage hook was Skipped"; exit 1; fi
 
       - name: Vitest (full suite)
         run: npx vitest run
