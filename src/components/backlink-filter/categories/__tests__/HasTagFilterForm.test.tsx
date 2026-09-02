@@ -16,7 +16,7 @@
  *
  * Coverage:
  *  - happy path: typed search resolves rows that surface as options (#1270);
- *  - IPC error path (REQUIRED, #1270 / AGENTS.md:198): the debounced search
+ *  - IPC error path (REQUIRED, #1270 / AGENTS.md § Testing › Conventions): the debounced search
  *    rejects; the popover must not crash, loading must settle to false, the
  *    result list stays empty (falls back to the empty state), and the `.catch`
  *    logs via `logger.warn`;

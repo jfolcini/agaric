@@ -454,7 +454,7 @@ describe('useTrashCount', () => {
     expect(afterTickCalls).toBe(2)
   })
 
-  // IPC error-path (AGENTS.md:198 / check-ipc-error-path.mjs). When the
+  // IPC error-path (AGENTS.md § Testing › Conventions / check-ipc-error-path.mjs). When the
   // `countTrash` IPC rejects, the failure is SILENTLY handled: the polling
   // layer (`usePollingQuery`) catches it into `error` state, and
   // `useItemCount` ignores that error, returning the safe fallback `0`

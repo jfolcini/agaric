@@ -90,7 +90,7 @@ describe('ImageResizeToolbar', () => {
     })
   })
 
-  // IPC error-path (AGENTS.md:198 / check-ipc-error-path.mjs). On a failed
+  // IPC error-path (AGENTS.md § Testing › Conventions / check-ipc-error-path.mjs). On a failed
   // `setProperty` save the toolbar reverts the optimistic width back to the
   // previous `currentWidth` and surfaces a `notify.error` toast (which
   // forwards to the globally-mocked sonner `toast.error`).

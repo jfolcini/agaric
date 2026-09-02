@@ -99,7 +99,7 @@ jobs:
 
             Every non-blocking note goes in the review body under a line
             ending in a colon (e.g. "Non-blocking notes:"). Never say notes
-            were "filed separately" unless you cite the issue number (#3702).
+            were "filed separately" unless you cite the issue number (#NNNN).
           # The plugin reads the PR (gh pr view/diff/checks) and the checkout
           # (Read/Grep/Glob), then posts (gh pr comment) and votes (gh pr
           # review). No generic Bash and no `gh api` (it also matches
