@@ -36,6 +36,17 @@ use agaric_core::ulid::BlockId;
 /// change introduces seq `0` as a per-device sentinel op, this default
 /// would silently treat it as already-seen — switch `cursor_seq` to
 /// `Option<i64>` and bind it directly at that point.
+///
+/// # Attachment ops (#4336)
+///
+/// `delete_attachment` and `rename_attachment` carry no `block_id`, so
+/// `op_log.block_id` is NULL on those rows and a bare `block_id = ?1` never
+/// matched them — the per-block History sheet omitted the delete and the
+/// rename for the very block that owned the attachment. The disjunct below
+/// is the one `list_page_history` and `undo_page_op_inner` share, scoped to
+/// this one block instead of a page subtree; see `list_page_history`'s doc
+/// block for why both probes exist, why they must stay byte-identical, and
+/// which rows they deliberately still omit.
 pub async fn list_block_history(
     pool: &SqlitePool,
     block_id: &BlockId,
@@ -61,14 +72,36 @@ pub async fn list_block_history(
 
     let rows = sqlx::query_as!(
         HistoryEntry,
-        "SELECT device_id, seq, op_type, payload, created_at, \
-                is_replicated AS \"is_replicated!: bool\" \
-         FROM op_log \
-         WHERE block_id = ?1 \
-           AND (?6 IS NULL OR op_type = ?6) \
-           AND (?2 IS NULL OR (\
-                seq < ?3 OR (seq = ?3 AND device_id < ?5))) \
-         ORDER BY seq DESC, device_id DESC \
+        "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+                ol.is_replicated AS \"is_replicated!: bool\" \
+         FROM op_log ol \
+         WHERE ( \
+             ol.block_id = ?1 \
+             OR ( \
+                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                 AND ( \
+                     EXISTS ( \
+                         SELECT 1 FROM attachments a \
+                         WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                         AND a.block_id = ?1 \
+                     ) \
+                     OR ( \
+                         ol.op_type = 'delete_attachment' \
+                         AND EXISTS ( \
+                             SELECT 1 FROM op_log src_add \
+                             WHERE src_add.op_type = 'add_attachment' \
+                             AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
+                             AND src_add.is_replicated = 0 \
+                             AND src_add.block_id = ?1 \
+                         ) \
+                     ) \
+                 ) \
+             ) \
+         ) \
+           AND (?6 IS NULL OR ol.op_type = ?6) \
+           AND (?2 IS NULL OR ( \
+                ol.seq < ?3 OR (ol.seq = ?3 AND ol.device_id < ?5))) \
+         ORDER BY ol.seq DESC, ol.device_id DESC \
          LIMIT ?4",
         block_id,         // ?1
         cursor_flag,      // ?2
