@@ -250,9 +250,11 @@ jobs:
           # frontend; the coverage ratchet also to backend, since
           # `cargo-coverage` runs it with `--gate`). A script that no suite
           # executes is linted by `lint`'s oxlint/oxfmt, which the shared SKIP
-          # list keeps on whenever `ci` is present. `scripts/verify-ci-equivalent.sh` keeps the same
-          # routing (`CI_PATH_RE`, `RS_SCRIPT_RE`, `HOOK_OWNER_*_RE`) and its
-          # self-test ratchets the two `ci` sets against each other.
+          # list keeps on whenever `ci` is present.
+          # `scripts/verify-ci-equivalent.sh` keeps the same `ci` set
+          # (`CI_PATH_RE`; its self-test ratchets the two against each other)
+          # and routes the coverage scripts to frontend only, since no local
+          # phase runs the Rust coverage gate.
           ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
 
           # Bundle/packaging gates for `ci.yml`'s two build jobs. Narrow on
