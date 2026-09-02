@@ -800,9 +800,7 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
   //     `spaceId` mismatch.
   //
   // #4558 — the CASCADED id is published space-lessly (`spaceId: null`) while
-  // the selected root keeps `SPACE_TEST`. A nested page's `space_id` is
-  // authoritative and a move does not re-parent it, so the cascade can reach a
-  // child that lives in another space entirely.
+  // the selected root keeps `SPACE_TEST`.
   it('evicts the selected page roots AND the nested pages the cascade swept, and nothing else', async () => {
     pageStore.setState({
       blocks: [
@@ -1144,20 +1142,6 @@ describe('useBlockMultiSelect handleBatchDelete — name-cache fan-out (#4524)',
 
   // #4558 — the cascaded child in ANOTHER SPACE, the block-tree arm of the
   // defect the two delete arms the issue names share.
-  //
-  // `move_blocks_to_space` moves a page by writing its authoritative
-  // `space_id` and does NOT re-parent it (pinned backend-side by
-  // `move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480`), so
-  // `P_MOVED` can sit under `P_ROOT` in SPACE_TEST while itself belonging to
-  // SPACE_OTHER. The delete cascade walks `parent_id` and sweeps it anyway.
-  // Publishing it scoped to the HOOK's `currentSpaceId` meant the subscriber —
-  // live on SPACE_OTHER — dropped it on the space check, and SPACE_OTHER's
-  // `[[` cache went on offering a page that is now in the trash.
-  //
-  // `P_STAYS_OTHER` present alongside `P_MOVED` absent rules out both the
-  // vacuous reading ("the cache was never warm") and the wholesale
-  // `invalidateNameCaches()` shortcut, which would empty the cache and let the
-  // next read re-fetch `P_MOVED` back out of the static mock.
   it("a cascaded child in another space is evicted from THAT space's [[ cache", async () => {
     // The user is looking at SPACE_OTHER; these are its pages.
     useSpaceStore.setState({
