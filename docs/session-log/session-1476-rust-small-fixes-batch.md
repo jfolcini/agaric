@@ -8,7 +8,7 @@ This session bundled six low-cost, low-risk backend issues into a single branch 
 
 **#4505 — bibliography import warns when the file has no `@` entries.** Scope as narrowed on the issue: a warning, not an error, and no cross-check against `detect_bibliography_format`. The directive-only path already warned on its own; `import_bibliography_inner` forwards parser warnings before its own empty-entries message. Review dropped the `entries.is_empty() &&` conjunct: every entry push already sits behind the `@` branch, so the `@` check alone is the guard.
 
-**#4512 — persisted Loro version vectors decode through a fallible path.** `try_decode_persisted_loro_vvs` returns a `Result`; `decode_persisted_loro_vvs(bytes, peer_id)` wraps it, warns, and falls back to the empty floor. Both call sites (`session_state_machine.rs`, `protocol_proptest.rs`) were updated. The doc comment's claim that "this workspace wires no tracing capture" was narrowed to this crate, since `agaric-observability` does use `with_default`. Three tests cover the Ok and Err arms; the warn line itself is not asserted, which the doc says.
+**#4512 — persisted Loro version vectors decode through a fallible path.** `decode_persisted_loro_vvs(bytes, peer_id)` decodes with `serde_json::from_slice`, warns on a malformed blob, and falls back to the empty floor; review inlined the `try_` wrapper it first went through and dropped the three tests that only exercised the wrapper. Both call sites (`session_state_machine.rs`, `protocol_proptest.rs`) were updated. The doc comment's claim that "this workspace wires no tracing capture" was narrowed to this crate, since `agaric-observability` does use `with_default`. The three existing proptests cover the two-arg decode; the warn line itself is not asserted, which the doc says.
 
 **#4570 — numeric group labels no longer render as `3.0`.** `group_key_expr` for `GroupKey::Property` now emits `COALESCE(gp.value_text, CASE WHEN gp.value_num = CAST(gp.value_num AS INTEGER) THEN CAST(CAST(gp.value_num AS INTEGER) AS TEXT) ELSE CAST(gp.value_num AS TEXT) END)`, one bound key and one joined row, with `NULL` still falling through to `none`. The test fixture gained a `3.5` block and pins `3`→2, `5`→1, `3.5`→1, `none`→2 and four buckets, plus a member-preview assertion: the preview re-selects buckets by the rendered label, so a label that did not compare equal to its own bucket would leave it populated but memberless, and nothing else covered that.
 
@@ -21,7 +21,7 @@ This session bundled six low-cost, low-risk backend issues into a single branch 
 Reviewer-run, foreground, with `SQLX_OFFLINE=true`:
 
 - `cargo nextest run -p agaric-store -E 'test(query)'`: 204 passed.
-- `cargo nextest run -p agaric-sync -E 'test(sync_protocol)'`: 50 passed.
+- `cargo nextest run -p agaric-sync -E 'test(sync_protocol)'`: 47 passed (50 before the three wrapper-only tests were dropped).
 - `cargo nextest run -p agaric-engine -E 'test(bibliograph)'`: 26 passed.
 - `cargo nextest run -p agaric -E 'test(db::)'`: 176 passed.
 - `cargo check --workspace`, `cargo check --bench interactive_slo -p agaric`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets`: clean.

@@ -1264,13 +1264,6 @@ async fn group_by_property_declared_number_buckets_by_value() {
     let (pool, _d) = test_pool().await;
     seed(&pool).await;
 
-    sqlx::query(
-        "INSERT INTO property_definitions (key, value_type, created_at) \
-         VALUES ('estimate', 'number', '2026-01-01T00:00:00.000Z')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
     set_property_num(&pool, "01B1000000000000000000000", "estimate", 3.0).await;
     set_property_num(&pool, "01B2000000000000000000000", "estimate", 3.0).await;
     set_property_num(&pool, "01B3000000000000000000000", "estimate", 5.0).await;
