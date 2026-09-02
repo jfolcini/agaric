@@ -1,0 +1,189 @@
+# Mutants cost probe (#3393, step 1 of the 2026-09-02 scope).
+#
+# The weekly `mutants` lane in scheduled-deep-checks.yml tests a deterministic
+# prefix of its 607 mutants (13 last run) and never reaches `agaric-store`.
+# Sharding it needs a shard count, and a shard count needs one number nobody
+# has measured on the runner: what one package-scoped mutant costs in each
+# package. This workflow measures exactly that and nothing else. Dispatch-only,
+# never scheduled, never gating: run it by hand, read the step summary, derive
+# the shard count, then change the lane.
+#
+# Two arms, one per package the lane examines, each running a small
+# round-robin shard so the sample spans the package's files rather than the
+# first few. Per-mutant build and test durations come from cargo-mutants'
+# own `outcomes.json`; the summary prints them per mutant and averaged over the
+# viable ones (unviable mutants stop at the build phase and are cheap by
+# construction).
+#
+# `agaric-engine` is deliberately absent: its tests still live in the app crate
+# (#3120, #3299, #3443), so a package-scoped run there measures an empty suite.
+
+name: Mutants cost probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      store_shard:
+        description: 'agaric-store shard k/n (round-robin over its 125 mutants; 0/25 is 5 mutants)'
+        required: false
+        default: '0/25'
+      reverse_shard:
+        description: 'agaric (src/reverse) shard k/n (round-robin over its 137 mutants; 0/28 is 5 mutants)'
+        required: false
+        default: '0/28'
+      mutants_timeout:
+        description: 'Per-mutant test-phase timeout (seconds); same meaning as the lane'
+        required: false
+        default: '900'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arm:
+          - package: agaric-store
+          - package: agaric
+    name: probe (${{ matrix.arm.package }})
+    env:
+      # Same wall budget as the lane, so a slow arm truncates instead of
+      # cancelling and the partial outcomes.json still gets summarised.
+      MUTANTS_WALL_BUDGET: '5400'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
+      - name: Install system dependencies
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        with:
+          toolchain: 1.95.0
+
+      - name: Rust cache
+        # Read the lane's cache, never write it: a probe must not shape what
+        # the weekly run restores.
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          shared-key: rust-mutants
+          save-if: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install cargo-mutants + cargo-nextest via prebuilt binary
+        # Pinned: a per-mutant cost is only comparable across runs of the same
+        # cargo-mutants. 27.1.0 is what the lane resolved on 2026-08-31
+        # (`cargo_mutants_version` in its outcomes.json).
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest
+
+      - name: Mutation-scope guard (#3386)
+        run: node scripts/check-mutants-scope.mjs
+
+      - name: Run the shard
+        working-directory: src-tauri
+        env:
+          PACKAGE: ${{ matrix.arm.package }}
+          STORE_SHARD: ${{ github.event.inputs.store_shard || '0/25' }}
+          REVERSE_SHARD: ${{ github.event.inputs.reverse_shard || '0/28' }}
+          MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
+          MUTANTS_BUILD_TIMEOUT: '600'
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            agaric-store) shard="$STORE_SHARD" ;;
+            agaric)       shard="$REVERSE_SHARD" ;;
+            *) echo "::error::unknown arm $PACKAGE"; exit 1 ;;
+          esac
+          # `-p` narrows generation to this package; the config's examine_globs
+          # still apply inside it (op.rs + op_log for the store, src/reverse for
+          # agaric), so the sample is drawn from the lane's own surface.
+          generated=$(cargo mutants --list -p "$PACKAGE" --no-times 2>/dev/null | wc -l)
+          echo "$generated" > "$RUNNER_TEMP/generated.txt"
+          echo "$PACKAGE: $generated mutants in the lane's surface; running shard $shard round-robin"
+          timeout --signal=INT --kill-after=120 "$MUTANTS_WALL_BUDGET" \
+            cargo mutants --in-place -p "$PACKAGE" \
+              --shard "$shard" --sharding round-robin \
+              --timeout "$MUTANTS_TIMEOUT" \
+              --build-timeout "$MUTANTS_BUILD_TIMEOUT" || true
+
+      - name: Per-mutant cost
+        if: always()
+        working-directory: src-tauri
+        env:
+          PACKAGE: ${{ matrix.arm.package }}
+        run: |
+          set -uo pipefail
+          out=mutants.out/outcomes.json
+          {
+            echo "## $PACKAGE: per-mutant cost"
+            echo
+            if [ ! -f "$out" ]; then
+              echo "_No outcomes.json: the baseline or the build failed before any mutant ran. See the job log._"
+            else
+              generated=$(cat "$RUNNER_TEMP/generated.txt" 2>/dev/null || echo '?')
+              echo "cargo-mutants $(jq -r '.cargo_mutants_version' "$out"); $(jq -r '.total_mutants' "$out") of $generated mutants tested"
+              echo
+              echo '| scenario | summary | build s | test s | total s |'
+              echo '|---|---|--:|--:|--:|'
+              jq -r '
+                def secs(p): ([.phase_results[] | select(.phase == p) | .duration] | add // 0 | round);
+                .outcomes[] | [
+                  (if .scenario == "Baseline" then "baseline" else .scenario.Mutant.name end),
+                  .summary, secs("Build"), secs("Test"), (secs("Build") + secs("Test"))
+                ] | "| \(.[0]) | \(.[1]) | \(.[2]) | \(.[3]) | \(.[4]) |"' "$out"
+              echo
+              # Viable = the mutant built and its tests ran; that is the cost a
+              # shard pays per mutant. Unviable ones stop at the build.
+              jq -r '
+                def secs(p): ([.phase_results[] | select(.phase == p) | .duration] | add // 0);
+                [.outcomes[] | select(.scenario != "Baseline") | select(.summary == "CaughtMutant" or .summary == "MissedMutant" or .summary == "Timeout") | secs("Build") + secs("Test")]
+                | if length == 0 then "no viable mutant completed"
+                  else "viable mutants: \(length); mean \((add / length) | round) s each; at that rate a 5400 s budget tests \((5400 / (add / length)) | floor) of them"
+                  end' "$out"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload outcomes
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants-cost-probe-${{ matrix.arm.package }}
+          path: src-tauri/mutants.out
+          if-no-files-found: warn
