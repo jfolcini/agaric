@@ -1185,7 +1185,9 @@ jobs:
         with:
           # NOT `merge-multiple: true`: every shard writes the same file names,
           # so a flat merge would silently keep one shard's missed.txt and drop
-          # the rest. One directory per shard, concatenated below.
+          # the rest. One directory per shard, concatenated below — except for
+          # a lone surviving shard, which the action extracts flat; the merge
+          # `find`s by file name so both layouts read the same.
           pattern: mutants-out-*
           path: shards
 
@@ -1238,7 +1240,10 @@ jobs:
               # A shard that never uploaded takes its slice out of BOTH sides
               # of that ratio, so it is invisible there. Count them: fewer
               # than the matrix declares means a shard failed before upload.
-              echo "shards merged: $(find shards -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
+              # Counted by outcomes.json, not by directory: download-artifact
+              # extracts a SINGLE matching artifact flat into `shards/` and
+              # only nests one directory per artifact when there are several.
+              echo "shards merged: $(find shards -type f -name outcomes.json 2>/dev/null | wc -l)"
               # …then the same split PER PACKAGE (#3386 review). Since #3393
               # each package has its own shard count derived from its own
               # per-mutant cost, so this split is how you tell whether that
