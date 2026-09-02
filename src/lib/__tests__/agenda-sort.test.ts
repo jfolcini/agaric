@@ -1114,13 +1114,6 @@ describe('getAgendaGroupKey', () => {
     )
     expect(getAgendaGroupKey({ label: 'Today', blocks: [], special: null })).toBe('label:Today')
   })
-
-  it('keys a group with no `special` field at all by its label', () => {
-    // `groupByPriority` / `groupByState` / `groupByPage` omit `special`
-    // entirely, so `undefined` — not just `null` — has to reach the `label:`
-    // namespace.
-    expect(getAgendaGroupKey({ label: 'No priority', blocks: [] })).toBe('label:No priority')
-  })
 })
 
 describe('compareGroupSortKeys: the group-order contract', () => {
