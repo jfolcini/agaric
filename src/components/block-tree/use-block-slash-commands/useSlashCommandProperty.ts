@@ -18,7 +18,9 @@
  * kept the property — a block wearing metadata for content it no longer has.
  * `flushActiveDraft` is the editor's OWN commit path (`debounced.cancel()` +
  * `commitNow()`, the #2969 bridge the export flow uses), not a second
- * mechanism, and a no-op when nothing is pending.
+ * mechanism, and a no-op when nothing is pending. It is also a no-op for a
+ * block carrying an inline `key:: value` line (`commitNow`'s #2675 carve-out),
+ * so Escape after a slash command still discards typed text there.
  * `useSlashCommandStructural.handleListStyle` carries the identical line for
  * the identical reason.
  *
