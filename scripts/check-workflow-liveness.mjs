@@ -30,7 +30,7 @@
 // its reporter job is scheduled is still reported. That is the whole point:
 // nothing here depends on the thing being watched.
 //
-// ─── Why `--event schedule` only ─────────────────────────────────────────────
+// ─── Why `--event schedule`, with one exception ──────────────────────────────
 //
 // `codeql` and `scorecard` also run on `push`/`pull_request`. Those runs are
 // NOT considered here, deliberately, in both directions:
@@ -44,6 +44,13 @@
 //     PR checks, the Security tab. It is precisely the SCHEDULED run whose
 //     failure is surfaced nowhere. `workflow_dispatch` runs are excluded for
 //     the same reason: a human is watching the run they triggered.
+//
+// The exception, and the reason the second clause above does not cover it:
+// `ci.yml`'s POST-MERGE run on `main`. The PR's checks all went green before
+// the merge, so nobody looks again, and there is no PR left to show the merge
+// commit's own red. That lane is therefore watched on `--event push --branch
+// main`, for the CONCLUSION question only — it has no cron, so the liveness
+// question (and with it staleness and never-ran) does not apply to it.
 //
 // ─── Why the conclusion comes from the newest COMPLETED run ──────────────────
 //
@@ -126,7 +133,8 @@ const HOUR_MS = 3600 * 1000
  * its cron implies. `findUnwatchedWorkflows` asserts this list and the
  * `.github/workflows` directory agree in BOTH directions, so adding a cron to
  * a new workflow (or deleting a watched one) fails the prek hook rather than
- * quietly leaving it unobserved.
+ * quietly leaving it unobserved. Plus the one PUSH-watched entry below, which
+ * has no cron and therefore sits outside that equality (see its comment).
  *
  * How `maxAgeHours` was derived — the watchdog itself runs DAILY at 19:37 UTC,
  * and "age" is measured at a watchdog run against the newest scheduled run.
@@ -195,6 +203,18 @@ export const WATCHED = Object.freeze([
     // 30h, not 40h: fires on ONE skipped day. See the measured derivation above.
     maxAgeHours: 30,
     why: 'daily 12:00 UTC; guards the ruleset that keeps unreviewed code off main',
+  }),
+  Object.freeze({
+    // The one PUSH-watched lane, and the only entry here judged on its
+    // conclusion alone. `ci.yml`'s post-merge run on `main` is where a merge
+    // that breaks main first shows up, and nothing reports it: the PR's own
+    // checks went green before the merge, and this is not a scheduled run, so
+    // no cron window applies — neither staleness nor never-ran means anything
+    // for a lane that only runs when someone merges.
+    workflow: 'ci.yml',
+    event: 'push',
+    branch: 'main',
+    why: 'post-merge run on main; a red main is reported nowhere else',
   }),
   Object.freeze({
     workflow: 'codeql.yml',
@@ -336,10 +356,14 @@ export function classifyWorkflow({
   maxAgeHours,
   excludeRunId,
   scheduleState,
+  event = 'schedule',
 }) {
   const considered = orderedRuns({ runs, workflow, excludeRunId })
 
-  if (considered.length === 0) {
+  // Both rules below answer "has the CRON stopped firing", so neither applies
+  // to a push-watched lane: it runs when someone merges, and no merges is not
+  // a defect. Such a lane is judged on its newest completed run's conclusion.
+  if (event === 'schedule' && considered.length === 0) {
     // #4478 — an empty run list is THREE different situations, and they need
     // opposite handling. Which one it is cannot be read from the run list (it
     // is empty in all three), so it is read from the workflow's own `state`.
@@ -385,7 +409,7 @@ export function classifyWorkflow({
     // does not have). A watchdog that says "I could not determine whether
     // this lane is disabled" is behaving correctly.
     //
-    // It is a verdict rather than a THROW — the posture `fetchScheduleRuns`
+    // It is a verdict rather than a THROW — the posture `fetchWorkflowRuns`
     // takes — for one specific reason: this is a SECONDARY question. `--out`
     // is written only after every lane is classified, so throwing here would
     // discard every other lane's perfectly good answer over a refinement to
@@ -424,17 +448,19 @@ export function classifyWorkflow({
     return `never-ran (no \`schedule\` run of ${workflow} found at all, but GitHub reports the workflow \`active\` — a schedule that has not fired YET)`
   }
 
-  const ageHours = (nowMs - considered[0].startedAtMs) / HOUR_MS
-  if (ageHours > maxAgeHours) {
-    return `stale (newest scheduled run started ${formatAge(ageHours)} ago; window is ${maxAgeHours}h)`
+  if (event === 'schedule') {
+    const ageHours = (nowMs - considered[0].startedAtMs) / HOUR_MS
+    if (ageHours > maxAgeHours) {
+      return `stale (newest scheduled run started ${formatAge(ageHours)} ago; window is ${maxAgeHours}h)`
+    }
   }
 
   const completed = considered.find((r) => r.status === 'completed')
   if (!completed) {
-    return `no-completed-run (newest scheduled run is \`${considered[0].status ?? 'unknown'}\` and none of the last ${considered.length} has completed)`
+    return `no-completed-run (newest ${event} run is \`${considered[0]?.status ?? 'none at all'}\` and none of the last ${considered.length} has completed)`
   }
   if (completed.conclusion === 'success') return 'success'
-  return `failure (newest completed scheduled run concluded \`${completed.conclusion ?? 'unknown'}\`)`
+  return `failure (newest completed ${event} run concluded \`${completed.conclusion ?? 'unknown'}\`)`
 }
 
 /**
@@ -638,6 +664,7 @@ export function buildResults({
       maxAgeHours: entry.maxAgeHours,
       excludeRunId: excl,
       scheduleState: statesByWorkflow[entry.workflow],
+      event: entry.event,
     })
     const entryOut = { result, periodHours: entry.periodHours }
     // #4400 / #4456 / #4478 — carried through so `file-scheduled-failures.mjs`
@@ -714,7 +741,11 @@ export function hasCronTrigger(workflowText) {
  */
 export function findUnwatchedWorkflows(files, watched = WATCHED) {
   const scheduled = new Set(files.filter((f) => hasCronTrigger(f.text)).map((f) => f.name))
-  const watchedNames = new Set(watched.map((w) => w.workflow))
+  // The invariant is over the CRON-watched entries only. A push-watched entry
+  // has no cron, so it is neither a phantom nor a licence: were `ci.yml` to
+  // grow one, it would be absent from this set and reported as unwatched,
+  // which is what forces a proper windowed entry for it.
+  const watchedNames = new Set(watched.filter((w) => w.event !== 'push').map((w) => w.workflow))
   return {
     unwatched: [...scheduled].filter((n) => !watchedNames.has(n)).toSorted(),
     phantom: [...watchedNames].filter((n) => !scheduled.has(n)).toSorted(),
@@ -811,7 +842,8 @@ function watchedEntry(name) {
 // ---------------------------------------------------------------------------
 
 /**
- * The last few `schedule`-event runs of one workflow.
+ * The last few runs of one workflow on the watched event (and branch, when the
+ * entry names one — `ci.yml` is watched on `main` alone).
  *
  * Ten, not one: the newest run may be in progress, and the conclusion question
  * needs the newest COMPLETED run behind it. Any failure here — `gh` missing,
@@ -819,7 +851,7 @@ function watchedEntry(name) {
  * propagates as a throw. There is no fallback value, because every possible
  * fallback would be a claim about health that this process cannot substantiate.
  */
-export function fetchScheduleRuns(repo, workflow) {
+export function fetchWorkflowRuns(repo, workflow, { event = 'schedule', branch } = {}) {
   let raw
   try {
     raw = execFileSync(
@@ -832,7 +864,8 @@ export function fetchScheduleRuns(repo, workflow) {
         '--workflow',
         workflow,
         '--event',
-        'schedule',
+        event,
+        ...(branch === undefined ? [] : ['--branch', branch]),
         '--limit',
         '10',
         '--json',
@@ -992,7 +1025,7 @@ export function main(argv = process.argv.slice(2)) {
     runsByWorkflow = {}
     statesByWorkflow = {}
     for (const entry of WATCHED) {
-      runsByWorkflow[entry.workflow] = fetchScheduleRuns(repo, entry.workflow)
+      runsByWorkflow[entry.workflow] = fetchWorkflowRuns(repo, entry.workflow, entry)
       // #4478 — unconditionally, one call per watched entry per tick, even
       // for lanes whose run list will turn out to be non-empty and whose
       // state is therefore never consulted. Fetching it lazily inside

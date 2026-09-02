@@ -437,19 +437,18 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # Android APK build. Skipped on `pull_request` events entirely — the
-  # ~28-min Android slot dominates PR wall-clock and the typical PR never
-  # touches Android-specific paths. On push (the merge commit on `main`,
-  # feature-branch pushes) it additionally path-gates on
-  # `detect-changes.outputs.android`, so it only runs when an
-  # Android-relevant path changed (scaffold/override/conf files, the
-  # cross-compile dependency graph, the multicast shim, the patch script,
-  # or this workflow). `release.yml` builds the signed Android artifact at
-  # tag time independently, covering everything this gate skips.
+  # Android APK build. Path-gated on `detect-changes.outputs.android` alone:
+  # the ~28-min slot is paid only by a PR that actually touches Android
+  # paths (scaffold/override/conf files, the cross-compile dependency graph,
+  # the multicast shim, the patch script, or this workflow), and those are
+  # exactly the PRs whose Android breakage should be caught before merge
+  # rather than after. Not a required check, so it never blocks a merge.
+  # `release.yml` builds the signed Android artifact at tag time
+  # independently, covering everything this gate skips.
   # ---------------------------------------------------------------------------
   android-build:
     needs: [validate, detect-changes]
-    if: github.event_name != 'pull_request' && needs.detect-changes.outputs.android == 'true'
+    if: needs.detect-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
     # n=1). +50% headroom + round up → 45 min.
