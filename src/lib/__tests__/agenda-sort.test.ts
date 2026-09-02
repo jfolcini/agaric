@@ -1079,6 +1079,41 @@ describe('mutation coverage: groupByDate Overdue-before-earlier-raw-date orderin
     expect(zeroIdx).toBeGreaterThanOrEqual(0)
     expect(overdueIdx).toBeLessThan(zeroIdx)
   })
+
+  it('sorts a past-dated raw group before Tomorrow, not after it', () => {
+    // The Tomorrow entry of `specialSortKey` carries the date it stands for
+    // (`[dated, tomorrowStr]`), which is what makes it participate in the
+    // chronological ordering instead of riding on insertion order: every
+    // special group is built BEFORE any raw-date group (`entries` concatenates
+    // `specialGroups` first), so a past-dated DONE group — which keeps its own
+    // raw date rather than joining Overdue — only overtakes Tomorrow if the
+    // comparator actually reads Tomorrow's date. The Today analogue is covered
+    // by "orders a past-dated DONE group before Today" above; this is the
+    // Tomorrow half of the same pair.
+    const blocks = [
+      makeBlock({ id: 'tomorrow', due_date: '2025-06-06', todo_state: 'TODO' }),
+      makeBlock({ id: 'pastDone', due_date: '2025-01-10', todo_state: 'DONE' }),
+    ]
+    const groups = groupByDate(blocks)
+    // Assert on `special`, not the raw group's label: that label is a
+    // locale-formatted date string.
+    expect(groups.map((g) => g.special)).toEqual([null, 'Tomorrow'])
+    expect(groups[0]?.blocks.map((b) => b.id)).toEqual(['pastDone'])
+  })
+})
+
+describe('getAgendaGroupKey', () => {
+  // `useVirtualizedGroupedRows` renders `header:${getAgendaGroupKey(g)}` as a
+  // React key, so both halves of the returned string are load-bearing: the
+  // `special:` / `label:` namespace tag is what keeps a raw `due_date` that
+  // spells "Today" from colliding with the real Today bucket (#3845), and the
+  // interpolated value is what keeps two groups within one namespace apart.
+  it('namespaces a special bucket and a same-named raw date bucket into different keys', () => {
+    expect(getAgendaGroupKey({ label: 'Today', blocks: [], special: 'Today' })).toBe(
+      'special:Today',
+    )
+    expect(getAgendaGroupKey({ label: 'Today', blocks: [], special: null })).toBe('label:Today')
+  })
 })
 
 describe('compareGroupSortKeys: the group-order contract', () => {
@@ -1682,3 +1717,76 @@ describe('mutation coverage: formatGroupDate malformed input fallback', () => {
     expect(groups[0]?.label).toBe('2025-06-15-extra')
   })
 })
+
+/*
+ * ---------------------------------------------------------------------------
+ * EQUIVALENT-MUTANT LEDGER — src/lib/agenda-sort.ts (#3749)
+ * ---------------------------------------------------------------------------
+ * Mutants that survive the Stryker run and CANNOT be killed: each produces
+ * output identical to the original for every reachable input. Recorded so the
+ * next triage pass does not re-derive them. Line numbers are from the
+ * 2026-08-31 run and will drift; the (col, mutator, replacement) triple is the
+ * stable id. Format: line:col [mutator] verbatim replacement.
+ *
+ * 259:14 [ArrayDeclaration] "[]"  (`Overdue: [GROUP_RANK.beforeDates, null]`)
+ *      The empty key destructures to `[undefined, undefined]`, so every
+ *      comparison involving Overdue yields NaN, which SortCompare coerces to
+ *      +0 — Overdue then compares equal to everything and a stable sort leaves
+ *      it where it already is. Where it already is, is first: `beforeDates` is
+ *      the minimum rank, and Overdue is also the first entry of the array
+ *      being sorted, because `entries` lists every special group before every
+ *      raw-date group and the date-ascending pass in `sortAgendaBlocks`
+ *      reaches an overdue block (date < today) before any Today/Tomorrow/
+ *      undated one. Correct position and mutated position coincide for every
+ *      input. (The sibling `Today` and `Tomorrow` entries are NOT equivalent —
+ *      both must overtake an earlier raw-date group — and both are killed.)
+ *
+ * 326:7  [ConditionalExpression] "true"  (`block.priority != null`, the LEFT
+ *      operand of the `&&` — the mutants on the whole condition at 326:7-68
+ *      and on the right operand at 326:33 are all killed)
+ *      `levels` holds only trimmed non-empty strings (`priority-levels.ts`
+ *      normalises them), so `levels.indexOf(null)` is -1 and the right operand
+ *      already rejects a null priority on its own. The conjunct is kept for
+ *      narrowing: `groupLabel` takes a `string`.
+ *
+ * 329:5  [OptionalChaining] "buckets.get(key).push"  (`groupByPriority`)
+ * 385:5  [OptionalChaining] "buckets.get(key).push"  (`groupByState`)
+ *      Both `?.` can never short-circuit: the key is drawn from exactly the
+ *      set of keys `buckets` was pre-seeded with one loop earlier —
+ *      `groupLabel(lv) for lv of levels` plus `NO_PRIORITY`, and
+ *      `TASK_STATE_SORT_ORDER` (which covers every `TodoState` `isTodoState`
+ *      admits) plus `NO_STATE`. `Map.get` therefore never returns undefined.
+ *
+ * 355:66 [StringLiteral] "\"Stryker was here!\""  (NoCoverage — the `?? ''` in
+ *      `classForLevel`)
+ *      Unreachable, hence uncovered: the one call site passes
+ *      `label.replace(/^P/, '')` where `label` is `` `P${lv}` `` for an
+ *      `lv` from `levels`, so `idx >= 0` and the clamped index is always in
+ *      range. Kept for `noUncheckedIndexedAccess` (#3790 finding 1).
+ *
+ * 362:85 [Regex] "/P/"  (`label.replace(/^P/, '')`)
+ *      Dropping the anchor cannot change the result: the ternary one line up
+ *      routes `NO_PRIORITY` elsewhere, so every label reaching this branch is
+ *      `` `P${lv}` `` and its first `P` IS at index 0 — which is the only
+ *      occurrence a non-global `replace` touches.
+ *
+ * 542:9  [ConditionalExpression] "true" (×2 — whole condition and the
+ *        `titleA !== null` operand)
+ * 542:9  [LogicalOperator] "titleA !== null || titleB !== null"
+ * 542:28 [ConditionalExpression] "true"  (the `titleB !== null` operand)
+ *      Both `!== null` clauses are constantly true at this point: lines
+ *      535-536 return for every one-sided-null pair, and the both-null pair
+ *      falls through to the state/priority/date chain either way (`titleA !==
+ *      titleB` is false when both are null). Kept for narrowing —
+ *      `titleA.localeCompare` does not typecheck without them (#3790
+ *      finding 3).
+ *
+ * 605:7  [ConditionalExpression] "false" (×3 — whole condition and two
+ *        operands), [LogicalOperator] (×2)
+ * 605:26 [ConditionalExpression] "false"  (`m === undefined`)
+ * 605:45 [ConditionalExpression] "false"  (`d === undefined`)
+ *      Same class, in `formatGroupDate`: `parts.length !== 3` returned two
+ *      lines earlier, so all three destructured slots exist and no mutation of
+ *      this guard can reach a different arm. Kept for
+ *      `noUncheckedIndexedAccess` (#3790 finding 3).
+ */

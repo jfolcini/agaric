@@ -70,6 +70,17 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(entry)).toBeNull()
   })
 
+  it('returns null when a delete_attachment filename is not a string', () => {
+    // The `typeof` half of the guard is what keeps the return type
+    // `string | null`: a non-string value with a truthy `.length` (an array
+    // here) satisfies the `.length > 0` half on its own.
+    const entry = makeEntry(
+      JSON.stringify({ attachment_id: 'ATT1', filename: ['notes.pdf'] }),
+      'delete_attachment',
+    )
+    expect(getPayloadRawContent(entry)).toBeNull()
+  })
+
   it('returns the filename for an add_attachment payload', () => {
     const entry = makeEntry(
       JSON.stringify({
@@ -97,6 +108,25 @@ describe('getPayloadRawContent', () => {
     const entry = makeEntry(
       JSON.stringify({ attachment_id: 'ATT1', block_id: 'BLK1' }),
       'add_attachment',
+    )
+    expect(getPayloadRawContent(entry)).toBeNull()
+  })
+
+  it('returns null when an add_attachment filename is not a string', () => {
+    const entry = makeEntry(
+      JSON.stringify({ attachment_id: 'ATT1', block_id: 'BLK1', filename: ['notes.pdf'] }),
+      'add_attachment',
+    )
+    expect(getPayloadRawContent(entry)).toBeNull()
+  })
+
+  it('renders a stray filename only for the attachment op types', () => {
+    // The add_attachment arm is gated on op_type, not on the presence of a
+    // `filename` field: a non-attachment op that happens to carry one must
+    // not be rendered as if it were an attachment row.
+    const entry = makeEntry(
+      JSON.stringify({ block_id: 'BLK1', filename: 'notes.pdf' }),
+      'move_block',
     )
     expect(getPayloadRawContent(entry)).toBeNull()
   })
