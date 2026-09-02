@@ -17,6 +17,7 @@ Read this section first. It outranks everything below it and every nested `AGENT
 - **No gold-plating.** No scope creep, no refactor-because-we-were-here, no second guard for the first guard, no observability for the observability, no helper for a one-off, no option nobody asked for.
 - **Reviews judge impact.** A finding needs a concrete failure and a named victim. Otherwise fix it if trivial, or let it go. Filing an issue is the last resort, not the default. Over-building is a finding too: a helper, option, abstraction, or paragraph the fix did not need is deleted, not defended.
 - **Say it once.** A rule and its one reason, in the same breath. No war stories, no archaeology. An issue number is a pointer, not a justification.
+- **Names do the explaining.** A comment says why, never what; when the what needs a comment, rename.
 - **Prefer deleting.** Removing a hook, a fallback, a config knob, or a paragraph needs no more justification than this section.
 
 ## Documentation Map

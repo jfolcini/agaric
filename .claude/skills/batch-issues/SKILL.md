@@ -63,7 +63,7 @@ Subagent prompt skeleton:
 **Working directory:** /home/javier/dev/agaric
 **Setup:** . "$HOME/.cargo/env"   (Rust only)
 **Files to create/modify:** path — what
-**Ladder:** read the code you touch first, then stop at the first rung that holds — not needed / already in the codebase / stdlib or platform / installed dependency / one plain line / the minimum that works. Validation, data loss, security, a11y and a red test are never the corner you cut.
+**Ladder:** read the code you touch first, then stop at the first rung that holds — not needed / already in the codebase / stdlib or platform / installed dependency / one plain line / the minimum that works. Validation, data loss, security, a11y and a red test are never the corner you cut. Names carry the what; a comment only for a why the code cannot show.
 **Do NOT modify:** AGENTS.md; anything outside the list above.
 **Do NOT run any git command** (stash/reset/checkout/add/commit); only edit files.
 **NEVER use background execution or monitors**; run every command in the foreground and read the output before your final message.
@@ -85,7 +85,7 @@ As each build finishes, launch its reviewer (a different subagent) while other b
 
 Two dimensions when a change has user-facing impact: technical (correctness, tests, `AGENTS.md` conventions, stays within existing abstractions) and UX (discoverability, consistency, touch parity, empty states, keyboard). Skip UX for backend-only changes.
 
-In both, the reviewer reads the diff against the ladder: a helper, option, branch, abstraction, or paragraph the fix did not need is a finding whose disposition is delete. The diff is the evidence, not the builder's report of it.
+In both, the reviewer reads the diff against the ladder: a helper, option, branch, abstraction, or paragraph the fix did not need is a finding whose disposition is delete. A comment that narrates the code is one too; its disposition is delete or rename. The diff is the evidence, not the builder's report of it.
 
 ### Disposing of a finding
 
