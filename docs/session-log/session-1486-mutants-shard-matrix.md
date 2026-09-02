@@ -1,0 +1,39 @@
+# Session 1486 — Mutants shard matrix (#3393, steps 2 and 3)
+
+The weekly Rust mutants lane ran `cargo mutants --in-place --workspace` inside a 90-minute wall budget and tested 11 of the 691 mutants it generated. Mutant order is deterministic and ordered by package, so the same 11 were tested every week, all of them in `src/reverse/`, and `agaric-store`'s `op.rs` and `op_log/` — the hash-chain core the lane was created for — were never mutated at all. #3393's narrowed scope of 2026-09-02 asked for three things in order: measure the per-mutant cost on the runner, derive the shard count from that number, then shard the lane. Session 1483 shipped the measurement as a dispatch-only probe workflow (PR #4614). This session spends those numbers and deletes the probe; what follows is the whole derivation, because the probe workflow that produced half of it no longer exists.
+
+## The numbers
+
+From the weekly lane's own uploaded outcomes (run 33384085834, 2026-08-31, cargo-mutants 27.1.0, 4-vCPU `ubuntu-24.04`): the workspace baseline cost 1088 s (370 s build, 718 s test); of the 11 mutants tested, the 6 viable ones cost a mean 600 s each (128 s incremental build plus a 473 s run of the whole `agaric` nextest suite) and the 5 unviable ones 67 s, since an unviable mutant stops at the build. Generated mutants split 183 `agaric` / 383 `agaric-engine` / 125 `agaric-store`.
+
+From the probe (run 33681606316, 2026-09-02, `-p agaric-store --shard 0/25 --sharding round-robin`): a package-scoped baseline cost 164 s (76 s build, 87 s test) against the workspace's 1088 s, and a viable store mutant cost 117 s (29 s build, 88 s test) against `agaric`'s 600 s.
+
+A shard's capacity is `floor((wall budget − baseline) / cost of one viable mutant)`, with every mutant assumed viable — the conservative side, since an unviable one is about six times cheaper. The budget stays 5400 s, now per shard:
+
+| package | generated | baseline | per viable mutant | per shard | shards |
+|---|--:|--:|--:|--:|--:|
+| `agaric` | 183 | ~600 s | 600 s | 8 | 23 |
+| `agaric-store` | 125 | 164 s | 117 s | 44 | 3 |
+| `agaric-engine` | 383 | ~90 s | ~90 s | 58 | 7 |
+
+33 shard jobs, which on a public repo cost nothing but wall-clock. `agaric-engine` is the one row not measured, deliberately: its tests still live in the app crate (#3443), so a package-scoped run there tests almost nothing and its cost is bounded by its build. That also means its survivors are the least trustworthy of the three — a "survivor" in `agaric-engine` may be a relocation artefact of the #2621 arch waves rather than a real coverage gap, and should be read that way until #3443 moves its tests. The workflow comment says so at the matrix, which is where someone triaging the survivor list will be.
+
+`--sharding round-robin` rather than the default `slice`: a shard that runs out of budget then leaves a gap spread across the package's files instead of a tail of one file, so the partial coverage a shard reports is a sample rather than a prefix. Each shard still runs its own baseline — `--baseline=skip` would buy back one baseline per shard, but the zero-coverage guard from #3057 is built on a `Success` baseline in that shard's own `outcomes.json`, and this lane's whole history is false greens that nothing could see. The capacities above already pay for it.
+
+## What shipped
+
+`mutants` is a `fail-fast: false` matrix of `{package, shard, shards}`, one flow-style line per entry with the derivation above in a comment directly over them. Each shard uploads `mutants-out-<package>-<shard>` (upload-artifact v7 rejects duplicate names) and runs the zero-coverage guard unchanged in substance, per shard, so one dead shard reds itself rather than hiding inside a merged total. cargo-mutants is pinned to `27.1.0` — the version every number above was measured under, and the version whose mutant ordering the shard denominators divide.
+
+`mutants-merge` downloads `mutants-out-*` into one directory per shard and concatenates them back into the single `mutants.out` layout the summary step and `file-mutation-survivors` have always read: the four `.txt` lists are one finding per line and the shards partition the mutant set, so concatenation is the union; `outcomes.json` sums `total_mutants` and concatenates `outcomes[]`; `mutants.json` is the union of the per-shard slices. Nothing downstream learns about shards. The summary step moved into that job, and gained a `shards merged: N` line, because a shard that never uploaded takes its slice out of both sides of the `tested: N of M generated` ratio and is otherwise invisible there. The merge fails, rather than publishing an empty `missed.txt`, when no shard produced output at all — the filer's `--require-rust` accepts an empty-but-present `missed.txt` as real data, and would read it as "every tracked rust survivor is fixed" (#3364). `file-mutation-survivors` now needs `mutants-merge`, and `report-scheduled-failures` needs both.
+
+`scripts/check-mutants-scope.mjs` had to learn the matrix, because the matrix is now the lane's statement of scope: the invocation says `-p "$PACKAGE"`, and what keeps all four `examine_globs` entries reachable is the union of the matrix's `package` column, not any one job. It resolves that token only when the job also maps `PACKAGE: ${{ matrix.package }}`, and reports `package-selection-unknown` otherwise rather than guessing. It also fails when a package's shard indices are not exactly `0..n-1` for the `shards` denominator its entries declare: a missing index is a slice nobody tests, and it drops its mutants out of the summary's tested count *and* its generated count, so no downstream reader can tell it from a smaller package.
+
+The probe workflow is deleted. It measured what it existed to measure and its numbers are in the table above.
+
+## Verified
+
+`node scripts/check-mutants-scope.mjs` and its `--self-test`, plus `src/__tests__/check-mutants-scope.test.ts` (3 tests). The guard's three new failure paths were falsified against a copy of the workflow, each restored afterwards: dropping one `agaric` shard entry reports `shard-matrix-incomplete` with the gap listed; dropping the `PACKAGE: ${{ matrix.package }}` mapping reports `package-selection-unknown`; renaming one package's entries to a package the globs do not reach reports the incompleteness on both sides of the rename. The merge and summary shell was run against a two-shard fixture and produced the expected merged `outcomes.json`, per-package split and tallies. `prek run --files` over both changed files: actionlint, zizmor, oxlint, oxfmt, typos and the rest pass.
+
+Not verified here: an actual sharded run. The first weekly cron is the first real measurement of the derivation, and the per-package split in the merged summary is what says whether it holds — a package testing well under its generated count every week needs more shards. cargo-mutants' flag semantics were read from its book rather than assumed: `--shard k/n` with `k` in `0..n-1`, `--sharding round-robin` assigning mutant `i` to shard `i % n` (the default is `slice`), and package selection where `-p` scopes generation while the test scope follows it — the baseline "runs the tests from all and only the packages for which mutants will be generated" and "each mutant runs only the tests from the package that's being mutated", which is what makes a package-scoped shard affordable at all.
+
+Out of scope, and stated here so it is not mistaken for an oversight: the `examine_globs` widening and the filer's third "untested" state were both dropped from #3393 by the maintainer on 2026-09-02. The widening is worth revisiting only after a full pass over the current surface has actually run.
