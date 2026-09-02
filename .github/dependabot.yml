@@ -56,7 +56,7 @@ version: 2
 # cannot serve both paths from one entry, so the duplication is by design.
 #
 # `iroh` needed BOTH halves rather than just the mirror: `iroh`,
-# `iroh-base` and `iroh-dns` are pinned at an exact `=1.0.3` across
+# `iroh-base` and `iroh-dns` are pinned at an exact `=1.1.0` across
 # `agaric-sync` and `agaric-store` and pin each other in the same sense,
 # but they were in no group at all — they fell into the cargo
 # `minor-and-patch` catch-all, whose `update-types` would additionally have
@@ -344,7 +344,7 @@ updates:
           - 'chrono'
           - 'chrono-tz'
       # #4351 — `iroh`, `iroh-base` and `iroh-dns` are pinned at an EXACT
-      # `=1.0.3` (`agaric-sync/Cargo.toml:62,68`, `agaric-store/Cargo.toml:79`)
+      # `=1.1.0` (`agaric-sync/Cargo.toml:62,68`, `agaric-store/Cargo.toml:79`)
       # and pin each other in the same sense: moving one alone cannot resolve,
       # so an ungrouped bump is a guaranteed-failing PR. Without this entry they
       # fell into the `minor-and-patch` catch-all, which carries `update-types`

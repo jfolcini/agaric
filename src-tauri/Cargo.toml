@@ -456,7 +456,7 @@ debug = false
 #      (in-tree via `netwatch` -> `iroh`; its `android-extra` feature is
 #      ON by default) calls `panic::catch_unwind(ndk_context::android_context)`
 #      in `src/os/android/api.rs` to probe for a JNI context — a recovery
-#      this profile deletes. `iroh-dns` 1.0.3 spells the consequence out in
+#      this profile deletes. `iroh-dns` 1.1.0 spells the consequence out in
 #      `src/android.rs` and `src/dns.rs`: it catches the same panic to fall
 #      back to default nameservers. From `src/android.rs`: "This depends on
 #      panic unwinding though, so if you set `panic = abort` in your
