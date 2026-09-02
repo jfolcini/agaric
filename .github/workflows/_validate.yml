@@ -238,9 +238,31 @@ jobs:
           # root anchor is meaningful. Note `^src-tauri/` already subsumes the
           # Cargo/migrations alternatives, but they are listed explicitly so
           # the intent is legible and robust to future anchor tweaks.
-          backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/)'
-          frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$)'
-          ci_re='(^\.github/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
+          backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(check-sqlx-cache-drift|check-unsafe-allowlist)\.sh$|^scripts/coverage-ratchet\.mjs$|^scripts/coverage-baseline\.json$)'
+          frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$|^scripts/(bundle-budgets|coverage-baseline)\.json$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$)'
+          # `scripts/` and `.claude/` are tooling: the guards and their manual-stage
+          # self-tests run in `lint` (a `scripts/*.test.mjs` runs wherever it is
+          # named: `pr-diff-base` in `lint`, `check-bundle-budget` in `vitest`),
+          # so a tooling-only PR is `ci` and pays no suite. The few files a suite
+          # consumes are routed to that suite above, data files included, so a
+          # re-baseline PR still runs the gate that reads it: the sqlx drift
+          # check and the unsafe allowlist to backend; the axe/test-naming hook
+          # owners, the bundle-budget guard with its `bundle-budgets.json`,
+          # the two coverage scripts, and every script a `src/**/*.test.ts`
+          # imports or spawns (the six `check-*.mjs` guards with unit tests in
+          # `src/__tests__/`, plus `scripts/lib/js-scanner.mjs`) to frontend,
+          # since only `vitest` runs those tests; the coverage ratchet and its
+          # `coverage-baseline.json` also to backend, since `cargo-coverage`
+          # runs it with `--gate`. Adding a vitest test for another script
+          # means adding that script here too. A script that no suite executes
+          # is linted by `lint`'s oxlint/oxfmt, which the shared SKIP list keeps
+          # on whenever `ci` is present.
+          # `scripts/verify-ci-equivalent.sh` keeps the same `ci` set
+          # (`CI_PATH_RE`; its self-test ratchets the two against each other)
+          # but leaves the coverage/bundle scripts and their baselines as `ci`
+          # alone: no local phase runs either coverage gate or the bundle
+          # budget, so there is no suite to route them to.
+          ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
 
           # Bundle/packaging gates for `ci.yml`'s two build jobs. Narrow on
           # purpose: logic correctness lives in the suites above, so these only
@@ -695,15 +717,13 @@ jobs:
         # `docs_only != 'true'`, needs no frontend build to run a node:test
         # file, and does not depend on a fail-closed SIDE EFFECT holding.
         #
-        # That last clause is the subtle one, and the reason not to "simplify"
-        # this into `vitest`: a scripts-only PR does reach `vitest` today, but
-        # only by accident. `scripts/*.mjs` matches none of `detect-changes`'
-        # three category regexes (`.mjs` does not satisfy frontend_re's
-        # `\.(ts|tsx|js|jsx|css)$` — the character before `js` is `m`), so it
-        # is an UNRECOGNIZED non-docs path and hits the fail-closed branch
-        # above, which pins frontend=backend=ci=true. Move the test there and
-        # it runs on an unrecognized-path fallback — which stops holding the
-        # day someone adds `\.mjs$` to frontend_re.
+        # That last clause is the reason not to "simplify" this into
+        # `vitest`: `scripts/` is the `ci` category, so a scripts-only PR
+        # does not reach `vitest` at all. `lint` is the one job every
+        # non-docs PR runs, which is what makes it the home for anything
+        # under `scripts/` that must execute on a tooling-only change (the
+        # coverage scripts are the exception, routed to the suites that call
+        # them by `detect-changes`' backend_re / frontend_re).
         #
         # Named explicitly rather than globbed: a glob here would silently
         # adopt every future `scripts/*.test.mjs` into this job, including

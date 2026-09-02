@@ -23,7 +23,8 @@
 //   node scripts/coverage-ratchet.mjs --summary <path> --key vitest --update
 //
 // Exit: 0 by default; 1 when `--gate` is set AND (coverage dropped beyond
-// tolerance OR the report carried no data).
+// tolerance OR the report carried no data OR the invocation was malformed:
+// no `--key`, no input path).
 // ─────────────────────────────────────────────────────────────────────
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -116,7 +117,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   if (!args.key) {
     console.error('ERROR: --key <vitest|rust> is required.')
-    return 0 // a usage error in the workflow, not a coverage verdict
+    return args.gate ? 1 : 0 // under --gate a usage error must not pass the job having evaluated nothing
   }
 
   let pct = null
@@ -124,7 +125,7 @@ function main() {
   else if (args.summary) pct = lineCoverageFromSummary(args.summary)
   else {
     console.error('ERROR: one of --lcov / --summary is required.')
-    return 0
+    return args.gate ? 1 : 0
   }
 
   if (pct === null) {
