@@ -265,6 +265,43 @@ describe('useSlashCommandStructural — duplicate (#976 item 13)', () => {
     expect(pasteBlocks).toHaveBeenCalledWith('BLOCK_1', expect.stringContaining('parent'))
   })
 
+  // #4577 — same family as `handleListStyle` above: `/duplicate` builds the
+  // clone from `serializeBlockSubtree(state.blocks, …)`, i.e. the STORE, so the
+  // flush has to land BEFORE the serialize. Asserting the markdown handed to
+  // `pasteBlocks` (not a call order) is what proves it: a flush that ran after
+  // the serialize would still copy the pre-typing content.
+  it('flushes the pending in-editor content before serializing the subtree (#4577)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'edit_block') {
+        return {
+          id: 'BLOCK_1',
+          content: (args as { toText: string }).toText,
+          op_refs: [{ device_id: 'dev1', seq: 5 }],
+        }
+      }
+      return undefined
+    })
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    const pasteBlocks = vi.fn(async (_anchorId: string, _markdown: string) => [] as string[])
+    pageStore.setState({ pasteBlocks })
+    // Stands in for `useDebouncedContentCommit`'s registration (the synthetic
+    // ctx has no live TipTap instance) — same bridge, same store `edit`.
+    const unregister = registerActiveDraftFlush('BLOCK_1', async () => {
+      await pageStore.getState().edit('BLOCK_1', 'typed but uncommitted')
+    })
+    try {
+      await result.current.exact['duplicate']?.(ctx, { id: 'duplicate', label: 'Duplicate' })
+    } finally {
+      unregister()
+    }
+
+    expect(pasteBlocks).toHaveBeenCalledWith(
+      'BLOCK_1',
+      expect.stringContaining('typed but uncommitted'),
+    )
+  })
+
   it('/duplicate is a no-op when the focused block is gone (no pasteBlocks)', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx, pageStore } = makeSyntheticCtx()
