@@ -200,6 +200,44 @@ test.describe('Slash structural inserts', () => {
     await expect(firstStatic(page)).not.toContainText('1. first item')
     await expect(firstStatic(page).locator('ol, ul, li')).toHaveCount(0)
   })
+
+  /**
+   * #4577 — the same command, exited with ESCAPE instead of Enter.
+   *
+   * `/numbered-list` writes only the `listStyle` property, so unlike every
+   * other structural command it commits no content of its own. The text the
+   * user typed just before the command was still in the editor's commit
+   * debounce, and Escape discards a pending edit — so the block ended up
+   * styled as a list while showing the PRE-command content. The handler now
+   * flushes that pending commit (`flushActiveDraft`) before writing the
+   * property.
+   *
+   * Both halves are asserted after the re-open, together: a fix that flushed
+   * but skipped the property, or kept the property and lost the text, fails
+   * one of them. `reopenPage` (Status → back) rather than `page.reload()` —
+   * a browser reload RE-SEEDS the tauri mock, so it would resurrect the seed
+   * content and prove nothing about persistence.
+   */
+  test('/numbered-list keeps the typed text when the block is exited with Escape', async ({
+    page,
+  }) => {
+    const editor = await focusBlock(page)
+    await page.keyboard.press('Control+a')
+    await page.keyboard.type('escaped item')
+
+    const list = await typeSlashCommand(page, 'numbered')
+    const item = list.locator('[data-testid="suggestion-item"]', { hasText: 'NUMBERED' }).first()
+    await expect(item).toBeVisible()
+    await item.click()
+    await expect(editor).toHaveText('escaped item')
+
+    // Escape, not Enter: the gesture that used to throw the text away.
+    await saveBlock(page, 'Escape')
+
+    await reopenPage(page, 'Getting Started')
+    await expect(firstStatic(page)).toContainText('escaped item')
+    await expect(firstBlock(page).getByTestId('list-marker')).toHaveText('1.')
+  })
 })
 
 // ===========================================================================

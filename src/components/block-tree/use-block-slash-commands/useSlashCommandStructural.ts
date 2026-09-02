@@ -21,6 +21,7 @@ import type {
 } from '@/components/block-tree/use-block-slash-commands/types'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
 import { EMBED_TOKEN_PREFIX } from '@/lib/embed-token'
@@ -44,22 +45,30 @@ async function handleCallout(ctx: SlashCommandContext, calloutType: string): Pro
  * block property instead of prepending a `1. ` / `- ` markdown marker: the
  * marker is now drawn from that property (`ListMarker.tsx` /
  * `list-marker-decoration.ts`), not from `blocks.content`.
+ *
+ * #4577 — but a property write is not a content edit, and that is what broke:
+ * every OTHER structural command goes through `applyContentEdit`, which
+ * serializes the live editor and commits it, so the text the user had just
+ * typed was persisted as a side effect. These two commit nothing, so typed
+ * text still sitting in the editor's commit debounce
+ * (`useDebouncedContentCommit`, `CONTENT_COMMIT_DEBOUNCE_MS`) survived only
+ * until the next Escape — which discards the pending edit — leaving a block
+ * styled as a list with the pre-command content. Flush the pending commit
+ * first, through the same `flushActiveDraft` bridge export uses (#2969): it
+ * is the editor's own commit path (`debounced.cancel()` + `commitNow()`), not
+ * a second mechanism, and it is a no-op when nothing is pending.
  */
-async function handleNumberedList(ctx: SlashCommandContext): Promise<void> {
+async function handleListStyle(
+  ctx: SlashCommandContext,
+  style: 'ordered' | 'bullet',
+  failKey: string,
+): Promise<void> {
   try {
-    await setListStyle(ctx.blockId, 'ordered')
+    await flushActiveDraft()
+    await setListStyle(ctx.blockId, style)
   } catch (err) {
-    logger.error('useSlashCommandStructural', 'setListStyle(ordered) failed', undefined, err)
-    notify.error(ctx.t('slash.numberedListFailed'))
-  }
-}
-
-async function handleBulletList(ctx: SlashCommandContext): Promise<void> {
-  try {
-    await setListStyle(ctx.blockId, 'bullet')
-  } catch (err) {
-    logger.error('useSlashCommandStructural', 'setListStyle(bullet) failed', undefined, err)
-    notify.error(ctx.t('slash.bulletListFailed'))
+    logger.error('useSlashCommandStructural', `setListStyle(${style}) failed`, undefined, err)
+    notify.error(ctx.t(failKey))
   }
 }
 
@@ -175,8 +184,8 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         // `turn-*` conversion options inline in the menu; selecting it
         // directly is a no-op (the user picks a concrete target type).
         turn: () => {},
-        'numbered-list': (ctx) => handleNumberedList(ctx),
-        'bullet-list': (ctx) => handleBulletList(ctx),
+        'numbered-list': (ctx) => handleListStyle(ctx, 'ordered', 'slash.numberedListFailed'),
+        'bullet-list': (ctx) => handleListStyle(ctx, 'bullet', 'slash.bulletListFailed'),
         // #976 (item 13) — duplicate the current block + its subtree.
         duplicate: (ctx) => handleDuplicate(ctx),
         divider: (ctx) => handleDivider(ctx),

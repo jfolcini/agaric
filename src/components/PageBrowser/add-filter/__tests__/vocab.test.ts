@@ -13,7 +13,9 @@
  * surfaces only a SUBSET of `ALL_PROPERTY_OPS` — the classic 4-operator set
  * the Pages browser's `+ Filter` popover has always offered (#4553 acceptance
  * criterion 7). The advanced surface derives its own (wider, type-driven)
- * subset via `propertyOpsForValueKind`, tested separately below.
+ * subset via `propertyOpsForValueType`, which keys on the DECLARED
+ * `value_type` and delegates to `propertyOpsForValueKind` for every type but
+ * `boolean` (#4571 item 2) — both tested separately below.
  *
  * Two layers of protection:
  *   1. Compile-time — the `satisfies Record<…Kind, …>` completeness records
@@ -35,6 +37,7 @@ import {
   PROPERTY_OPS_BY_VALUE_KIND,
   type PropertyOpKind,
   propertyOpsForValueKind,
+  propertyOpsForValueType,
   propertyValueKindForType,
   type PropertyValueKind,
   TODO_STATE_VALUES,
@@ -219,8 +222,10 @@ describe('propertyValueKindForType', () => {
     ['ref', 'Ref'],
     ['text', 'Text'],
     ['select', 'Text'],
-    // `boolean` has no `PropertyValue` variant (a named out-of-scope backend
-    // gap) — falls back to Text rather than dropping the predicate.
+    // `boolean` has no `PropertyValue` variant, so this is a placeholder, not
+    // a comparison the UI ever builds: `propertyOpsForValueType` offers a
+    // boolean-declared key `Exists`/`NotExists` only (#4571 item 2), and
+    // neither reads a value column.
     ['boolean', 'Text'],
     // Undeclared key (no registry entry) — the bare-text-box default.
     [null, 'Text'],
@@ -229,5 +234,52 @@ describe('propertyValueKindForType', () => {
     ['bogus', 'Text'],
   ])('maps declared value_type %j to %s', (valueType, expected) => {
     expect(propertyValueKindForType(valueType)).toBe(expected)
+  })
+})
+
+// #4571 item 2 — `propertyOpsForValueType` exists ONLY because the operator
+// question and the `PropertyValue`-variant question stopped having the same
+// answer. `propertyValueKindForType('boolean')` is `'Text'` (above), so a
+// boolean-declared key inherits Text's `PropertyValue` variant — but must NOT
+// inherit Text's comparisons, which compile against a `value_text` that is
+// NULL for a `value_bool` row. The whole contract of this function is that
+// those two disagree for exactly one declared type, so both arms are pinned
+// here: the boolean one, and the delegation every other type still takes.
+describe('propertyOpsForValueType (#4571 item 2)', () => {
+  it('offers a boolean-declared key existence only', () => {
+    expect(propertyOpsForValueType('boolean').map((o) => o.value)).toEqual(['Exists', 'NotExists'])
+  })
+
+  // The half that makes the boolean arm mean something: `boolean` and `text`
+  // map to the SAME `PropertyValueKind`, so a function that merely forwarded
+  // to `propertyOpsForValueKind` would return the identical list for both.
+  it('does not give a boolean-declared key the Text tier it maps to', () => {
+    expect(propertyOpsForValueType('boolean').map((o) => o.value)).not.toEqual(
+      propertyOpsForValueKind(propertyValueKindForType('boolean')).map((o) => o.value),
+    )
+  })
+
+  it.each<[string | null | undefined, PropertyValueKind]>([
+    ['number', 'Num'],
+    ['date', 'Date'],
+    ['ref', 'Ref'],
+    ['text', 'Text'],
+    ['select', 'Text'],
+    // An UNDECLARED key keeps the bare-text-box tier it has always had — the
+    // gap #4571 deliberately left open (item 3, out of scope).
+    [null, 'Text'],
+    [undefined, 'Text'],
+    ['bogus', 'Text'],
+  ])('delegates value_type %j to the %s tier unchanged', (valueType, kind) => {
+    expect(propertyOpsForValueType(valueType)).toEqual(propertyOpsForValueKind(kind))
+  })
+
+  it('every op it offers is drawn from ALL_PROPERTY_OPS (labels never drift)', () => {
+    const allLabels = new Map(ALL_PROPERTY_OPS.map((o) => [o.value, o.labelKey]))
+    for (const valueType of ['boolean', 'number', 'date', 'ref', 'text', null]) {
+      for (const op of propertyOpsForValueType(valueType)) {
+        expect(op.labelKey).toBe(allLabels.get(op.value))
+      }
+    }
   })
 })

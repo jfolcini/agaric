@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlock } from '@/__tests__/fixtures'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
+import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { setListStyle } from '@/lib/list-style'
 import { useUndoStore } from '@/stores/undo'
 
@@ -191,6 +192,51 @@ describe('useSlashCommandStructural — list, divider (#4552 slice 2)', () => {
     await expect(
       result.current.exact['numbered-list']?.(ctx, { id: 'numbered-list', label: 'Numbered list' }),
     ).resolves.toBeUndefined()
+  })
+
+  // #4577 — the PAIR. `/numbered-list` writes only a block property, so
+  // unlike every other structural command it never routes through
+  // `applyContentEdit` and never commits the text the user just typed. That
+  // text sits in the editor's commit debounce until something flushes it;
+  // Escape discards it, so the block kept the PRE-command content while
+  // wearing the new list style. Both halves have to be asserted together:
+  // asserting only `setListStyle` passes on the broken code, and asserting
+  // only the content passes on a handler that flushed and then forgot to
+  // write the style.
+  //
+  // The registration below stands in for `useDebouncedContentCommit`'s (the
+  // synthetic ctx has no live TipTap instance): it is the same
+  // `registerActiveDraftFlush` bridge, committing through the page store's
+  // `edit` exactly as the real one does.
+  it('flushes the pending in-editor content before writing listStyle (#4577)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'edit_block') {
+        return {
+          id: 'BLOCK_1',
+          content: (args as { toText: string }).toText,
+          op_refs: [{ device_id: 'dev1', seq: 4 }],
+        }
+      }
+      return undefined
+    })
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    const unregister = registerActiveDraftFlush('BLOCK_1', async () => {
+      await pageStore.getState().edit('BLOCK_1', 'typed but uncommitted')
+    })
+    try {
+      await result.current.exact['numbered-list']?.(ctx, {
+        id: 'numbered-list',
+        label: 'Numbered list',
+      })
+    } finally {
+      unregister()
+    }
+
+    // Re-read the store rather than asserting the call shape: this is the
+    // content a subsequent Escape would leave behind.
+    expect(pageStore.getState().blocksById.get('BLOCK_1')?.content).toBe('typed but uncommitted')
+    expect(mockedSetListStyle).toHaveBeenCalledWith('BLOCK_1', 'ordered')
   })
 
   it('divider replaces content with `---`', async () => {

@@ -278,7 +278,16 @@ export function PageBrowserBatchToolbar({
       // A plain array, not a `new Set` — `notifyPagesRemoved` de-duplicates
       // internally (#4524), so building one here would be redundant work
       // that also hides the shared function's own contract at the call site.
-      notifyPagesRemoved([...ids, ...cascadedPageIds], currentSpaceId)
+      //
+      // #4558 — the cascaded ids go in the space-less cohort. `handleMoveToSpace`
+      // below establishes the fact this rests on: a page's `space_id` is
+      // authoritative and a move does not re-parent, so a nested page can sit
+      // in a different space from its parent. The trash cascade reaches it
+      // anyway (it walks `parent_id`), so scoping its removal to
+      // `currentSpaceId` left its OWN space's cache offering a trashed page.
+      // The selected roots keep their scope — they are what the user acted on,
+      // in the space they acted from.
+      notifyPagesRemoved(ids, currentSpaceId, cascadedPageIds)
       onClearSelection()
       onMutated()
       notify.success(t('pageBrowser.batch.trashed', { count }), {

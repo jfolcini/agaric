@@ -153,9 +153,10 @@ export const LAST_EDITED_BUCKETS: ReadonlyArray<{ key: string; spec: FilterPrimi
  * All ten `PropertyPredicate` operators the engine supports (#4553 Phase 1 —
  * `src-tauri/agaric-store/src/filters/primitive.rs`), in a single fixed
  * display order. Both {@link PROPERTY_OPS} (the Pages browser's classic
- * 4-operator subset) and {@link propertyOpsForValueKind} (the advanced
- * surface's type-driven subset) filter this list rather than each
- * maintaining their own copy, so a label never drifts between the two.
+ * 4-operator subset) and {@link propertyOpsForValueType} (the advanced
+ * surface's type-driven subset, via {@link propertyOpsForValueKind}) filter
+ * this list rather than each maintaining their own copy, so a label never
+ * drifts between the two.
  */
 export const ALL_PROPERTY_OPS: ReadonlyArray<{ value: PropertyOpKind; labelKey: string }> = [
   { value: 'Eq', labelKey: 'pageBrowser.filter.propertyOpEq' },
@@ -219,6 +220,38 @@ export function propertyOpsForValueKind(
 }
 
 /**
+ * The declared `value_type` for which no comparison is offerable at all
+ * (#4571 item 2). `boolean` properties are stored in `value_bool`, and there
+ * is no `PropertyValue::Bool` variant to compare it with; see
+ * {@link propertyOpsForValueType}.
+ */
+const NULLARY_ONLY_VALUE_TYPE = 'boolean'
+
+/**
+ * The operators offered for a property key from its DECLARED `value_type`,
+ * rather than from the `PropertyValue` variant that type maps to.
+ *
+ * The two are the same question for every type but one. A `boolean`-declared
+ * key has no `PropertyValue` variant to compare against
+ * ({@link propertyValueKindForType} maps it to `Text` only so the emit path
+ * has something to name), and a `boolean` property is stored in `value_bool`
+ * — so every `Text` comparison the operator list used to offer for it
+ * (`Eq`, `Ne`, `Contains`, `StartsWith`) compiled against a `value_text` that
+ * is NULL for that row and silently matched nothing. Offer existence only
+ * until a `Bool` variant exists: `Exists`/`NotExists` test the property ROW,
+ * which is the one thing that is true of a boolean property regardless of
+ * which column holds its value.
+ */
+export function propertyOpsForValueType(
+  valueType: string | null | undefined,
+): ReadonlyArray<{ value: PropertyOpKind; labelKey: string }> {
+  if (valueType === NULLARY_ONLY_VALUE_TYPE) {
+    return ALL_PROPERTY_OPS.filter((op) => PROPERTY_OP_ARITY[op.value] === 'nullary')
+  }
+  return propertyOpsForValueKind(propertyValueKindForType(valueType))
+}
+
+/**
  * #4553 Phase 1 — map a property's declared `value_type` (from
  * `PropertyDefinition.value_type`, the schema registry surfaced by
  * `commands.listPropertyDefs()`) to the `PropertyValue` variant an emitted
@@ -229,10 +262,17 @@ export function propertyOpsForValueKind(
  * (`src/lib/property-save-utils.ts`). An UNDECLARED key (no registry entry —
  * `value_type` is `null`/`undefined`) also falls back to `Text`, which is the
  * bare-text-box behaviour the popover has always had for a key nobody has
- * typed a definition for yet. `boolean` has no `PropertyValue` variant at all
- * (a separate, out-of-scope backend gap the issue names explicitly) and also
- * falls back to `Text` rather than silently dropping the predicate — an
- * imperfect comparison the user can see and correct beats one that vanishes.
+ * typed a definition for yet.
+ *
+ * `boolean` also returns `Text`, but that is now a placeholder rather than a
+ * policy: #4571 item 2. The old defence — "an imperfect comparison the user
+ * can see and correct beats one that vanishes" — was wrong about the
+ * comparison being visible. A boolean property's value lives in `value_bool`,
+ * so `key = "true"` compiled against a NULL `value_text` and matched nothing,
+ * with nothing on screen to say why. {@link propertyOpsForValueType} is the
+ * fix: a `boolean`-declared key is offered `Exists`/`NotExists` only, which
+ * never reads a value column, so this return value is never used to build one.
+ * Give `boolean` its own variant here the day `PropertyValue::Bool` exists.
  */
 export function propertyValueKindForType(valueType: string | null | undefined): PropertyValueKind {
   switch (valueType) {

@@ -39,7 +39,7 @@ import {
   LAST_EDITED_BUCKETS,
   PROPERTY_OPS,
   type PropertyOpKind,
-  propertyOpsForValueKind,
+  propertyOpsForValueType,
   propertyValueKindForType,
   type PropertyValueKind,
   VALUE_BEARING_OPS,
@@ -98,6 +98,18 @@ export interface AddFilterPopoverProps {
   }) => React.ReactNode
 }
 
+/**
+ * The has-property editor's operand at rest (#4571 item 1). The `kind` is the
+ * tier the text was typed under; `'Text'` is the tier an empty box belongs to
+ * on both surfaces (the Pages browser is pinned to it, and the advanced
+ * surface starts on it before a key is typed), so an untouched editor derives
+ * the empty string either way.
+ */
+const EMPTY_PROP_VALUE = { text: '', kind: 'Text' } as const satisfies {
+  text: string
+  kind: PropertyValueKind
+}
+
 export function AddFilterPopover({
   onAddFilter,
   warnManyFilters,
@@ -117,7 +129,13 @@ export function AddFilterPopover({
   const [pathValue, setPathValue] = useState('')
   const [pathExclude, setPathExclude] = useState(false)
   const [propKey, setPropKey] = useState('')
-  const [propValue, setPropValue] = useState('')
+  // #4571 item 1 — the typed operand is stored WITH the `PropertyValueKind` it
+  // was typed under, so a key change that moves the key to another tier can
+  // discard it by derivation (see `propValue` below) instead of by an effect.
+  const [rawPropValue, setRawPropValue] = useState<{
+    text: string
+    kind: PropertyValueKind
+  }>(EMPTY_PROP_VALUE)
   const [rawPropOp, setPropOp] = useState<PropertyOpKind>('Eq')
   // #1280 D2 — advanced facet editor state.
   const [stateValues, setStateValues] = useState<ReadonlyArray<string>>([])
@@ -184,9 +202,16 @@ export function AddFilterPopover({
         : 'Text',
     [showAdvancedFacets, propKey, propertyValueTypes],
   )
+  // #4571 item 2 — keyed on the DECLARED `value_type`, not on the
+  // `PropertyValue` variant it maps to: `boolean` maps to `Text` (there is no
+  // `Bool` variant) but must not inherit Text's comparisons, which compile
+  // against a `value_text` that is NULL for a boolean row.
   const propertyOps = useMemo(
-    () => (showAdvancedFacets ? propertyOpsForValueKind(propertyValueKind) : PROPERTY_OPS),
-    [showAdvancedFacets, propertyValueKind],
+    () =>
+      showAdvancedFacets
+        ? propertyOpsForValueType(propertyValueTypes.get(propKey.trim()))
+        : PROPERTY_OPS,
+    [showAdvancedFacets, propKey, propertyValueTypes],
   )
 
   // Reconcile `propOp` when the derived operator set no longer contains it —
@@ -201,14 +226,37 @@ export function AddFilterPopover({
   // the stale operator. Deriving makes the invalid state unrepresentable
   // instead of transient, and drops the `react(set-state-in-effect)` warning
   // this file did not have before.
-  const propOp = propertyOps.some((op) => op.value === rawPropOp) ? rawPropOp : 'Eq'
+  //
+  // #4571 item 2 — the landing spot is the FIRST offered operator, not a
+  // hardcoded `Eq`: a `boolean`-declared key offers only `Exists`/`NotExists`,
+  // so `Eq` stopped being a member of every set the moment that tier existed.
+  const propOp = propertyOps.some((op) => op.value === rawPropOp)
+    ? rawPropOp
+    : (propertyOps[0]?.value ?? 'Eq')
+
+  // #4571 item 1 — the OPERAND is reconciled the same way, and for the same
+  // reason: a value typed for one tier is meaningless in another. `3` typed
+  // against a `number` key stayed in the box when the key was retyped as a
+  // `date` one, where the control is `<input type="date">` — which renders a
+  // value it cannot parse as blank, so the user saw an empty date field, hit
+  // Apply (enabled, because the STATE was non-blank), and got
+  // `Date("3")` — a predicate the engine compiles to a comparison against a
+  // date nobody typed. Derived, not cleared in an effect, for the reason
+  // above: the invalid pairing is never representable, not merely transient.
+  const propValue = rawPropValue.kind === propertyValueKind ? rawPropValue.text : ''
+  const setPropValue = useCallback(
+    (text: string) => {
+      setRawPropValue({ text, kind: propertyValueKind })
+    },
+    [propertyValueKind],
+  )
 
   const reset = useCallback(() => {
     setEditor(null)
     setPathValue('')
     setPathExclude(false)
     setPropKey('')
-    setPropValue('')
+    setRawPropValue(EMPTY_PROP_VALUE)
     setPropOp('Eq')
     setStateValues([])
     setStateIsNull(false)
