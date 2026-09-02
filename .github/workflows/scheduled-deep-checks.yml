@@ -27,9 +27,14 @@ name: Scheduled deep checks
 #                    SLO gate again. `workflow_dispatch` can flip
 #                    `slo_include_problem` to also measure the cache and
 #                    MostLinked counterfactual probes (#2508 / #2585).
-#   mutants        — #649: cargo-mutants scoped to the invariant core
-#                    (op, op_log, reverse, loro/engine). Non-blocking; the
-#                    survivor list is the deliverable to triage into tests.
+#   mutants        — #649/#3393: cargo-mutants scoped to the invariant core
+#                    (op, op_log, reverse, loro/engine), SHARDED one job per
+#                    (package, shard) with the counts derived from measured
+#                    per-mutant cost. Non-blocking; the survivor list is the
+#                    deliverable to triage into tests.
+#   mutants-merge  — #3393: reassembles the shards into the single
+#                    `mutants-out` artifact + step summary the filer below
+#                    and every other reader have always consumed.
 #   mutants-frontend — #886: StrykerJS scoped to a handful of pure,
 #                    deterministic frontend libs (search-query's pure
 #                    modules, agenda-sort, filters/model, date-utils,
@@ -798,14 +803,84 @@ jobs:
   # ---------------------------------------------------------------------------
   # mutants (#649) — cargo-mutants scoped (via `.cargo/mutants.toml`'s
   # `examine_globs` — see that file's header: the path is load-bearing, #3386)
-  # to the invariant core. Non-blocking: the deliverable is the survivor list
-  # in the step summary + uploaded artifact, which a maintainer triages into
-  # test gaps. `|| true` is intentional — a surviving mutant is signal, not a
-  # CI failure (this lane is not a required check and is never gated).
+  # to the invariant core, SHARDED one job per (package, shard) since #3393.
+  # Non-blocking: the deliverable is the survivor list in `mutants-merge`'s
+  # step summary + its merged artifact, which a maintainer triages into test
+  # gaps. `|| true` is intentional — a surviving mutant is signal, not a CI
+  # failure (this lane is not a required check and is never gated).
   # ---------------------------------------------------------------------------
   mutants:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      # A shard that dies must not cancel the other 32: each carries a
+      # different slice of the surface, and the slices that DID run are still
+      # the week's deliverable.
+      fail-fast: false
+      matrix:
+        # #3393 — the shard counts are DERIVED, not guessed. A shard's capacity
+        # is floor((MUTANTS_WALL_BUDGET - baseline) / one viable mutant), both
+        # measured on this 4-vCPU runner, and a package's shard count is its
+        # generated-mutant count divided by that capacity. Measured 2026-08-31
+        # (weekly run 33384085834) and 2026-09-02 (the dispatch-only cost probe
+        # of #3393 step 1, deleted with this change — its numbers survive in
+        # `docs/session-log/session-1486-mutants-shard-matrix.md`):
+        #
+        #   agaric         183 mutants, ~600 s each (128 s rebuild + 473 s of
+        #                  the `agaric` suite), ~600 s baseline →  8/shard → 23
+        #   agaric-store   125 mutants,  117 s each (29 s + 88 s), 164 s
+        #                  baseline                              → 44/shard →  3
+        #   agaric-engine  383 mutants, deliberately unmeasured: its tests
+        #                  still live in the app crate (#3443), so a
+        #                  package-scoped run costs little more than its ~90 s
+        #                  build                                 → 58/shard →  7
+        #
+        # Every mutant is assumed viable, which is the conservative side (an
+        # unviable one stops at the build and costs ~6x less). `agaric-engine`
+        # survivors need reading with #3443 in mind: with its tests still in
+        # the app crate, a "survivor" there can be a relocation artefact rather
+        # than a real coverage gap.
+        #
+        # `shards` is the denominator every shard of that package must agree on
+        # (cargo-mutants: "all shards must be run with the same arguments and
+        # the same sharding denominator, or the results will be meaningless"),
+        # and the indices must run 0..n-1 or the missing index is a slice
+        # nobody tests — indistinguishable downstream from a smaller package.
+        # `scripts/check-mutants-scope.mjs` checks both.
+        include:
+          - { package: agaric, shard: 0, shards: 23 }
+          - { package: agaric, shard: 1, shards: 23 }
+          - { package: agaric, shard: 2, shards: 23 }
+          - { package: agaric, shard: 3, shards: 23 }
+          - { package: agaric, shard: 4, shards: 23 }
+          - { package: agaric, shard: 5, shards: 23 }
+          - { package: agaric, shard: 6, shards: 23 }
+          - { package: agaric, shard: 7, shards: 23 }
+          - { package: agaric, shard: 8, shards: 23 }
+          - { package: agaric, shard: 9, shards: 23 }
+          - { package: agaric, shard: 10, shards: 23 }
+          - { package: agaric, shard: 11, shards: 23 }
+          - { package: agaric, shard: 12, shards: 23 }
+          - { package: agaric, shard: 13, shards: 23 }
+          - { package: agaric, shard: 14, shards: 23 }
+          - { package: agaric, shard: 15, shards: 23 }
+          - { package: agaric, shard: 16, shards: 23 }
+          - { package: agaric, shard: 17, shards: 23 }
+          - { package: agaric, shard: 18, shards: 23 }
+          - { package: agaric, shard: 19, shards: 23 }
+          - { package: agaric, shard: 20, shards: 23 }
+          - { package: agaric, shard: 21, shards: 23 }
+          - { package: agaric, shard: 22, shards: 23 }
+          - { package: agaric-store, shard: 0, shards: 3 }
+          - { package: agaric-store, shard: 1, shards: 3 }
+          - { package: agaric-store, shard: 2, shards: 3 }
+          - { package: agaric-engine, shard: 0, shards: 7 }
+          - { package: agaric-engine, shard: 1, shards: 7 }
+          - { package: agaric-engine, shard: 2, shards: 7 }
+          - { package: agaric-engine, shard: 3, shards: 7 }
+          - { package: agaric-engine, shard: 4, shards: 7 }
+          - { package: agaric-engine, shard: 5, shards: 7 }
+          - { package: agaric-engine, shard: 6, shards: 7 }
     # Job-level so the run step and the guard step below quote the SAME
     # number: the guard names the budget in its partial-coverage notice, and
     # two copies of it would drift (#3386).
@@ -850,7 +925,12 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: rust-mutants
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # ONE saver, not 33 (#3393): every shard restores the same target
+          # dir, and 33 concurrent saves of a multi-GB cache would churn the
+          # repository's 10 GB cache quota and evict other workflows' caches
+          # for no gain. `agaric` shard 0 is the saver because `agaric` is the
+          # package whose build the other shards benefit most from.
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.package == 'agaric' && matrix.shard == 0 }}
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -865,9 +945,12 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-mutants + cargo-nextest via prebuilt binary
+        # PINNED (#3393): the shard counts above are derived from per-mutant
+        # costs measured under 27.1.0, and shards must agree on how the mutant
+        # list is divided — a floating version can change either.
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
-          tool: cargo-mutants,cargo-nextest
+          tool: cargo-mutants@27.1.0,cargo-nextest
 
       - name: Mutation-scope guard (#3386) — config is readable and every glob is live
         # Runs BEFORE the expensive step, because every failure mode it checks
@@ -878,6 +961,8 @@ jobs:
         #     in a package this lane does not examine (the #2621 arch-wave
         #     drift: op.rs / op_log / loro-engine moved to `agaric-store` and
         #     `agaric-engine`, which a bare `cargo mutants` never mutates),
+        #   * a shard matrix whose indices do not cover 0..n-1 for the `shards`
+        #     denominator each entry declares (#3393),
         #   * the paths the steps below read drifting away from where
         #     cargo-mutants actually writes (`--output DIR` creates
         #     `DIR/mutants.out`, not `DIR`).
@@ -920,100 +1005,80 @@ jobs:
         #      letting one hung mutant silently eat the job's 120-minute
         #      budget.
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
-        # can't expand into the shell as code (zizmor template-injection).
+        # can't expand into the shell as code (zizmor template-injection);
+        # the matrix values ride the same way for the same reason.
         #
-        # Both numbers above were sized against the PRE-#3386 baseline, which
-        # ran `cargo test` because the config file was inert. What the first
-        # healthy run actually measured (run 30981051402, 2026-08-05, the first
-        # one where `.cargo/mutants.toml` was live and the baseline therefore
-        # ran `cargo nextest run`) — record real values here rather than the
-        # predictions, and re-check them if this lane ever goes red on a
-        # Timeout baseline:
-        #   * baseline BUILD 350s against the 600s `--build-timeout` (1.7x),
-        #   * baseline TEST 604s against the 900s `--timeout` (1.49x — NOT the
-        #     3x above, which is 900 measured against the 300 that failed, not
-        #     against what the phase now costs). The `agaric` suite grows every
-        #     week; 1.49x is the headroom that will bite first.
+        # `-p "$PACKAGE"` (#3393) replaces the `--workspace` this step used to
+        # pass. Per cargo-mutants' package-selection docs, `-p` scopes mutant
+        # GENERATION to that package, and the test scope follows it: the
+        # baseline "runs the tests from all and only the packages for which
+        # mutants will be generated", and "each mutant runs only the tests
+        # from the package that's being mutated". That is what makes a shard
+        # affordable — the workspace baseline cost 1088 s and re-ran the whole
+        # `agaric` suite for every mutant of every package — and it is also
+        # why `agaric-engine` mutants are cheap and weak: its tests still sit
+        # in the app crate (#3443), so a package-scoped run barely tests them.
+        # The union of the matrix's packages is what keeps every
+        # `examine_globs` entry reachable; `check-mutants-scope.mjs` asserts
+        # that union, not this one job's slice.
         #
-        # #3386, three further corrections:
+        # `--shard k/n --sharding round-robin`: shards are `k/n` with k in
+        # 0..n-1 and n the denominator every shard of a package repeats;
+        # `round-robin` assigns mutant i to shard i % n, so a truncated shard
+        # still covers a SPREAD of the package's files rather than the front
+        # of one file (the default `slice` algorithm is the deterministic
+        # prefix this lane used to be, one package at a time).
         #
-        #   a. `--workspace`. The four `examine_globs` are the invariant core,
-        #      but the #2621 arch waves moved three of them into the
-        #      `agaric-store` / `agaric-engine` packages. cargo-mutants only
-        #      generates mutants in the packages it examines, and this
-        #      workspace's root manifest is itself the `agaric` package with
-        #      no `default-members`, so a bare invocation examines ONLY
-        #      `agaric` — 137 of the 607 mutants the config asks for, with the
-        #      other three globs silently matching nothing. Measured with
-        #      `cargo mutants --list` on 2026-07-31: 137 without
-        #      `--workspace`, 607 with it.
+        # No `--baseline=skip`, though it would buy back one baseline per
+        # shard: the zero-coverage guard below is built on a Success baseline
+        # in this shard's own outcomes.json, and a lane that cannot detect its
+        # own false green is exactly what #3057 was. The shard capacities in
+        # the matrix above already pay for it.
         #
-        #   b. No `--output`. `-o/--output DIR` means "create mutants.out
-        #      WITHIN this directory" — so `--output mutants-out` wrote
-        #      `src-tauri/mutants-out/mutants.out/`, while the guard, the
-        #      summary and the `file-mutation-survivors` filer all read
-        #      `mutants-out/…` directly. Every one of them was reading a path
-        #      that never existed, which is why `--require-rust` in the filer
-        #      (#3387) could never see a `missed.txt`. The default location,
-        #      `src-tauri/mutants.out/`, is what the steps below read.
+        # No `--output`: `-o/--output DIR` means "create mutants.out WITHIN
+        # this directory" — so `--output mutants-out` wrote
+        # `src-tauri/mutants-out/mutants.out/`, while the guard, the summary
+        # and the `file-mutation-survivors` filer all read `mutants-out/…`.
+        # Every one of them was reading a path that never existed (#3386),
+        # which is why `--require-rust` in the filer (#3387) could never see a
+        # `missed.txt`. The default location, `src-tauri/mutants.out/`, is
+        # what the steps below read.
         #
-        #   c. A wall-clock budget. 607 mutants do not fit in the job's 120
-        #      minutes: measured locally (16 cores) a mutant costs ~26s in
-        #      `agaric-store` and 13-35s+ in `agaric`, and a 4-vCPU runner is
-        #      several times slower — cargo-mutants also runs mutants
-        #      SEQUENTIALLY by default (`--jobs` defaults to 1). Without a
-        #      budget the job would be CANCELLED at 120 minutes, the guard
-        #      step below would never run, and the lane would be red for a
-        #      brand-new reason. `timeout --signal=INT` instead makes
-        #      cargo-mutants stop cleanly: it writes the partial
-        #      `outcomes.json` / `missed.txt` for the mutants it did test, with
-        #      the baseline still recorded as Success, so everything the steps
-        #      below read is present and honest (measured on cargo-mutants
-        #      27.1.0: a SIGINT'd run left `total_mutants: 5` against a
-        #      20-mutant `mutants.json`). Tree restoration on SIGINT is
-        #      usually but NOT reliably clean — 12 of 13 measured runs left
-        #      `git status` clean, one left a mutant written into the source
-        #      file. That is harmless on an ephemeral runner (the steps below
-        #      read only `mutants.out/`, and the artifact is that directory),
-        #      but if you reproduce this locally with `--in-place`, check
-        #      `git status` afterwards: a stray mutant lands in a TRACKED file
-        #      and .gitignore will not save you. The same applies, EVERY run,
-        #      to proptest: a mutant caught by a proptest makes proptest write
-        #      `<pkg>/proptest-regressions/<mod>.txt` recording a seed that
-        #      only fails because a mutant was applied. cargo-mutants restores
-        #      the source it mutated and knows nothing about those files, and
-        #      they are deliberately not gitignored (the repo tracks six real
-        #      ones). Delete them after a local run; never commit them.
-        #      Mutant order is deterministic (`--no-shuffle` is the default),
-        #      so a truncated run covers a STABLE prefix and the survivor
-        #      filer's cross-run diff does not churn. That stability is also
-        #      the catch: the prefix is ordered by package, so the cut is not
-        #      a proportional sample and the LAST packages are never tested.
-        #      Measured 2026-07-31: src/reverse occupies positions 1-137,
-        #      agaric-engine/src/loro 138-509, agaric-store 510-607 — so
-        #      op.rs / op_log, the hash-chain core this lane exists for, is
-        #      reached only if the budget covers ~84% of the surface, which it
-        #      does not. Right-sizing (a rotating `--shard`, `--jobs > 1`, or
-        #      narrower globs) is tracked separately; until then the summary
-        #      step prints the per-package split so the blind spot is named
-        #      rather than merely disclosed as a ratio.
-        #      90 min leaves ~25 min of the 120 for setup, install and upload
-        #      (observed: ~2 min of setup before cargo-mutants starts).
-        #      What the budget bought in practice, from the same first healthy
-        #      run (30981051402): 13 of 607 mutants tested — the ~26s/mutant
-        #      local figure above is ~415s/mutant on the 4-vCPU runner, because
-        #      each mutant re-runs the WHOLE `agaric` nextest suite (the same
-        #      suite the 604s baseline measures) after a ~119s rebuild. The
-        #      truncation therefore stops inside `src/reverse/` — positions
-        #      1-13 of 137 — and the whole job took 91m of its 120m cap. Those
-        #      are the numbers any right-sizing work should start from; the
-        #      lane is green and honest at that size, not useful.
+        # The wall-clock budget stays what it was, now per shard. 90 min
+        # leaves ~25 min of the job's 120 for setup, install and upload
+        # (observed: ~2 min of setup before cargo-mutants starts). Without it
+        # a slow shard would be CANCELLED at 120 minutes, the guard step below
+        # would never run, and the lane would be red for a brand-new reason.
+        # `timeout --signal=INT` instead makes cargo-mutants stop cleanly: it
+        # writes the partial `outcomes.json` / `missed.txt` for the mutants it
+        # did test, with the baseline still recorded as Success, so everything
+        # the steps below read is present and honest (measured on cargo-mutants
+        # 27.1.0: a SIGINT'd run left `total_mutants: 5` against a 20-mutant
+        # `mutants.json`).
+        #
+        # Tree restoration on SIGINT is usually but NOT reliably clean — 12 of
+        # 13 measured runs left `git status` clean, one left a mutant written
+        # into the source file. That is harmless on an ephemeral runner (the
+        # steps below read only `mutants.out/`, and the artifact is that
+        # directory), but if you reproduce this locally with `--in-place`,
+        # check `git status` afterwards: a stray mutant lands in a TRACKED file
+        # and .gitignore will not save you. The same applies, EVERY run, to
+        # proptest: a mutant caught by a proptest makes proptest write
+        # `<pkg>/proptest-regressions/<mod>.txt` recording a seed that only
+        # fails because a mutant was applied. cargo-mutants restores the source
+        # it mutated and knows nothing about those files, and they are
+        # deliberately not gitignored (the repo tracks six real ones). Delete
+        # them after a local run; never commit them.
         env:
           MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
           MUTANTS_BUILD_TIMEOUT: '600'
+          PACKAGE: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
         run: |
           timeout --signal=INT --kill-after=120 "$MUTANTS_WALL_BUDGET" \
-            cargo mutants --in-place --workspace \
+            cargo mutants --in-place -p "$PACKAGE" \
+              --shard "$SHARD/$SHARDS" --sharding round-robin \
               --timeout "$MUTANTS_TIMEOUT" \
               --build-timeout "$MUTANTS_BUILD_TIMEOUT" || true
 
@@ -1025,6 +1090,12 @@ jobs:
         # place that fails the job — and it fails ONLY on zero coverage /
         # a non-Success baseline, never on surviving (missed) mutants, which
         # stay pure triage signal per the `mutants` lane's whole design.
+        #
+        # Per SHARD since #3393, unchanged in substance: each shard runs its
+        # own baseline and writes its own outcomes.json, so a shard whose
+        # baseline broke reds that shard while the other 32 still report. A
+        # merge-time-only guard would let one dead shard hide inside the
+        # merged totals.
         #
         # Schema (sourcefrog/cargo-mutants `src/outcome.rs` `LabOutcome` /
         # `ScenarioOutcome`): the top-level object carries an aggregate
@@ -1066,20 +1137,94 @@ jobs:
           if [ "$fail" -eq 1 ]; then
             exit 1
           fi
-          # #3386: the wall-clock budget can stop the run part-way through the
-          # generated set. That is an acceptable, DELIBERATE truncation — but
-          # it must never be silent, so state it. `mutants.json` is the full
-          # generated set (written before testing begins); `total_mutants` is
-          # what was actually tested.
+          # #3386: the wall-clock budget can stop a shard part-way through its
+          # slice. That is an acceptable, DELIBERATE truncation — but it must
+          # never be silent, so state it. `mutants.json` is this shard's
+          # generated slice (written before testing begins); `total_mutants`
+          # is what was actually tested.
           generated=$(jq -r 'length' mutants.out/mutants.json 2>/dev/null || echo 0)
-          echo "zero-coverage guard OK: total_mutants=$total baseline=$baseline_summary (surviving/missed mutants, if any, are triage signal — see the summary step below — and never gate this job)"
+          echo "zero-coverage guard OK: total_mutants=$total baseline=$baseline_summary (surviving/missed mutants, if any, are triage signal — see the summary in \`mutants-merge\` — and never gate this job)"
           if [ "$generated" -gt 0 ] && [ "$total" -lt "$generated" ]; then
-            echo "::notice::mutation coverage is PARTIAL: $total of $generated generated mutants were tested before the ${MUTANTS_WALL_BUDGET}s wall-clock budget stopped the run. Mutant order is deterministic, so the same prefix is covered each week; the untested tail carries no signal either way."
+            echo "::notice::mutation coverage is PARTIAL for this shard: $total of $generated mutants in its slice were tested before the ${MUTANTS_WALL_BUDGET}s wall-clock budget stopped it. Round-robin sharding means the untested remainder is spread across the package's files rather than concentrated at its tail; if this fires every week the package needs more shards (see the derivation on the matrix above)."
           fi
+
+      - name: Upload this shard's mutants report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # One artifact per shard — upload-artifact v7 rejects a duplicate
+          # name. `mutants-merge` globs them back into the single
+          # `mutants-out` artifact the filer downloads.
+          name: mutants-out-${{ matrix.package }}-${{ matrix.shard }}
+          # Must be cargo-mutants' output directory ITSELF, not a parent:
+          # `file-mutation-survivors` reads `mutants-artifact/missed.txt`
+          # flat off the downloaded artifact root (#3386/#3387).
+          path: src-tauri/mutants.out/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # mutants-merge (#3393) — reassembles the shards into the ONE `mutants-out`
+  # layout the summary and `file-mutation-survivors` have always read. Sharding
+  # is the only thing that changed about this lane; teaching every downstream
+  # reader about shards would have been the larger change.
+  # ---------------------------------------------------------------------------
+  mutants-merge:
+    needs: mutants
+    # `always()`: a dead shard must not take the surviving 32 shards' results
+    # with it. What must NOT be swallowed is "no shard produced anything" —
+    # the merge step fails on that rather than uploading an empty missed.txt,
+    # which the filer would read as "every tracked rust survivor is fixed"
+    # (#3364).
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download every shard's output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          # NOT `merge-multiple: true`: every shard writes the same file names,
+          # so a flat merge would silently keep one shard's missed.txt and drop
+          # the rest. One directory per shard, concatenated below.
+          pattern: mutants-out-*
+          path: shards
+
+      - name: Merge the shards into one mutants.out
+        run: |
+          set -euo pipefail
+          mapfile -t outcomes < <(find shards -type f -name outcomes.json | sort)
+          if [ "${#outcomes[@]}" -eq 0 ]; then
+            echo "::error::no shard uploaded an outcomes.json — every mutants shard died before producing output. Failing rather than publishing an empty mutants-out, which \`file-mutation-survivors\` would read as 'no rust survivors' and use to delete every tracked one (#3364)."
+            exit 1
+          fi
+          mkdir -p mutants.out
+          # The four lists are one finding per line, and the shards partition
+          # the mutant set, so concatenation IS the union.
+          for f in caught missed unviable timeout; do
+            find shards -type f -name "$f.txt" -exec cat {} + > "mutants.out/$f.txt"
+          done
+          # `total_mutants` is a per-run count of what was TESTED and
+          # `outcomes[]` a per-scenario array, so summing and concatenating
+          # reproduce a single run's file. Each shard contributes its own
+          # Baseline entry; the readers select mutants by `.scenario.Mutant`,
+          # and the per-shard zero-coverage guard is what judges baselines.
+          jq -s '{
+              cargo_mutants_version: (map(.cargo_mutants_version) | first),
+              total_mutants: (map(.total_mutants // 0) | add),
+              outcomes: (map(.outcomes // []) | add),
+            }' "${outcomes[@]}" > mutants.out/outcomes.json
+          # `mutants.json` under `--shard` is that shard's slice, so the union
+          # over a package's shards is the package's generated set.
+          mapfile -t generated < <(find shards -type f -name mutants.json | sort)
+          if [ "${#generated[@]}" -gt 0 ]; then
+            jq -s 'add | unique' "${generated[@]}" > mutants.out/mutants.json
+          else
+            echo '[]' > mutants.out/mutants.json
+          fi
+          echo "merged ${#outcomes[@]} shard(s)"
 
       - name: Mutants summary
         if: always()
-        working-directory: src-tauri
         run: |
           {
             echo "## cargo-mutants (invariant core)"
@@ -1087,28 +1232,27 @@ jobs:
             if [ -f mutants.out/outcomes.json ]; then
               echo '```'
               # tested-of-generated first (#3386): the wall-clock budget can
-              # truncate the run, and a tally that omits the denominator reads
+              # truncate a shard, and a tally that omits the denominator reads
               # as full coverage of a small surface.
               echo "tested: $(jq -r '.total_mutants // 0' mutants.out/outcomes.json) of $(jq -r 'length' mutants.out/mutants.json 2>/dev/null || echo '?') generated"
-              # …then the same split PER PACKAGE (#3386 review). The budget
-              # stops the run at a deterministic prefix, and the mutant list is
-              # ordered by package, so the cut is not a proportional sample: the
-              # packages at the END of the order get ZERO mutants tested, the
-              # same ones every week. `agaric-store` (op.rs / op_log — the
-              # hash-chain core this lane exists for) is last in that order, so
-              # a bare "tested: N of 607" can read as healthy sampling while the
-              # highest-value surface is never mutated at all. Naming the
-              # per-package split is what makes the truncation legible rather
-              # than merely disclosed. Defensive throughout: this step must not
-              # be able to fail (see the `Mutation summary` note on the
-              # frontend lane).
+              # A shard that never uploaded takes its slice out of BOTH sides
+              # of that ratio, so it is invisible there. Count them: fewer
+              # than the matrix declares means a shard failed before upload.
+              echo "shards merged: $(find shards -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
+              # …then the same split PER PACKAGE (#3386 review). Since #3393
+              # each package has its own shard count derived from its own
+              # per-mutant cost, so this split is how you tell whether that
+              # derivation still holds: a package testing well under its
+              # generated count every week needs more shards.
+              # Defensive throughout: this step must not be able to fail (see
+              # the `Mutation summary` note on the frontend lane).
               echo "per package (tested of generated):"
               jq -r '.[].package' mutants.out/mutants.json 2>/dev/null | sort | uniq -c |
                 while read -r generated pkg; do
                   [ -n "$pkg" ] || continue
                   tested=$(jq -r --arg p "$pkg" '[.outcomes[]? | select((.scenario|type) == "object") | select(.scenario.Mutant.package == $p)] | length' mutants.out/outcomes.json 2>/dev/null || echo 0)
                   if [ "${tested:-0}" -eq 0 ]; then
-                    echo "  $pkg: 0 of $generated  <-- NOT COVERED this run (budget stopped before this package)"
+                    echo "  $pkg: 0 of $generated  <-- NOT COVERED this run (every shard of it failed or timed out)"
                   else
                     echo "  $pkg: $tested of $generated"
                   fi
@@ -1128,19 +1272,19 @@ jobs:
                 echo '```'
               fi
             else
-              echo "_No outcomes produced (build or config error) — see job log._"
+              echo "_No outcomes produced (every shard failed) — see the shard job logs._"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload mutants report
+      - name: Upload merged mutants report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
+          # The name `file-mutation-survivors` downloads. It reads missed.txt
+          # flat off the artifact root, so the path is the merged directory
+          # itself, never a parent (#3386/#3387).
           name: mutants-out
-          # Must be cargo-mutants' output directory ITSELF, not a parent:
-          # `file-mutation-survivors` reads `mutants-artifact/missed.txt`
-          # flat off the downloaded artifact root (#3386/#3387).
-          path: src-tauri/mutants.out/
+          path: mutants.out/
           if-no-files-found: ignore
           retention-days: 30
 
@@ -1276,7 +1420,9 @@ jobs:
   # CONTENT, not lane health.
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
-    needs: [mutants, mutants-frontend]
+    # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
+    # is the merged one, and `mutants` is now 33 shard jobs.
+    needs: [mutants-merge, mutants-frontend]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -2611,6 +2757,7 @@ jobs:
       - bench-smoke
       - bench-slo
       - mutants
+      - mutants-merge
       - mutants-frontend
       - file-mutation-survivors
       - fuzz

@@ -47,6 +47,14 @@
 //      a week — and, given it is reachable, must pass `--dry-run` off the
 //      schedule so a smoke run cannot rewrite the real tracking issue.
 //
+//   5. #3393 sharded the lane: it now runs one matrix job per
+//      `{ package, shard, shards }` and passes `-p "$PACKAGE" --shard k/n`.
+//      That makes the matrix column the statement of scope — checked here as
+//      such — and adds one silent mode of its own: shard indices that do not
+//      cover `0..n-1` leave a slice of a package's mutants untested every
+//      week, and nothing downstream can see it, because a missing shard drops
+//      its mutants out of the summary's tested count AND its generated count.
+//
 // All of it is checked here, statically, with no cargo invocation, so the
 // hook is cheap enough to run on every commit that touches the config, the
 // workflow, or the invariant-core sources it names.
@@ -173,18 +181,67 @@ function readWorkspace(root) {
 }
 
 /**
+ * The lane's shard matrix (#3393), one `{ package, shard, shards }` per job.
+ * Flow-style one entry per line, which is what makes them greppable and what
+ * this matcher expects.
+ */
+export function matrixShards(lines) {
+  const entry = /^\s*-\s*\{\s*package:\s*([\w.-]+),\s*shard:\s*(\d+),\s*shards:\s*(\d+)\s*\}\s*$/
+  return lines.flatMap((l) => {
+    const m = entry.exec(l)
+    return m ? [{ package: m[1], shard: Number(m[2]), shards: Number(m[3]) }] : []
+  })
+}
+
+/**
+ * Each package's shard indices must be exactly `0..shards-1` for ONE value of
+ * `shards`. cargo-mutants divides a package's mutants by the denominator each
+ * shard is given and tests only its own index ("all shards must be run with
+ * the same arguments and the same sharding denominator, or the results will
+ * be meaningless"), so a missing index is a slice nobody ever tests — and
+ * downstream that is indistinguishable from a package with fewer mutants,
+ * because the missing shard drops out of BOTH sides of the summary's
+ * tested-of-generated ratio.
+ */
+export function checkShardMatrix({ entries, push }) {
+  const byPackage = new Map()
+  for (const e of entries) byPackage.set(e.package, [...(byPackage.get(e.package) ?? []), e])
+  for (const [pkg, es] of byPackage) {
+    const n = es[0].shards
+    const indices = [...new Set(es.map((e) => e.shard))].toSorted((a, b) => a - b)
+    const complete =
+      es.every((e) => e.shards === n) && indices.length === n && indices.every((v, i) => v === i)
+    if (!complete) {
+      push(
+        'shard-matrix-incomplete',
+        `the shard matrix for '${pkg}' declares shards=${[...new Set(es.map((e) => e.shards))].join('/')} but its entries are ${JSON.stringify(indices)}; they must be exactly 0..n-1 for one n. Any other shape leaves a slice of that package's mutants untested every week, and the summary cannot show it — a missing shard removes its mutants from the tested count AND the generated count.`,
+      )
+    }
+  }
+}
+
+/**
  * Which packages the lane's invocation generates mutants in, expressed as
  * member directory prefixes. `undefined` means "cannot be determined", which
  * is itself reported: an invocation whose package selection this guard cannot
  * model is one whose scope nobody is checking.
+ *
+ * `matrixPackages` covers the sharded shape (#3393): the invocation passes
+ * `-p "$PACKAGE"`, so the packages the LANE examines are the union of its
+ * matrix column, not the one this job happens to run. An unresolvable
+ * variable yields `undefined` — the guard reports rather than guesses.
  */
-export function examinedPackageDirs(argv, workspace) {
+export function examinedPackageDirs(argv, workspace, matrixPackages = []) {
   if (argv.includes('--workspace')) return workspace.members
   const explicit = []
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '-p' || argv[i] === '--package') explicit.push(argv[i + 1])
     const eq = /^--package=(.+)$/.exec(argv[i])
     if (eq) explicit.push(eq[1])
+  }
+  if (explicit.some((p) => /^"?\$\{?PACKAGE\}?"?$/.test(p))) {
+    if (matrixPackages.length === 0) return undefined
+    explicit.splice(0, explicit.length, ...matrixPackages)
   }
   if (explicit.length > 0) return explicit.map((p) => (p === 'agaric' ? '.' : p))
   // No selection at all: cargo's default members. We only model the shape this
@@ -503,11 +560,23 @@ export function analyzeMutantsScope({ root, overrideArgv }) {
     )
   }
 
-  const examinedDirs = invocation ? examinedPackageDirs(invocation.argv, workspace) : undefined
+  // #3393: the sharded lane passes `-p "$PACKAGE"`, so the packages it
+  // examines are its matrix column — and only when the job actually maps that
+  // shell variable to it. Without the mapping the token names something this
+  // guard cannot see, and `examinedPackageDirs` reports instead of guessing.
+  const shardEntries = lines ? matrixShards(lines) : []
+  const mapsMatrixPackage =
+    lines?.some((l) => /^\s*PACKAGE:\s*\$\{\{\s*matrix\.package\s*\}\}\s*$/.test(l)) ?? false
+  const matrixPackages = mapsMatrixPackage ? [...new Set(shardEntries.map((e) => e.package))] : []
+  if (shardEntries.length > 0) checkShardMatrix({ entries: shardEntries, push })
+
+  const examinedDirs = invocation
+    ? examinedPackageDirs(invocation.argv, workspace, matrixPackages)
+    : undefined
   if (invocation && examinedDirs === undefined) {
     push(
       'package-selection-unknown',
-      `cannot determine which packages the lane examines from its \`cargo mutants\` invocation. Pass \`--workspace\` or an explicit \`-p\`, so the scope is stated rather than inherited from cargo's default-member rules.`,
+      `cannot determine which packages the lane examines from its \`cargo mutants\` invocation. Pass \`--workspace\`, an explicit \`-p\`, or \`-p "$PACKAGE"\` with \`PACKAGE: \${{ matrix.package }}\` and a shard matrix, so the scope is stated rather than inherited from cargo's default-member rules.`,
     )
   }
 
@@ -758,6 +827,45 @@ function runSelfTest() {
   if (drifted.problems.filter((p) => p.kind === 'glob-outside-examined-packages').length === 3)
     ok('dropping --workspace flags all three moved-out globs (the #2621 drift)')
   else fail('moved-out globs are flagged', JSON.stringify(drifted.problems.map((p) => p.kind)))
+
+  // 3b. #3393, the sharded shape: `-p "$PACKAGE"` names the matrix column, so
+  //     the lane's scope is the UNION of that column — and is unknown, not
+  //     assumed, when nothing maps the variable to it.
+  const SHARDED = [
+    '        include:',
+    '          - { package: agaric, shard: 0, shards: 2 }',
+    '          - { package: agaric, shard: 1, shards: 2 }',
+    '          - { package: agaric-store, shard: 0, shards: 1 }',
+    '          PACKAGE: ${{ matrix.package }}',
+  ]
+  const entries = matrixShards(SHARDED)
+  const sharded = examinedPackageDirs(['cargo', 'mutants', '--in-place', '-p', '"$PACKAGE"'], ws, [
+    ...new Set(entries.map((e) => e.package)),
+  ])
+  if (
+    entries.length === 3 &&
+    insideAny('agaric-store/src/op.rs', sharded, MEMBERS) &&
+    insideAny('src/reverse/batch.rs', sharded, MEMBERS) &&
+    examinedPackageDirs(['cargo', 'mutants', '-p', '"$PACKAGE"'], ws, []) === undefined
+  )
+    ok('a shard matrix resolves `-p "$PACKAGE"` to its column, and nothing else does')
+  else fail('sharded package selection', JSON.stringify({ entries, sharded }))
+
+  // 3c. …and a matrix missing one of its own shard indices is flagged: that
+  //     slice is never tested and the summary cannot show it.
+  const gaps = []
+  checkShardMatrix({
+    entries: [
+      { package: 'agaric', shard: 0, shards: 2 },
+      { package: 'agaric-store', shard: 0, shards: 1 },
+    ],
+    push: (kind) => gaps.push(kind),
+  })
+  const whole = []
+  checkShardMatrix({ entries, push: (kind) => whole.push(kind) })
+  if (gaps.length === 1 && gaps[0] === 'shard-matrix-incomplete' && whole.length === 0)
+    ok('a shard matrix missing an index is flagged, a complete one is not')
+  else fail('shard matrix completeness', JSON.stringify({ gaps, whole }))
 
   selfTestReaders(ok, fail)
   selfTestPlumbing(ok, fail)
