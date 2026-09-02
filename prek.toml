@@ -273,8 +273,8 @@ types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
 # Layer-boundary guard — UI primitives in `src/components/ui/` must be
-# stateless. They are atomic building blocks (AGENTS.md "Component
-# hierarchy") and must never reach into zustand stores: any feature
+# stateless. They are atomic building blocks (AGENTS.md § Frontend
+# Development Guidelines) and must never reach into zustand stores: any feature
 # requiring app state belongs in `src/components/` (shared) or higher
 # layers. Catches the drift class where someone wires a primitive
 # directly to `useNavigationStore` etc. — the next reviewer would
@@ -285,7 +285,7 @@ repo = "local"
 [[repos.hooks]]
 id = "no-ui-store-imports"
 name = "ui primitives must not import zustand stores"
-entry = "bash -c 'if grep -rnE \"from ['\\''\\\"](\\@/stores|\\.\\./stores|\\.\\./\\.\\./stores)\" src/components/ui/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=__tests__; then echo \"ERROR: src/components/ui/ primitives must be stateless — move state-dependent logic up to src/components/ (shared) or src/hooks/. See AGENTS.md \\\"Component hierarchy\\\".\"; exit 1; fi'"
+entry = "bash -c 'if grep -rnE \"from ['\\''\\\"](\\@/stores|\\.\\./stores|\\.\\./\\.\\./stores)\" src/components/ui/ --include=\"*.ts\" --include=\"*.tsx\" --exclude-dir=__tests__; then echo \"ERROR: src/components/ui/ primitives must be stateless — move state-dependent logic up to src/components/ (shared) or src/hooks/. See AGENTS.md § Frontend Development Guidelines.\"; exit 1; fi'"
 language = "system"
 pass_filenames = false
 types_or = ["ts", "tsx"]
@@ -930,11 +930,11 @@ files = "^scripts/check-strict-invoke-optout\\.mjs$"
 stages = ["pre-commit"]
 
 # axe-presence: every `src/components/__tests__/*.test.tsx` must include
-# at least one axe(...) audit, per src/__tests__/AGENTS.md:227. Without
+# at least one axe(...) audit, per src/__tests__/AGENTS.md § Accessibility audit. Without
 # this, accessibility regressions slip through component additions
 # because reviewers can't catch the missing audit by eye on every PR.
 # Easy half.
-# WHY: a component test with no axe() audit lets accessibility regressions land — src/__tests__/AGENTS.md:227
+# WHY: a component test with no axe() audit lets accessibility regressions land — src/__tests__/AGENTS.md § Accessibility audit
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -946,11 +946,11 @@ pass_filenames = false
 files = "^src/components/__tests__/.*\\.test\\.tsx$"
 stages = ["pre-commit"]
 
-# test-file-naming: enforce the convention from src/__tests__/AGENTS.md:81
+# test-file-naming: enforce the convention from src/__tests__/AGENTS.md § Test file naming
 # (Vitest → .test.ts/.test.tsx in src/, Playwright → .spec.ts in e2e/).
 # Mixing the suffixes silently routes a file to the wrong runner.
 # Rust tests are out of scope (rule is frontend-only). Easy half.
-# WHY: a mismatched suffix silently routes a test file to the wrong runner — src/__tests__/AGENTS.md:81
+# WHY: a mismatched suffix silently routes a test file to the wrong runner — src/__tests__/AGENTS.md § Test file naming
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -968,7 +968,7 @@ stages = ["pre-commit"]
 # least one error-path test in either its sibling `__tests__/<name>.test.tsx`
 # or the top-level `src/components/__tests__/<name>.test.tsx` fallback.
 # Catches the silent-`.catch` / missing-toast class of regression that
-# AGENTS.md:198 is aimed at. Hard half; recursive walk
+# AGENTS.md § Testing is aimed at. Hard half; recursive walk
 # Closed by (the `files` regex below is intentionally broad —
 # the `ui/` and `__tests__/` exclusions live in the script's
 # `listAllComponents()` walk, not in the regex).
@@ -1614,8 +1614,8 @@ stages = ["pre-commit"]
 # blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a
 # time component, and base64url cursors. Values that appear verbatim
 # in any `src-tauri/src/**/*.rs` source file are auto-allowlisted as
-# deterministic test fixtures (per src-tauri/tests/AGENTS.md:319 —
-# "For deterministic data, no redaction needed"). Inline
+# deterministic test fixtures (per src-tauri/tests/AGENTS.md § Snapshot
+# testing (insta): "For deterministic data, no redaction needed"). Inline
 # `# snapshot-allow-<kind>: <reason>` comments support the rare known-
 # Fixed-generated-value case. Hard half.
 # WHY: an unredacted snapshot commits user content into the repo — snapshot review convention

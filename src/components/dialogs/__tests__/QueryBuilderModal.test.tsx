@@ -664,7 +664,7 @@ describe('QueryBuilderModal', () => {
       expect(onSave).toHaveBeenCalledWith('type:property key:future_key')
     })
 
-    // IPC error-path (AGENTS.md:198 / check-ipc-error-path.mjs). When the
+    // IPC error-path (AGENTS.md § Testing › Conventions / check-ipc-error-path.mjs). When the
     // mount-effect `listPropertyDefs()` rejects, the component SILENTLY
     // handles the failure: it logs a warning and falls back to an empty
     // `knownPropertyKeys` list (no toast, no banner). The observable

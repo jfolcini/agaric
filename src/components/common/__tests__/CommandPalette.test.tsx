@@ -1637,7 +1637,7 @@ describe('CommandPalette — commands mode recent commands (Phase 2)', () => {
 
 describe('CommandPalette — a11y', () => {
   it('does not crash when searchBlocksPartitioned rejects', async () => {
-    // IPC error-path coverage per AGENTS.md:198 — the palette must
+    // IPC error-path coverage per AGENTS.md § Testing › Conventions — the palette must
     // survive a rejected partitioned call without throwing or leaking
     // a console error. The empty state should render (no page-group,
     // no error toast within the palette).

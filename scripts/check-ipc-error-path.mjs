@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────
 // IPC error-path coverage check.
 //
-// Per AGENTS.md:198, every component that calls Tauri `invoke` must
+// Per AGENTS.md § Testing, every component that calls Tauri `invoke` must
 // have at least one error-path test (mocked rejection). Without this,
 // a component that swallows IPC failures (silent `.catch`, missing
 // toast, broken aria-live region) ships an unverified failure path
@@ -368,7 +368,7 @@ function runGuard() {
 
   if (violations.length > 0) {
     console.error('')
-    console.error('Per AGENTS.md:198, every component that calls Tauri invoke must have at')
+    console.error('Per AGENTS.md § Testing, every component that calls Tauri invoke must have at')
     console.error('least one error-path test. Add a test that mocks the relevant IPC call to')
     console.error('reject, renders the component, and asserts the error path fires (toast,')
     console.error('banner, aria-live region — whatever the component does on failure). Use')

@@ -1,126 +1,68 @@
 # Rust backend test patterns
 
-> See also: root [`AGENTS.md`](../../AGENTS.md) for the architectural invariants tests must respect. Backend-tree-specific rules live in [`../src/commands/AGENTS.md`](../src/commands/AGENTS.md), [`../src/mcp/AGENTS.md`](../src/mcp/AGENTS.md), and [`../migrations/AGENTS.md`](../migrations/AGENTS.md).
+> See also: root [`AGENTS.md`](../../AGENTS.md) for the architectural invariants tests must respect; [`../src/commands/AGENTS.md`](../src/commands/AGENTS.md), [`../src/mcp/AGENTS.md`](../src/mcp/AGENTS.md), [`../migrations/AGENTS.md`](../migrations/AGENTS.md) for backend-tree rules; [`../../src/__tests__/AGENTS.md`](../../src/__tests__/AGENTS.md) for frontend tests.
 
 ## Test layers
 
 | Layer | Where | What |
 |---|---|---|
-| Unit | `src/<module>.rs` → `#[cfg(test)] mod tests` (or `src/<module>/tests.rs`) | Single-module logic |
-| Integration | `src/integration_tests.rs`, `src/command_integration_tests/` (incl. `sync_integration.rs`) | Cross-module pipelines + command API contracts + sync peer-ref/protocol commands |
-| Sync (network) | `src-tauri/agaric-sync/src/mdns.rs` (inline), `src/sync_net/tests.rs`, `src/sync_daemon/tests.rs`, `src/sync_daemon/snapshot_transfer_tests.rs` (+ `_host.rs`) | mDNS announce/parse wire format, TLS/cert + wire protocol, mDNS discovery lifecycle + peer-sync flows, snapshot transfer round-trips |
-| Bench | `benches/*.rs` (`harness = false`) | Criterion microbenchmarks; not a per-PR gate — CI runs them in the **weekly** `bench-smoke` / `bench-slo` lanes (see `benches/AGENTS.md`) |
+| Unit | `#[cfg(test)] mod tests` in the module, or a sibling `tests.rs` | Single-module logic |
+| Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/src/command_integration_tests/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
+| Conformance | `src-tauri/src/command_integration_tests/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
+| Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/src/sync_daemon/tests.rs`, `src-tauri/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer |
+| Bench | `src-tauri/benches/*.rs` (`harness = false`) | Criterion microbenchmarks; weekly CI lane only, see `src-tauri/benches/AGENTS.md` |
 
-Plus `src/lib.rs` carries `specta_tests` for TypeScript binding verification.
+`src-tauri/src/lib.rs` also carries `specta_tests` (TypeScript binding verification) and the `log_bridge_tests` / `boot_path_tests` / `log_dir_tests` modules.
 
 ## Running tests
 
-> **Package vs lib target:** the cargo **package** is `agaric`; the **lib target** is `agaric_lib`. Use `-p agaric` / `package(agaric)` for filters — `-p agaric-lib` errors. `agaric_lib` only appears as a Rust import path (`use agaric_lib::…`) in benches / integration tests.
+Package is `agaric`; lib target is `agaric_lib`. Filter with `-p agaric` / `package(agaric)`; `agaric_lib` is only an import path in benches and integration tests.
 
 ```bash
-. "$HOME/.cargo/env"             # required once per shell on this machine
+. "$HOME/.cargo/env"                                  # once per shell on this machine
 
-cargo nextest run --workspace      # REQUIRED runner for the suite (parallel, retries) — bare
-                                   # `cargo nextest run` is package-scoped to `agaric` ONLY and
-                                   # silently skips agaric-core/store/engine/sync/observability/
-                                   # diagnostics — compare `cargo nextest list` (agaric only) vs
-                                   # `cargo nextest list --workspace` (all 7 members) if you want
-                                   # today's counts; #3212 has the root cause (no
-                                   # `default-members`, deliberately). Required, not just preferred:
-                                   # several tests depend on nextest's
-                                   # process-per-test isolation — see "Process-global state"
-                                   # below. Under plain `cargo test` they can pass
-                                   # vacuously, fail, or flip between runs depending on thread
-                                   # scheduling (#4102).
-cargo test --doc --workspace       # doctests ONLY — nextest does not run doctests, so this
-                                   # covers the one thing it can't. It is NOT a general
-                                   # substitute for `cargo nextest run` above.
+cargo nextest run --workspace                         # THE runner. Bare `cargo nextest run` is
+                                                      # package-scoped to `agaric` and silently skips
+                                                      # the other six workspace members (#3212).
+cargo test --doc --workspace                          # doctests only — nextest cannot run them
 
-cargo nextest run -p agaric create_block_returns           # by name substring
-cargo nextest run -p agaric -E 'test(op_log::)'            # by module
+cargo nextest run --workspace -E 'test(create_block_returns)'   # by name substring
+cargo nextest run -p agaric -E 'test(op_log::)'                 # by module
+cargo nextest run -p agaric -E 'test(command_integration_tests::)'
+cargo nextest run -p agaric -E 'test(convergence)'
 
-cargo test -p agaric -- integration_tests --skip command_integration_tests   # OK on cargo test:
-                                   # `src/integration_tests.rs` touches no process-global (each
-                                   # test builds its own `LoroEngineRegistry`, and the module
-                                   # deliberately does not read `sql_only_fallback_count()` — see the
-                                   # `Engine-path helpers (#1689)` section comment in that file,
-                                   # which contrasts its engine-tree-presence guard with the
-                                   # sibling `*_convergence_tests` files' counter-delta guard).
-                                   # Verified: 5 full-module runs,
-                                   # default parallel threads, 0 failures. The `--skip` is NOT
-                                   # decoration: `command_integration_tests` contains
-                                   # `integration_tests` as a substring, so a bare `-- integration_tests`
-                                   # filter ALSO matches every test under `command_integration_tests::`
-                                   # (350+ extra tests, conformance included) — silently pulling in
-                                   # the exact process-global-counter tests this line claims to avoid.
-cargo nextest run -p agaric -E 'test(command_integration_tests::)'   # REQUIRED nextest, not
-                                   # `cargo test`: `conformance.rs` reads the process-global
-                                   # `sql_only_fallback_count()` as a per-test before/after
-                                   # delta and asserts it == 0, which races against every OTHER
-                                   # conformance test's concurrent fallback events once `cargo
-                                   # test` runs them as threads in one process. Reproduced: flaky,
-                                   # not deterministic — 1 failure in 10 default-parallel `cargo
-                                   # test` runs of this module (e.g.
-                                   # `local_move_block_parity_local_matches_remote_2344`; a
-                                   # DIFFERENT conformance test can fail on a different run,
-                                   # depending on thread scheduling); 0 failures across 3 nextest
-                                   # runs. Don't expect that 1-in-10 rate to hold — it's a race,
-                                   # not a fixed frequency; treat any flake in this module under
-                                   # plain `cargo test` as confirming the bug, not as noise. (An
-                                   # older rationale — a process-global Loro engine registry
-                                   # shared by `conformance`/`undo_integration` — was fixed by
-                                   # #2249 and corrected out of root AGENTS.md in #4276; both
-                                   # files' own doc comments say their engine state is
-                                   # per-test. The counter above is what still makes this
-                                   # module nextest-only.)
-cargo nextest run -p agaric -E 'test(sync_net::) + test(sync_daemon::)'   # network sync
+cargo insta test                                      # writes .snap.new for changed snapshots
+cargo insta review                                    # accept / reject
 
-cargo insta test          # snapshot tests; writes .snap.new for changed
-cargo insta review        # interactive accept/reject
-
-cargo test -p agaric -- specta_tests --ignored   # regenerate src/lib/bindings.ts — a codegen
-                                   # action (writes a file), not a correctness assertion, so
-                                   # process isolation doesn't apply here; `cargo test` is fine.
-                                   # Verified clean: running it produced no diff in
-                                   # `src/lib/bindings.ts` (already up to date). nextest
-                                   # equivalent, verified to select/run the same single test:
-                                   # `cargo nextest run -p agaric -E 'test(specta_tests::)'
-                                   # --run-ignored=only` — prefer this form; `-- --ignored` after
-                                   # the filter also works (nextest emulates it), but
-                                   # `--run-ignored=only` is the documented, canonical flag.
-
-cargo bench --bench core_bench -- hash   # local only (hash_bench is a mod of core_bench, #2879)
+cargo nextest run -p agaric -E 'test(specta_tests::)' --run-ignored=only   # regenerate src/lib/bindings.ts
 ```
 
-### Nextest configuration (`src-tauri/.config/nextest.toml`)
+Use nextest, not plain `cargo test`, for anything under `command_integration_tests::` or `materializer::handlers::` — see "Process-global state". `cargo test` runs a crate's tests as threads in one process; nextest gives each test its own process.
 
-- `fail-fast = false` — always runs everything even if some fail.
-- `retries = 1` (default), `retries = 2` (CI profile).
-- `slow-timeout = 30s` default, `60s` CI — DB-backed tests can be slow on cold cache.
+Nextest configuration lives in `src-tauri/.config/nextest.toml`: `fail-fast = false`, `retries = 1` (`2` in the `ci` profile), `slow-timeout` 30s (60s in CI), and a single-threaded `spy-counter-serial` test group for the counter-delta handler tests.
 
-## Writing unit tests
+## Process-global state
 
-### Process-global state
+A test that touches something global to the OS process must not assume it is alone in the process. Under plain `cargo test` such a test can pass vacuously (satisfied by a leftover from an earlier test), fail on an ordering it did not cause, or flip between runs (#4102). `cargo nextest run` isolates each test in its own process, which is why it is the required runner.
 
-If a test touches something that is global to the OS process — a `tracing` global default subscriber, `log::max_level()`, mutated process env vars (`std::env::set_var`), or an `OnceLock`/registry seeded once and read everywhere — it must not assume it is alone in the process. `cargo nextest run` gives every test its own process, so this is invisible there; plain `cargo test` runs a crate's tests as threads sharing ONE process, so these tests can pass vacuously (the assertion is satisfied by a leftover from an earlier test, not by the call under test), fail on an ordering they didn't cause, or flip between runs (#4102).
+Two classes in this crate:
 
-Concrete instances in this crate: `init_logging` (`src/lib.rs`) installs the process-wide `tracing` subscriber via `try_init().ok()` and calls `init_log_bridge`, which sets `log::max_level()` — `log_bridge_tests::init_log_bridge_makes_log_crate_records_reachable`, `boot_path_tests::init_logging_completes_the_real_boot_sequence`, and `log_dir_tests::log_dir_write_path_and_bug_report_read_path_agree` all assert on that shared state and are documented as needing a clean process.
+1. **The `tracing` subscriber and `log::max_level()`.** `init_logging` in `src-tauri/src/lib.rs` installs the process-wide subscriber via `try_init().ok()` and calls `init_log_bridge`. `log_bridge_tests`, `boot_path_tests` and `log_dir_tests` assert on that shared state and need a clean process.
+2. **Counter-delta tests.** Any test that reads a process-global counter, does its work, reads it again and asserts on the difference. The counter here is `sql_only_fallback::count()` (re-exported as `crate::materializer::sql_only_fallback_count()`), a monotonic `AtomicU64`; the assertion is nearly always `delta == 0`, proving the op took the engine path rather than the SQL-only fallback (#891). A sibling test's fallback event in the same process flips the delta for a test that never touched the fallback. This is a shape, not a module list — find the current readers with:
 
-The second class is a **shape, not a module** — read it as a rule you apply, not a list you look yourself up in. Any test that reads a process-global counter, does its own work, reads the counter again, and asserts on the difference is unsafe under plain `cargo test`: a sibling test's event lands on the same counter between the two reads, and the delta stops being a statement about the code under test. In this crate that counter is `sql_only_fallback::count()` (re-exported as `crate::materializer::sql_only_fallback_count()`), a monotonic `AtomicU64`, and the assertion is nearly always `delta == 0` — proof that THIS test's op took the engine path rather than the SQL-only fallback (#891). Under `cargo nextest run` each test owns its process and the delta is honest; under `cargo test`'s one shared process another test's concurrent fallback event can flip it nonzero for a test that never touched the fallback path itself — reproduced directly (see "Running tests" above).
+   ```sh
+   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src
+   ```
 
-Do not read that as a property of one module. The counter is reachable under two spellings — `sql_only_fallback::count()` and the `crate::materializer::sql_only_fallback_count()` re-export — so the authoritative sweep is:
+   `src-tauri/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
 
-```sh
-grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src
-```
+Root `AGENTS.md` states the same rule under "Running tests efficiently" and defers here for the grep; keep the two agreeing. The old rationale (a shared process-global Loro engine registry) was fixed in #2249 — do not reinstate it. When adding a test of either shape, say so in its doc comment.
 
-It currently spans eleven test files, not one: `command_integration_tests/conformance.rs`, all four `materializer/handlers/{tag,move,create_edit,delete_restore}_convergence_tests.rs`, `materializer/handlers/{apply_reproject_proptest,space_hydration_tests,engine_path_tests}.rs`, `materializer/tests/{apply_op,fifo_status}.rs`, and the `bulk_equivalence` arm harness. (Three more paths match — 14 in total — without being hazards. `materializer/coordinator.rs` is the PRODUCTION reader that fills `StatusInfo`: it asserts nothing. `command_integration_tests/undo_integration.rs` matches only inside its module doc, which names the counter to say that file does NOT read it. `integration_tests.rs` likewise matches only inside a COMMENT — the `Engine-path helpers (#1689)` block names the counter solely to contrast it with the engine-tree-presence guard that file uses *instead* — which is why "Running tests" above can still call `cargo test -p agaric -- integration_tests --skip command_integration_tests` safe; there is no counter read in that module to race.) Re-run the grep rather than trusting that enumeration: it will age, the rule will not. In particular `cargo test -p agaric -- convergence` is a plain-`cargo test` run over four of them, so it hits exactly the race this section exists to warn about; use `cargo nextest run -p agaric -E 'test(convergence)'`.
+## Fixtures
 
-Root [`AGENTS.md`](../../AGENTS.md) states the same rule in its "Running tests efficiently" bullet and defers here for the grep; keep the two agreeing. Both used to name a process-global Loro engine registry as the cause — that was fixed by #2249 (each test's engine state is its own `Materializer`'s, not shared), `conformance.rs` and `undo_integration.rs` document it as resolved in their isolation contracts, and #4276 corrected the root doc. The counter above is the reason `command_integration_tests::conformance` still needs nextest today; don't reinstate the registry rationale. If you're adding a test of this shape, say so in a doc comment the way those do, rather than leaving the next person to rediscover it — and prefer a delta/lower-bound check over an exact one if the counter is genuinely shared with concurrently-running tests.
+### Database
 
-### Database setup
-
-Every DB-backed test follows this exact pattern — a module-local `test_pool()`:
+Every DB-backed test defines a module-local `test_pool()`:
 
 ```rust
 async fn test_pool() -> (SqlitePool, TempDir) {
@@ -130,30 +72,21 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 }
 ```
 
-**Critical:** bind `_dir` so the `TempDir` outlives the pool — `let (pool, _dir) = test_pool().await`. Writing `let (pool, _) = …` drops the `TempDir` immediately and the SQLite file is deleted; tests fail with cryptic DB errors.
+Bind `_dir` so the `TempDir` outlives the pool: `let (pool, _dir) = test_pool().await;`. `let (pool, _) = …` drops the directory immediately and the SQLite file vanishes. Tests needing split read/write pools use `test_pools()` in `src-tauri/src/db/tests.rs`, returning `(DbPools, TempDir)`.
 
-For tests needing separate read/write pools (only in `db.rs`): use `test_pools()` returning `(DbPools, TempDir)`.
-
-### Async test attribute
+### Async attribute
 
 ```rust
-#[tokio::test]                                                            // pure DB tests
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]               // anything using Materializer
-#[test]                                                                   // pure logic (serde, hashing)
+#[tokio::test]                                                // pure DB tests
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]   // anything using Materializer
+#[test]                                                       // pure logic (serde, hashing)
 ```
 
-Materializer-touching tests REQUIRE `multi_thread` — the default single-threaded executor deadlocks because background tasks can't progress.
-
-### Naming
-
-- Functions read as assertions, no `test_` prefix: `create_block_returns_correct_fields`, `edit_deleted_block_returns_not_found`.
-- Snapshot tests: `snapshot_<what>` — e.g. `snapshot_create_block_response`.
-- Fixture constants module-local (not shared): `DEV`, `FIXED_TS`, `PAST_TS`, `FAKE_HASH`, etc.
-- Helper functions module-local — each module defines its own `test_pool`, `insert_block`, `make_create_payload`. **Test helper duplication is intentional** — tests are self-contained; no shared test utility crate.
+Materializer tests require `multi_thread`: the single-threaded executor deadlocks because background tasks cannot progress.
 
 ### Materializer settle
 
-After ops that trigger background cache-rebuild (edit / delete / restore / purge / create page / create tag), insert a 50ms sleep before the next write:
+After ops that dispatch background cache-rebuild work (edit / delete / restore / purge / create page / create tag), sleep before the next write to avoid SQLite write-lock contention with the background consumer:
 
 ```rust
 async fn settle() {
@@ -161,56 +94,39 @@ async fn settle() {
 }
 ```
 
-Not needed after creating "content" blocks (no background tasks dispatched). Required to prevent SQLite write-lock contention between materializer's background consumer and the next test write.
+Not needed after creating content blocks. `materializer.flush_background().await` waits for the queue to drain; `apply_snapshot` enqueues a full rebuild, so tests asserting on cache state after a restore must flush first. `Materializer::wait_for_initial_block_count_cache` (startup population, call before overwriting `cached_block_count`) and `wait_for_pending_block_count_refreshes` (in-flight refreshes, e.g. after an FTS optimize) gate the block-count cache.
 
-### Block-count cache sync primitives
+### Naming and helpers
 
-`Materializer` exposes two `pub async` helpers. They cover disjoint concerns:
+- Test names read as assertions, no `test_` prefix: `edit_deleted_block_returns_not_found`. Snapshot tests: `snapshot_<what>`.
+- Fixture constants (`DEV`, `FIXED_TS`, `FAKE_HASH`) and helpers (`test_pool`, `insert_block`, `make_create_payload`) are module-local. Duplication is intentional; there is no shared test utility crate.
+- ULID fixtures uppercase (Crockford base32, blake3 determinism). Positions 1-based.
 
-| Helper | Gates on | Use when… |
-|---|---|---|
-| `wait_for_initial_block_count_cache` | The one-shot startup task populating `cached_block_count`. Idempotent. | Test wants to overwrite `cached_block_count` with a simulated value (e.g. 10M-block scale). Must be called before the `.store(…)` or the startup refresh clobbers the simulated value. |
-| `wait_for_pending_block_count_refreshes` | All currently in-flight `refresh_block_count_cache()` tasks. `AtomicU32` counter + `Notify`. | Test triggered an FTS optimize (which fires a refresh) and now wants to simulate a different `cached_block_count`. |
-
-They compose: tests that exercise both paths call the first at top + the second before simulating / asserting. Neither is `#[cfg(test)]`-gated; both stay available to integration tests in sibling modules. Production code never needs to call either.
-
-### Error testing
+### Assertions
 
 ```rust
-let result = edit_block_inner(&pool, DEV, &mat, "NONEXISTENT".into(), "text".into()).await;
-assert!(matches!(result, Err(AppError::NotFound(_))),
-    "editing nonexistent block must return AppError::NotFound");
-
-// For typed validation sub-kinds (#2251 — the code is a structured field,
-// NOT a message prefix; `to_string()` is just "Validation error: <reason>"):
-let err = result.unwrap_err();
-assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));
+assert!(matches!(result, Err(AppError::NotFound(_))), "editing nonexistent block must return NotFound");
+assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));   // typed sub-kind, not a message prefix
 ```
 
-### Assertion style
+- Every assertion carries a message.
+- Exact counts: `assert_eq!(count, 5)`, never `assert!(count >= 1)` — inequality hides duplicate-result and missing-filter bugs.
+- Every command tests nonexistent ID → `NotFound`, deleted block → `NotFound`, invalid input → `Validation`.
+- State-changing ops verify the op log: count, `op_type`, payload, hash chain. The log is append-only; reverse ops (`src-tauri/src/reverse/tests.rs`) are appended, never mutate existing records. Non-reversible ops return `AppError::NonReversible`, not a panic.
+- Recursive-CTE tests verify `is_conflict = 0` and `depth < 100` (root `AGENTS.md` invariant #9).
 
-- `assert_eq!` with a descriptive message.
-- `assert!(matches!(...))` for enum variants.
-- `insta::assert_yaml_snapshot!` for complex response structures (see Snapshot Testing).
-- **Exact counts only** — `assert_eq!(count, 5)` not `assert!(count >= 1)`. Inequality hides duplicate-result / missing-filter bugs.
+### Determinism
 
-## Writing integration tests
-
-Integration test surfaces, all `#[cfg(test)] mod` includes in `lib.rs` (they compile as part of the lib crate's test binary, not separate binaries):
-
-- **`src/integration_tests.rs`** — pipeline tests spanning 3+ modules. Op chains + hash, crash recovery, cascade delete/purge, pagination, position handling, materializer dispatch, edit sequences. Use `create_content()` shorthand + `settle_bg_tasks()` between materializer-triggering ops.
-- **`src/command_integration_tests/`** (`block`/`page`/`tag`/`property`/`backlink`/`lifecycle`/`sync`/`trash`/`undo` integration modules + `common.rs` + `mod.rs`) — every `*_inner` command's API contract. Happy path + error variants + edge cases (empty / unicode / large / concurrent) + op-log verification. The sync surface here is `sync_integration.rs` (peer-ref commands: `list_peer_refs` / `update_peer_name` / `delete_peer_ref`, scheduler wiring).
-- **Network sync** lives outside the `command_integration_tests/` tree: `agaric-sync/src/mdns.rs`'s inline tests (the mDNS wire format: service type, the announced TXT record, `parse_service_event` — moved out of the app crate in #3488), `src/sync_net/tests.rs` (TLS/cert generation, wire-message serialisation), `src/sync_daemon/tests.rs` (mDNS discovery lifecycle — `process_discovery_event`, stale-peer eviction — plus `try_sync_with_peer_*` / `inmem_handle_incoming_sync_*` peer flows and backoff/conflict handling), and `src/sync_daemon/snapshot_transfer_tests.rs` (snapshot transfer round-trips). The crate-level `src/sync_integration_tests.rs` (diffy-era E2E) was **deleted** when the Loro-native sync layer landed; a full TLS+WS socket round-trip remains deferred (#602). Do not cite `sync_integration_tests.rs` as a live layer.
-
-**Reverse-op tests (`reverse.rs`):** test the reverse of each op type. Non-reversible ops (`purge_block`, `delete_attachment`) must return `AppError::NonReversible`, not panic. Prior-state lookups use the op log exclusively (not the materialised `blocks` table), so tests verify op-log walking even when the materializer lags. Reverse ops are **appended** to the op log — never assert existing ops were mutated. Use `append_local_op_at` with `FIXED_TS` for deterministic timestamps.
+- `FIXED_TS` over `now()`; `append_local_op_at` (caller timestamp) over `append_local_op` (wall clock).
+- `now_rfc3339()` has millisecond precision: two calls in the same ms collide. Sleep 2ms or use constants before `assert_ne!` on timestamps.
+- `FxHashSet` iteration order is unstable: use `BTreeSet` or sort before comparing.
+- `settle()` avoids lock contention; it is not a timing assertion.
 
 ## Snapshot testing (insta)
 
-Snapshots live alongside the code — e.g. `src/commands/tests/snapshots/`, `src/mcp/tools_ro/snapshots/` and `tools_rw/snapshots/`, `agaric-store/src/snapshots/`, `agaric-store/src/backlink/snapshots/`, `agaric-store/src/pagination/snapshots/`, `agaric-store/src/op_log/tests/snapshots/`. Naming: `agaric_lib__<module>__tests__<test_name>.snap` for app-crate modules and `agaric_store__<module>__tests__<test_name>.snap` for modules that have moved into `agaric-store` (#2621). New snapshot-testing modules get a sibling `snapshots/` directory.
+Snapshots live in a `snapshots/` directory beside the tests (`src-tauri/src/commands/tests/snapshots/`, `src-tauri/src/mcp/tools_ro/snapshots/`, `src-tauri/agaric-store/src/snapshots/`, …). File name: `agaric_lib__<module>__tests__<test_name>.snap` for app-crate modules, `agaric_store__…` for `agaric-store`. A new snapshot-testing module gets its own sibling `snapshots/`.
 
-### Redaction patterns
-
-Non-deterministic fields are redacted:
+Redact non-deterministic fields:
 
 ```rust
 insta::assert_yaml_snapshot!(resp, {
@@ -222,103 +138,30 @@ insta::assert_yaml_snapshot!(resp, {
 });
 ```
 
-Deterministic data (`insert_block` with known IDs) needs no redaction.
+For deterministic data, no redaction needed — values that appear verbatim in a `.rs` source file are allowlisted by the `snapshot-redaction` pre-commit guard (`prek.toml`).
 
-### Named snapshots (for loops)
+Named snapshots in loops: `insta::assert_yaml_snapshot!(format!("op_payload_json_{tag}"), value)`.
 
-```rust
-for payload in all_test_payloads() {
-    let tag = payload.op_type_str();
-    insta::assert_yaml_snapshot!(format!("op_payload_json_{tag}"), serde_json::to_value(&payload).unwrap());
-}
+## Conformance fixtures
+
+`conformance/fixtures/*.json` pin every mutating command (and read commands via a `queries` array) against both the Rust backend and the TS mock (`src/lib/tauri-mock/__tests__/conformance.test.ts`). Never hand-write `expected` / `expected_queries`; the backend authors them:
+
+```bash
+cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'
+npx vitest run src/lib/tauri-mock     # from the repo root; red means the mock diverges — fix the mock, not the backend
 ```
 
-## Benchmarks (Criterion)
+## Benchmarks
 
-The `benches/*.rs` files cover the hot-path functions (create / edit / list / search / pagination / FTS / hash / agenda / properties / sync / undo etc.). Parameterised scales typically 100 / 1K / 10K / 100K where size matters.
+Pattern: one `TempDir` + DB per bench, `Runtime::block_on` for setup, `b.to_async(&rt).iter(...)`, `materializer.shutdown()` after each group, `BenchmarkId::from_parameter` for size sweeps. Bench files are separate crates, so `*_inner` may need `pub`.
 
-### Pattern
+Run the bench before committing, not just `cargo check --bench`: a hand-seeded raw-SQL fixture that has drifted from the schema compiles fine and panics on execution (#1233). No PR gate runs benches; `.github/workflows/scheduled-deep-checks.yml` runs them weekly, so a break surfaces a week later on someone else's PR. `src-tauri/benches/AGENTS.md` § "Run benches without the E0308 build race" has the exact loop.
 
-```rust
-use criterion::{criterion_group, criterion_main, Criterion};
-use tokio::runtime::Runtime;
+## Before committing
 
-fn bench_foo(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let dir = TempDir::new().unwrap();
-    let pool = rt.block_on(fresh_pool(&dir, "bench_name"));
-    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-
-    c.bench_function("descriptive_name", |b| {
-        b.to_async(&rt).iter(|| async { /* bench body */ })
-    });
-
-    rt.block_on(async { materializer.shutdown() });
-}
-
-criterion_group!(benches, bench_foo);
-criterion_main!(benches);
-```
-
-### Rules
-
-- Not run per-PR or in pre-commit, but **CI does run every bench weekly**: `.github/workflows/scheduled-deep-checks.yml` carries `bench-smoke` (sharded compile + a `--test` smoke run that fails on a drifted seed/fixture) and `bench-slo` (the warm `interactive_slo` budget gate), on the Monday cron plus manual `workflow_dispatch`. Nothing in `ci.yml` / `_validate.yml` gates a PR on a bench, so a break you don't catch locally surfaces up to a week later, attributed to an unrelated PR. `benches/AGENTS.md` is the source of truth for the lanes and the pitfalls.
-- Each bench gets its own temp DB with `TempDir`.
-- Shut down the materializer after each bench group.
-- Parameterise size comparisons via `BenchmarkId::from_parameter`.
-- **Run the bench before committing, don't just compile it.** `cargo check --bench <name>` / `--no-run` proves only that it builds — a hand-seeded raw-SQL fixture that has drifted from the live schema compiles fine and panics the moment it executes (#1233). Mirror CI's smoke gate locally: `cargo bench --no-run` once, then run each prebuilt binary with `--test`; `benches/AGENTS.md` § "Run the smoke gate locally before pushing" has the exact loop (it also dodges the cargo #6313 build-race). Visibility on `*_inner` may still need `pub` — bench files are separate crates.
-
-## Test file checklist
-
-Before committing:
-
-- DB tests bind `_dir` so `TempDir` outlives the pool.
-- Async tests use `#[tokio::test]` (or `multi_thread, worker_threads = 2` for materializer).
-- Materializer-triggering ops followed by `settle()` / `mat.flush_background()` before the next write.
-- Names read as assertions (`x_returns_y`, not `test_x`).
-- Error paths covered: nonexistent ID → `NotFound`, deleted → `NotFound`, invalid input → `Validation`.
-- Snapshot tests redact `.id` / `.created_at` / `.hash` / `.next_cursor`.
-- Helpers module-local (don't share across modules).
-- Recursive-CTE tests verify the `is_conflict = 0` + `depth < 100` invariants from root AGENTS.md invariant #9.
-- Op-log assertions check the appended record (no mutation — append-only).
-- `assert_eq!` for exact counts.
-- ULID fixtures uppercase (Crockford base32 → blake3 determinism).
-- Position values 1-based, not 0.
-- Benchmarks declared `harness = false`, and actually **run** (not just compiled) before committing — the weekly lane is the only CI that executes them.
-- SQL changes: `just gen-sqlx` run and every regenerated `.sqlx/` file committed.
-
-## Quality standards
-
-1. **Isolation.** Every test gets its own `TempDir` + DB. No shared state, no order dependencies.
-2. **Determinism.** Use `FIXED_TS` over `now()` where possible. Redact non-deterministic fields in snapshots. `append_local_op_at` (caller-provided timestamp) over `append_local_op` (wall-clock) when stability matters.
-3. **No timing-dependent assertions.** `settle()` is for write-lock contention avoidance, not timing. Materializer metrics tests use generous windows (200ms).
-4. **Descriptive assertion messages.** Every `assert!` carries a message explaining expected behaviour.
-5. **Error path coverage.** Every command tests at minimum: nonexistent ID, deleted block, invalid input.
-6. **Op log verification.** State-changing operations verify op_log entries: count, op_type, payload, hash chain.
-7. **Exact counts.** `assert_eq!(count, 5)`, never `assert!(count >= 1)`.
-8. **Zero flaky tests.** Common causes:
-   - **Timestamp collisions** — `now_rfc3339()` has millisecond precision. Two calls in the same ms produce identical timestamps. `tokio::time::sleep(Duration::from_millis(2))` between or use `FIXED_TS` constants.
-   - **Materializer races** — always `settle()` / `flush_background()` between materializer-triggering ops.
-   - **Non-deterministic ordering** — `FxHashSet` iteration order isn't stable. Use `BTreeSet` or sort before comparing.
-
-## Common pitfalls
-
-1. **Missing `_dir`** — drops `TempDir` immediately; DB file vanishes. Always `let (pool, _dir) = test_pool().await;`.
-2. **Missing `settle()`** — materializer's background tx contends with the next write. After delete / edit / restore / purge / create page / create tag, settle before continuing.
-3. **Wrong tokio flavor** — Materializer tests deadlock on default single-threaded.
-4. **Snapshot without redaction** — ULIDs / timestamps / hashes break the snap on every run.
-5. **`just gen-sqlx` skipped** — compile-time `query!` macros need offline cache regeneration after SQL changes, across all four `.sqlx/` lanes.
-6. **Specta drift** — Rust types in Tauri commands changed without `cargo test -- specta_tests --ignored`.
-7. **Timestamp `assert_ne!` without sleep** — consecutive ms-precision timestamps can collide.
-8. **Recursive CTE missing `is_conflict = 0`** — conflict copies leak in as phantom rows (root AGENTS.md invariant #9).
-9. **`unwrap()` outside test code; `.ok()` swallowing errors** on core paths. `tracing::warn!` + explicit fallback over silent discard. Mutex `.expect("…poisoned")` should be `.unwrap_or_else(|e| e.into_inner())`.
-10. **Adding command params breaks integration tests mechanically** — all call sites in `command_integration_tests/` must update; the compiler catches them all.
-11. **`apply_snapshot` enqueues cache-rebuild tasks** — `apply_snapshot(pool, materializer, compressed)` deletes the cache tables, inserts snapshot data, enqueues the full rebuild set before returning. Tests asserting on cache state post-restore must call `materializer.flush_background().await` first.
-
-## Cross-references
-
-- Root [`AGENTS.md`](../../AGENTS.md) — the architectural invariants.
-- [`../src/commands/AGENTS.md`](../src/commands/AGENTS.md) — command patterns (`_inner`, `CommandTx`, `MAX_BATCH_BLOCK_IDS`, `LAST_APPEND`, `ValidationCode`) tests should verify.
-- [`../src/mcp/AGENTS.md`](../src/mcp/AGENTS.md) — MCP rules.
-- [`../migrations/AGENTS.md`](../migrations/AGENTS.md) — migration rules.
-- [`../../src/__tests__/AGENTS.md`](../../src/__tests__/AGENTS.md) — frontend tests (separate world).
+- `_dir` bound; correct tokio flavor; `settle()` / `flush_background()` after materializer-triggering ops.
+- Snapshot redactions in place.
+- SQL changes: `just gen-sqlx` run and every regenerated `.sqlx/` file (all four crates) committed.
+- Tauri command types changed: regenerate `src/lib/bindings.ts` (command above).
+- New command params: update every call site in `src-tauri/src/command_integration_tests/`; the compiler finds them.
+- No `unwrap()` outside test code; no `.ok()` swallowing errors on core paths. Mutex poisoning: `.unwrap_or_else(|e| e.into_inner())`.

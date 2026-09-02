@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────
 # axe-presence check.
 #
-# Per src/__tests__/AGENTS.md:227, every component test file in
+# Per src/__tests__/AGENTS.md § Accessibility audit, every component test file in
 # src/components/__tests__/*.test.tsx must include at least one
 # axe(...) audit. Without this, accessibility regressions slip
 # through component additions because reviewers can't catch the
@@ -68,7 +68,7 @@ if [ -n "$missing" ]; then
   echo ""
   echo "Every src/components/__tests__/*.test.tsx must include at least one"
   echo "axe audit (expect(await axe(container)).toHaveNoViolations()) per"
-  echo "src/__tests__/AGENTS.md:227. Add an 'a11y' it() block following"
+  echo "src/__tests__/AGENTS.md § Accessibility audit. Add an 'a11y' it() block following"
   echo "the pattern in that doc, e.g.:"
   echo ""
   echo "  it('has no a11y violations', async () => {"

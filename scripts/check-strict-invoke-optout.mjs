@@ -19,7 +19,7 @@
 // `strictInvokeFallback` never runs, the `afterEach` reads an empty record,
 // and the pre-#3225 hazard is back in full inside that file. The rule
 // against adding another has existed only as prose in
-// `src/__tests__/AGENTS.md` ("Don't add another"), while every other
+// `src/__tests__/AGENTS.md` § Shared setup ("No per-file `vi.mock`"), while every other
 // invariant of comparable weight in this repo carries a committed baseline
 // (`scripts/lib-layering-baseline.json`, `src-tauri/dynamic-sql-baseline.txt`,
 // `scripts/tauri-import-baseline.json`, `src-tauri/unsafe-allowlist.txt`).
@@ -49,10 +49,9 @@
 //
 // A blanket `vi.mocked(invoke).mockResolvedValue(undefined)` opts a file
 // out just as effectively — an explicit stub is honoured, so the strict
-// fallback never fires. `src/__tests__/AGENTS.md` documents that class
-// separately and calls it deliberate. It is textual to detect and easy to
-// spell differently, so it is left to review rather than mechanized into a
-// guard that would be simultaneously noisy and easy to evade.
+// fallback never fires. That opt-out is left to review: it is textual to
+// detect and easy to spell differently, so a guard for it would be both
+// noisy and easy to evade.
 //
 // ─── Scope ────────────────────────────────────────────────────────────
 //
