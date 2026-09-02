@@ -360,8 +360,8 @@ cargo_get_pinned() {
     && python3 -m pip install --user --quiet "zizmor==${version}" >/dev/null 2>&1; then
     local wheel_bin
     wheel_bin="$(python3 -m site --user-base)/bin/zizmor"
-    if [ -x "$wheel_bin" ]; then
-      mkdir -p "$HOME/.cargo/bin" && ln -sf "$wheel_bin" "$HOME/.cargo/bin/zizmor"
+    if [ -x "$wheel_bin" ] && mkdir -p "$HOME/.cargo/bin" \
+      && ln -sf "$wheel_bin" "$HOME/.cargo/bin/zizmor" && [ -x "$HOME/.cargo/bin/zizmor" ]; then
       ok "$bin $version (pip wheel, linked into ~/.cargo/bin)"; return
     fi
   fi
