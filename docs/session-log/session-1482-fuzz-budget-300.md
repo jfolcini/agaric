@@ -1,6 +1,6 @@
 # Session 1482 — Fuzz budget from 120 s to 300 s per target
 
-The weekly fuzz lane gave each of its eight cargo-fuzz targets 120 seconds: sixteen minutes of fuzzing a week, restarted from the seed corpus every time until #4529 made the corpus persist across runs. With persistence in place the budget is the only lever left, and 120 seconds is a smoke length, as the lane's own comment says.
+The weekly fuzz lane gave each of its eight cargo-fuzz targets 120 seconds: sixteen minutes of fuzzing a week, restarted from the seed corpus every time until #4496 made the corpus persist across runs (#4529 later added the keep-alive against cache eviction). With persistence in place the budget is the only lever left, and 120 seconds is a smoke length, as the lane's own comment says.
 
 This session raises the per-target default to 300 seconds, everywhere the number lives: the dispatch input's default, both `env:` fallbacks (the fuzz step and the scheduled-failures reporter), the reporter's guard that compares a dispatch's inputs against the declared defaults, and the fuzz job's `timeout-minutes` (130 to 155, re-derived from the job's own worst-case arithmetic, which is updated in place). The cmin step's bound is unchanged.
 
