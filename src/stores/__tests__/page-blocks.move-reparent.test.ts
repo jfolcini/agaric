@@ -1102,6 +1102,11 @@ describe('PageBlockStore', () => {
     // treat the counts as corroboration that was never re-run, not as
     // standing proof.
     //
+    // #3765 — Stryker scores a Timeout as DETECTED and this module times
+    // mutants out nondeterministically, so re-check an entry below by
+    // hand-applying its exact replacement to `page-blocks-move.ts` and running
+    // the scoped suites, never by reading the reported status.
+    //
     // Line citations below were re-verified against the CURRENT
     // `page-blocks-move.ts` (grepped literal expressions) — every one had
     // drifted since this ledger was written (applyProvisionalMove +47,
@@ -1125,22 +1130,18 @@ describe('PageBlockStore', () => {
     //
     //   361:9  ConditionalExpression `!cur` -> `false`
     //   361:15 BlockStatement `{ needsReload = true; return {} }` -> `{}`
-    //     RETRACTED, not equivalent — do not re-close either mutant on this
-    //     ledger's authority. #3799 Finding 5 originally proposed this same
-    //     "defensively redundant" argument (from this ledger's "never
-    //     observed to matter across 96 reconciles"), but that was an EMPIRICAL
-    //     corpus result, not a proof of unreachability like the `provIndex`
-    //     argument above — and `reconcileProvisionalMoveSuccess`'s own doc
-    //     comment (page-blocks-move.ts, current text) now explicitly REJECTS
-    //     it: "`!cur` genuinely guards a block deleted (or dropped by a racing
-    //     `load()`) between the pre-await provisional splice and this resolve
-    //     callback — a real concurrent-write race, not defensive noise" —
-    //     "kept, not deleted (unlike Findings 2-4 ..., which were PROVABLY
-    //     subsumed by other code reachable from the exact same inputs)". A
-    //     later, more authoritative statement in the production file itself
-    //     supersedes this ledger's original claim for these two mutants only.
-    //     Left as untriaged survivors on #3759 — see the reviewer comment
-    //     there.
+    //     ACCEPTED GAP (#3765) — unkilled, and not an equivalence claim: the
+    //     `!cur` branch guards a real concurrent-delete race (the doc comment
+    //     on `reconcileProvisionalMoveSuccess`), and reaching it is not
+    //     killing it. In every reachable state `!cur` implies the id is gone
+    //     from `blocks` too — every writer moves `blocks` and `blocksById`
+    //     together — so `stillInPlace` is false and short-circuits before
+    //     `cur` is dereferenced, and the same `load()` runs anyway. Only a
+    //     forged store (a `blocksById` missing the id while `state.blocks` is
+    //     still reference-equal to `provBlocks`) dereferences `cur`; both
+    //     mutants then throw, but that pins a state no writer produces and
+    //     would pass for the crash rather than for the race, so it is not
+    //     added.
     //
     //   366:7 ConditionalExpression `state.blocks === handle.provBlocks` -> `false`
     //     The reference-equality fast path is a pure optimisation: whenever it
@@ -1153,7 +1154,13 @@ describe('PageBlockStore', () => {
     //     genuine fast path".
     //
     //   254:9 ConditionalExpression `seen.has(id)` -> `false`  (deriveTouched)
+    //   255:5 CallExpression       `seen.add(id)`  -> `;`      (deriveTouched)
     //   257:9 ConditionalExpression `b` -> `true`               (deriveTouched)
+    //     Only these directions survive: `254:9 -> true`, `257:9 -> false` and
+    //     `257:12 touched.push(b) -> ;` all leave `touched` empty and are
+    //     killed. 255:5 is the same claim as 254:9 — with `seen` never
+    //     populated, `seen.has(id)` is always false and the dedup is off
+    //     either way.
     //     Every `touchedIds` list is derived from ids present in the `blocks`
     //     array returned alongside it, and none repeats: canary
     //     `MISSING_FROM_BLOCKS` = 0 and `DUPLICATE` = 0 of 74. The dedup is
