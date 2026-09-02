@@ -1481,7 +1481,7 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 /// baseline measured only the page heading because the fixture children had
 /// no `page_id`. The scale parameter is *children of the exported page*.
 ///
-/// **45 ms is 2.10× the worst CI observation (#3441).** Three post-#3427
+/// **45 ms is 2.10× the worst of the two CI runs pulled (#3441).** Three post-#3427
 /// `bench-slo` runs have since timed the real 2K-child path on the CI runner;
 /// the two pulled read 21.39 ms (2026-08-17) and 16.44 ms (2026-08-24), which
 /// retires the local-only evidence the previous 30 ms figure rested on — it
