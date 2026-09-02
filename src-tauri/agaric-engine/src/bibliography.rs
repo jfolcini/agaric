@@ -545,6 +545,20 @@ pub fn parse_bibtex(content: &str) -> Result<BibParseOutput, AppError> {
         entries.push(entry);
     }
 
+    // Nothing parsed and not a single '@' in the whole input: this is not
+    // BibTeX at all (a CSL-JSON export is the common mix-up). Every other
+    // warning here needs an '@' to fire, so without this the caller gets an
+    // empty result and no reason for it (#4505). A file that does hold '@'
+    // markers — e.g. only `@comment`/`@string` directives — already carries a
+    // per-directive warning above; do not double up.
+    if entries.is_empty() && !content.contains('@') {
+        warnings.push(
+            "no BibTeX entries found: the input contains no '@' entry markers \
+             (is it CSL-JSON?)"
+                .to_string(),
+        );
+    }
+
     Ok(BibParseOutput { entries, warnings })
 }
 
@@ -1123,6 +1137,54 @@ mod tests {
                 out.warnings
             );
         }
+    }
+
+    /// #4505 — a CSL-JSON file fed to the BibTeX parser parses to zero
+    /// entries and, before the fix, zero warnings: the caller saw an empty
+    /// result with no reason for it. No '@' anywhere means it is not BibTeX.
+    #[test]
+    fn bibtex_warns_when_input_has_no_at_markers() {
+        let src = r#"[{"id":"doe2020","type":"article-journal","title":"A Study"}]"#;
+        let out = parse_bibtex(src).unwrap();
+        assert_eq!(
+            out.entries.len(),
+            0,
+            "CSL-JSON must yield no BibTeX entries: {:?}",
+            out.entries
+        );
+        assert_eq!(
+            out.warnings.iter().filter(|w| w.contains("no '@'")).count(),
+            1,
+            "missing the no-'@'-markers warning in {:?}",
+            out.warnings
+        );
+    }
+
+    /// The other half of #4505: a file that *does* carry '@' markers already
+    /// explains itself through the per-directive warning, so the no-'@'
+    /// warning must stay silent for it.
+    #[test]
+    fn bibtex_directive_only_input_gets_no_missing_at_warning() {
+        let src = "@comment{just a comment {nested}}";
+        let out = parse_bibtex(src).unwrap();
+        assert_eq!(
+            out.entries.len(),
+            0,
+            "a lone directive yields no entries: {:?}",
+            out.entries
+        );
+        assert_eq!(
+            out.warnings.iter().filter(|w| w.contains("no '@'")).count(),
+            0,
+            "directive-only input must not get the no-'@' warning: {:?}",
+            out.warnings
+        );
+        assert_eq!(
+            out.warnings.len(),
+            1,
+            "the '@comment' directive warning is the only one expected: {:?}",
+            out.warnings
+        );
     }
 
     #[test]

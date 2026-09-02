@@ -1248,6 +1248,79 @@ async fn group_by_property_value_text() {
     assert!(counts.contains_key("none"), "got {counts:?}");
 }
 
+/// #4570 — group by a property DECLARED `number`. Migration `0062`'s
+/// exactly-one-value-column CHECK means such a property lives in `value_num`
+/// with `value_text IS NULL`, so the pre-fix `gp.value_text` group key read
+/// NULL for every one of these blocks and swept all four into the single
+/// `none` bucket. Deliberately not `set_property` (which writes `value_text`
+/// and would pass either way — the vacuous shape #4553 called out).
+///
+/// The bucket LABELS are the other half: `value_num` is REAL, so an integral
+/// 3 must label as `3` (SQLite's bare `CAST(3.0 AS TEXT)` renders `3.0`)
+/// while a genuinely fractional 3.5 keeps `3.5`. Both arms of that CASE are
+/// pinned here, so neither can be dropped without a red.
+#[tokio::test]
+async fn group_by_property_declared_number_buckets_by_value() {
+    let (pool, _d) = test_pool().await;
+    seed(&pool).await;
+
+    sqlx::query(
+        "INSERT INTO property_definitions (key, value_type, created_at) \
+         VALUES ('estimate', 'number', '2026-01-01T00:00:00.000Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    set_property_num(&pool, "01B1000000000000000000000", "estimate", 3.0).await;
+    set_property_num(&pool, "01B2000000000000000000000", "estimate", 3.0).await;
+    set_property_num(&pool, "01B3000000000000000000000", "estimate", 5.0).await;
+    set_property_num(&pool, "01B4000000000000000000000", "estimate", 3.5).await;
+
+    let resp = compile_and_run(
+        &pool,
+        group_req(
+            default_filter(),
+            GroupKey::Property {
+                key: "estimate".to_string(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    let counts = group_counts(&resp);
+    assert_eq!(
+        counts.get("3"),
+        Some(&2),
+        "an integral value_num labels as `3`, not REAL `3.0`: {counts:?}"
+    );
+    assert_eq!(counts.get("5"), Some(&1), "got {counts:?}");
+    assert_eq!(
+        counts.get("3.5"),
+        Some(&1),
+        "a fractional value_num keeps its REAL rendering: {counts:?}"
+    );
+    // The only other blocks in SPACE are the two tag blocks, which carry no
+    // `estimate`. Pre-fix this bucket held all six.
+    assert_eq!(counts.get("none"), Some(&2), "got {counts:?}");
+    assert_eq!(counts.len(), 4, "no stray bucket (e.g. `3.0`): {counts:?}");
+
+    // The member preview re-selects by the RENDERED label (`gkey IN (…)`), so
+    // a label that did not compare equal to its own bucket key would leave the
+    // bucket populated but memberless.
+    let three_ids: BTreeSet<&str> = find_group(&resp, "3")
+        .members
+        .iter()
+        .map(|m| m.block.id.as_str())
+        .collect();
+    assert_eq!(
+        three_ids,
+        ["01B1000000000000000000000", "01B2000000000000000000000"]
+            .into_iter()
+            .collect::<BTreeSet<&str>>(),
+        "the `3` bucket's member preview must re-select the same two blocks"
+    );
+}
+
 #[tokio::test]
 async fn group_member_preview_is_bounded() {
     let (pool, _d) = test_pool().await;
