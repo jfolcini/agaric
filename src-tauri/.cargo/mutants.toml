@@ -53,9 +53,10 @@
 # examine, and this workspace's root manifest is itself a package with no
 # `default-members`, so a bare `cargo mutants` examines ONLY `agaric` — those
 # three globs then match nothing and the surface silently collapses to
-# `src/reverse/**` (137 of 607 mutants). The lane therefore passes
-# `--workspace`, and `scripts/check-mutants-scope.mjs` fails if any glob here
-# resolves outside the package set the lane actually examines.
+# `src/reverse/**` (137 of 607 mutants). The lane therefore names its packages
+# explicitly — since #3393 one shard-matrix job per `(package, shard)`, passing
+# `-p` — and `scripts/check-mutants-scope.mjs` fails if any glob here resolves
+# outside the union of that matrix's `package` column.
 examine_globs = [
     "agaric-store/src/op.rs",
     "agaric-store/src/op_log/**",

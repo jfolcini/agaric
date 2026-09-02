@@ -239,11 +239,10 @@ export function examinedPackageDirs(argv, workspace, matrixPackages = []) {
     const eq = /^--package=(.+)$/.exec(argv[i])
     if (eq) explicit.push(eq[1])
   }
-  if (explicit.some((p) => /^"?\$\{?PACKAGE\}?"?$/.test(p))) {
-    if (matrixPackages.length === 0) return undefined
-    explicit.splice(0, explicit.length, ...matrixPackages)
-  }
-  if (explicit.length > 0) return explicit.map((p) => (p === 'agaric' ? '.' : p))
+  const sharded = explicit.some((p) => /^"?\$\{?PACKAGE\}?"?$/.test(p))
+  if (sharded && matrixPackages.length === 0) return undefined
+  const selected = sharded ? matrixPackages : explicit
+  if (selected.length > 0) return selected.map((p) => (p === 'agaric' ? '.' : p))
   // No selection at all: cargo's default members. We only model the shape this
   // repo actually has (root manifest is a package, no `default-members` key →
   // the root package alone).
