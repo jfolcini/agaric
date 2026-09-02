@@ -33,6 +33,19 @@ Agaric is licensed under **GPL-3.0-or-later** ([`LICENSE`](LICENSE)). Contributi
 
 There is **no CLA** and no maintainer-held copyright assignment. The project deliberately uses DCO (a lightweight, well-understood mechanism, the same one the Linux kernel uses) instead of a CLA precisely so the BDFL cannot unilaterally relicense the project to a closed-source or non-commercial license. Any relicense would require obtaining permission from every individual contributor — the GPL family's standard rugpull guard.
 
+## Continuity and succession
+
+The project is solo-maintained, so this section answers one question: if the BDFL is unavailable, what does someone else need in order to keep triaging, merging and releasing within a week? The answer is short because most of it is already public or replaceable.
+
+| Item | Where it lives | What a successor needs |
+| --- | --- | --- |
+| Repository administration | The repository is under the BDFL's personal GitHub account; that account is its only admin. | The BDFL's GitHub account names a successor in GitHub's [account successor setting](https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-access-to-your-personal-repositories/maintaining-ownership-continuity-of-your-personal-accounts-repositories). GitHub lets that person archive or transfer the public repositories to their own account once the account is unreachable, and a [repository transfer](https://docs.github.com/en/repositories/creating-and-managing-repositories/transferring-a-repository) keeps issues, PRs, webhooks, Actions secrets and deploy keys attached, so the release workflow keeps signing. |
+| Commit and tag signing | The BDFL's GPG key, on the BDFL's machines only. | Nothing. The ruleset requires *a* valid signature on `main`, not a specific key (see [Branch protection](#branch-protection--merge-rights)), and [`scripts/bump-version.sh`](scripts/bump-version.sh) signs the release tag with whatever key the local git config selects. A successor signs with their own key. |
+| Updater signing key | `TAURI_SIGNING_PRIVATE_KEY` and its password as Actions secrets, plus the BDFL's local copy. | Repository admin is enough to keep releasing: the secrets stay set and `release.yml` uses them. If the local copy is lost, the successor rotates the key per [`SECURITY.md` § Updater signing-key rotation](SECURITY.md#updater-signing-key-rotation); the cost is one manual re-install for existing users, documented there. No escrow of the private key is needed for continuity. |
+| Android keystore | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` as Actions secrets, plus the BDFL's local copy. | Same as the updater key: the secrets keep the release workflow signing. A replaced keystore changes the APK signature, so an existing sideloaded install cannot upgrade in place: it has to be uninstalled first, which wipes that device's app-private database unless it has synced elsewhere (`docs/session-log/analysis-report-2026-07-22.md`). There is no store listing yet (#79). |
+| DNS and domains | Every published URL, including the updater endpoint in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json), is on `github.com`; `com.agaric.app` is a bundle identifier. The one real name is `agaric.app`: the same file registers it as the Android App Links host (`plugins.deep-link.mobile`), so whoever holds it controls App Link verification through `/.well-known/assetlinks.json` for every Android install. Nothing in this repository serves that file, and the repository does not record whether the name is registered or by whom. | This is the one open handover item: the BDFL records here either the registrar and how the successor gets the account, or that the name is unheld and App Links are unverified today. |
+| Legal rights | GPL-3.0-or-later with DCO sign-off and no CLA (see [Licensing](#licensing)); no trademark is claimed on the name. | Nothing. Anyone may continue the project under its license, including under the same name, from a fork if the repository itself is unreachable. |
+
 ## Revisit triggers
 
 The governance model is intentionally minimal today. The following events should each trigger a fresh look at this document:
@@ -40,6 +53,6 @@ The governance model is intentionally minimal today. The following events should
 - **First external contributor with a sustained pattern of merged PRs** — codify a "committer" or "reviewer" role; consider sharing release-tagging rights; decide whether the admin bypass goes away or widens to cover both names.
 - **A second person is needed for security response** (per [`SECURITY.md`](SECURITY.md) 14-day SLA) — name a backup responder; document the rotation.
 - **An incident where a BDFL decision is contested by multiple contributors** — adopt a more explicit dispute-resolution path (e.g., move to a 2-of-N maintainer model, or a written RFC process).
-- **The BDFL becomes unavailable for > 30 days** — invoke the succession plan (currently informal; future work to formalise once there is a second maintainer to hand off to).
+- **The BDFL becomes unavailable for > 30 days** — invoke the [continuity and succession](#continuity-and-succession) procedure; once a second maintainer exists, name them there instead of relying on the GitHub successor flow.
 
 Each of these is a soft trigger, not a deadline. The point is that this document should change in lockstep with the human reality on the ground rather than ossify.
