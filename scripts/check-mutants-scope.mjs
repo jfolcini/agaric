@@ -70,9 +70,10 @@
 //   node scripts/check-mutants-scope.mjs
 //   node scripts/check-mutants-scope.mjs --root <dir>
 //   node scripts/check-mutants-scope.mjs --self-test
+//   node scripts/check-mutants-scope.mjs --shard-count
 //
 // Exit: 0 = scope is live and the plumbing lines up, 1 = at least one
-//       problem, 2 = bad usage / self-test failure.
+//       problem, 2 = bad usage / self-test / --shard-count failure.
 
 import { existsSync, globSync, readFileSync, realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -608,6 +609,32 @@ function main(root = REPO_ROOT) {
   )
 }
 
+/**
+ * Prints how many shard jobs the matrix declares (#3393). `mutants-merge`
+ * compares the shards that actually uploaded against this number and refuses
+ * to publish a short merge; it reads the number from here rather than
+ * repeating it, because two copies of a shard total is precisely the drift
+ * this guard exists to catch.
+ *
+ * Fails closed: a workflow, job or matrix this cannot read exits 2 with
+ * nothing on stdout, so the caller reds rather than comparing against a 0 that
+ * every merge trivially clears.
+ */
+function printShardCount(root = REPO_ROOT) {
+  const workflowAbs = resolve(root, WORKFLOW_PATH)
+  const lines = existsSync(workflowAbs)
+    ? jobLines(readFileSync(workflowAbs, 'utf8'), JOB_ID)
+    : undefined
+  const entries = lines ? matrixShards(lines) : []
+  if (entries.length === 0) {
+    console.error(
+      `--shard-count: no shard matrix in the \`${JOB_ID}\` job of ${WORKFLOW_PATH}. The caller compares the shards that uploaded against this number, so printing a count nobody read would let a short merge publish (#3393).`,
+    )
+    process.exit(2)
+  }
+  console.log(entries.length)
+}
+
 // ---------------------------------------------------------------------------
 // self-test
 // ---------------------------------------------------------------------------
@@ -889,17 +916,23 @@ const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   const argv = process.argv.slice(2)
-  if (argv.includes('--self-test')) {
+  // `--root <dir>` resolves against a different root so the gating vitest test
+  // can assert the NON-ZERO exits end-to-end. A guard whose failure path is
+  // never executed is decoration.
+  const rootAt = argv.indexOf('--root')
+  const root = rootAt < 0 ? REPO_ROOT : argv[rootAt + 1]
+  const rest = rootAt < 0 ? argv : argv.toSpliced(rootAt, 2)
+  if (rootAt >= 0 && root === undefined) {
+    console.error('--root needs a directory')
+    process.exit(2)
+  } else if (rest.includes('--self-test')) {
     runSelfTest()
-  } else if (argv[0] === '--root' && argv.length === 2) {
-    // Resolve against a different root so the gating vitest test can assert
-    // the NON-ZERO exit end-to-end. A guard whose failure path is never
-    // executed is decoration.
-    main(argv[1])
-  } else if (argv.length > 0) {
-    console.error(`unknown argument: ${argv[0]}`)
+  } else if (rest[0] === '--shard-count' && rest.length === 1) {
+    printShardCount(root)
+  } else if (rest.length > 0) {
+    console.error(`unknown argument: ${rest[0]}`)
     process.exit(2)
   } else {
-    main()
+    main(root)
   }
 }

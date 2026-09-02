@@ -813,33 +813,27 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
-      # A shard that dies must not cancel the other 32: each carries a
+      # A shard that dies must not cancel the other 38: each carries a
       # different slice of the surface, and the slices that DID run are still
       # the week's deliverable.
       fail-fast: false
       matrix:
-        # #3393 — the shard counts are DERIVED, not guessed. A shard's capacity
-        # is floor((MUTANTS_WALL_BUDGET - baseline) / one viable mutant), both
-        # measured on this 4-vCPU runner, and a package's shard count is its
-        # generated-mutant count divided by that capacity. Measured 2026-08-31
-        # (weekly run 33384085834) and 2026-09-02 (the dispatch-only cost probe
-        # of #3393 step 1, deleted with this change — its numbers survive in
-        # `docs/session-log/session-1486-mutants-shard-matrix.md`):
+        # #3393 — the shard counts are DERIVED, not guessed. A shard's
+        # capacity is floor((MUTANTS_WALL_BUDGET - baseline) / one viable
+        # mutant), both measured on this 4-vCPU runner, and a package's shard
+        # count is the smallest n whose largest round-robin slice,
+        # ceil(generated/n), fits that capacity. The measurements and the
+        # arithmetic are in
+        # `docs/session-log/session-1486-mutants-shard-matrix.md`; the results:
         #
-        #   agaric         183 mutants, ~600 s each (128 s rebuild + 473 s of
-        #                  the `agaric` suite), ~600 s baseline →  8/shard → 23
-        #   agaric-store   125 mutants,  117 s each (29 s + 88 s), 164 s
-        #                  baseline                              → 44/shard →  3
-        #   agaric-engine  383 mutants, deliberately unmeasured: its tests
-        #                  still live in the app crate (#3443), so a
-        #                  package-scoped run costs little more than its ~90 s
-        #                  build                                 → 59/shard →  7
+        #   agaric         183 mutants,  7/shard → 27 shards
+        #   agaric-store   125 mutants, 44/shard →  3 shards
+        #   agaric-engine  383 mutants, 44/shard →  9 shards
         #
-        # Every mutant is assumed viable, which is the conservative side (an
-        # unviable one stops at the build and costs ~6x less). `agaric-engine`
-        # survivors need reading with #3443 in mind: with its tests still in
-        # the app crate, a "survivor" there can be a relocation artefact rather
-        # than a real coverage gap.
+        # `agaric-engine` is the one package whose per-mutant cost was not
+        # measured; it is sized on `agaric-store`'s measured cost, the nearest
+        # comparable case. If its shards report PARTIAL coverage every week,
+        # that estimate was optimistic and it needs more shards.
         #
         # `shards` is the denominator every shard of that package must agree on
         # (cargo-mutants: "all shards must be run with the same arguments and
@@ -848,39 +842,45 @@ jobs:
         # nobody tests — indistinguishable downstream from a smaller package.
         # `scripts/check-mutants-scope.mjs` checks both.
         include:
-          - { package: agaric, shard: 0, shards: 23 }
-          - { package: agaric, shard: 1, shards: 23 }
-          - { package: agaric, shard: 2, shards: 23 }
-          - { package: agaric, shard: 3, shards: 23 }
-          - { package: agaric, shard: 4, shards: 23 }
-          - { package: agaric, shard: 5, shards: 23 }
-          - { package: agaric, shard: 6, shards: 23 }
-          - { package: agaric, shard: 7, shards: 23 }
-          - { package: agaric, shard: 8, shards: 23 }
-          - { package: agaric, shard: 9, shards: 23 }
-          - { package: agaric, shard: 10, shards: 23 }
-          - { package: agaric, shard: 11, shards: 23 }
-          - { package: agaric, shard: 12, shards: 23 }
-          - { package: agaric, shard: 13, shards: 23 }
-          - { package: agaric, shard: 14, shards: 23 }
-          - { package: agaric, shard: 15, shards: 23 }
-          - { package: agaric, shard: 16, shards: 23 }
-          - { package: agaric, shard: 17, shards: 23 }
-          - { package: agaric, shard: 18, shards: 23 }
-          - { package: agaric, shard: 19, shards: 23 }
-          - { package: agaric, shard: 20, shards: 23 }
-          - { package: agaric, shard: 21, shards: 23 }
-          - { package: agaric, shard: 22, shards: 23 }
+          - { package: agaric, shard: 0, shards: 27 }
+          - { package: agaric, shard: 1, shards: 27 }
+          - { package: agaric, shard: 2, shards: 27 }
+          - { package: agaric, shard: 3, shards: 27 }
+          - { package: agaric, shard: 4, shards: 27 }
+          - { package: agaric, shard: 5, shards: 27 }
+          - { package: agaric, shard: 6, shards: 27 }
+          - { package: agaric, shard: 7, shards: 27 }
+          - { package: agaric, shard: 8, shards: 27 }
+          - { package: agaric, shard: 9, shards: 27 }
+          - { package: agaric, shard: 10, shards: 27 }
+          - { package: agaric, shard: 11, shards: 27 }
+          - { package: agaric, shard: 12, shards: 27 }
+          - { package: agaric, shard: 13, shards: 27 }
+          - { package: agaric, shard: 14, shards: 27 }
+          - { package: agaric, shard: 15, shards: 27 }
+          - { package: agaric, shard: 16, shards: 27 }
+          - { package: agaric, shard: 17, shards: 27 }
+          - { package: agaric, shard: 18, shards: 27 }
+          - { package: agaric, shard: 19, shards: 27 }
+          - { package: agaric, shard: 20, shards: 27 }
+          - { package: agaric, shard: 21, shards: 27 }
+          - { package: agaric, shard: 22, shards: 27 }
+          - { package: agaric, shard: 23, shards: 27 }
+          - { package: agaric, shard: 24, shards: 27 }
+          - { package: agaric, shard: 25, shards: 27 }
+          - { package: agaric, shard: 26, shards: 27 }
           - { package: agaric-store, shard: 0, shards: 3 }
           - { package: agaric-store, shard: 1, shards: 3 }
           - { package: agaric-store, shard: 2, shards: 3 }
-          - { package: agaric-engine, shard: 0, shards: 7 }
-          - { package: agaric-engine, shard: 1, shards: 7 }
-          - { package: agaric-engine, shard: 2, shards: 7 }
-          - { package: agaric-engine, shard: 3, shards: 7 }
-          - { package: agaric-engine, shard: 4, shards: 7 }
-          - { package: agaric-engine, shard: 5, shards: 7 }
-          - { package: agaric-engine, shard: 6, shards: 7 }
+          - { package: agaric-engine, shard: 0, shards: 9 }
+          - { package: agaric-engine, shard: 1, shards: 9 }
+          - { package: agaric-engine, shard: 2, shards: 9 }
+          - { package: agaric-engine, shard: 3, shards: 9 }
+          - { package: agaric-engine, shard: 4, shards: 9 }
+          - { package: agaric-engine, shard: 5, shards: 9 }
+          - { package: agaric-engine, shard: 6, shards: 9 }
+          - { package: agaric-engine, shard: 7, shards: 9 }
+          - { package: agaric-engine, shard: 8, shards: 9 }
     # Job-level so the run step and the guard step below quote the SAME
     # number: the guard names the budget in its partial-coverage notice, and
     # two copies of it would drift (#3386).
@@ -925,8 +925,8 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: rust-mutants
-          # ONE saver, not 33 (#3393): every shard restores the same target
-          # dir, and 33 concurrent saves of a multi-GB cache would churn the
+          # ONE saver, not 39 (#3393): every shard restores the same target
+          # dir, and 39 concurrent saves of a multi-GB cache would churn the
           # repository's 10 GB cache quota and evict other workflows' caches
           # for no gain. `agaric` shard 0 is the saver because `agaric` is the
           # package whose build the other shards benefit most from.
@@ -1013,7 +1013,7 @@ jobs:
         # are still the `agaric` shards' numbers, because `-p agaric` runs that
         # same suite; the other two packages' baselines are far smaller. The
         # `agaric` suite grows every week, so 1.49x is the headroom that will
-        # bite first — and it now bites 23 shards at once.
+        # bite first — and it now bites 27 shards at once.
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
         # can't expand into the shell as code (zizmor template-injection);
         # the matrix values ride the same way for the same reason.
@@ -1025,10 +1025,8 @@ jobs:
         # mutants will be generated", and "each mutant runs only the tests
         # from the package that's being mutated". That is what makes a shard
         # affordable — the workspace baseline cost 1088 s and re-ran the whole
-        # `agaric` suite for every mutant of every package — and it is also
-        # why `agaric-engine` mutants are cheap and weak: its tests still sit
-        # in the app crate (#3443), so a package-scoped run barely tests them.
-        # The union of the matrix's packages is what keeps every
+        # `agaric` suite for every mutant of every package. The union of the
+        # matrix's packages is what keeps every
         # `examine_globs` entry reachable; `check-mutants-scope.mjs` asserts
         # that union, not this one job's slice.
         #
@@ -1103,7 +1101,7 @@ jobs:
         #
         # Per SHARD since #3393, unchanged in substance: each shard runs its
         # own baseline and writes its own outcomes.json, so a shard whose
-        # baseline broke reds that shard while the other 32 still report. A
+        # baseline broke reds that shard while the other 38 still report. A
         # merge-time-only guard would let one dead shard hide inside the
         # merged totals.
         #
@@ -1181,15 +1179,22 @@ jobs:
   # ---------------------------------------------------------------------------
   mutants-merge:
     needs: mutants
-    # `always()`: a dead shard must not take the surviving 32 shards' results
-    # with it. What must NOT be swallowed is "no shard produced anything" —
-    # the merge step fails on that rather than uploading an empty missed.txt,
-    # which the filer would read as "every tracked rust survivor is fixed"
-    # (#3364).
+    # `always()`: a dead shard must not take the surviving 38 shards' results
+    # with it. What must NOT be swallowed is a merge that is SHORT — see the
+    # shard-count check in the merge step.
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
       - name: Download every shard's output
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1202,11 +1207,27 @@ jobs:
           path: shards
 
       - name: Merge the shards into one mutants.out
+        # The merge is only as complete as the shards that uploaded, and with
+        # `fail-fast: false` the realistic failure is a HANDFUL of dead shards,
+        # not all of them. Their survivors are then simply absent from the
+        # merged `missed.txt`, which is real data as far as
+        # `file-mutation-survivors` can tell — it diffs that file against the
+        # tracking issue's marker block, its only cross-run memory, so the
+        # absent lines read as "Resolved since last run", leave the tracked set
+        # and come back as new next week (#3364). So: count the shards that
+        # uploaded, compare against the matrix, and fail BEFORE writing
+        # `mutants.out/` — no merged artifact means the filer's
+        # `--require-rust` reds instead of rewriting the issue from a partial
+        # set. The expected count is read from the matrix itself by
+        # `check-mutants-scope.mjs`, the guard that already parses it; a second
+        # hand-written copy of the number is the drift that guard exists to
+        # catch.
         run: |
           set -euo pipefail
+          expected=$(node scripts/check-mutants-scope.mjs --shard-count)
           mapfile -t outcomes < <(find shards -type f -name outcomes.json | sort)
-          if [ "${#outcomes[@]}" -eq 0 ]; then
-            echo "::error::no shard uploaded an outcomes.json — every mutants shard died before producing output. Failing rather than publishing an empty mutants-out, which \`file-mutation-survivors\` would read as 'no rust survivors' and use to delete every tracked one (#3364)."
+          if [ "${#outcomes[@]}" -lt "$expected" ]; then
+            echo "::error::only ${#outcomes[@]} of $expected mutants shards uploaded an outcomes.json. Failing rather than publishing a partial mutants-out: the missing shards' survivors would be absent from missed.txt, and \`file-mutation-survivors\` would report them as resolved, drop them from the tracking issue's marker block and re-report them as new next week (#3364). Re-run the failed shards."
             exit 1
           fi
           mkdir -p mutants.out
@@ -1233,7 +1254,7 @@ jobs:
           else
             echo '[]' > mutants.out/mutants.json
           fi
-          echo "merged ${#outcomes[@]} shard(s)"
+          echo "merged all $expected shard(s)"
 
       - name: Mutants summary
         if: always()
@@ -1247,13 +1268,6 @@ jobs:
               # truncate a shard, and a tally that omits the denominator reads
               # as full coverage of a small surface.
               echo "tested: $(jq -r '.total_mutants // 0' mutants.out/outcomes.json) of $(jq -r 'length' mutants.out/mutants.json 2>/dev/null || echo '?') generated"
-              # A shard that never uploaded takes its slice out of BOTH sides
-              # of that ratio, so it is invisible there. Count them: fewer
-              # than the matrix declares means a shard failed before upload.
-              # Counted by outcomes.json, not by directory: download-artifact
-              # extracts a SINGLE matching artifact flat into `shards/` and
-              # only nests one directory per artifact when there are several.
-              echo "shards merged: $(find shards -type f -name outcomes.json 2>/dev/null | wc -l)"
               # …then the same split PER PACKAGE (#3386 review). Since #3393
               # each package has its own shard count derived from its own
               # per-mutant cost, so this split is how you tell whether that
@@ -1287,7 +1301,7 @@ jobs:
                 echo '```'
               fi
             else
-              echo "_No outcomes produced (every shard failed) — see the shard job logs._"
+              echo "_No merged output — the merge step refused to publish a short or empty result; see its error and the shard job logs._"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -1436,7 +1450,7 @@ jobs:
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
     # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
-    # is the merged one, and `mutants` is now 33 shard jobs.
+    # is the merged one, and `mutants` is now 39 shard jobs.
     needs: [mutants-merge, mutants-frontend]
     if: always()
     runs-on: ubuntu-24.04
