@@ -59,13 +59,13 @@ tokio = { version = "1", features = ["sync", "macros", "rt", "rt-multi-thread", 
 # are the tripwire; this pin keeps the bump deliberate and reviewable rather
 # than incidental. Default features give the ring crypto provider that
 # `presets::Minimal` requires.
-iroh = "=1.0.3"
+iroh = "=1.1.0"
 # `iroh-dns` — needed directly for `DnsResolver::custom`, which is how the
 # offline guard injects a recording resolver. Pinned exactly and in lockstep
 # with iroh: two independent caret ranges can drift apart and resolve two
 # incompatible `n0-error` copies, at which point the `e!` macro stops
 # type-checking. That cost a build cycle during the spike.
-iroh-dns = "=1.0.3"
+iroh-dns = "=1.1.0"
 # `n0-error` / `n0-future` — iroh's error and future plumbing, needed to
 # implement the `Resolver` trait (`BoxFuture`, the `e!` macro). Left as caret
 # ranges deliberately: they must agree with whatever the pinned iroh resolves,

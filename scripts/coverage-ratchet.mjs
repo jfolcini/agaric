@@ -22,7 +22,9 @@
 //   node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust --gate
 //   node scripts/coverage-ratchet.mjs --summary <path> --key vitest --update
 //
-// Exit: 0 by default; 1 when `--gate` is set AND coverage dropped beyond tolerance.
+// Exit: 0 by default; 1 when `--gate` is set AND (coverage dropped beyond
+// tolerance OR the report carried no data OR the invocation was malformed:
+// no `--key`, no input path).
 // ─────────────────────────────────────────────────────────────────────
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -51,8 +53,9 @@ function parseArgs(argv) {
 /** Total line coverage % from an lcov tracefile (sum LH / sum LF). */
 function lineCoverageFromLcov(path) {
   // A missing/unreadable artifact degrades to "no data" (return null) rather
-  // than throwing — this script's contract is ALWAYS exit 0 (non-blocking),
-  // and the CI `hashFiles()` guard can still race a deleted/partial artifact.
+  // than throwing: `main` decides what "no data" means (exit 1 under
+  // `--gate`, 0 otherwise) and writes the step summary either way, and the
+  // CI `hashFiles()` guard can still race a deleted/partial artifact.
   let text
   try {
     text = readFileSync(path, 'utf8')
@@ -72,7 +75,7 @@ function lineCoverageFromLcov(path) {
 /** Total line coverage % from an istanbul json-summary. */
 function lineCoverageFromSummary(path) {
   // Same no-throw contract as lineCoverageFromLcov: a missing/empty/malformed
-  // summary degrades to "no data", never aborts the non-blocking step.
+  // summary degrades to "no data" for `main` to judge.
   let json
   try {
     json = JSON.parse(readFileSync(path, 'utf8'))
@@ -94,7 +97,7 @@ function writeBaseline(baseline) {
       'Coverage ratchet baseline (#648) — total LINE coverage % per suite, ' +
       'MEASURED from a real CI-equivalent run. The coverage-ratchet script ' +
       'compares each run against these and surfaces a drop in the step ' +
-      'summary (NON-BLOCKING — coverage is not gated, per #648). ' +
+      'summary; the rust suite runs with --gate and fails the job on a drop or an empty report, vitest is advisory (#648). ' +
       'Re-baseline on main with `--update` after a deliberate change.',
     ...baseline,
   }
@@ -114,7 +117,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   if (!args.key) {
     console.error('ERROR: --key <vitest|rust> is required.')
-    return 0 // still non-blocking
+    return args.gate ? 1 : 0 // under --gate a usage error must not pass the job having evaluated nothing
   }
 
   let pct = null
@@ -122,14 +125,17 @@ function main() {
   else if (args.summary) pct = lineCoverageFromSummary(args.summary)
   else {
     console.error('ERROR: one of --lcov / --summary is required.')
-    return 0
+    return args.gate ? 1 : 0
   }
 
   if (pct === null) {
+    // Under `--gate` an empty report is a failure, not a skip: lcov's
+    // `--ignore-errors empty` upstream accepts a tracefile with no records, so
+    // instrumentation producing nothing would otherwise pass the hard gate.
     appendStepSummary(
-      `### Coverage ratchet (${args.key}): no data (artifact missing or empty) — skipped.`,
+      `### Coverage ratchet (${args.key}): no data (artifact missing or empty) — ${args.gate ? '**HARD GATE (`--gate`) — failing the job.**' : 'skipped.'}`,
     )
-    return 0
+    return args.gate ? 1 : 0
   }
 
   const rounded = Math.round(pct * 100) / 100

@@ -35,15 +35,15 @@ Use a read-only Explore agent for discovery (`docs/FEATURE-MAP.md`, `docs/featur
 
 ## Model selection
 
-Score each item on cost (files, diff size, toolchain) and risk (migrations, materializer/concurrency, security paths, cross-cutting refactors, ambiguous scope). Risk wins.
+Delegate to the cheapest model that can do the item well: subagents keep the orchestrator's context small, run faster, and cost less. Score each item on cost (files, diff size, toolchain) and risk (migrations, materializer/concurrency, security paths, cross-cutting refactors, ambiguous scope). Risk wins.
 
 | Item | Builder | Reviewer |
 | --- | --- | --- |
-| Low risk, mechanical (docs, rename, copy, small UI polish, dep bump) | `haiku` | `sonnet` |
-| Typical scoped fix or feature in one domain | `sonnet` | `sonnet` |
-| High risk (migration, materializer, security, cross-cutting, ambiguous) | inherit | inherit |
+| Mechanical (docs, rename, copy, small UI polish, dep bump, comment sweep) | `sonnet` | `sonnet` |
+| Typical scoped fix or feature in one domain | `opus` | `opus` |
+| High risk (migration, materializer, security, cross-cutting, ambiguous) | `fable` | `fable` |
 
-The reviewer is never a weaker tier than the builder. Unsure: inherit. A builder that keeps failing gets relaunched one tier up, not retried.
+Tiers follow Artificial Analysis's Anthropic provider page: Opus 5 scores within a few points of Fable 5.1 on its intelligence index at roughly half the price, and Sonnet 5 at a third of Opus's. Unsure: one tier up. A builder that keeps failing is relaunched one tier up (`sonnet` → `opus` → `fable`), not retried. Research and read-only discovery go to `sonnet` (Explore agent) regardless of the item's tier.
 
 ## 2. Build
 
@@ -102,7 +102,8 @@ One file per session at `docs/session-log/session-NNNN-<slug>.md`; never edit a 
 
 - Run the formatters on your changed files first (`cargo fmt`; `npx oxfmt --write <files>`, never `oxfmt --write .`), then commit once. If a hook still rewrites a file, re-stage and retry.
 - Stage by path (`git add -A -- <paths>`), never bare `git add -A`.
-- Confirm HEAD advanced (`git log --oneline -1`) before pushing; a hook abort can be masked. Read the named failing hook and fix its cause; never `--no-verify`.
+- Confirm HEAD advanced (`git log --oneline -1`) before pushing; a hook abort can be masked. Read the named failing hook and fix its cause. Pre-commit hooks always run (file-scoped, seconds).
+- The pre-push verifier is scoped to the push range and classifies it like CI. Let it run for a Rust or frontend range you have not otherwise verified. Skip it with `SKIP_CI_VERIFY='<reason>' git push` when it would only repeat what CI runs on the PR anyway: a docs, CI or tooling-only range, a re-push after a review nit, or a range whose full suite the reviewer subagent just ran. CI is the merge gate; the hook is a convenience, and a box already running a heavy build is a reason on its own.
 - After a Rust change, regenerate codegen (`references/codegen-and-sql.md`) and verify with `cargo check --all-targets`. Doc-comment-only Rust changes still regenerate `src/lib/bindings.ts` (`just gen-bindings`, backgrounded: it exceeds the 10-minute foreground limit).
 - `SQLX_OFFLINE=true cargo check --workspace` is the check CI runs; a plain `cargo check` passes with a stale `.sqlx`.
 - Push with `scripts/push.sh` for anything touching `.rs`.
@@ -113,7 +114,7 @@ One file per session at `docs/session-log/session-NNNN-<slug>.md`; never edit a 
 
 Do not wait for CI. Record the PR as a task and start the next batch from the latest `origin/main`. Reconcile at the next batch boundary (or when the 10-PR cap blocks you):
 
-- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`); an approval with findings is not "nothing to address". Fix quick in-scope findings in a new commit; otherwise dispose of them per §4. Then `gh pr merge <n> --squash --delete-branch`. `--admin` is sanctioned for own PRs blocked only by `REVIEW_REQUIRED` when `validate-all` and `dco` are green.
+- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`); an approval with findings is not "nothing to address". Fix quick in-scope findings in a new commit; otherwise dispose of them per §4. Then `gh pr merge <n> --squash --delete-branch --admin`: the ruleset requires one approving review and the reviewer app's approval does not count, so an own PR is always `REVIEW_REQUIRED`; `--admin` is sanctioned once `validate-all` and `dco` are green and the reviewer body has been read.
 - Red → diagnose (`gh run view --log-failed`), push a fix, leave for the next sweep.
 - Running → leave it.
 
