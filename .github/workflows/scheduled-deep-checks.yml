@@ -885,12 +885,10 @@ jobs:
     # number: the guard names the budget in its partial-coverage notice, and
     # two copies of it would drift (#3386).
     #
-    # 5400 s is the OTHER derived number, and small on purpose: a bigger budget
-    # buys fewer, longer shards (at 20400 s the same arithmetic gives 6/1/3 = 10
-    # jobs and 10 baselines instead of 39), but 20 concurrent jobs on a Free
-    # account run 39 short shards in ~2 waves of ~90 min against one wave of
-    # ~5.5 h, so the redundant baselines buy back half the sweep's wall-clock —
-    # and on a public repo they cost nothing else. See the session log.
+    # 5400 s is the OTHER derived number, and small on purpose: many short
+    # shards finish the sweep in about half the wall-clock of a few long ones,
+    # and the extra baselines they each pay for cost nothing on a public repo.
+    # The arithmetic against a larger budget is in the session log.
     env:
       MUTANTS_WALL_BUDGET: '5400'
     steps:
@@ -1011,19 +1009,11 @@ jobs:
         #      headroom over the observed ~322s baseline build without
         #      letting one hung mutant silently eat the job's 120-minute
         #      budget.
-        # Both numbers were sized against the PRE-#3386 baseline, which ran
-        # `cargo test` because the config file was inert, and against a
-        # WORKSPACE baseline: run 30981051402 (2026-08-05) measured BUILD
-        # 350 s and TEST 604 s, both covering all three packages, and by
-        # run 33384085834 (2026-08-31) that test phase was 718 s. Since #3393
-        # each shard is `-p "$PACKAGE"`, so the phase `--timeout` now applies
-        # to is that ONE package's suite: 473 s for `agaric` (1.90x under the
-        # 900 s `--timeout`), 87 s for `agaric-store`. Sharding therefore
-        # widened this headroom rather than spending it — but `agaric`'s suite
-        # grows every week and is still the one that will bite first, now
-        # across 27 shards at once. Do not read 604 s as `agaric`'s number:
-        # the derivation in the session log spends 473 s, and the two differ
-        # by the other packages' suites.
+        # Both were sized against a WORKSPACE baseline. Since #3393 a shard is
+        # `-p "$PACKAGE"`, so the phase `--timeout` applies to is ONE package's
+        # suite: 473 s for `agaric` (1.90x under the 900 s), 87 s for
+        # `agaric-store`. `agaric`'s grows every week and is still what bites
+        # first, now across 27 shards at once.
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
         # can't expand into the shell as code (zizmor template-injection);
         # the matrix values ride the same way for the same reason.
@@ -1074,19 +1064,12 @@ jobs:
         # 27.1.0: a SIGINT'd run left `total_mutants: 5` against a 20-mutant
         # `mutants.json`).
         #
-        # Tree restoration on SIGINT is usually but NOT reliably clean — 12 of
-        # 13 measured runs left `git status` clean, one left a mutant written
-        # into the source file. That is harmless on an ephemeral runner (the
-        # steps below read only `mutants.out/`, and the artifact is that
-        # directory), but if you reproduce this locally with `--in-place`,
-        # check `git status` afterwards: a stray mutant lands in a TRACKED file
-        # and .gitignore will not save you. The same applies, EVERY run, to
-        # proptest: a mutant caught by a proptest makes proptest write
-        # `<pkg>/proptest-regressions/<mod>.txt` recording a seed that only
-        # fails because a mutant was applied. cargo-mutants restores the source
-        # it mutated and knows nothing about those files, and they are
-        # deliberately not gitignored (the repo tracks six real ones). Delete
-        # them after a local run; never commit them.
+        # Harmless here, a trap locally: `--in-place` mutates TRACKED files,
+        # and neither an interrupted run's restoration nor cargo-mutants'
+        # cleanup covers the `<pkg>/proptest-regressions/<mod>.txt` a
+        # mutant-killing proptest writes — recording a seed that only fails
+        # under that mutant, in files the repo deliberately tracks. After a
+        # local run check `git status` and delete them; never commit them.
         env:
           MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
           MUTANTS_BUILD_TIMEOUT: '600'
