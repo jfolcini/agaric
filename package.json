@@ -163,6 +163,7 @@
     "vitest-axe": "^0.1.0"
   },
   "overrides": {
+    "rolldown": "1.2.4",
     "deepmerge-ts": "^8.0.1",
     "highlight.js": "^11.12.0",
     "js-yaml": "^4.2.0",
