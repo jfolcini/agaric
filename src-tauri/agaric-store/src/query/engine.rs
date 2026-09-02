@@ -1215,9 +1215,20 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
             // through INTEGER first (`3`); a fractional one keeps its REAL
             // rendering (`3.5`). A NULL `value_num` makes the `WHEN` comparison
             // NULL → the ELSE arm → NULL → the `none` bucket, as before.
+            //
+            // #4607 — the same gap for the remaining three typed columns: a
+            // `date`-, `boolean`- or `ref`-declared property populates none of
+            // the columns read above. The labels match the UI's own property
+            // rendering (`propertyRowDisplay`,
+            // `src/lib/query-result-columns.ts`): `value_date` is already the
+            // ISO text it displays and `value_ref` the raw referenced block id
+            // (Property group keys are NOT id-resolved — see
+            // `GroupedResults.headerLabel` — so no title JOIN), while
+            // `value_bool` is INTEGER 0/1 and the UI shows `true`/`false`.
             "COALESCE(gp.value_text, CASE WHEN gp.value_num = CAST(gp.value_num AS INTEGER) \
              THEN CAST(CAST(gp.value_num AS INTEGER) AS TEXT) \
-             ELSE CAST(gp.value_num AS TEXT) END)"
+             ELSE CAST(gp.value_num AS TEXT) END, gp.value_date, gp.value_ref, \
+             CASE gp.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END)"
                 .to_string(),
             format!(" LEFT JOIN block_properties gp ON gp.block_id = b.id AND gp.key = ?{pos}"),
             Some(Bind::Text(key.clone())),
