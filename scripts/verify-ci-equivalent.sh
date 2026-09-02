@@ -172,7 +172,7 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 # cargo-audit-guard.sh used to be covered by self-test hooks outside every
 # skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
-HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
@@ -917,7 +917,7 @@ prek_skip_list() {
 
     # Frontend absent → skip the FE lint/type/architecture hooks.
     if [ "$has_ts" = "0" ]; then
-        skip_items+=(oxlint oxfmt tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
+        skip_items+=(tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
             no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
             import-cycles store-layering axe-presence test-file-naming \
             ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
@@ -955,6 +955,9 @@ prek_skip_list() {
     [ "$has_docs" = "0" ] && [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
         skip_items+=(architecture-citations doc-vs-code-paths)
     [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-json)
+    # oxlint/oxfmt also cover `scripts/*.mjs`, which is tooling (`ci`): they
+    # run when frontend OR ci changed, so a tooling-only push is still linted.
+    [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(oxlint oxfmt)
     [ "$has_rs" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-toml)
     [ "$has_ci" = "0" ] && skip_items+=(check-yaml)
 
@@ -1114,15 +1117,15 @@ if [ "${1:-}" = "--self-test" ]; then
 
     # RATCHET the documented divergence from `_validate.yml`'s `ci_re`. The
     # comment this replaces ("mirrors _validate.yml's classifier") went stale
-    # precisely because nothing checked it. Assert the difference is EXACTLY:
-    #   (a) the `scripts/*.sh` arm — shell scripts are CI here, not there.
-    #   (b) the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
-    #       `.gitleaks.toml`) are anchored to the repo root in
-    #       `_validate.yml` (`^prek\.toml$`, …) but UNANCHORED here
-    #       (`prek\.toml$`, …), so ANY path merely ENDING in one of those
-    #       filenames — a nested copy (`docs/prek.toml`) or a differently
-    #       prefixed file at the repo root (`myprek.toml`) alike — is CI
-    #       here and not there too.
+    # precisely because nothing checked it. Assert the difference is EXACTLY
+    # the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
+    # `.gitleaks.toml`): anchored to the repo root in `_validate.yml`
+    # (`^prek\.toml$`, …) but UNANCHORED here (`prek\.toml$`, …), so ANY path
+    # merely ENDING in one of those filenames — a nested copy
+    # (`docs/prek.toml`) or a differently prefixed file at the repo root
+    # (`myprek.toml`) alike — is CI here and not there. (`scripts/` and
+    # `.claude/` used to be a second divergence; both classifiers route them
+    # to CI now, and the tooling-path checks above assert that.)
     # Every other CI path — including these same filenames at the repo TOP
     # LEVEL, where anchored and unanchored agree — must still agree with
     # _validate.yml, or the divergence is wider than documented.
@@ -1215,10 +1218,10 @@ if [ "${1:-}" = "--self-test" ]; then
             # and this ratchet is not exempt just because its failure mode
             # is a command returning nothing instead of a missing file.
             #
-            # Both HALVES of the documented divergence must be excluded
-            # here, or the two halves of this very check disagree with each
-            # other: (a) `scripts/*.sh`, and (b) the four toml arms, which
-            # are UNANCHORED in `CI_PATH_RE` (see the divergence note above
+            # The documented divergence must be excluded here, or the two
+            # halves of this very check disagree with each other: the four
+            # toml arms, which are UNANCHORED in `CI_PATH_RE` (see the
+            # divergence note above
             # `CI_PATH_RE`) — so ANY tracked path merely ending in one of
             # those four filenames (a nested `docs/prek.toml`, a
             # differently-prefixed `myprek.toml`) is CI here and not in
@@ -2650,19 +2653,15 @@ else
     #
     # DIVERGENCE FROM `_validate.yml` (#4419, 2026-08-26; ratcheted by the
     # "divergence ratchet" --self-test checks below, #4424): this classifier
-    # differs from `_validate.yml`'s `ci_re` in two documented ways.
-    #   (a) `scripts/*.sh` is CI here (see CI_PATH_RE); `_validate.yml`'s
-    #       `ci_re` does NOT attribute it, and its comment still names a
-    #       root `*.sh` as unrecognized. So a shell-only push runs Phase A
-    #       locally while CI runs the full suite.
-    #   (b) the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
-    #       `.gitleaks.toml`) are anchored to the repo root in
-    #       `_validate.yml` (`^prek\.toml$`, …) but UNANCHORED here
-    #       (`prek\.toml$`, …), so ANY path merely ENDING in one of those
-    #       filenames — a nested copy (`docs/prek.toml`) or a differently
-    #       prefixed file at the repo root (`myprek.toml`) alike — is CI
-    #       here and not there too.
-    # Both asymmetries are deliberate and in the SAFE direction — CI does
+    # differs from `_validate.yml`'s `ci_re` in one documented way: the four
+    # toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`, `.gitleaks.toml`)
+    # are anchored to the repo root in `_validate.yml` (`^prek\.toml$`, …)
+    # but UNANCHORED here (`prek\.toml$`, …), so ANY path merely ENDING in
+    # one of those filenames — a nested copy (`docs/prek.toml`) or a
+    # differently prefixed file at the repo root (`myprek.toml`) alike — is
+    # CI here and not there. (`scripts/` used to be a second one; both
+    # classifiers route tooling to CI now.)
+    # The asymmetry is deliberate and in the SAFE direction — CI does
     # strictly more than the local gate, never less — so this is no longer a
     # mirror. Unlike the stale version of this note, the parity IS now
     # ratcheted: the --self-test divergence-ratchet checks fail closed if
@@ -2753,9 +2752,8 @@ fi
 # --range below) AND, category-aware, the hooks whose category did NOT change.
 #
 # The per-category plan is `prek_skip_list` above, which CI's `lint` job reads
-# through `--print-skip` — one list, not two. The documented `scripts/*.sh`
-# divergence is in the CLASSIFIER, not the list — see the note on CI_PATH_RE:
-# a hook is skipped only when the category it guards is absent from this push.
+# through `--print-skip` — one list, not two. A hook is skipped only when
+# the category it guards is absent from this push.
 # The nightly `full-suite` job in
 # .github/workflows/scheduled-deep-checks.yml runs the FULL unskipped prek
 # suite over the whole tree as the backstop, and CI's `lint` job runs the
