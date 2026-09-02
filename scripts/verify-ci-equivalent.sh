@@ -118,7 +118,11 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # repo's own tooling under `scripts/` and `.claude/`.
 #
 # `^scripts/` and `^\.claude/` are deliberate, and mirror `_validate.yml`'s
-# `ci_re`. Without them a tooling-only change fell through to the
+# `ci_re`. (The two coverage scripts are frontend-only here via
+# `HOOK_OWNER_TS_RE`, so Phase A lints them; CI also routes
+# `coverage-ratchet.mjs` to backend because `cargo-coverage` executes it,
+# which no local phase does. That is the one routing the two sides do not
+# share, and it is in the safe direction.) Without them a tooling-only change fell through to the
 # fail-closed arm below — "a build/toolchain change we cannot attribute to a
 # suite" — which pins frontend+backend+ci and makes a two-file YAML+script
 # diff pay the FULL Rust suite (four consecutive unusable pushes on
@@ -954,10 +958,9 @@ prek_skip_list() {
     # not a docs-only hook: CI's placement, and CI is the gate.
     [ "$has_docs" = "0" ] && [ "$has_ts" = "0" ] && [ "$has_rs" = "0" ] && \
         skip_items+=(architecture-citations doc-vs-code-paths)
-    [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-json)
     # oxlint/oxfmt also cover `scripts/*.mjs`, which is tooling (`ci`): they
     # run when frontend OR ci changed, so a tooling-only push is still linted.
-    [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(oxlint oxfmt)
+    [ "$has_ts" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-json oxlint oxfmt)
     [ "$has_rs" = "0" ] && [ "$has_ci" = "0" ] && skip_items+=(check-toml)
     [ "$has_ci" = "0" ] && skip_items+=(check-yaml)
 
