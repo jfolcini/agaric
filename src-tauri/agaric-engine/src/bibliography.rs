@@ -545,13 +545,14 @@ pub fn parse_bibtex(content: &str) -> Result<BibParseOutput, AppError> {
         entries.push(entry);
     }
 
-    // Nothing parsed and not a single '@' in the whole input: this is not
-    // BibTeX at all (a CSL-JSON export is the common mix-up). Every other
-    // warning here needs an '@' to fire, so without this the caller gets an
-    // empty result and no reason for it (#4505). A file that does hold '@'
-    // markers — e.g. only `@comment`/`@string` directives — already carries a
-    // per-directive warning above; do not double up.
-    if entries.is_empty() && !content.contains('@') {
+    // Not a single '@' in the whole input: this is not BibTeX at all (a
+    // CSL-JSON export is the common mix-up, #4505). The import command
+    // already reports "no importable bibliography entries found" for an
+    // empty result; this adds the CSL-JSON hint on top, so the user sees
+    // both messages. A file that does hold '@' markers — e.g. only
+    // `@comment`/`@string` directives — already carries a per-directive
+    // warning above; do not double up.
+    if !content.contains('@') {
         warnings.push(
             "no BibTeX entries found: the input contains no '@' entry markers \
              (is it CSL-JSON?)"
