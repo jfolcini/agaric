@@ -21,6 +21,31 @@ import {
 import { i18n } from '@/lib/i18n'
 
 /**
+ * #3752 EQUIVALENCE LEDGER — `date-utils.ts` mutants no input can distinguish
+ * (101:40 is not one of them: see 'rejects a calendar day the host timezone
+ * skipped' under `formatJournalTitle`).
+ *
+ * 80:7 [ConditionalExpression] `fmt === 'yyyy-MM-dd'` -> false — the slow path
+ *   formats the same Date back to the identical 4-2-2 string.
+ * 80:15 [StringLiteral] -> `fmt === ''` — only `''` takes the mutated fast path,
+ *   and date-fns 4 throws on an empty format string, so the existing `catch`
+ *   already returns that same `isoContent`.
+ * 153:38 [ConditionalExpression] `monthIndex1 >= 1` -> true — the sole caller
+ *   `formatCompactDate` has already returned at `m < 1`.
+ * 153:38 [EqualityOperator] `>=` -> `>` — differs only at exactly 1, where the
+ *   ternary's fallback value is also 1. (`>=` -> `<` is killed by 'formats a
+ *   same-year date compactly'.)
+ * 153:58 [ConditionalExpression] `monthIndex1 <= 12` -> true — the same sole
+ *   caller has already returned at `m > 12`.
+ * 169:7 [ConditionalExpression] (x3), 169:7 [LogicalOperator] (x2),
+ * 169:26 and 169:45 [ConditionalExpression] — the guard is already always false
+ *   (`Number()` yields NaN, never `undefined`, for the three parts
+ *   `parts.length === 3` guarantees), so no rearrangement of its operands can
+ *   change a result; deleting it instead fails `npm run typecheck` with TS18048
+ *   under `noUncheckedIndexedAccess`.
+ */
+
+/**
  * #4555 — falsification helper. `getDateLocale()`/`getAppLocaleTag()`
  * resolve from `i18n.language`, and Phase 0 ships English only (no `es`
  * bundle). To prove a call site actually TRACKS the app locale — rather
@@ -82,32 +107,6 @@ describe('formatDate (review-timezone semantics regression)', () => {
   })
 })
 
-/**
- * #3752 EQUIVALENCE LEDGER — `date-utils.ts` mutants no test in the mutation
- * lane kills. All but 101:40 are equivalent: no input distinguishes them.
- *
- * 80:7 [ConditionalExpression] `fmt === 'yyyy-MM-dd'` -> false — the slow path
- *   formats the same Date back to the identical 4-2-2 string.
- * 80:15 [StringLiteral] -> `fmt === ''` — only `''` takes the mutated fast path,
- *   and date-fns 4 throws on an empty format string, so the existing `catch`
- *   already returns that same `isoContent`.
- * 101:40 [ConditionalExpression] — NOT equivalent: 'rejects a calendar day the
- *   host timezone skipped' below kills it under `npm test`, but the Stryker
- *   vitest runner forces `pool: 'threads'`, where `TZ` cannot be changed.
- * 153:38 [ConditionalExpression] `monthIndex1 >= 1` -> true — the sole caller
- *   `formatCompactDate` has already returned at `m < 1`.
- * 153:38 [EqualityOperator] `>=` -> `>` — differs only at exactly 1, where the
- *   ternary's fallback value is also 1. (`>=` -> `<` is killed by 'formats a
- *   same-year date compactly'.)
- * 153:58 [ConditionalExpression] `monthIndex1 <= 12` -> true — the same sole
- *   caller has already returned at `m > 12`.
- * 169:7 [ConditionalExpression] (x3), 169:7 [LogicalOperator] (x2),
- * 169:26 and 169:45 [ConditionalExpression] — the guard is already always false
- *   (`Number()` yields NaN, never `undefined`, for the three parts
- *   `parts.length === 3` guarantees), so no rearrangement of its operands can
- *   change a result; deleting it instead fails `npm run typecheck` with TS18048
- *   under `noUncheckedIndexedAccess`.
- */
 describe('formatCompactDate', () => {
   beforeEach(() => {
     vi.useFakeTimers()

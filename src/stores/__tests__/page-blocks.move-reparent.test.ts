@@ -1131,10 +1131,14 @@ describe('PageBlockStore', () => {
     //   361:9  ConditionalExpression `!cur` -> `false`
     //   361:15 BlockStatement `{ needsReload = true; return {} }` -> `{}`
     //     ACCEPTED GAP (#3765) — unkilled, and not an equivalence claim.
-    //     Every writer moves `blocks` and `blocksById` together, so a missing
-    //     `cur` also makes `stillInPlace` false, which short-circuits before
-    //     `cur` is dereferenced; only a forged store reaches either mutant,
-    //     and a test for one would pin a state no writer produces.
+    //     A racing delete does reach this path, as the doc comment on
+    //     `reconcileProvisionalMoveSuccess` says; but every writer drops the
+    //     id from `blocks` and `blocksById` together, so `stillInPlace` is
+    //     false and short-circuits before `cur` is dereferenced, and both
+    //     mutants land on the same `needsReload = true`. They differ only for
+    //     a forged store (`state.blocks === handle.provBlocks` while
+    //     `blocksById` lost the id), and a test for one would pin a state no
+    //     writer produces.
     //
     //   366:7 ConditionalExpression `state.blocks === handle.provBlocks` -> `false`
     //     The reference-equality fast path is a pure optimisation: whenever it
