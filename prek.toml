@@ -273,8 +273,8 @@ types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
 # Layer-boundary guard — UI primitives in `src/components/ui/` must be
-# stateless. They are atomic building blocks (AGENTS.md § Frontend Development Guidelines ("Component
-# hierarchy") and must never reach into zustand stores: any feature
+# stateless. They are atomic building blocks (AGENTS.md § Frontend
+# Development Guidelines) and must never reach into zustand stores: any feature
 # requiring app state belongs in `src/components/` (shared) or higher
 # layers. Catches the drift class where someone wires a primitive
 # directly to `useNavigationStore` etc. — the next reviewer would
@@ -1614,8 +1614,8 @@ stages = ["pre-commit"]
 # blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a
 # time component, and base64url cursors. Values that appear verbatim
 # in any `src-tauri/src/**/*.rs` source file are auto-allowlisted as
-# deterministic test fixtures (per src-tauri/tests/AGENTS.md (deterministic fixtures) —
-# "For deterministic data, no redaction needed"). Inline
+# deterministic test fixtures (per src-tauri/tests/AGENTS.md § Snapshot
+# testing (insta): "For deterministic data, no redaction needed"). Inline
 # `# snapshot-allow-<kind>: <reason>` comments support the rare known-
 # Fixed-generated-value case. Hard half.
 # WHY: an unredacted snapshot commits user content into the repo — snapshot review convention

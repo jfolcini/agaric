@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────
 // Snapshot-redaction check.
 //
-// Per src-tauri/tests/AGENTS.md (snapshot redaction), snapshot tests must redact
+// Per src-tauri/tests/AGENTS.md § Snapshot testing (insta), snapshot tests must redact
 // non-deterministic fields (ULIDs, timestamps, hashes, cursors) so the
 // snapshots stay stable across runs. Without redaction, every test
 // invocation produces a fresh ULID/timestamp/hash and the snapshot
@@ -375,7 +375,7 @@ if (violations.length > 0) {
   }
   console.error('')
   console.error(
-    'Per src-tauri/tests/AGENTS.md (snapshot redaction), redact non-deterministic fields:',
+    'Per src-tauri/tests/AGENTS.md § Snapshot testing (insta), redact non-deterministic fields:',
   )
   console.error('  insta::assert_yaml_snapshot!(resp, {')
   console.error('      ".id"          => "[ULID]",')
