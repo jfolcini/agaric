@@ -168,6 +168,9 @@ jobs:
         #   - webkit2gtk-driver — provides WebKitWebDriver, which tauri-driver
         #     proxies on Linux (the actual WebDriver backend for the WebView).
         #   - xvfb — a virtual display so the WebKitWebView can render headless.
+        #   - dbus-daemon — owns `dbus-run-session` (verified in release.yml:
+        #     `dpkg -S /usr/bin/dbus-run-session` on noble), for the launch
+        #     step below (#4444).
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
         # that cannot serve the index no longer reds this job as a code
         # failure; the INSTALL decides. Measured trace + exit codes in
@@ -184,6 +187,7 @@ jobs:
             mold
             webkit2gtk-driver
             xvfb
+            dbus-daemon
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
         # Mirrors `_validate.yml`: the repo ships `.cargo/config.toml.example`
@@ -220,7 +224,15 @@ jobs:
 
       - name: Run WebdriverIO real-backend smoke (Xvfb)
         # The binary is already built above, so tell wdio.conf.ts to skip its
-        # own onPrepare build. xvfb-run gives the WebKitWebView a display.
+        # own onPrepare build. xvfb-run gives the WebKitWebView a display;
+        # dbus-run-session gives it a session bus, the same wrapper
+        # release.yml uses for its boot smoke (#4444: every worker boot
+        # stalled a flat 30.1 s between the AT-SPI warning and the libEGL
+        # line, six workers in series, ~3 min of a ~4 min suite; a dbus
+        # call's default timeout is 25 s, and release.yml reached
+        # init_logging in 6 s once a real bus existed). Measure the same
+        # interval on the first run after this lands; if it is unchanged,
+        # strace one boot to name the waiter instead of guessing again.
         #
         # #3334 — no vault isolation is configured HERE on purpose. The runner
         # being ephemeral used to be the only thing keeping this lane off a real
@@ -232,7 +244,7 @@ jobs:
         # WDIO_KEEP_VAULT=1 to retain the sandbox for a post-mortem.
         env:
           WDIO_SKIP_TAURI_BUILD: '1'
-        run: xvfb-run -a npm run test:e2e-tauri
+        run: xvfb-run -a dbus-run-session -- npm run test:e2e-tauri
 
       - name: Upload WebdriverIO logs
         # #4428 — `**/*.log` swept `node_modules`. Every failing run's
