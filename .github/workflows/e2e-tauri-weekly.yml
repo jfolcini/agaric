@@ -150,11 +150,11 @@ jobs:
       # sibling lanes' comments record ~12 min apt steps on a bad mirror).
       #
       # OWN KEY (`apt-tauri-e2e-…`), deliberately NOT the shared `apt-tauri-…`
-      # key: this lane installs a SUPERSET (webkit2gtk-driver + xvfb on top of
-      # the standard Tauri stack, plus dbus-daemon). Reusing the shared key would let whichever
-      # lane saved first pin its own package set, so a hit here could be
-      # missing exactly the .debs this lane adds. Bump the `-vN` suffix
-      # when the package list below changes.
+      # key: this lane installs a SUPERSET (webkit2gtk-driver, xvfb and
+      # dbus-daemon on top of the standard Tauri stack). Reusing the shared
+      # key would let whichever lane saved first pin its own package set, so
+      # a hit here could be missing exactly the .debs this lane adds. Bump
+      # the `-vN` suffix when the package list below changes.
       - name: Cache apt archives (Tauri system deps + WebDriver/Xvfb)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
