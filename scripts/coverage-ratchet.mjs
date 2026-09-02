@@ -52,8 +52,9 @@ function parseArgs(argv) {
 /** Total line coverage % from an lcov tracefile (sum LH / sum LF). */
 function lineCoverageFromLcov(path) {
   // A missing/unreadable artifact degrades to "no data" (return null) rather
-  // than throwing — this script's contract is ALWAYS exit 0 (non-blocking),
-  // and the CI `hashFiles()` guard can still race a deleted/partial artifact.
+  // than throwing: `main` decides what "no data" means (exit 1 under
+  // `--gate`, 0 otherwise) and writes the step summary either way, and the
+  // CI `hashFiles()` guard can still race a deleted/partial artifact.
   let text
   try {
     text = readFileSync(path, 'utf8')
@@ -73,7 +74,7 @@ function lineCoverageFromLcov(path) {
 /** Total line coverage % from an istanbul json-summary. */
 function lineCoverageFromSummary(path) {
   // Same no-throw contract as lineCoverageFromLcov: a missing/empty/malformed
-  // summary degrades to "no data", never aborts the non-blocking step.
+  // summary degrades to "no data" for `main` to judge.
   let json
   try {
     json = JSON.parse(readFileSync(path, 'utf8'))
@@ -95,7 +96,7 @@ function writeBaseline(baseline) {
       'Coverage ratchet baseline (#648) — total LINE coverage % per suite, ' +
       'MEASURED from a real CI-equivalent run. The coverage-ratchet script ' +
       'compares each run against these and surfaces a drop in the step ' +
-      'summary (NON-BLOCKING — coverage is not gated, per #648). ' +
+      'summary; the rust suite runs with --gate and fails the job on a drop or an empty report, vitest is advisory (#648). ' +
       'Re-baseline on main with `--update` after a deliberate change.',
     ...baseline,
   }
@@ -115,7 +116,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   if (!args.key) {
     console.error('ERROR: --key <vitest|rust> is required.')
-    return 0 // still non-blocking
+    return 0 // a usage error in the workflow, not a coverage verdict
   }
 
   let pct = null

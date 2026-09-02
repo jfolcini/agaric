@@ -12,9 +12,9 @@
 #
 # Beyond rule types, the job also asserts the required status-check
 # CONTEXTS (`dco`, `validate-all`), the strict up-to-date-branch flag
-# (#819 (1)), the `pull_request` rule's four review parameters, and the
-# ruleset's single Admin bypass actor — type-only asserting passed even
-# after a context removal, and passes with every review toggle off.
+# (#819 (1)), and the `pull_request` rule's four review parameters —
+# type-only asserting passed even after a context removal, and passes with
+# every review toggle off.
 #
 # If a maintainer intentionally changes the ruleset, update the EXPECTED
 # lists below in the same PR that adjusts the ruleset.
@@ -110,21 +110,10 @@ jobs:
             echo "  actual:   ${ACTUAL_PR}" >&2
           fi
 
-          # Exactly one bypass actor: the Admin repository role (actor_id 5),
-          # mode `always` — the documented solo-maintainer asymmetry. A second
-          # actor, or a Write-role one, would let unreviewed code onto main.
-          # `rules/branches/main` does not carry bypass actors; the ruleset
-          # itself does.
-          EXPECTED_BYPASS='[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]'
-          RULESET_ID="$(gh api "repos/${REPO}/rulesets" --jq '[.[] | select(.target == "branch" and .enforcement == "active")] | if length == 1 then .[0].id else error("expected exactly one active branch ruleset, found \(length)") end')"
-          ACTUAL_BYPASS="$(gh api "repos/${REPO}/rulesets/${RULESET_ID}" --jq '[.bypass_actors[] | {actor_id, actor_type, bypass_mode}] | sort_by(.actor_type, .actor_id)' | jq -c .)"
-          if [ "${ACTUAL_BYPASS}" = "${EXPECTED_BYPASS}" ]; then
-            echo "OK: ruleset ${RULESET_ID} bypass actors match: ${EXPECTED_BYPASS}"
-          else
-            failed=1
-            echo "ERROR: ruleset ${RULESET_ID} bypass actors have drifted." >&2
-            echo "  expected: ${EXPECTED_BYPASS}" >&2
-            echo "  actual:   ${ACTUAL_BYPASS}" >&2
-          fi
+          # Not asserted: the ruleset's `bypass_actors` (one Admin actor, per
+          # the same doc section). They are visible only through
+          # `repos/{repo}/rulesets/{id}`, which needs Administration: read —
+          # a scope a workflow `permissions:` block cannot grant GITHUB_TOKEN;
+          # `rules/branches/main` (metadata only) does not carry them.
 
           exit "${failed}"
