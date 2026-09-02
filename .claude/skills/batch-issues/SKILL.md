@@ -43,9 +43,7 @@ Delegate to the cheapest model that can do the item well: subagents keep the orc
 | Typical scoped fix or feature in one domain | `opus` | `opus` |
 | High risk (migration, materializer, security, cross-cutting, ambiguous) | inherit | inherit |
 
-The tiers follow Artificial Analysis (Sept 2026, Anthropic provider page), not vendor guidance: Fable 5.1 leads intelligence (62 at high effort, 66 at max) but is the slowest and dearest; Opus 5 sits within a few points (59-61 at medium-high) at roughly half the blended price, so it is the default builder; Sonnet 5 (43 non-reasoning, 55 at max) is the fast, cheap tier at about a third of Opus's price; Haiku 4.5 (30) is only faster per token, not cheaper per task, and is not intelligent enough to be trusted with repo conventions, so it is not used. Re-check the numbers when a new release shifts them.
-
-The reviewer is never a weaker tier than the builder. Unsure: inherit. A builder that keeps failing gets relaunched one tier up, not retried. Research and read-only discovery go to `sonnet` (Explore agent) regardless of the item's tier.
+Tiers follow Artificial Analysis's Anthropic provider page: Opus 5 scores within a few points of Fable 5.1 on its intelligence index at roughly half the price, and Sonnet 5 at a third of Opus's; Haiku 4.5 is not cheaper per task. Unsure: inherit. A builder that keeps failing is relaunched one tier up (`sonnet` → `opus` → `fable`), not retried. Research and read-only discovery go to `sonnet` (Explore agent) regardless of the item's tier.
 
 ## 2. Build
 
@@ -115,7 +113,7 @@ One file per session at `docs/session-log/session-NNNN-<slug>.md`; never edit a 
 
 Do not wait for CI. Record the PR as a task and start the next batch from the latest `origin/main`. Reconcile at the next batch boundary (or when the 10-PR cap blocks you):
 
-- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`); an approval with findings is not "nothing to address". Fix quick in-scope findings in a new commit; otherwise dispose of them per §4. Then `gh pr merge <n> --squash --delete-branch`. `--admin` is sanctioned for own PRs blocked only by `REVIEW_REQUIRED` when `validate-all` and `dco` are green.
+- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`); an approval with findings is not "nothing to address". Fix quick in-scope findings in a new commit; otherwise dispose of them per §4. Then `gh pr merge <n> --squash --delete-branch`.
 - Red → diagnose (`gh run view --log-failed`), push a fix, leave for the next sweep.
 - Running → leave it.
 
