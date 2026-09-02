@@ -6,6 +6,25 @@
  * `todo_state` / `priority`, the column directly via `setTodoStateCmd` /
  * `setPriorityCmd`) and notify the undo store. Pure ctx-driven — empty
  * `useMemo` dep array, no `oxlint-disable react-hooks/exhaustive-deps`.
+ *
+ * #4577 — every mutating handler below opens with `await flushActiveDraft()`,
+ * and that line is load-bearing rather than defensive. A property write is not
+ * a content edit: the structural commands that DO edit content serialize the
+ * live editor through `applyContentEdit`, so the text the user typed a moment
+ * earlier is persisted as a side effect, while these commands commit nothing
+ * of their own and leave it sitting in the editor's commit debounce
+ * (`useDebouncedContentCommit`, `CONTENT_COMMIT_DEBOUNCE_MS`). Escape discards
+ * a pending edit, so `buy milk` + `/effort 1h` + Escape reverted the text and
+ * kept the property — a block wearing metadata for content it no longer has.
+ * `flushActiveDraft` is the editor's OWN commit path (`debounced.cancel()` +
+ * `commitNow()`, the #2969 bridge the export flow uses), not a second
+ * mechanism, and a no-op when nothing is pending.
+ * `useSlashCommandStructural.handleListStyle` carries the identical line for
+ * the identical reason.
+ *
+ * The handlers that write nothing need no flush: `handleAssigneeOrLocation`,
+ * the `custom` assignee/location presets and `handleAttach` open a drawer or a
+ * file dialog, which moves focus out of the editor — and blur flushes.
  */
 
 import { useMemo } from 'react'
@@ -15,6 +34,7 @@ import type {
   SlashCommandContext,
   SlashHandlerTables,
 } from '@/components/block-tree/use-block-slash-commands/types'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { guessMimeType, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
@@ -24,6 +44,7 @@ import { formatRepeatLabel } from '@/lib/repeat-utils'
 
 async function handleTodoState(ctx: SlashCommandContext, state: string): Promise<void> {
   try {
+    await flushActiveDraft()
     unwrap(await commands.setTodoState(ctx.blockId, state))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
@@ -38,6 +59,7 @@ async function handleTodoState(ctx: SlashCommandContext, state: string): Promise
 
 async function handlePriority(ctx: SlashCommandContext, priority: string): Promise<void> {
   try {
+    await flushActiveDraft()
     unwrap(await commands.setPriority(ctx.blockId, priority))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
@@ -73,6 +95,7 @@ async function handleAssigneePreset(
   }
   const value = label.split(' — ')[0]?.replace('ASSIGNEE ', '')
   try {
+    await flushActiveDraft()
     const resp = unwrap(
       await commands.setProperty(ctx.blockId, 'assignee', {
         value_text: value ?? null,
@@ -102,6 +125,7 @@ async function handleLocationPreset(
   }
   const value = label.split(' — ')[0]?.replace('LOCATION ', '')
   try {
+    await flushActiveDraft()
     const resp = unwrap(
       await commands.setProperty(ctx.blockId, 'location', {
         value_text: value ?? null,
@@ -127,6 +151,7 @@ async function handleEffort(ctx: SlashCommandContext, value: string): Promise<vo
   // `value_text` AND non-member). The misleading `effort-custom` affordance has
   // been removed from EFFORT_COMMANDS, so only the fixed buckets reach here.
   try {
+    await flushActiveDraft()
     const resp = unwrap(
       await commands.setProperty(ctx.blockId, 'effort', {
         value_text: value,
@@ -146,6 +171,7 @@ async function handleEffort(ctx: SlashCommandContext, value: string): Promise<vo
 async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise<void> {
   if (sub === 'remove') {
     try {
+      await flushActiveDraft()
       const countResp = unwrap(await commands.deleteProperty(ctx.blockId, 'repeat-count'))
       const untilResp = unwrap(await commands.deleteProperty(ctx.blockId, 'repeat-until'))
       // #2468 — `delete_property` now surfaces `op_refs` (was a `null`
@@ -164,6 +190,7 @@ async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise
   const count = Number.parseInt(sub, 10)
   if (Number.isNaN(count)) return
   try {
+    await flushActiveDraft()
     const resp = unwrap(
       await commands.setProperty(ctx.blockId, 'repeat-count', {
         value_text: null,
@@ -183,6 +210,7 @@ async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise
 async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<void> {
   if (value === 'remove') {
     try {
+      await flushActiveDraft()
       const resp = unwrap(await commands.deleteProperty(ctx.blockId, 'repeat'))
       // #2468 — see handleRepeatLimit: delete_property is now undoable by
       // ref; skip the undo push on an idempotent no-op (empty `op_refs`).
@@ -194,6 +222,7 @@ async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<vo
     return
   }
   try {
+    await flushActiveDraft()
     const resp = unwrap(
       await commands.setProperty(ctx.blockId, 'repeat', {
         value_text: value,

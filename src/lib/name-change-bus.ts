@@ -418,12 +418,11 @@ export const NAME_CACHE_FANOUT_MAX_IDS = 25
  * above; it is what both toolbar handlers already did.
  *
  * `everywhereIds` (#4558) is the sub-cohort whose space the caller does NOT
- * know — a delete cascade's page children, which can live in other spaces
- * (see {@link notifyPageRemoved}'s `spaceId: null` section). They are
- * published space-lessly so every registered cache honours them, while the
- * ids the caller CAN scope stay scoped. A move publishes nothing here: its
- * pages still exist, in the destination space, and a space-less removal would
- * evict them from the destination's cache too.
+ * know — see {@link notifyPageRemoved}'s `spaceId: null` section for why one
+ * exists. They are published space-lessly so every registered cache honours
+ * them, while the ids the caller CAN scope stay scoped. A move publishes
+ * nothing here: its pages still exist, in the destination space, and a
+ * space-less removal would evict them from the destination's cache too.
  *
  * `pageIds` is `readonly string[] | ReadonlySet<string>`, not the more
  * permissive `Iterable<string>` it started as: `string` is itself an
