@@ -750,6 +750,22 @@ describe('walkSync', () => {
     expect(result.matches).toHaveLength(1)
     expect(result.matches[0]?.end).toBe(2)
   })
+
+  it('hands the matcher an empty string for a node with no nodeValue', () => {
+    // The node list comes from the caller, and every node outside CharacterData
+    // reports a null `nodeValue` — an element stands in for one here. The
+    // fallback must be empty text, not merely *some* text: a non-empty one
+    // would invent matches on a node that carries no characters.
+    const scanned: string[] = []
+    walkSync([document.createElement('p') as unknown as Text], {
+      kind: 'literal',
+      matcher: (text) => {
+        scanned.push(text)
+        return []
+      },
+    })
+    expect(scanned).toEqual([''])
+  })
 })
 
 describe('regex ReDoS / catastrophic-backtracking guard (#2030)', () => {
@@ -1037,6 +1053,29 @@ describe('collectTextNodes', () => {
     // executed at all.
     const parsed = attach('<template>diverted</template>')
     expect(collectTextNodes(parsed)).toHaveLength(0)
+  })
+
+  it('yields nothing when the host has no owner document', () => {
+    // A Document is the one node the DOM gives a null `ownerDocument`, so it is
+    // the only host for which the TreeWalker is never constructed. The
+    // paragraph is attached first so the empty result cannot come from an empty
+    // page instead: without the `?.` and the `!walker` guard this throws.
+    attach('<p>alpha</p>')
+    expect(collectTextNodes(document as unknown as HTMLElement)).toEqual([])
+  })
+
+  it('skips a text node whose parent is not an element', () => {
+    // Direct children of a DocumentFragment have a null `parentElement` — the
+    // state the `!parent` guard is written against, where reading `tagName` off
+    // it is a TypeError rather than a rejection. The sibling paragraph keeps
+    // the walk itself observable.
+    const fragment = document.createDocumentFragment()
+    const parented = document.createElement('p')
+    parented.textContent = 'parented'
+    fragment.append(document.createTextNode('orphan'), parented)
+    expect(collectTextNodes(fragment as unknown as HTMLElement).map((n) => n.nodeValue)).toEqual([
+      'parented',
+    ])
   })
 })
 
@@ -1389,6 +1428,51 @@ describe('runWalker', () => {
     expect(ricCalls).toBeGreaterThanOrEqual(1)
     expect(result.matches).toHaveLength(2)
   })
+
+  it('hands the matcher an empty string for a node with no nodeValue', async () => {
+    // Same contract as the `walkSync` case above, on the chunked path: an
+    // element (null `nodeValue`) must reach the matcher as empty text rather
+    // than as a string that would manufacture matches.
+    const scanned: string[] = []
+    await new Promise<void>((resolve) => {
+      runWalker(
+        [document.createElement('p') as unknown as Text],
+        {
+          kind: 'literal',
+          matcher: (text) => {
+            scanned.push(text)
+            return []
+          },
+        },
+        { onComplete: () => resolve() },
+      )
+    })
+    expect(scanned).toEqual([''])
+  })
+
+  it('steps over a hole in the node list', () => {
+    // `textNodes[i]` is an unchecked index, so a caller handing over a sparse
+    // list must not crash the chunk. The stubbed idle callback runs the chunk
+    // in this tick, where a dereference of the hole surfaces as a thrown
+    // TypeError instead of an unhandled rejection.
+    vi.stubGlobal('requestIdleCallback', (cb: (deadline: IdleDeadline) => void) => {
+      cb({ didTimeout: false, timeRemaining: () => 50 })
+      return 1
+    })
+    const host = attach('<p>alpha</p>')
+    const nodes = collectTextNodes(host)
+    const compiled = compileQuery('alpha', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    let result: ReturnType<typeof walkSync> | undefined
+    runWalker([undefined as unknown as Text, ...nodes], compiled, {
+      onComplete: (r) => {
+        result = r
+      },
+    })
+    expect(result?.matches.map((m) => m.node.nodeValue)).toEqual(['alpha'])
+  })
 })
 
 /*
@@ -1411,24 +1495,18 @@ describe('runWalker', () => {
  *
  * The 2026-08-17 pass mapped all 25 findings back onto this ledger that way and
  * every one landed. Seventeen matched constructs already recorded here — the
- * table below, whose 14 rows cover them because a single construct can carry
- * more than one mutant (see SUB-MUTANT AMBIGUITY, following). The remaining
- * eight were newly triaged and are in section F.
+ * table below, because a single construct can carry more than one mutant (see
+ * SUB-MUTANT AMBIGUITY, following). The remaining eight were newly triaged and
+ * are in section F.
  *
- *   err instanceof Error ? ... : ''        A (was 193:81)
- *   while (from <= haystack.length)        C (was 251:10, reported 320:10)
- *   while (from <= folded.length)          C (was 296:10, reported 425:10)
- *   start !== undefined && end !== ...     D (was 301:9/301:32, reported 430)
- *   text.length > REGEX_NODE_SCAN_MAX      E (was 327:19, reported 451:19)
- *   high <= 0xdbff                         E (was 363:27, reported 487:27)
- *   host.ownerDocument?.createTreeWalker   A (was 383:18, reported 507:18)
- *   !(node instanceof Text)                A (was 385:11, reported 509:11)
- *   !parent                                A (was 387:11, reported 511:11)
- *   v == null || v.length === 0            A (was 396:11, reported 520:11)
- *   !walker                                A (was 400:7,  reported 524:7)
- *   node.nodeValue ?? '' (collect)         A (was 451:36, reported 575:36)
- *   !node                                  A (was 532:11, reported 656:11)
- *   node.nodeValue ?? '' (chunked)         A (was 533:38, reported 657:38)
+ *   err instanceof Error ? ... : ''        A (was 193:81, now 193:81)
+ *   while (from <= haystack.length)        C (was 251:10, now 367:10)
+ *   while (from <= folded.length)          C (was 296:10, now 610:10)
+ *   start !== undefined && end !== ...     D (was 301:9/301:32, now 615:9/615:32)
+ *   text.length > REGEX_NODE_SCAN_MAX      E (was 327:19, now 636:19)
+ *   high <= 0xdbff                         E (was 363:27, now 672:27)
+ *   !(node instanceof Text)                A (was 385:11, now 694:11)
+ *   v == null || v.length === 0            A (was 396:11, now 705:11)
  *
  * SUB-MUTANT AMBIGUITY. A `line:col` can name more than one mutant when
  * several nodes start at the same offset — section D already documents this for
@@ -1438,34 +1516,24 @@ describe('runWalker', () => {
  * claim. The other three die (21, 1 and 21 failing tests respectively), so a
  * bare "520:11 survived" line understates what the suite already catches.
  *
- * A. Guards over states the DOM/type contract cannot produce. TypeScript types
- *    `Node.ownerDocument`, `Node.nodeValue` and indexed access as nullable, so
- *    these branches exist to satisfy the compiler; no input reaches them.
+ * A. Guards over states no input can produce. What is left here after the
+ *    2026-09-02 cull is the part of that claim the DOM itself carries, not the
+ *    part TypeScript's nullable types were carrying.
  *
  *    193:81 [StringLiteral] `''` → "Stryker was here!" — the `err instanceof
  *      Error ? err.message : ''` fallback. `new RegExp(...)` rejects only with
  *      a SyntaxError, so the else arm is unreachable.
- *    383:18 [OptionalChaining] `host.ownerDocument?.createTreeWalker` →
- *      `host.ownerDocument.createTreeWalker`, and 400:7 [ConditionalExpression]
- *      `!walker` → false — per the DOM spec only a Document has a null
- *      `ownerDocument`; for an Element it is always present, so the walker is
- *      always constructed and the `?.` / `!walker` pair is dead. (Killable only
- *      by fabricating a non-Element "host", which production never passes.)
- *    385:11 [ConditionalExpression] `!(node instanceof Text)` → false — the
+ *    694:11 [ConditionalExpression] `!(node instanceof Text)` → false — the
  *      walker is created with `NodeFilter.SHOW_TEXT`, so `acceptNode` is only
  *      ever offered Text nodes.
- *    387:11 [ConditionalExpression] `!parent` → false — the walker is rooted at
- *      an element and the root itself is not SHOW_TEXT, so every visited text
- *      node has an element parent.
- *    396:11 [ConditionalExpression] `v == null` → false — `Text.nodeValue` is
- *      always a string (`''` at worst), never null. (The `v.length === 0` half
- *      of the same condition IS covered — see the zero-length-text-node test.)
- *    451:36 and 533:38 [StringLiteral] `''` → "Stryker was here!" — the
- *      `node.nodeValue ?? ''` fallbacks, same reason as 396:11.
- *    532:11 [ConditionalExpression] `!node` → false — `textNodes[i]` is read
- *      under `i < Math.min(cursor + CHUNK_SIZE, textNodes.length)`.
+ *    705:11 [ConditionalExpression] `v == null` → false — a `Text` node's
+ *      `nodeValue` is always a string (`''` at worst), and `acceptNode` sees
+ *      nothing but Text nodes (previous entry), so unlike the `?? ''` fallbacks
+ *      in `walkSync` / `runWalker` — whose node lists come from the caller and
+ *      which tests now kill — no cast reaches this one. (The `v.length === 0`
+ *      half of the condition IS covered — see the zero-length-text-node test.)
  *
- * C. 251:10 and 296:10 [EqualityOperator] `from <= haystack.length` /
+ * C. 367:10 and 610:10 [EqualityOperator] `from <= haystack.length` /
  *    `from <= folded.length` → `<`. The two differ only on the final iteration
  *    where `from === length`; with a non-empty needle (`scanLiteral` is reached
  *    only through `compileQuery`, which returns `{kind:'empty'}` for
@@ -1501,14 +1569,13 @@ describe('runWalker', () => {
  *    independently-generated sweep; both controls fired — 3,652 and 29
  *    differences respectively — proving the harness had power).
  *
- *    #3804 — line refreshed (was 301, drifted): the condition below is
- *    currently at matcher.ts:430 (verify with `grep -n 'start !== undefined
- *    && end !== undefined' src/lib/in-page-find/matcher.ts`); columns below
- *    are as originally recorded and have not been independently re-verified
- *    against the current line.
- *      301:9  [ConditionalExpression] `start !== undefined && end !== undefined`
+ *    #3757 — lines refreshed (were 301, then 430): the condition is currently
+ *    at matcher.ts:615 (verify with `grep -n 'start !== undefined
+ *    && end !== undefined' src/lib/in-page-find/matcher.ts`), and the columns
+ *    below now match the report that raised them.
+ *      615:9  [ConditionalExpression] `start !== undefined && end !== undefined`
  *             → true
- *      301:9  [LogicalOperator] `start !== undefined && end !== undefined` →
+ *      615:9  [LogicalOperator] `start !== undefined && end !== undefined` →
  *             `start !== undefined || end !== undefined`. NB this one must be
  *             judged as an AST edit, not a textual splice: pasting the
  *             replacement in place reassociates the enclosing condition to
@@ -1525,16 +1592,16 @@ describe('runWalker', () => {
  *             Verified by splicing each reading separately, and re-verified by
  *             the committed harness above (both readings, as `diffInnerOr` /
  *             `diffOuterOr`).
- *      301:9  [ConditionalExpression] `start !== undefined` → true
- *      301:32 [ConditionalExpression] `end !== undefined` → true
+ *      615:9  [ConditionalExpression] `start !== undefined` → true
+ *      615:32 [ConditionalExpression] `end !== undefined` → true
  *
  * E. Rewrites that are value-identical rather than merely untested.
- *      327:19 [ConditionalExpression] `text.length > REGEX_NODE_SCAN_MAX` → true,
- *      327:19 [EqualityOperator] same → `>=` — `text.slice(0, N)` returns a
+ *      636:19 [ConditionalExpression] `text.length > REGEX_NODE_SCAN_MAX` → true,
+ *      636:19 [EqualityOperator] same → `>=` — `text.slice(0, N)` returns a
  *        string equal to `text` whenever `text.length <= N`, so both the
  *        always-slice mutant and the boundary shift hand `re.exec` the same
  *        input, including at exactly `REGEX_NODE_SCAN_MAX`.
- *      363:27 [EqualityOperator] `high <= 0xdbff` → `high < 0xdbff` — differs
+ *      672:27 [EqualityOperator] `high <= 0xdbff` → `high < 0xdbff` — differs
  *        only at `high === 0xdbff`, i.e. code points U+10FC00…U+10FFFF. That
  *        whole plane-16 range is Private Use / noncharacter: exhaustively
  *        checked, none of the 1,024 code points matches `/[\p{L}\p{N}_]/u`, and
@@ -1600,6 +1667,17 @@ describe('runWalker', () => {
  *      `→ true` (always fast) stays KILLED (5 tests) — that direction really
  *      does break the İ offset mapping.
  *
+ *      ONE BOUNDARY ON "GENUINELY EQUIVALENT", found 2026-09-02 (#3757). The
+ *      sweep varies whole code points, and outside that population the two
+ *      paths do diverge: for a QUERY that is an unpaired surrogate,
+ *      `compileQuery('\uDE00')` over '😀' returns {1,2} on the fast path —
+ *      `indexOf` is code-unit based — while the slow path maps any hit inside a
+ *      pair back to the pair and returns {0,2}. So read the verdict as
+ *      equivalent for every query composed of whole code points, which is every
+ *      query the toolbar can produce. Deliberately still unkilled: a test would
+ *      have to pin which of two spans a degenerate input gets, and half a
+ *      surrogate pair is not a span this module means to emit either way.
+ *
  *    The `if (import.meta.env.DEV && foldedNeedle === '')` assertion cluster —
  *    [ConditionalExpression → false], the `''` [StringLiteral], the throw's
  *    [BlockStatement], and both message [StringLiteral]s. All survive or report
@@ -1616,8 +1694,31 @@ describe('runWalker', () => {
  *    a test to kill these would mean deliberately breaking the coupling the
  *    assertion exists to detect.
  *
+ * G. Triaged 2026-09-02 (#3757). Two clusters #4507 added after the sections
+ *    above were written, and which no earlier pass had reached.
+ *
+ *    The `if (import.meta.env.DEV && foldedNeedle !== needle)` assertion beside
+ *    the fold loop in `compileQuery` (268:9 [ConditionalExpression → false],
+ *    268:57 [BlockStatement] and the six message [StringLiteral]s at 270-275).
+ *    Unkillable exactly as the `foldedNeedle === ''` cluster in section F is,
+ *    and for the argument the site itself makes: while Final_Sigma is the only
+ *    context-sensitive mapping in the locale-free table the two folds cannot
+ *    disagree, so the block never runs and its contents can be replaced with
+ *    anything. Note the message [StringLiteral]s report as NO COVERAGE while
+ *    the condition's mutants report as survivors — same fact, seen from inside
+ *    and outside the block. `→ true` is killed, which is what shows the
+ *    condition is evaluated rather than dead code.
+ *
+ *    `lowered.indexOf('ς') === -1 ? lowered : lowered.replace(...)` in
+ *    `foldForMatch` (546:10 [ConditionalExpression → false], 546:26
+ *    [StringLiteral `'ς'` → ""]). Both send every string down the `replace`
+ *    arm, and replacing `ς` in a string that holds none returns an equal
+ *    string: the `indexOf` is a cost guard, not a semantic one, and the
+ *    function's docblock prices exactly what it buys. `→ true` is killed —
+ *    that direction skips the collapse and loses word-final sigma.
+ *
  * Follow-up-worthy (redundant / unreachable production code, not test gaps):
- * the whole of group A. (The `needle.length === 0` early return, the folded
+ * what remains of group A. (The `needle.length === 0` early return, the folded
  * path's duplicate-span filter, and the redundant guards formerly noted at
  * `codePointBefore`'s `index >= 2` and the whole-word `end >= text.length`
  * ternary were removed in #3809.)
@@ -1631,7 +1732,7 @@ describe('runWalker', () => {
  * invariant, and the ambient-locale precondition guards those tests needed are
  * gone.
  *
- * Note on 385:11 (`!(node instanceof Text)` → false, listed under A): the guard
+ * Note on 694:11 (`!(node instanceof Text)` → false, listed under A): the guard
  * is redundant under `SHOW_TEXT` and would additionally misfire across realms,
  * since `instanceof` is realm-scoped. That is not reachable here: the walker is
  * built from `host.ownerDocument`, so it only ever yields nodes from the host's
