@@ -720,9 +720,9 @@ export function stripComments(text) {
 }
 
 /**
- * True when a workflow file declares a cron trigger. Text-based, like
- * `findUncoveredLanes` in the sibling filer and for the same reason: the repo's
- * scripts carry no YAML runtime dependency. Comment lines are dropped first so
+ * True when a workflow file declares a cron trigger. Text-based, like the
+ * other workflow guards and for the same reason: the repo's scripts carry no
+ * YAML runtime dependency. Comment lines are dropped first so
  * a documented-but-disabled `# - cron:` does not read as a live schedule.
  */
 export function hasCronTrigger(workflowText) {
@@ -769,8 +769,9 @@ export function findUnwatchedWorkflows(files, watched = WATCHED) {
  *     `deep-checks` and the watchdog would overwrite THAT issue's marker
  *     block, silently un-tracking every red lane.
  *
- * Text assertions, in the same spirit (and with the same limits) as
- * `findUncoveredLanes` in the sibling filer.
+ * Text assertions, with the limits every textual workflow guard here has: a
+ * layout change the patterns do not anticipate reads as a violation, not a
+ * pass.
  */
 export function findWatchdogWiringProblems(rawWorkflowText) {
   // Comments stripped FIRST — see `stripComments`. The header comment of

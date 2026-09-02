@@ -920,6 +920,20 @@ jobs:
         if: needs.detect-changes.outputs.backend == 'true'
         run: prek run --all-files --hook-stage pre-push cargo-clippy
 
+      - name: Cargo check the fuzz targets (backend PRs)
+        # `src-tauri/fuzz` is its own workspace, so `--workspace` clippy never
+        # compiles it and a fuzz target that no longer builds surfaced only in
+        # the weekly sweep (#3163 hid for five days). Nightly is needed only
+        # to RUN with sanitizers; a plain `cargo check` works on the stable
+        # toolchain here. Sharing clippy's target dir means only the fuzz
+        # crate itself compiles (~1 min measured locally).
+        if: needs.detect-changes.outputs.backend == 'true'
+        env:
+          SQLX_OFFLINE: 'true'
+        run: >-
+          CARGO_TARGET_DIR="$PWD/src-tauri/target"
+          cargo check --manifest-path src-tauri/fuzz/Cargo.toml --locked
+
       - name: Run npm-audit advisory scan (pre-push-staged hook)
         # ci/path-conditional-jobs: npm-audit is a Node/frontend advisory scan,
         # gated on frontend == 'true' — a backend/ci-only PR has no npm surface
@@ -1448,17 +1462,25 @@ jobs:
         # deleting them frees the headroom needed before cargo runs. `df -h`
         # is logged before+after so future tightening can size against real
         # numbers instead of a guess.
+        #
+        # Backgrounded: the reclaim measured 1:37-1:48 per shard on the
+        # critical path (2026-09-02) and touches nothing the apt / toolchain /
+        # cache / `npm ci` steps below need, so they overlap it. The "Wait for
+        # disk reclaim" step before the compile joins it and checks its exit.
         run: |
           set -euo pipefail
           echo "Before:" && df -h /
-          sudo rm -rf /usr/share/dotnet \
-                      /usr/local/lib/android \
-                      /opt/ghc \
-                      /usr/local/share/boost \
-                      /usr/local/share/powershell \
-                      /usr/share/swift \
-                      "$AGENT_TOOLSDIRECTORY"
-          echo "After:" && df -h /
+          (
+            sudo rm -rf /usr/share/dotnet \
+                        /usr/local/lib/android \
+                        /opt/ghc \
+                        /usr/local/share/boost \
+                        /usr/local/share/powershell \
+                        /usr/share/swift \
+                        "$AGENT_TOOLSDIRECTORY"
+            echo $? > "$RUNNER_TEMP/free-disk.exit"
+          ) > "$RUNNER_TEMP/free-disk.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/free-disk.pid"
 
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
@@ -1546,6 +1568,15 @@ jobs:
         uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
         with:
           tool: cargo-nextest,cargo-llvm-cov
+
+      - name: Wait for disk reclaim
+        run: |
+          set -euo pipefail
+          pid=$(cat "$RUNNER_TEMP/free-disk.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 2; done
+          cat "$RUNNER_TEMP/free-disk.log"
+          [ "$(cat "$RUNNER_TEMP/free-disk.exit")" = "0" ] || { echo "disk reclaim failed"; exit 1; }
+          echo "After:" && df -h /
 
       - name: Cargo test (nextest, shard ${{ matrix.shard }}/2, with llvm-cov)
         working-directory: src-tauri
@@ -1752,13 +1783,11 @@ jobs:
     if: needs.detect-changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     # MCP build + smoke is much lighter than the full nextest+llvm-cov
-    # run on cargo-tests. 20 min covers the cold-cache compile of
-    # `src-tauri` for the `agaric-mcp` bin + smoke test + the release-
-    # mode rebuild that prepare-external-bins.mjs runs.
-    # 20 → 30 (#1458): a slow-mirror apt `Install system dependencies` step
-    # (~12 min, same root cause as the playwright/lint cap bumps) ran this job
-    # out the 20-min budget. Deb re-download tracked as #1464; 30 min absorbs it.
-    timeout-minutes: 30
+    # run on cargo-tests: one dev-profile compile of `src-tauri` shared by
+    # the `agaric-mcp` bin and the smoke test. 9.7 min measured with the old
+    # release build (2026-09-02), less now; the apt step is bounded by the
+    # apt-install action and the .deb cache (#1464). 20 min.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1849,20 +1878,20 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Build agaric-mcp stub binary (FEAT-4f)
-        # Build the release binary first so the I-MCP-9 smoke test below
-        # can exec it (the test searches `target/{debug,release}/` for
-        # the binary; we used to debug-build and then release-build in
-        # series — ~3:48 wasted re-compiling the same code with a
-        # different profile). The release build also satisfies the
-        # FEAT-4f externalBin staging check at the end.
-        run: node scripts/prepare-external-bins.mjs
+        # Dev profile, deliberately: the I-MCP-9 smoke test below searches
+        # `target/{debug,release}/` for the binary and its own nextest
+        # compile is a dev tree, so one profile serves both and the
+        # artifacts are shared. The release profile (thin LTO,
+        # codegen-units=1) cost 5:18 here (2026-09-02) and the `build` job
+        # produces and verifies the real release sidecar anyway.
+        run: node scripts/prepare-external-bins.mjs --profile dev
 
       - name: MCP stub-binary smoke test (I-MCP-9)
         working-directory: src-tauri
         run: cargo nextest run --features ci-smoke --profile ci -E 'test(stub_binary_roundtrips_initialize_over_uds)'
 
       - name: Verify agaric-mcp smoke (--version)
-        run: src-tauri/target/release/agaric-mcp --version
+        run: src-tauri/target/debug/agaric-mcp --version
 
       - name: Verify externalBin artifact exists
         run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu

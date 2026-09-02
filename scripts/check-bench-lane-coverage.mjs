@@ -32,9 +32,8 @@
 //     still read that variable. Deleting `bench-slo`, or reverting either job
 //     to a hardcoded bench name, fails here instead of quietly emptying a lane.
 //
-// Textual workflow parsing on purpose, mirroring
-// `scripts/file-scheduled-failures.mjs`'s `findUncoveredLanes`: the repo's
-// scripts carry no YAML dependency and the workflow's layout is uniform. Every
+// Textual workflow parsing on purpose, like the other workflow guards: the
+// repo's scripts carry no YAML dependency and the workflow's layout is uniform. Every
 // pattern is anchored, and a mention inside a `#` comment never satisfies a
 // reference check — the self-test pins that direction explicitly, because a
 // guard satisfied by the comment that explains it is a guard that cannot fail.
