@@ -239,7 +239,7 @@ describe('propertyValueKindForType', () => {
 
 // This function exists because the operator question and the
 // `PropertyValue`-variant question disagree for exactly one declared type
-// (see `propertyOpsForValueType`), so both arms are pinned: the boolean one
+// (see its docblock in `vocab.ts`), so both arms are pinned: the boolean one
 // and the delegation.
 describe('propertyOpsForValueType (#4571 item 2)', () => {
   it('offers a boolean-declared key existence only', () => {
