@@ -718,8 +718,8 @@ export function collectTextNodes(host: HTMLElement): Text[] {
 /**
  * Walk text nodes synchronously and collect matches.
  *
- * Used by tests (deterministic, no async) and as the inner loop of the
- * chunked runner. Returns a {@link FindResult} with the match list and
+ * Test oracle only (deterministic, no async): {@link runWalker} inlines the
+ * same loop. Returns a {@link FindResult} with the match list and
  * the count of text nodes skipped for exceeding {@link REGEX_NODE_MAX}.
  *
  * `compiled` is consumed verbatim — callers must pre-compile via
@@ -771,7 +771,7 @@ export function walkSync(
 }
 
 /**
- * Cooperative chunked walker — runs {@link walkSync} 50 nodes at a time,
+ * Cooperative chunked walker — walks 50 nodes at a time,
  * yielding via `requestIdleCallback` (fallback `setTimeout(0)`) between
  * chunks so a 10k-node page doesn't freeze the UI on first keypress.
  *
