@@ -1374,8 +1374,10 @@ jobs:
   # ---------------------------------------------------------------------------
   # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
   # fuzz crate (src-tauri/fuzz) builds under stable for compile-checking but
-  # `cargo fuzz run` needs nightly (libFuzzer instrumentation). Smoke-length
-  # budget here; a longer campaign runs out-of-band. Non-blocking.
+  # `cargo fuzz run` needs nightly (libFuzzer instrumentation). Each weekly
+  # run continues from the corpus the previous one saved (#4529), so the
+  # per-target budget below is how far each week explores past the last;
+  # a longer campaign still runs out-of-band. Non-blocking.
   # ---------------------------------------------------------------------------
   fuzz:
     runs-on: ubuntu-24.04
