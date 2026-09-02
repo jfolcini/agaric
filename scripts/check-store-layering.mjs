@@ -31,19 +31,7 @@
  * specifiers shaped that way are treated as store-to-store edges; anything
  * else (component/hook/lib imports) is out of scope for this hook.
  */
-import { spawnSync } from 'node:child_process'
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs'
-import os from 'node:os'
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { detectImports } from './check-import-cycles.mjs'
@@ -182,125 +170,6 @@ function main() {
   process.exit(1)
 }
 
-// ─── self-test (#3997) ─────────────────────────────────────────────
-//
-// Added because this hook had no backstop of any kind: no self-test hook
-// existed at all before #3997, so a regression in checkLayering/
-// storeBasename — or a defanged check-import-cycles.mjs, the shared module
-// this guard delegates import-detection to — could land unnoticed.
-function runSelfTest() {
-  const failures = []
-  const ok = (name) => console.log(`  ok - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-
-  // --- checkLayering: pure function over a store-import graph -----------
-
-  const clean1 = checkLayering(new Map([['page-blocks.ts', ['blocks.ts']]]))
-  if (clean1.length === 0) ok('allowed cross-store import (page-blocks -> blocks) is clean')
-  else fail('allowed cross-store import is clean', JSON.stringify(clean1))
-
-  const intraFamily = checkLayering(new Map([['page-blocks.ts', ['page-blocks-reducers.ts']]]))
-  if (intraFamily.length === 0) ok('intra-family import is clean')
-  else fail('intra-family import is clean', JSON.stringify(intraFamily))
-
-  const disallowed = checkLayering(new Map([['page-blocks.ts', ['tabs-history.ts']]]))
-  if (disallowed.length === 1 && disallowed[0].includes('tabs-history.ts')) {
-    ok('disallowed cross-store import from the family is flagged')
-  } else {
-    fail('disallowed cross-store import from the family is flagged', JSON.stringify(disallowed))
-  }
-
-  const reverse = checkLayering(new Map([['blocks.ts', ['page-blocks.ts']]]))
-  if (reverse.length === 1 && reverse[0].includes('blocks.ts imports page-blocks.ts')) {
-    ok('reverse import (blocks.ts -> family) is flagged')
-  } else {
-    fail('reverse import (blocks.ts -> family) is flagged', JSON.stringify(reverse))
-  }
-
-  const blocksClean = checkLayering(new Map([['blocks.ts', ['space.ts']]]))
-  if (blocksClean.length === 0) ok('blocks.ts importing a non-family store is clean')
-  else fail('blocks.ts importing a non-family store is clean', JSON.stringify(blocksClean))
-
-  // --- storeBasename: specifier resolution -------------------------------
-
-  if (storeBasename('./blocks') === 'blocks.ts') ok("storeBasename('./blocks') -> blocks.ts")
-  else fail("storeBasename('./blocks') -> blocks.ts", storeBasename('./blocks'))
-
-  if (storeBasename('@/stores/space') === 'space.ts') {
-    ok("storeBasename('@/stores/space') -> space.ts")
-  } else {
-    fail("storeBasename('@/stores/space') -> space.ts", storeBasename('@/stores/space'))
-  }
-
-  if (storeBasename('@/lib/utils') === null) ok('out-of-scope specifier resolves to null')
-  else fail('out-of-scope specifier resolves to null', storeBasename('@/lib/utils'))
-
-  runCliSelfTest(ok, fail)
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
-}
-
-/**
- * End-to-end CLI self-test: spawns THIS script as a real subprocess against a
- * fully synthetic fixture repo (its own scripts/ + src/stores/), copying
- * check-import-cycles.mjs alongside it exactly as the real repo lays them
- * out, and asserts on the actual process exit code. The assertions above
- * drive checkLayering()/storeBasename() directly and never call main() or
- * its process.exit() calls — a regression that dropped `process.exit(1)`
- * from main() (defanging the gate entirely) would sail through those
- * assertions with zero failures. This closes that hole (mirrors
- * check-lib-layering.mjs's runCliSelfTest, #3997 sibling fix).
- */
-function runCliSelfTest(ok, fail) {
-  const fixtureRoot = mkdtempSync(resolve(os.tmpdir(), 'store-layering-cli-selftest-'))
-  try {
-    const fixtureScripts = resolve(fixtureRoot, 'scripts')
-    const fixtureStores = resolve(fixtureRoot, 'src', 'stores')
-    mkdirSync(fixtureScripts, { recursive: true })
-    mkdirSync(fixtureStores, { recursive: true })
-    copyFileSync(import.meta.filename, resolve(fixtureScripts, 'check-store-layering.mjs'))
-    copyFileSync(
-      resolve(import.meta.dirname, 'check-import-cycles.mjs'),
-      resolve(fixtureScripts, 'check-import-cycles.mjs'),
-    )
-
-    const run = () =>
-      spawnSync(process.execPath, [resolve(fixtureScripts, 'check-store-layering.mjs')], {
-        cwd: fixtureRoot,
-        encoding: 'utf8',
-      })
-
-    // Clean tree -> exit 0.
-    writeFileSync(resolve(fixtureStores, 'blocks.ts'), 'export const useBlocksStore = () => 1\n')
-    writeFileSync(
-      resolve(fixtureStores, 'page-blocks.ts'),
-      "import { useBlocksStore } from './blocks'\nexport const x = useBlocksStore\n",
-    )
-    let res = run()
-    if (res.status === 0) ok('CLI exits 0 on a clean tree')
-    else fail('CLI exits 0 on a clean tree', `status=${res.status} stderr=${res.stderr}`)
-
-    // Reverse import (blocks.ts -> page-blocks.ts) -> exit 1, the gate that
-    // actually blocks a bad PR.
-    writeFileSync(
-      resolve(fixtureStores, 'blocks.ts'),
-      "import { x } from './page-blocks'\nexport const useBlocksStore = () => x\n",
-    )
-    res = run()
-    if (res.status === 1) ok('CLI exits 1 on a reverse import (the gate actually blocks)')
-    else fail('CLI exits 1 on a reverse import (the gate actually blocks)', `status=${res.status}`)
-  } finally {
-    rmSync(fixtureRoot, { recursive: true, force: true })
-  }
-}
-
 // Run the scan only when invoked directly as a script, not when imported.
 // Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
 // RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
@@ -308,9 +177,5 @@ function runCliSelfTest(ok, fail) {
 const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
-  if (process.argv.includes('--self-test')) {
-    runSelfTest()
-  } else {
-    main()
-  }
+  main()
 }

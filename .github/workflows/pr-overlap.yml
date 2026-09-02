@@ -167,7 +167,7 @@ jobs:
           # requests could ever have paired the two, and the thing that was
           # actually wrong is that #3724's base predated it.
           #
-          # The computation lives in a script with its own `--self-test`
+          # The computation lives in a script
           # because the four lines that used to be here were wrong in a way
           # nothing could see: they took the merge base from HEAD, which on a
           # `pull_request` checkout is `refs/pull/N/merge` whose FIRST PARENT
@@ -633,8 +633,7 @@ jobs:
           # as `cmd` then `rc=$?`, every branch below except the exit-0 one was
           # dead code: an exit 1 lost its `::error::` and its summary, and an
           # exit 2 ("not computed") became an unexplained red. `|| rc=$?` is
-          # the -e-safe capture, and the script's --self-test asserts this
-          # exact line still reads that way.
+          # the -e-safe capture.
           #
           # #4178: the same `-e` is still active below `set -uo pipefail`
           # above (that line only ADDS -u and reasserts pipefail; it never
@@ -797,9 +796,8 @@ jobs:
   # the network to do its job is a bad hook: it would break an offline
   # commit, and turn one flaky API call into a block on EVERY commit rather
   # than one CI run. So the actual check runs here, once per push to a PR;
-  # `scripts/check-session-log-pr-collision.mjs`'s own `--self-test` (a prek
-  # hook keyed on that script and this file) stays pure-function and
-  # network-free, exercising `analyze()` directly.
+  # `scripts/check-session-log-pr-collision.mjs` itself stays pure-function
+  # and network-free.
   #
   # ─── Why this job needs no fork-content checkout at all ───────────────────
   #
@@ -833,9 +831,8 @@ jobs:
   # at all — the cheapest self-consistency check available, and one that
   # catches an empty/truncated/stale API response even when `gh pr list`
   # itself reported success. See that script's own header for the full
-  # fail-open enumeration and its `--self-test` for each case asserted
-  # separately (a missing self-PR, a malformed entry, a PR that added no
-  # session-log file at all — each is a DISTINCT tested outcome, not a shared
+  # fail-open enumeration (a missing self-PR, a malformed entry, a PR that
+  # added no session-log file at all — each a DISTINCT outcome, not a shared
   # "green").
   #
   # ─── #4431 — a crash must never be reported as a finding ──────────────────
@@ -1184,16 +1181,11 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # Every path this step touches is an env var rather than a literal,
-          # so `check-session-log-pr-collision.mjs --self-test` can extract
-          # the shell below VERBATIM (between the BEGIN/END markers) and run
-          # it against fixtures in a temp directory. Reading the YAML is what
-          # let the exit-code aliasing of #4431 survive review; executing the
-          # real bytes for every outcome is what catches the next one.
+          # so the shell below can be run against fixtures unchanged (#4431).
           GUARD_SCRIPT: scripts/check-session-log-pr-collision.mjs
           PRS_JSON: prs.json
           MERGED_PATHS: merged-paths.txt
         run: |
-          # --- BEGIN session-log-pr-collision step shell (extracted verbatim by --self-test) ---
           set -uo pipefail
           summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
@@ -1242,8 +1234,7 @@ jobs:
               # diff adds that path — it is the PR introducing the guard, or
               # the PR moving it there (#4431 review note 6) — so there is
               # nothing for it to have verified. Correctness of the guard itself is
-              # covered by its `--self-test` (a prek hook, and part of
-              # validate-all), not by this job. A warning, not a failure —
+              # not this job's concern. A warning, not a failure —
               # failing would make the introducing PR unmergeable by the very
               # guard it introduces.
               echo "::warning::session-log-pr-collision: NOT RUN — $GUARD_SCRIPT does not exist on this PR's base branch, and PR #$PR_NUMBER is the PR that adds it there (introducing the guard, or moving it to this path). No collision check was performed. It takes effect for every PR whose base contains this merge."
@@ -1326,4 +1317,3 @@ jobs:
             echo "::error::session-log-pr-collision: could not verify (exit=$rc, verdict=${verdict:-<none>}) — the guard did not reach a verdict, so NO collision was observed and none is being reported. Likely causes: the guard is missing or unreadable in the base checkout, a syntax error or uncaught exception in it, node itself crashing or being killed, or the guard refusing to trust its own open-PR payload (its own message is above). Treated as a failure, never a pass (#3933)."
             exit 1
           fi
-          # --- END session-log-pr-collision step shell ---

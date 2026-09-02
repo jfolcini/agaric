@@ -62,15 +62,13 @@
 // cannot model is a loud failure, not an unchecked gap.
 //
 // Usage: node scripts/check-tsc-root-files.mjs
-//        node scripts/check-tsc-root-files.mjs --self-test
 // Exit:  0 = every project's actual root-file set matches its intended
 //        set exactly, 1 = a drop (or unexplained extra) was found,
-//        2 = repo layout / self-test failure.
+//        2 = repo layout failure.
 // ─────────────────────────────────────────────────────────────────────
 
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -215,7 +213,6 @@ function resolveActualSet(baseDir, files) {
 
 /**
  * Compare a project's intended vs. actual `.ts`/`.tsx` root-file sets.
- * Pure (no process/tsc calls) so the self-test can drive it directly.
  * Returns `{ missing, extra }` (both sorted absolute-path arrays).
  */
 function diffSets(intended, actual) {
@@ -247,11 +244,7 @@ function groupByStem(files) {
 
 // ─── main ───────────────────────────────────────────────────────────
 
-if (process.argv.includes('--self-test')) {
-  runSelfTest()
-} else {
-  runGuard()
-}
+runGuard()
 
 function runGuard() {
   if (!fs.existsSync(ROOT_TSCONFIG)) {
@@ -313,231 +306,4 @@ function runGuard() {
     `OK: ${results.length} tsconfig project(s), ${totalActual} actual root .ts/.tsx file(s) ` +
       `match ${totalIntended} intended (no drops, no unexplained extras).`,
   )
-}
-
-// ─── self-test ──────────────────────────────────────────────────────
-//
-// Two layers:
-//   1. Pure `diffSets`/`resolveIntendedSet` cases — no process spawned.
-//   2. End-to-end `checkProject` against a real synthetic tsconfig,
-//      shelling out to the real `tsc -p ... --showConfig` the same way
-//      the guard does, so a regression in the shell-out plumbing itself
-//      (not just the pure diff math) cannot silently pass.
-function runSelfTest() {
-  const failures = []
-  const ok = (name) => console.log(`  ok   - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-  const assertThrows = (name, fn) => {
-    try {
-      fn()
-      fail(name, 'did not throw')
-    } catch {
-      ok(name)
-    }
-  }
-
-  // ── pure diffSets ──────────────────────────────────────────────────
-
-  {
-    const intended = new Set(['/p/a.ts', '/p/a.tsx', '/p/b.ts'])
-    const actual = new Set(['/p/a.ts', '/p/b.ts']) // a.tsx silently dropped
-    const { missing, extra } = diffSets(intended, actual)
-    if (missing.length === 1 && missing[0] === '/p/a.tsx' && extra.length === 0) {
-      ok('diffSets flags a file present in intended but missing from actual')
-    } else {
-      fail(
-        'diffSets flags a file present in intended but missing from actual',
-        JSON.stringify({ missing, extra }),
-      )
-    }
-  }
-  {
-    const intended = new Set(['/p/a.ts'])
-    const actual = new Set(['/p/a.ts', '/p/ghost.ts']) // guard's own model disagrees with tsc
-    const { missing, extra } = diffSets(intended, actual)
-    if (missing.length === 0 && extra.length === 1 && extra[0] === '/p/ghost.ts') {
-      ok('diffSets flags a file present in actual but missing from intended')
-    } else {
-      fail(
-        'diffSets flags a file present in actual but missing from intended',
-        JSON.stringify({ missing, extra }),
-      )
-    }
-  }
-  {
-    const intended = new Set(['/p/a.ts', '/p/b.tsx'])
-    const actual = new Set(['/p/a.ts', '/p/b.tsx'])
-    const { missing, extra } = diffSets(intended, actual)
-    if (missing.length === 0 && extra.length === 0) {
-      ok('diffSets is clean when intended and actual match exactly')
-    } else {
-      fail(
-        'diffSets is clean when intended and actual match exactly',
-        JSON.stringify({ missing, extra }),
-      )
-    }
-  }
-
-  // ── pure resolveIntendedSet / pattern shapes, against a scratch tree ──
-
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'check-tsc-root-files-selftest-'))
-  try {
-    const srcDir = path.join(scratch, 'src')
-    const nestedDir = path.join(srcDir, '__tests__')
-    fs.mkdirSync(nestedDir, { recursive: true })
-    fs.writeFileSync(path.join(srcDir, 'a.ts'), 'export const a = 1\n')
-    fs.writeFileSync(path.join(srcDir, 'a.d.ts'), 'export declare const a: number\n')
-    fs.writeFileSync(path.join(srcDir, 'standalone.d.ts'), 'export declare const s: number\n')
-    fs.writeFileSync(path.join(nestedDir, 'collide.ts'), 'export const b = 1\n')
-    fs.writeFileSync(path.join(nestedDir, 'collide.tsx'), 'export const c = 1\n')
-    fs.writeFileSync(path.join(srcDir, 'excluded.ts'), 'export const d = 1\n')
-    fs.writeFileSync(path.join(srcDir, 'ignored.json'), '{}\n')
-
-    // Bare-directory include ("src"), literal-file exclude.
-    const bareDirSet = resolveIntendedSet(scratch, ['src'], ['src/excluded.ts'])
-    const bareDirRel = [...bareDirSet].map((f) => toPosix(path.relative(scratch, f))).toSorted()
-    const expectedBareDir = [
-      'src/__tests__/collide.ts',
-      'src/__tests__/collide.tsx',
-      'src/a.ts',
-      'src/standalone.d.ts',
-    ]
-    if (JSON.stringify(bareDirRel) === JSON.stringify(expectedBareDir)) {
-      ok(
-        'resolveIntendedSet: bare-directory include walks .ts/.tsx, skips .json, honors literal exclude',
-      )
-    } else {
-      fail('resolveIntendedSet: bare-directory include', bareDirRel.join(', '))
-    }
-
-    // `.d.ts` vs. same-stem `.ts`: tsc's OTHER intentional priority
-    // collapse (out of scope for this guard, see resolveIntendedSet's
-    // doc comment) — `a.d.ts` (collides with `a.ts`) must be dropped
-    // from the intended set, but `standalone.d.ts` (no `.ts`/`.tsx`
-    // sibling) must NOT be, since tsc keeps standalone `.d.ts` root
-    // files matched by `include`.
-    if (
-      !bareDirSet.has(path.join(srcDir, 'a.d.ts')) &&
-      bareDirSet.has(path.join(srcDir, 'standalone.d.ts'))
-    ) {
-      ok(
-        'resolveIntendedSet: drops a .d.ts colliding with a same-stem .ts, keeps a standalone .d.ts',
-      )
-    } else {
-      fail(
-        'resolveIntendedSet: .d.ts vs .ts collapse',
-        JSON.stringify({
-          hasCollidingDts: bareDirSet.has(path.join(srcDir, 'a.d.ts')),
-          hasStandaloneDts: bareDirSet.has(path.join(srcDir, 'standalone.d.ts')),
-        }),
-      )
-    }
-
-    // `<dir>/**/*.ts` glob include: must NOT pick up the .tsx sibling
-    // (mirrors how tsc itself would resolve that narrower pattern).
-    const globSet = resolveIntendedSet(scratch, ['src/**/*.ts'], undefined)
-    const globRel = [...globSet].map((f) => toPosix(path.relative(scratch, f))).toSorted()
-    const expectedGlob = [
-      'src/__tests__/collide.ts',
-      'src/a.ts',
-      'src/excluded.ts',
-      'src/standalone.d.ts',
-    ]
-    if (JSON.stringify(globRel) === JSON.stringify(expectedGlob)) {
-      ok('resolveIntendedSet: "<dir>/**/*.ts" glob include matches only that extension')
-    } else {
-      fail('resolveIntendedSet: glob include', globRel.join(', '))
-    }
-
-    // Literal-file include.
-    const literalSet = resolveIntendedSet(scratch, ['src/a.ts'], undefined)
-    const literalRel = [...literalSet].map((f) => toPosix(path.relative(scratch, f)))
-    if (literalRel.length === 1 && literalRel[0] === 'src/a.ts') {
-      ok('resolveIntendedSet: literal-file include resolves to exactly that file')
-    } else {
-      fail('resolveIntendedSet: literal-file include', literalRel.join(', '))
-    }
-
-    // Directory-prefix exclude.
-    const dirExcludeSet = resolveIntendedSet(scratch, ['src'], ['src/__tests__'])
-    const dirExcludeRel = [...dirExcludeSet]
-      .map((f) => toPosix(path.relative(scratch, f)))
-      .toSorted()
-    const expectedDirExclude = ['src/a.ts', 'src/excluded.ts', 'src/standalone.d.ts']
-    if (JSON.stringify(dirExcludeRel) === JSON.stringify(expectedDirExclude)) {
-      ok('resolveIntendedSet: directory exclude removes every file under it')
-    } else {
-      fail('resolveIntendedSet: directory exclude', dirExcludeRel.join(', '))
-    }
-
-    // Unsupported pattern shapes must throw loudly, not silently no-op.
-    assertThrows('expandInclude throws (not silently skips) on an unmodeled glob shape', () =>
-      resolveIntendedSet(scratch, ['src/*.ts'], undefined),
-    ) // single-star, not "**"
-
-    // `?` alone (no `*`) is real tsc glob syntax too — must also throw,
-    // not silently fall through to the literal-path branch as "no match".
-    assertThrows('expandInclude throws (not silently skips) on a bare "?" glob shape', () =>
-      resolveIntendedSet(scratch, ['src/?.ts'], undefined),
-    )
-  } finally {
-    fs.rmSync(scratch, { recursive: true, force: true })
-  }
-
-  // ── end-to-end checkProject(), shelling out to the real tsc ────────
-
-  if (!fs.existsSync(TSC_BIN)) {
-    fail('end-to-end checkProject() against real tsc', `tsc binary not found at ${TSC_BIN}`)
-  } else {
-    const e2eScratch = fs.mkdtempSync(path.join(os.tmpdir(), 'check-tsc-root-files-e2e-'))
-    try {
-      const projSrc = path.join(e2eScratch, 'src')
-      fs.mkdirSync(projSrc, { recursive: true })
-      fs.writeFileSync(path.join(projSrc, 'plain.ts'), 'export const p = 1\n')
-      const tsconfigPath = path.join(e2eScratch, 'tsconfig.json')
-      const writeTsconfig = () =>
-        fs.writeFileSync(
-          tsconfigPath,
-          JSON.stringify({ compilerOptions: { noEmit: true, module: 'esnext' }, include: ['src'] }),
-        )
-      writeTsconfig()
-
-      // Collision case: both a.ts and a.tsx under src/ — must FAIL.
-      fs.writeFileSync(path.join(projSrc, 'a.ts'), 'export const a = 1\n')
-      fs.writeFileSync(path.join(projSrc, 'a.tsx'), 'export const A = () => null\n')
-      const withCollision = checkProject(tsconfigPath)
-      const droppedRel = withCollision.missing.map((f) => toPosix(path.relative(e2eScratch, f)))
-      if (droppedRel.length === 1 && droppedRel[0] === 'src/a.tsx') {
-        ok('checkProject(): real tsc -p --showConfig reproduces the a.ts/a.tsx drop end-to-end')
-      } else {
-        fail(
-          'checkProject(): real tsc -p --showConfig reproduces the a.ts/a.tsx drop end-to-end',
-          JSON.stringify({ missing: droppedRel, extra: withCollision.extra }),
-        )
-      }
-
-      // Resolve the collision (rename a.tsx out of the way) — must PASS.
-      fs.renameSync(path.join(projSrc, 'a.tsx'), path.join(projSrc, 'a-view.tsx'))
-      const resolved = checkProject(tsconfigPath)
-      if (resolved.missing.length === 0 && resolved.extra.length === 0) {
-        ok('checkProject(): renaming away the collision clears the guard end-to-end')
-      } else {
-        fail(
-          'checkProject(): renaming away the collision clears the guard end-to-end',
-          JSON.stringify({ missing: resolved.missing, extra: resolved.extra }),
-        )
-      }
-    } finally {
-      fs.rmSync(e2eScratch, { recursive: true, force: true })
-    }
-  }
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
 }

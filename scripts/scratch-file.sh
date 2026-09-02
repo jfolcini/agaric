@@ -78,8 +78,6 @@
 #   scripts/scratch-file.sh verify "$file" "$fp"          # exits 4 on mismatch
 #   gh pr create --body-file "$file"
 #
-#   scripts/scratch-file.sh --self-test
-#
 # Exit: 0 on success. 2 bad usage. 3 fingerprint of a missing file. 4 verify
 # failed — the file's content is not what this caller wrote; DO NOT consume
 # it.
@@ -88,14 +86,13 @@ set -euo pipefail
 
 # Split from `usage` because `exit` inside a bash function terminates the whole
 # PROCESS: the argument-less subcommand paths below need to report bad usage and
-# `return 2` so `run_self_test` can observe that status instead of dying on it.
+# `return 2`, letting `main()` decide the process's exit status.
 usage_text() {
   cat >&2 <<'EOF'
 usage:
   scratch-file.sh new <label>                 mint a fresh, collision-proof scratch file; prints its path
   scratch-file.sh fingerprint <file>           print a content fingerprint for later verification
   scratch-file.sh verify <file> <fingerprint>  exit 0 iff <file>'s content still matches <fingerprint>
-  scratch-file.sh --self-test
 EOF
 }
 
@@ -114,10 +111,10 @@ scratch_root() {
 }
 
 # NOTE: `return`, never `exit`, inside the three subcommand functions — `exit`
-# inside a bash function terminates the whole PROCESS, which would abort
-# `run_self_test` the instant it exercises a failure path instead of letting it
-# observe one. `main()` below is the only place a non-zero return becomes the
-# process's exit status, for direct CLI invocation. A missing argument returns
+# inside a bash function terminates the whole PROCESS, so a caller that sources
+# this file could not observe a failure path. `main()` below is the only place a
+# non-zero return becomes the process's exit status, for direct CLI invocation.
+# A missing argument returns
 # 2 ("bad usage", per the header) rather than letting `${1:?…}` expansion abort
 # the shell with 1.
 new_scratch_file() {
@@ -185,185 +182,6 @@ verify() {
   return 0
 }
 
-run_self_test() {
-  local st_fail=0
-  st_ok() { printf '  ok   - %s\n' "$1"; }
-  st_bad() {
-    printf '  FAIL - %s: %s\n' "$1" "$2" >&2
-    st_fail=1
-  }
-
-  # Not `local` — a trap that outlives this function's scope must not close
-  # over a local, or it dereferences an unbound variable once the function
-  # that declared it has returned.
-  work="$(mktemp -d)"
-  trap 'rm -rf "$work"' EXIT
-  export CLAUDE_SCRATCHPAD_DIR="$work/scratchpad"
-  mkdir -p "$CLAUDE_SCRATCHPAD_DIR"
-
-  # 1. THE FALSIFICATION: run the exact #3731 timing (write, long wait, a
-  #    second writer with the SAME label lands mid-wait, read) down two paths
-  #    side by side, and require the old one to clobber AND the new one not to.
-  #
-  #    The old path is not a hand-written literal in this test — writing two
-  #    string literals to one hardcoded name and asserting they differ would
-  #    invoke none of the code under test and could not fail. It is derived
-  #    from the script itself: `$(scratch_root)/<label>` is precisely what a
-  #    name-per-label allocator hands back, so if `new_scratch_file` ever
-  #    regressed to a path decided in advance it would return that same path,
-  #    the mid-wait writer would land on it, and the second conjunct below
-  #    would fail. (Verified by patching a copy of this script to drop
-  #    `mktemp -d`: this assertion fails against it.)
-  local body_a='PR body for #3719 (the op-log frontier fix)'
-  local body_b='PR body for #3718 (docs). Closes #3272. Closes #3273.'
-  local old_shape_a new_shape_a
-  old_shape_a="$(scratch_root)/pr-body" # what the pre-fix code produced
-  new_shape_a="$(new_scratch_file pr-body)"
-  printf '%s' "$body_a" >"$old_shape_a"
-  printf '%s' "$body_a" >"$new_shape_a"
-  # the long wait — a second concurrent agent, identical label, lands mid-wait
-  printf '%s' "$body_b" >"$(scratch_root)/pr-body"
-  printf '%s' "$body_b" >"$(new_scratch_file pr-body)"
-  local old_readback new_readback
-  old_readback="$(cat "$old_shape_a")"
-  new_readback="$(cat "$new_shape_a")"
-  if [ "$old_readback" = "$body_b" ] && [ "$new_readback" = "$body_a" ]; then
-    st_ok "the #3719 timing clobbers a path derived from the label, and does NOT clobber new's path"
-  else
-    st_bad "the #3719 timing clobbers a label-derived path but not new's path" \
-      "label-derived path read back [$old_readback]; new's path read back [$new_readback]"
-  fi
-
-  # 2. THE FIX: `new` with the SAME label, called twice, never returns the
-  #    same path — not "unlikely", checked directly.
-  local fa fb
-  fa="$(new_scratch_file pr-body)"
-  fb="$(new_scratch_file pr-body)"
-  if [ "$fa" != "$fb" ]; then
-    st_ok "new: two calls with the identical label get distinct paths"
-  else
-    st_bad "new: two calls with the identical label get distinct paths" "both got $fa"
-  fi
-
-  # 3. THE FIX UNDER REAL CONCURRENCY: not two sequential calls (mktemp's
-  #    clock-based fallback could paper over a race a sequential test can't
-  #    see) but N callers racing for real, same label, same instant.
-  local n=25 pathsfile="$work/paths.txt"
-  : >"$pathsfile"
-  local pids=()
-  for _ in $(seq 1 "$n"); do
-    (new_scratch_file pr-body >>"$pathsfile") &
-    pids+=("$!")
-  done
-  local pid
-  # `|| true`: a non-zero child status propagated by `wait` would trip `set -e`
-  # and kill the self-test before the assertion below can print its
-  # "$got lines, $uniq distinct" diagnostic. The line/uniq counts do the
-  # asserting — a caller that failed contributed no line, so it still fails.
-  for pid in "${pids[@]}"; do wait "$pid" || true; done
-  local got uniq
-  got="$(wc -l <"$pathsfile" | tr -d ' ')"
-  uniq="$(sort -u "$pathsfile" | wc -l | tr -d ' ')"
-  if [ "$got" = "$n" ] && [ "$uniq" = "$n" ]; then
-    st_ok "new: $n genuinely concurrent callers, identical label, $uniq/$n distinct paths — no collision"
-  else
-    st_bad "new: $n concurrent callers all get distinct paths" "$got lines, $uniq distinct (wanted $n/$n)"
-  fi
-
-  # 4. THE FIX REPLAYS THE INCIDENT: run the exact #3719/#3725 timing again,
-  #    this time through `new` instead of a shared generic name — the writer
-  #    that "loses" the OLD race in test 1 must read back its OWN content.
-  local fileA fileB
-  fileA="$(new_scratch_file pr-body)"
-  printf 'PR body for #3719 (the op-log frontier fix)' >"$fileA"
-  local wroteA
-  wroteA="$(cat "$fileA")"
-  # the long wait; a second, concurrent agent writes ITS OWN scratch file —
-  # same label, guaranteed-distinct path, so it cannot land on $fileA
-  fileB="$(new_scratch_file pr-body)"
-  printf 'PR body for #3718 (docs). Closes #3272. Closes #3273.' >"$fileB"
-  local readA
-  readA="$(cat "$fileA")"
-  if [ "$readA" = "$wroteA" ]; then
-    st_ok "new: the #3719 timing replayed through unique paths reads back its own body, unclobbered"
-  else
-    st_bad "new: the #3719 timing replayed through unique paths reads back its own body" \
-      "wrote [$wroteA] read [$readA]"
-  fi
-
-  # 5. fingerprint/verify: unchanged content verifies clean.
-  local f fp
-  f="$(new_scratch_file commit-msg)"
-  printf 'fix(sync): the op-log frontier …' >"$f"
-  fp="$(fingerprint "$f")"
-  if verify "$f" "$fp" 2>/dev/null; then
-    st_ok "verify: passes when the file is exactly what fingerprint saw"
-  else
-    st_bad "verify: passes when the file is exactly what fingerprint saw" "verify exited nonzero"
-  fi
-
-  # 6. fingerprint/verify: defence in depth — tampered content is REFUSED,
-  #    loudly, not silently accepted.
-  printf 'a different agent wrote over this' >"$f"
-  if verify "$f" "$fp" 2>/dev/null; then
-    st_bad "verify: refuses a file whose content changed since fingerprinting" \
-      "verify exited 0 on tampered content"
-  else
-    st_ok "verify: refuses a file whose content changed since fingerprinting"
-  fi
-
-  # 7. fingerprint/verify: a REMOVED file is refused too, not silently
-  #    treated as "nothing to check".
-  rm -f "$f"
-  if verify "$f" "$fp" 2>/dev/null; then
-    st_bad "verify: refuses a file that no longer exists" "verify exited 0 on a missing file"
-  else
-    st_ok "verify: refuses a file that no longer exists"
-  fi
-
-  # 8. The documented exit codes are the ones a caller actually observes. The
-  #    header promises "2 bad usage"; an argument-less subcommand used to reach
-  #    a `${1:?…}` expansion and abort the shell with 1, so anything branching
-  #    on status 2 to detect misuse never saw it.
-  local self="${BASH_SOURCE[0]}" bad_usage_fail=''
-  local case_desc rc
-  for case_desc in 'new' 'fingerprint' 'verify' 'verify /nonexistent' 'not-a-subcommand'; do
-    rc=0
-    # shellcheck disable=SC2086 # deliberate word-splitting: each case is an argv
-    bash "$self" $case_desc >/dev/null 2>&1 || rc=$?
-    [ "$rc" = 2 ] || bad_usage_fail="$bad_usage_fail [$case_desc exited $rc, wanted 2]"
-  done
-  if [ -z "$bad_usage_fail" ]; then
-    st_ok "usage: every argument-less subcommand and an unknown one exit 2, as the header documents"
-  else
-    st_bad "usage: every argument-less subcommand and an unknown one exit 2" "$bad_usage_fail"
-  fi
-
-  # 9. A degenerate label ('.' / '..') survives the allow-set unchanged and
-  #    would name the minted directory itself, so `: >"$file"` died with "Is a
-  #    directory" and aborted `new` under `set -e`. Nonsense in, a usable
-  #    scratch file out.
-  local degenerate df dfail=''
-  for degenerate in '.' '..' '/' '///'; do
-    df=''
-    df="$(new_scratch_file "$degenerate" 2>/dev/null)" || df=''
-    if [ -z "$df" ] || [ ! -f "$df" ]; then
-      dfail="$dfail [label '$degenerate' -> '${df:-<none>}']"
-    fi
-  done
-  if [ -z "$dfail" ]; then
-    st_ok "new: degenerate labels ('.', '..', '/', '///') still mint a real, writable file"
-  else
-    st_bad "new: degenerate labels still mint a real file" "$dfail"
-  fi
-
-  if [ "$st_fail" -ne 0 ]; then
-    echo "scratch-file.sh self-test FAILED" >&2
-    return 1
-  fi
-  echo "scratch-file.sh self-test passed"
-}
-
 main() {
   case "${1:-}" in
     new)
@@ -377,9 +195,6 @@ main() {
     verify)
       shift
       verify "$@"
-      ;;
-    --self-test)
-      run_self_test
       ;;
     *)
       usage

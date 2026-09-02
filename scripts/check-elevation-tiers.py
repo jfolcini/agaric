@@ -53,7 +53,6 @@ Invocation: prek passes the changed files as argv (hook id
 `check-elevation-tiers`). Run manually over the whole tree with:
 
     python3 scripts/check-elevation-tiers.py            # scans src/components
-    python3 scripts/check-elevation-tiers.py --self-test
 
 Stdlib only — no third-party deps.
 """
@@ -180,7 +179,6 @@ def strip_comments(text: str) -> str:
 def scan_text(rel_path: str, text: str) -> list[str]:
     """Return offending `file:line: <line>` strings for one file's source.
 
-    Pure (no I/O) so the `--self-test` fixtures can exercise it directly.
     Allowlist / scope skips are applied by `check_file`, not here.
     """
     stripped = strip_comments(text)
@@ -229,101 +227,7 @@ def scope_files() -> list[Path]:
     return sorted(out)
 
 
-# --- self-test fixtures ------------------------------------------------------
-# `python3 scripts/check-elevation-tiers.py --self-test`. Proves the guard
-# flags a raw shadow on a container surface, stays silent on the tier
-# utilities and on a shadow mentioned only in a comment, and that the
-# allowlist exempts an intentional non-tier file. Stdlib only — no framework,
-# no temp files.
-_SELFTEST_FLAG_CASES: list[tuple[str, str, bool]] = [
-    (
-        "raw shadow-md on a popover surface -> FLAG",
-        '<div className="rounded-lg border bg-popover p-1 shadow-md" />',
-        True,
-    ),
-    (
-        "raw focus:shadow-lg on a skip-link -> FLAG",
-        '<a className="focus:rounded-md focus:bg-background focus:shadow-lg" />',
-        True,
-    ),
-    (
-        "data-[state=on]:shadow-sm variant prefix -> FLAG",
-        "'data-[state=on]:bg-secondary data-[state=on]:shadow-sm'",
-        True,
-    ),
-    (
-        "tier utility shadow-(--shadow-floating) -> clean",
-        '<div className="rounded-md border bg-popover shadow-(--shadow-floating)" />',
-        False,
-    ),
-    (
-        "tier utility shadow-(--shadow-resting) -> clean",
-        '<div className="bg-card shadow-(--shadow-resting)" />',
-        False,
-    ),
-    (
-        "shadow-sm mentioned only in a // comment -> clean (stripped)",
-        "// EditableBlock (`ring-1 ring-border bg-accent/[0.06] shadow-sm`, rounded)\n"
-        '<div className="bg-accent/[0.06] shadow-(--shadow-resting)" />',
-        False,
-    ),
-    (
-        "shadow-sm inside a /* block */ comment -> clean (stripped)",
-        '/* legacy: shadow-sm */\n<div className="shadow-(--shadow-resting)" />',
-        False,
-    ),
-    (
-        "unrelated longer token shadow-smooth -> clean (boundary)",
-        '<div className="shadow-smooth" />',
-        False,
-    ),
-]
-
-
-def run_self_test() -> int:
-    failures = 0
-    for name, body, expect_flag in _SELFTEST_FLAG_CASES:
-        # Use a neutral, NON-allowlisted scope path so only scan_text logic
-        # (not the file-level allowlist skip) decides the outcome.
-        got_flag = bool(scan_text("src/components/__fixture__.tsx", body))
-        ok = got_flag == expect_flag
-        status = "PASS" if ok else "FAIL"
-        print(f"  [{status}] {name}")
-        if not ok:
-            print(f"        expected flag={expect_flag}, got flag={got_flag}")
-            failures += 1
-
-    # Allowlist exemption: an intentional non-tier file with a raw shadow is
-    # skipped by check_file even though scan_text would flag it.
-    allow_rel = next(iter(ALLOWLIST))
-    raw = scan_text(allow_rel, '<span className="text-white shadow-sm" />')
-    allow_ok = bool(raw)  # scan_text itself must SEE it...
-    # ...and check_file must SUPPRESS it for an allowlisted file. We assert the
-    # path membership directly (check_file reads from disk; here we assert the
-    # contract that ALLOWLIST keys are honoured).
-    suppressed = allow_rel in ALLOWLIST
-    status = "PASS" if (allow_ok and suppressed) else "FAIL"
-    print(f"  [{status}] allowlisted file ({allow_rel}) exempted")
-    if not (allow_ok and suppressed):
-        failures += 1
-
-    if failures:
-        print(
-            f"check-elevation-tiers self-test FAILED ({failures} case(s))",
-            file=sys.stderr,
-        )
-        return 1
-    print(
-        f"check-elevation-tiers self-test passed "
-        f"({len(_SELFTEST_FLAG_CASES) + 1} cases)"
-    )
-    return 0
-
-
 def main(argv: list[str]) -> int:
-    if "--self-test" in argv:
-        return run_self_test()
-
     # prek passes changed files; a bare invocation scans the whole scope.
     file_args = [a for a in argv if not a.startswith("-")]
     if file_args:

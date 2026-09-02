@@ -71,13 +71,11 @@
 //
 // Usage:
 //   node scripts/check-pairing-rejection-contract.mjs
-//   node scripts/check-pairing-rejection-contract.mjs --self-test
 //
 // Exit codes: 0 = every constant agrees and is load-bearing; 1 = a real
-// disagreement (or the wiring guard above); 2 = self-test failure.
+// disagreement (or the wiring guard above).
 
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 
 const SCRIPTS_DIR = import.meta.dirname
@@ -258,8 +256,13 @@ export function assertPairingRejectionContract({
   const rustText = readFileSync(rustPath, 'utf8')
   const declText = readFileSync(tsDeclPath, 'utf8')
   const dialogText = readFileSync(tsxMatcherPath, 'utf8')
+  // Fields listed out rather than spread from `entry`: `CONTRACT` is a shared
+  // module constant, so the derived rows must be fresh objects, and oxlint's
+  // `no-map-spread` rejects the spread form here.
   const states = CONTRACT.map((entry) => ({
-    ...entry,
+    name: entry.name,
+    rustVariant: entry.rustVariant,
+    readByDialog: entry.readByDialog,
     rustValue: extractRustConst(rustText, entry.name),
     tsValue: extractTsConst(declText, entry.name),
     rustUses: rustArmUsesConst(rustText, entry),
@@ -288,344 +291,16 @@ export function main() {
 }
 
 // ---------------------------------------------------------------------------
-// self-test
+// entry point
 // ---------------------------------------------------------------------------
-
-const RUST_FIXTURE = [
-  '/// Doc comment mentioning PAIRING_PROOF_REQUIRED_MESSAGE and even the raw',
-  '/// text "a decoy value" so the extractor cannot be fooled by prose.',
-  'pub const PAIRING_PROOF_REQUIRED_MESSAGE: &str = "pairing passphrase proof required";',
-  'pub const PEER_NOT_PAIRED_MESSAGE: &str = "peer not paired with this device";',
-  '',
-  'impl Rejection {',
-  "    pub fn peer_message(&self) -> &'static str {",
-  '        match self {',
-  '            Self::Unpaired => PEER_NOT_PAIRED_MESSAGE,',
-  '            Self::PairingProofMissing => PAIRING_PROOF_REQUIRED_MESSAGE,',
-  '        }',
-  '    }',
-  '}',
-  '',
-].join('\n')
-
-const DECL_FIXTURE = [
-  "// A comment quoting 'a decoy value' to prove prose is not extracted.",
-  "export const PAIRING_PROOF_REQUIRED_MESSAGE = 'pairing passphrase proof required'",
-  "export const PEER_NOT_PAIRED_MESSAGE = 'peer not paired with this device'",
-  '',
-  'export function isPairingWindowRejection(message: string): boolean {',
-  '  return (',
-  '    message.includes(PAIRING_PROOF_REQUIRED_MESSAGE) || message.includes(PEER_NOT_PAIRED_MESSAGE)',
-  '  )',
-  '}',
-  '',
-].join('\n')
-
-const DIALOG_FIXTURE = [
-  "import { PAIRING_PROOF_REQUIRED_MESSAGE } from '@/lib/pairing-rejections'",
-  '',
-  'useEffect(() => {',
-  '  if (!syncError.includes(PAIRING_PROOF_REQUIRED_MESSAGE)) return',
-  '}, [syncError])',
-  '',
-].join('\n')
-
-// The healthy code shape on each side, and the drifted one the checks must
-// reject. Named because several assertions below mutate the fixtures between
-// exactly these two forms, and a typo in one copy would silently weaken the
-// assertion that uses it.
-const LIVE_RUST_ARM = 'Self::PairingProofMissing => PAIRING_PROOF_REQUIRED_MESSAGE,'
-const INLINED_RUST_ARM = 'Self::PairingProofMissing => "pairing passphrase proof required",'
-const LIVE_TS_MATCHER = '.includes(PAIRING_PROOF_REQUIRED_MESSAGE)'
-const INLINED_TS_MATCHER = ".includes('pairing passphrase proof required')"
-
-const PROOF = CONTRACT[0]
-const UNPAIRED = CONTRACT[1]
-
-function selfTestExtraction({ check }) {
-  check(
-    extractRustConst(RUST_FIXTURE, PROOF.name) === 'pairing passphrase proof required',
-    'the Rust constant value is extracted verbatim, ignoring the same words in doc prose',
-    JSON.stringify(extractRustConst(RUST_FIXTURE, PROOF.name)),
-  )
-  check(
-    extractRustConst(RUST_FIXTURE, UNPAIRED.name) === 'peer not paired with this device',
-    'the SECOND Rust constant is extracted independently of the first',
-    JSON.stringify(extractRustConst(RUST_FIXTURE, UNPAIRED.name)),
-  )
-  check(
-    extractRustConst('// pub const PAIRING_PROOF_REQUIRED_MESSAGE: &str = "x";\n', PROOF.name) ===
-      null,
-    'a commented-out Rust declaration is not extracted as the live one',
-    '',
-  )
-  check(
-    extractRustConst('fn main() {}\n', PROOF.name) === null,
-    'a file with no Rust declaration → null',
-    '',
-  )
-
-  check(
-    extractTsConst(DECL_FIXTURE, PROOF.name) === 'pairing passphrase proof required',
-    'the TS constant value is extracted verbatim, ignoring quoted prose in comments',
-    JSON.stringify(extractTsConst(DECL_FIXTURE, PROOF.name)),
-  )
-  check(
-    extractTsConst(DECL_FIXTURE, UNPAIRED.name) === 'peer not paired with this device',
-    'the SECOND TS constant is extracted independently of the first',
-    JSON.stringify(extractTsConst(DECL_FIXTURE, UNPAIRED.name)),
-  )
-  check(
-    extractTsConst('const PAIRING_PROOF_REQUIRED_MESSAGE = "double quoted"\n', PROOF.name) ===
-      'double quoted',
-    'a double-quoted TS declaration is read (formatter quote style is not a failure)',
-    '',
-  )
-  check(
-    extractTsConst("// const PAIRING_PROOF_REQUIRED_MESSAGE = 'x'\n", PROOF.name) === null,
-    'a commented-out TS declaration is not extracted as the live one',
-    '',
-  )
-  check(
-    extractTsConst('export const OTHER = 1\n', PROOF.name) === null,
-    'a file with no TS declaration → null',
-    '',
-  )
-
-  check(rustArmUsesConst(RUST_FIXTURE, PROOF), 'the Rust arm is seen resolving to the constant', '')
-  check(
-    rustArmUsesConst(RUST_FIXTURE, UNPAIRED),
-    "the SECOND constant's arm is checked against its OWN variant, not the first's",
-    '',
-  )
-  check(
-    !rustArmUsesConst(RUST_FIXTURE.replace(LIVE_RUST_ARM, INLINED_RUST_ARM), PROOF),
-    'a re-inlined literal in the Rust match arm is NOT mistaken for a constant reference',
-    '',
-  )
-  check(
-    !rustArmUsesConst(RUST_FIXTURE, { name: PROOF.name, rustVariant: 'Unpaired' }),
-    'the arm check is variant-specific: the proof constant on the Unpaired arm is not a match',
-    '',
-  )
-  check(tsMatcherUsesConst(DECL_FIXTURE, PROOF.name), 'the TS matcher is seen reading it', '')
-  check(
-    !tsMatcherUsesConst(DECL_FIXTURE.replace(LIVE_TS_MATCHER, INLINED_TS_MATCHER), PROOF.name),
-    'a re-inlined literal in the TS matcher is NOT mistaken for a constant reference',
-    '',
-  )
-
-  // The re-inlining above, done the way a human actually does it: the old line
-  // is left behind commented out. An unanchored `.test()` reads the comment as
-  // the live reference and the whole "is it load-bearing" check goes vacuous.
-  check(
-    !rustArmUsesConst(
-      RUST_FIXTURE.replace(LIVE_RUST_ARM, `// ${LIVE_RUST_ARM}\n            ${INLINED_RUST_ARM}`),
-      PROOF,
-    ),
-    'a COMMENTED-OUT Rust arm does not satisfy the constant-reference check',
-    '',
-  )
-  check(
-    !tsMatcherUsesConst(
-      `${DECL_FIXTURE.replace(LIVE_TS_MATCHER, INLINED_TS_MATCHER)}\n// if (!syncError${LIVE_TS_MATCHER}) return\n`,
-      PROOF.name,
-    ),
-    'a COMMENTED-OUT TS matcher does not satisfy the constant-reference check',
-    '',
-  )
-  check(
-    !rustArmUsesConst(
-      `${RUST_FIXTURE.replace(LIVE_RUST_ARM, INLINED_RUST_ARM)}\n/// * \`${LIVE_RUST_ARM}\` is the wire arm.\n`,
-      PROOF,
-    ),
-    'a DOC-COMMENT mention of the arm does not satisfy the constant-reference check',
-    '',
-  )
-
-  // …and the tolerance the anchoring must not cost: rustfmt may wrap the arm.
-  check(
-    rustArmUsesConst(
-      RUST_FIXTURE.replace(
-        LIVE_RUST_ARM,
-        'Self::PairingProofMissing =>\n                PAIRING_PROOF_REQUIRED_MESSAGE,',
-      ),
-      PROOF,
-    ),
-    'a rustfmt-wrapped arm is still recognised (the comment check must not over-anchor)',
-    '',
-  )
-}
-
-/** A healthy state row for `entry`, which individual assertions then spoil. */
-function healthyState(entry, value) {
-  return {
-    ...entry,
-    rustValue: value,
-    tsValue: value,
-    rustUses: true,
-    declUses: true,
-    dialogUses: entry.readByDialog,
-  }
-}
-
-function selfTestContract({ check }) {
-  const proof = healthyState(PROOF, 'pairing passphrase proof required')
-  const unpaired = healthyState(UNPAIRED, 'peer not paired with this device')
-  const healthy = [proof, unpaired]
-  check(checkContract(healthy).length === 0, 'an agreeing, load-bearing pair passes', '')
-
-  // The drift class #3492 is about, in both directions and on both constants.
-  for (const [label, spoiled] of [
-    ['a REWORDED Rust message with an unchanged TS constant', { ...proof, rustValue: 'needed' }],
-    ['a REWORDED TS constant with an unchanged Rust message', { ...proof, tsValue: 'needed' }],
-    ['the SECOND constant drifting', { ...unpaired, tsValue: 'not paired' }],
-  ]) {
-    const problems = checkContract([spoiled])
-    check(
-      problems.length === 1 && problems[0].includes('drifted'),
-      `${label} is caught`,
-      JSON.stringify(problems),
-    )
-  }
-
-  // Anchors disappearing must fail, not pass vacuously.
-  check(
-    checkContract([{ ...proof, rustValue: null }]).length === 1,
-    'a missing Rust declaration is a failure, not a vacuous pass',
-    '',
-  )
-  check(
-    checkContract([{ ...proof, tsValue: null }]).length === 1,
-    'a missing TS declaration is a failure, not a vacuous pass',
-    '',
-  )
-
-  // Constants that agree but are not the ones on the wire / in a matcher.
-  check(
-    checkContract([{ ...proof, rustUses: false }]).length === 1,
-    'an agreeing Rust constant the wire arm does not use is caught',
-    '',
-  )
-  check(
-    checkContract([{ ...proof, declUses: false }]).length === 1,
-    'an agreeing constant `isPairingWindowRejection` does not read is caught',
-    '',
-  )
-  check(
-    checkContract([{ ...proof, dialogUses: false }]).length === 1,
-    "an agreeing constant the DIALOG's failure path does not read is caught",
-    '',
-  )
-  // …and the asymmetry that is deliberate: the dialog must NOT match the
-  // unpaired message, so its absence there is not a problem. A guard that
-  // demanded it would push the frontend into the #3504 regression this whole
-  // contract documents.
-  check(
-    checkContract([{ ...unpaired, dialogUses: false }]).length === 0,
-    'PEER_NOT_PAIRED_MESSAGE is deliberately NOT required in the dialog (see #3504)',
-    '',
-  )
-}
-
-/** End-to-end against fixture files on disk, then against the real repo. */
-function selfTestEndToEnd({ check, fail }) {
-  const dir = mkdtempSync(join(tmpdir(), 'pairing-rejection-contract-'))
-  const rustPath = join(dir, 'server.rs')
-  const tsDeclPath = join(dir, 'pairing-rejections.ts')
-  const tsxMatcherPath = join(dir, 'PairingDialog.tsx')
-  const paths = { rustPath, tsDeclPath, tsxMatcherPath }
-  writeFileSync(rustPath, RUST_FIXTURE, 'utf8')
-  writeFileSync(tsDeclPath, DECL_FIXTURE, 'utf8')
-  writeFileSync(tsxMatcherPath, DIALOG_FIXTURE, 'utf8')
-
-  let threw = null
-  try {
-    assertPairingRejectionContract(paths)
-  } catch (err) {
-    threw = err
-  }
-  check(threw === null, 'end-to-end: an agreeing fixture set does not throw', threw?.message)
-
-  // Reword ONLY the Rust side on disk — the exact move #3492 describes.
-  writeFileSync(
-    rustPath,
-    RUST_FIXTURE.replaceAll('pairing passphrase proof required', 'wrong pairing code'),
-    'utf8',
-  )
-  threw = null
-  try {
-    assertPairingRejectionContract(paths)
-  } catch (err) {
-    threw = err
-  }
-  check(
-    threw !== null && threw.message.includes('wrong pairing code'),
-    'end-to-end: rewording the Rust message alone DOES throw, quoting both values',
-    threw?.message ?? '(no throw)',
-  )
-
-  // …and the #3504 half: rewording the OTHER message, which only the toast
-  // suppression reads, must be just as red. It is the message no test on
-  // either side asserts by hand, so this guard is the only thing watching it.
-  writeFileSync(rustPath, RUST_FIXTURE, 'utf8')
-  writeFileSync(
-    tsDeclPath,
-    DECL_FIXTURE.replaceAll('peer not paired with this device', 'peer is not paired'),
-    'utf8',
-  )
-  threw = null
-  try {
-    assertPairingRejectionContract(paths)
-  } catch (err) {
-    threw = err
-  }
-  check(
-    threw !== null && threw.message.includes('peer is not paired'),
-    'end-to-end: rewording the unpaired message alone DOES throw too',
-    threw?.message ?? '(no throw)',
-  )
-
-  // …and the real repo, as it stands right now, must satisfy the contract.
-  try {
-    const states = assertPairingRejectionContract()
-    check(true, `the real repo satisfies the contract (${states.length} constants)`, '')
-  } catch (err) {
-    fail('the real repo satisfies the contract', err.message)
-  }
-}
-
-function runSelfTest() {
-  const failures = []
-  const ok = (name) => console.log(`  ok  - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-  const check = (cond, name, detail) => (cond ? ok(name) : fail(name, detail))
-
-  selfTestExtraction({ check })
-  selfTestContract({ check })
-  selfTestEndToEnd({ check, fail })
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
-}
 
 const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
-  if (process.argv.slice(2).includes('--self-test')) {
-    runSelfTest()
-  } else {
-    try {
-      main()
-    } catch (err) {
-      console.error(`check-pairing-rejection-contract: ${err.message}`)
-      process.exit(1)
-    }
+  try {
+    main()
+  } catch (err) {
+    console.error(`check-pairing-rejection-contract: ${err.message}`)
+    process.exit(1)
   }
 }

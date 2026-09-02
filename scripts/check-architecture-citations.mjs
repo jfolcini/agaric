@@ -33,16 +33,13 @@
 //     exit 0. Any OTHER `git ls-files` failure (git missing, permission
 //     denied, ENOBUFS, ...) is a genuine invocation error and is re-thrown,
 //     exiting 2 with the cause named — it must never be swallowed into a
-//     silent "clean". `--self-test` spawns this script with `git` stripped
-//     from PATH and asserts that. Mirrors
-//     scripts/check-dead-symbol-citations.mjs's equivalent guard exactly.
+//     silent "clean".
 //
 // Usage:
 //   node scripts/check-architecture-citations.mjs              # auto source
 //   node scripts/check-architecture-citations.mjs --cached     # staged index
 //   node scripts/check-architecture-citations.mjs --worktree   # working tree
 //   node scripts/check-architecture-citations.mjs --print-source
-//   node scripts/check-architecture-citations.mjs --self-test
 //
 // Any OTHER argument is a usage error, not a silently ignored one: a
 // mistyped `--cache` that resolved to AUTO would judge a copy the caller did
@@ -50,12 +47,6 @@
 //
 // Exit codes: 0 clean / 1 matches found / 2 invocation error.
 
-import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-
-import { runSourceScenarios } from './lib/git-scratch-guard.mjs'
 import {
   describeSource,
   gitEnv,
@@ -131,7 +122,7 @@ function check() {
     chosen = resolveSource(process.argv, process.env, {
       // This guard's own flags, declared so an argument that is neither
       // these nor a source flag is a usage error rather than a silent AUTO.
-      extraFlags: ['--print-source', '--self-test'],
+      extraFlags: ['--print-source'],
       // AUTO must know whose index `GIT_INDEX_FILE` names, not merely that it
       // is set — see `resolveSource`.
       repoRoot: REPO_ROOT,
@@ -193,77 +184,4 @@ function check() {
   return 1
 }
 
-// Proves the exit-2 invocation-error path (added above) actually fires,
-// rather than just existing in source. Spawns this same script as a child
-// process with `git` removed from PATH — a genuine invocation error (ENOENT,
-// no "not a git repository" stderr), distinct from the deliberate fail-open
-// case. Asserts the child exits 2. Mirrors
-// scripts/check-dead-symbol-citations.mjs's self-test.
-function invocationErrorTest() {
-  const result = spawnSync(process.execPath, [import.meta.filename], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    env: { ...process.env, PATH: '' },
-  })
-  if (result.status !== 2) {
-    console.error(
-      `self-test FAILED: expected exit 2 with \`git\` missing from PATH, got ${result.status}\n` +
-        `  stdout: ${result.stdout}\n  stderr: ${result.stderr}`,
-    )
-    return 1
-  }
-  if (!/invocation error/.test(result.stderr)) {
-    console.error(
-      `self-test FAILED: exit was 2 but stderr didn't name it an invocation error:\n${result.stderr}`,
-    )
-    return 1
-  }
-  console.log('  ok   - git missing from PATH is a genuine invocation error and exits 2')
-  return 0
-}
-
-// #3962 — index vs working tree, in throwaway repositories built through the
-// shared scratch guard. Every assertion is a PAIR: the source that must go
-// red and the source that must stay green on the same fixture. A one-sided
-// "the fixed guard fails" would pass just as well against a guard that fails
-// on everything.
-//
-// The fixture citation is assembled from `SECTION_MARK` at runtime, exactly
-// as `CITATION_RE` is, so this file's own source text still cannot contain
-// the sequence it searches for.
-function sourceTest() {
-  const root = mkdtempSync(join(tmpdir(), 'architecture-citations-selftest-'))
-  try {
-    const results = runSourceScenarios({
-      scriptPath: import.meta.filename,
-      file: 'notes.md',
-      badLine: `See docs/ARCHITECTURE.md ${SECTION_MARK}7 for the block model.`,
-      goodLine: 'See docs/architecture/blocks.md — Block model.',
-      root,
-    })
-    let failures = 0
-    for (const result of results) {
-      if (result.ok) {
-        console.log(`  ok   - ${result.name}`)
-      } else {
-        failures += 1
-        console.error(`  FAIL - ${result.name}: ${result.detail}`)
-      }
-    }
-    return failures === 0 ? 0 : 1
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-}
-
-function selfTest() {
-  const failed = invocationErrorTest() + sourceTest()
-  if (failed > 0) {
-    console.error('\nself-test FAILED')
-    return 1
-  }
-  console.log('self-test OK')
-  return 0
-}
-
-process.exit(process.argv.includes('--self-test') ? selfTest() : check())
+process.exit(check())

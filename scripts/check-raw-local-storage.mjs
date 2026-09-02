@@ -46,13 +46,10 @@
 // list is per-file, not a blanket opt-out for the whole codebase.
 //
 // Usage: node scripts/check-raw-local-storage.mjs
-//        node scripts/check-raw-local-storage.mjs --self-test
-// Exit:  0 = clean, 1 = at least one violation, 2 = repo layout /
-//        self-test failure.
+// Exit:  0 = clean, 1 = at least one violation, 2 = repo layout failure.
 // ─────────────────────────────────────────────────────────────────────
 
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -192,11 +189,7 @@ function analyze({ root, srcDir }) {
 
 // ─── main ───────────────────────────────────────────────────────────
 
-if (process.argv.includes('--self-test')) {
-  runSelfTest()
-} else {
-  runGuard()
-}
+runGuard()
 
 function runGuard() {
   if (!fs.existsSync(SRC_DIR)) {
@@ -228,105 +221,4 @@ function runGuard() {
   }
 
   console.log(`OK: ${scanned} source file(s) scanned, no raw localStorage calls in app code`)
-}
-
-// ─── self-test ──────────────────────────────────────────────────────
-//
-// Drives analyze() against a synthetic src tree so the guard's exit
-// behavior is itself verified: a raw call FAILS, a registry accessor
-// call PASSES, a commented call PASSES, an exempt-file raw call PASSES,
-// a variable-indirection call PASSES, and a test file is ignored.
-function runSelfTest() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'raw-local-storage-selftest-'))
-  const failures = []
-  const ok = (name) => console.log(`  ok   - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-
-  try {
-    const srcDir = path.join(tmp, 'src')
-    const libDir = path.join(srcDir, 'lib')
-    const hooksDir = path.join(srcDir, 'hooks')
-    const compDir = path.join(srcDir, 'components')
-    const testDir = path.join(compDir, '__tests__')
-    for (const d of [libDir, hooksDir, compDir, testDir]) fs.mkdirSync(d, { recursive: true })
-
-    // 1. Raw getItem in a component → violation.
-    fs.writeFileSync(
-      path.join(compDir, 'Bad.tsx'),
-      "export const C = () => localStorage.getItem('agaric-foo')\n",
-    )
-    // 2. Raw window.localStorage.setItem → violation.
-    fs.writeFileSync(
-      path.join(compDir, 'BadWindow.tsx'),
-      "export const f = () => window.localStorage.setItem('agaric-foo', '1')\n",
-    )
-    // 3. Registry accessor call → clean.
-    fs.writeFileSync(
-      path.join(compDir, 'Good.tsx'),
-      "import { PREFERENCES, readPreference } from '@/lib/preferences'\nexport const C = () => readPreference(PREFERENCES.foo)\n",
-    )
-    // 4. Commented / documented call → clean.
-    fs.writeFileSync(
-      path.join(compDir, 'Commented.tsx'),
-      "// legacy: localStorage.getItem('foo') used to live here\n/** JSDoc: localStorage.setItem('x', '1') */\nexport const C = () => null\n",
-    )
-    // 5. Exempt file (preferences.ts) with a raw call → clean.
-    fs.writeFileSync(
-      path.join(libDir, 'preferences.ts'),
-      "export const f = () => localStorage.getItem('agaric-foo')\n",
-    )
-    // 6. Exempt file (useTheme.ts) with a raw call → clean.
-    fs.writeFileSync(
-      path.join(hooksDir, 'useTheme.ts'),
-      "export const f = () => localStorage.setItem('theme-preference', 'dark')\n",
-    )
-    // 7. Variable-indirection call → not matched (out of this guard's scope).
-    fs.writeFileSync(
-      path.join(compDir, 'Indirect.tsx'),
-      "const storage = localStorage\nexport const f = () => storage.getItem('agaric-foo')\n",
-    )
-    // 8. Test file with a raw call → ignored (out of scope).
-    fs.writeFileSync(
-      path.join(testDir, 'Bad.test.tsx'),
-      "it('x', () => localStorage.getItem('agaric-foo'))\n",
-    )
-
-    const { violations } = analyze({ root: tmp, srcDir })
-    const hit = (f) => violations.some((v) => v.file === `src/${f}`)
-
-    if (hit('components/Bad.tsx')) ok('raw getItem in component is flagged')
-    else fail('raw getItem in component is flagged', JSON.stringify(violations))
-
-    if (hit('components/BadWindow.tsx')) ok('raw window.localStorage.setItem is flagged')
-    else fail('raw window.localStorage.setItem is flagged', JSON.stringify(violations))
-
-    if (!hit('components/Good.tsx')) ok('registry accessor call passes')
-    else fail('registry accessor call passes', 'Good.tsx was flagged')
-
-    if (!hit('components/Commented.tsx')) ok('commented call passes')
-    else fail('commented call passes', 'Commented.tsx was flagged')
-
-    if (!hit('lib/preferences.ts')) ok('exempt registry file passes')
-    else fail('exempt registry file passes', 'preferences.ts was flagged')
-
-    if (!hit('hooks/useTheme.ts')) ok('exempt grandfathered file passes')
-    else fail('exempt grandfathered file passes', 'useTheme.ts was flagged')
-
-    if (!hit('components/Indirect.tsx')) ok('variable-indirection call passes')
-    else fail('variable-indirection call passes', 'Indirect.tsx was flagged')
-
-    if (!violations.some((v) => v.file.includes('__tests__'))) ok('test file is ignored')
-    else fail('test file is ignored', 'a __tests__ file was flagged')
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true })
-  }
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
 }

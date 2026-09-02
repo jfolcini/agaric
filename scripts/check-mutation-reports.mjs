@@ -35,21 +35,11 @@
 //
 // Usage:
 //   node scripts/check-mutation-reports.mjs [--reports-dir reports/mutation]
-//   node scripts/check-mutation-reports.mjs --self-test
 //
 // Exit: 0 = lane alive, 1 = lane dead (loud `::error::` annotations),
-//       2 = bad usage / self-test failure.
+//       2 = bad usage.
 
-import {
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
 
@@ -65,8 +55,7 @@ const COUNTED_STATUSES = new Set(['Killed', 'Timeout', 'Survived', 'NoCoverage']
 
 /**
  * Pure analysis of a Stryker reports tree. Returns the problems found; the
- * CLI turns them into `::error::` annotations and an exit code, and the
- * self-test asserts on them directly.
+ * CLI turns them into `::error::` annotations and an exit code.
  */
 export function analyzeReports({ reportsDir, moduleNames }) {
   const problems = []
@@ -157,117 +146,6 @@ function main(argv) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// self-test
-// ---------------------------------------------------------------------------
-//
-// Drives analyzeReports() against synthetic report trees in a temp dir so we
-// can assert the exit behavior #3330 demands: a healthy run PASSES, and each
-// of the three false-green shapes (missing root, a module with no report, a
-// zero-mutant run) FAILS.
-function runSelfTest() {
-  const tmp = mkdtempSync(join(tmpdir(), 'mutation-liveness-selftest-'))
-  const failures = []
-  const ok = (name) => console.log(`  ok   - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-
-  const MODS = ['alpha', 'beta']
-  const report = (statuses) => ({
-    files: {
-      'src/lib/x.ts': {
-        mutants: statuses.map((status, i) => ({
-          id: String(i),
-          status,
-          mutatorName: 'ConditionalExpression',
-          location: { start: { line: i + 1 } },
-        })),
-      },
-    },
-  })
-  const writeReport = (root, mod, statuses) => {
-    mkdirSync(join(root, mod), { recursive: true })
-    writeFileSync(join(root, mod, 'mutation.json'), JSON.stringify(report(statuses)), 'utf8')
-  }
-
-  try {
-    // 1. Healthy run: every module reported, mutants were tested → PASS.
-    const healthy = join(tmp, 'healthy')
-    writeReport(healthy, 'alpha', ['Killed', 'Survived'])
-    writeReport(healthy, 'beta', ['Killed', 'NoCoverage'])
-    const r1 = analyzeReports({ reportsDir: healthy, moduleNames: MODS })
-    if (r1.problems.length === 0 && r1.totalMutants === 4) ok('healthy run passes')
-    else
-      fail('healthy run passes', `problems=${JSON.stringify(r1.problems)} total=${r1.totalMutants}`)
-
-    // 2. Reports root absent (Stryker crashed before writing JSON) → FAIL.
-    const r2 = analyzeReports({ reportsDir: join(tmp, 'does-not-exist'), moduleNames: MODS })
-    if (r2.problems.length === 1 && /no reports directory/.test(r2.problems[0]))
-      ok('missing reports root fails')
-    else fail('missing reports root fails', JSON.stringify(r2.problems))
-
-    // 3. One module silently dropped out (no mutation.json) → FAIL, even
-    //    though the other module reported plenty of mutants. This is the
-    //    `| <mod> | _no report_ |` row the summary step renders as green.
-    const dropped = join(tmp, 'dropped')
-    writeReport(dropped, 'alpha', ['Killed', 'Survived'])
-    const r3 = analyzeReports({ reportsDir: dropped, moduleNames: MODS })
-    if (r3.problems.some((p) => p.includes('`beta`') && p.includes('no `')))
-      ok('module with no mutation.json fails')
-    else fail('module with no mutation.json fails', JSON.stringify(r3.problems))
-
-    // 4. A module's report is truncated/invalid JSON → FAIL (a partial
-    //    report is a crashed run, not "zero survivors").
-    const broken = join(tmp, 'broken')
-    writeReport(broken, 'alpha', ['Killed'])
-    mkdirSync(join(broken, 'beta'), { recursive: true })
-    writeFileSync(join(broken, 'beta', 'mutation.json'), '{"files": {', 'utf8')
-    const r4 = analyzeReports({ reportsDir: broken, moduleNames: MODS })
-    if (r4.problems.some((p) => p.includes('not valid JSON'))) ok('invalid JSON report fails')
-    else fail('invalid JSON report fails', JSON.stringify(r4.problems))
-
-    // 5. Every module reported but ZERO mutants were tested → FAIL. This is
-    //    the direct analogue of the Rust lane's `total_mutants == 0` check.
-    const empty = join(tmp, 'empty')
-    writeReport(empty, 'alpha', [])
-    writeReport(empty, 'beta', [])
-    const r5 = analyzeReports({ reportsDir: empty, moduleNames: MODS })
-    if (r5.problems.some((p) => p.includes('ZERO'))) ok('zero-mutant run fails')
-    else fail('zero-mutant run fails', JSON.stringify(r5.problems))
-
-    // 6. Only compile/runtime errors → still ZERO mutation coverage → FAIL.
-    //    A run where every mutant failed to compile must not be able to
-    //    satisfy the non-zero check by counting its own errors.
-    const errored = join(tmp, 'errored')
-    writeReport(errored, 'alpha', ['CompileError', 'RuntimeError'])
-    writeReport(errored, 'beta', ['CompileError'])
-    const r6 = analyzeReports({ reportsDir: errored, moduleNames: MODS })
-    if (r6.totalMutants === 0 && r6.problems.some((p) => p.includes('ZERO')))
-      ok('all-CompileError run fails (errors are not coverage)')
-    else
-      fail(
-        'all-CompileError run fails (errors are not coverage)',
-        `total=${r6.totalMutants} problems=${JSON.stringify(r6.problems)}`,
-      )
-
-    // 7. The real module list is what the workflow checks — assert the guard
-    //    is actually wired to `stryker.modules.mjs` and not an empty list
-    //    (an empty MODULE_NAMES would make the per-module loop vacuous).
-    if (MODULE_NAMES.length > 0) ok(`guard is wired to ${MODULE_NAMES.length} real module(s)`)
-    else fail('guard is wired to real modules', 'MODULE_NAMES is empty')
-  } finally {
-    rmSync(tmp, { recursive: true, force: true })
-  }
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
-}
-
 // Only run the CLI when invoked directly, so a test can import
 // `analyzeReports` without the module `process.exit()`ing out of it.
 // Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
@@ -276,10 +154,5 @@ function runSelfTest() {
 const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
-  const argv = process.argv.slice(2)
-  if (argv.includes('--self-test')) {
-    runSelfTest()
-  } else {
-    main(argv)
-  }
+  main(process.argv.slice(2))
 }

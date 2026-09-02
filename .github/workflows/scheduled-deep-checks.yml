@@ -2800,9 +2800,8 @@ jobs:
   #     what the lanes TEST, so a dispatch on `main` with a shortened budget
   #     could report a still-broken lane as recovered and close the issue over
   #     it. Any non-default input dry-runs too.
-  # `checkReporterAuthority` in the script pins every arm (cron writes;
-  # default-input cron-ref dispatch writes; other ref, tag, and each flipped
-  # input do not) by executing this very `run:` block.
+  # The arms: cron writes; default-input cron-ref dispatch writes; any other
+  # ref, tag, or flipped input does not.
   # ---------------------------------------------------------------------------
   report-scheduled-failures:
     needs:
@@ -2847,9 +2846,7 @@ jobs:
           # changed what the lanes test (#3960, fourth pass — see the `run:`).
           # `|| '<default>'` mirrors the lanes' own idiom above and means these
           # are never empty, on any event, so `set -u` is safe. Every input
-          # must appear here: `findDispatchInputEnvMapping` reads this block
-          # and `checkReporterAuthority` fails on an input the step cannot see,
-          # so a new input added to `on:` cannot quietly escape the gate.
+          # must appear here.
           MUTANTS_TIMEOUT_INPUT: ${{ github.event.inputs.mutants_timeout || '900' }}
           FUZZ_SECONDS_INPUT: ${{ github.event.inputs.fuzz_seconds || '120' }}
           SLO_INCLUDE_PROBLEM_INPUT: ${{ github.event.inputs.slo_include_problem || 'false' }}
@@ -2863,7 +2860,7 @@ jobs:
           # path this array stayed empty, so the step aborted before running
           # the reporter at all for anyone on that shell. Keeping the always-
           # passed arguments in the array means it is never empty at the point
-          # of expansion; `findUnportableEmptyArrayExpansions` pins that.
+          # of expansion.
           extra=(--needs-json-file needs.json)
           if [ "$EVENT_NAME" != "schedule" ]; then
             # Dispatch/manual run: NOT --dry-run (#3716) — a dispatch is the
@@ -2906,9 +2903,7 @@ jobs:
             #    closed with a "recovered" comment over a lane never tested at
             #    its real budget. Same silent false-green, one dimension over.
             #    Every input is compared against its declared default from
-            #    `on:` above; `checkReporterAuthority` flips each in turn and
-            #    requires the run to stop being authoritative, so an input
-            #    added later without a comparison here fails the guard.
+            #    `on:` above, so an input added later needs a comparison here.
             #
             # A run that fails either test still computes and PRINTS the whole
             # answer — `--dry-run` performs every read — so a dispatch is
@@ -2959,9 +2954,8 @@ jobs:
         # notice still firing for it over-approximates in the LOUD direction —
         # the only direction a last-resort notice may err in. Over-firing
         # costs a comment on an idempotent issue; under-firing is the silence
-        # this job exists to end. `findLastResortNoticeCondition` pins the
-        # expression verbatim and cross-checks the ref against the authority
-        # gate's, so the two cannot drift apart in silence.
+        # this job exists to end. Keep the ref in step with the authority
+        # gate's.
         if: failure() && (github.event_name == 'schedule' || github.ref == 'refs/heads/main')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

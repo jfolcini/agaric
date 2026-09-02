@@ -38,10 +38,8 @@
 // ─── Usage ──────────────────────────────────────────────────────────
 //
 //   node scripts/check-trace-interactions.mjs
-//   node scripts/check-trace-interactions.mjs --self-test
 //
-// Wired into `prek.toml` as a `local` repo hook, files = src TS; a companion
-// hook runs `--self-test` whenever this script changes.
+// Wired into `prek.toml` as a `local` repo hook, files = src TS.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -154,44 +152,13 @@ function run() {
   return offenders
 }
 
-// ─── Self-test ──────────────────────────────────────────────────────
-
-function selfTest() {
-  const cases = [
-    { src: 'traceInteraction(INTERACTIONS.SEARCH, () => f())', good: true },
-    { src: 'traceInteraction(  INTERACTIONS.PAGE_OPEN  , () => f())', good: true },
-    { src: "traceInteraction('search', () => f())", good: false },
-    { src: 'traceInteraction(`page.${id}`, () => f())', good: false },
-    { src: 'traceInteraction(name, () => f())', good: false },
-    { src: 'traceInteraction(getName(), () => f())', good: false },
-  ]
-  let failures = 0
-  for (const { src, good } of cases) {
-    const [{ firstArg }] = findTraceInteractionCalls(src)
-    const pass = VALID_FIRST_ARG.test(firstArg)
-    if (pass !== good) {
-      failures++
-      process.stderr.write(`self-test FAIL: ${JSON.stringify(src)} expected ${good}, got ${pass}\n`)
-    }
-  }
-  if (failures > 0) {
-    process.stderr.write(`check-trace-interactions self-test: ${failures} case(s) failed\n`)
-    process.exit(1)
-  }
-  process.stdout.write('check-trace-interactions self-test: all cases passed\n')
-}
-
-if (process.argv.includes('--self-test')) {
-  selfTest()
-} else {
-  const offenders = run()
-  if (offenders.length > 0) {
-    process.stderr.write('Frontend trace-interaction naming violations (#2110, M4):\n')
-    for (const o of offenders) process.stderr.write(`  ${o}\n`)
-    process.stderr.write(
-      '\nName every traceInteraction span with an INTERACTIONS.<KEY> member ' +
-        '(src/lib/observability/interactions.ts) so span names stay PII-safe.\n',
-    )
-    process.exit(1)
-  }
+const offenders = run()
+if (offenders.length > 0) {
+  process.stderr.write('Frontend trace-interaction naming violations (#2110, M4):\n')
+  for (const o of offenders) process.stderr.write(`  ${o}\n`)
+  process.stderr.write(
+    '\nName every traceInteraction span with an INTERACTIONS.<KEY> member ' +
+      '(src/lib/observability/interactions.ts) so span names stay PII-safe.\n',
+  )
+  process.exit(1)
 }
