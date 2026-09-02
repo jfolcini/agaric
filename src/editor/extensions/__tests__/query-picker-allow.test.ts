@@ -63,12 +63,24 @@ describe('query-picker — allow gate hands off to manual {{query typing', () =>
     // (popup closes) instead of rendering an empty 'No results' state.
     expect(allow({ state: stateFor('{{q'), range: { from: 0, to: 3 } })).toBe(false)
     expect(allow({ state: stateFor('{{query'), range: { from: 0, to: 7 } })).toBe(false)
+    // #4550 — the one addition: `{{embed …}}` is a second legitimate trigger
+    // shape, so the gate has three accepted forms rather than one. Manual
+    // query syntax is still rejected, which is what this file exists to pin.
+    expect(allow({ state: stateFor('{{embed'), range: { from: 0, to: 7 } })).toBe(true)
+    expect(allow({ state: stateFor('{{embed sprint'), range: { from: 0, to: 14 } })).toBe(true)
   })
 
-  it('keeps the empty-query items gate (affordance item only while query is empty)', () => {
+  it('keeps the empty-query items gate (affordances only while query is empty)', () => {
     const cfg = setup()
     const items = cfg['items'] as (query: string) => PickerItem[]
-    expect(items('')).toEqual([{ id: 'query', label: 'Insert query…' }])
+    // #4550 — the bare `{{` now offers the embed affordance alongside the
+    // query one. The gate that matters to THIS regression is unchanged:
+    // anything the user types that is not the embed prefix empties the list
+    // AND (above) deactivates the plugin.
+    expect(items('')).toEqual([
+      { id: 'query', label: 'Insert query…' },
+      { id: 'embed', label: 'Insert embed…' },
+    ])
     expect(items('query tag:foo')).toEqual([])
   })
 })

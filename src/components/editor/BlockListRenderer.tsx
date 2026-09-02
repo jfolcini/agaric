@@ -30,6 +30,7 @@ import { useListStyles } from '@/hooks/useListStyles'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { computeListOrdinals } from '@/lib/list-ordinals'
 import type { ListStyle } from '@/lib/list-style'
+import { computeSiblingAriaProps } from '@/lib/outline-aria'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import { SENTINEL_ID } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
@@ -266,44 +267,13 @@ export function BlockListRenderer({
   }, [collapsedIds])
 
   // ── Sibling aria props ─────────────────────────────────────
-  // Compute aria-setsize / aria-posinset for each block by grouping siblings
-  // that share the same parent in the flat list. Single-pass O(N) algorithm
-  // We keep a `lastAtDepth` map that records the most-recent index
-  // seen at each depth. Each block's parent is simply `lastAtDepth[depth-1]`,
-  // matching the semantics of the previous backward-scan — each block is
-  // grouped with the nearest preceding block at its parent's depth. Roots
-  // (depth 0) share the `-1` sentinel group.
-  const siblingAriaProps = useMemo(() => {
-    const result = new Map<string, { setsize: number; posinset: number }>()
-    const groups = new Map<number, number[]>()
-    const lastAtDepth = new Map<number, number>()
-
-    for (let i = 0; i < visibleItems.length; i++) {
-      const block = visibleItems[i]
-      if (!block) continue
-      const parentIdx = block.depth > 0 ? (lastAtDepth.get(block.depth - 1) ?? -1) : -1
-      let list = groups.get(parentIdx)
-      if (!list) {
-        list = []
-        groups.set(parentIdx, list)
-      }
-      list.push(i)
-      lastAtDepth.set(block.depth, i)
-    }
-
-    for (const indices of groups.values()) {
-      const setsize = indices.length
-      for (let j = 0; j < indices.length; j++) {
-        const idx = indices[j]
-        const block = idx != null ? visibleItems[idx] : undefined
-        if (block) {
-          result.set(block.id, { setsize, posinset: j + 1 })
-        }
-      }
-    }
-
-    return result
-  }, [visibleItems])
+  // #4550 — the single-pass grouping now lives in `@/lib/outline-aria` so an
+  // embedded subtree computes `aria-setsize` / `aria-posinset` with the SAME
+  // algorithm over the same notion of depth. That matters more than the
+  // de-duplication: an embed's rows are announced relative to the host tree,
+  // and "relative to the host tree" is only meaningful if both sides agree on
+  // how a sibling group is formed. Behaviour here is unchanged.
+  const siblingAriaProps = useMemo(() => computeSiblingAriaProps(visibleItems), [visibleItems])
 
   const sortableItems = useMemo(
     () => [...visibleItems.map((b) => b.id), ...(visibleItems.length > 0 ? [SENTINEL_ID] : [])],

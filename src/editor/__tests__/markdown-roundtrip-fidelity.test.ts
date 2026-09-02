@@ -43,6 +43,7 @@ import {
 } from '@/editor/__tests__/builders'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import type { InlineNode } from '@/editor/types'
+import { parseEmbedToken } from '@/lib/embed-token'
 
 const ULID = '01HZ00000000000000000BLOCK'
 
@@ -218,6 +219,34 @@ describe('finding 11: literal ((ULID)) text vs live block_ref', () => {
     const d = doc(paragraph(text('not ((01hz00000000000000000block)) and ((plain))')))
     expect(serialize(d)).toBe('not ((01hz00000000000000000block)) and ((plain))')
     expect(parse(serialize(d))).toEqual(d)
+  })
+})
+
+// #4550 — the embed token's inner `((ULID))` rides finding 11's escape rule,
+// and lands on the WRONG side of it if the picker ever writes plain text.
+describe('#4550: the {{embed ((ULID))}} token', () => {
+  it('serializes bare and reparses identically when the inner ref is a NODE', () => {
+    const d = doc(paragraph(text('{{embed '), blockRef(ULID), text('}}')))
+    const md = serialize(d)
+    expect(md).toBe(`{{embed ((${ULID}))}}`)
+    expect(parse(md)).toEqual(d)
+    expect(serialize(parse(md))).toBe(md)
+  })
+
+  it('parses back to a live embed token, so the render and the backlink both survive', () => {
+    const md = serialize(doc(paragraph(text('{{embed '), blockRef(ULID), text('}}'))))
+    expect(parseEmbedToken(md)).toEqual({ targetId: ULID })
+  })
+
+  it('is NOT what a plain-text token produces — the escape breaks it', () => {
+    // Finding 11's rule applied to this shape: the inner ref escapes, and
+    // `{{embed \((ULID))}}` matches neither `parseEmbedToken` here nor
+    // `ULID_LINK_RE` in `reindex_block_links_conn`. The block would render as
+    // inert text AND contribute no backlink — silently, on the first blur.
+    // This is why the picker inserts a `block_ref` node, not a string.
+    const md = serialize(doc(paragraph(text(`{{embed ((${ULID}))}}`))))
+    expect(md).toBe(`{{embed \\((${ULID}))}}`)
+    expect(parseEmbedToken(md)).toBeNull()
   })
 })
 

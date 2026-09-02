@@ -27,7 +27,7 @@ import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { isPairingWindowRejection } from '@/lib/pairing-rejections'
-import { forEachPageStore } from '@/stores/page-blocks'
+import { forEachLivePageStoreGroup } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
@@ -112,7 +112,15 @@ function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
   const targeted =
     Array.isArray(changedPageIds) && changedPageIds.length > 0 ? new Set(changedPageIds) : null
 
-  forEachPageStore((pageId, pageStore) => {
+  // #4550 — reload EVERY live provider store for a changed page, not only
+  // the registry slot's. A page can legitimately have two mounted stores (it
+  // is open in a tab AND embedded elsewhere, or a #1560 transient remount is
+  // in flight); `forEachPageStore` hands out only the most-recently-mounted
+  // one, so the other would keep serving the pre-sync snapshot for the rest
+  // of the session. Reloading each of them is the belt; the registry's
+  // block-state fan-out (`mirrorToSiblings`) is the braces — this path stays
+  // correct even if that fan-out is ever bypassed.
+  forEachLivePageStoreGroup((pageId, pageStores) => {
     // In targeted mode, skip stores whose page wasn't touched — they cannot
     // have changed, so reloading them is pure waste. In fallback mode
     // (`targeted == null`) reload every store.
@@ -120,9 +128,10 @@ function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
     // #731 — re-anchor this page's positional undo state BEFORE the reload.
     // The out-of-band ops just applied shifted the backend op-log indexing
     // that `undoDepth` addresses; without this reset the next Ctrl+Z would
-    // reverse the wrong op. Keyed by the same pageId the block reload uses.
+    // reverse the wrong op. Keyed by the same pageId the block reload uses,
+    // and fired ONCE per page however many provider stores it has.
     reanchorUndo(pageId)
-    pageStore.getState().load()
+    for (const pageStore of pageStores) pageStore.getState().load()
   })
 
   // Resolve-cache preload — a changed page's / tag's title may have moved.

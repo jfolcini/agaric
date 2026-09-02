@@ -19,8 +19,9 @@ const {
   mockSetOpsSent,
   mockUpdateLastSynced,
   mockLoad,
+  mockLoad1Embed,
   mockLoad2,
-  mockForEachPageStore,
+  mockForEachLivePageStoreGroup,
   mockPreload,
   mockReanchorUndo,
 } = vi.hoisted(() => {
@@ -42,25 +43,42 @@ const {
   // assert that only the changed page reloads (PAGE_1) while the untouched
   // one (PAGE_2) is skipped, and that the fallback reloads BOTH.
   const load2 = vi.fn().mockResolvedValue(undefined)
+  // #4550 — a SECOND live provider store for PAGE_1. A page can legitimately
+  // have two mounted stores (open in a tab AND embedded elsewhere); only one
+  // of them is the registry slot's, and the pre-#4550 `forEachPageStore`
+  // fan-out reached only that one, leaving the other serving the pre-sync
+  // snapshot for the rest of the session.
+  const load1Embed = vi.fn().mockResolvedValue(undefined)
 
-  const mockPageBlockRegistry = new Map()
-  mockPageBlockRegistry.set('PAGE_1', {
-    getState: () => ({
-      load,
-      rootParentId: 'PAGE_1',
-    }),
-  })
-  mockPageBlockRegistry.set('PAGE_2', {
-    getState: () => ({
-      load: load2,
-      rootParentId: 'PAGE_2',
-    }),
-  })
-  // #1075 — useSyncEvents now fans out via `forEachPageStore` (single source
-  // of truth) instead of iterating the registry Map directly.
-  const forEachPageStore = vi.fn(
-    (fn: (pageId: string, store: { getState: () => unknown }) => void) => {
-      for (const [pageId, store] of mockPageBlockRegistry) fn(pageId, store)
+  const mockPageBlockRegistry = new Map<string, Array<{ getState: () => unknown }>>()
+  mockPageBlockRegistry.set('PAGE_1', [
+    {
+      getState: () => ({
+        load,
+        rootParentId: 'PAGE_1',
+      }),
+    },
+    {
+      getState: () => ({
+        load: load1Embed,
+        rootParentId: 'PAGE_1',
+      }),
+    },
+  ])
+  mockPageBlockRegistry.set('PAGE_2', [
+    {
+      getState: () => ({
+        load: load2,
+        rootParentId: 'PAGE_2',
+      }),
+    },
+  ])
+  // #1075 / #4550 — useSyncEvents fans out via `forEachLivePageStoreGroup`
+  // (single source of truth), which yields EVERY live provider store per
+  // pageId rather than only the registry slot's newest one.
+  const forEachLivePageStoreGroup = vi.fn(
+    (fn: (pageId: string, stores: Array<{ getState: () => unknown }>) => void) => {
+      for (const [pageId, stores] of mockPageBlockRegistry) fn(pageId, stores)
     },
   )
 
@@ -76,8 +94,9 @@ const {
     mockSetOpsSent: setOpsSent,
     mockUpdateLastSynced: updateLastSynced,
     mockLoad: load,
+    mockLoad1Embed: load1Embed,
     mockLoad2: load2,
-    mockForEachPageStore: forEachPageStore,
+    mockForEachLivePageStoreGroup: forEachLivePageStoreGroup,
     mockPreload: preload,
     mockReanchorUndo: reanchorUndo,
   }
@@ -103,7 +122,7 @@ vi.mock('@/stores/sync', () => ({
 }))
 
 vi.mock('@/stores/page-blocks', () => ({
-  forEachPageStore: mockForEachPageStore,
+  forEachLivePageStoreGroup: mockForEachLivePageStoreGroup,
 }))
 
 // #731 — useSyncEvents re-anchors each reloaded page's undo state.
@@ -758,6 +777,39 @@ describe('useSyncEvents', () => {
       expect(mockLoad2).not.toHaveBeenCalled()
       expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
       expect(mockReanchorUndo).not.toHaveBeenCalledWith('PAGE_2')
+
+      unmount()
+    })
+
+    // #4550 — the case the embed feature makes ordinary: PAGE_1 has TWO live
+    // provider stores (its own view plus an `{{embed}}` of it on another
+    // page). Only one of them is the registry slot's; before the live-group
+    // fan-out the other kept serving the pre-sync snapshot for the rest of
+    // the session. Re-anchoring is still page-scoped, so it fires ONCE.
+    it('reloads EVERY live provider store for a changed page, not just the slot owner', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(3)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+          changed_blocks: 5,
+          changed_page_ids: ['PAGE_1'],
+        },
+      })
+
+      expect(mockLoad).toHaveBeenCalledTimes(1)
+      expect(mockLoad1Embed).toHaveBeenCalledTimes(1)
+      expect(mockLoad2).not.toHaveBeenCalled()
+      expect(mockReanchorUndo).toHaveBeenCalledTimes(1)
+      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
 
       unmount()
     })
