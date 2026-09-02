@@ -1477,28 +1477,16 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 }
 
 /// `export_page_markdown` — serialise a page with 2K children on top of
-/// a 100K background DB. Budget: 45 ms; #3304 showed that the former 10 ms
+/// a 100K background DB. Budget: 30 ms; #3304 showed that the former 10 ms
 /// baseline measured only the page heading because the fixture children had
 /// no `page_id`. The scale parameter is *children of the exported page*.
 ///
-/// **45 ms is 2.10× the worst of the two CI runs pulled (#3441).** Three post-#3427
-/// `bench-slo` runs have since timed the real 2K-child path on the CI runner;
-/// the two pulled read 21.39 ms (2026-08-17) and 16.44 ms (2026-08-24), which
-/// retires the local-only evidence the previous 30 ms figure rested on — it
-/// gave the worse of the two only 1.40×, the thinness #3441 was filed for.
-///
-/// 2.10× is deliberately ABOVE the peer band on that same 08-17 run
-/// (count_backlinks_batch 81.04/100 = 1.23×, list_blocks 21.03/30 = 1.43×,
-/// count_agenda_batch 18.83/30 = 1.59×, list_page_links 113.40/200 = 1.76×):
-/// nothing gates on this lane, so an intermittent red here is a lane people
-/// learn to ignore, not a caught regression. The peers keep their numbers
-/// until one of them actually reddens (#3441 scope note, 2026-09-02).
-///
-/// Rebaseline this number only from CI observations, never from a developer
-/// box: a dev-box sample says nothing about the runner the budget is enforced
-/// on, which is how the 30 ms figure came to be unevidenced in the first place.
+/// 30 ms is evidenced by CI, not a developer box (#3441): the `bench-slo`
+/// runs of 2026-08-17 and 2026-08-24 measured 21.39 ms and 16.44 ms on the
+/// runner (1.40× / 1.83× headroom). Rebaseline only from CI observations; a
+/// dev-box sample says nothing about the runner the budget is enforced on.
 fn bench_export_page_markdown(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 45.0;
+    const BUDGET_MS: f64 = 30.0;
     // Must be a valid ULID (Crockford base32, no I/L/O/U): export_page_markdown_inner
     // parses the page id as a ULID. "SLOEXPORT…" had invalid chars (L, O).
     const EXPORT_PAGE_ID: &str = "01SEXPRTPG0000000000000001";
