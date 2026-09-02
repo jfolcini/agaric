@@ -56,7 +56,10 @@ async function handleCallout(ctx: SlashCommandContext, calloutType: string): Pro
  * styled as a list with the pre-command content. Flush the pending commit
  * first, through the same `flushActiveDraft` bridge export uses (#2969): it
  * is the editor's own commit path (`debounced.cancel()` + `commitNow()`), not
- * a second mechanism, and it is a no-op when nothing is pending.
+ * a second mechanism, and it is a no-op when nothing is pending. It is also
+ * a no-op for a block carrying an inline `key:: value` line (`commitNow`'s
+ * #2675 carve-out), so Escape after a slash command still discards typed
+ * text there.
  */
 async function handleListStyle(
   ctx: SlashCommandContext,
