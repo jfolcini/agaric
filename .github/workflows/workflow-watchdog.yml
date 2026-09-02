@@ -144,9 +144,8 @@ jobs:
           # unbound-variable abort rather than an empty expansion — and on the
           # `schedule` path this array was empty, so the step would die before
           # reaching the filer. GitHub's runners ship bash 5, so this one was
-          # latent here; it was live in the deep-checks reporter, whose block
-          # the reporter self-test executes for real. Same shape, same fix, and
-          # `findUnportableEmptyArrayExpansions` now pins both steps.
+          # latent here; it was live in the deep-checks reporter. Same shape,
+          # same fix in both steps.
           extra=(--profile workflow-watchdog --needs-json-file watchdog.json)
           if [ "$EVENT_NAME" != "schedule" ]; then
             # Dispatch/manual run: exercise the whole path, write nothing.

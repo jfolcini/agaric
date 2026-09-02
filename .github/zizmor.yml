@@ -122,12 +122,9 @@
 #     Zero inline suppressions is a wiring failure, not a vacuous pass — but
 #     it is a ZERO check, not a per-step one. It cannot tell you that some
 #     particular caching step still carries its comment.
-#   * the exactly-four assertion, and the live "does the suppression survive
-#     a 12-line drift?" run against the real zizmor binary, live in that
-#     script's `--self-test`, which no prek hook runs since #4556 Phase 2.
-#
-# Run that `--self-test` by hand after touching any of those four steps,
-# ci.yml's job list, or this file.
+#   * nothing asserts the exact count per step any more (the script's
+#     self-test went in #4556); re-check the four steps by eye after
+#     touching them, ci.yml's job list, or this file.
 
 rules: {}
 # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every

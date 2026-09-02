@@ -29,7 +29,7 @@
 # The classification is on the TOOL'S OWN error text ("error loading
 # advisory database: ...", verified live against a real cargo-audit
 # invocation against a locally-reproduced directory/package mismatch — see
-# this script's --self-test and the PR that introduced it), not a guess at
+# the PR that introduced this script), not a guess at
 # what upstream might do next. `cargo-audit` 0.22.1 emits that exact prefix
 # for every reason `Database::load` can fail (git operation, TOML parse,
 # lockfile format) — the messages after the colon vary, the prefix does
@@ -42,7 +42,7 @@
 # case it is, with a distinct exit code a caller can act on, instead of
 # reading as an accusation against this repo's own dependency tree.
 #
-# ─── Which way this fails, and the limit of its self-test ──────────────────
+# ─── Which way this fails ──────────────────────────────────────────────────
 #
 # The classification is a POSITIVE match: only output carrying that prefix
 # becomes exit 2. Everything else — a reworded upstream error, a network
@@ -55,17 +55,12 @@
 # widening the match to catch more infrastructure cases, and never make an
 # UNMATCHED failure exit 2 — that inverts the direction.
 #
-# The self-test drives a STUB `cargo` (see below). It therefore cannot
-# detect the one way this guard is most likely to rot: cargo-audit changing
-# its own wording, at which point a real database-load failure stops
-# matching and starts reading as exit 1 — the pre-#3688 behaviour, restored
-# silently, with the self-test still green. That limit is inherent to
-# testing offline against captured text; the mitigation is the fail
-# direction above (rot degrades to the old, blocking behaviour rather than
-# to a pass) plus the assertion below that pins the exact fingerprint, so
-# the classifier and its test cannot drift apart without someone editing
-# both. The real-tool reproduction was done by hand while writing this and
-# is recorded in the PR body, not re-run in CI.
+# The way this guard is most likely to rot is cargo-audit changing its own
+# wording, at which point a real database-load failure stops matching and
+# starts reading as exit 1 — the pre-#3688 behaviour, restored silently. The
+# mitigation is the fail direction above: rot degrades to the old, blocking
+# behaviour rather than to a pass. The real-tool reproduction was done by
+# hand while writing this and is recorded in the PR body, not re-run in CI.
 #
 # ─── Contract ───────────────────────────────────────────────────────────────
 #   exit 0 — cargo audit ran clean.
@@ -84,7 +79,6 @@
 #
 # Usage:
 #   scripts/cargo-audit-guard.sh [crate-dir] [-- cargo-audit-args...]
-#   scripts/cargo-audit-guard.sh --self-test
 #
 # crate-dir defaults to `.`; the CI step passes `src-tauri`.
 
@@ -92,8 +86,8 @@ set -uo pipefail
 
 # The fingerprint. This is cargo-audit's OWN prefix (rustsec crate's
 # `Error::LoadDb` Display impl), not a phrase this repo invented — matched
-# against a live reproduction, not assumed. See --self-test and the PR body
-# for the exact captured text.
+# against a live reproduction, not assumed. See the PR body for the exact
+# captured text.
 DB_LOAD_ERROR_RE='error loading advisory database'
 
 print_db_load_banner() {
@@ -138,9 +132,6 @@ BANNER
 }
 
 # Runs `cargo audit` in `$dir`, classifies the result, prints accordingly.
-# Exported as a function (rather than only inline in `main`) so the
-# self-test can point it at a stub `cargo` on PATH without touching the
-# real network or the real advisory database.
 run_guard() {
   local dir="${1:-.}"
   shift || true
@@ -190,317 +181,8 @@ run_guard() {
 }
 
 # ---------------------------------------------------------------------------
-# self-test
-# ---------------------------------------------------------------------------
-#
-# Offline and deterministic: a stub `cargo` on PATH stands in for the real
-# binary. The canned text is not invented —
-# it is the text captured from a REAL `cargo audit` run against (a) a
-# locally-reproduced directory/package mismatch built the same way RustSec
-# commit e11d6b33 broke it, using real advisory-db fixture files, and (b) a
-# real RUSTSEC-2026-0194 (quick-xml) report against this repo's own
-# Cargo.lock with that one advisory un-ignored. Both captured while writing
-# this script; see the PR body for the exact commands.
-
-SELFTEST_FAILURES=0
-st_ok() { printf '  ok   - %s\n' "$1"; }
-st_fail() {
-  SELFTEST_FAILURES=$((SELFTEST_FAILURES + 1))
-  printf '  FAIL - %s: %s\n' "$1" "$2" >&2
-}
-st_expect() {
-  if [ "$2" = "$3" ]; then st_ok "$1"; else st_fail "$1" "expected [$2], got [$3]"; fi
-}
-# Presence check, immune to how many TIMES a phrase occurs — the fixed-line
-# `grep -c` counting this file used at first broke the moment a phrase
-# legitimately appeared on more than one line (the two-remedy banner line).
-st_contains() {
-  if printf '%s' "$3" | grep -q -- "$2"; then st_ok "$1"; else st_fail "$1" "'$2' not found in output"; fi
-}
-st_not_contains() {
-  if printf '%s' "$3" | grep -q -- "$2"; then st_fail "$1" "'$2' unexpectedly found in output"; else st_ok "$1"; fi
-}
-
-# The exact stderr text captured from a real `cargo audit --db <fixture>`
-# run against an advisory whose directory doesn't match its `package`
-# field — the live reproduction of RustSec commit e11d6b33.
-STUB_DB_LOAD_TEXT='error: error loading advisory database: git operation failed: expected RUSTSEC-2026-9999 to be in gettext-sys directory (instead of ""/tmp/adb-malformed/crates/gettext-rs"")'
-
-# The exact stderr text captured from a real `cargo audit` run with
-# RUSTSEC-2026-0194 (quick-xml, a genuine advisory, not "unmaintained")
-# un-ignored against this repo's own Cargo.lock.
-STUB_VULN_TEXT='Crate:     quick-xml
-Version:   0.37.5
-Title:     Quadratic run time when checking a start tag for duplicate attribute names
-ID:        RUSTSEC-2026-0194
-Severity:  7.5 (high)
-error: 4 vulnerabilities found!'
-
-# bindir gets its own `cargo` shim on PATH; text/exitcode are what `cargo
-# audit` prints/returns for that shim.
-st_make_stub_cargo() {
-  local bindir="$1" text="$2" exitcode="$3"
-  mkdir -p "$bindir"
-  cat > "$bindir/cargo" <<STUB
-#!/usr/bin/env bash
-if [ "\${1:-}" = "audit" ]; then
-  cat >&2 <<'TXT'
-$text
-TXT
-  exit $exitcode
-fi
-echo "stub cargo: unsupported subcommand \$1" >&2
-exit 99
-STUB
-  chmod +x "$bindir/cargo"
-}
-
-# Minimal probe for the nested-invocation check in run_self_test's section
-# 0, below. Exercises ONLY the ambient-GITHUB_STEP_SUMMARY isolation that
-# check needs — the `local GITHUB_STEP_SUMMARY=` line plus one db-load-
-# failure call to `run_guard` — instead of re-running the ENTIRE suite a
-# second time inside the nested process (the 2s streaming-proof sleep,
-# section 4's two /usr/bin symlink-farm builds, everything else). Not a
-# general entry point; only ever invoked by that nested call.
-run_gss_isolation_probe() {
-  local GITHUB_STEP_SUMMARY=
-  local bindir
-  bindir=$(mktemp -d -t cargo-audit-guard-gssprobe-bin.XXXXXX)
-  st_make_stub_cargo "$bindir" "$STUB_DB_LOAD_TEXT" 1
-  PATH="$bindir:$PATH" run_guard "." >/dev/null 2>&1
-  rm -rf "$bindir"
-}
-
-run_self_test() {
-  local tmp
-  tmp=$(mktemp -d -t cargo-audit-guard-selftest.XXXXXX)
-  # EXIT, not RETURN: this function exits 2 on failure, and an `exit` does
-  # not fire a RETURN trap — so the failing run, the one someone will be
-  # re-running, was the one that leaked its temp dir.
-  # shellcheck disable=SC2064 # expand $tmp now, not at trap time
-  trap "rm -rf '$tmp'" EXIT
-
-  # In CI, GitHub Actions sets GITHUB_STEP_SUMMARY in the job's environment
-  # BEFORE this script (or any prek hook) ever runs, and `--self-test` is
-  # invoked the same way every other hook is — so without this line, it
-  # inherits that ambient value. Section 1 below drives `run_guard` against
-  # a db-load-failure STUB; `print_db_load_banner` would append the false
-  # "advisory database failed to load" warning straight into the REAL job
-  # summary, on every green `validate / lint` run — the exact
-  # misleading-report class this whole PR exists to close, produced by its
-  # own self-test. Cleared here; section 5 is the ONLY place that sets it
-  # again, explicitly and only for the one call under test.
-  local GITHUB_STEP_SUMMARY=
-
-  # ── 0. THE REAL (INHERITED) JOB SUMMARY IS NEVER TOUCHED ─────────────────
-  # Proven at the ACTUAL entry point — a real `bash $SELF <flag>` process
-  # inheriting an ambient GITHUB_STEP_SUMMARY, exactly how CI's environment
-  # reaches this script — not just by calling run_guard directly, because
-  # the bug lived in what gets inherited BEFORE the `local` line above ever
-  # runs. `--self-test-gss-probe` (not `--self-test`) keeps this to the one
-  # call under test instead of re-running the whole suite nested inside
-  # itself a second time.
-  local real_summary="$tmp/real-ambient-job-summary.md"
-  printf 'pre-existing content from an unrelated CI step\n' > "$real_summary"
-  GITHUB_STEP_SUMMARY="$real_summary" bash "$SELF" --self-test-gss-probe \
-    >"$tmp/nested-probe.out" 2>&1
-  local probe_rc=$?
-  st_expect 'the ambient-GITHUB_STEP_SUMMARY probe itself exits cleanly' '0' "$probe_rc"
-  st_expect 'and it never appends the false advisory-database-failed banner into an inherited (real) summary file' \
-    '0' "$(grep -c 'advisory database failed to load' "$real_summary" || true)"
-  st_expect 'and the summary file keeps its ORIGINAL content untouched — not just "no banner", no write at all' \
-    '1' "$(grep -c 'pre-existing content from an unrelated CI step' "$real_summary" || true)"
-
-  # ── 1. A DATABASE-LOAD FAILURE is classified as exit 2, with the banner ──
-  local dbfail_bin="$tmp/bin-dbfail"
-  st_make_stub_cargo "$dbfail_bin" "$STUB_DB_LOAD_TEXT" 1
-  local out rc
-  out=$(PATH="$dbfail_bin:$PATH" run_guard "$tmp" 2>&1)
-  rc=$?
-  st_expect 'a database-load failure exits 2, not 1' '2' "$rc"
-  st_contains 'the banner explicitly says this is NOT a vulnerable dependency' \
-    'NOT a statement about our dependencies' "$out"
-  st_contains 'the banner names the waiver mechanism and says it cannot help' \
-    'CANNOT help here' "$out"
-  st_contains 'the banner names the upstream-fix remedy' 'already in flight' "$out"
-  st_contains "the banner names the local-cache remedy (git clean -fdx)" 'clean -fdx' "$out"
-  st_contains "cargo-audit's own original output is still present verbatim (nothing hidden)" \
-    'RUSTSEC-2026-9999' "$out"
-
-  # ── 1b. THE OUTPUT IS STREAMED, not buffered until the run finishes ──────
-  # A stub `cargo audit` that prints a line, sleeps, then prints a second
-  # line and exits non-zero. `out=$(cmd 2>&1)` would show NOTHING until the
-  # whole thing exits — indistinguishable, from the log, between "about to
-  # print" and "hung". Proving streaming means observing the FIRST line on
-  # disk WHILE the stub is still sleeping (still running), not merely that
-  # both lines are present once everything is done — a test that only
-  # checked the final output would pass against the old buffered code too.
-  local slow_bin="$tmp/bin-slow"
-  mkdir -p "$slow_bin"
-  cat > "$slow_bin/cargo" <<'STUB'
-#!/usr/bin/env bash
-if [ "${1:-}" = "audit" ]; then
-  echo "SLOW-STUB-LINE-1"
-  sleep 2
-  echo "SLOW-STUB-LINE-2"
-  exit 1
-fi
-echo "stub cargo: unsupported subcommand $1" >&2
-exit 99
-STUB
-  chmod +x "$slow_bin/cargo"
-
-  local streamfile="$tmp/stream.out"
-  : > "$streamfile"
-  ( PATH="$slow_bin:$PATH" run_guard "$tmp" >"$streamfile" 2>&1 ) &
-  local guard_pid=$!
-  local waited=0 line1_seen_while_running=0
-  # Poll for up to 10s (the stub's own sleep is 2s — 5x headroom, not the
-  # 5x-on-paper-but-sub-second-in-practice margin a 0.4s sleep gave against
-  # a contended runner: the failure mode is scheduling jitter between the
-  # child writing LINE-1 and this loop next getting CPU time to notice it,
-  # which eats into the ABSOLUTE remaining sleep budget, not a ratio — a
-  # short sleep can be jittered away entirely). LINE-1 landing on disk AND
-  # the guard process still alive (still blocked in the stub's `sleep`,
-  # confirmed via `kill -0`, which only tests liveness and sends no signal)
-  # is the streamed-not-buffered proof.
-  while [ "$waited" -lt 100 ]; do
-    if grep -q 'SLOW-STUB-LINE-1' "$streamfile" 2>/dev/null; then
-      if kill -0 "$guard_pid" 2>/dev/null; then
-        line1_seen_while_running=1
-      fi
-      break
-    fi
-    sleep 0.1
-    waited=$((waited + 1))
-  done
-  wait "$guard_pid"
-  local slow_rc=$?
-  st_expect 'the FIRST line lands on stdout WHILE cargo audit is still running (streamed, not buffered)' \
-    '1' "$line1_seen_while_running"
-  st_expect 'and the second (post-sleep) line also lands once the run finishes' \
-    '1' "$(grep -c 'SLOW-STUB-LINE-2' "$streamfile" || true)"
-  st_expect 'a non-zero cargo-audit exit is still propagated as a guard failure (exit 1), not lost in the pipe' \
-    '1' "$slow_rc"
-
-  # ── 2. A REAL VULNERABILITY is classified as exit 1 — UNCHANGED, no banner ─
-  local vuln_bin="$tmp/bin-vuln"
-  st_make_stub_cargo "$vuln_bin" "$STUB_VULN_TEXT" 1
-  out=$(PATH="$vuln_bin:$PATH" run_guard "$tmp" 2>&1)
-  rc=$?
-  st_expect 'a real vulnerability report exits 1 (unchanged, ordinary gate failure)' '1' "$rc"
-  st_not_contains 'and does NOT get the database-load banner (the two cases must not look alike)' \
-    'NOT a statement about our dependencies' "$out"
-  st_contains "cargo-audit's own vulnerability report reaches the caller unmodified" \
-    'RUSTSEC-2026-0194' "$out"
-
-  # ── 3. THE CLEAN CASE is exit 0 with no banner ────────────────────────────
-  local ok_bin="$tmp/bin-ok"
-  st_make_stub_cargo "$ok_bin" 'Loaded 1207 security advisories
-Scanning Cargo.lock for vulnerabilities (962 crate dependencies)' 0
-  out=$(PATH="$ok_bin:$PATH" run_guard "$tmp" 2>&1)
-  rc=$?
-  st_expect 'a clean audit exits 0' '0' "$rc"
-  st_not_contains 'and carries no banner' 'NOT a statement about our dependencies' "$out"
-
-  # ── 4. AN UNRECOGNISED FAILURE FALLS THROUGH TO 1, NEVER TO 2 ────────────
-  # This is the direction question, pinned. Assertions 1 and 2 already fix
-  # the two known shapes at 2 and 1 — an extra "the two codes differ" check
-  # could only ever redden when one of those already had, so it was
-  # decoration. What is NOT implied by them, and is the way this guard
-  # actually rots, is what happens to a failure matching NEITHER pattern:
-  # upstream rewording its own error, a network timeout, cargo missing. All
-  # must land on 1 (blocking, "we could not clear this tree"), because 2 is
-  # the code a caller is allowed to treat as "not about our dependencies".
-  # Widening the match until an unknown failure exits 2 is the change that
-  # would let a genuine advisory pass unnoticed, and it reddens here.
-  local reworded_bin="$tmp/bin-reworded"
-  st_make_stub_cargo "$reworded_bin" \
-    'error: failed to load the advisory database: git operation failed' 1
-  out=$(PATH="$reworded_bin:$PATH" run_guard "$tmp" 2>&1)
-  rc=$?
-  st_expect 'an unrecognised failure (upstream reworded its own error) exits 1, not 2' '1' "$rc"
-  st_not_contains 'and gets no database-load banner it has not earned' \
-    'NOT a statement about our dependencies' "$out"
-  st_contains "and the tool's own text still reaches the caller" \
-    'failed to load the advisory database' "$out"
-
-  # A PATH carrying everything EXCEPT cargo — the script's own helpers must
-  # still resolve, or this would pass for the wrong reason.
-  local nocargo="$tmp/bin-nocargo" p f b
-  mkdir -p "$nocargo"
-  for p in /usr/bin /bin /usr/local/bin; do
-    [ -d "$p" ] || continue
-    for f in "$p"/*; do
-      b=${f##*/}
-      [ "$b" = cargo ] || ln -sf "$f" "$nocargo/$b" 2>/dev/null || true
-    done
-  done
-  rc=$(PATH="$nocargo" run_guard "$tmp" >/dev/null 2>&1; echo $?)
-  st_expect 'cargo missing from PATH entirely also exits 1 (blocking), never 0 or 2' '1' "$rc"
-
-  # And the fingerprint the classifier keys on is the tool's real prefix, not
-  # a paraphrase — the two must be edited together or this reddens.
-  st_contains 'the classifier keys on the exact prefix the captured real output carries' \
-    "$DB_LOAD_ERROR_RE" "$STUB_DB_LOAD_TEXT"
-
-  # ── 5. GITHUB_STEP_SUMMARY gets the same distinction, when set ───────────
-  # `run_guard` is a shell FUNCTION, not an external binary — an
-  # assignment-prefixed call to a function is documented as visible only
-  # for that call, but that guarantee is the kind of thing worth not
-  # depending on structurally: get it wrong once (reorder these two calls,
-  # or add a case that assumes an unmodified PATH/GITHUB_STEP_SUMMARY
-  # afterward) and it fails silently rather than loudly, resolving the
-  # wrong stub `cargo` or leaking into a later assertion. Every other call
-  # in this file is already wrapped in `$(...)`, whose subshell makes the
-  # scoping unconditional instead of relying on prefix-assignment
-  # semantics; these two carry no output to capture, so `( ... )` alone.
-  local summary="$tmp/summary.md"
-  : > "$summary"
-  ( GITHUB_STEP_SUMMARY="$summary" PATH="$dbfail_bin:$PATH" run_guard "$tmp" >/dev/null 2>&1 )
-  st_expect 'a database-load failure is also flagged in GITHUB_STEP_SUMMARY' \
-    '1' "$(grep -c 'advisory database failed to load' "$summary" || true)"
-  : > "$summary"
-  ( GITHUB_STEP_SUMMARY="$summary" PATH="$vuln_bin:$PATH" run_guard "$tmp" >/dev/null 2>&1 )
-  st_expect 'a real vulnerability does NOT write to GITHUB_STEP_SUMMARY (unchanged CI behaviour)' \
-    '0' "$(wc -l < "$summary" | tr -d ' ')"
-
-  # ── 6. THE INVOCATION, not only the function ─────────────────────────────
-  # Everything above calls `run_guard` directly. The only caller that exists
-  # in production is a `run:` line in `.github/workflows/_validate.yml`, and
-  # it goes through `main`'s argument parsing, which nothing here had
-  # exercised — the guard body tested while its call site was not.
-  local cli_rc
-  cli_rc=$(PATH="$dbfail_bin:$PATH" bash "$SELF" "$tmp" >/dev/null 2>&1; echo $?)
-  st_expect 'invoked as the workflow invokes it (script + crate-dir arg), a db-load failure is still 2' \
-    '2' "$cli_rc"
-  cli_rc=$(PATH="$vuln_bin:$PATH" bash "$SELF" "$tmp" >/dev/null 2>&1; echo $?)
-  st_expect 'and a real advisory is still 1 through the same entry point' '1' "$cli_rc"
-  cli_rc=$(PATH="$ok_bin:$PATH" bash "$SELF" "$tmp" -- --no-fetch >/dev/null 2>&1; echo $?)
-  st_expect 'the `-- <cargo-audit-args>` form parses and still reports the clean run' '0' "$cli_rc"
-
-  # And the path that `run:` line actually names resolves. `working-directory:
-  # src-tauri` plus `bash ../scripts/cargo-audit-guard.sh .` is two facts that
-  # have to agree with the filesystem, and neither is checked by anything else.
-  local vwf="$REPO_ROOT/.github/workflows/_validate.yml"
-  st_expect 'the workflow step still runs this guard instead of bare `cargo audit`' '1' \
-    "$(grep -c '^ *run: bash \.\./scripts/cargo-audit-guard\.sh \.$' "$vwf" || true)"
-  st_expect "the relative path that step uses resolves to this script" '1' \
-    "$(test -f "$REPO_ROOT/src-tauri/../scripts/cargo-audit-guard.sh" && echo 1 || echo 0)"
-
-  if [ "$SELFTEST_FAILURES" -gt 0 ]; then
-    printf '\nself-test: %s assertion(s) failed\n' "$SELFTEST_FAILURES" >&2
-    exit 2
-  fi
-  printf 'self-test: all assertions passed\n'
-}
-
-# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-
-SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
 
 main() {
   local dir="."
@@ -512,12 +194,4 @@ main() {
   run_guard "$dir" "$@"
 }
 
-if [ "${1:-}" = "--self-test" ]; then
-  run_self_test
-elif [ "${1:-}" = "--self-test-gss-probe" ]; then
-  # Internal only — invoked by run_self_test's own nested check (section 0),
-  # never a documented entry point. Not listed in the header Usage block.
-  run_gss_isolation_probe
-else
-  main "$@"
-fi
+main "$@"

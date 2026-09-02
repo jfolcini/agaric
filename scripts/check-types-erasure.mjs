@@ -936,8 +936,7 @@ function runSelfTest() {
  * a fully synthetic fixture repo and asserts on the actual process exit
  * code, so a regression that drops `process.exit(1)` from `runGuard()`
  * (defanging the gate entirely) cannot sail through with the in-process
- * assertions above showing zero failures. Mirrors
- * `check-lib-layering.mjs`'s `runCliSelfTest`.
+ * assertions above showing zero failures.
  */
 function runCliSelfTest(ok, fail) {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'types-erasure-cli-selftest-'))

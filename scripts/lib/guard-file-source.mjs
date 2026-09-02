@@ -90,8 +90,8 @@
 //   scripts/check-dead-symbol-citations.mjs
 //   scripts/check-remove-after-markers.mjs
 //
-// All five drive themselves through `runSourceScenarios` (or, for the last,
-// its own fixtures built on the same helper), which spawns the guard INSIDE
+// The self-tests that remain drive themselves through `runSourceScenarios`
+// (or their own fixtures built on the same helper), which spawns the guard INSIDE
 // a throwaway fixture with `cwd` set to it; a script-anchored root would send
 // them scanning the real repository from there and passing for entirely the
 // wrong reason. The Python guards solved the same problem by copying the

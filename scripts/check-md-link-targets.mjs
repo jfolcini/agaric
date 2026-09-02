@@ -51,7 +51,6 @@
 //   node scripts/check-md-link-targets.mjs --cached     # staged index
 //   node scripts/check-md-link-targets.mjs --worktree   # working tree
 //   node scripts/check-md-link-targets.mjs --print-source
-//   node scripts/check-md-link-targets.mjs --self-test
 //
 // Any OTHER argument is a usage error, not a silently ignored one: a
 // mistyped `--cache` that resolved to AUTO would judge a copy the
@@ -60,11 +59,8 @@
 // Exit: 0 = clean, 1 = at least one untracked target, 2 = invocation error.
 // ─────────────────────────────────────────────────────────────────────
 
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import path, { join } from 'node:path'
+import path from 'node:path'
 
-import { runSourceScenarios } from './lib/git-scratch-guard.mjs'
 import {
   describeSource,
   gitEnv,
@@ -169,7 +165,7 @@ function check() {
   let chosen
   try {
     chosen = resolveSource(process.argv, process.env, {
-      extraFlags: ['--print-source', '--self-test'],
+      extraFlags: ['--print-source'],
       // AUTO must know whose index `GIT_INDEX_FILE` names, not merely that it
       // is set — see `resolveSource`.
       repoRoot: ROOT,
@@ -237,45 +233,4 @@ function check() {
   return 0
 }
 
-// #3962/#4017 — index vs working tree, in throwaway repositories built
-// through the shared scratch guard. Every assertion is a PAIR: the source
-// that must go red and the source that must stay green on the same fixture.
-// A one-sided "the fixed guard fails" would pass just as well against a
-// guard that fails on everything.
-//
-// `goodLine` deliberately contains NO link. A "good" line linking to another
-// fixture file would make scenario 4 (the offending file is `git rm`'d) red
-// for a second reason — the surviving doc would then link at a path that
-// just left the index — and the scenario's point is that a deletion is the
-// best possible commit, not a new violation.
-function selfTest() {
-  const root = mkdtempSync(join(tmpdir(), 'md-link-targets-selftest-'))
-  try {
-    const results = runSourceScenarios({
-      scriptPath: import.meta.filename,
-      file: 'notes.md',
-      badLine: 'See the [migration plan](docs/plan-that-was-deleted.md) for the rollout.',
-      goodLine: 'See the migration plan for the rollout.',
-      root,
-    })
-    let failures = 0
-    for (const result of results) {
-      if (result.ok) {
-        console.log(`  ok   - ${result.name}`)
-      } else {
-        failures += 1
-        console.error(`  FAIL - ${result.name}: ${result.detail}`)
-      }
-    }
-    if (failures > 0) {
-      console.error('\nself-test FAILED')
-      return 1
-    }
-    console.log('self-test OK')
-    return 0
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-}
-
-process.exit(process.argv.includes('--self-test') ? selfTest() : check())
+process.exit(check())

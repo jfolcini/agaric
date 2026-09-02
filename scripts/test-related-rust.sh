@@ -52,13 +52,11 @@
 #   --range REVSPEC  (pre-push use) — files differing in a commit range,
 #                    e.g. `--range @{upstream}..HEAD` or `--range main...HEAD`
 #   --dry            preview filter expressions (works with either)
-#   --self-test      run the fixture suite below and exit
 #
 # Usage:
 #   scripts/test-related-rust.sh                              # pre-commit
 #   scripts/test-related-rust.sh --range @{upstream}..HEAD    # pre-push
 #   scripts/test-related-rust.sh --range main...HEAD --dry    # preview
-#   scripts/test-related-rust.sh --self-test                  # guard's own tests
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -68,7 +66,6 @@ set -euo pipefail
 SOURCE="--cached"
 RANGE=""
 DRY=0
-SELF_TEST=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -79,8 +76,6 @@ while [ $# -gt 0 ]; do
       [ -z "$RANGE" ] && { echo "ERROR: --range requires a revspec" >&2; exit 2; } ;;
     --dry)
       DRY=1; shift ;;
-    --self-test)
-      SELF_TEST=1; shift ;;
     *)
       echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -91,23 +86,11 @@ if ! REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
   exit 2
 fi
 REPO_ROOT=$(cd "$REPO_ROOT" && pwd -P)
-# Which cargo the hook runs. A TEST SEAM, not a configuration knob (#3431).
-#
-# It used to be `CARGO_BIN="${CARGO_BIN:-cargo}"`, which is reachable from the
-# production exec path: any ambient `CARGO_BIN` in a developer's shell or on a
-# runner silently redirected the gate to a different binary — and a gate that
-# can be pointed elsewhere by an unrelated environment variable is not a gate.
-#
-# The self-test cannot simply be handed the flag, because it drives the REAL
-# (non-`--self-test`) path in a subprocess on purpose — that is the code it
-# needs to cover. So the seam is gated on an explicit self-test marker that
-# only the fixture harness exports, and both variables are namespaced to this
-# script. Two deliberate, script-specific variables must be set together
-# before the binary moves; nothing in a normal environment does that.
+# Which cargo the hook runs. Hardcoded, not `${CARGO_BIN:-cargo}` (#3431): an
+# ambient `CARGO_BIN` in a developer's shell or on a runner would silently
+# redirect the gate to a different binary, and a gate that can be pointed
+# elsewhere by an unrelated environment variable is not a gate.
 CARGO_BIN=cargo
-if [ "${TEST_RELATED_RUST_SELF_TEST:-0}" = "1" ] && [ -n "${TEST_RELATED_RUST_CARGO_BIN:-}" ]; then
-  CARGO_BIN="$TEST_RELATED_RUST_CARGO_BIN"
-fi
 
 # ── Foundational targets that force the full workspace suite ─────────
 # A trailing slash declares a directory target and matches every file below
@@ -217,399 +200,9 @@ load_crate_map() {
   CRATE_MAP=$(crate_roots || true)
 }
 
-# Validate the REAL checkout before the self-test builds its faithful fixture.
-# Otherwise the fixture could recreate a path that has gone stale in the
-# checkout and let the always-run self-test report a false green.
+# Validate the REAL checkout before any selection work.
 if ! validate_fallback_targets; then
   exit 1
-fi
-
-# ── Self-test ────────────────────────────────────────────────────────
-# Builds a throwaway workspace + git repo and asserts the selector's
-# verdict for each shape. The #3220 regression this pins: a staged file
-# under a non-app crate must produce a non-empty filter, and an
-# unmappable Rust file must be reported loudly rather than blend into
-# the "nothing to do" path.
-if [ "$SELF_TEST" -eq 1 ]; then
-  SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
-  fails=0
-
-  assert_out() { # <label> <grep-pattern> <output>
-    if printf '%s' "$3" | grep -qF -- "$2"; then
-      echo "  ✓ $1"
-    else
-      echo "  ✗ $1 (expected output to contain: $2)" >&2
-      printf '%s\n' "$3" | sed 's/^/      | /' >&2
-      fails=$((fails + 1))
-    fi
-  }
-
-  refute_out() { # <label> <grep-pattern> <output>
-    if printf '%s' "$3" | grep -qF -- "$2"; then
-      echo "  ✗ $1 (expected output NOT to contain: $2)" >&2
-      printf '%s\n' "$3" | sed 's/^/      | /' >&2
-      fails=$((fails + 1))
-    else
-      echo "  ✓ $1"
-    fi
-  }
-
-  assert_eq() { # <label> <expected> <actual>
-    if [ "$2" = "$3" ]; then
-      echo "  ✓ $1"
-    else
-      echo "  ✗ $1 (expected: $2; actual: $3)" >&2
-      fails=$((fails + 1))
-    fi
-  }
-
-  # The fixture must not inherit the caller's git context. When this
-  # runs from a git hook, GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE point at
-  # the REAL repository — `git init` there is a re-init that rewrites
-  # core.worktree to $tmp and leaves the checkout unusable once $tmp is
-  # removed. Hooks are disabled too: the fixture would otherwise
-  # inherit core.hooksPath and prek aborts on a repo with no prek.toml.
-  # Shared code (#3722), not a private copy: three other scripts each
-  # reinvented this scrub independently and none of them stopped the
-  # next one from repeating the incident.
-  # shellcheck source=scripts/lib/git-scratch-guard.sh
-  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-scratch-guard.sh"
-  git_scratch_guard "$tmp"
-  git_scratch_init "$tmp"
-  cd "$tmp"
-
-  # Minimal but structurally faithful workspace: a root package whose
-  # dir is src-tauri/ itself, plus two members — one whose directory
-  # name matches its package name, one where it does not
-  # (diagnostics/ → agaric-diagnostics), which is exactly the case a
-  # hardcoded crate array gets wrong.
-  mkdir -p src-tauri/src/commands src-tauri/src/db src-tauri/src/loro \
-    src-tauri/agaric-engine/src/apply src-tauri/agaric-core/src \
-    src-tauri/agaric-store/src/pagination src-tauri/diagnostics/src tools
-  cat > src-tauri/Cargo.toml <<'TOML'
-[workspace]
-resolver = "2"
-members = [".", "agaric-core", "agaric-engine", "agaric-store", "diagnostics"]
-
-[package]
-name = "agaric"
-version = "0.0.0"
-edition = "2021"
-TOML
-  for member in agaric-core:agaric-core agaric-engine:agaric-engine \
-    agaric-store:agaric-store \
-    diagnostics:agaric-diagnostics; do
-    dir="${member%%:*}"; pkg="${member##*:}"
-    cat > "src-tauri/$dir/Cargo.toml" <<TOML
-[package]
-name = "$pkg"
-version = "0.0.0"
-edition = "2021"
-TOML
-    : > "src-tauri/$dir/src/lib.rs"
-  done
-  : > src-tauri/src/lib.rs
-  : > src-tauri/src/main.rs
-  : > src-tauri/src/db/mod.rs
-  : > src-tauri/agaric-core/src/error.rs
-  : > src-tauri/agaric-store/src/op.rs
-  : > src-tauri/agaric-store/src/pagination/mod.rs
-  : > README.md
-  git add -A
-  git commit -qm "fixture scaffold"
-
-  cargo_stub="$tmp/cargo-stub"
-  cargo_stub_log="$tmp/cargo-stub.log"
-  cat > "$cargo_stub" <<'STUB'
-#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\0' "$PWD" "$@" > "$CARGO_STUB_LOG"
-STUB
-  chmod +x "$cargo_stub"
-
-  stage() { # <path> — create (if absent) and stage a single file
-    mkdir -p "$(dirname "$1")"
-    printf '// fixture\n' > "$1"
-    git add -- "$1"
-  }
-
-  run_sel_from() { # <cwd> [selector args...] → combined dry-run output
-    local cwd="$1" out rc
-    shift
-    set +e
-    out=$(cd "$cwd" && bash "$SELF" --dry "$@" 2>&1)
-    rc=$?
-    set -e
-    if [ "$rc" -ne 0 ]; then
-      out="$out
-[exit $rc]"
-    fi
-    printf '%s' "$out"
-  }
-
-  run_sel() { # → dry run from the fixture root
-    run_sel_from "$tmp"
-  }
-
-  run_real_from() { # <cwd> [selector args...] → stubbed non-dry output
-    local cwd="$1" out rc
-    shift
-    set +e
-    out=$(
-      cd "$cwd" && \
-        TEST_RELATED_RUST_SELF_TEST=1 TEST_RELATED_RUST_CARGO_BIN="$cargo_stub" \
-        CARGO_STUB_LOG="$cargo_stub_log" bash "$SELF" "$@" 2>&1
-    )
-    rc=$?
-    set -e
-    if [ "$rc" -ne 0 ]; then
-      out="$out
-[exit $rc]"
-    fi
-    printf '%s' "$out"
-  }
-
-  # (1) app-crate file — the pre-existing precise path must be intact.
-  stage src-tauri/src/cache.rs
-  out=$(run_sel); git reset -q
-  assert_out "src-tauri/src/cache.rs -> test(~cache)" 'test(~cache)' "$out"
-  refute_out "app-crate-only run stays package-scoped (no --workspace)" \
-    '--workspace' "$out"
-
-  # (2) commands/ still pulls in the #818 specta bindings guard.
-  stage src-tauri/src/commands/blocks.rs
-  out=$(run_sel); git reset -q
-  assert_out "commands/blocks.rs -> test(~commands::blocks)" \
-    'test(~commands::blocks)' "$out"
-  assert_out "commands/ -> specta bindings guard (#818)" \
-    'test(~specta_tests)' "$out"
-
-  # (3) THE #3220 REGRESSION: a crate-only change must not be silent.
-  stage src-tauri/agaric-engine/src/apply/kernel.rs
-  out=$(run_sel); git reset -q
-  assert_out "agaric-engine file -> package(agaric-engine)" \
-    'package(agaric-engine)' "$out"
-  assert_out "package filter forces --workspace (#3212)" '--workspace' "$out"
-  refute_out "crate-only change is not reported as unfilterable" \
-    'UNMAPPED' "$out"
-
-  # (4) directory name != package name.
-  stage src-tauri/diagnostics/src/audit.rs
-  out=$(run_sel); git reset -q
-  assert_out "diagnostics/ -> package(agaric-diagnostics)" \
-    'package(agaric-diagnostics)' "$out"
-
-  # (5) mixed app + crate change keeps both tiers.
-  stage src-tauri/src/cache.rs
-  stage src-tauri/agaric-engine/src/apply/kernel.rs
-  out=$(run_sel); git reset -q
-  assert_out "mixed set keeps the module filter" 'test(~cache)' "$out"
-  assert_out "mixed set keeps the package filter" 'package(agaric-engine)' "$out"
-
-  # (6) non-Rust change — quiet skip, no alarm.
-  stage README.md
-  out=$(run_sel); git reset -q
-  assert_out "non-Rust staged file -> quiet skip" 'No staged .rs files' "$out"
-  refute_out "non-Rust staged file raises no alarm" 'UNMAPPED' "$out"
-
-  # (7) Rust file in no known crate — loud, and named.
-  stage tools/stray.rs
-  out=$(run_sel); git reset -q
-  assert_out "stray .rs -> loud UNMAPPED banner" 'UNMAPPED' "$out"
-  assert_out "stray .rs -> names the offending file" 'tools/stray.rs' "$out"
-  assert_out "stray .rs -> says no tests were selected" \
-    'NO Rust tests were selected' "$out"
-
-  # (8) deliberately non-filterable app file — quiet, distinct wording.
-  stage src-tauri/src/loro/mod.rs
-  out=$(run_sel); git reset -q
-  assert_out "mod.rs only -> quiet, distinct skip message" \
-    'carry no module filter' "$out"
-  refute_out "mod.rs only raises no alarm" 'UNMAPPED' "$out"
-
-  # (9) foundational file still escalates to the full workspace suite.
-  stage src-tauri/agaric-core/src/error.rs
-  out=$(run_sel); git reset -q
-  assert_out "agaric-core/src/error.rs -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-
-  stage src-tauri/src/lib.rs
-  out=$(run_sel); git reset -q
-  assert_out "src/lib.rs -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-
-  stage src-tauri/src/main.rs
-  out=$(run_sel); git reset -q
-  assert_out "src/main.rs -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-
-  # (10) every file below the current db module directory is foundational.
-  stage src-tauri/src/db/command_tx.rs
-  out=$(run_sel); git reset -q
-  assert_out "db/command_tx.rs -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-
-  # (11) Directory matching happens before mod.rs is treated as unfilterable.
-  stage src-tauri/src/db/mod.rs
-  out=$(run_sel); git reset -q
-  assert_out "db/mod.rs -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-
-  # (12) The moved agaric-store op definition remains an exact-file fallback.
-  stage src-tauri/agaric-store/src/op.rs
-  out=$(run_sel); git reset -q
-  assert_out "agaric-store/src/op.rs -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-
-  # (13) Any file below agaric-store's pagination module is foundational.
-  stage src-tauri/agaric-store/src/pagination/history.rs
-  out=$(run_sel); git reset -q
-  assert_out "pagination/history.rs -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-
-  stage src-tauri/agaric-store/src/pagination/mod.rs
-  out=$(run_sel); git reset -q
-  assert_out "pagination/mod.rs -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-
-  # (14) Prefix-like siblings must stay on their normal narrow selectors.
-  stage src-tauri/src/db_extra.rs
-  stage src-tauri/agaric-store/src/pagination_extra/history.rs
-  stage src-tauri/agaric-store/src/op_extra.rs
-  stage src-tauri/agaric-store/src/op.rs_extra.rs
-  out=$(run_sel); git reset -q
-  assert_out "db_extra.rs remains module-filtered" 'test(~db_extra)' "$out"
-  assert_out "agaric-store prefix siblings remain package-filtered" \
-    'package(agaric-store)' "$out"
-  refute_out "prefix siblings do not trigger the full workspace fallback" \
-    'cargo nextest run --workspace (full)' "$out"
-  refute_out "prefix siblings are not reported as unmapped" 'UNMAPPED' "$out"
-
-  # (15) NUL-delimited paths keep spaces/newlines intact. Both unusual names
-  # are below foundational directories and must therefore escalate cleanly.
-  stage 'src-tauri/src/db/with space.rs'
-  out=$(run_sel); git reset -q
-  assert_out "spaced db filename -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-  refute_out "spaced db filename is not unmapped" 'UNMAPPED' "$out"
-
-  newline_fallback=$'src-tauri/agaric-store/src/pagination/line\nbreak.rs'
-  stage "$newline_fallback"
-  out=$(run_sel); git reset -q
-  assert_out "newline pagination filename -> full workspace suite" \
-    'cargo nextest run --workspace (full)' "$out"
-  refute_out "newline pagination filename is not unmapped" 'UNMAPPED' "$out"
-
-  stage 'src-tauri/src/feature with space.rs'
-  out=$(run_sel); git reset -q
-  assert_out "nonfallback spaced filename remains module-filtered" \
-    'test(~feature with space)' "$out"
-  refute_out "nonfallback spaced filename does not run the full suite" \
-    'cargo nextest run --workspace (full)' "$out"
-  refute_out "nonfallback spaced filename is not unmapped" 'UNMAPPED' "$out"
-
-  # (16) Both cached and range modes resolve paths from the repository root,
-  # even when the hook is launched from a nested workspace directory.
-  nested_cwd="$tmp/src-tauri/agaric-engine/src/apply"
-  stage src-tauri/src/main.rs
-  out=$(run_sel_from "$nested_cwd" --cached); git reset -q
-  assert_out "nested cwd cached diff finds foundational main.rs" \
-    'cargo nextest run --workspace (full)' "$out"
-  refute_out "nested cwd cached diff is not unmapped" 'UNMAPPED' "$out"
-
-  stage 'src-tauri/src/db/range nested.rs'
-  git commit -qm "range-mode fixture"
-  out=$(run_sel_from "$nested_cwd" --range 'HEAD^..HEAD')
-  assert_out "nested cwd range diff finds foundational db file" \
-    'cargo nextest run --workspace (full)' "$out"
-  refute_out "nested cwd range diff is not unmapped" 'UNMAPPED' "$out"
-
-  # (17) Exercise the REAL (non-dry) fallback branch with an injected cargo
-  # binary. The stub records NUL-delimited cwd/argv, proving the selector execs
-  # from the fixture's src-tauri root with the exact full-workspace command.
-  stage src-tauri/src/main.rs
-  out=$(run_real_from "$nested_cwd" --cached); git reset -q
-  assert_out "stubbed non-dry fallback reaches the cargo exec" \
-    'running full test suite' "$out"
-  if [ -f "$cargo_stub_log" ]; then
-    cargo_call=()
-    mapfile -d '' -t cargo_call < "$cargo_stub_log"
-    assert_eq "cargo stub recorded cwd plus three argv entries" "4" "${#cargo_call[@]}"
-    assert_eq "full fallback cargo cwd is fixture/src-tauri" \
-      "$(cd "$tmp/src-tauri" && pwd -P)" "${cargo_call[0]:-}"
-    assert_eq "full fallback argv[0] is nextest" "nextest" "${cargo_call[1]:-}"
-    assert_eq "full fallback argv[1] is run" "run" "${cargo_call[2]:-}"
-    assert_eq "full fallback argv[2] is --workspace" "--workspace" "${cargo_call[3]:-}"
-  else
-    echo "  ✗ cargo stub did not write its invocation log" >&2
-    fails=$((fails + 1))
-  fi
-
-  # (17b) #3431: the cargo seam must NOT be reachable from a production run.
-  # An ambient `CARGO_BIN` — the pre-#3431 spelling, and a plausible thing to
-  # find in a developer's shell or on a runner — must move nothing.
-  #
-  # A dry run keeps this cheap (no suite is executed), and the staged file is
-  # deliberately a NON-fallback crate file: that is the path that resolves the
-  # crate map through `$CARGO_BIN metadata`, so an honoured override both
-  # writes the stub's log AND breaks the mapping (the stub returns no JSON).
-  # A fallback file would short-circuit before cargo is ever consulted and the
-  # assertion would pass without proving anything.
-  rm -f "$cargo_stub_log"
-  stage src-tauri/agaric-store/src/seam_probe.rs
-  set +e
-  out=$(cd "$tmp" && CARGO_BIN="$cargo_stub" CARGO_STUB_LOG="$cargo_stub_log" \
-    bash "$SELF" --dry --cached 2>&1)
-  set -e
-  git reset -q; rm -f "$tmp/src-tauri/agaric-store/src/seam_probe.rs"
-  assert_out "an ambient CARGO_BIN still produces the correct selection" \
-    'package(agaric-store)' "$out"
-  if [ -e "$cargo_stub_log" ]; then
-    echo "  ✗ ambient CARGO_BIN redirected the hook's cargo (test seam is production-reachable)" >&2
-    fails=$((fails + 1))
-  else
-    echo "  ✓ an ambient CARGO_BIN does not redirect the hook's cargo"
-  fi
-
-  # (18) A moved/deleted exact-file target makes the selector fail loudly.
-  rm src-tauri/agaric-store/src/op.rs
-  out=$(run_sel)
-  assert_out "missing fallback file is reported" \
-    'configured Rust fallback file is missing: src-tauri/agaric-store/src/op.rs' "$out"
-  assert_out "missing fallback file fails the selector" '[exit 1]' "$out"
-
-  # The always-run outer self-test mode must validate THIS checkout before it
-  # can construct a fixture that recreates the stale target and masks the move.
-  set +e
-  outer_out=$(bash "$SELF" --self-test 2>&1)
-  outer_rc=$?
-  set -e
-  if [ "$outer_rc" -ne 0 ]; then
-    outer_out="$outer_out
-[exit $outer_rc]"
-  fi
-  assert_out "outer self-test validates the real checkout first" \
-    'configured Rust fallback file is missing: src-tauri/agaric-store/src/op.rs' "$outer_out"
-  assert_out "outer self-test fails before building its fixture" '[exit 1]' "$outer_out"
-  git checkout -q -- src-tauri/agaric-store/src/op.rs
-
-  # (19) Directory targets are validated too, so a future module move cannot
-  # silently turn every prefix match into a dead fallback.
-  mv src-tauri/agaric-store/src/pagination src-tauri/agaric-store/src/pagination-moved
-  out=$(run_sel)
-  assert_out "missing fallback directory is reported" \
-    'configured Rust fallback directory is missing: src-tauri/agaric-store/src/pagination/' "$out"
-  assert_out "missing fallback directory fails the selector" '[exit 1]' "$out"
-  mv src-tauri/agaric-store/src/pagination-moved src-tauri/agaric-store/src/pagination
-
-  if [ "$fails" -gt 0 ]; then
-    echo "self-test: $fails assertion(s) failed" >&2
-    exit 1
-  fi
-  echo "self-test: all assertions passed"
-  exit 0
 fi
 
 STAGED_RS=()

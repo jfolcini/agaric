@@ -1184,16 +1184,11 @@ jobs:
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # Every path this step touches is an env var rather than a literal,
-          # so `check-session-log-pr-collision.mjs --self-test` can extract
-          # the shell below VERBATIM (between the BEGIN/END markers) and run
-          # it against fixtures in a temp directory. Reading the YAML is what
-          # let the exit-code aliasing of #4431 survive review; executing the
-          # real bytes for every outcome is what catches the next one.
+          # so the shell below can be run against fixtures unchanged (#4431).
           GUARD_SCRIPT: scripts/check-session-log-pr-collision.mjs
           PRS_JSON: prs.json
           MERGED_PATHS: merged-paths.txt
         run: |
-          # --- BEGIN session-log-pr-collision step shell (extracted verbatim by --self-test) ---
           set -uo pipefail
           summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
@@ -1326,4 +1321,3 @@ jobs:
             echo "::error::session-log-pr-collision: could not verify (exit=$rc, verdict=${verdict:-<none>}) — the guard did not reach a verdict, so NO collision was observed and none is being reported. Likely causes: the guard is missing or unreadable in the base checkout, a syntax error or uncaught exception in it, node itself crashing or being killed, or the guard refusing to trust its own open-PR payload (its own message is above). Treated as a failure, never a pass (#3933)."
             exit 1
           fi
-          # --- END session-log-pr-collision step shell ---

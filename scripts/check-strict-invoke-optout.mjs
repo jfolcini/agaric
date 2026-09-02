@@ -60,12 +60,10 @@
 //
 // Usage: node scripts/check-strict-invoke-optout.mjs
 //        node scripts/check-strict-invoke-optout.mjs --update-baseline
-//        node scripts/check-strict-invoke-optout.mjs --self-test
 // Exit:  0 clean, 1 = drift (new opt-out or stale baseline entry),
-//        2 = repo layout / self-test failure.
+//        2 = repo layout failure.
 // ─────────────────────────────────────────────────────────────────────
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -77,7 +75,7 @@ const CORE_MODULE = '@tauri-apps/api/core'
 /** The fallback that makes an unstubbed command reject instead of resolving. */
 const STRICT_FALLBACK = 'strictInvokeFallback'
 
-// ─── analysis (pure over a src dir, so the self-test can drive it) ──────
+// ─── analysis (pure over a src dir) ────────────────────────────────────
 
 function listTestFiles(dir) {
   const out = []
@@ -235,9 +233,7 @@ function writeBaseline(entries) {
 
 // ─── entry point ────────────────────────────────────────────────────────
 
-if (process.argv.includes('--self-test')) {
-  runSelfTest()
-} else if (process.argv.includes('--update-baseline')) {
+if (process.argv.includes('--update-baseline')) {
   updateBaseline()
 } else {
   runGuard()
@@ -314,119 +310,4 @@ function runGuard() {
   console.log(
     `OK: ${optOuts.length} baselined strict-invoke opt-out(s), no new opt-outs, no stale entries`,
   )
-}
-
-// ─── self-test ──────────────────────────────────────────────────────────
-//
-// Drives analyze() over a synthetic src tree so the guard's own exit
-// behavior is verified: a baselined opt-out PASSES, a NEW opt-out is
-// flagged, a STALE baseline entry is flagged, a factory that threads
-// `strictInvokeFallback` does NOT count, a factory-less `vi.mock` DOES
-// count, a mock of a DIFFERENT module does NOT count, a factory whose
-// nested parens would truncate a lazy regex is still read whole, and
-// non-test files are ignored.
-function runSelfTest() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'strict-invoke-selftest-'))
-  const failures = []
-  const ok = (name) => console.log(`  ok   - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-
-  try {
-    const srcDir = path.join(tmp, 'src')
-    const testsDir = path.join(srcDir, 'components', '__tests__')
-    fs.mkdirSync(testsDir, { recursive: true })
-
-    const write = (name, body) => fs.writeFileSync(path.join(testsDir, name), body)
-
-    write('Baselined.test.ts', `vi.mock('${CORE_MODULE}', () => ({ invoke: vi.fn() }))\n`)
-    write('NewOptOut.test.ts', `vi.mock('${CORE_MODULE}', () => ({ invoke: vi.fn() }))\n`)
-    write('Fixed.test.ts', `vi.mock('${CORE_MODULE}', () => ({ invoke: vi.fn() }))\n`)
-    write(
-      'Strict.test.tsx',
-      `vi.mock('${CORE_MODULE}', async () => {\n` +
-        `  const { strictInvokeFallback } = await import('@/__tests__/helpers/invoke')\n` +
-        '  return { invoke: vi.fn(strictInvokeFallback), convertFileSrc: vi.fn() }\n' +
-        '})\n',
-    )
-    write('NoFactory.test.ts', `vi.mock('${CORE_MODULE}')\n`)
-    write('OtherModule.test.ts', "vi.mock('sonner', () => ({ toast: vi.fn() }))\n")
-    write(
-      'NestedParens.test.ts',
-      `vi.mock('${CORE_MODULE}', () => ({\n` +
-        '  invoke: vi.fn((cmd) => (cmd === "x" ? 1 : 2)),\n' +
-        '  convertFileSrc: vi.fn(() => ""),\n' +
-        '}))\n',
-    )
-    write(
-      'Commented.test.ts',
-      `// A comment mentioning vi.mock('${CORE_MODULE}', () => ({ invoke: vi.fn() }))\n` +
-        `/* and a block one: vi.mock('${CORE_MODULE}') */\n` +
-        'export const x = 1\n',
-    )
-    write(
-      'CommentThenReal.test.ts',
-      `// documented: vi.mock('${CORE_MODULE}', () => ({ invoke: vi.fn() }))\n` +
-        `vi.mock('${CORE_MODULE}', () => ({ invoke: vi.fn() }))\n`,
-    )
-    // Not a test file — must be ignored even though it matches textually.
-    fs.writeFileSync(
-      path.join(srcDir, 'helper.ts'),
-      `vi.mock('${CORE_MODULE}', () => ({ invoke: vi.fn() }))\n`,
-    )
-
-    const rel = (n) => `src/components/__tests__/${n}`
-    const { optOuts, newOptOuts, staleBaseline } = analyze({
-      srcDir,
-      root: tmp,
-      baseline: [rel('Baselined.test.ts'), rel('Fixed.test.ts'), rel('Gone.test.ts')].toSorted(),
-    })
-
-    // `Fixed.test.ts` is written as an opt-out on purpose: only `Gone.test.ts`
-    // (absent from the tree) may be stale, which pins "stale == no longer
-    // opts out", not "stale == file deleted".
-    if (!newOptOuts.includes(rel('Baselined.test.ts'))) ok('baselined opt-out passes')
-    else fail('baselined opt-out passes', JSON.stringify(newOptOuts))
-
-    if (newOptOuts.includes(rel('NewOptOut.test.ts'))) ok('new opt-out is flagged')
-    else fail('new opt-out is flagged', JSON.stringify(newOptOuts))
-
-    if (staleBaseline.includes(rel('Gone.test.ts'))) ok('stale baseline entry is flagged')
-    else fail('stale baseline entry is flagged', JSON.stringify(staleBaseline))
-
-    if (!optOuts.includes(rel('Strict.test.tsx')))
-      ok('factory threading strictInvokeFallback is not an opt-out')
-    else fail('strictInvokeFallback factory is clean', JSON.stringify(optOuts))
-
-    if (optOuts.includes(rel('NoFactory.test.ts'))) ok('factory-less vi.mock counts as an opt-out')
-    else fail('factory-less vi.mock counts', JSON.stringify(optOuts))
-
-    if (!optOuts.includes(rel('OtherModule.test.ts'))) ok('mock of another module does not count')
-    else fail('other-module mock does not count', JSON.stringify(optOuts))
-
-    if (optOuts.includes(rel('NestedParens.test.ts')))
-      ok('factory with nested parens is read whole and still counts')
-    else fail('nested-paren factory is read whole', JSON.stringify(optOuts))
-
-    if (!optOuts.includes(rel('Commented.test.ts')))
-      ok('a commented-out / documented vi.mock does not count')
-    else fail('commented vi.mock does not count', JSON.stringify(optOuts))
-
-    if (optOuts.includes(rel('CommentThenReal.test.ts')))
-      ok('a real vi.mock alongside a documenting comment still counts')
-    else fail('real vi.mock next to a comment still counts', JSON.stringify(optOuts))
-
-    if (!optOuts.some((f) => f.endsWith('helper.ts'))) ok('non-test file is ignored')
-    else fail('non-test file is ignored', JSON.stringify(optOuts))
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true })
-  }
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
 }

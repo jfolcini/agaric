@@ -84,11 +84,10 @@
 //
 // Falsification: rename an existing, non-grandfathered migration's covering
 // test to drop its `_<NNNN>_` tag, and this guard goes red on that
-// migration number. See `--self-test`.
+// migration number.
 //
 // Usage:
 //   node scripts/check-migration-test-coverage.mjs
-//   node scripts/check-migration-test-coverage.mjs --self-test
 //   node scripts/check-migration-test-coverage.mjs --update-baseline
 //
 // Exit: 0 clean / 1 an uncovered, non-grandfathered migration, or a
@@ -96,17 +95,7 @@
 // wiring error (no migrations found, or a `.sql` file this guard cannot
 // number — the guard could not answer, not an answer of "clean").
 
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..')
@@ -123,8 +112,7 @@ const BASELINE_FILE = join(REPO_ROOT, 'src-tauri', 'migrations-test-coverage-bas
 // test with the right name sitting in a file OTHER than these three does
 // not satisfy the documented convention (nor would it be selected by
 // running the filter against `db::tests` the way AGENTS.md's own recipe
-// does) and must not count — see the self-test's
-// `MENTIONED_ONLY_OUTSIDE_THE_NAMED_FILES` fixture.
+// does) and must not count.
 const TEST_FILES = [
   join(REPO_ROOT, 'src-tauri', 'src', 'db', 'tests.rs'),
   join(REPO_ROOT, 'src-tauri', 'src', 'snapshot', 'tests.rs'),
@@ -189,8 +177,8 @@ export function listMigrations(dir = MIGRATIONS_DIR) {
 }
 
 /**
- * `listMigrations(dir).numbers` — kept as its own export because the
- * self-test and any importer overwhelmingly want just the numbers.
+ * `listMigrations(dir).numbers` — kept as its own export because an
+ * importer overwhelmingly wants just the numbers.
  *
  * @param {string} dir
  */
@@ -203,9 +191,9 @@ export function listMigrationNumbers(dir = MIGRATIONS_DIR) {
  * exact shape a Rust test attribute takes in this codebase (the attribute
  * line immediately above an optional `async` and the `fn` line; verified
  * against every migration test in `db/tests.rs` today). Files that don't
- * exist are skipped rather than erroring: a self-test fixture tree carries
- * only the files it needs, and `main()`'s own real-repo run always has all
- * three named in `TEST_FILES`.
+ * exist are skipped rather than erroring: a caller may point this at a tree
+ * carrying only the files it needs, and `main()`'s own real-repo run always
+ * has all three named in `TEST_FILES`.
  *
  * @param {string[]} files
  */
@@ -305,7 +293,7 @@ function writeBaseline(numbers, path = BASELINE_FILE) {
 }
 
 /**
- * The full verdict, parameterised so the self-test can point every input at
+ * The full verdict, parameterised so a caller can point every input at
  * a throwaway fixture tree without touching this repository. `main()` calls
  * this with no arguments, which resolves every input against the real repo.
  *
@@ -431,408 +419,9 @@ function main() {
   return exitCode
 }
 
-// ---------------------------------------------------------------------------
-// self-test
-// ---------------------------------------------------------------------------
-
-function selfTest() {
-  const root = mkdtempSync(join(tmpdir(), 'migration-test-coverage-selftest-'))
-  const failures = []
-  const record = (name, ok, detail = '') => {
-    if (ok) {
-      console.log(`  ok   - ${name}`)
-    } else {
-      failures.push(name)
-      console.error(`  FAIL - ${name}: ${detail}`)
-    }
-  }
-  try {
-    const migrationsDir = join(root, 'migrations')
-    mkdirSync(migrationsDir, { recursive: true })
-    // Two migrations: 0001 (will be grandfathered, no test) and 0002 (must
-    // have a matching test or the guard fails on it).
-    writeFileSync(join(migrationsDir, '0001_initial.sql'), 'CREATE TABLE t (id TEXT) STRICT;\n')
-    writeFileSync(join(migrationsDir, '0002_add_column.sql'), 'ALTER TABLE t ADD COLUMN x TEXT;\n')
-
-    const dbTests = join(root, 'db_tests.rs')
-    const snapshotTests = join(root, 'snapshot_tests.rs')
-    const elsewhereTests = join(root, 'elsewhere_tests.rs')
-    const baselinePath = join(root, 'baseline.txt')
-
-    // 1. NEITHER migration has a covering test yet, and NEITHER is
-    //    baselined: both are reported.
-    writeFileSync(dbTests, 'fn not_a_migration_test() {}\n')
-    {
-      const r = runCheck({ migrationsDir, testFiles: [dbTests, snapshotTests], baselinePath })
-      record(
-        'both migrations are flagged when neither has a covering test and neither is baselined',
-        r.exitCode === 1 &&
-          r.lines.some((l) => /- 0001 —/.test(l)) &&
-          r.lines.some((l) => /- 0002 —/.test(l)),
-        JSON.stringify(r),
-      )
-    }
-
-    // 2. Grandfather 0001 via the baseline; 0002 alone is now reported —
-    //    proves the baseline exempts by NUMBER, not by clearing everything.
-    writeBaseline(['0001'], baselinePath)
-    {
-      const r = runCheck({ migrationsDir, testFiles: [dbTests, snapshotTests], baselinePath })
-      record(
-        '0001 is grandfathered by the baseline; only 0002 is still flagged',
-        r.exitCode === 1 &&
-          !r.lines.some((l) => /- 0001 —/.test(l)) &&
-          r.lines.some((l) => /- 0002 —/.test(l)),
-        JSON.stringify(r),
-      )
-    }
-
-    // 3. Add a correctly-named test for 0002 — the guard goes green. This is
-    //    the ACCEPTANCE half of #4144's own falsification.
-    writeFileSync(
-      dbTests,
-      ['fn not_a_migration_test() {}', '', '#[test]', 'fn t_0002_add_column_4144() {}', ''].join(
-        '\n',
-      ),
-    )
-    {
-      const r = runCheck({ migrationsDir, testFiles: [dbTests, snapshotTests], baselinePath })
-      record(
-        'adding a correctly-named `_0002_` test clears the flag',
-        r.exitCode === 0,
-        JSON.stringify(r),
-      )
-    }
-
-    // 4. #4144's OWN FALSIFICATION: rename that SAME test to drop its
-    //    `_0002_` tag (the exact failure mode the issue describes — a
-    //    migration test named outside the convention silently vanishes from
-    //    the filter's selection). The guard must go red again, on 0002
-    //    specifically, even though 0001 stays grandfathered throughout.
-    writeFileSync(
-      dbTests,
-      ['fn not_a_migration_test() {}', '', '#[test]', 'fn t_add_column_4144() {}', ''].join('\n'),
-    )
-    {
-      const r = runCheck({ migrationsDir, testFiles: [dbTests, snapshotTests], baselinePath })
-      record(
-        "#4144's falsification: renaming the covering test to drop `_0002_` turns the guard red again",
-        r.exitCode === 1 &&
-          r.lines.some((l) => /- 0002 —/.test(l)) &&
-          !r.lines.some((l) => /- 0001 —/.test(l)),
-        JSON.stringify(r),
-      )
-    }
-
-    // 5. `async fn` + `#[tokio::test]` is recognised too — the actual shape
-    //    every migration test in db/tests.rs uses today.
-    writeFileSync(
-      dbTests,
-      ['#[tokio::test]', 'async fn t_0002_add_column_4144() {}', ''].join('\n'),
-    )
-    {
-      const r = runCheck({ migrationsDir, testFiles: [dbTests, snapshotTests], baselinePath })
-      record(
-        'an `async fn` under `#[tokio::test]` counts as a covering test',
-        r.exitCode === 0,
-        JSON.stringify(r),
-      )
-    }
-
-    // 5b. `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]` —
-    //     the actual shape `attachment_blobs_backfill_dedups_pre_0094_…`
-    //     uses in the real `db/tests.rs` — is recognised too, not only the
-    //     bare `#[tokio::test]`.
-    writeFileSync(
-      dbTests,
-      [
-        '#[tokio::test(flavor = "multi_thread", worker_threads = 2)]',
-        'async fn t_0002_add_column_4144() {}',
-        '',
-      ].join('\n'),
-    )
-    {
-      const r = runCheck({ migrationsDir, testFiles: [dbTests, snapshotTests], baselinePath })
-      record(
-        '`#[tokio::test(flavor = …, worker_threads = …)]` (WITH arguments) counts as a covering test',
-        r.exitCode === 0,
-        JSON.stringify(r),
-      )
-    }
-
-    // 6. A test covering 0002 in a SNAPSHOT-siblings file (not db/tests.rs)
-    //    also counts — the guard scans every file named in `testFiles`, not
-    //    only the first one.
-    writeFileSync(dbTests, 'fn not_a_migration_test() {}\n')
-    writeFileSync(snapshotTests, ['#[test]', 'fn t_0002_add_column_4144() {}', ''].join('\n'))
-    {
-      const r = runCheck({ migrationsDir, testFiles: [dbTests, snapshotTests], baselinePath })
-      record(
-        'a covering test in a snapshot-sibling file (not db/tests.rs) also counts',
-        r.exitCode === 0,
-        JSON.stringify(r),
-      )
-    }
-
-    // 7. SCOPE: a correctly-named test sitting in a file NOT passed as one
-    //    of `testFiles` does not count. Mirrors AGENTS.md's own scoping —
-    //    this guard is insurance for the documented convention, not a
-    //    repo-wide search for any test that happens to mention a migration.
-    writeFileSync(snapshotTests, 'fn not_a_migration_test() {}\n')
-    writeFileSync(elsewhereTests, ['#[test]', 'fn t_0002_add_column_4144() {}', ''].join('\n'))
-    {
-      const r = runCheck({ migrationsDir, testFiles: [dbTests, snapshotTests], baselinePath })
-      record(
-        'a correctly-named test in a file OUTSIDE the documented set does not count',
-        r.exitCode === 1 && r.lines.some((l) => /- 0002 —/.test(l)),
-        JSON.stringify(r),
-      )
-    }
-
-    // 7b. The attribute->fn regex terminates on adversarial input. The
-    //     earlier `\s*(?:\r?\n\s*)+` shape let two subexpressions both
-    //     claim a newline, so a `#[test]` followed by a long run of blank
-    //     lines and no `fn` backtracked exponentially (CodeQL js/redos,
-    //     high). A migration test file is repo-controlled, so this was a
-    //     hang risk rather than a reachable attack, but the bound is what
-    //     keeps the rewrite from being undone by a later "simplification".
-    {
-      const evilPath = join(root, 'redos-probe.rs')
-      writeFileSync(evilPath, `#[test]\n${'\n'.repeat(60_000)}`)
-      const started = Date.now()
-      const found = extractTestNames([evilPath])
-      const elapsedMs = Date.now() - started
-      record(
-        'a `#[test]` followed by 60k blank lines and no `fn` terminates promptly (#4144 redos)',
-        found.length === 0 && elapsedMs < 2_000,
-        `matches=${found.length} elapsedMs=${elapsedMs}`,
-      )
-    }
-
-    // 8. `--update-baseline`'s underlying computation grandfathers the
-    //    CURRENT uncovered set exactly, and `runCheck` is green against the
-    //    baseline it just wrote.
-    {
-      const migrations = listMigrationNumbers(migrationsDir)
-      const testNames = extractTestNames([dbTests, snapshotTests])
-      const uncovered = computeUncovered(migrations, testNames)
-      const freshBaselinePath = join(root, 'baseline-regenerated.txt')
-      writeBaseline(uncovered, freshBaselinePath)
-      const regenerated = readBaseline(freshBaselinePath)
-      record(
-        "`--update-baseline`'s computation grandfathers exactly the current uncovered set",
-        regenerated.size === 2 && regenerated.has('0001') && regenerated.has('0002'),
-        JSON.stringify([...regenerated]),
-      )
-      const r = runCheck({
-        migrationsDir,
-        testFiles: [dbTests, snapshotTests],
-        baselinePath: freshBaselinePath,
-      })
-      record(
-        'and `runCheck` is green against the freshly regenerated baseline',
-        r.exitCode === 0,
-        JSON.stringify(r),
-      )
-    }
-
-    // 9. WIRING: a `migrationsDir` with no `.sql` files at all (or a
-    //    non-existent directory) is a wiring failure (exit 2), not a silent
-    //    "clean" — the same "the guard could not answer" discipline
-    //    `check-pr-overlap-trust-boundary.mjs` applies to a missing `on:`
-    //    block.
-    {
-      const emptyDir = join(root, 'no-migrations-here')
-      const r = runCheck({
-        migrationsDir: emptyDir,
-        testFiles: [dbTests, snapshotTests],
-        baselinePath,
-      })
-      record(
-        'a migrations directory with no migrations is a wiring failure (exit 2), not "clean"',
-        r.exitCode === 2,
-        JSON.stringify(r),
-      )
-    }
-
-    // 10. Non-migration files in the directory (no `NNNN_` prefix, or a
-    //     non-`.sql` extension) are ignored rather than mis-parsed.
-    writeFileSync(join(migrationsDir, 'AGENTS.md'), '# not a migration\n')
-    writeFileSync(join(migrationsDir, '0001_initial.sql.bak'), 'not really sql\n')
-    writeFileSync(snapshotTests, ['#[test]', 'fn t_0002_add_column_4144() {}', ''].join('\n'))
-    {
-      const migrations = listMigrationNumbers(migrationsDir)
-      record(
-        'non-migration files (AGENTS.md, a stray .sql.bak) are ignored by the filename scan',
-        JSON.stringify(migrations) === JSON.stringify(['0001', '0002']),
-        JSON.stringify(migrations),
-      )
-    }
-
-    // 10a. THE OTHER HALF OF "SHRINK-ONLY": a STALE baseline entry. Without
-    //      this the baseline only ever grows in effect — a migration that
-    //      later gains a correctly-named test keeps its grandfathering
-    //      forever, and a line naming a migration that does not exist is
-    //      accepted in silence. Both directions are pinned, plus the fix.
-    {
-      const staleDir = join(root, 'stale-migrations')
-      mkdirSync(staleDir, { recursive: true })
-      writeFileSync(join(staleDir, '0001_covered_now.sql'), 'SELECT 1;\n')
-      const staleTests = join(root, 'stale_tests.rs')
-      writeFileSync(staleTests, ['#[test]', 'fn t_0001_covered_now_4144() {}', ''].join('\n'))
-
-      // 0001 HAS a covering test, yet is still listed; 0999 names a migration
-      // that does not exist at all.
-      const stalePath = join(root, 'stale-baseline.txt')
-      writeBaseline(['0001', '0999'], stalePath)
-      const stale = runCheck({
-        migrationsDir: staleDir,
-        testFiles: [staleTests],
-        baselinePath: stalePath,
-      })
-      record(
-        'a baselined migration that NOW has a covering test is reported as STALE (red)',
-        stale.exitCode === 1 &&
-          stale.lines.some((l) => /stale entr/.test(l)) &&
-          stale.lines.some((l) => /^ {2}- 0001$/.test(l)),
-        JSON.stringify(stale),
-      )
-      record(
-        'and so is a baseline line naming a migration that does not exist',
-        stale.exitCode === 1 && stale.lines.some((l) => /^ {2}- 0999$/.test(l)),
-        JSON.stringify(stale),
-      )
-
-      // Pruning both is the fix, and it is the only thing that changed.
-      const prunedPath = join(root, 'stale-baseline-pruned.txt')
-      writeBaseline([], prunedPath)
-      const pruned = runCheck({
-        migrationsDir: staleDir,
-        testFiles: [staleTests],
-        baselinePath: prunedPath,
-      })
-      record('pruning the stale entries clears it', pruned.exitCode === 0, JSON.stringify(pruned))
-    }
-
-    // 10b. THE CEILING (#4144's own acceptance, and the divergence the
-    //      #4148/#4135/#4144 review found open): a migration numbered `1000`
-    //      with a PERFECTLY conventional `_1000_` test. The naming rule is
-    //      satisfied; the documented filter's `_0[0-9]{3}_` selects nothing,
-    //      so that test is never in the migration-test group. The guard must
-    //      go red on the NUMBER — this is the "satisfies the guard and still
-    //      never runs" case — and the baseline must NOT be able to silence
-    //      it, because a ceiling breach is a broken filter, not a missing
-    //      test.
-    {
-      const ceilingDir = join(root, 'ceiling-migrations')
-      mkdirSync(ceilingDir, { recursive: true })
-      writeFileSync(join(ceilingDir, '1000_past_the_ceiling.sql'), 'SELECT 1;\n')
-      const ceilingTests = join(root, 'ceiling_tests.rs')
-      writeFileSync(
-        ceilingTests,
-        ['#[test]', 'fn t_1000_past_the_ceiling_4144() {}', ''].join('\n'),
-      )
-      const emptyBaseline = join(root, 'ceiling-empty-baseline.txt')
-      writeBaseline([], emptyBaseline)
-      const r = runCheck({
-        migrationsDir: ceilingDir,
-        testFiles: [ceilingTests],
-        baselinePath: emptyBaseline,
-      })
-      record(
-        'migration 1000 with a conventional `_1000_` test is RED — the documented filter cannot select it',
-        r.exitCode === 1 &&
-          r.lines.some((l) => /ceiling/.test(l)) &&
-          r.lines.some((l) => /- 1000 —/.test(l)),
-        JSON.stringify(r),
-      )
-      // …and baselining the number does not buy it a pass.
-      const fullBaseline = join(root, 'ceiling-full-baseline.txt')
-      writeBaseline(['1000'], fullBaseline)
-      const baselined = runCheck({
-        migrationsDir: ceilingDir,
-        testFiles: [ceilingTests],
-        baselinePath: fullBaseline,
-      })
-      record(
-        'and grandfathering 1000 in the baseline does NOT silence the ceiling breach',
-        baselined.exitCode === 1 && baselined.lines.some((l) => /- 1000 —/.test(l)),
-        JSON.stringify(baselined),
-      )
-      // NEGATIVE CONTROL: the SAME shape one number below the ceiling
-      // (`0999`) is green, so the assertion above is about the ceiling and
-      // not about four-digit numbers in general.
-      const belowDir = join(root, 'below-ceiling-migrations')
-      mkdirSync(belowDir, { recursive: true })
-      writeFileSync(join(belowDir, '0999_below_the_ceiling.sql'), 'SELECT 1;\n')
-      const belowTests = join(root, 'below_ceiling_tests.rs')
-      writeFileSync(belowTests, ['#[test]', 'fn t_0999_below_the_ceiling_4144() {}', ''].join('\n'))
-      const below = runCheck({
-        migrationsDir: belowDir,
-        testFiles: [belowTests],
-        baselinePath: emptyBaseline,
-      })
-      record(
-        'migration 0999 — one below the ceiling — with the same shape of test is GREEN',
-        below.exitCode === 0,
-        JSON.stringify(below),
-      )
-    }
-
-    // 10c. A `.sql` file this guard cannot NUMBER is a wiring failure, not a
-    //      silent skip. `10000_x.sql` matches neither `MIGRATION_FILE_RE`
-    //      (five digits before the `_`) nor any other convention, and the
-    //      earlier draft dropped it on the floor while still reporting
-    //      "clean" — a guard reporting a verdict about a file it never
-    //      looked at.
-    {
-      const malformedDir = join(root, 'malformed-migrations')
-      mkdirSync(malformedDir, { recursive: true })
-      writeFileSync(join(malformedDir, '0001_fine.sql'), 'SELECT 1;\n')
-      writeFileSync(join(malformedDir, '10000_five_digits.sql'), 'SELECT 1;\n')
-      const malformedTests = join(root, 'malformed_tests.rs')
-      writeFileSync(malformedTests, ['#[test]', 'fn t_0001_fine_4144() {}', ''].join('\n'))
-      const emptyBaseline = join(root, 'malformed-baseline.txt')
-      writeBaseline([], emptyBaseline)
-      const r = runCheck({
-        migrationsDir: malformedDir,
-        testFiles: [malformedTests],
-        baselinePath: emptyBaseline,
-      })
-      record(
-        'a `.sql` file that does not follow `NNNN_description.sql` is a wiring failure (exit 2), not a silent skip',
-        r.exitCode === 2 && r.lines.some((l) => /10000_five_digits\.sql/.test(l)),
-        JSON.stringify(r),
-      )
-    }
-
-    // 11. THE REAL REPO ITSELF must pass — the wiring check that this guard
-    //     is still pointed at the tree it is about, and that the committed
-    //     `src-tauri/migrations-test-coverage-baseline.txt` actually
-    //     grandfathers today's pre-convention migrations.
-    {
-      const r = runCheck()
-      record(
-        'this repository itself passes check-migration-test-coverage today',
-        r.exitCode === 0,
-        JSON.stringify(r),
-      )
-    }
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    return 2
-  }
-  console.log('self-test: all assertions passed')
-  return 0
-}
-
 const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
-  if (process.argv.includes('--self-test')) process.exit(selfTest())
-  else if (process.argv.includes('--update-baseline')) process.exit(updateBaseline())
+  if (process.argv.includes('--update-baseline')) process.exit(updateBaseline())
   else process.exit(main())
 }

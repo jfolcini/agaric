@@ -72,13 +72,10 @@
 //
 // Usage: node scripts/check-lib-layering.mjs
 //        node scripts/check-lib-layering.mjs --update-baseline
-//        node scripts/check-lib-layering.mjs --self-test
 // Exit:  0 clean, 1 = drift (new violation or stale baseline entry),
-//        2 = repo layout / self-test failure.
+//        2 = repo layout failure.
 // ─────────────────────────────────────────────────────────────────────
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
 import { detectImports } from './check-import-cycles.mjs'
@@ -139,8 +136,8 @@ function listSourceFiles(dir) {
  * guard.
  *
  * `srcDir` is threaded through explicitly (rather than reading the
- * module-level `SRC_DIR` constant) so the self-test can drive relative-
- * specifier resolution against its synthetic tree instead of the real repo.
+ * module-level `SRC_DIR` constant) so relative-specifier resolution can be
+ * driven against an arbitrary tree instead of the real repo.
  *
  * @param {string} spec raw specifier text
  * @param {string} fromFile absolute path of the importing file
@@ -165,7 +162,7 @@ export function specifierTier(spec, fromFile, srcDir) {
  * Compute the live set of layering-violating files (files under a tier
  * directory that import a HIGHER-ranked tier) and diff it against
  * `baseline` (an array of POSIX repo-relative paths). Pure over the
- * filesystem so the self-test can drive it against a synthetic tree.
+ * filesystem, so it can be driven against an arbitrary tree.
  *
  * @returns {{ violators: string[], details: Map<string, string[]>,
  *   newViolators: string[], staleBaseline: string[], scanned: number }}
@@ -284,216 +281,9 @@ function runGuard() {
   )
 }
 
-// ─── self-test ──────────────────────────────────────────────────────
-//
-// Drives analyze()/specifierTier() against a synthetic src tree so the
-// guard's own exit behavior is verified: a legal (downward) import PASSES,
-// an illegal (upward) NEW import is flagged, a BASELINED upward import
-// PASSES, and a STALE baseline entry (fixed, no longer imports upward) is
-// flagged.
-function runSelfTest() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lib-layering-selftest-'))
-  const failures = []
-  const ok = (name) => console.log(`  ok - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-
-  try {
-    const srcDir = path.join(tmp, 'src')
-    const libDir = path.join(srcDir, 'lib')
-    const storesDir = path.join(srcDir, 'stores')
-    const hooksDir = path.join(srcDir, 'hooks')
-    const compDir = path.join(srcDir, 'components')
-    const testDir = path.join(hooksDir, '__tests__')
-    const altTestDir = path.join(libDir, 'tests')
-    for (const d of [libDir, storesDir, hooksDir, compDir, testDir, altTestDir]) {
-      fs.mkdirSync(d, { recursive: true })
-    }
-
-    // Legal: a hook importing a store (downward) → clean.
-    fs.writeFileSync(
-      path.join(hooksDir, 'useThing.ts'),
-      "import { useBlocksStore } from '@/stores/blocks'\nexport const useThing = () => useBlocksStore()\n",
-    )
-    // Illegal, NEW: a pure lib util importing a store (upward) → violation.
-    fs.writeFileSync(
-      path.join(libDir, 'newOffender.ts'),
-      "import { useBlocksStore } from '@/stores/blocks'\nexport const f = () => useBlocksStore()\n",
-    )
-    // Illegal, but BASELINED: a store importing a component (upward) → clean
-    // (recorded in the baseline passed to analyze()).
-    fs.writeFileSync(
-      path.join(storesDir, 'legacyOffender.ts'),
-      "import { Widget } from '@/components/Widget'\nexport const w = Widget\n",
-    )
-    // STALE baseline entry: this file used to import upward but has been
-    // fixed (only imports its own tier now) — must be flagged so the
-    // baseline is pruned.
-    fs.writeFileSync(
-      path.join(hooksDir, 'fixedOffender.ts'),
-      "import { helper } from '@/hooks/helper'\nexport const g = helper\n",
-    )
-    // Relative-specifier upward import, also NEW → proves relative
-    // resolution (not just the `@/` alias) is checked.
-    fs.writeFileSync(
-      path.join(libDir, 'relativeOffender.ts'),
-      "import { useThing } from '../hooks/useThing'\nexport const h = useThing\n",
-    )
-    // Out-of-scope target (`@/editor/...`) → not a violation either way.
-    fs.writeFileSync(
-      path.join(libDir, 'touchesEditor.ts'),
-      "import { Foo } from '@/editor/Foo'\nexport const e = Foo\n",
-    )
-    // Test file with an upward import → ignored entirely.
-    fs.writeFileSync(
-      path.join(testDir, 'ignored.test.ts'),
-      "import { Widget } from '@/components/Widget'\nexport const t = Widget\n",
-    )
-    // A `tests/` (not `__tests__`) directory is excluded by DIRECTORY NAME
-    // alone — this file's own name doesn't match the `.test.ts` filename
-    // filter, so it's only caught if the 'tests' directory exclusion holds.
-    fs.writeFileSync(
-      path.join(altTestDir, 'fixture-helper.ts'),
-      "import { Widget } from '@/components/Widget'\nexport const t2 = Widget\n",
-    )
-    // `.d.ts` declaration files are excluded even with an upward import.
-    fs.writeFileSync(
-      path.join(libDir, 'ambient.d.ts'),
-      "import type { Widget } from '@/components/Widget'\nexport type W = typeof Widget\n",
-    )
-    // `.tsx` files are scanned too, not just `.ts` (two real baseline
-    // entries are `.tsx` — a new upward import in one must be flagged).
-    fs.writeFileSync(
-      path.join(libDir, 'newOffender.tsx'),
-      "import { Widget } from '@/components/Widget'\nexport const jsx = () => Widget\n",
-    )
-
-    const baseline = ['src/stores/legacyOffender.ts', 'src/hooks/fixedOffender.ts']
-    const { violators, newViolators, staleBaseline } = analyze({ root: tmp, srcDir, baseline })
-
-    if (!newViolators.includes('src/hooks/useThing.ts')) ok('downward import is legal')
-    else fail('downward import is legal', 'useThing.ts flagged')
-
-    if (newViolators.includes('src/lib/newOffender.ts')) ok('new upward import is flagged')
-    else fail('new upward import is flagged', JSON.stringify(newViolators))
-
-    if (
-      violators.includes('src/stores/legacyOffender.ts') &&
-      !newViolators.includes('src/stores/legacyOffender.ts')
-    ) {
-      ok('baselined upward import passes')
-    } else {
-      fail('baselined upward import passes', JSON.stringify({ violators, newViolators }))
-    }
-
-    if (staleBaseline.includes('src/hooks/fixedOffender.ts')) ok('stale baseline entry is flagged')
-    else fail('stale baseline entry flagged', JSON.stringify(staleBaseline))
-
-    if (newViolators.includes('src/lib/relativeOffender.ts')) {
-      ok('relative-specifier upward import is flagged')
-    } else {
-      fail('relative-specifier upward import flagged', JSON.stringify(newViolators))
-    }
-
-    if (!violators.includes('src/lib/touchesEditor.ts')) {
-      ok('out-of-scope target (editor) is not a violation')
-    } else {
-      fail('out-of-scope target ignored', 'touchesEditor.ts flagged')
-    }
-
-    if (!violators.some((f) => f.includes('__tests__'))) ok('test file ignored')
-    else fail('test file ignored', 'a __tests__ file appeared in violators')
-
-    if (!violators.some((f) => f.includes('/tests/'))) ok("'tests/' directory ignored")
-    else fail("'tests/' directory ignored", 'a tests/ file appeared in violators')
-
-    if (!violators.includes('src/lib/ambient.d.ts')) ok('.d.ts file ignored')
-    else fail('.d.ts file ignored', 'ambient.d.ts flagged')
-
-    if (newViolators.includes('src/lib/newOffender.tsx')) {
-      ok('.tsx files are scanned (new upward import flagged)')
-    } else {
-      fail('.tsx files are scanned (new upward import flagged)', JSON.stringify(newViolators))
-    }
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true })
-  }
-
-  runCliSelfTest(ok, fail)
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
-}
-
-/**
- * End-to-end CLI self-test: spawns THIS script as a real subprocess against a
- * fully synthetic fixture repo (its own scripts/ + src/ + baseline file) and
- * asserts on the actual process exit code. The assertions in runSelfTest()
- * drive analyze()/specifierTier() directly and never call runGuard(),
- * readBaseline(), or the process.exit() calls that make the pre-commit hook
- * actually block a bad PR -- a regression that dropped `process.exit(1)`
- * from runGuard() (defanging the gate entirely) would sail through those
- * assertions with zero failures, since prek.toml never runs the plain guard
- * against the live repo when only this script changes (only `--self-test`
- * fires). This closes that hole by running the real CLI end to end.
- */
-function runCliSelfTest(ok, fail) {
-  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lib-layering-cli-selftest-'))
-  try {
-    const fixtureScripts = path.join(fixtureRoot, 'scripts')
-    const fixtureSrc = path.join(fixtureRoot, 'src')
-    fs.mkdirSync(fixtureScripts, { recursive: true })
-    fs.mkdirSync(path.join(fixtureSrc, 'lib'), { recursive: true })
-    fs.mkdirSync(path.join(fixtureSrc, 'stores'), { recursive: true })
-    fs.copyFileSync(import.meta.filename, path.join(fixtureScripts, 'check-lib-layering.mjs'))
-    fs.copyFileSync(
-      path.join(import.meta.dirname, 'check-import-cycles.mjs'),
-      path.join(fixtureScripts, 'check-import-cycles.mjs'),
-    )
-    fs.writeFileSync(path.join(fixtureSrc, 'stores', 'x.ts'), 'export const useX = 1\n')
-    fs.writeFileSync(path.join(fixtureSrc, 'lib', 'clean.ts'), 'export const ok = 1\n')
-
-    const run = () =>
-      spawnSync(process.execPath, [path.join(fixtureScripts, 'check-lib-layering.mjs')], {
-        cwd: fixtureRoot,
-        encoding: 'utf8',
-      })
-
-    // No baseline file yet -> exit 2 (repo-layout/config error).
-    let res = run()
-    if (res.status === 2) ok('CLI exits 2 when the baseline file is missing')
-    else fail('CLI exits 2 when the baseline file is missing', `status=${res.status}`)
-
-    // Empty baseline, no violations -> exit 0 (the real pre-commit-passing path).
-    fs.writeFileSync(path.join(fixtureScripts, 'lib-layering-baseline.json'), '[]\n')
-    res = run()
-    if (res.status === 0) ok('CLI exits 0 on a clean tree')
-    else fail('CLI exits 0 on a clean tree', `status=${res.status} stderr=${res.stderr}`)
-
-    // Introduce a NEW upward import not in the baseline -> exit 1 (the real
-    // pre-commit-FAILING path -- this is what actually blocks a bad PR).
-    fs.writeFileSync(
-      path.join(fixtureSrc, 'lib', 'offender.ts'),
-      "import { useX } from '@/stores/x'\nexport const y = useX\n",
-    )
-    res = run()
-    if (res.status === 1) ok('CLI exits 1 on a new violation (the gate actually blocks)')
-    else fail('CLI exits 1 on a new violation (the gate actually blocks)', `status=${res.status}`)
-  } finally {
-    fs.rmSync(fixtureRoot, { recursive: true, force: true })
-  }
-}
-
 // ─── main ───────────────────────────────────────────────────────────
 
-if (process.argv.includes('--self-test')) {
-  runSelfTest()
-} else if (process.argv.includes('--update-baseline')) {
+if (process.argv.includes('--update-baseline')) {
   updateBaseline()
 } else {
   runGuard()

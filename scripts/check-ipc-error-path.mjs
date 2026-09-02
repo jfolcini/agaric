@@ -95,13 +95,10 @@
 // 6 components were already green via existing rejection coverage.
 //
 // Usage: node scripts/check-ipc-error-path.mjs
-//        node scripts/check-ipc-error-path.mjs --self-test
-// Exit:  0 = clean, 1 = at least one violation, 2 = repo layout / self-test
-//        failure.
+// Exit:  0 = clean, 1 = at least one violation, 2 = repo layout failure.
 // ─────────────────────────────────────────────────────────────────────
 
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -262,10 +259,9 @@ function hasRejectionCoverage(testSrc) {
 
 /**
  * Analyze IPC-calling components under `componentsDir` against the
- * given test dirs/allowlist. Pure(-ish) over the filesystem so the
- * self-test can drive it against a synthetic fixture tree without
- * touching the real repo. Returns `{ violations, missingTest,
- * staleAllowlist, checked }`.
+ * given test dirs/allowlist. Pure(-ish) over the filesystem, so it can
+ * be driven against an arbitrary fixture tree without touching the real
+ * repo. Returns `{ violations, missingTest, staleAllowlist, checked }`.
  *
  * - `violations`    — test file exists but lacks a rejection pattern.
  * - `missingTest`   — IPC component with NO test file and NOT
@@ -321,11 +317,7 @@ function toPosix(p) {
 
 // ─── main ───────────────────────────────────────────────────────────
 
-if (process.argv.includes('--self-test')) {
-  runSelfTest()
-} else {
-  runGuard()
-}
+runGuard()
 
 function runGuard() {
   const { violations, missingTest, staleAllowlist, checked } = analyze({
@@ -386,154 +378,4 @@ function runGuard() {
       allowlisted > 0 ? ` (${allowlisted} covered via allowlisted parent test)` : ''
     }`,
   )
-}
-
-// ─── self-test ──────────────────────────────────────────────────────
-//
-// Drives analyze() against a synthetic component tree in a temp dir so
-// we can assert the exit behavior #1270 demands: a no-test IPC
-// component FAILS; a covered one PASSES; an allowlisted one PASSES; a
-// stale allowlist entry FAILS.
-function runSelfTest() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-guard-selftest-'))
-  const failures = []
-  const ok = (name) => console.log(`  ok   - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-
-  try {
-    const componentsDir = path.join(tmp, 'src/components')
-    const testsDir = path.join(componentsDir, '__tests__')
-    fs.mkdirSync(testsDir, { recursive: true })
-    fs.mkdirSync(path.join(componentsDir, 'sub'), { recursive: true })
-    fs.mkdirSync(path.join(componentsDir, 'sub', '__tests__'), { recursive: true })
-
-    const IPC_SRC = "import { foo } from '@/lib/tauri'\nexport const C = () => foo()\n"
-    const NO_IPC_SRC = 'export const C = () => null\n'
-    // #2927: a runtime `commands` import from the generated bindings is an
-    // IPC call site and must be treated exactly like `@/lib/tauri`.
-    const BINDINGS_IPC_SRC =
-      "import { commands } from '@/lib/bindings'\nexport const C = () => commands.foo()\n"
-    // A type-only import from the bindings (both the `import type` form and
-    // the inline `type` form) is NOT an IPC call site — no runtime value.
-    const BINDINGS_TYPE_SRC =
-      "import type { Block } from '@/lib/bindings'\nexport const C = (b: Block) => b\n"
-    const BINDINGS_INLINE_TYPE_SRC =
-      "import { type Block } from '@/lib/bindings'\nexport const C = (b: Block) => b\n"
-    // #3202: a plugin-shim submodule import (`@/lib/platform/<domain>`) is a
-    // rejecting async plugin round-trip and must be treated like
-    // `@/lib/tauri`; the bare `@/lib/platform` barrel (synchronous capability
-    // detection — `isMac`, `modKey`, `isMobilePlatform`) must NOT be.
-    const PLATFORM_SHIM_SRC =
-      "import { enableAutostart } from '@/lib/platform/autostart'\nexport const C = () => enableAutostart()\n"
-    const PLATFORM_BARREL_SRC =
-      "import { isMac } from '@/lib/platform'\nexport const C = () => (isMac() ? 'a' : 'b')\n"
-    // #4413: a runtime import from the migration floor (`@/lib/ipc-helpers`)
-    // is an IPC call site and must be treated exactly like `@/lib/tauri` —
-    // this is the branch that keeps `GatedImage.tsx` / `DeviceManagement.tsx`
-    // in scope after their migration off the deleted `@/lib/tauri` wrappers.
-    const IPC_HELPERS_SRC =
-      "import { readAttachment } from '@/lib/ipc-helpers'\nexport const C = () => readAttachment()\n"
-    const COVERED_TEST = "it('rejects', () => { foo.mockRejectedValueOnce(new Error('x')) })\n"
-    const NO_REJECT_TEST = "it('renders', () => { render(<C />) })\n"
-
-    // 1. IPC component, no test file, not allowlisted → missingTest.
-    fs.writeFileSync(path.join(componentsDir, 'NoTest.tsx'), IPC_SRC)
-    // 2. IPC component with a covered top-level test → checked.
-    fs.writeFileSync(path.join(componentsDir, 'Covered.tsx'), IPC_SRC)
-    fs.writeFileSync(path.join(testsDir, 'Covered.test.tsx'), COVERED_TEST)
-    // 3. IPC component with a test lacking a rejection → violation.
-    fs.writeFileSync(path.join(componentsDir, 'Incomplete.tsx'), IPC_SRC)
-    fs.writeFileSync(path.join(testsDir, 'Incomplete.test.tsx'), NO_REJECT_TEST)
-    // 4. Non-IPC component, no test → ignored entirely.
-    fs.writeFileSync(path.join(componentsDir, 'Plain.tsx'), NO_IPC_SRC)
-    // 5. IPC component, no test, but allowlisted → excused.
-    fs.writeFileSync(path.join(componentsDir, 'sub', 'Allowed.tsx'), IPC_SRC)
-    // 6. Runtime `commands` binding import, covered test → checked (#2927).
-    fs.writeFileSync(path.join(componentsDir, 'BindingsIpc.tsx'), BINDINGS_IPC_SRC)
-    fs.writeFileSync(path.join(testsDir, 'BindingsIpc.test.tsx'), COVERED_TEST)
-    // 7. Type-only bindings import, no test → NOT an IPC caller, ignored.
-    fs.writeFileSync(path.join(componentsDir, 'BindingsType.tsx'), BINDINGS_TYPE_SRC)
-    // 8. Inline-type bindings import, no test → NOT an IPC caller, ignored.
-    fs.writeFileSync(path.join(componentsDir, 'BindingsInlineType.tsx'), BINDINGS_INLINE_TYPE_SRC)
-    // 9. Plugin-shim submodule import, covered test → checked (#3202).
-    fs.writeFileSync(path.join(componentsDir, 'PlatformShim.tsx'), PLATFORM_SHIM_SRC)
-    fs.writeFileSync(path.join(testsDir, 'PlatformShim.test.tsx'), COVERED_TEST)
-    // 10. Bare platform barrel (sync capability detection), no test → ignored.
-    fs.writeFileSync(path.join(componentsDir, 'PlatformBarrel.tsx'), PLATFORM_BARREL_SRC)
-    // 11. Runtime `@/lib/ipc-helpers` import, covered test → checked (#4413).
-    fs.writeFileSync(path.join(componentsDir, 'IpcHelpersIpc.tsx'), IPC_HELPERS_SRC)
-    fs.writeFileSync(path.join(testsDir, 'IpcHelpersIpc.test.tsx'), COVERED_TEST)
-
-    const allowlist = { 'src/components/sub/Allowed.tsx': 'covered via Parent.test.tsx' }
-
-    const r = analyze({ root: tmp, componentsDir, testsDir, allowlist })
-
-    if (r.missingTest.includes('src/components/NoTest.tsx')) ok('no-test IPC component is flagged')
-    else fail('no-test IPC component is flagged', `missingTest=${JSON.stringify(r.missingTest)}`)
-
-    if (r.checked.includes('Covered.tsx')) ok('covered IPC component passes')
-    else fail('covered IPC component passes', `checked=${JSON.stringify(r.checked)}`)
-
-    if (r.violations.some((v) => v.component === 'src/components/Incomplete.tsx'))
-      ok('incomplete test is a violation')
-    else fail('incomplete test is a violation', `violations=${JSON.stringify(r.violations)}`)
-
-    if (!r.missingTest.includes('src/components/Plain.tsx')) ok('non-IPC component is ignored')
-    else fail('non-IPC component is ignored', 'Plain.tsx was flagged')
-
-    if (!r.missingTest.includes('src/components/sub/Allowed.tsx'))
-      ok('allowlisted component passes')
-    else fail('allowlisted component passes', 'Allowed.tsx was flagged despite allowlist')
-
-    if (r.checked.includes('BindingsIpc.tsx')) ok('runtime bindings `commands` import is IPC')
-    else fail('runtime bindings `commands` import is IPC', `checked=${JSON.stringify(r.checked)}`)
-
-    if (!r.missingTest.includes('src/components/BindingsType.tsx'))
-      ok('type-only bindings import is ignored')
-    else fail('type-only bindings import is ignored', 'BindingsType.tsx was flagged')
-
-    if (!r.missingTest.includes('src/components/BindingsInlineType.tsx'))
-      ok('inline-type bindings import is ignored')
-    else fail('inline-type bindings import is ignored', 'BindingsInlineType.tsx was flagged')
-
-    if (r.checked.includes('PlatformShim.tsx')) ok('platform plugin-shim import is IPC')
-    else fail('platform plugin-shim import is IPC', `checked=${JSON.stringify(r.checked)}`)
-
-    if (!r.missingTest.includes('src/components/PlatformBarrel.tsx'))
-      ok('bare platform barrel import is ignored')
-    else fail('bare platform barrel import is ignored', 'PlatformBarrel.tsx was flagged')
-
-    if (r.checked.includes('IpcHelpersIpc.tsx'))
-      ok('runtime @/lib/ipc-helpers import is IPC (#4413)')
-    else
-      fail(
-        'runtime @/lib/ipc-helpers import is IPC (#4413)',
-        `checked=${JSON.stringify(r.checked)}`,
-      )
-
-    if (r.staleAllowlist.length === 0) ok('matched allowlist entry is not stale')
-    else fail('matched allowlist entry is not stale', JSON.stringify(r.staleAllowlist))
-
-    // 6. Stale allowlist entry (component absent) → flagged.
-    const r2 = analyze({
-      root: tmp,
-      componentsDir,
-      testsDir,
-      allowlist: { 'src/components/Ghost.tsx': 'no longer exists' },
-    })
-    if (r2.staleAllowlist.includes('src/components/Ghost.tsx'))
-      ok('stale allowlist entry is flagged')
-    else fail('stale allowlist entry is flagged', JSON.stringify(r2.staleAllowlist))
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true })
-  }
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
 }

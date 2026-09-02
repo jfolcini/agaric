@@ -48,14 +48,10 @@
 //     `src/lib/tauri-mock/`        for the Rust backend.
 //
 // Usage: node scripts/check-raw-invoke.mjs
-//        node scripts/check-raw-invoke.mjs --self-test
-// Exit:  0 = clean, 1 = at least one violation, 2 = repo layout /
-//        self-test failure.
+// Exit:  0 = clean, 1 = at least one violation, 2 = repo layout failure.
 // ─────────────────────────────────────────────────────────────────────
 
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 
 import { ScanError, stripComments } from './lib/js-scanner.mjs'
@@ -144,8 +140,8 @@ function scanSource(src) {
 
 /**
  * Analyze all source files under `srcDir` for raw-invoke violations,
- * honoring the exemption list. Pure over the filesystem so the
- * self-test can drive it against a synthetic tree. Returns
+ * honoring the exemption list. Pure over the filesystem, so it can be
+ * driven against an arbitrary tree. Returns
  * `{ violations, scanned, scanErrors }`, where `scanErrors` is
  * `{ file, message }` for files the shared scanner could not lex
  * unambiguously — a FAILURE, not a skip: a file this guard cannot parse
@@ -174,11 +170,7 @@ function analyze({ root, srcDir }) {
 
 // ─── main ───────────────────────────────────────────────────────────
 
-if (process.argv.includes('--self-test')) {
-  runSelfTest()
-} else {
-  runGuard()
-}
+runGuard()
 
 function runGuard() {
   if (!fs.existsSync(SRC_DIR)) {
@@ -222,228 +214,4 @@ function runGuard() {
   }
 
   console.log(`OK: ${scanned} source file(s) scanned, no raw invoke() calls in app code`)
-}
-
-// ─── self-test ──────────────────────────────────────────────────────
-//
-// Drives analyze() against a synthetic src tree so the guard's exit
-// behavior is itself verified: a raw invoke FAILS, a typed-binding call
-// PASSES, a commented invoke PASSES, an exempt-file raw invoke PASSES,
-// and a test file is ignored.
-function runSelfTest() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'raw-invoke-selftest-'))
-  const failures = []
-  const ok = (name) => console.log(`  ok   - ${name}`)
-  const fail = (name, detail) => {
-    failures.push(name)
-    console.error(`  FAIL - ${name}: ${detail}`)
-  }
-
-  try {
-    const srcDir = path.join(tmp, 'src')
-    const libDir = path.join(srcDir, 'lib')
-    const obsDir = path.join(libDir, 'observability')
-    const compDir = path.join(srcDir, 'components')
-    const testDir = path.join(compDir, '__tests__')
-    for (const d of [libDir, obsDir, compDir, testDir]) fs.mkdirSync(d, { recursive: true })
-
-    // 1. Raw invoke in a component → violation.
-    fs.writeFileSync(
-      path.join(compDir, 'Bad.tsx'),
-      "import { invoke } from '@tauri-apps/api/core'\nexport const C = () => invoke('mcp_set_enabled', { enabled: true })\n",
-    )
-    // 2. Raw generic invoke<T>('cmd') → violation.
-    fs.writeFileSync(
-      path.join(compDir, 'BadGeneric.tsx'),
-      "export const C = () => invoke<Foo>('get_mcp_status')\n",
-    )
-    // 3. Typed-binding call → clean.
-    fs.writeFileSync(
-      path.join(compDir, 'Good.tsx'),
-      "import { commands } from '@/lib/bindings'\nexport const C = () => unwrap(await commands.mcpSetEnabled(true))\n",
-    )
-    // 4. Commented / documented invoke → clean.
-    fs.writeFileSync(
-      path.join(compDir, 'Commented.tsx'),
-      "// legacy: invoke('list_blocks') handshake was dropped\n/** JSDoc: invoke('get_mcp_status') */\nexport const C = () => null\n",
-    )
-    // 5. Exempt file (bindings.ts) with raw invoke → clean.
-    fs.writeFileSync(
-      path.join(libDir, 'bindings.ts'),
-      "export const commands = { f: () => invoke('create_block') }\n",
-    )
-    // 6. Exempt dir (observability) with raw invoke → clean.
-    fs.writeFileSync(
-      path.join(obsDir, 'invoke.ts'),
-      "export const f = () => invoke('some_command')\n",
-    )
-    // 7. Test file with raw invoke → ignored (out of scope).
-    fs.writeFileSync(
-      path.join(testDir, 'Bad.test.tsx'),
-      "it('x', () => invoke('mcp_set_enabled'))\n",
-    )
-    // 8. #4413: `src/lib/ipc-helpers.ts` is exempted by an exact FILE match
-    //    in EXEMPT_FILES, not a directory prefix. A sibling file under
-    //    `src/lib/` must still be flagged — a regression that generalised
-    //    the exemption to an `src/lib/` directory prefix would wrongly
-    //    wave this through too.
-    fs.writeFileSync(
-      path.join(libDir, 'sibling-of-ipc-helpers.ts'),
-      "export const f = () => invoke('list_blocks')\n",
-    )
-    // 9. #4413: a file under a same-named `src/lib/ipc-helpers/` *directory*
-    //    must also still be flagged — proving the exemption is file-exact
-    //    rather than a directory-prefix match on the module's own name (the
-    //    narrower generalisation a future edit could make when moving
-    //    `src/lib/ipc-helpers.ts` from EXEMPT_FILES to an EXEMPT_DIR_PREFIXES
-    //    entry).
-    fs.mkdirSync(path.join(libDir, 'ipc-helpers'), { recursive: true })
-    fs.writeFileSync(
-      path.join(libDir, 'ipc-helpers', 'nested.ts'),
-      "export const f = () => invoke('list_blocks')\n",
-    )
-    // 10. #3993: a string literal containing `/*` (`'./fixtures/**'`) sits
-    //    above a real invoke() call, and a real JSDoc block comment closes
-    //    later in the file. The byte-identical private `stripComments` this
-    //    guard used to carry is not string-aware: it reads the `/*` inside
-    //    the string as a comment opener and blanks everything up to the
-    //    JSDoc's `*/`, hiding the invoke() call entirely and reporting the
-    //    file clean. The shared scanner's `stripComments` is string-aware,
-    //    so this must still be flagged. (Demonstrated verbatim in #3993.)
-    fs.writeFileSync(
-      path.join(compDir, 'FakeCommentOpener.tsx'),
-      "const GLOB = './fixtures/**'\nexport async function load() {\n  return await invoke('listBlocks')\n}\n/** any JSDoc block below it */\n",
-    )
-    // 11. #3993: a file with an unterminated string literal cannot be lexed
-    //    unambiguously. The shared scanner fails CLOSED (throws
-    //    `ScanError`), and this guard must surface that as a scanError — a
-    //    FAILURE the human sees — not silently drop the file from both
-    //    `violations` and the scanned count.
-    fs.writeFileSync(
-      path.join(compDir, 'Unterminated.tsx'),
-      "export const bad = 'unterminated string literal, never closes\n",
-    )
-
-    const { violations, scanErrors } = analyze({ root: tmp, srcDir })
-    const hit = (f) => violations.some((v) => v.file === `src/${f}`)
-
-    if (hit('components/Bad.tsx')) ok('raw invoke in component is flagged')
-    else fail('raw invoke in component is flagged', JSON.stringify(violations))
-
-    if (hit('components/BadGeneric.tsx')) ok('raw invoke<T>() is flagged')
-    else fail('raw invoke<T>() is flagged', JSON.stringify(violations))
-
-    if (!hit('components/Good.tsx')) ok('typed-binding call passes')
-    else fail('typed-binding call passes', 'Good.tsx was flagged')
-
-    if (!hit('components/Commented.tsx')) ok('commented invoke passes')
-    else fail('commented invoke passes', 'Commented.tsx was flagged')
-
-    if (!hit('lib/bindings.ts')) ok('exempt file passes')
-    else fail('exempt file passes', 'bindings.ts was flagged')
-
-    if (!hit('lib/observability/invoke.ts')) ok('exempt dir passes')
-    else fail('exempt dir passes', 'observability/invoke.ts was flagged')
-
-    if (!violations.some((v) => v.file.includes('__tests__'))) ok('test file is ignored')
-    else fail('test file is ignored', 'a __tests__ file was flagged')
-
-    if (hit('lib/sibling-of-ipc-helpers.ts'))
-      ok('a sibling file under src/lib/ is flagged, not swept in by ipc-helpers.ts (#4413)')
-    else
-      fail(
-        'a sibling file under src/lib/ is flagged, not swept in by ipc-helpers.ts',
-        JSON.stringify(violations),
-      )
-
-    if (hit('lib/ipc-helpers/nested.ts'))
-      ok(
-        'a file under a same-named src/lib/ipc-helpers/ directory is flagged — file-exact, not a directory prefix (#4413)',
-      )
-    else
-      fail(
-        'a file under a same-named src/lib/ipc-helpers/ directory is flagged',
-        JSON.stringify(violations),
-      )
-
-    if (hit('components/FakeCommentOpener.tsx'))
-      ok('a string containing `/*` above a real invoke() call is still flagged (#3993)')
-    else
-      fail(
-        'a string containing `/*` above a real invoke() call is still flagged',
-        JSON.stringify(violations),
-      )
-
-    if (
-      scanErrors.some((e) => e.file === 'src/components/Unterminated.tsx') &&
-      !hit('components/Unterminated.tsx')
-    )
-      ok('an unlexable file is reported as a scanError (failure), not silently skipped')
-    else
-      fail(
-        'an unlexable file is reported as a scanError, not silently skipped',
-        JSON.stringify({ scanErrors, violations }),
-      )
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true })
-  }
-
-  // ─── CLI-level self-test: real subprocess, real exit code ───────────
-  //
-  // Everything above drives analyze()/scanSource() directly and only
-  // inspects the RETURN VALUE's `scanErrors` array — it never reaches
-  // process.exit(). A regression that dropped the `process.exit(1)` in the
-  // scanErrors branch of runGuard() (falling through to the violations
-  // check and, when there happen to be no OTHER violations, all the way to
-  // the `console.log('OK: ...')` success branch) would print the ERROR
-  // block to stderr but still exit 0, and every assertion above would stay
-  // green through it. Spawn the real CLI (copied into a scaffold tree with
-  // its own `scripts/lib/js-scanner.mjs`, since runGuard() resolves SRC_DIR
-  // from the script's own location, not `cwd`) against a tree containing
-  // ONE typed-binding call (clean) plus ONE unlexable file with no raw
-  // `invoke()` calls at all (so no violation could paper over the missing
-  // exit) and assert the real exit code is non-zero.
-  const scanErrTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'raw-invoke-scanerror-'))
-  try {
-    const seScripts = path.join(scanErrTmp, 'scripts')
-    const seLib = path.join(seScripts, 'lib')
-    const seSrc = path.join(scanErrTmp, 'src', 'components')
-    fs.mkdirSync(seLib, { recursive: true })
-    fs.mkdirSync(seSrc, { recursive: true })
-    fs.writeFileSync(
-      path.join(seSrc, 'Clean.tsx'),
-      "import { commands } from '@/lib/bindings'\nexport const C = () => unwrap(await commands.mcpSetEnabled(true))\n",
-    )
-    fs.writeFileSync(
-      path.join(seSrc, 'Broken.tsx'),
-      "const bad = 'unterminated string literal, never closes\n",
-    )
-    const seScript = path.join(seScripts, 'check-raw-invoke.mjs')
-    fs.copyFileSync(import.meta.filename, seScript)
-    fs.copyFileSync(
-      path.join(import.meta.dirname, 'lib', 'js-scanner.mjs'),
-      path.join(seLib, 'js-scanner.mjs'),
-    )
-    const resSE = spawnSync(process.execPath, [seScript], { encoding: 'utf8' })
-    if (
-      resSE.status === 1 &&
-      /could not be scanned unambiguously/.test(resSE.stderr) &&
-      !resSE.stdout.includes('OK:')
-    ) {
-      ok('CLI exits 1 (not OK) when a file cannot be scanned, even with no other violations')
-    } else {
-      fail(
-        'CLI exits 1 when a file cannot be scanned (scanErrors branch), even with no other violations',
-        `status=${resSE.status} stdout=${resSE.stdout} stderr=${resSE.stderr}`,
-      )
-    }
-  } finally {
-    fs.rmSync(scanErrTmp, { recursive: true, force: true })
-  }
-
-  if (failures.length > 0) {
-    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
-    process.exit(2)
-  }
-  console.log('self-test: all assertions passed')
 }

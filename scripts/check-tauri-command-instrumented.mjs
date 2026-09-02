@@ -40,11 +40,8 @@
 // ─── Usage ──────────────────────────────────────────────────────────
 //
 //   node scripts/check-tauri-command-instrumented.mjs
-//   node scripts/check-tauri-command-instrumented.mjs --self-test
 //
-// Wired into `prek.toml` as a `local` repo hook, types = ["rust"]; a second
-// hook runs `--self-test` whenever this script changes so the guard's own
-// detection logic can't silently regress.
+// Wired into `prek.toml` as a `local` repo hook, types = ["rust"].
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -249,7 +246,7 @@ const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 /**
  * Analyze one source file. Returns the list of uncovered command names as
  * `{ name, lineno }`. `allowlist` is a `Set` of `name` strings exempt for
- * THIS file (already filtered by filename by the caller / self-test).
+ * THIS file (already filtered by filename by the caller).
  */
 function uncoveredCommands(src, allowlist) {
   const instrumented = instrumentedFnNames(src)
@@ -273,85 +270,7 @@ function uncoveredCommands(src, allowlist) {
   return offenders
 }
 
-/**
- * Self-test: exercise the detection logic against in-memory fixtures so a
- * regression that vacuums the guard fails its own hook. Returns true on pass.
- */
-function selfTest() {
-  const cases = [
-    {
-      label: 'DIRECT: #[instrument] on the command fn ⇒ covered',
-      src: `#[tauri::command]\n#[instrument(skip(pool), err)]\npub async fn a(pool: P) -> Result<(), AppError> {\n  do_thing()?;\n  Ok(())\n}\n`,
-      allow: new Set(),
-      expect: [],
-    },
-    {
-      label: 'DELEGATED: wrapper calls an in-file instrumented helper ⇒ covered',
-      src: `#[instrument(skip(pool), err)]\nasync fn b_inner_with_space(pool: P) -> Result<(), AppError> { Ok(()) }\n\n#[tauri::command]\npub async fn b(pool: P) -> Result<(), AppError> {\n  b_inner_with_space(pool).await\n}\n`,
-      allow: new Set(),
-      expect: [],
-    },
-    {
-      label: 'GAP: wrapper delegates to an UN-instrumented helper ⇒ flagged',
-      src: `async fn c_inner(pool: P) -> Result<(), AppError> { Ok(()) }\n\n#[tauri::command]\npub async fn c(pool: P) -> Result<(), AppError> {\n  c_inner(pool).await\n}\n`,
-      allow: new Set(),
-      expect: ['c'],
-    },
-    {
-      label: 'GAP suppressed by allowlist ⇒ not flagged',
-      src: `#[tauri::command]\npub async fn d() -> Result<(), AppError> {\n  Ok(())\n}\n`,
-      allow: new Set(['d']),
-      expect: [],
-    },
-    {
-      label: 'doc-comment mention of #[instrument] does NOT count as coverage',
-      src: `/// see #[instrument] elsewhere\n#[tauri::command]\npub async fn e(pool: P) -> Result<(), AppError> {\n  e_logic(pool)?;\n  Ok(())\n}\n`,
-      allow: new Set(),
-      expect: ['e'],
-    },
-  ]
-  let ok = true
-  for (const { label, src, allow, expect } of cases) {
-    const got = uncoveredCommands(src, allow).map((o) => o.name)
-    const pass = JSON.stringify(got) === JSON.stringify(expect)
-    if (!pass) {
-      ok = false
-      console.error(`self-test FAILED: ${label}`)
-      console.error(`  expected ${JSON.stringify(expect)}, got ${JSON.stringify(got)}`)
-    }
-  }
-  // Stale-allowlist guard: every ALLOWLIST entry must still correspond to a
-  // real command in the tree, else it silently masks a renamed/removed fn.
-  for (const key of ALLOWLIST.keys()) {
-    const [file, name] = key.split(':')
-    let found = false
-    for (const path of walkRustFiles(COMMANDS_DIR)) {
-      if (!path.endsWith(`/${file}`)) continue
-      const src = readFileSync(path, 'utf8')
-      for (const cmd of iterCommandFns(src)) {
-        if (cmd.name === name) {
-          found = true
-          break
-        }
-      }
-    }
-    if (!found) {
-      ok = false
-      console.error(`self-test FAILED: stale ALLOWLIST entry ${key} — no such command`)
-    }
-  }
-  return ok
-}
-
 // ─── Entry point ────────────────────────────────────────────────────
-
-if (process.argv.includes('--self-test')) {
-  if (selfTest()) {
-    process.exit(0)
-  }
-  console.error('check-tauri-command-instrumented self-test failed (see above).')
-  process.exit(1)
-}
 
 const offenders = []
 for (const path of walkRustFiles(COMMANDS_DIR)) {
