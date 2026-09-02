@@ -675,9 +675,7 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
   //     mismatch.
   //
   // #4558 — the CASCADED id is published space-lessly (`spaceId: null`) while
-  // the selected root keeps `SPACE_TEST`. A nested page's `space_id` is
-  // authoritative and a move does not re-parent it, so the cascade can reach a
-  // child that lives in another space entirely.
+  // the selected root keeps `SPACE_TEST`.
   it('evicts the nested pages the cascade swept, and nothing else', async () => {
     const { changes, unsubscribe } = recordChanges()
     try {
@@ -768,19 +766,6 @@ describe('batch trash — cascaded nested pages (#4480)', () => {
   // pinned by the event-count test at the top of this describe. Keep both.
   // #4558 — the cascaded child in ANOTHER SPACE, the batch arm of the same
   // defect the single delete has.
-  //
-  // `handleMoveToSpace` (below) establishes the fact this rests on:
-  // `move_blocks_to_space` writes a page's authoritative `space_id` and does
-  // NOT re-parent it, so `P_MOVED` can sit under `P_ROOT` in SPACE_TEST while
-  // itself belonging to SPACE_OTHER. The trash cascade walks `parent_id` and
-  // sweeps it anyway. Publishing it scoped to the TOOLBAR's space meant the
-  // subscriber — live on SPACE_OTHER — dropped it on the space check, and
-  // SPACE_OTHER's `[[` cache went on offering a page that is now in the trash.
-  //
-  // `P_STAYS_OTHER` present alongside `P_MOVED` absent rules out both the
-  // vacuous reading ("the cache was never warm") and the wholesale
-  // `invalidateNameCaches()` shortcut, which would empty the cache and let the
-  // next read re-fetch `P_MOVED` back out of the static mock.
   it("a cascaded child in another space is evicted from THAT space's [[ cache", async () => {
     const user = userEvent.setup()
     function pageRow(id: string, content: string) {

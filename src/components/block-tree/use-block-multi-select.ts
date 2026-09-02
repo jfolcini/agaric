@@ -230,13 +230,7 @@ export function useBlockMultiSelect({
         //    the reported cohort but was in the user's selection and is not a
         //    live page either way.
         //
-        // #4558 — the cascaded half goes in the SPACE-LESS cohort, the page
-        // subset of the selection stays scoped, matching the two delete arms
-        // the issue names (`usePageDeleteAction.handleConfirm` and
-        // `PageBrowserBatchToolbar.handleTrash`). Why a cascaded child's space
-        // is unknowable here: `notifyPageRemoved`'s `spaceId: null` section.
-        // The selection keeps its scope — the store that classified those rows
-        // as pages is this space's store.
+        // #4558 — cascade is space-less, see notifyPageRemoved.
         //
         // The PAGE SUBSET, not `ids` wholesale — and this is where the hook
         // must NOT copy `handleTrash`. The toolbar's selection is pages by

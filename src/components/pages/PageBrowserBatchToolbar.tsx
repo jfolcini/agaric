@@ -279,10 +279,7 @@ export function PageBrowserBatchToolbar({
       // internally (#4524), so building one here would be redundant work
       // that also hides the shared function's own contract at the call site.
       //
-      // #4558 — the cascaded ids go in the space-less cohort, the selected
-      // roots keep `currentSpaceId`. Why a cascaded child's space is
-      // unknowable here: `notifyPageRemoved`'s `spaceId: null` section, whose
-      // premise `handleMoveToSpace` below restates for the move case.
+      // #4558 — cascade is space-less, see notifyPageRemoved.
       notifyPagesRemoved(ids, currentSpaceId, cascadedPageIds)
       onClearSelection()
       onMutated()

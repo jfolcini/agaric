@@ -354,9 +354,7 @@ describe('single delete — cascaded nested pages (#4523)', () => {
   //   * the seed scoped to anything but the origin space → `spaceId` mismatch.
   //
   // #4558 — the two cascaded ids are published SPACE-LESSLY (`spaceId: null`)
-  // while the seed keeps `SPACE_A`. A cascaded child's own space is unknown to
-  // this caller: a page's `space_id` survives a move without re-parenting, so
-  // the child can be in another space, and the cascade reaches it anyway.
+  // while the seed keeps `SPACE_A`.
   it('evicts the nested pages the cascade swept, and nothing else', async () => {
     // The user deleted PAGE_ROOT. The cascade also tombstoned its two page
     // children and the backend reports all three (seed included).
@@ -454,20 +452,6 @@ describe('single delete — cascaded nested pages (#4523)', () => {
   // event-count test at the top of this describe, which reddens on
   // `[{kind:'invalidated'}]`. Keep both.
   // #4558 — the cascaded child in ANOTHER SPACE.
-  //
-  // `move_blocks_to_space` moves a page by writing its authoritative
-  // `space_id` and does NOT re-parent it, so a page can sit under a parent in
-  // SPACE_A while itself belonging to SPACE_B (pinned backend-side by
-  // `move_blocks_to_space_leaves_nested_pages_in_the_origin_space_4480`). The
-  // delete cascade walks `parent_id` and reaches it regardless. Publishing
-  // that child scoped to the DELETE's origin space meant the subscriber
-  // dropped it on the space check — so SPACE_B's own `[[` cache went on
-  // offering a page that is now in the trash, and picking it linked to it.
-  //
-  // `MOVED_SIBLING` present alongside `MOVED_CHILD` absent rules out the
-  // vacuous reading ("the cache was never warm"); it also rules out the
-  // wholesale `invalidateNameCaches()` shortcut, which would empty the cache
-  // and let the next read re-fetch `MOVED_CHILD` back out of the static mock.
   it("a cascaded child in another space is evicted from THAT space's [[ cache", async () => {
     function pageRow(id: string, content: string) {
       return {

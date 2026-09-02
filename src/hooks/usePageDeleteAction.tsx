@@ -244,9 +244,7 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // would wave a 200-nested-page delete straight past the threshold the
         // budget exists to enforce.
         //
-        // #4558 — the CASCADED ids go in the space-less cohort, the seed keeps
-        // `originSpaceId`. Why a cascaded child's space is unknowable here:
-        // `notifyPageRemoved`'s `spaceId: null` section.
+        // #4558 — cascade is space-less, see notifyPageRemoved.
         notifyPagesRemoved([canonicalSeedId], originSpaceId, cascadedPageIds)
         // #3626 — a deleted page must stop lighting up the calendar. The
         // journal's own DaySection routes its delete through here too, so this
