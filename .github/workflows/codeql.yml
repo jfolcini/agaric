@@ -52,10 +52,10 @@ jobs:
   analyze:
     name: Analyze ${{ matrix.language }}
     runs-on: ubuntu-24.04
-    # CodeQL JS/TS + Actions analyses typically run in 5–10 min on a repo this
-    # size; Rust (build-mode: none) is similar. +50% headroom + round up → 30
-    # min. Bump only if observed runs cross ~20 min.
-    timeout-minutes: 30
+    # Per language, from the matrix: JS/TS and Actions run in 1–4 min; Rust
+    # (build-mode: none) measured 19.7 min on 2026-09-02 (run 33637027967),
+    # so its cap is 45 (+50% headroom, rounded up) and the others keep 15.
+    timeout-minutes: ${{ matrix.timeout }}
     permissions:
       # Required: upload SARIF results to GitHub Code Scanning (Security tab).
       security-events: write
@@ -76,10 +76,13 @@ jobs:
         include:
           - language: actions
             build-mode: none
+            timeout: 15
           - language: javascript-typescript
             build-mode: none
+            timeout: 15
           - language: rust
             build-mode: none
+            timeout: 45
 
     steps:
       - name: Checkout
