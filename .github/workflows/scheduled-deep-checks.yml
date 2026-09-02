@@ -105,7 +105,7 @@ on:
       fuzz_seconds:
         description: 'Per-target fuzz time budget (seconds)'
         required: false
-        default: '120'
+        default: '300'
       slo_include_problem:
         description: 'Also run the interactive_slo cache/counterfactual probes (#2508/#2585) — off by default so the scheduled gate tracks only in-budget commands'
         required: false
@@ -1379,17 +1379,17 @@ jobs:
   # ---------------------------------------------------------------------------
   fuzz:
     runs-on: ubuntu-24.04
-    # 130, not 60. The arithmetic, written out because review showed an earlier
+    # 155, not 60. The arithmetic, written out because review showed an earlier
     # figure had less headroom than its own comment implied — N is the derived
     # target count, currently 8:
     #
     #   setup (apt, toolchain, node, npm, install-action)   ~10 min
     #   N nightly ASan builds, COLD rust-cache              24-40 min
-    #   N targets x 120s of fuzzing                         ~16 min
+    #   N targets x 300s of fuzzing                         ~40 min
     #   cmin, at its own step bound                         up to 30 min
     #   artifact uploads                                     ~2 min
     #                                                      ------------
-    #   worst case                                          ~98 min
+    #   worst case                                          ~122 min
     #
     # N is pinned ONCE, as `BUDGETED_TARGETS` in the fuzz step, which warns when
     # the derivation outgrows it. The figures above are that N substituted in —
@@ -1410,8 +1410,10 @@ jobs:
     #
     # History: #4497 took the count from five to eight, this bound from 90 to
     # 110, and then to 130 once the build term was scaled by arithmetic rather
-    # than by assumption.
-    timeout-minutes: 130
+    # than by assumption; the per-target budget then went from 120s to 300s
+    # (the corpus persists across runs since #4529, so a longer run explores
+    # past the frontier the previous one reached), and this bound to 155.
+    timeout-minutes: 155
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1609,7 +1611,7 @@ jobs:
         # floor on a cache miss, not the whole input set. The dispatch input
         # rides via `env:` (not inline `${{ }}`) per zizmor template-injection.
         env:
-          FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds || '120' }}
+          FUZZ_SECONDS: ${{ github.event.inputs.fuzz_seconds || '300' }}
           # cargo-fuzz builds with `-Zsanitizer=address`, which rustc rejects
           # when libc is statically linked ("sanitizer is incompatible with
           # statically linked libc"). Disable crt-static for the fuzz build;
@@ -2646,7 +2648,7 @@ jobs:
           # are never empty, on any event, so `set -u` is safe. Every input
           # must appear here.
           MUTANTS_TIMEOUT_INPUT: ${{ github.event.inputs.mutants_timeout || '900' }}
-          FUZZ_SECONDS_INPUT: ${{ github.event.inputs.fuzz_seconds || '120' }}
+          FUZZ_SECONDS_INPUT: ${{ github.event.inputs.fuzz_seconds || '300' }}
           SLO_INCLUDE_PROBLEM_INPUT: ${{ github.event.inputs.slo_include_problem || 'false' }}
         run: |
           set -euo pipefail
@@ -2709,7 +2711,7 @@ jobs:
             # get to speak for the repository.
             if [ "$GITHUB_REF" != "refs/heads/main" ] ||
                [ "$MUTANTS_TIMEOUT_INPUT" != "900" ] ||
-               [ "$FUZZ_SECONDS_INPUT" != "120" ] ||
+               [ "$FUZZ_SECONDS_INPUT" != "300" ] ||
                [ "$SLO_INCLUDE_PROBLEM_INPUT" != "false" ]; then
               extra+=(--dry-run)
             fi
