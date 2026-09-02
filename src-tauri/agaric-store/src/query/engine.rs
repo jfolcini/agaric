@@ -1196,12 +1196,10 @@ fn group_key_expr(key: &GroupKey, pos: usize) -> (String, String, Option<Bind>) 
             // the key stays a bound `?{pos}` in the ON clause, never an
             // interpolated identifier. Migration 0062 lets exactly one value
             // column be non-NULL, so the COALESCE yields whichever is set,
-            // rendered as `propertyRowDisplay` shows it: `value_text` and
-            // `value_date` as stored, `value_ref` as the raw block id (group
-            // headers do not id-resolve property keys), `value_num` in canonical
-            // form (`3`, not REAL `3.0`; `3.5` stays), `value_bool` as
-            // `true`/`false`. An absent key falls through to the `none` bucket
-            // (#4607).
+            // rendered as `propertyRowDisplay` shows it: `value_num` in canonical
+            // form (`3`, not REAL `3.0`; `3.5` stays) and `value_bool` as
+            // `true`/`false`, where a stored 0 is a value, not an absence. An
+            // absent key falls through to the `none` bucket (#4607).
             "COALESCE(gp.value_text, CASE WHEN gp.value_num = CAST(gp.value_num AS INTEGER) \
              THEN CAST(CAST(gp.value_num AS INTEGER) AS TEXT) \
              ELSE CAST(gp.value_num AS TEXT) END, gp.value_date, gp.value_ref, \
