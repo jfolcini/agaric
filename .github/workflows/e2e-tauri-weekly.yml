@@ -224,15 +224,10 @@ jobs:
 
       - name: Run WebdriverIO real-backend smoke (Xvfb)
         # The binary is already built above, so tell wdio.conf.ts to skip its
-        # own onPrepare build. xvfb-run gives the WebKitWebView a display;
-        # dbus-run-session gives it a session bus, the same wrapper
-        # release.yml uses for its boot smoke (#4444: every worker boot
-        # stalled a flat 30.1 s between the AT-SPI warning and the libEGL
-        # line, six workers in series, ~3 min of a ~4 min suite; a dbus
-        # call's default timeout is 25 s, and release.yml reached
-        # init_logging in 6 s once a real bus existed). Measure the same
-        # interval on the first run after this lands; if it is unchanged,
-        # strace one boot to name the waiter instead of guessing again.
+        # own onPrepare build. xvfb-run gives the WebKitWebView a display and
+        # dbus-run-session a session bus (#4444: without one every worker boot
+        # stalled a flat 30 s, the dbus default timeout), the composition
+        # release.yml uses for its boot smoke.
         #
         # #3334 — no vault isolation is configured HERE on purpose. The runner
         # being ephemeral used to be the only thing keeping this lane off a real
