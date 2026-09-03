@@ -53,6 +53,7 @@ dependencies = [
 name = "agaric"
 version = "0.9.9"
 dependencies = [
+ "agaric",
  "agaric-core",
  "agaric-engine",
  "agaric-observability",

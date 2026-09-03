@@ -36,29 +36,31 @@ use agaric_store::op_log;
 use agaric_store::pagination::{self, BlockRow, HistoryEntry, PageResponse};
 use agaric_sync::pairing::PairingSession;
 
-// Domain sub-modules
-pub(crate) mod advanced_query;
-pub(crate) mod agenda;
-pub(crate) mod attachments;
-pub(crate) mod block_cleanup;
-pub(crate) mod blocks;
-pub(crate) mod bug_report;
-pub(crate) mod compaction;
-pub(crate) mod drafts;
-pub(crate) mod history;
-pub(crate) mod journal;
-pub(crate) mod link_metadata;
-pub(crate) mod logging;
-pub(crate) mod mcp;
-pub(crate) mod notifier;
-pub(crate) mod observability;
-pub(crate) mod pages;
-pub(crate) mod properties;
-pub(crate) mod queries;
-pub(crate) mod recovery;
-pub(crate) mod spaces;
-pub(crate) mod sync_cmds;
-pub(crate) mod tags;
+// Domain sub-modules. `pub` rather than `pub(crate)` so the command tests can
+// address them from an integration-test binary, which links the lib as an
+// external crate (#4499). Every item inside keeps its own visibility.
+pub mod advanced_query;
+pub mod agenda;
+pub mod attachments;
+pub mod block_cleanup;
+pub mod blocks;
+pub mod bug_report;
+pub mod compaction;
+pub mod drafts;
+pub mod history;
+pub mod journal;
+pub mod link_metadata;
+pub mod logging;
+pub mod mcp;
+pub mod notifier;
+pub mod observability;
+pub mod pages;
+pub mod properties;
+pub mod queries;
+pub mod recovery;
+pub mod spaces;
+pub mod sync_cmds;
+pub mod tags;
 
 // Tauri command handlers and testable _inner functions — explicitly re-exported.
 pub use agenda::{
@@ -71,16 +73,16 @@ pub use agenda::{
 // produces today-anchored rows that drift over time) and call this path
 // directly with a fixed `today`. Production callers use
 // `list_projected_agenda_inner` (above) — they do not need `_on_the_fly`,
-// so this re-export is gated on `#[cfg(test)]`.
-#[cfg(test)]
-pub(crate) use agenda::list_projected_agenda_on_the_fly;
+// so this re-export is gated on `#[cfg(test)]` / `test-util`.
+#[cfg(any(test, feature = "test-util"))]
+pub use agenda::list_projected_agenda_on_the_fly;
 // #2601 — pinned-`today` reader variant, used by the agenda cache/fallback
 // parity + prefilter tests so a fixture's future-dated repeat rules and the
 // horizon fallback anchor to an injected reference date, not the wall clock.
 // The non-test wrapper `list_projected_agenda_inner` calls it directly, so
 // the re-export is only needed for the tests.
-#[cfg(test)]
-pub(crate) use agenda::list_projected_agenda_inner_with_today;
+#[cfg(any(test, feature = "test-util"))]
+pub use agenda::list_projected_agenda_inner_with_today;
 pub use attachments::{
     add_attachment_with_bytes, add_attachment_with_bytes_inner, delete_attachment,
     delete_attachment_inner, list_attachments, list_attachments_batch,

@@ -64,7 +64,7 @@ use sql_only::*;
 
 // External re-exports — preserve the pre-split paths so callers outside
 // this module (materializer/mod.rs, consumer.rs, tests.rs) do not change.
-pub(crate) use attachments::cleanup_orphaned_attachments;
+pub use attachments::cleanup_orphaned_attachments;
 // #3519 test-only: the GC's in-window rendezvous, so the race test can commit
 // a reference at the one instant that used to be unrecoverable.
 #[cfg(test)]
@@ -72,8 +72,8 @@ pub(crate) use attachments::GC_RACE_RENDEZVOUS;
 // #2110 M6 — the two process-global counter accessors, re-exported with
 // disambiguating names (both submodules name their getter `count()`) so
 // `materializer/mod.rs` can surface them to the OTel metrics pipeline.
-pub(crate) use descendant_fanout_dropped::count as descendant_fanout_dropped_count;
-pub(crate) use sql_only_fallback::count as sql_only_fallback_count;
+pub use descendant_fanout_dropped::count as descendant_fanout_dropped_count;
+pub use sql_only_fallback::count as sql_only_fallback_count;
 // #2621: the LOCAL command paths now route their engine-apply through the moved
 // kernel `apply_op_projected` (see `domain::block_ops`), not these per-op
 // `apply_*_via_loro` helpers directly. The engine-path convergence tests reach

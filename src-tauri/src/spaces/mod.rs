@@ -25,8 +25,8 @@ pub use bootstrap::{
     bootstrap_spaces,
 };
 
-#[cfg(test)]
-pub(crate) use bootstrap::bootstrap_spaces_for_test;
+#[cfg(any(test, feature = "test-util"))]
+pub use bootstrap::bootstrap_spaces_for_test;
 
 #[cfg(test)]
 mod tests;

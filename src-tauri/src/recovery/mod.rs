@@ -52,10 +52,10 @@ pub use sync_inbox::replay_sync_inbox;
 
 // Test wrapper: re-export the once-only-guard reset for in-crate
 // test code (`integration_tests.rs`) so multi-test runs aren't poisoned
-// by the production guard. Test-only by `cfg(test)`; not part of the
-// public crate API.
-#[cfg(test)]
-pub(crate) use boot::reset_recovery_guard;
+// by the production guard. Gated on `cfg(test)` / the dev-only `test-util`
+// feature (#4499); no release build carries it.
+#[cfg(any(test, feature = "test-util"))]
+pub use boot::reset_recovery_guard;
 
 // ---------------------------------------------------------------------------
 // Types

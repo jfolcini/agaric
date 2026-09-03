@@ -1,0 +1,42 @@
+# Session 1485 — A `test-util` feature for the app crate (#4499 phase 0d, step 1)
+
+Phase 0d of #4499 evicts `src/commands/tests/`, `src/command_integration_tests/` and the crate-root
+`*_app_tests.rs` files — 48 files, ~91K lines, 1,445 test functions — into a handful of integration-test
+binaries. Nothing there moves for free: an integration binary links the lib as an *external* crate, so it
+never sees `cfg(test)` and cannot name a `pub(crate)` item. This session is step 1 alone, the enabling
+change: widen what a future test binary must reach, move no test file, change no behaviour.
+
+Two classes of item needed work. The first is plain visibility — the 22 `commands::*` domain submodules
+and the two materializer counter accessors the OTel pipeline already surfaces (`sql_only_fallback_count`,
+`descendant_fanout_dropped_count`) were `pub(crate)`; they are compiled into release today and only their
+*names* were crate-private, so widening them to `pub` changes name resolution and nothing else. The second
+is the five seams that vanish entirely when the lib is built without `cfg(test)`: the agenda `_on_the_fly`
+and `_with_today` pinned-clock readers, the attachment GC pass `cleanup_orphaned_attachments`, the spaces
+`bootstrap_spaces_for_test` shim, the recovery once-guard `reset_recovery_guard`, and the `write_fault`
+attachment fault injector. Those are re-gated `#[cfg(any(test, feature = "test-util"))] pub`, behind a new
+`test-util` cargo feature on the app crate — the same shape `agaric-core`, `-store`, `-engine` and `-sync`
+already carry. `write_fault` deliberately did **not** become unconditionally `pub`: its own doc comment
+says no release binary may contain the markers or the stat that looks for them, so the gate stays and its
+production call site moved to the same `any(test, feature = ...)` condition, otherwise the injector would
+compile without the site that fires it.
+
+Turning the feature on for this crate's own tests without turning it on for `cargo build` is done with a
+self dev-dependency, `agaric = { path = ".", features = ["test-util"] }`. Cargo accepts the dev-dependency
+cycle on the current package, and with the 2024 edition's resolver the feature is unified into the lib
+whenever a test target is built and absent otherwise — so `cargo nextest run` and `cargo check --all-targets`
+see the seams and `cargo check --lib` (the release surface) does not. That is checked both ways rather than
+assumed, and `cargo tree -e features` versus `-e features,no-dev` is the direct evidence. Because the change
+adds a dependency *requirement* to `src-tauri/Cargo.toml`, `src-tauri/fuzz/Cargo.lock` is invalidated too and
+was regenerated in the same commit, per the obligation `verify-lockfiles` states.
+
+Falsification here is the absence of a behaviour change, so the proof is the negative one: the diff touches
+only visibility, `cfg` predicates, comments and the manifests; no test file moved; the crate compiles with
+and without the feature; and the workspace suite is unchanged and green.
+
+Verified: `cargo nextest run --workspace`, 6,283 passed and 11 skipped, no failures; `cargo check -p agaric
+--lib` and `cargo check -p agaric --lib --features test-util` both clean, as is `--all-targets` (which is
+what compiles the benches); `cargo tree -p agaric -e features` prints `test-util` and `-e features,no-dev`
+prints nothing, which is the feature being dev-only stated as evidence rather than as a claim about the
+resolver; `cargo machete` clean, so the self dev-dependency needs no allowlist entry; `cargo metadata` in
+`src-tauri/fuzz` leaves that lock untouched — a dev-dependency on a path dep is not resolved by the fuzz
+workspace — and `src-tauri/Cargo.lock` gains exactly one line. No `.sqlx` cache moved: no SQL changed.

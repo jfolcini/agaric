@@ -354,10 +354,11 @@ pub(crate) async fn verify_written_attachment(
 /// process global: every test owns a private `TempDir`, so two tests can arm
 /// different faults concurrently under both `cargo nextest` (process per test)
 /// and plain `cargo test` (threads in one process) without a shared registry,
-/// a lock, or cross-talk. The whole module is `#[cfg(test)]`, so no release
-/// binary contains either the markers or the stat that looks for them.
-#[cfg(test)]
-pub(crate) mod write_fault {
+/// a lock, or cross-talk. The whole module is gated on `test` / the dev-only
+/// `test-util` feature (#4499), so no release binary contains either the
+/// markers or the stat that looks for them.
+#[cfg(any(test, feature = "test-util"))]
+pub mod write_fault {
     use std::path::Path;
 
     /// Arms "storage kept a different number of bytes than we wrote".
@@ -367,21 +368,21 @@ pub(crate) mod write_fault {
 
     /// Make every subsequent attachment write under `app_data_dir` leave a
     /// one-byte file on disk, so the recorded `size_bytes` cannot match it.
-    pub(crate) fn arm_truncate(app_data_dir: &Path) {
+    pub fn arm_truncate(app_data_dir: &Path) {
         std::fs::write(app_data_dir.join(TRUNCATE_MARKER), b"")
             .expect("arm the truncate write fault");
     }
 
     /// Make every subsequent attachment write under `app_data_dir` vanish
     /// before the read-back, so the stat guard cannot find it.
-    pub(crate) fn arm_unlink(app_data_dir: &Path) {
+    pub fn arm_unlink(app_data_dir: &Path) {
         std::fs::write(app_data_dir.join(UNLINK_MARKER), b"").expect("arm the unlink write fault");
     }
 
     /// Apply whichever fault is armed for `app_data_dir` to the blob just
     /// written at `full_path`. A no-op when nothing is armed, which is every
     /// test but the two that opt in.
-    pub(crate) fn apply(app_data_dir: &Path, full_path: &Path) {
+    pub fn apply(app_data_dir: &Path, full_path: &Path) {
         if app_data_dir.join(TRUNCATE_MARKER).exists() {
             // One byte, not zero: the guard must be comparing lengths, not
             // testing emptiness.
@@ -457,7 +458,7 @@ pub async fn add_attachment_with_bytes_inner(
             // makes storage disagree with the buffer we are about to hash — the
             // one fault this path cannot otherwise produce, and the only way to
             // prove the post-write verification below is actually CALLED.
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-util"))]
             write_fault::apply(&dir, &dir.join(&path));
             Ok::<String, AppError>(blake3::hash(&bytes).to_hex().to_string())
         })

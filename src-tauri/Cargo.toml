@@ -118,6 +118,16 @@ if_not_else = "warn"
 # `cargo nextest run` does not. Local devs can still run the test
 # manually: `cargo build --bin agaric-mcp && cargo nextest run --features ci-smoke -E 'test(stub_binary)'`.
 ci-smoke = []
+# #4499 — `test-util` widens the in-crate test seams (agenda `_on_the_fly` /
+# `_with_today`, the attachment GC pass, the spaces bootstrap shim, the
+# recovery once-guard reset, the attachment `write_fault` injector) from
+# `#[cfg(test)]` to `#[cfg(any(test, feature = "test-util"))] pub` so the
+# command tests can move to integration-test binaries, which link the lib as
+# an external crate and therefore never see `cfg(test)`. Enabled only by this
+# crate's own `[dev-dependencies]` self-entry below, so no release build gets
+# it — `write_fault` in particular must stay out of shipped binaries. Mirrors
+# the `test-util` feature `agaric-core` / `-store` / `-engine` / `-sync` carry.
+test-util = []
 # #645 — the `diagnostics` feature (formerly built the
 # `audit_cross_space_refs` / `op_log_histogram` bins) is retired: those
 # bins moved to the `agaric-diagnostics` workspace member, so the feature
@@ -330,6 +340,11 @@ loro = "1.12"
 # there now; the app crate no longer references it directly.
 
 [dev-dependencies]
+# #4499 — self dev-dependency: the ONLY way to turn `test-util` on for this
+# crate's own test builds without turning it on for `cargo build`. Cargo
+# permits a dev-dependency cycle on the current package; the feature is unified
+# into the lib whenever a test target is built and is absent otherwise.
+agaric = { path = ".", features = ["test-util"] }
 # Test-only mock runtime for exercising the concrete TauriEventSink against
 # real managed-state lookup and event emission. This reuses the production
 # Tauri version; Cargo feature unification applies `test` only to test builds.

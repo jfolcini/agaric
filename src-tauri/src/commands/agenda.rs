@@ -203,7 +203,7 @@ pub async fn list_projected_agenda_inner(
 /// `today` so fixtures with future-dated (`.+` / `++` today-anchored) repeat
 /// rules — and the #2601 horizon fallback, which threads `today` into
 /// [`list_projected_agenda_on_the_fly`] — stay stable across the wall clock.
-pub(crate) async fn list_projected_agenda_inner_with_today(
+pub async fn list_projected_agenda_inner_with_today(
     pool: &SqlitePool,
     start_date: String,
     end_date: String,
@@ -557,7 +557,7 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
 /// the system clock advances. Calling on-the-fly directly sidesteps that
 /// drift; threading `today` through the cache rebuild itself is a larger
 /// Follow-up that leaves open.
-pub(crate) async fn list_projected_agenda_on_the_fly(
+pub async fn list_projected_agenda_on_the_fly(
     pool: &SqlitePool,
     range_start: chrono::NaiveDate,
     range_end: chrono::NaiveDate,
