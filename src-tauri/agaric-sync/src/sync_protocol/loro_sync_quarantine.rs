@@ -332,7 +332,9 @@ pub async fn read_quarantined_bytes(
 ///   them.
 ///
 /// So quarantine's job is the #535 half — never destroy the local durable
-/// record — and NOT to be a second delivery mechanism. This function exists so
+/// record while the lineage it belongs to is still live; a snapshot catch-up
+/// retires the two together (see below) — and NOT to be a second delivery
+/// mechanism. This function exists so
 /// that "manual" means something concrete: the bytes are byte-identical to what
 /// was admitted, so re-admission remains possible at any time, by a human or a
 /// diagnostic tool, without a schema migration or a rebuild.
