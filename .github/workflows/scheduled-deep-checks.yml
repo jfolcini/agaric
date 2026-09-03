@@ -1174,7 +1174,7 @@ jobs:
   # ---------------------------------------------------------------------------
   mutants-merge:
     needs: mutants
-    # `always()`: a dead shard must not take the surviving 38 shards' results
+    # `always()`: a dead shard must not take the surviving 42 shards' results
     # with it. A SHORT merge is published for the same reason and reported as
     # a warning — see the merge step, which also puts the filer in dry-run.
     if: always()
@@ -1209,7 +1209,7 @@ jobs:
       - name: Merge the shards into one mutants.out
         id: merge
         # The merge is only as complete as the shards that uploaded, and with
-        # `fail-fast: false` across 39 jobs the realistic failure is a HANDFUL
+        # `fail-fast: false` across 43 jobs the realistic failure is a HANDFUL
         # of dead shards, not all of them. The shards that DID run are real
         # signal, so a short merge is published — what must not run on a short
         # set is the FILER'S REWRITE: the missing shards' survivors are simply
@@ -1491,7 +1491,7 @@ jobs:
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
     # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
-    # is the merged one, and `mutants` is now 39 shard jobs.
+    # is the merged one, and `mutants` is now 43 shard jobs.
     needs: [mutants-merge, mutants-frontend]
     if: always()
     runs-on: ubuntu-24.04
@@ -1571,7 +1571,7 @@ jobs:
         # update the same children instead of filing new ones. See the
         # § Parent/child section in the script header.
         #
-        # `--dry-run` ALSO on a short merge (#3393 review): with 39 shards the
+        # `--dry-run` ALSO on a short merge (#3393 review): with 43 shards the
         # realistic failure is a handful of dead ones, and their survivors are
         # then absent from `missed.txt` — present-and-shorter, which
         # `--require-rust` cannot tell from real data. Rewriting the body from
