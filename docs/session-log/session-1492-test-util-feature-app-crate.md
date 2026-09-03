@@ -34,6 +34,14 @@ Falsification here is the absence of a behaviour change, so the proof is the neg
 only visibility, `cfg` predicates, comments and the manifests; no test file moved; the crate compiles with
 and without the feature; and the workspace suite is unchanged and green.
 
+The one cost the feature carries: a bench is a dev target, so the self dev-dependency turns `test-util` on for
+`attachment_bench` too, and every write there now pays `write_fault::apply`'s two marker stats on a bench whose
+empty buffer was chosen to keep the filesystem portion small. Keeping the two `write_fault` callers in-crate
+would avoid it, and was rejected: Phase 0d's premise is that no command test stays in the app crate, and a
+carve-out for two would be re-litigated by every phase after this one. The cost is constant per iteration, so
+the weekly trend still reads; the absolute number stepped once. Noted at the bench's own comment, where the
+"filesystem portion minimal" line would otherwise mislead.
+
 Verified: `cargo nextest run --workspace`, 6,283 passed and 11 skipped, no failures; `cargo check -p agaric
 --lib` and `cargo check -p agaric --lib --features test-util` both clean, as is `--all-targets` (which is
 what compiles the benches); `agaric feature "test-util"` appears once in `cargo tree -p agaric -e features`

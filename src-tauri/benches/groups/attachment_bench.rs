@@ -94,6 +94,10 @@ fn bench_add_attachment_with_bytes(c: &mut Criterion) {
 
         // Benchmark the only live origination path. An empty buffer keeps the
         // filesystem portion minimal while retaining backend-owned path creation.
+        // Not zero, though: a bench is a dev target, so the self dev-dependency
+        // turns `test-util` on and each write pays `write_fault::apply`'s two
+        // marker stats (#4499). Constant per iteration, so trends hold, but the
+        // absolute number stepped up once when the seam opened.
         let app_data_dir = dir.path().to_path_buf();
 
         let mut counter = 0u64;
