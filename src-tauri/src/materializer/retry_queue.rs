@@ -137,7 +137,7 @@ pub(crate) const SEED_UNRESOLVED_LINK_LAST_ERROR: &str =
 ///   composite `(device_id, seq)` packed into the `task_kind` column
 ///   as `"ApplyOp:<seq>:<device_id>"`, with `block_id` set to
 ///   [`APPLY_OP_TASK_SENTINEL`]. Reconstruction requires a fresh
-///   `OpRecord` lookup against `op_log` (handled in [`sweep_once`]).
+///   `OpRecord` lookup against `op_log` (handled in [`sweep_once_counted`]).
 ///
 /// The enum carries owned data on the apply-op variant, so
 /// `RetryKind` is no longer `Copy`. Methods take `&self`.
@@ -491,7 +491,7 @@ pub(crate) fn backoff_delay_for(attempts: i64, class: BackoffClass) -> chrono::D
 /// `created_at`, so the original first-failure timestamp is preserved
 /// across every re-failure. Combined with the sweeper no longer
 /// pre-clearing the row on enqueue (it leases instead — see
-/// [`lease_entry`] / [`sweep_once`]), a fail-on-run task now keeps the
+/// [`lease_entry`] / [`sweep_once_counted`]), a fail-on-run task now keeps the
 /// SAME row across cycles: `attempts` accumulates (1, 2, 3, …) and
 /// `created_at` ages, so both `give_up_reason` triggers
 /// (`attempts >= MAX_ATTEMPTS`, `now - created_at >= GIVE_UP_AGE_DAYS`)
@@ -600,8 +600,8 @@ pub(crate) async fn record_failure(
 /// match the sibling helpers in this module (`record_failure`,
 /// `fetch_due`, `clear_entry`, `task_from_row`, `RetryKind`). Only
 /// `spawn_sweeper` retains `pub` as the module's integration point; since
-/// #4208 it drives `sweep_until_no_progress`, so `sweep_once` is `pub` only
-/// as the single-pass primitive the drain tests pin. The
+/// #4208 it drives `sweep_until_no_progress`, and `sweep_once` is a
+/// `#[cfg(test)]` wrapper over one pass for the tests. The
 /// `cfg_attr(not(test), allow(dead_code))` keeps lib-only builds quiet
 /// while preserving the function for the planned `StatusInfo` wiring;
 /// it is exercised by the unit tests in this module.
@@ -674,10 +674,10 @@ pub(crate) struct DueRow {
     pub block_id: String,
     pub task_kind: String,
     /// Number of times this task has already been retried — gates the
-    /// `MAX_ATTEMPTS` give-up trigger in [`sweep_once`].
+    /// `MAX_ATTEMPTS` give-up trigger in [`sweep_once_counted`].
     pub attempts: i64,
     /// Epoch-ms timestamp the row was first persisted (#109 Phase 2) — gates
-    /// the `GIVE_UP_AGE_DAYS` give-up trigger in [`sweep_once`].
+    /// the `GIVE_UP_AGE_DAYS` give-up trigger in [`sweep_once_counted`].
     pub created_at: i64,
     /// The most recent failure recorded by `record_failure`. #2541: read so
     /// [`give_up_reason`] can exempt shed-persisted rows
@@ -724,10 +724,10 @@ pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRo
 /// Issue #378: this is the canonical clear site. It is called from the
 /// consumer's *durable-success* path (after the apply/work has been
 /// committed) for any task that is retryable
-/// ([`RetryKind::from_task`] returns `Some`), and from [`sweep_once`]
+/// ([`RetryKind::from_task`] returns `Some`), and from [`sweep_once_counted`]
 /// only on the give-up / unknown-kind retirement paths. The sweeper no
 /// longer pre-clears a row on successful *enqueue* — see
-/// [`lease_entry`] and the [`sweep_once`] doc-comment for why that broke
+/// [`lease_entry`] and the [`sweep_once_counted`] doc-comment for why that broke
 /// attempt accumulation and the give-up triggers (the issue #157 / #378
 /// infinite-loop pathology).
 pub(crate) async fn clear_entry(
@@ -756,7 +756,7 @@ pub(crate) async fn clear_entry(
 /// task is retryable (so callers on the hot consumer success path can
 /// blindly hand it any [`MaterializeTask`] — non-retryable tasks never
 /// created a row and are a cheap no-op). It is the ONLY confirmed-success
-/// clear site now that [`sweep_once`] leases instead of pre-clearing.
+/// clear site now that [`sweep_once_counted`] leases instead of pre-clearing.
 ///
 /// MUST be called only after the work is committed — clearing before
 /// durable success risks losing the retry entry on a crash, trading the
@@ -968,7 +968,7 @@ pub(crate) async fn clear_obligation(
 /// Build a [`MaterializeTask`] from a persisted row. Returns `None` for
 /// unknown `task_kind` strings (migration-forward safety) **and** for
 /// [`RetryKind::ApplyOp`] rows (which need an additional
-/// `OpRecord` lookup against `op_log` — handled inside [`sweep_once`]).
+/// `OpRecord` lookup against `op_log` — handled inside [`sweep_once_counted`]).
 ///
 /// For global rebuild kinds (`RebuildTagsCache`, etc.), the
 /// row's `block_id` (which holds [`GLOBAL_TASK_SENTINEL`]) is passed
@@ -977,6 +977,31 @@ pub(crate) async fn clear_obligation(
 pub(crate) fn task_from_row(row: &DueRow) -> Option<MaterializeTask> {
     let kind = RetryKind::from_str(&row.task_kind)?;
     kind.to_task(row.block_id.clone())
+}
+
+/// One pass, returning the re-enqueued count; the tests' entry point.
+#[cfg(test)]
+pub async fn sweep_once(
+    read_pool: &SqlitePool,
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+) -> Result<usize, AppError> {
+    Ok(sweep_once_counted(read_pool, write_pool, materializer)
+        .await?
+        .re_enqueued)
+}
+
+/// What one [`sweep_once_counted`] pass did to the rows it fetched.
+struct SweepCounts {
+    /// Rows leased after a successful enqueue: the `re_enqueued` log field,
+    /// which counts dispatches.
+    re_enqueued: usize,
+    /// Rows this pass pushed out of the next `fetch_due` batch — leased, or
+    /// deleted by one of the retirement arms. [`sweep_until_no_progress`]
+    /// needs this rather than `re_enqueued`: a full batch of retirements
+    /// re-enqueues nothing yet is pure forward progress, and stopping there
+    /// would cap retirement at one batch per 60 s tick.
+    advanced: usize,
 }
 
 /// Scan the retry queue once: fetch due rows, re-enqueue each via the
@@ -993,45 +1018,17 @@ pub(crate) fn task_from_row(row: &DueRow) -> Option<MaterializeTask> {
 /// re-enqueue; on failure `record_failure` UPSERTs it (attempts += 1,
 /// `created_at` preserved) and on durable success the consumer clears it
 /// via [`clear_on_success`]. The give-up / unknown-kind retirement paths
-/// below are the only places `sweep_once` itself deletes a row.
+/// below are the only places this function itself deletes a row.
 ///
 /// I-Materializer-1: split the pool into `read_pool` (for the `fetch_due`
 /// SELECT) and `write_pool` (for the `clear_entry` / `lease_entry`
 /// writes) to match the "background tasks use split read/write pools"
 /// pattern documented in AGENTS.md. Tests pass the same pool for both
 /// arguments.
-///
-/// Returns the number of rows re-enqueued.
-pub async fn sweep_once(
-    read_pool: &SqlitePool,
-    write_pool: &SqlitePool,
-    materializer: &crate::materializer::Materializer,
-) -> Result<usize, AppError> {
-    Ok(sweep_once_counted(read_pool, write_pool, materializer)
-        .await?
-        .re_enqueued)
-}
-
-/// What one [`sweep_once`] pass did to the rows it fetched.
-struct SweepCounts {
-    /// Rows leased after a successful enqueue. [`sweep_once`]'s return value
-    /// and the `re_enqueued` log field, which both count dispatches.
-    re_enqueued: usize,
-    /// Rows this pass pushed out of the next `fetch_due` batch — leased, or
-    /// deleted by one of the retirement arms. [`sweep_until_no_progress`]
-    /// needs this rather than `re_enqueued`: a full batch of retirements
-    /// re-enqueues nothing yet is pure forward progress, and stopping there
-    /// would cap retirement at one batch per 60 s tick.
-    advanced: usize,
-}
-
 // #647: the retry sweeper is the documented worst-case path (a stuck retry
-// row, the 1-hour cache-staleness ceiling) — yet it had no span. This span
-// covers one sweep pass; it sits on the counted body rather than on
-// [`sweep_once`] because the sweeper (`spawn_sweeper` →
-// `sweep_until_no_progress`) calls this one, and a span on a wrapper only
-// tests call is never emitted in a shipped build. `skip_all` (#632): pools +
-// the Materializer handle carry no PII but are not useful in a log line either.
+// row, the 1-hour cache-staleness ceiling) — yet it had no span.
+// `skip_all` (#632): pools + the Materializer handle carry no PII but are
+// not useful in a log line either.
 #[instrument(name = "materializer.sweep_once", skip_all, err)]
 async fn sweep_once_counted(
     read_pool: &SqlitePool,
