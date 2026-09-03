@@ -6,6 +6,6 @@ A fifth instance of the defect session 1488 fixed four of, found while reviewing
 
 `block_id` and `space_id` in the same handler stay on the loose `normalize_ulid_arg` deliberately, and that is the line the fix stops at: both feed `validate_block_in_space` / `verify_active`, which answer `NotFound` for a malformed id rather than silently succeeding. `value_ref` had no such backstop, which is the whole difference.
 
-`set_property_malformed_value_ref_errors_rather_than_dangling` pins both arms: three malformed refs error (the `block_properties` count is asserted too, but the projection guard already kept that at zero, so only the error arm falsifies), and a lowercase well-formed one is accepted and stored uppercase — so the boundary normalisation the parse replaced is not quietly lost. Falsified against a copy of `tools_rw.rs` with the parse reverted to `normalize_ulid_arg`, then restored and `cmp`-checked.
+`set_property_malformed_value_ref_errors_rather_than_dangling` pins both arms: three malformed refs error, and a lowercase well-formed one is accepted and stored uppercase — so the boundary normalisation the parse replaced is not quietly lost. Falsified against a copy of `tools_rw.rs` with the parse reverted to `normalize_ulid_arg`, then restored and `cmp`-checked.
 
 The rest of #3301 landed in #4621; the two change-notification findings in the issue body stay dropped.

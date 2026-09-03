@@ -1643,15 +1643,6 @@ async fn set_property_malformed_value_ref_errors_rather_than_dangling() {
             "value_ref {bad:?} must surface as AppError::Ulid, got {err:?}",
         );
     }
-    let stored: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'linked_page'",
-    )
-    .bind(&page_a)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(stored, 0, "no dangling ref row may survive the rejections");
-
     // A lowercase but well-formed ref still resolves.
     tools
         .call_tool(

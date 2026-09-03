@@ -613,17 +613,14 @@ async fn handle_set_property(
     // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
     let space_id = normalize_ulid_arg(&args.space_id);
-    // #3301 — parse, don't wave through. The schema calls `value_ref` a
-    // "Block ULID reference", but a malformed one used to sail past
-    // `validate_ref_property_cross_space` (an orphan target is not a
-    // cross-space violation) and into the op log and the Loro engine, where
-    // nothing removes it; the SQL projection dropped the row, so the tool
-    // answered Ok for a property that did not exist.
+    // #3301 — a malformed `value_ref` had no downstream backstop, so it was
+    // stored verbatim and the tool answered Ok.
     let value_ref = args
         .value_ref
         .as_deref()
-        .map(|s| BlockId::from_string(s).map(BlockId::into_string))
-        .transpose()?;
+        .map(BlockId::from_string)
+        .transpose()?
+        .map(BlockId::into_string);
     // Refuse cross-space writes at the MCP boundary. We
     // intentionally do NOT validate `value_ref` against `space_id`: a
     // ref-typed property may legitimately point at a global block
