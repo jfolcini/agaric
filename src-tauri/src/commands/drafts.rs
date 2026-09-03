@@ -206,13 +206,13 @@ pub struct FlushAllDraftsResult {
 ///
 /// Mirrors [`flush_draft_inner`] modulo the surrounding tx:
 ///
-/// - **H-12b: oversized content** — logged at `warn` and skipped, with
-///   the draft row left in place for the reason given at that arm in the
-///   body. No other draft is affected.
 /// - **H-12a: target block missing or soft-deleted** — the orphan draft
 ///   row is deleted in the same tx with a `warn` log, and the loop
 ///   continues to the next draft. No op_log row is appended for the
 ///   orphan.
+/// - **H-12b: oversized content** — logged at `warn` and skipped, with
+///   the draft row left in place for the reason given at that arm in the
+///   body. No other draft is affected.
 /// - **Happy path** — appends one `edit_block` op (with a `prev_edit`
 ///   chained from the most-recent `edit_block`/`create_block` for that
 ///   block) and deletes the draft row.
@@ -276,25 +276,6 @@ pub async fn flush_all_drafts_inner(
         let draft_anchor_seq = row.draft_anchor_seq;
         let draft_anchor_device = row.draft_anchor_device;
 
-        // H-12b: enforce MAX_CONTENT_LENGTH. Skip the offender so the rest
-        // of the batch still flushes (#3262). The row is KEPT, unlike the
-        // H-12a orphan below — not to preserve the text, which nothing reads
-        // back, but so a row we failed to process is never silently dropped
-        // (#2540). The next keystroke overwrites it.
-        //
-        // This cap sits ABOVE the orphan and supersession checks here and
-        // BELOW them in `recover_single_draft`, so an oversized draft for a
-        // deleted block outlives this flush and is cleared at the next boot.
-        if content.len() > super::MAX_CONTENT_LENGTH {
-            tracing::warn!(
-                block_id = %block_id,
-                content_len = content.len(),
-                max = super::MAX_CONTENT_LENGTH,
-                "flush_all_drafts: draft content exceeds the maximum; skipped, row kept"
-            );
-            continue;
-        }
-
         // H-12a: verify the target block exists and is not soft-deleted.
         // If absent, drop the orphan draft inside the same tx and skip
         // the op append — same shape as `flush_draft_inner` modulo the
@@ -343,6 +324,21 @@ pub async fn flush_all_drafts_inner(
                 "flush_all_drafts: draft superseded by a newer edit; dropped stale draft"
             );
             flushed += 1;
+            continue;
+        }
+
+        // H-12b: enforce MAX_CONTENT_LENGTH. Skip the offender so the rest
+        // of the batch still flushes (#3262). The row is KEPT, unlike the
+        // H-12a orphan above — not to preserve the text, which nothing reads
+        // back, but so a row we failed to process is never silently dropped
+        // (#2540). The next keystroke overwrites it.
+        if content.len() > super::MAX_CONTENT_LENGTH {
+            tracing::warn!(
+                block_id = %block_id,
+                content_len = content.len(),
+                max = super::MAX_CONTENT_LENGTH,
+                "flush_all_drafts: draft content exceeds the maximum; skipped, row kept"
+            );
             continue;
         }
 

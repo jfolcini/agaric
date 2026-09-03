@@ -6786,15 +6786,21 @@ async fn flush_all_drafts_skips_oversized_draft_and_flushes_the_rest_3262() {
 /// rows consumed — because every draft shares one `BEGIN IMMEDIATE` tx.
 ///
 /// Trigger: a `BEFORE INSERT ON op_log` `RAISE(ABORT)`, the same technique as
-/// `failed_boot_recovery_keeps_draft_and_recovers_on_next_boot_2540`, so the
-/// first draft's op append fails where no guard is watching.
+/// `failed_boot_recovery_keeps_draft_and_recovers_on_next_boot_2540`. It is
+/// scoped to the SECOND draft, and the two `updated_at` values are set apart
+/// so `ORDER BY updated_at ASC` puts the first one first. That ordering is the
+/// whole test: the first draft's append and draft-row delete both succeed
+/// before the abort, so the assertions below are about work being UNDONE. An
+/// abort on the first draft would leave nothing written either way, and would
+/// pass against savepoint-per-draft just as well as against one shared tx.
 #[tokio::test]
 async fn flush_all_drafts_rolls_back_the_batch_on_an_unanticipated_error_3262() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let block_ids = ["01HZ000000000000000FA0RB01", "01HZ000000000000000FA0RB02"];
-    for id in block_ids {
+    let first = "01HZ000000000000000FA0RB01";
+    let second = "01HZ000000000000000FA0RB02";
+    for (i, id) in [first, second].into_iter().enumerate() {
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position) \
              VALUES (?, 'content', 'initial', NULL, 1)",
@@ -6806,13 +6812,26 @@ async fn flush_all_drafts_rolls_back_the_batch_on_an_unanticipated_error_3262() 
         draft::save_draft(&pool, DEV, id, "unflushed text")
             .await
             .unwrap();
+        // `now_ms()` has ms resolution, so two saves in the same millisecond
+        // would tie and leave `ORDER BY updated_at ASC` free to pick either.
+        sqlx::query("UPDATE block_drafts SET updated_at = ? WHERE block_id = ?")
+            .bind(i64::try_from(i).unwrap() + 1)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
-    // Poison the op-log: the loop's `flush_draft_in_tx` append aborts.
-    sqlx::query(
+    // Poison the op-log for the SECOND draft only, so the first one is fully
+    // processed inside the tx before the loop hits the abort.
+    // SQLite rejects a bound parameter in a trigger body ("trigger cannot use
+    // variables"), so the id is interpolated; it is a ULID literal from this
+    // test, not input.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER op_log_abort BEFORE INSERT ON op_log \
-         BEGIN SELECT RAISE(ABORT, 'op_log inserts forbidden'); END",
-    )
+         WHEN NEW.block_id = '{second}' \
+         BEGIN SELECT RAISE(ABORT, 'op_log inserts forbidden'); END"
+    )))
     .execute(&pool)
     .await
     .unwrap();
@@ -6821,11 +6840,26 @@ async fn flush_all_drafts_rolls_back_the_batch_on_an_unanticipated_error_3262() 
         .await
         .expect_err("an unanticipated error must escape the loop, not be skipped");
 
-    let ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+    let first_ops: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE block_id = ?")
+        .bind(first)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(ops, 0, "the rolled-back batch must append no op_log rows");
+    assert_eq!(
+        first_ops, 0,
+        "the first draft's op append succeeded and must have been rolled back"
+    );
+
+    let first_draft: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_drafts WHERE block_id = ?")
+            .bind(first)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        first_draft, 1,
+        "the first draft's row was deleted in-tx and must have come back"
+    );
 
     let drafts: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
         .fetch_one(&pool)
