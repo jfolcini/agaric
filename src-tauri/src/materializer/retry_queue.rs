@@ -1866,8 +1866,8 @@ async fn try_reenqueue_apply_op(
 ///
 /// Continue only while a pass advanced a full batch: a shorter pass left a
 /// row (shed, or `Err`) on its original `next_attempt_at`, and `fetch_due`
-/// would hand that row straight back. `MAX_SWEEPS_PER_TICK` keeps
-/// `spawn_sweeper` reaching its `shutdown_flag` check.
+/// would hand that row straight back. `MAX_SWEEPS_PER_TICK` bounds one
+/// tick's wall clock.
 ///
 /// Draining until a pass sheds fills the background channel, so a live
 /// edit's cache task that arrives mid-drain is shed and retried a minute

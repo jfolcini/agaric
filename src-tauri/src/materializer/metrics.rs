@@ -465,7 +465,8 @@ pub struct StatusInfo {
     /// cache rebuilds (`'__GLOBAL__'` sentinel).
     pub retry_persist_cache_global: u64,
     /// #2509: persistent-enqueue events that reached the **1h backoff-cap**
-    /// tier (`attempts >= 4`). #2509 measure-item 2: if this stays ~0 in the
+    /// tier (`attempts >= 4` on the failure ladder; a shed row's 5 min cap
+    /// is not counted). #2509 measure-item 2: if this stays ~0 in the
     /// field, no failure mode ever exercises the deep backoff schedule and
     /// the next boot's reconcile would have covered the same ground.
     pub retry_persist_capped: u64,
