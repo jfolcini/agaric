@@ -192,9 +192,7 @@ pub struct FlushAllDraftsResult {
 /// `block_drafts` for the next flush. Only an unanticipated error (a
 /// `prev_edit` lookup failure, an op-log append or `block_drafts` DELETE
 /// error) escapes the loop, and the single tx then rolls the whole batch
-/// back — no drafts flushed, no op_log rows appended. Untested: nothing in
-/// this loop chooses the tx boundary, so no change to it could redden such
-/// a test; what it would pin is `Transaction`'s own drop-is-rollback.
+/// back — no drafts flushed, no op_log rows appended.
 /// The frontend caller (boot recovery, `useAppBootRecovery`) treats any
 /// error as "log warn, continue boot", and a user-driven `flush_draft` on
 /// one block still succeeds alone.

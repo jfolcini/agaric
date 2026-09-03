@@ -11,18 +11,9 @@ use agaric_store::op_log::append_local_op_in_tx;
 // ---------------------------------------------------------------------------
 
 /// Process a single draft: returns `Ok(true)` if the draft was recovered
-/// (synthetic op created), `Ok(false)` if it was already flushed.
-///
-/// A draft whose content exceeds [`crate::commands::MAX_CONTENT_LENGTH`]
-/// returns `Err` (#3262). This LOSES that text, and deliberately: until now
-/// recovery was the one path that persisted an over-cap paste — it appended
-/// the op and wrote `blocks.content` — so such a draft used to survive a boot
-/// and no longer does. Nothing reads a `block_drafts` row back, so the row
-/// this keeps is the #2540 invariant, not the user's data. Keeping content
-/// the flush paths reject out of the append-only log and off the wire is
-/// worth that. `Err` rather than `Ok(false)` because `recover_at_boot` deletes
-/// the row on either `Ok`; boot logs the failure and carries on with the
-/// other drafts.
+/// (synthetic op created), `Ok(false)` if it was already flushed, and `Err`
+/// for content over [`crate::commands::MAX_CONTENT_LENGTH`] — the reason is
+/// at that check (#3262).
 ///
 /// When recovering, both the op_log append and the `blocks.content` update
 /// are wrapped in a single IMMEDIATE transaction — mirroring the production
@@ -158,9 +149,11 @@ pub(super) async fn recover_single_draft(
     if matching_ops == 0 {
         // #3262: never append an over-cap op. `edit_block_inner` and the flush
         // paths reject this content, so recovery must not smuggle it into the
-        // op log and on to peers. `Err`, not `Ok(false)`: the caller deletes
-        // the draft row on `Ok`, and the row is kept for the reason given at
-        // the H-12b arm in `commands::drafts::flush_all_drafts_inner`.
+        // op log and on to peers. This LOSES that text, deliberately: recovery
+        // was the one path that persisted an over-cap paste, so such a draft
+        // used to survive a boot and no longer does. The `block_drafts` row
+        // stays — the #2540 invariant — but nothing reads one back. `Err`, not
+        // `Ok(false)`, because the caller deletes the row on either `Ok`.
         if draft.content.len() > crate::commands::MAX_CONTENT_LENGTH {
             return Err(AppError::validation(format!(
                 "draft content {} exceeds maximum {}",
