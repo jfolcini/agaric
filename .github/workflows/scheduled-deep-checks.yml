@@ -813,7 +813,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
-      # A shard that dies must not cancel the other 42: each carries a
+      # A shard that dies must not cancel the other 45: each carries a
       # different slice of the surface, and the slices that DID run are still
       # the week's deliverable.
       fail-fast: false
@@ -832,12 +832,19 @@ jobs:
         #
         #   agaric         183 mutants,  6/shard → 31 shards  (cap 7)
         #   agaric-store   125 mutants, 42/shard →  3 shards  (cap 44)
-        #   agaric-engine  383 mutants, 43/shard →  9 shards  (cap 44)
+        #   agaric-engine  383 mutants, 32/shard → 12 shards  (cap 44, est.)
         #
         # `agaric-engine` is the one package whose per-mutant cost was not
         # measured; it is sized on `agaric-store`'s measured cost, the nearest
-        # comparable case. If its shards report PARTIAL coverage every week,
-        # that estimate was optimistic and it needs more shards.
+        # comparable case. Its 12 is therefore NOT the smallest n that fits:
+        # 9 would (`ceil(383/9)` = 43 against a capacity of 44), but one mutant
+        # of slack is only slack if the capacity is real, and engine's 458 tests
+        # include proptests and snapshots against the 88 s suite store's 117 s
+        # came from. Above ~121 s/mutant all 9 truncate, every one still records
+        # a Success baseline, and the survivors they never reached resolve and
+        # re-file weekly with nothing red — the #3364 case this lane exists to
+        # close. 12 costs three free jobs for ~27% slack. The PARTIAL notice on
+        # the first crons is what settles the estimate either way.
         #
         # `shards` is the denominator every shard of that package must agree on
         # (cargo-mutants: "all shards must be run with the same arguments and
@@ -880,15 +887,18 @@ jobs:
           - { package: agaric-store, shard: 0, shards: 3 }
           - { package: agaric-store, shard: 1, shards: 3 }
           - { package: agaric-store, shard: 2, shards: 3 }
-          - { package: agaric-engine, shard: 0, shards: 9 }
-          - { package: agaric-engine, shard: 1, shards: 9 }
-          - { package: agaric-engine, shard: 2, shards: 9 }
-          - { package: agaric-engine, shard: 3, shards: 9 }
-          - { package: agaric-engine, shard: 4, shards: 9 }
-          - { package: agaric-engine, shard: 5, shards: 9 }
-          - { package: agaric-engine, shard: 6, shards: 9 }
-          - { package: agaric-engine, shard: 7, shards: 9 }
-          - { package: agaric-engine, shard: 8, shards: 9 }
+          - { package: agaric-engine, shard: 0, shards: 12 }
+          - { package: agaric-engine, shard: 1, shards: 12 }
+          - { package: agaric-engine, shard: 2, shards: 12 }
+          - { package: agaric-engine, shard: 3, shards: 12 }
+          - { package: agaric-engine, shard: 4, shards: 12 }
+          - { package: agaric-engine, shard: 5, shards: 12 }
+          - { package: agaric-engine, shard: 6, shards: 12 }
+          - { package: agaric-engine, shard: 7, shards: 12 }
+          - { package: agaric-engine, shard: 8, shards: 12 }
+          - { package: agaric-engine, shard: 9, shards: 12 }
+          - { package: agaric-engine, shard: 10, shards: 12 }
+          - { package: agaric-engine, shard: 11, shards: 12 }
     # Job-level so the run step and the guard step below quote the SAME
     # number: the guard names the budget in its partial-coverage notice, and
     # two copies of it would drift (#3386).
@@ -938,8 +948,8 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: rust-mutants
-          # ONE saver, not 43 (#3393): every shard restores the same target
-          # dir, and 43 concurrent saves of a multi-GB cache would churn the
+          # ONE saver, not 46 (#3393): every shard restores the same target
+          # dir, and 46 concurrent saves of a multi-GB cache would churn the
           # repository's 10 GB cache quota and evict other workflows' caches
           # for no gain. `agaric` shard 0 is the saver because `agaric` is the
           # package whose build the other shards benefit most from.
@@ -1096,7 +1106,7 @@ jobs:
         #
         # Per SHARD since #3393, unchanged in substance: each shard runs its
         # own baseline and writes its own outcomes.json, so a shard whose
-        # baseline broke reds that shard while the other 42 still report. A
+        # baseline broke reds that shard while the other 45 still report. A
         # merge-time-only guard would let one dead shard hide inside the
         # merged totals.
         #
@@ -1174,7 +1184,7 @@ jobs:
   # ---------------------------------------------------------------------------
   mutants-merge:
     needs: mutants
-    # `always()`: a dead shard must not take the surviving 42 shards' results
+    # `always()`: a dead shard must not take the surviving 45 shards' results
     # with it. A SHORT merge is published for the same reason and reported as
     # a warning — see the merge step, which also puts the filer in dry-run.
     if: always()
@@ -1209,7 +1219,7 @@ jobs:
       - name: Merge the shards into one mutants.out
         id: merge
         # The merge is only as complete as the shards that uploaded, and with
-        # `fail-fast: false` across 43 jobs the realistic failure is a HANDFUL
+        # `fail-fast: false` across 46 jobs the realistic failure is a HANDFUL
         # of dead shards, not all of them. The shards that DID run are real
         # signal, so a short merge is published — what must not run on a short
         # set is the FILER'S REWRITE: the missing shards' survivors are simply
@@ -1502,7 +1512,7 @@ jobs:
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
     # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
-    # is the merged one, and `mutants` is now 43 shard jobs.
+    # is the merged one, and `mutants` is now 46 shard jobs.
     needs: [mutants-merge, mutants-frontend]
     if: always()
     runs-on: ubuntu-24.04
@@ -1582,7 +1592,7 @@ jobs:
         # update the same children instead of filing new ones. See the
         # § Parent/child section in the script header.
         #
-        # `--dry-run` ALSO on a short merge (#3393 review): with 43 shards the
+        # `--dry-run` ALSO on a short merge (#3393 review): with 46 shards the
         # realistic failure is a handful of dead ones, and their survivors are
         # then absent from `missed.txt` — present-and-shorter, which
         # `--require-rust` cannot tell from real data. Rewriting the body from
