@@ -1,31 +1,20 @@
 /**
  * Type-drift regression guard for #4414.
  *
- * `src/lib/tauri/{attachments,properties,import,history}.ts` used to
- * hand-declare `AttachmentRow`, `PropertyRow`, `ImportResult`, `OpRef`, and
- * `UndoResult` as local `interface`s instead of re-exporting the generated
- * `@/lib/bindings` types (a sixth, `SyncSessionInfo` in `sync.ts`, got the
- * same fix, but `sync.ts` itself was later deleted entirely — #4411/#4413
- * retired both its wrapper functions — so there is no wrapper type left to
- * pin there; `commands.startSync`'s callers use the generated
- * `SyncSessionInfo` directly). `attachments.ts` itself was deleted the same
- * way in #4411 (`addAttachmentWithBytes` was a PURE passthrough), so
- * `AttachmentRow` has no wrapper type left to pin either — callers use the
- * generated `AttachmentRow` directly. `AttachmentRow` drifted silently
- * before the fix — missing `content_hash?: string | null` — because nothing
- * checked the two declarations against each other.
+ * A wrapper module that hand-declares a type the generator already owns can
+ * drift from it silently — `AttachmentRow` did, missing
+ * `content_hash?: string | null`, because nothing checked the two
+ * declarations against each other. Re-exporting instead of redeclaring makes
+ * that impossible by construction, so what needs guarding is the
+ * reintroduction of a duplicate. The `Expect<IsEqual<…>>` block below is that
+ * guard, and it is a COMPILE-TIME assertion checked by `tsc`
+ * (`npm run typecheck`), not by vitest, which strips types without checking
+ * them — which is why both are run.
  *
- * The fix (re-export instead of redeclare) makes drift impossible BY
- * CONSTRUCTION, so there is no runtime behaviour to assert for most of these
- * — the type itself no longer has an independent existence to diverge. The
- * guard that actually catches a regression (someone reintroducing a
- * hand-declared duplicate) is the `Expect<IsEqual<…>>` block below: it is a
- * COMPILE-TIME assertion, checked by `tsc` (`npm run typecheck`, and the
- * pre-push / CI type-check), not by vitest — vitest strips types without
- * checking them. That split is why both are run (see the PR verification
- * notes); the `it()` below exists to give the guard a described home and to
- * smoke-check a re-exported value still works at runtime, the way
- * `AttachmentRow`'s did before its wrapper was retired.
+ * It pins the four wrapper types that still exist. `AttachmentRow` and
+ * `SyncSessionInfo` are no longer among them: #4411/#4413 retired
+ * `attachments.ts` and `sync.ts` outright, so their callers use the generated
+ * types directly and there is no second declaration left to diverge.
  */
 import { describe, expect, it } from 'vitest'
 
@@ -60,7 +49,7 @@ export type _UndoResultMatchesWire = Expect<IsEqual<UndoResult, WireUndoResult>>
 describe('@/lib/tauri/* wrapper types match the generated bindings (#4414)', () => {
   it('PropertyRow re-export carries value_bool — native boolean storage', () => {
     // Typed as the WRAPPER's re-exported `PropertyRow`. If the wrapper ever
-    // redeclares the interface without `value_bool` again, `value_bool: null`
+    // redeclares the interface without `value_bool`, `value_bool: null`
     // becomes an EXCESS PROPERTY and `tsc` rejects the literal — a second,
     // more directly-readable compile-time trip-wire alongside the
     // `Expect<IsEqual<…>>` block above.

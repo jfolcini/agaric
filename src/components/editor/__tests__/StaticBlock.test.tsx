@@ -22,8 +22,7 @@ import { ListMarkerProvider } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
 import { clearRichContentParseCache } from '@/components/RichContentRenderer'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import type { AttachmentRow } from '@/lib/bindings'
-import type { PropertyRow } from '@/lib/tauri'
+import type { AttachmentRow, PropertyRow } from '@/lib/bindings'
 
 vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn() }))
 
