@@ -218,12 +218,16 @@ export function checkShardMatrix({ entries, push }) {
   for (const [pkg, es] of byPackage) {
     const n = es[0].shards
     const indices = [...new Set(es.map((e) => e.shard))].toSorted((a, b) => a - b)
+    // `es.length === n`, not `indices.length === n`: a duplicated entry keeps
+    // the index set complete while `--shard-count` (which counts entries)
+    // returns one more than the merge can ever assemble, so the filer would
+    // dry-run for good.
     const complete =
-      es.every((e) => e.shards === n) && indices.length === n && indices.every((v, i) => v === i)
+      es.every((e) => e.shards === n) && es.length === n && indices.every((v, i) => v === i)
     if (!complete) {
       push(
         'shard-matrix-incomplete',
-        `the shard matrix for '${pkg}' declares shards=${[...new Set(es.map((e) => e.shards))].join('/')} but its entries are ${JSON.stringify(indices)}; they must be exactly 0..n-1 for one n. Any other shape leaves a slice of that package's mutants untested every week, and the summary cannot show it — a missing shard removes its mutants from the tested count AND the generated count.`,
+        `the shard matrix for '${pkg}' declares shards=${[...new Set(es.map((e) => e.shards))].join('/')} but its entries are ${JSON.stringify(es.map((e) => e.shard).toSorted((a, b) => a - b))}; they must be exactly 0..n-1 for one n. Any other shape leaves a slice of that package's mutants untested every week, and the summary cannot show it — a missing shard removes its mutants from the tested count AND the generated count.`,
       )
     }
   }

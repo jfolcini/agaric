@@ -1300,11 +1300,19 @@ jobs:
           # partition the mutant set, so concatenating them IS the union. No
           # `unique`: it cannot fix a double count, only hide one, and it would
           # shrink the `generated` denominator the summary reports against.
+          # Skipped the same way `outcomes.json` is: a shard killed mid-write
+          # uploads truncated JSON, and one `jq -s` over it under `set -e`
+          # would red the step after the files above are already on disk.
           # `</dev/null` because a `jq -s` with no file arguments would read
-          # stdin and hang; there is always at least one file here, since a
-          # shard writes `mutants.json` before it can write the
-          # `outcomes.json` counted above.
-          mapfile -t generated < <(find shards -type f -name mutants.json | sort)
+          # stdin and hang.
+          generated=()
+          while IFS= read -r m; do
+            if jq -e . "$m" >/dev/null 2>&1; then
+              generated+=("$m")
+            else
+              echo "::warning::shard '$(dirname "$m")' uploaded an unreadable mutants.json — excluded from the generated denominator."
+            fi
+          done < <(find shards -type f -name mutants.json | sort)
           jq -s add "${generated[@]}" </dev/null > mutants.out/mutants.json
           echo "merged $merged of $expected shard(s)"
 
