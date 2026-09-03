@@ -309,10 +309,7 @@ async fn cleanup_rejected_attachment(full_path: &Path) {
 ///
 /// - [`AppError::Io`] — the just-written file cannot be stat'd
 /// - [`AppError::Validation`] — the on-disk length differs from `size_bytes`
-pub(crate) async fn verify_written_attachment(
-    full_path: &Path,
-    size_bytes: i64,
-) -> Result<(), AppError> {
+pub async fn verify_written_attachment(full_path: &Path, size_bytes: i64) -> Result<(), AppError> {
     let metadata = match tokio::fs::metadata(full_path).await {
         Ok(metadata) => metadata,
         Err(error) => {

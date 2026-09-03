@@ -187,7 +187,7 @@ pub struct PageWithMetadataRow {
 /// end" with no recovery, which Review Round 1 flagged across three
 /// independent reviewers as a BLOCKER. Per-sort i64 stamped into the
 /// already-unused `Cursor.position` slot.
-pub(crate) fn sort_discriminator(sort: PageSort) -> i64 {
+pub fn sort_discriminator(sort: PageSort) -> i64 {
     match sort {
         PageSort::Alphabetical => 1,
         PageSort::RecentlyModified => 2,
@@ -810,8 +810,10 @@ const PAGES_METADATA_BASE_SELECT: &str = r"SELECT
 /// The error path (invalid filter / date) surfaces verbatim so a test can
 /// also assert rejection. The space_id, filter binds, and `limit` are
 /// supplied by the caller via the bound `?N` placeholders at execution.
-#[cfg(test)]
-pub(crate) fn compose_list_pages_with_metadata_sql(
+// #4499 phase 0d: its only caller, `list_pages_with_metadata_tests`, is now an
+// integration-test binary, which links this crate without `cfg(test)`.
+#[cfg(any(test, feature = "test-util"))]
+pub fn compose_list_pages_with_metadata_sql(
     filter: &ListPagesWithMetadataFilter,
     limit_plus_one: i64,
 ) -> Result<String, AppError> {

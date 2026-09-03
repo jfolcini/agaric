@@ -2,8 +2,8 @@
 pub use crate::db::ReadPool;
 use crate::db::init_pool;
 use crate::materializer::Materializer;
-// kept (#2897): test-prelude re-export consumed by sibling `#[cfg(test)]`
-// modules via `use super::common::*`.
+// kept (#2897): test-prelude re-export, now consumed through
+// `tests/commands/prelude.rs` by the moved command suites (#4499 phase 0d).
 pub use agaric_store::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
 use std::path::PathBuf;

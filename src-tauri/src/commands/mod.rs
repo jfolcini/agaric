@@ -225,10 +225,11 @@ pub(crate) use agaric_store::pagination::ensure_batch_within_cap;
 
 /// Maximum allowed attachment size (50 MB).
 ///
-/// #1925 — `pub(crate)` so the markdown importer can pre-check a referenced
-/// vault file's size (warn + skip oversized) before handing it to the
-/// bytes-based attachment ingest, which re-checks against the same constant.
-pub(crate) const MAX_ATTACHMENT_SIZE: i64 = 50 * 1024 * 1024;
+/// #1925 — visible beyond this module so the markdown importer can pre-check a
+/// referenced vault file's size (warn + skip oversized) before handing it to
+/// the bytes-based attachment ingest, which re-checks against the same
+/// constant; `pub` since #4499 phase 0d, for the moved attachment tests.
+pub const MAX_ATTACHMENT_SIZE: i64 = 50 * 1024 * 1024;
 
 /// Maximum AGGREGATE size (bytes) of ALL attachment bytes accepted in a single
 /// `import_markdown` call (#2724).
@@ -253,7 +254,7 @@ pub(crate) const MAX_TOTAL_ATTACHMENT_BYTES: i64 = 512 * 1024 * 1024;
 /// hash, disk write) and unbounded `Vec` capacity even while well under the
 /// byte cap. 10_000 comfortably exceeds any real vault's referenced-asset set
 /// for one import while bounding the worst case.
-pub(crate) const MAX_ATTACHMENT_FILE_COUNT: usize = 10_000;
+pub const MAX_ATTACHMENT_FILE_COUNT: usize = 10_000;
 
 /// Allowed MIME type patterns for attachments.
 /// Patterns ending with `/*` match any subtype under that top-level type.
@@ -975,7 +976,7 @@ fn new_error_id() -> String {
 /// peers), so this sanitization exists purely for UX consistency and to
 /// keep raw SQL fragments or filesystem paths out of toast notifications
 /// — not as a security boundary.
-pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
+pub fn sanitize_internal_error(err: AppError) -> AppError {
     match &err {
         AppError::Database(_)
         | AppError::Migration(_)
@@ -1107,10 +1108,11 @@ pub fn is_flatpak() -> Result<bool, AppError> {
 // Tests
 // ---------------------------------------------------------------------------
 
-// Public under `#[cfg(test)]` so the sibling integration test modules
-// (`crate::integration_tests`, `crate::command_integration_tests::*`,
-// `crate::mcp::tools_ro::tests`) can reach into `tests::common` for the
-// shared helpers (`assign_all_to_test_space`, `TEST_SPACE_ID`, etc.).
-// Stays gated by `#[cfg(test)]` so production builds never see it.
-#[cfg(test)]
+// The shared command-test fixture. `crate::integration_tests` and
+// `crate::mcp::tools_ro::tests` consume it from inside the lib; the `commands`
+// and `app_tests` binaries under `src-tauri/tests/` consume it as
+// `agaric_lib::commands::tests::common`, which needs it visible to an external
+// crate — hence `test-util` alongside `test` (#4499 phase 0d). Neither
+// condition holds for a production build, so no release binary sees it.
+#[cfg(any(test, feature = "test-util"))]
 pub mod tests;

@@ -29,7 +29,7 @@ use super::*;
 /// safely under SQLite's default parameter limit (999 / 32 766 depending on
 /// build). Mirrors the [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
 /// cap on the `*_by_ids` write family.
-pub(crate) const MAX_FILTER_TAG_IDS: usize = 1000;
+pub const MAX_FILTER_TAG_IDS: usize = 1000;
 
 /// Add a tag to a block.
 ///

@@ -1,0 +1,246 @@
+use crate::prelude::*;
+
+// ======================================================================
+// get_status
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_status_returns_initial_metrics() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Allow 10ms for consumer tokio tasks to be spawned and start their event
+    // loops. This is minimal — just enough for the runtime to schedule the
+    // spawned tasks before we query their status metrics.
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    let status = get_status_inner(&mat, None).await;
+
+    // Fresh materializer — all counters at zero
+    assert_eq!(
+        status.total_ops_dispatched, 0,
+        "fresh materializer should have zero ops"
+    );
+    assert_eq!(
+        status.total_background_dispatched, 0,
+        "fresh materializer should have zero background ops"
+    );
+    // New fields exposed
+    assert_eq!(status.bg_dropped, 0, "fresh materializer drops zero tasks");
+    assert_eq!(
+        status.bg_deduped, 0,
+        "fresh materializer dedupes zero tasks"
+    );
+    assert_eq!(
+        status.fg_full_waits, 0,
+        "fresh materializer records zero full-channel waits"
+    );
+    assert_eq!(
+        status.last_materialize_at, None,
+        "fresh materializer has not recorded a batch yet"
+    );
+    assert_eq!(
+        status.time_since_last_materialize_secs, None,
+        "fresh materializer has no elapsed-since value"
+    );
+    assert_eq!(
+        status.total_ops_in_log,
+        Some(0),
+        "fresh op_log contains zero ops"
+    );
+    assert!(
+        status.sync_peer_failure_counts.is_empty(),
+        "no scheduler wired — peer failure map must be empty"
+    );
+    assert_eq!(
+        status.retry_queue_pending,
+        Some(0),
+        "retry queue must start empty"
+    );
+}
+
+/// When a `SyncScheduler` is wired and has recorded failures, those counts
+/// must appear in `StatusInfo.sync_peer_failure_counts`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_status_surfaces_peer_failure_counts() {
+    use agaric_sync::sync_scheduler::SyncScheduler;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let scheduler = SyncScheduler::new();
+
+    scheduler.record_failure("PEER_A");
+    scheduler.record_failure("PEER_A");
+    scheduler.record_failure("PEER_B");
+
+    let status = get_status_inner(&mat, Some(&scheduler)).await;
+    assert_eq!(
+        status.sync_peer_failure_counts.len(),
+        2,
+        "both failing peers must be surfaced"
+    );
+    let mut counts: std::collections::HashMap<_, _> =
+        status.sync_peer_failure_counts.iter().cloned().collect();
+    assert_eq!(counts.remove("PEER_A"), Some(2));
+    assert_eq!(counts.remove("PEER_B"), Some(1));
+}
+
+/// The `total_ops_in_log` field must reflect the actual `op_log` row count.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_status_total_ops_in_log_reflects_op_log_count() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed 3 op_log rows directly
+    for i in 1..=3 {
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("dev-status")
+        .bind(i64::from(i))
+        .bind(format!("hash-{i}"))
+        .bind("create_block")
+        .bind(r#"{"block_id":"BLK_S","block_type":"content","content":""}"#)
+        .bind(1_749_988_800_000_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let status = get_status_inner(&mat, None).await;
+    assert_eq!(
+        status.total_ops_in_log,
+        Some(3),
+        "total_ops_in_log must match the actual op_log row count"
+    );
+}
+
+/// #385: the cached op_log count must (a) reflect the real row count on a
+/// cold/stale call and (b) be rate-limited — a row inserted within the TTL
+/// window after a refresh is NOT reflected until the cache is invalidated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_status_total_ops_in_log_is_rate_limited_cache() {
+    use std::sync::atomic::Ordering;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    async fn seed_op(pool: &sqlx::SqlitePool, seq: i64) {
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("dev-cache")
+        .bind(seq)
+        .bind(format!("hash-{seq}"))
+        .bind("create_block")
+        .bind(r#"{"block_id":"BLK_C","block_type":"content","content":""}"#)
+        .bind(1_749_988_800_000_i64)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Seed 3 rows, then the first (cold) status call must recompute and
+    // report the true count.
+    for i in 1..=3 {
+        seed_op(&pool, i).await;
+    }
+    let status = get_status_inner(&mat, None).await;
+    assert_eq!(
+        status.total_ops_in_log,
+        Some(3),
+        "cold call must reflect the real op_log count"
+    );
+
+    // The cold refresh must also STAMP the TTL timestamp. The within-TTL
+    // assertion below already depends on that — an unstamped `0` would make
+    // every call look stale and re-COUNT to 5 — but only implicitly, and
+    // nothing in this file ever named the timestamp in an assertion, so the
+    // metric-provability guard read it as unobserved (#3382, #3384). Assert it
+    // directly: a regression that stopped stamping now fails HERE, naming the
+    // field, instead of surfacing as a confusing count mismatch two lines down.
+    let stamped_at = mat
+        .metrics()
+        .cached_op_log_count_at_ms
+        .load(Ordering::Relaxed);
+    assert!(
+        stamped_at > 0,
+        "the cold refresh must stamp cached_op_log_count_at_ms"
+    );
+
+    // Insert 2 more rows WITHOUT invalidating the cache; the next call is
+    // within the TTL window, so it must serve the cached (stale) 3.
+    for i in 4..=5 {
+        seed_op(&pool, i).await;
+    }
+    let status = get_status_inner(&mat, None).await;
+    assert_eq!(
+        status.total_ops_in_log,
+        Some(3),
+        "within-TTL call must serve the cached value, not re-COUNT"
+    );
+
+    // Force the cache stale (timestamp = 0) and confirm the next call
+    // recomputes to the now-current count of 5.
+    mat.metrics()
+        .cached_op_log_count_at_ms
+        .store(0, Ordering::Relaxed);
+    let status = get_status_inner(&mat, None).await;
+    assert_eq!(
+        status.total_ops_in_log,
+        Some(5),
+        "post-invalidation call must recompute the fresh op_log count"
+    );
+
+    // The cached atomic must now match SELECT COUNT(*).
+    let actual: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let cached = mat.metrics().cached_op_log_count.load(Ordering::Relaxed);
+    assert_eq!(
+        i64::try_from(cached).unwrap(),
+        actual,
+        "cached op_log count must equal SELECT COUNT(*) after refresh"
+    );
+}
+
+/// Exercises the status ← atomic copy path: get_status_inner reads the
+/// bg_dropped counter directly from the atomic and copies it into StatusInfo.
+/// Note: this exercises status<-atomic copy, not real task drop — the counter
+/// is nudged manually because triggering a real background-task failure
+/// requires mocking the consumer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_status_reports_bg_dropped_counter() {
+    use agaric_lib::materializer::retry_queue;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed a retry row directly (simulating the consumer having written it).
+    retry_queue::record_failure(
+        &pool,
+        &agaric_lib::materializer::MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_RS".into(),
+        },
+        "simulated",
+        mat.metrics(),
+    )
+    .await
+    .unwrap();
+    // Nudge the materializer metric to mirror what the consumer would do
+    // when it enqueues a task to the persistent queue. Tests don't easily
+    // trigger a real failure without mocking, so exercise the metric path.
+    mat.metrics()
+        .bg_dropped
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    let status = get_status_inner(&mat, None).await;
+    assert_eq!(
+        status.bg_dropped, 1,
+        "bg_dropped must reflect the atomic counter"
+    );
+    assert_eq!(
+        status.retry_queue_pending,
+        Some(1),
+        "retry_queue_pending must reflect the row we just wrote"
+    );
+}

@@ -8,13 +8,13 @@
 //! it did when this was a single file.
 
 pub(crate) mod aliases;
-pub(crate) mod bibliography;
-pub(crate) mod inline_query_md;
+pub mod bibliography;
+pub mod inline_query_md;
 pub(crate) mod links;
-pub(crate) mod listing;
-pub(crate) mod markdown;
+pub mod listing;
+pub mod markdown;
 pub(crate) mod markdown_yaml;
-pub(crate) mod metadata;
+pub mod metadata;
 
 pub use aliases::*;
 pub use bibliography::*;

@@ -7,10 +7,27 @@
 | Layer | Where | What |
 |---|---|---|
 | Unit | `#[cfg(test)] mod tests` in the module, or a sibling `tests.rs` | Single-module logic |
-| Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/src/command_integration_tests/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
-| Conformance | `src-tauri/src/command_integration_tests/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
+| Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/tests/command_integration/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
+| Conformance | `src-tauri/tests/command_integration/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
 | Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/src/sync_daemon/tests.rs`, `src-tauri/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer |
 | Bench | `src-tauri/benches/*.rs` (`harness = false`) | Criterion microbenchmarks; weekly CI lane only, see `src-tauri/benches/AGENTS.md` |
+
+### The three integration-test binaries
+
+`src-tauri/tests/` holds `app_tests/`, `commands/` and `command_integration/`,
+each a directory with a `main.rs` root and its suites as sibling modules. The
+`main.rs` shape is load-bearing: for a *crate root*, `mod foo;` resolves against
+the root's own directory, so a `tests/commands.rs` root would look for
+`tests/foo.rs`, not `tests/commands/foo.rs` (E0583). Cargo auto-discovers
+`tests/<name>/main.rs` and names the binary `<name>`, so no `[[test]]` entry is
+needed.
+
+One binary per group, not per file: every integration-test root links
+`agaric_lib` afresh, and the module tree gives the same isolation for free.
+Inside them `crate::` means the test binary, so lib paths are `agaric_lib::`,
+and anything they reach must be visible to an external crate — either `pub`, or
+`#[cfg(any(test, feature = "test-util"))]` where it must stay out of a release
+build (`commands::tests::common` is the fixture that takes this route).
 
 `src-tauri/src/lib.rs` also carries `specta_tests` (TypeScript binding verification) and the `log_bridge_tests` / `boot_path_tests` / `log_dir_tests` modules.
 

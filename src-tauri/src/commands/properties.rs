@@ -27,13 +27,13 @@ use super::*;
 /// (in `commands::tests::property_cmd_tests`) asserts this constant
 /// stays in sync with the actual seeded options as a drift guard
 /// (#3124 — the fallback previously omitted CANCELLED).
-pub(crate) const TODO_STATE_FALLBACK_DEFAULTS: &[&str] = &["TODO", "DOING", "DONE", "CANCELLED"];
+pub const TODO_STATE_FALLBACK_DEFAULTS: &[&str] = &["TODO", "DOING", "DONE", "CANCELLED"];
 
 /// Built-in fallback vocabulary for the `priority` reserved key —
 /// must mirror the live `property_definitions.options` seeded by
 /// migration 0014 (`["1","2","3"]`, never changed since). See
 /// [`TODO_STATE_FALLBACK_DEFAULTS`] for why this is a named constant.
-pub(crate) const PRIORITY_FALLBACK_DEFAULTS: &[&str] = &["1", "2", "3"];
+pub const PRIORITY_FALLBACK_DEFAULTS: &[&str] = &["1", "2", "3"];
 
 /// Defensive fallback validation for reserved property
 /// keys (`todo_state`, `priority`) when the corresponding row in

@@ -39,9 +39,10 @@ use super::super::*;
 /// per chunk keeps typical bibliographies single-transaction while bounding
 /// pathological multi-thousand-entry files.
 ///
-/// `pub(crate)` so the chunk-boundary test can size a multi-chunk import
-/// relative to the threshold instead of hardcoding the number.
-pub(crate) const IMPORT_BIB_CHUNK_ENTRIES: usize = 200;
+/// `pub` so the chunk-boundary test — now in the `commands` integration-test
+/// binary (#4499 phase 0d) — can size a multi-chunk import relative to the
+/// threshold instead of hardcoding the number.
+pub const IMPORT_BIB_CHUNK_ENTRIES: usize = 200;
 
 /// The typed property definitions a bibliography import *prefers* for its
 /// eight keys. A preference, not a guarantee: the vault's existing shape

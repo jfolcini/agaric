@@ -1,0 +1,30 @@
+---
+source: tests/commands/snapshot_tests.rs
+expression: resp
+---
+items:
+  - id: "[ULID]"
+    block_type: content
+    content: first
+    parent_id: "[ULID]"
+    position: 1
+    deleted_at: "[TIMESTAMP]"
+    todo_state: ~
+    priority: ~
+    due_date: ~
+    scheduled_date: ~
+    page_id: "[ULID]"
+  - id: "[ULID]"
+    block_type: page
+    content: second
+    parent_id: "[ULID]"
+    position: 2
+    deleted_at: "[TIMESTAMP]"
+    todo_state: ~
+    priority: ~
+    due_date: ~
+    scheduled_date: ~
+    page_id: "[ULID]"
+next_cursor: "[CURSOR]"
+has_more: false
+total_count: ~

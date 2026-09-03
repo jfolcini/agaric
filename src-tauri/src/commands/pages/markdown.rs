@@ -49,7 +49,7 @@ use super::super::*;
 /// sibling-reproject cost incurred when each block is created. That reproject
 /// cost is a separate concern tracked on its own and is unaffected by this
 /// threshold.
-pub(crate) const IMPORT_CHUNK_BLOCKS: usize = 500;
+pub const IMPORT_CHUNK_BLOCKS: usize = 500;
 
 /// #2724 — aggregate attachment-budget check for one import.
 ///
@@ -160,7 +160,7 @@ static HUMAN_MULTIWORD_TAG_RE: std::sync::LazyLock<regex::Regex> = std::sync::La
 /// empty segments, and rejoins with `/` so `Project/Backend/API.md` →
 /// `Project/Backend/API`. Returns an empty string when nothing usable remains
 /// (the caller falls back to a default title).
-pub(crate) fn folder_path_to_namespace_title(path: &str) -> String {
+pub fn folder_path_to_namespace_title(path: &str) -> String {
     let without_ext = path.strip_suffix(".md").unwrap_or(path);
     without_ext
         .replace('\\', "/")
@@ -1738,7 +1738,7 @@ fn push_block_bullet(output: &mut String, indent: &str, list_marker: &str, resol
 ///
 /// `match_vault_file` keys on `path`/basename (never bytes), so this pre-pass is
 /// stable even as the ingest loop later empties `bytes` via `mem::take`.
-pub(crate) fn ingest_read_counts(
+pub fn ingest_read_counts(
     pending_attachments: &[(String, Vec<import::AttachmentRef>)],
     vault_files: &[VaultFile],
 ) -> HashMap<usize, usize> {

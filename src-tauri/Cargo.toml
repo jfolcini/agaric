@@ -127,7 +127,11 @@ ci-smoke = []
 # crate's own `[dev-dependencies]` self-entry below, so no release build gets
 # it — `write_fault` in particular must stay out of shipped binaries. Mirrors
 # the `test-util` feature `agaric-core` / `-store` / `-engine` / `-sync` carry.
-test-util = []
+# Step 2 added `commands::tests::common` (the shared command-test fixture that
+# the moved suites and the two remaining in-lib test modules both use) to that
+# set, which is why the feature now pulls `tempfile` — the same shape as
+# `agaric-store`'s `test-util = ["dep:tempfile"]` for its `test_support`.
+test-util = ["dep:tempfile"]
 # #645 — the `diagnostics` feature (formerly built the
 # `audit_cross_space_refs` / `op_log_histogram` bins) is retired: those
 # bins moved to the `agaric-diagnostics` workspace member, so the feature
@@ -160,6 +164,13 @@ agaric-store = { path = "agaric-store", version = "0.1.0" }
 # query-free `bibliography` leaf, re-exported below via `crate::bibliography`.
 agaric-engine = { path = "agaric-engine", version = "0.1.0" }
 agaric-sync = { path = "agaric-sync", version = "0.1.0" }
+# #4499 — `commands::tests::common::test_pool` returns a `TempDir`, so the
+# `test-util` build of the lib needs `tempfile` as a NORMAL dependency: the lib
+# rlib the test binaries link is compiled without this package's
+# dev-dependencies. Optional and reached only through `test-util`, so a default
+# `cargo build` neither compiles nor links it; the `[dev-dependencies]` entry
+# below stays for the test targets' own direct use.
+tempfile = { version = "3.27.0", optional = true }
 # agaric-observability — OpenTelemetry trace/log/metric pipelines (#2878). The
 # `observability` module + its heavy OTel dep tree moved into this leaf crate;
 # re-exported below via `pub use agaric_observability as observability;` so

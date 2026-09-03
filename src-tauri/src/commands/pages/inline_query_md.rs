@@ -57,7 +57,7 @@ use agaric_store::filters::{FilterExpr, FilterPrimitive, PropertyPredicate, Prop
 /// vice-versa. `filter` deserializes into the query engine's OWN
 /// [`FilterExpr`] type, so no schema is re-implemented here.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct InlineQuerySpec {
+pub struct InlineQuerySpec {
     pub filter: FilterExpr,
     /// Render matches as a table (vs. the default list). Omitted ⇒ `false`,
     /// matching the TS encoder which only emits `table` when `true`.
@@ -163,7 +163,7 @@ fn predicate_value_mut(p: &mut PropertyPredicate) -> Option<&mut PropertyValue> 
 // ── codec ─────────────────────────────────────────────────────────────────
 
 /// Decode a stored `v2:<base64url>` payload into a spec (ULIDs in ref fields).
-pub(crate) fn decode_v2(payload: &str) -> Option<InlineQuerySpec> {
+pub fn decode_v2(payload: &str) -> Option<InlineQuerySpec> {
     let b64 = payload.strip_prefix("v2:")?;
     decode_b64(b64)
 }
@@ -184,7 +184,7 @@ fn encode_spec_b64(spec: &InlineQuerySpec) -> Option<String> {
 }
 
 /// Encode a spec into the canonical stored `v2:<base64url>` payload.
-pub(crate) fn encode_v2(spec: &InlineQuerySpec) -> Option<String> {
+pub fn encode_v2(spec: &InlineQuerySpec) -> Option<String> {
     Some(format!("v2:{}", encode_spec_b64(spec)?))
 }
 

@@ -1,0 +1,15 @@
+---
+source: tests/commands/snapshot_tests.rs
+expression: resp
+---
+id: "[ULID]"
+block_type: content
+content: snapshot test content
+parent_id: ~
+position: 1
+deleted_at: ~
+todo_state: ~
+priority: ~
+due_date: ~
+scheduled_date: ~
+page_id: ~

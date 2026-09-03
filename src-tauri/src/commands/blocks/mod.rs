@@ -1,7 +1,7 @@
 //! Blocks command handlers.
 
 pub(crate) mod crud;
-pub(crate) mod move_ops;
+pub mod move_ops;
 pub(crate) mod queries;
 
 pub use crud::*;

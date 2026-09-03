@@ -484,7 +484,7 @@ pub async fn list_template_page_ids_in_space(
 /// Safety bound on the FE page-tree loader.  Pages with deeper / wider
 /// trees than this should already be the user's signal to split the
 /// page; the loader truncates rather than blocking the editor.
-pub(crate) const PAGE_SUBTREE_MAX_BLOCKS: i64 = 10_000;
+pub const PAGE_SUBTREE_MAX_BLOCKS: i64 = 10_000;
 
 /// Result of [`load_page_subtree_inner`] — the (possibly capped) block
 /// set plus an honest truncation signal so the FE can surface a
