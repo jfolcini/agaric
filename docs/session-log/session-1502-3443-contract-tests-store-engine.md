@@ -4,7 +4,7 @@ Goal: the first slice of #3443 as narrowed on 2026-09-02. `cargo mutants -p agar
 
 ## What shipped
 
-Twelve tests, every one shown red under a named mutation of the method it pins before it was kept.
+Eleven tests, every one shown red under a named mutation of the method it pins before it was kept.
 
 `agaric-store`, new files under `op_log/tests/`:
 
@@ -16,7 +16,7 @@ Twelve tests, every one shown red under a named mutation of the method it pins b
 - `loro/engine/reads.rs`: `contains_block` follows index membership (true after create and after soft delete, false for an unknown id and after purge); `read_position` is the dense sibling rank before and after a move, with the exact `Validation` error for an unknown block.
 - `loro/engine/tree.rs`: `children_ordered_block_ids` returns the root forest for `None` and an empty vector for an unknown parent; the sibling order was already pinned in-crate by `merge/apply.rs`.
 - `loro/engine/snapshot.rs`: `live_blocks_preorder` enumerates every unpurged block depth-first in sibling order across two roots, keeps a soft-deleted block, and drops a purged subtree.
-- `loro/engine/sync.rs`: `screen_inbound_blob` reports the exporter's declared frontier with no fork on a fresh update and again on redelivery of the same bytes, reports the full own-peer fork message on a divergent lineage under the same peer id, and does not panic on bytes that are not a Loro blob (that test pins only the decode-failure return, and its name says so).
+- `loro/engine/sync.rs`: `screen_inbound_blob` reports the exporter's declared frontier with no fork on a fresh update and again on redelivery of the same bytes, and reports the full own-peer fork message on a divergent lineage under the same peer id.
 
 Not added: `OpPayload::attachment_id` already has the `_3452` pair in `op_log/tests/append.rs` with a distinct id per attachment arm, so the builder's copy was deleted. `import_with_changed_blocks` has two in-crate tests and stays.
 
@@ -27,7 +27,7 @@ Not added: `OpPayload::attachment_id` already has the `_3452` pair in `op_log/te
 - The undo append test compared against a second pool's plain append; the hash-equality half was structurally true (`compute_op_hash` has no provenance input) and the chain half duplicated `append.rs::second_op_references_first_as_parent`. Cut to the provenance triple with a foreign `reverses` ref and the `seq` it reads.
 - A rollback test asserting the op log untouched was deleted: the `_in_tx` signature makes the assertion unreachable, and its `seq` assertions were duplicates.
 - A trailing `count == 0` after an explicit rollback was vacuous and was cut.
-- The PR reviewer cut two more duplicates: the valueless `set_property` redo test (the validation runs in the shared append and `op.rs` already pins it) and the redo hash recomputation (same shape as `tests/hash.rs`; `parent_seqs` carries the load), and narrowed the sibling-order test to its two new arms.
+- The PR reviewer cut an undecodable-blob test that killed no mutant of its own (any body replacement already reddens the two frontier tests), a `prev_edit` field nothing read, and two more duplicates: the valueless `set_property` redo test (the validation runs in the shared append and `op.rs` already pins it) and the redo hash recomputation (same shape as `tests/hash.rs`; `parent_seqs` carries the load), and narrowed the sibling-order test to its two new arms.
 
 ## Verified
 
