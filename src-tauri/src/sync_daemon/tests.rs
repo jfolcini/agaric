@@ -3421,13 +3421,28 @@ async fn two_daemons_start_on_different_ports() {
 ///
 /// The key is freshly generated, so nothing is listening on it. That is deliberate: the
 /// dial must fail, and it must fail as a recorded failure rather than a silent skip.
-async fn seed_unreachable_peer(pool: &sqlx::SqlitePool, peer_id: &str) {
+///
+/// `exclude_from_resync` stamps `synced_at` so Branch C's round
+/// (`peers_due_for_resync`, which gates on it) cannot claim the peer and a dial
+/// against it is Branch B's — the attribution the Branch B tests used to buy
+/// with a fixed 300 ms sleep, before #4025 let them delete it. The stamp lands
+/// *before* the key bind on purpose: the row is unresolvable until the key
+/// arrives, so no tick can find it due in between.
+async fn seed_unreachable_peer(pool: &sqlx::SqlitePool, peer_id: &str, exclude_from_resync: bool) {
     peer_refs::upsert_peer_ref(pool, peer_id).await.unwrap();
     sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = ?")
         .bind(peer_id)
         .execute(pool)
         .await
         .unwrap();
+    if exclude_from_resync {
+        sqlx::query("UPDATE peer_refs SET synced_at = ? WHERE peer_id = ?")
+            .bind(agaric_store::db::now_ms())
+            .bind(peer_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
     peer_refs::bind_endpoint_id(pool, peer_id, &SecretKey::generate().public().to_string())
         .await
         .unwrap();
@@ -3470,9 +3485,14 @@ const BRANCH_SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_
 /// `daemon_loop`, which resolves paired peers and calls `try_sync_with_peer`. With an
 /// unreachable peer the dial fails and the scheduler records a failure.
 ///
-/// Approach: start the daemon with NO peer refs (so Branch C's immediate first tick
-/// finds nothing), then insert a peer ref that is resolvable but unreachable (see
-/// [`seed_unreachable_peer`]), fire `notify_change()`, and verify a failure is recorded.
+/// Approach: start the daemon with NO peer refs, then insert a peer ref that is
+/// resolvable but unreachable and stamped out of Branch C's round (see
+/// [`seed_unreachable_peer`]), fire `notify_change()`, and verify a failure is
+/// recorded.
+///
+/// #4025: the `notify_change()` deliberately lands in the startup window where
+/// Branch C's immediate first tick cancels Branch B's debounce. There is no
+/// sleep here any more — a change signalled in that window has to survive it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     let (pool, _dir) = test_pool().await;
@@ -3500,24 +3520,13 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     .await
     .unwrap();
 
-    // No observable predicate available — sleep retained.
-    // We need the daemon to (a) enter daemon_loop, (b) let Branch C's
-    // immediate first resync tick fire and find zero peers (no-op), and
-    // (c) sit on the next debounce wait. None of these transitions are
-    // exposed to test code, so we still rely on a fixed wait here.
-    // Let startup complete and Branch C's first tick pass (no peers → no-op).
-    //
-    // #4025: (b) is the load-bearing part, and it is a workaround — this sleep
-    // is dodging the permit that `wait_for_debounced_change` loses when Branch
-    // C's immediate first tick cancels its debounce window. It is one of the
-    // three things #4025's acceptance criterion 3 says to delete when the
-    // scheduler is fixed (the others are `wait_for_change_round` and
-    // `CHANGE_WAKE_NUDGE`). This is also the suspected cause of this test's
-    // known flakiness.
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // No wait for startup: the notify below lands inside the window where
+    // Branch C's immediate first tick cancels Branch B's debounce, and #4025
+    // is exactly the claim that a change signalled there is still owed a
+    // round when the loop comes back to Branch B.
 
     // Insert a peer ref with an unreachable last_address (port 1).
-    seed_unreachable_peer(&pool, "REMOTE_PEER").await;
+    seed_unreachable_peer(&pool, "REMOTE_PEER", true).await;
 
     // Trigger Branch B by notifying a local change.
     scheduler.notify_change();
@@ -3598,20 +3607,12 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     .await
     .unwrap();
 
-    // No observable predicate available — sleep retained.
-    // Same rationale as the sibling branch_b test above: we need the
-    // daemon to enter its loop and let Branch C's first tick pass on an
-    // empty peer table before we insert peers, and the daemon doesn't
-    // expose that transition to test code.
-    // Let startup complete and Branch C's first tick pass (no peers → no-op).
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
     // Insert TWO peer refs, both with unreachable addresses.  Pre-L-61
     // the sequential loop visited them one at a time; post-L-61 the
     // JoinSet visits them concurrently.  Either way, both must
     // accumulate a failure.
     for peer_id in ["REMOTE_PEER_1", "REMOTE_PEER_2"] {
-        seed_unreachable_peer(&pool, peer_id).await;
+        seed_unreachable_peer(&pool, peer_id, true).await;
     }
 
     // Trigger Branch B by notifying a local change.
@@ -3679,7 +3680,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
 
     // Insert a peer ref that has NEVER synced (synced_at IS NULL → always due)
     // with a last_address so resolve_peer_address can find it.
-    seed_unreachable_peer(&pool, "OVERDUE_PEER").await;
+    seed_unreachable_peer(&pool, "OVERDUE_PEER", false).await;
 
     // Start daemon — the first resync tick fires immediately.
     let daemon = SyncDaemon::start(
@@ -4009,69 +4010,6 @@ async fn change_round_does_not_duplicate_a_paired_and_discovered_peer() {
 // progress event `try_sync_with_peer` emits immediately before it dials —
 // earlier than the failure it eventually records, and specific to one peer.
 
-/// How often [`wait_for_change_round`] re-arms the local-change wake.
-///
-/// Part of the #4025 workaround; remove it with that fix.
-///
-/// Must exceed the scheduler's debounce window (the #3533 daemon tests use
-/// 100 ms) or every nudge would restart the window and Branch B would never
-/// leave it. 300 ms leaves each wake 200 ms of quiet to complete in.
-const CHANGE_WAKE_NUDGE: std::time::Duration = std::time::Duration::from_millis(300);
-
-/// [`wait_for`], re-arming `notify_change()` on a cadence while it polls.
-///
-/// # This is a WORKAROUND for #4025, not a design
-///
-/// The re-arm exists only because the production wake path loses permits
-/// (#4025). It is not how a test should have to wait for a local change, and
-/// #4025's acceptance criterion 3 names this function and
-/// [`CHANGE_WAKE_NUDGE`] as the things whose removal proves the fix landed: if
-/// the scheduler is repaired and these are still needed, the fix is incomplete.
-/// Delete both, and the 300 ms sleep in
-/// [`daemon_branch_b_local_change_triggers_sync_attempt`], with that fix.
-///
-/// # Why a single `notify_change()` is not enough
-///
-/// `notify_change` stores at most one permit, and `wait_for_debounced_change`
-/// *consumes* that permit and then waits out its debounce window. If another
-/// `select!` branch becomes ready during that window the debounced future is
-/// dropped — and the consumed permit goes with it, because by then it is no
-/// longer held by a `Notified` that could hand it back. At daemon startup
-/// there is always such a branch: Branch C's resync interval fires its first
-/// tick immediately. So a wake fired right after `start` is regularly eaten,
-/// which is what the fixed 300 ms sleep in
-/// `daemon_branch_b_local_change_triggers_sync_attempt` has been avoiding by
-/// luck rather than by construction.
-///
-/// Re-arming is what production does anyway — every local change notifies —
-/// and it removes the race instead of narrowing it. It cannot rescue a Branch B
-/// that composes the wrong round: no number of wakes produces a peer the round
-/// does not contain.
-async fn wait_for_change_round<F>(
-    scheduler: &SyncScheduler,
-    mut predicate: F,
-    timeout: std::time::Duration,
-    label: &'static str,
-) where
-    F: FnMut() -> bool,
-{
-    let start = std::time::Instant::now();
-    loop {
-        scheduler.notify_change();
-        let nudged = std::time::Instant::now();
-        while nudged.elapsed() < CHANGE_WAKE_NUDGE {
-            if predicate() {
-                return;
-            }
-            assert!(
-                start.elapsed() < timeout,
-                "wait_for_change_round({label}) timed out after {timeout:?}"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    }
-}
-
 /// Whether the sink shows a dial being *started* against `peer_id`.
 ///
 /// `try_sync_with_peer` emits this after the backoff gate, the per-peer lock
@@ -4147,8 +4085,8 @@ async fn daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_35
     // empty, so Branch B is the only branch that can produce this peer.
     {
         let sink = sink.clone();
-        wait_for_change_round(
-            &scheduler,
+        scheduler.notify_change();
+        wait_for(
             move || dial_started(&sink, SEEDED_PEER),
             BRANCH_DISPATCH_DEADLINE,
             "branch_b/#3533: connecting event for the seeded unpaired peer",
@@ -4210,7 +4148,7 @@ async fn daemon_branch_b_ignores_discovered_unpaired_peer_outside_pairing_window
     // `seed_unreachable_peer` binds a freshly generated key, while
     // `discovered_entry` announces `test_endpoint_id(peer_id)` — two different
     // keys for one device, which is exactly the pinned-identity refusal.
-    seed_unreachable_peer(&pool, PAIRED_MISMATCH).await;
+    seed_unreachable_peer(&pool, PAIRED_MISMATCH, false).await;
     assert!(
         !peer_refs::is_pending_pairing(&pool).await.unwrap(),
         "precondition: no pairing window is open"
@@ -4245,8 +4183,8 @@ async fn daemon_branch_b_ignores_discovered_unpaired_peer_outside_pairing_window
     // Barrier 1 — a Branch B round ran.
     {
         let sched = scheduler.clone();
-        wait_for_change_round(
-            &scheduler,
+        scheduler.notify_change();
+        wait_for(
             move || sched.failure_count(PAIRED_MISMATCH) >= 1,
             BRANCH_DISPATCH_DEADLINE,
             "branch_b/#3533: paired peer's pinned-key refusal recorded",
@@ -4287,9 +4225,9 @@ async fn daemon_branch_b_ignores_discovered_unpaired_peer_outside_pairing_window
 /// notification.
 ///
 /// Bounded on both sides, and both bounds carry meaning. It must be *large*
-/// enough to absorb a loaded runner: the wake itself is a `Notify` permit plus
-/// one `should_start_active` query against a temp-file SQLite DB, observed in
-/// the low milliseconds. It must be *far below* `SyncDaemon::DORMANT_POLL_INTERVAL`
+/// enough to absorb a loaded runner: the wake itself is a watch-channel change
+/// notification plus one `should_start_active` query against a temp-file SQLite
+/// DB, observed in the low milliseconds. It must be *far below* `SyncDaemon::DORMANT_POLL_INTERVAL`
 /// (30 s) or a daemon that only ever transitioned on the periodic poll would
 /// also pass, and the notify path — the one `confirm_pairing` depends on, and
 /// the one #3852 suspected on Android — would go untested. 5 s is ~1000× the
