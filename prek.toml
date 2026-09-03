@@ -1388,7 +1388,7 @@ pass_filenames = false
 # allowlist is built from all of them, so a fixture const added in
 # `agaric-sync/src` changes this guard's verdict.
 # `Cargo.toml` is a trigger too — the member list is derived from it.
-files = "(\\.snap$|^src-tauri/(src|tests|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs$|^src-tauri/Cargo\\.toml$)"
+files = "(\\.snap$|^src-tauri/(src|tests|[^/]+/src|[^/]+/tests|[^/]+/[^/]+/src)/.*\\.rs$|^src-tauri/Cargo\\.toml$)"
 stages = ["pre-commit"]
 
 # Session-log numbering: the number must be free in the MERGE TARGET, not
