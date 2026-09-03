@@ -250,7 +250,7 @@ async fn snapshot_vault(db_path: &Path, backup: &Path) -> Result<(), sqlx::Error
         .execute(&mut conn)
         .await;
     // A close error after a successful VACUUM must not turn into `Err`: the
-    // caller would delete the good snapshot and fall back to the raw copy.
+    // caller's raw-copy fallback would overwrite the good snapshot.
     let _ = conn.close().await;
     vacuumed.map(|_| ())
 }
