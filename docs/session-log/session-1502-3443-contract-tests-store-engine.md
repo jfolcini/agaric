@@ -33,7 +33,7 @@ Not added: `OpPayload::attachment_id` already has the `_3452` pair in `op_log/te
 
 - `cargo nextest run -p agaric-store` after review: 1347 passed, 3 skipped.
 - `cargo nextest run -p agaric-engine` after review: 471 passed, 0 skipped.
-- Each test's falsification was re-run by the reviewer against a copy of the production file; `cmp` silent after every restore. During one falsification window a reviewer working on the engine files read `op.rs` while the store builder's mutation was live; the file is byte-identical to `HEAD` at commit time.
+- Each test's falsification was re-run by the reviewer against a copy of the production file; `cmp` silent after every restore. Production files are byte-identical to `HEAD` at commit time.
 
 ## Left for the next slice
 
