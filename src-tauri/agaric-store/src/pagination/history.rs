@@ -198,10 +198,8 @@ pub async fn list_block_history(
 /// the owning block's sheet while this one still omits it.
 ///
 /// It drops `src_add.is_replicated = 0` (#4620) for a reason that holds
-/// here too: `ingest_remote_op_in_tx` populates `op_log.block_id` for a
-/// replicated row exactly as the local append path does, and attachments
-/// are never reparented, so that filter pruned correct matches rather than
-/// unsafe ones. This query keeps it anyway — see the #4627 paragraph below.
+/// here too — see `list_block_history`. This query keeps it anyway, for an
+/// unrelated one: the #4627 paragraph below.
 ///
 /// Same op, two sheets, two answers, and the asymmetry is the point.
 ///
