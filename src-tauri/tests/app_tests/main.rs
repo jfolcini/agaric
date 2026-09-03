@@ -1,7 +1,8 @@
 //! Crate-root app tests (#4499 phase 0d) — one integration-test binary for the
-//! six suites that used to be `#[cfg(test)] mod`s in
-//! `src/lib.rs`. Each covers the app-crate half of a facility whose store-side
-//! tests already live down in `agaric-store`.
+//! five `*_app_tests.rs` suites that used to be `#[cfg(test)] mod`s in
+//! `src/lib.rs`, plus the reverse tests that need the app's `Materializer`
+//! (phase 1). Each covers the app-crate half of a facility whose store-side
+//! tests already live down in `agaric-store` or `agaric-engine`.
 //!
 //! Consolidated for the same reason as `tests/commands/`: six roots would
 //! link `agaric_lib` six times.
