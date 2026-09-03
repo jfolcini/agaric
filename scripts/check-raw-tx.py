@@ -717,7 +717,6 @@ def run_self_test() -> int:
         # App-crate sites that did NOT migrate — MUST still match.
         ("src-tauri/src/db/command_tx.rs", True),
         ("src-tauri/agaric-engine/src/materializer/handlers/apply.rs", True),
-        ("src-tauri/src/materializer/handlers/apply.rs", False),
         ("src-tauri/src/recovery/draft_recovery.rs", True),
         # Dropped globs must NOT match: gcal was removed; cache/fts/snapshot/
         # sync production code left the app crate; and draft.rs is marker-only.
