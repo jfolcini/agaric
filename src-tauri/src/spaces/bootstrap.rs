@@ -207,11 +207,8 @@ pub async fn bootstrap_spaces(
 /// resulting DB rows / op_log, not on cache dispatch, so a transient
 /// materializer (created → run → `shutdown()`) is the minimal shim that
 /// satisfies the coupled-dispatch signature without leaking a worker.
-#[cfg(test)]
-pub(crate) async fn bootstrap_spaces_for_test(
-    pool: &SqlitePool,
-    device_id: &str,
-) -> Result<(), AppError> {
+#[cfg(any(test, feature = "test-util"))]
+pub async fn bootstrap_spaces_for_test(pool: &SqlitePool, device_id: &str) -> Result<(), AppError> {
     let mat = Materializer::new(pool.clone());
     let result = bootstrap_spaces(pool, device_id, &mat).await;
     mat.shutdown();

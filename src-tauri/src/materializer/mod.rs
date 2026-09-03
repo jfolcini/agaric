@@ -93,15 +93,19 @@ pub(crate) use dispatch::move_same_page_hint;
 // #1993: re-exported test-only so command-level tests can drive the GC pass
 // (delete defers byte reclamation to it). Non-test code reaches it within the
 // materializer module via `handlers::cleanup_orphaned_attachments`.
-#[cfg(test)]
-pub(crate) use handlers::cleanup_orphaned_attachments;
+#[cfg(any(test, feature = "test-util"))]
+pub use handlers::cleanup_orphaned_attachments;
 // Re-export the two process-global materializer counter accessors
 // so the OTel metrics pipeline (`observability::metrics`) can surface them as
 // observable counters WITHOUT reaching into the private `handlers` module or
 // touching the underlying statics directly. Each is a thin getter over a
 // monotonic `AtomicU64` (relaxed load); the metrics callback reads it on each
 // collection cycle. PII-safe by construction (opaque counts only).
-pub(crate) use handlers::{descendant_fanout_dropped_count, sql_only_fallback_count};
+// `sql_only_fallback_count` is additionally `pub` because the conformance
+// tests will read it from outside the crate once step 2 moves them into an
+// integration binary; its sibling has no caller that moves.
+pub(crate) use handlers::descendant_fanout_dropped_count;
+pub use handlers::sql_only_fallback_count;
 pub use metrics::{QueueMetrics, StatusInfo};
 use serde::Deserialize;
 use std::sync::Arc;

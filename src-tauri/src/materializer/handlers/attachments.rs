@@ -323,7 +323,7 @@ async fn gc_race_rendezvous(relative_str: &str) {
 /// the bulk `SELECT fs_path FROM attachments` likewise loads every row
 /// (active and soft-deleted). A file is an orphan iff its normalized
 /// relative path is not present in the set.
-pub(crate) async fn cleanup_orphaned_attachments(
+pub async fn cleanup_orphaned_attachments(
     pool: &SqlitePool,
     read_pool: Option<&SqlitePool>,
     app_data_dir: &Path,

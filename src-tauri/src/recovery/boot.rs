@@ -41,8 +41,8 @@ static RECOVERY_DONE: AtomicBool = AtomicBool::new(false);
 /// Reset the once-only guard. **Test-only.** Production callers
 /// must never reset the flag — the contract is "exactly once per
 /// process".
-#[cfg(test)]
-pub(crate) fn reset_recovery_guard() {
+#[cfg(any(test, feature = "test-util"))]
+pub fn reset_recovery_guard() {
     RECOVERY_DONE.store(false, Ordering::Release);
 }
 

@@ -7,4 +7,4 @@
 //! `crate::materializer::handlers::sql_only_fallback::{count, …}` (and the
 //! `sql_only_fallback_count` alias in `mod.rs`).
 
-pub(crate) use agaric_engine::apply::sql_only_fallback::*;
+pub use agaric_engine::apply::sql_only_fallback::*;
