@@ -834,17 +834,10 @@ jobs:
         #   agaric-store   125 mutants, 42/shard →  3 shards  (cap 44)
         #   agaric-engine  383 mutants, 32/shard → 12 shards  (cap 44, est.)
         #
-        # `agaric-engine` is the one package whose per-mutant cost was not
-        # measured; it is sized on `agaric-store`'s measured cost, the nearest
-        # comparable case. Its 12 is therefore NOT the smallest n that fits:
-        # 9 would (`ceil(383/9)` = 43 against a capacity of 44), but one mutant
-        # of slack is only slack if the capacity is real, and engine's 458 tests
-        # include proptests and snapshots against the 88 s suite store's 117 s
-        # came from. Above ~121 s/mutant all 9 truncate, every one still records
-        # a Success baseline, and the survivors they never reached resolve and
-        # re-file weekly with nothing red — the #3364 case this lane exists to
-        # close. 12 costs three free jobs for ~27% slack. The PARTIAL notice on
-        # the first crons is what settles the estimate either way.
+        # `agaric-engine` gets 12 rather than the 9 the rule allows, because
+        # its capacity is borrowed from `agaric-store` rather than measured —
+        # session log ¶ "A later round re-sized". Its PARTIAL notices on the
+        # first crons are what settle that estimate.
         #
         # `shards` is the denominator every shard of that package must agree on
         # (cargo-mutants: "all shards must be run with the same arguments and
