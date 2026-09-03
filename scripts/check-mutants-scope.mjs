@@ -571,8 +571,10 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  *     #3394 kept listing this lane as failing for a week after #3392 fixed its
  *     upstream.
  *   * …and BECAUSE it is reachable from a dispatch, the step must select
- *     `--dry-run` off the schedule. Otherwise a smoke run rewrites the real
- *     tracking issue — the #2947 rule the schedule gate used to enforce.
+ *     `--dry-run` unless `CRON_EQUIVALENT` (the workflow-level env that names
+ *     the cron and its default-input `main` dispatch) holds. Otherwise a
+ *     smoke run rewrites the real tracking issue — the #2947 rule the
+ *     schedule gate used to enforce.
  *     Removing the gate without adding the dry run trades one bug for a worse
  *     one, so the two are checked as a pair.
  */
@@ -592,11 +594,11 @@ export function checkFilerPlumbing({ lines, push }) {
       `the \`${FILER_JOB_ID}\` job is gated on \`github.event_name == 'schedule'\` (${jobIf.trim()}), so a \`workflow_dispatch\` skips it entirely. This lane has no failure mode of its own — it goes red only when \`${JOB_ID}\` fails to hand it a missed.txt — so gating it this way means a fix to \`${JOB_ID}\` cannot be verified end-to-end until the next weekly cron (#3394). Keep the job reachable and put the schedule-only behaviour on the step as \`--dry-run\` instead.`,
     )
   } else if (
-    !(lines.some((l) => l.includes('--dry-run')) && lines.some((l) => /EVENT_NAME/.test(l)))
+    !(lines.some((l) => l.includes('--dry-run')) && lines.some((l) => /CRON_EQUIVALENT/.test(l)))
   ) {
     push(
       'filer-dispatch-writes',
-      `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from \`$EVENT_NAME\`, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-on-schedule go together; this has one without the other.`,
+      `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from \`$CRON_EQUIVALENT\`, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-on-schedule go together; this has one without the other.`,
     )
   }
 
@@ -976,11 +978,11 @@ function selfTestFilerPlumbing(ok, fail) {
     `          name: ${ARTIFACT_NAME}`,
     ...(path === undefined ? [] : [`          path: ${path}`]),
     '      - name: File or update the single mutation-survivor tracking issue',
-    '        env:',
-    '          EVENT_NAME: ${{ github.event_name }}',
     '        run: |',
     '          extra=()',
-    ...(dryRun ? ['          if [ "$EVENT_NAME" != "schedule" ]; then extra=(--dry-run); fi'] : []),
+    ...(dryRun
+      ? ['          if [ "$CRON_EQUIVALENT" != \'true\' ]; then extra=(--dry-run); fi']
+      : []),
     ...(read === undefined ? [] : [`          node x.mjs --rust-missed ${read} "\${extra[@]}"`]),
   ]
 

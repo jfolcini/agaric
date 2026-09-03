@@ -62,8 +62,8 @@ name: Scheduled deep checks
 #                    ran), diffs them against a single tracking issue's
 #                    last-known set and files/updates that ONE issue only on
 #                    genuinely NEW findings (see
-#                    `scripts/file-fuzz-findings.mjs`). Scheduled-event-only;
-#                    needs `issues: write`.
+#                    `scripts/file-fuzz-findings.mjs`). Writes only when
+#                    `CRON_EQUIVALENT` (below) holds; needs `issues: write`.
 #   type-aware-lint — #4408: `oxlint --type-aware`, the type-aware half of
 #                    the linter, which needs the separately-published
 #                    `oxlint-tsgolint` (typescript-go) binary and so had never
@@ -142,6 +142,22 @@ env:
   # holds the half the workflow cannot check about itself — that BOTH jobs
   # still exist and still read this variable outside comments.
   SLO_BENCHES: interactive_slo
+  # #3960 — the runs the three writers (`file-mutation-survivors`,
+  # `file-fuzz-findings`, `report-scheduled-failures`) treat as authoritative:
+  # the cron, and a `workflow_dispatch` on `refs/heads/main` with every input
+  # at its declared default, which tests exactly what the cron tests and so
+  # writes for real. Any other ref (the tracking issues are repo-wide; a
+  # branch's lane health is not the repository's) or a changed input (a
+  # shortened budget can report a still-broken lane as recovered) is a smoke
+  # run: the writers still perform every read and `--dry-run` the `gh`
+  # writes. The three steps read this one value instead of re-deriving it;
+  # every declared input appears in it, at its declared default.
+  CRON_EQUIVALENT: >-
+    ${{ github.event_name == 'schedule'
+      || (github.ref == 'refs/heads/main'
+          && (github.event.inputs.mutants_timeout || '900') == '900'
+          && (github.event.inputs.fuzz_seconds || '300') == '300'
+          && (github.event.inputs.slo_include_problem || 'false') == 'false') }}
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -1470,30 +1486,15 @@ jobs:
   # artifact just contributes zero survivors from that lane (see the script's
   # own doc comment).
   #
-  # #3394 — this lane is NO LONGER gated on `github.event_name == 'schedule'`.
-  # The write must still be schedule-only (a `workflow_dispatch` smoke run must
-  # never file/update the real tracking issue — the #2947 requirement), but that
-  # belongs on the STEP as `--dry-run`, not on the job: this lane has no failure
-  # mode of its own. Every red it has ever gone was DOWNSTREAM of `mutants` —
-  # `--require-rust` throwing because no `missed.txt` reached it (run
-  # 30794686024, 2026-08-03). Gating the whole job on `schedule` meant the only
-  # way to check that a `mutants` fix had actually un-blocked this lane was to
-  # wait for the next weekly cron: #3392 fixed `mutants` on 2026-08-04, the
-  # 2026-08-05 dispatch (run 30981051402) proved the `mutants` half green — and
-  # left THIS lane `skipped`, so #3394 kept listing it as failing for a week
-  # with nobody able to confirm otherwise. A dispatch now exercises the whole
-  # path (artifact download, both `--require-*` gates, the `gh issue list`
-  # lookup, the body render) and writes nothing. This job's own `--dry-run`
-  # below is what keeps a dispatch from touching #3394's marker block: this
-  # lane cannot lean on `report-scheduled-failures`'s gating for its own
-  # content-tracking issue, because that job's gate is narrower than this
-  # one's. It writes for the `schedule` event AND for a dispatch on
-  # `refs/heads/main` whose inputs are all at their declared defaults
-  # (#3716 removed a blanket off-schedule `--dry-run` that discarded a
-  # genuinely newly-failing lane for up to a week; #3960 then scoped what
-  # replaced it to the ref and the inputs). This lane dry-runs on EVERY
-  # dispatch regardless, because what it commits is mutation-survivor
-  # CONTENT, not lane health.
+  # #3394 — this lane is NOT gated on `github.event_name == 'schedule'`: it has
+  # no failure mode of its own (every red it has gone was `mutants` failing to
+  # hand it a `missed.txt`, run 30794686024), so a job-level gate meant a
+  # `mutants` fix could not be confirmed to have un-blocked it until the next
+  # cron. The job runs on every event; the step dry-runs unless
+  # `CRON_EQUIVALENT` holds, so a smoke dispatch exercises the whole path
+  # (artifact download, both `--require-*` gates, the `gh issue list` lookup,
+  # the body render) and writes nothing (#2947), while a default-input
+  # dispatch on `main` files exactly what the cron would.
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
     # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
@@ -1547,24 +1548,11 @@ jobs:
         # `report-scheduled-failures` below `needs:` this job, so the failure
         # is reported through the ordinary path instead of vanishing as a skip.
         #
-        # #3394: `--dry-run` off the schedule — kept, and STRICTER than the
-        # reporter's gate rather than an inconsistency with it. That job now
-        # writes on a dispatch only when the run reproduces the cron (on
-        # `refs/heads/main`, every input at its default — #3716/#3960); this
-        # one dry-runs on every dispatch, because what it commits is
-        # mutation-survivor CONTENT a smoke dispatch should not make
-        # authoritative, not lane health derived from job results. (The
-        # earlier version of this note said the reporter "reads only GitHub's
-        # own job-result data, safe to write anytime". Job-result data is
-        # scoped to the ref and to the dispatch inputs, which is exactly what
-        # #3960 spent two passes on.) The
-        # dry run still performs every read —
-        # including the real `gh issue list` lookup (only `--known-body-file`
-        # stubs that out, and this never passes it) — and only skips the
-        # `gh issue edit` / `gh issue comment` writes. That is what makes a
-        # manual dispatch a real end-to-end check of this lane instead of a
-        # skip. `EVENT_NAME` rides via `env:` rather than inline `${{ }}` per
-        # the same zizmor template-injection rule the reporter follows.
+        # `--dry-run` unless `CRON_EQUIVALENT` (workflow `env`) holds. The dry
+        # run still performs every read — including the real `gh issue list`
+        # lookup (only `--known-body-file` stubs that out, and this never
+        # passes it) — and only skips the `gh issue edit` / `gh issue comment`
+        # writes.
         #
         # `--children`: the rolling parent is the notification, not the
         # worktop. Measured 2026-08-09, it carried 261 survivors across 9
@@ -1588,7 +1576,6 @@ jobs:
         # dying outright leaves both counts empty, which counts as short.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
           SHORT_MERGE: >-
             ${{ needs.mutants-merge.outputs.shards_merged == ''
               || needs.mutants-merge.outputs.shards_merged
@@ -1599,7 +1586,7 @@ jobs:
           if [ "$SHORT_MERGE" = 'true' ]; then
             echo "::warning::running --dry-run: mutants-merge reported a short merge, so the tracking issue is not rewritten from a partial survivor set (#3364). See the merge job's warning for the shard counts."
             extra=(--dry-run)
-          elif [ "$EVENT_NAME" != "schedule" ]; then
+          elif [ "$CRON_EQUIVALENT" != 'true' ]; then
             extra=(--dry-run)
           fi
           node scripts/file-mutation-survivors.mjs \
@@ -2316,13 +2303,13 @@ jobs:
   # artifact. A missing artifact contributes zero per-target findings rather
   # than failing triage (`continue-on-error` download); `needs.fuzz.result` is
   # passed in so a lane that died before it could upload anything still gets
-  # reported. Scheduled-event-only per #2947: a `workflow_dispatch` smoke run
-  # (e.g. testing a `fuzz_seconds` tweak) must never file/update the real
-  # tracking issue.
+  # reported. Writes only when `CRON_EQUIVALENT` (workflow `env`) holds and
+  # dry-runs otherwise (#2947): a smoke dispatch testing a `fuzz_seconds`
+  # tweak exercises the whole path and never touches the real tracking issue.
   # ---------------------------------------------------------------------------
   file-fuzz-findings:
     needs: [fuzz]
-    if: always() && github.event_name == 'schedule'
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -2365,11 +2352,16 @@ jobs:
         # resulting red filer job is itself reported by #3359's
         # `report-scheduled-failures`, which `needs:` this job.
         run: |
+          set -euo pipefail
+          # Seeded, never `extra=()`: see the reporter step below.
+          extra=(--require-results --require-targets-manifest)
+          if [ "$CRON_EQUIVALENT" != 'true' ]; then
+            extra+=(--dry-run)
+          fi
           node scripts/file-fuzz-findings.mjs \
             --result-dir fuzz-status-artifact \
             --job-status "$FUZZ_JOB_RESULT" \
-            --require-results \
-            --require-targets-manifest
+            "${extra[@]}"
 
   # ---------------------------------------------------------------------------
   # type-aware-lint (#4408) — `oxlint --type-aware`. Reporting-only, with a
@@ -2808,41 +2800,13 @@ jobs:
   # runner-pool outage, whole-run cancellation) nothing reports. That needs an
   # out-of-band watchdog; `actionlint` in prek covers the invalid-workflow half.
   #
-  # Unlike the two content filers this job is NOT scheduled-event-only: it
-  # runs — and WRITES for real — on `workflow_dispatch` too (#3716). It used
-  # to run `--dry-run` off the schedule and discard whatever it computed;
-  # since the weekly cron is the only OTHER trigger, that meant a dispatch
-  # that found a newly-failing lane threw the finding away and the rolling
-  # issue kept advertising last week's (by then wrong, sometimes inverted)
-  # set for up to seven more days — worse than reporting nothing, because a
-  # reader trusts the issue's own "machine-readable" claim and acts on it.
-  # Writing on a dispatch is safe: the tracking issue is a SET, not an
-  # append-log (`decideAction`/`diffLanes` are idempotent), so a dispatch
-  # that finds nothing new no-ops exactly like an unchanged scheduled run —
-  # there is no churn to guard against. `--skipped-ok` still rides along off
-  # the schedule, because `file-fuzz-findings` (the one dependency still
-  # gated on `github.event_name == 'schedule'`; `file-mutation-survivors`
-  # stopped being gated in #3394) legitimately reports `skipped` there and
-  # that must not read as a lane failure. It must not read as a lane
-  # RECOVERY either — #3960: with the `--dry-run` above removed, that half
-  # became a live false-green in which a dispatch closed the tracking issue
-  # over a lane it had never executed. `--skipped-ok` now CARRIES such a lane
-  # over untouched; see `carriedOverJobs` in the script.
-  #
-  # And the write is scoped to the runs that REPRODUCE the cron — not merely
-  # to non-`schedule` events. Two passes were needed because each fix was
-  # silent about the dimension it had just introduced:
-  #   * #3960, third pass — the REF. The tracking issue is repo-wide, so an
-  #     authoritative dispatch on a feature branch publishes that BRANCH's
-  #     lane health as the repository's. Any ref but `refs/heads/main`
-  #     dry-runs.
-  #   * #3960, fourth pass — the INPUTS. Ref equality is not cron-equivalence:
-  #     `fuzz_seconds`, `mutants_timeout` and `slo_include_problem` change
-  #     what the lanes TEST, so a dispatch on `main` with a shortened budget
-  #     could report a still-broken lane as recovered and close the issue over
-  #     it. Any non-default input dry-runs too.
-  # The arms: cron writes; default-input cron-ref dispatch writes; any other
-  # ref, tag, or flipped input does not.
+  # It writes for real whenever `CRON_EQUIVALENT` (workflow `env`) holds and
+  # dry-runs otherwise, like the two content filers. Writing on a dispatch is
+  # safe: the tracking issue is a SET, not an append-log (`decideAction` /
+  # `diffLanes` are idempotent), so a dispatch that finds nothing new no-ops
+  # exactly like an unchanged scheduled run (#3716). No lane is gated on the
+  # event any more, so a `skipped` lane is a real failure on every
+  # authoritative run and `--skipped-ok` is not passed.
   # ---------------------------------------------------------------------------
   report-scheduled-failures:
     needs:
@@ -2881,16 +2845,6 @@ jobs:
           # file rather than passed as an argv string so a payload containing
           # quotes can never be re-parsed by the shell.
           NEEDS_JSON: ${{ toJSON(needs) }}
-          EVENT_NAME: ${{ github.event_name }}
-          # Every `workflow_dispatch` input this workflow declares, so the step
-          # below can tell a dispatch that REPRODUCES the cron from one that
-          # changed what the lanes test (#3960, fourth pass — see the `run:`).
-          # `|| '<default>'` mirrors the lanes' own idiom above and means these
-          # are never empty, on any event, so `set -u` is safe. Every input
-          # must appear here.
-          MUTANTS_TIMEOUT_INPUT: ${{ github.event.inputs.mutants_timeout || '900' }}
-          FUZZ_SECONDS_INPUT: ${{ github.event.inputs.fuzz_seconds || '300' }}
-          SLO_INCLUDE_PROBLEM_INPUT: ${{ github.event.inputs.slo_include_problem || 'false' }}
         run: |
           set -euo pipefail
           printf '%s' "$NEEDS_JSON" > needs.json
@@ -2903,59 +2857,8 @@ jobs:
           # passed arguments in the array means it is never empty at the point
           # of expansion.
           extra=(--needs-json-file needs.json)
-          if [ "$EVENT_NAME" != "schedule" ]; then
-            # Dispatch/manual run: NOT --dry-run (#3716) — a dispatch is the
-            # only way to get an off-cycle answer, and discarding what it
-            # computes left the rolling issue advertising the INVERSE of the
-            # true failing set for up to a week. Writing is safe here: the
-            # issue is a set, not an append (`decideAction`/`diffLanes` are
-            # idempotent), so a dispatch that finds nothing new is a silent
-            # no-op exactly like an unchanged scheduled run. `--skipped-ok`
-            # stays: `file-fuzz-findings` is schedule-only, so off the
-            # schedule it legitimately reports `skipped`, and that must not
-            # read as a lane failure. Since #3960 it does not read as a lane
-            # RECOVERY either — a skipped lane is carried over, because
-            # "it never ran" is not evidence that it is fixed.
-            extra+=(--skipped-ok)
-            # …but the answer is only the REPOSITORY's when the run that
-            # produced it reproduces the cron. Two things have to hold, and
-            # each was shipped without the other:
-            #
-            # 1. THE REF. The tracking issue is repo-wide, while a
-            #    `workflow_dispatch` runs on a user-selected ref, so writing
-            #    unconditionally publishes ONE BRANCH's lane results as the
-            #    repository's health: dispatch on `fix/mutants`, every lane
-            #    green there, and this job closes an issue whose subject —
-            #    `main` — is still red, silently, until next Monday.
-            #    Idempotence answers churn, not provenance.
-            #
-            #    `GITHUB_REF`, not `GITHUB_REF_NAME`: only the full ref
-            #    distinguishes the branch `main` from a TAG named `main`, and
-            #    a tag is a legal dispatch target. It is a runner-set default
-            #    env var, so it needs no `env:` mapping and raises no
-            #    template-injection question.
-            #
-            # 2. THE INPUTS. Ref equality is NOT cron-equivalence: this
-            #    workflow's dispatch inputs change what the lanes TEST.
-            #    `fuzz_seconds=10` on `refs/heads/main` passes the ref test,
-            #    and a still-broken `fuzz` lane reports `success` at a budget
-            #    it was never meant to pass at — so the lane diffs as
-            #    RECOVERED, and if it was the last tracked one the issue is
-            #    closed with a "recovered" comment over a lane never tested at
-            #    its real budget. Same silent false-green, one dimension over.
-            #    Every input is compared against its declared default from
-            #    `on:` above, so an input added later needs a comparison here.
-            #
-            # A run that fails either test still computes and PRINTS the whole
-            # answer — `--dry-run` performs every read — so a dispatch is
-            # still a real end-to-end exercise of this job. It just does not
-            # get to speak for the repository.
-            if [ "$GITHUB_REF" != "refs/heads/main" ] ||
-               [ "$MUTANTS_TIMEOUT_INPUT" != "900" ] ||
-               [ "$FUZZ_SECONDS_INPUT" != "300" ] ||
-               [ "$SLO_INCLUDE_PROBLEM_INPUT" != "false" ]; then
-              extra+=(--dry-run)
-            fi
+          if [ "$CRON_EQUIVALENT" != 'true' ]; then
+            extra+=(--dry-run)
           fi
           node scripts/file-scheduled-failures.mjs "${extra[@]}"
 
