@@ -41,3 +41,7 @@ pub use types::{
 // Re-export for tests and internal use
 #[allow(unused_imports)]
 pub use types::{MIN_SCHEMA_VERSION, SCHEMA_VERSION};
+
+// #3120: repatriated from the app crate.
+#[cfg(test)]
+mod tests;

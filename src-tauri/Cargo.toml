@@ -228,8 +228,8 @@ tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 # E1) — the `arc_lock` owned-guard sharding lives there now; the app crate no
 # longer references it directly.
 # `similar` moved with `word_diff.rs` into `agaric-core` (#2621).
-zstd = "0.13"
-ciborium = "0.2"
+# `zstd`, `ciborium` and `loro` moved with `recovery/` and the sync test
+# suites into `agaric-sync` (#3120).
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 # #3852 — `log`→`tracing` bridge. Several deps in the sync path (notably
@@ -310,23 +310,6 @@ dirs = { version = "6.0.0", default-features = false }
 # the manifest half alone in #3432; see the `/src-tauri/fuzz` entry in
 # `.github/dependabot.yml` for the guard that stops that recurring.
 rmcp = { version = "3.1", features = ["client"] }
-
-# Phase 1 — Loro CRDT runtime. Hard dep as of Phase 3 day-9
-# (the `loro-shadow` feature gate retired); the engine is the only
-# materializer path.  Caret-1 mirrors what the (now-archived) spike
-# crate pinned (see git tag `pend-09/spike-archive` for
-# `crates/loro-spike/Cargo.toml`); the spike's format-stability finding
-# (kill criterion #4) is the basis for the 1.x pin.  Not part of any
-# coupled dep stack per AGENTS.md §"Coupled Dependency Updates".
-# HELD at 1.13.6 via Cargo.lock + a dependabot `ignore` (#3161). This caret
-# range ALLOWS 1.13.7 — deliberately not tightened to `=1.13.6`, because that
-# still resolves `loro-internal` 1.13.7 transitively, so the lockfile is the
-# real hold either way and a false sense of pinning here would be worse.
-# 1.13.7 makes `find_common_ancestor` quadratic in history at frontier
-# width > 1 (215x at 1000 rounds). Our regression test can no longer detect
-# it — #3187 narrowed it to width 1, dag.rs's fast path. Do not `cargo update`
-# loro without re-measuring at width 2.
-loro = "1.12"
 
 # `xxhash-rust` moved with `loro/engine/mod.rs` into `agaric-engine` (#2621,
 # wave E1) — `peer_id_from_device_id`'s deterministic `xxh3_64` hash lives

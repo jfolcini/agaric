@@ -75,7 +75,7 @@ Loro engine state is **not** bundled into the snapshot blob — it lives in the 
 - **Loro engines reload EMPTY (#607/#779).** `loro_doc_state` is wiped in the same tx, so the caller's mandatory `reload_registry_from_db` rehydrates nothing — post-reset engines are intentionally empty and import the peer's full CRDT state cleanly on the next session (pinned by `apply_snapshot_wipes_loro_doc_state_and_engines_reload_empty_2474`).
 - **Re-apply is not deduped.** Applying the same snapshot blob twice is safe for core-table state (deterministic wipe-then-insert) but is *not* a no-op for the epoch: each apply is an independent RESET and bumps the epoch again (pinned by `applying_the_same_snapshot_twice_is_reapplied_not_deduped_2474`).
 
-All of the above are pinned by tests in `src-tauri/src/snapshot/tests.rs`.
+All of the above are pinned by tests in `src-tauri/agaric-sync/src/snapshot/tests.rs`.
 
 ### Crash-safe write
 
@@ -93,7 +93,7 @@ Runs once per process (guarded by an `AtomicBool`). Four steps, in order:
 
 1. **Delete pending snapshots.** `DELETE FROM log_snapshots WHERE status = 'pending'`.
 2. **Replay unmaterialized ops** (C-2b). Walk `op_log WHERE seq > materializer_apply_cursor.materialized_through_seq`; enqueue each row through the materializer foreground queue; drain via Barrier. The apply-cursor advance is transactional with the apply, so no gap should exist — this is the standing safety net, and (because local writes never advance the cursor) it re-applies the whole prior session's local ops idempotently on every boot.
-3. **Reconcile drafts.** Walk `block_drafts`; for each row, emit a synthetic `edit_block` op iff no newer op supersedes it (`src-tauri/src/recovery/draft_recovery.rs`; `recover_single_draft` only ever constructs `OpPayload::EditBlock` — there is no `create_block` synthesis path). A draft whose block is missing or soft-deleted is dropped as orphan noise rather than recreating the block. Supersession is the **#1256 seq-anchor** check: each draft carries `(draft_anchor_device, draft_anchor_seq)` — the local device's op-log high-water seq at save time (migration 0092) — and is superseded iff a block-scoped `edit_block`/`create_block` op exists with `device_id = draft_anchor_device AND seq > draft_anchor_seq`. This replaced the #384 wall-clock comparison, which a backward clock step (NTP correction) could defeat.
+3. **Reconcile drafts.** Walk `block_drafts`; for each row, emit a synthetic `edit_block` op iff no newer op supersedes it (`src-tauri/agaric-sync/src/recovery/draft_recovery.rs`; `recover_single_draft` only ever constructs `OpPayload::EditBlock` — there is no `create_block` synthesis path). A draft whose block is missing or soft-deleted is dropped as orphan noise rather than recreating the block. Supersession is the **#1256 seq-anchor** check: each draft carries `(draft_anchor_device, draft_anchor_seq)` — the local device's op-log high-water seq at save time (migration 0092) — and is superseded iff a block-scoped `edit_block`/`create_block` op exists with `device_id = draft_anchor_device AND seq > draft_anchor_seq`. This replaced the #384 wall-clock comparison, which a backward clock step (NTP correction) could defeat.
 4. **Delete all draft rows.** After reconciliation. Followed by an explicit cache rebuild for any blocks resurrected by step 3.
 
 Per-draft errors are captured in a `RecoveryReport`; a single corrupt draft does not block boot.

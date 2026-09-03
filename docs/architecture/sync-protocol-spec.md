@@ -714,7 +714,7 @@ of `SyncOrchestrator::handle_message`. Notable rules:
   orchestrator. Implementation detail in
   `src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs`.
 
-The surrounding daemon (`src-tauri/src/sync_daemon`) owns everything outside
+The surrounding daemon (`src-tauri/agaric-sync/src/sync_daemon`) owns everything outside
 the per-session machine: discovery, scheduling, per-peer locking, connection
 setup, TOFU binding of the peer's `EndpointId`, dormant/active mode, and the post-`ResetRequired`
 and post-`Complete` sub-flows.
@@ -963,7 +963,7 @@ The device-local reset (history/undo/attribution loss + engine re-key)
 is **unconditional** — identical regardless of trigger — because it is a
 property of `apply_snapshot` itself, pinned by
 `apply_snapshot_resets_undo_and_history_surface_2474` and siblings in
-`src-tauri/src/snapshot/tests.rs`.
+`src-tauri/agaric-sync/src/snapshot/tests.rs`.
 
 ## Version-vector format and exchange
 

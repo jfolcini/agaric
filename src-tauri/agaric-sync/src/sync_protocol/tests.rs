@@ -1,0 +1,5882 @@
+#![allow(unused_imports)]
+use super::*;
+use agaric_core::ulid::BlockId;
+use agaric_engine::materializer::Materializer;
+use agaric_store::op::{CreateBlockPayload, OpPayload};
+use agaric_store::op_log::{OpRecord, append_local_op_at};
+use agaric_store::test_support::init_pool;
+use sqlx::SqlitePool;
+use std::path::PathBuf;
+use tempfile::TempDir;
+
+// ── Fixture constants ───────────────────────────────────────────────
+
+const FIXED_TS: i64 = 1_736_942_400_000;
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+async fn test_pool() -> (SqlitePool, TempDir) {
+    let dir = TempDir::new().unwrap();
+    let db_path: PathBuf = dir.path().join("test.db");
+    let pool = init_pool(&db_path).await.unwrap();
+    (pool, dir)
+}
+
+fn test_create_payload(block_id: &str) -> OpPayload {
+    OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::test_id(block_id),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(0),
+        index: None,
+        content: "test".into(),
+    })
+}
+
+// ── get_local_heads ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn get_local_heads_empty_db() {
+    let (pool, _dir) = test_pool().await;
+    let heads = get_local_heads(&pool).await.unwrap();
+    assert!(heads.is_empty(), "empty DB should have no heads");
+}
+
+#[tokio::test]
+async fn get_local_heads_single_device() {
+    let (pool, _dir) = test_pool().await;
+
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("BLK{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+
+    let heads = get_local_heads(&pool).await.unwrap();
+    assert_eq!(heads.len(), 1, "should have exactly one device head");
+    assert_eq!(
+        heads[0].device_id, "device-A",
+        "single device head should be device-A"
+    );
+    assert_eq!(heads[0].seq, 3, "head seq should be 3");
+    assert!(!heads[0].hash.is_empty(), "hash must not be empty");
+}
+
+#[tokio::test]
+async fn get_local_heads_multiple_devices() {
+    let (pool, _dir) = test_pool().await;
+
+    append_local_op_at(&pool, "device-A", test_create_payload("BLK-A1"), FIXED_TS)
+        .await
+        .unwrap();
+    append_local_op_at(&pool, "device-B", test_create_payload("BLK-B1"), FIXED_TS)
+        .await
+        .unwrap();
+    append_local_op_at(&pool, "device-A", test_create_payload("BLK-A2"), FIXED_TS)
+        .await
+        .unwrap();
+
+    let heads = get_local_heads(&pool).await.unwrap();
+    assert_eq!(heads.len(), 2, "should have two device heads");
+
+    let head_a = heads.iter().find(|h| h.device_id == "device-A").unwrap();
+    let head_b = heads.iter().find(|h| h.device_id == "device-B").unwrap();
+    assert_eq!(head_a.seq, 2, "device-A should be at seq 2");
+    assert_eq!(head_b.seq, 1, "device-B should be at seq 1");
+}
+
+/// #430 — the loose-index-scan rewrite must evaluate per-device heads via PK
+/// index SEEKS, not a full covering-index SCAN of `op_log` for a
+/// MAX-per-group. The old `… IN (SELECT device_id, MAX(seq) … GROUP BY
+/// device_id)` plan was `SCAN op_log USING COVERING INDEX` (+ bloom filter +
+/// temp B-tree); this pins that it is gone.
+#[tokio::test]
+async fn get_local_heads_plan_uses_index_seeks() {
+    let (pool, _dir) = test_pool().await;
+    for i in 1..=4 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-B",
+            test_create_payload(&format!("B{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+
+    // EXPLAIN QUERY PLAN of the exact get_local_heads query.
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN \
+         WITH RECURSIVE devices(device_id) AS ( \
+             SELECT (SELECT device_id FROM op_log ORDER BY device_id LIMIT 1) \
+             UNION ALL \
+             SELECT (SELECT ol.device_id FROM op_log ol \
+                       WHERE ol.device_id > devices.device_id \
+                       ORDER BY ol.device_id LIMIT 1) \
+               FROM devices \
+              WHERE devices.device_id IS NOT NULL \
+         ) \
+         SELECT \
+             d.device_id AS device_id, \
+             (SELECT ol.seq  FROM op_log ol \
+                WHERE ol.device_id = d.device_id ORDER BY ol.seq DESC LIMIT 1) AS seq, \
+             (SELECT ol.hash FROM op_log ol \
+                WHERE ol.device_id = d.device_id ORDER BY ol.seq DESC LIMIT 1) AS hash \
+           FROM devices d \
+          WHERE d.device_id IS NOT NULL \
+          ORDER BY d.device_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let detail = plan
+        .iter()
+        .map(|r| r.3.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    // The result is driven by the tiny `devices` CTE, and each device's head
+    // is a PK seek (`device_id=?`) — not a MAX-per-group full scan.
+    assert!(
+        detail.contains("SCAN devices"),
+        "result must be driven by the devices CTE, not op_log: {detail}"
+    );
+    assert!(
+        detail.contains("(device_id=?)"),
+        "per-device head must be a PK seek (device_id=?): {detail}"
+    );
+    // The old `… IN (SELECT device_id, MAX(seq) … GROUP BY device_id)` plan
+    // built a BLOOM FILTER over a full covering-index scan of op_log; its
+    // absence confirms we are off that path. (The only `SCAN op_log` now is the
+    // O(1) anchor `… ORDER BY device_id LIMIT 1` scalar subquery.)
+    assert!(
+        !detail.contains("BLOOM FILTER"),
+        "plan must not full-scan op_log for a MAX-per-group (#430): {detail}"
+    );
+}
+
+// ── check_reset_required — VV-based own-lineage loss (#2502, #602) ───
+
+/// A test space id for the version-vector comparisons below.
+fn crr_space() -> agaric_store::space::SpaceId {
+    agaric_store::space::SpaceId::from_trusted("01HZCRRSPACEXXXXXXXXXXXXXX")
+}
+
+/// Build a per-space `SpaceVersionVector` whose Loro vv carries `ops`
+/// ops authored by `device_id` (its own current-epoch PeerID). The vv is
+/// keyed by `peer_id_from_device_id(device_id)`, and its counter grows
+/// monotonically with `ops`, so more ops → a strictly higher own-counter.
+fn crafted_space_vv(
+    device_id: &str,
+    ops: usize,
+    space: &agaric_store::space::SpaceId,
+) -> SpaceVersionVector {
+    let mut engine =
+        agaric_engine::loro::engine::LoroEngine::with_peer_id(device_id).expect("set peer id");
+    for i in 0..ops {
+        let id = format!("01HZ0000000000000000{i:06}");
+        let pos = i64::try_from(i).expect("op index fits i64");
+        engine
+            .apply_create_block(&id, "content", "x", None, pos)
+            .expect("create block");
+    }
+    SpaceVersionVector {
+        space_id: space.clone(),
+        vv: engine.version_vector(),
+    }
+}
+
+/// #2502/#602: the peer being ahead only for *other* peer ids (normal —
+/// they simply hold more state) must NOT trigger a reset. The op-log-seq
+/// lookup this replaced would have mis-fired on exactly this shape (#602).
+#[test]
+fn check_reset_required_ignores_other_peer_ids() {
+    let space = crr_space();
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
+
+    // We hold one op of our own; the peer advertises a vv carrying only a
+    // DIFFERENT device's ops (nothing of ours).
+    let local = vec![crafted_space_vv("local-dev", 1, &space)];
+    let peer = vec![crafted_space_vv("remote-dev", 3, &space)];
+
+    let reset = check_reset_required(own, &local, &peer).unwrap();
+    assert!(
+        !reset,
+        "#602: the peer being ahead for another device's peer id is a normal \
+         pull, never a reset"
+    );
+}
+
+/// The genuine reset case, now in VV space: the peer's advertised vv claims
+/// ops WE authored (our own peer id) beyond what our engine can produce —
+/// own-lineage loss (history/tail lost, older-backup restore).
+#[test]
+fn check_reset_required_detects_own_lineage_loss() {
+    let space = crr_space();
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
+
+    // We can produce 1 op of our own; the peer claims to have seen 3 of ours.
+    let local = vec![crafted_space_vv("local-dev", 1, &space)];
+    let peer = vec![crafted_space_vv("local-dev", 3, &space)];
+
+    let reset = check_reset_required(own, &local, &peer).unwrap();
+    assert!(
+        reset,
+        "a peer claiming more of OUR OWN ops than our engine holds must reset \
+         (own-lineage loss)"
+    );
+}
+
+/// An own-peer claim we DO satisfy (equal counters) must not reset, and a
+/// peer vv carrying none of our ops (counter 0 for our peer) is trivially
+/// covered — the VV analogue of the retired "seq-0 head" case.
+#[test]
+fn check_reset_required_satisfied_and_no_own_ops_pass() {
+    let space = crr_space();
+    let other_space = agaric_store::space::SpaceId::from_trusted("01HZCRRSPACE2XXXXXXXXXXXXX");
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
+
+    // We hold 2 of our ops; the peer advertises exactly 2 of ours (equal, not
+    // greater) plus a second space carrying only a foreign device's ops.
+    let local = vec![crafted_space_vv("local-dev", 2, &space)];
+    let peer = vec![
+        crafted_space_vv("local-dev", 2, &space),
+        crafted_space_vv("fresh-peer", 2, &other_space),
+    ];
+
+    let reset = check_reset_required(own, &local, &peer).unwrap();
+    assert!(
+        !reset,
+        "an equal own-peer counter + a space with none of our ops must not reset"
+    );
+}
+
+/// A space the peer advertises (claiming our ops) that we do not hold at all
+/// locally reads as local counter 0 → any positive own claim is a loss.
+#[test]
+fn check_reset_required_missing_local_space_is_loss() {
+    let space = crr_space();
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
+
+    // We hold NO local vv for the space; the peer claims we authored 2 ops in
+    // it — we lost the whole space's own-lineage.
+    let local: Vec<SpaceVersionVector> = Vec::new();
+    let peer = vec![crafted_space_vv("local-dev", 2, &space)];
+
+    let reset = check_reset_required(own, &local, &peer).unwrap();
+    assert!(
+        reset,
+        "a peer claiming our ops in a space we hold no local vv for must reset"
+    );
+}
+
+/// Cross-version back-compat: an older peer advertises no `loro_vvs`
+/// (`HeadExchange.loro_vvs` is `#[serde(default)]` → empty). With nothing to
+/// compare against, no reset is signalled — the streamer proceeds normally and
+/// the receiver-side reachability gate remains the safety net. This is the
+/// key property that keeps old-peer ↔ new-peer sessions working.
+#[test]
+fn check_reset_required_empty_peer_vvs_never_resets() {
+    let space = crr_space();
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
+    let local = vec![crafted_space_vv("local-dev", 3, &space)];
+
+    let reset = check_reset_required(own, &local, &[]).unwrap();
+    assert!(
+        !reset,
+        "an older peer advertising no version vectors must never trigger a reset"
+    );
+}
+
+// ── complete_sync ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn complete_sync_updates_peer_refs() {
+    let (pool, _dir) = test_pool().await;
+
+    // Create peer first (update_on_sync requires existing peer)
+    agaric_store::peer_refs::upsert_peer_ref(&pool, "peer-A")
+        .await
+        .unwrap();
+
+    let before = agaric_store::peer_refs::get_peer_ref(&pool, "peer-A")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        before.synced_at.is_none(),
+        "synced_at should be None initially"
+    );
+
+    complete_sync(&pool, "peer-A", "hash-received", "hash-sent")
+        .await
+        .unwrap();
+
+    let after = agaric_store::peer_refs::get_peer_ref(&pool, "peer-A")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        after.synced_at.is_some(),
+        "synced_at should be set after complete_sync"
+    );
+    assert_eq!(
+        after.last_hash.as_deref(),
+        Some("hash-received"),
+        "last_hash should store received hash"
+    );
+    assert_eq!(
+        after.last_sent_hash.as_deref(),
+        Some("hash-sent"),
+        "last_sent_hash should store sent hash"
+    );
+}
+
+// ── bookkeeping pair atomicity ──────────────────────────
+
+/// The post-session bookkeeping pair —
+/// `peer_refs::upsert_peer_ref_in_tx` followed by `complete_sync_in_tx`
+/// — must commit atomically. Both writes share a single
+/// `BEGIN IMMEDIATE` transaction so a crash or error between them
+/// cannot leave a peer row whose `last_hash` is stale relative to the
+/// ops actually applied.
+///
+/// This test verifies the success path: when the transaction commits,
+/// both writes are visible together — the peer row exists AND its
+/// `last_hash` / `last_sent_hash` / `synced_at` reflect the recorded
+/// sync.
+#[tokio::test]
+async fn upsert_peer_ref_and_complete_sync_share_tx_commits_both_atomically() {
+    let (pool, _dir) = test_pool().await;
+
+    // Pre-condition: peer does not exist.
+    assert!(
+        agaric_store::peer_refs::get_peer_ref(&pool, "peer-tx-success")
+            .await
+            .unwrap()
+            .is_none(),
+        "peer must not exist before the bookkeeping pair runs"
+    );
+
+    // Run the bookkeeping pair inside a single BEGIN IMMEDIATE tx —
+    // exactly mirroring the orchestrator's `SyncComplete` arm.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    agaric_store::peer_refs::upsert_peer_ref_in_tx(&mut tx, "peer-tx-success")
+        .await
+        .unwrap();
+    complete_sync_in_tx(&mut tx, "peer-tx-success", "hash-rx", "hash-tx")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    // Post-condition: both writes visible together.
+    let peer = agaric_store::peer_refs::get_peer_ref(&pool, "peer-tx-success")
+        .await
+        .unwrap()
+        .expect("peer row must exist after committed bookkeeping pair");
+    assert_eq!(
+        peer.last_hash.as_deref(),
+        Some("hash-rx"),
+        "last_hash must be populated by complete_sync_in_tx"
+    );
+    assert_eq!(
+        peer.last_sent_hash.as_deref(),
+        Some("hash-tx"),
+        "last_sent_hash must be populated by complete_sync_in_tx"
+    );
+    assert!(
+        peer.synced_at.is_some(),
+        "synced_at must be populated by complete_sync_in_tx"
+    );
+}
+
+/// When the inner write fails, the whole transaction must
+/// roll back — including the preceding `upsert_peer_ref_in_tx`. The
+/// peer row must NOT exist after the failure so the next session
+/// retries from a clean state instead of seeing a stranded row whose
+/// `last_hash` is `NULL` while the ops were already applied.
+///
+/// The failure is forced with a SQLite trigger that calls
+/// `RAISE(ABORT)` on `UPDATE peer_refs` — the same pattern used by
+/// `set_page_aliases_in_transaction` elsewhere in the suite.
+#[tokio::test]
+async fn upsert_peer_ref_and_complete_sync_share_tx_rolls_back_on_inner_failure() {
+    let (pool, _dir) = test_pool().await;
+
+    // Install a trigger that aborts any UPDATE to peer_refs. This
+    // simulates the second-write-of-the-pair failing for any reason
+    // (disk error, concurrent constraint violation, etc.).
+    sqlx::query(
+        "CREATE TRIGGER test_pend24_m2_fail_update \
+         BEFORE UPDATE ON peer_refs \
+         BEGIN \
+            SELECT RAISE(ABORT, 'simulated mid-bookkeeping failure'); \
+         END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Run the bookkeeping pair. The upsert succeeds (INSERT OR IGNORE
+    // for a fresh peer), but the UPDATE inside complete_sync_in_tx
+    // hits the trigger and aborts.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    agaric_store::peer_refs::upsert_peer_ref_in_tx(&mut tx, "peer-tx-rollback")
+        .await
+        .unwrap();
+    let inner = complete_sync_in_tx(&mut tx, "peer-tx-rollback", "hash-rx", "hash-tx").await;
+    assert!(
+        inner.is_err(),
+        "complete_sync_in_tx must propagate the trigger abort, got: {:?}",
+        inner.as_ref().ok()
+    );
+
+    // Drop tx without committing — sqlx's Transaction Drop rolls back.
+    drop(tx);
+
+    // Drop the trigger so the post-condition query is unaffected.
+    sqlx::query("DROP TRIGGER test_pend24_m2_fail_update")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Post-condition: the peer row must NOT exist. If the upsert had
+    // committed independently, this `get` would return `Some(_)` with
+    // a NULL `last_hash`, leaving the next session with a stranded
+    // Peer-ref row — exactly the regression prevents.
+    let peer = agaric_store::peer_refs::get_peer_ref(&pool, "peer-tx-rollback")
+        .await
+        .unwrap();
+    assert!(
+        peer.is_none(),
+        "rollback of the bookkeeping tx must un-do the upsert too; \
+         got stranded peer row: {peer:?}"
+    );
+}
+
+// ── OpTransfer roundtrip ────────────────────────────────────────────
+
+#[tokio::test]
+async fn op_transfer_from_op_record_roundtrip() {
+    let (pool, _dir) = test_pool().await;
+
+    let record = append_local_op_at(
+        &pool,
+        "test-device",
+        test_create_payload("BLK-RT"),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    // OpRecord → OpTransfer
+    let transfer: OpTransfer = record.clone().into();
+    assert_eq!(
+        transfer.device_id, record.device_id,
+        "transfer device_id should match record"
+    );
+    assert_eq!(transfer.seq, record.seq, "transfer seq should match record");
+    assert_eq!(
+        transfer.hash, record.hash,
+        "transfer hash should match record"
+    );
+
+    // OpTransfer → OpRecord
+    let roundtripped: OpRecord = transfer.into();
+    assert_eq!(
+        roundtripped.device_id, record.device_id,
+        "roundtripped device_id should match original"
+    );
+    assert_eq!(
+        roundtripped.seq, record.seq,
+        "roundtripped seq should match original"
+    );
+    assert_eq!(
+        roundtripped.parent_seqs, record.parent_seqs,
+        "roundtripped parent_seqs should match original"
+    );
+    assert_eq!(
+        roundtripped.hash, record.hash,
+        "roundtripped hash should match original"
+    );
+    assert_eq!(
+        roundtripped.op_type, record.op_type,
+        "roundtripped op_type should match original"
+    );
+    assert_eq!(
+        roundtripped.payload, record.payload,
+        "roundtripped payload should match original"
+    );
+    assert_eq!(
+        roundtripped.created_at, record.created_at,
+        "roundtripped created_at should match original"
+    );
+}
+
+/// I-Sync-4: `OpTransfer` and `OpRecord` are intentionally kept as
+/// separate types (a deliberate wire-vs-DB boundary, not duplication
+/// — see the doc-block on `OpTransfer`). This test pins the
+/// "structurally identical" contract: an `OpRecord` with non-trivial
+/// values for every field MUST round-trip through
+/// `OpRecord -> OpTransfer -> OpRecord` losslessly at the serde-JSON
+/// level. If a future field is added to one type but not the other
+/// (or a `From` impl regresses to drop a field), this test fails and
+/// forces the contract to be re-asserted explicitly.
+///
+/// `block_id` is `#[serde(skip, default)]` on `OpRecord` (sidecar
+/// not part of the wire identity), so JSON serialization elides it on
+/// both sides — this is intentional.
+#[test]
+fn op_transfer_and_op_record_remain_structurally_identical_i_sync_4() {
+    // Fully-populated record: non-trivial parent_seqs, non-empty
+    // payload, non-default created_at, populated block_id sidecar.
+    let original = OpRecord {
+        device_id: "device-A".into(),
+        seq: 42,
+        parent_seqs: Some("[7,8,9]".into()),
+        hash: "f".repeat(64),
+        op_type: "create_block".into(),
+        payload: r#"{"block_id":"BLK_I_SYNC_4","block_type":"content","content":"hello","parent_id":null,"position":3}"#.into(),
+        created_at: 1_741_944_413_589,
+        block_id: Some("BLK_I_SYNC_4".into()),
+    };
+
+    let transfer: OpTransfer = OpTransfer::from(original.clone());
+    let roundtripped: OpRecord = OpRecord::from(transfer);
+
+    let original_json =
+        serde_json::to_string(&original).expect("OpRecord serialization must succeed");
+    let roundtripped_json = serde_json::to_string(&roundtripped)
+        .expect("round-tripped OpRecord serialization must succeed");
+
+    assert_eq!(
+        original_json, roundtripped_json,
+        "I-Sync-4: OpRecord -> OpTransfer -> OpRecord must be a lossless \
+         identity at the serde-JSON level. If this fails, a field was \
+         added to one struct but not the other, or a `From` impl dropped \
+         a field — re-assert the parity contract explicitly before \
+         landing the divergence."
+    );
+}
+
+/// The wire-side `From<OpTransfer>` conversion must NOT parse
+/// the payload — `apply_remote_ops` already does a validation parse
+/// and populates the sidecar from that single parse. Doing it here
+/// would double the JSON parse cost on the sync hot path (catch-up
+/// after Android resume, multi-thousand-op batches), regressing
+/// Exactly the workload was filed against. Leaving the sidecar
+/// `None` on the wire conversion is correct as long as
+/// `apply_remote_ops` (the validation-parse piggyback) runs before
+/// any code path that observes `record.block_id` for a sync'd op.
+#[test]
+fn op_transfer_from_leaves_block_id_unpopulated_l13() {
+    let payload = r#"{"block_id":"BLK_L13_RX","block_type":"content","content":"hi","parent_id":null,"position":0}"#;
+    let transfer = OpTransfer {
+        device_id: "remote-dev".into(),
+        seq: 7,
+        parent_seqs: None,
+        hash: "0".repeat(64),
+        op_type: "create_block".into(),
+        payload: payload.into(),
+        created_at: FIXED_TS,
+        origin: "user".into(),
+    };
+
+    let record: OpRecord = transfer.into();
+    assert_eq!(
+        record.block_id, None,
+        "From<OpTransfer> must NOT parse — block_id sidecar is \
+         populated by `apply_remote_ops` from its existing validation \
+         parse so sync stays at one parse per op (not two)"
+    );
+}
+
+// ── SyncOrchestrator ────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_start_returns_head_exchange() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let mut orchestrator = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    let msg = orchestrator.start().await.unwrap();
+
+    match msg {
+        SyncMessage::HeadExchange {
+            heads,
+            engine_format_version,
+            ..
+        } => {
+            assert!(heads.is_empty(), "empty DB should produce empty heads");
+            assert_eq!(
+                engine_format_version,
+                agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+                "start() must advertise the local ENGINE_FORMAT_VERSION (#2130)"
+            );
+        }
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+
+    materializer.shutdown();
+}
+
+// ── SyncMessage serde roundtrip ─────────────────────────────────────
+
+#[test]
+fn sync_message_serde_roundtrip() {
+    let messages = vec![
+        SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "dev-A".into(),
+                seq: 5,
+                hash: "abc123".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        },
+        SyncMessage::LoroSync {
+            msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
+                protocol_version: crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
+                space_id: agaric_store::space::SpaceId::from_trusted("00000000000000000000000000"),
+                bytes: vec![1, 2, 3],
+            },
+            is_last: true,
+        },
+        SyncMessage::ResetRequired {
+            reason: "compacted".into(),
+        },
+        SyncMessage::SnapshotOffer {
+            size_bytes: 1024,
+            blob_blake3: "deadbeef".into(),
+        },
+        SyncMessage::SnapshotAccept,
+        SyncMessage::SnapshotReject,
+        SyncMessage::SyncComplete {
+            last_hash: "xyz789".into(),
+        },
+        SyncMessage::Error {
+            message: "something went wrong".into(),
+        },
+        SyncMessage::FileRequest {
+            attachment_ids: vec!["ATT1".into(), "ATT2".into()],
+        },
+        SyncMessage::FileOffer {
+            attachment_id: "ATT1".into(),
+            size_bytes: 4096,
+            blake3_hash: "a".repeat(64),
+            content_hash: None,
+        },
+        SyncMessage::FileReceived {
+            attachment_id: "ATT1".into(),
+        },
+        SyncMessage::FileTransferComplete,
+    ];
+
+    for msg in &messages {
+        let json = serde_json::to_string(msg).unwrap_or_else(|e| panic!("serialize failed: {e}"));
+        let deser: SyncMessage = serde_json::from_str(&json)
+            .unwrap_or_else(|e| panic!("deserialize failed for {json}: {e}"));
+        let json2 = serde_json::to_string(&deser).unwrap();
+        assert_eq!(json, json2, "serde roundtrip mismatch for: {json}");
+    }
+}
+
+// ── Additional coverage: edge cases & state machine ─────────────────
+
+/// Receiving an Error message transitions to Failed state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_handles_error_message() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    let _start = orch.start().await.unwrap();
+    let response = orch
+        .handle_message(SyncMessage::Error {
+            message: "something broke".into(),
+        })
+        .await
+        .unwrap();
+    assert!(response.is_none(), "Error should not produce a response");
+    assert_eq!(
+        orch.session().state,
+        SyncState::Failed("something broke".into()),
+        "state should be Failed with the error message"
+    );
+    assert!(
+        !orch.is_succeeded(),
+        "failed orchestrator should not report complete"
+    );
+
+    materializer.shutdown();
+}
+
+/// #2130: a responder must reject a peer advertising an incompatible
+/// `engine_format_version` UP FRONT in the HeadExchange arm — before any
+/// raw-byte Loro merge — emitting a `SyncEvent::Error`, transitioning to the
+/// terminal `Failed` state, and never producing a `LoroSync` payload.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_incompatible_engine_format() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_event_sink(Box::new(sink.clone()));
+
+    // A peer one major engine format ahead of us. The responder must reject it
+    // up front rather than letting the bytes reach an import.
+    let incompatible = agaric_engine::loro::engine::ENGINE_FORMAT_VERSION + 1;
+    let result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "remote-dev".into(),
+                seq: 1,
+                hash: "abc".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: incompatible,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "an incompatible engine_format_version must be rejected with an error"
+    );
+    assert!(
+        matches!(orch.session().state, SyncState::Failed(_)),
+        "session must transition to the terminal Failed state, got {:?}",
+        orch.session().state
+    );
+
+    let events = sink.events();
+    let err = events
+        .iter()
+        .find_map(|e| match e {
+            SyncEvent::Error { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("a SyncEvent::Error must be emitted on rejection");
+    assert!(
+        err.contains("engine format"),
+        "the error message must mention the engine format, got: {err:?}"
+    );
+    // No LoroSync payload is ever produced: the rejection returns Err before
+    // `head_exchange_outgoing_loro`, so there is nothing queued to drain.
+    assert!(
+        orch.next_message().is_none(),
+        "a rejected session must not queue any LoroSync (or other) payload"
+    );
+
+    materializer.shutdown();
+}
+
+/// #2130 back-compat: `engine_format_version == 0` (a legacy peer predating the
+/// field) is ACCEPTED and falls through to the normal head-exchange path, and a
+/// matching version is accepted too. Mirrors
+/// [`loro_sync_orchestrator_handles_empty_registry_without_panic`].
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_accepts_legacy_and_matching_engine_format() {
+    for version in [0, agaric_engine::loro::engine::ENGINE_FORMAT_VERSION] {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(
+            pool,
+            "local-dev".into(),
+            std::sync::Arc::new(materializer.clone()),
+        );
+
+        let resp = orch
+            .handle_message(SyncMessage::HeadExchange {
+                heads: vec![],
+                loro_vvs: vec![],
+                engine_format_version: version,
+                op_log_replication: false,
+                op_log_batch_chunked: false,
+                pairing_proof: None,
+                device_name: None,
+                sender_device_id: None,
+            })
+            .await
+            .unwrap_or_else(|e| {
+                panic!("engine_format_version={version} must be accepted, got error: {e:?}")
+            });
+
+        // Accepted ⇒ proceeds to the normal outgoing head-exchange path: either
+        // the empty-registry short-circuit (`SyncComplete`/`Complete`) or a real
+        // `LoroSync` (`StreamingOps`). Never `Failed`.
+        assert!(
+            !matches!(orch.session().state, SyncState::Failed(_)),
+            "engine_format_version={version} must not fail the session, state={:?}",
+            orch.session().state
+        );
+        assert!(
+            matches!(
+                resp,
+                Some(SyncMessage::SyncComplete { .. } | SyncMessage::LoroSync { .. })
+            ),
+            "engine_format_version={version} must proceed to the outgoing path, got {resp:?}"
+        );
+
+        materializer.shutdown();
+    }
+}
+
+/// Receiving a ResetRequired message transitions to ResetRequired state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_handles_reset_required() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    let _start = orch.start().await.unwrap();
+    let response = orch
+        .handle_message(SyncMessage::ResetRequired {
+            reason: "compacted".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        response.is_none(),
+        "ResetRequired should not produce a response"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::ResetRequired,
+        "state should be ResetRequired after receiving reset message"
+    );
+
+    materializer.shutdown();
+}
+
+/// #705 / #2249: an incoming `LoroSync` payload that cannot be imported
+/// must FAIL the session (transition to `Failed`, return an error) rather
+/// than silently dropping the payload and proceeding to `SyncComplete` —
+/// the latter would fake convergence and let the responder record a bogus
+/// `synced_at`.
+///
+/// #2249 note: the registry is now always present (`loro_state()` returns
+/// a real `Arc<LoroState>` from the materializer — the old process-global
+/// `None` defensive branch is gone), so the sole remaining failure at
+/// import time is an undecodable/corrupt snapshot. This test feeds
+/// deliberately-garbage snapshot bytes and pins that the invariant still
+/// holds: error surfaced, session `Failed`, no fake success.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_loro_sync_undecodable_snapshot_fails_session() {
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // `start()` drives Idle → ExchangingHeads; `LoroSync` is accepted in
+    // ExchangingHeads (responder's first post-HeadExchange message).
+    let _start = orch.start().await.unwrap();
+
+    let loro_msg = LoroSyncMessage::Snapshot {
+        protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+        space_id: agaric_store::space::SpaceId::from_trusted("00000000000000000000000000"),
+        bytes: vec![1, 2, 3],
+    };
+    let result = orch
+        .handle_message(SyncMessage::LoroSync {
+            msg: loro_msg,
+            is_last: true,
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "undecodable LoroSync must error, not fake success; got {result:?}"
+    );
+    assert!(
+        matches!(orch.session().state, SyncState::Failed(_)),
+        "undecodable LoroSync must transition to Failed, got {:?}",
+        orch.session().state
+    );
+    assert!(
+        !orch.is_succeeded(),
+        "a failed session must NOT report success (no fake convergence / synced_at)"
+    );
+
+    materializer.shutdown();
+}
+
+// ── State validation tests ──────────────────────────────────────────
+
+/// Regression test for `handle_message` must not silently
+/// reject stray `SnapshotOffer` messages. The snapshot catch-up
+/// sub-flow runs at the daemon layer (`sync_daemon::snapshot_transfer`)
+/// after the main loop exits with `ResetRequired`. If `SnapshotOffer`
+/// ever reaches `handle_message`, the daemon-layer interception has
+/// regressed — surface that as `AppError::InvalidOperation` so the
+/// caller cannot paper over the bug.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // Drive to ExchangingHeads so state-validation passes SnapshotOffer
+    // through and we hit the handler body (not the terminal-state reject).
+    let _start = orch.start().await.unwrap();
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "start() must transition to ExchangingHeads"
+    );
+
+    let result = orch
+        .handle_message(SyncMessage::SnapshotOffer {
+            size_bytes: 1024,
+            blob_blake3: "deadbeef".into(),
+        })
+        .await;
+
+    let err = match result {
+        Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
+        other => panic!(
+            "SnapshotOffer routed through handle_message must return \
+             AppError::InvalidOperation — the daemon layer's \
+             snapshot_transfer sub-flow is the only reachable path. got: {other:?}"
+        ),
+    };
+    assert!(
+        err.contains("SnapshotOffer"),
+        "error message must name the offending variant, got: {err}"
+    );
+    assert!(
+        err.contains("snapshot_transfer"),
+        "error message must point callers at the daemon sub-flow, got: {err}"
+    );
+
+    materializer.shutdown();
+}
+
+/// #611: `LoroSyncChunked` is a transport-internal encoding with no producer
+/// since the iroh port (#3464) removed the chunking layer. One reaching
+/// `handle_message` means a chunking-era peer sent it, or a dispatch
+/// regression; either way surface it as `AppError::InvalidOperation` (same
+/// contract as a stray `SnapshotOffer`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() {
+    use crate::sync_protocol::loro_sync_types::{
+        LORO_SYNC_PROTOCOL_VERSION, LoroSyncChunkedHeader,
+    };
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // Drive to ExchangingHeads so state-validation passes the message
+    // through and we hit the handler body (not the terminal-state reject).
+    let _start = orch.start().await.unwrap();
+    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+
+    let result = orch
+        .handle_message(SyncMessage::LoroSyncChunked {
+            header: LoroSyncChunkedHeader::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: agaric_store::space::SpaceId::from_trusted("00000000000000000000000000"),
+                size_bytes: 1024,
+            },
+            is_last: true,
+            compressed: false,
+        })
+        .await;
+
+    let err = match result {
+        Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
+        other => panic!(
+            "LoroSyncChunked routed through handle_message must return \
+             AppError::InvalidOperation — nothing produces the variant, so \
+             the only way to see one is a peer that predates the QUIC port. \
+             got: {other:?}"
+        ),
+    };
+    assert!(
+        err.contains("LoroSyncChunked"),
+        "error message must name the offending variant, got: {err}"
+    );
+    assert!(
+        err.contains("inline"),
+        "error message must say where an oversized LoroSync goes instead, \
+         so the reader is not left looking for a reassembly layer that no \
+         longer exists, got: {err}"
+    );
+
+    materializer.shutdown();
+}
+
+/// I-Sync-1: `SnapshotAccept` and `SnapshotReject` belong to the
+/// `snapshot_transfer` sub-flow at the sync-daemon layer, not the
+/// orchestrator state machine. If either ever reaches `handle_message`,
+/// it is the same kind of routing regression as a stray `SnapshotOffer`
+/// — surface it as `AppError::InvalidOperation` instead of silently
+/// returning `Ok(None)`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_snapshot_accept_and_reject_i_sync_1() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // Drive to ExchangingHeads so state-validation passes the snapshot
+    // control messages through to the dispatch arm.
+    let _start = orch.start().await.unwrap();
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "start() must transition to ExchangingHeads"
+    );
+
+    for variant in [SyncMessage::SnapshotAccept, SyncMessage::SnapshotReject] {
+        let label = match variant {
+            SyncMessage::SnapshotAccept => "SnapshotAccept",
+            SyncMessage::SnapshotReject => "SnapshotReject",
+            _ => unreachable!(),
+        };
+        let result = orch.handle_message(variant).await;
+        let err = match result {
+            Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
+            other => panic!(
+                "{label} routed through handle_message must return \
+                 AppError::InvalidOperation — the snapshot_transfer sub-flow \
+                 is the only reachable path. got: {other:?}"
+            ),
+        };
+        assert!(
+            err.contains("snapshot_transfer"),
+            "{label} error must point callers at the daemon sub-flow, got: {err}"
+        );
+    }
+
+    materializer.shutdown();
+}
+
+/// After a full sync completes, sending another HeadExchange should
+/// fail because Complete is a terminal state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_messages_in_terminal_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // Manually set `state = Complete` to set up the terminal-state
+    // precondition. The state validation match in `handle_message`
+    // reads `self.state` (the source of truth), so setting it directly
+    // is sufficient to exercise the terminal-state reject branch. (The
+    // empty-registry path short-circuits to `SyncComplete` rather than
+    // emitting a sentinel-empty `LoroSync`, so we cannot drive to
+    // Complete through `handle_message` alone without scaffolding a
+    // real Loro registry — the dedicated coverage for that path lives
+    // in `loro_sync_orchestrator_handles_empty_registry_without_panic`.)
+    let _start = orch.start().await.unwrap();
+    orch.state = SyncState::Complete;
+    assert_eq!(
+        orch.state,
+        SyncState::Complete,
+        "should reach Complete state before terminal test"
+    );
+
+    // Now try sending another HeadExchange — should fail
+    let result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "messages in terminal state should be rejected"
+    );
+
+    materializer.shutdown();
+}
+
+/// State-validation invariant — `SyncMessage::SyncComplete` is rejected
+/// when it arrives in a state where it is not a valid transition.
+///
+/// `SyncComplete` is only valid in `StreamingOps` (the normal
+/// op-stream terminator) or `ExchangingHeads` (the empty-stream
+/// short-circuit). It is the terminal arm above that catches it in
+/// `Complete`/`Failed`; this exercises the *non-terminal* wrong-state
+/// arm — i.e. `(_, SyncComplete)` in `ApplyingOps`, an intermediate
+/// state SyncComplete must never arrive in. The orchestrator must
+/// transition to `Failed("SyncComplete received in wrong state")` and
+/// return `AppError::InvalidOperation`, NOT advance to `Complete`.
+///
+/// This test fails if that rejection arm were changed to accept (the
+/// orchestrator would advance to `Complete` / `Ok(_)` instead of
+/// `Failed` / `Err`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_sync_complete_in_wrong_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // Directly set `state = ApplyingOps` to set up the precondition.
+    // `ApplyingOps` is reached mid-import (an inbound LoroSync handler is
+    // running); a peer must never send a bare `SyncComplete` in it. The
+    // state-validation match in `handle_message` reads `self.state` (the
+    // source of truth), so setting it directly exercises the same
+    // wrong-state rejection branch deterministically — and is NOT the
+    // terminal-state arm (ApplyingOps is non-terminal).
+    let _start = orch.start().await.unwrap();
+    orch.state = SyncState::ApplyingOps;
+
+    let result = orch
+        .handle_message(SyncMessage::SyncComplete {
+            last_hash: "deadbeef".into(),
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "SyncComplete in ApplyingOps must be rejected, got: {result:?}"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("SyncComplete") && err_msg.contains("wrong state"),
+        "rejection error should name SyncComplete and 'wrong state', got: {err_msg}"
+    );
+    assert_eq!(
+        orch.state,
+        SyncState::Failed("SyncComplete received in wrong state".into()),
+        "state must transition to Failed with the descriptive message"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::Failed("SyncComplete received in wrong state".into()),
+        "mirrored session.state must also transition to Failed"
+    );
+    assert!(
+        !orch.is_succeeded(),
+        "a wrong-state SyncComplete must NOT fake convergence / success"
+    );
+
+    materializer.shutdown();
+}
+
+/// State-validation invariant — once the session is `Failed(_)`, the
+/// terminal-state arm `(Complete | Failed(_), _)` must reject every
+/// incoming message with `AppError::InvalidOperation("... already in
+/// terminal state ...")`.
+///
+/// The existing `orchestrator_rejects_messages_in_terminal_state`
+/// covers ONLY the `Complete` half of that pattern; the `Failed(_)`
+/// half was untested. A `Failed` session is terminal — no further
+/// message may be processed and the state must not change.
+///
+/// This test fails if the `Failed(_)` branch of the terminal arm were
+/// removed/changed to accept (the message would fall through to a
+/// per-message arm and either mutate state or return `Ok(_)`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_messages_in_failed_terminal_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // Put the session into the `Failed` terminal state. The
+    // state-validation match reads `self.state` (the source of truth),
+    // so setting it directly exercises the terminal-state reject branch.
+    // (`session` is private; the other terminal-state test likewise drives
+    // only `orch.state`, which the terminal arm reads.)
+    let failed_state = SyncState::Failed("prior protocol violation".into());
+    orch.state = failed_state.clone();
+
+    // A HeadExchange would normally be valid from Idle/ExchangingHeads,
+    // but the terminal-state arm must reject it before any per-message
+    // dispatch — proving it is the terminal arm (not a wrong-state arm)
+    // that fires. The error must name the terminal state.
+    let result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await;
+
+    let err_msg = match result {
+        Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
+        other => panic!(
+            "a message arriving in the Failed terminal state must return \
+             AppError::InvalidOperation, got: {other:?}"
+        ),
+    };
+    assert!(
+        err_msg.contains("terminal state"),
+        "rejection error must name the terminal state, got: {err_msg}"
+    );
+
+    // The terminal arm must NOT mutate state — no transition occurred.
+    assert_eq!(
+        orch.state, failed_state,
+        "state must remain unchanged (no transition) after a terminal-state reject"
+    );
+
+    // SnapshotOffer is otherwise accepted in any non-terminal state; in a
+    // terminal state it too must be rejected by the same arm. This pins
+    // the arm's "reject everything" contract for a second message kind.
+    let result2 = orch
+        .handle_message(SyncMessage::SnapshotOffer {
+            size_bytes: 1024,
+            blob_blake3: "deadbeef".into(),
+        })
+        .await;
+    assert!(
+        matches!(result2, Err(agaric_core::error::AppError::InvalidOperation(ref m)) if m.contains("terminal state")),
+        "SnapshotOffer in the Failed terminal state must also be rejected by the terminal arm, got: {result2:?}"
+    );
+    assert_eq!(
+        orch.state, failed_state,
+        "state must remain Failed after the second terminal-state reject"
+    );
+
+    materializer.shutdown();
+}
+
+/// Error messages should be accepted in any non-terminal state,
+/// including Idle.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_accepts_error_in_any_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // State is Idle — Error should still be accepted
+    let result = orch
+        .handle_message(SyncMessage::Error {
+            message: "test error".into(),
+        })
+        .await;
+    assert!(result.is_ok(), "Error should be accepted in Idle state");
+    assert_eq!(
+        orch.session().state,
+        SyncState::Failed("test error".into()),
+        "error in Idle should transition to Failed state"
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// #452 — SyncOrchestrator rejects HeadExchange after already exchanged
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_head_exchange_in_streaming_state() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // start() → ExchangingHeads
+    let _start = orch.start().await.unwrap();
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "state should be ExchangingHeads after start"
+    );
+
+    // Directly set `state = StreamingOps` to set up the precondition.
+    // Driving via HeadExchange is brittle: the empty-registry short-
+    // circuit transitions to `Complete` instead, and a sibling test in
+    // this binary may have populated the process-global `OnceLock`
+    // registry which would route us through the per-space LoroSync
+    // path. The state-validation match in `handle_message` reads
+    // `self.state` (the source of truth), so setting it directly
+    // exercises the same rejection branch deterministically.
+    orch.state = SyncState::StreamingOps;
+
+    // Send a HeadExchange in StreamingOps → should fail with the
+    // wrong-state rejection (not the terminal-state reject).
+    let result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "HeadExchange should be rejected in StreamingOps state"
+    );
+    assert_eq!(
+        orch.state,
+        SyncState::Failed("HeadExchange received in wrong state".into()),
+        "state should transition to Failed with descriptive message"
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// #618 — is_terminal includes all terminal states
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn is_terminal_includes_all_terminal_states() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // Complete → terminal
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    orch.state = SyncState::Complete;
+    assert!(orch.is_terminal(), "Complete should be terminal");
+    assert!(
+        orch.is_succeeded(),
+        "Complete should also pass is_succeeded"
+    );
+
+    // Failed → terminal
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    orch.state = SyncState::Failed("err".into());
+    assert!(orch.is_terminal(), "Failed should be terminal");
+    assert!(!orch.is_succeeded(), "Failed should not pass is_succeeded");
+
+    // ResetRequired → terminal
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    orch.state = SyncState::ResetRequired;
+    assert!(orch.is_terminal(), "ResetRequired should be terminal");
+    assert!(
+        !orch.is_succeeded(),
+        "ResetRequired should not pass is_succeeded"
+    );
+
+    // Non-terminal states
+    for state in [
+        SyncState::Idle,
+        SyncState::ExchangingHeads,
+        SyncState::StreamingOps,
+        SyncState::ApplyingOps,
+        SyncState::Merging,
+    ] {
+        let mut orch = SyncOrchestrator::new(
+            pool.clone(),
+            "dev".into(),
+            std::sync::Arc::new(materializer.clone()),
+        );
+        orch.state = state.clone();
+        assert!(!orch.is_terminal(), "{state:?} should NOT be terminal");
+    }
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// I-Sync-3 — `is_succeeded` (formerly `is_complete`) is the file-transfer
+// gate: a session ending in `Failed(_)` must NOT trigger file transfer,
+// even though it IS terminal. This pins the contract that the rename
+// clarifies — `is_terminal` and `is_succeeded` are DISTINCT predicates,
+// and the `run_sync_session` file-transfer gate uses the strict subset
+// (`is_succeeded`) so failures and reset-required hand off to retry /
+// snapshot-transfer instead of running file transfer over a broken
+// session.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_state_skips_file_transfer_i_sync_3() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // Drive the orchestrator into Failed via a peer-reported Error,
+    // mirroring `orchestrator_handles_error_message` but asserting the
+    // file-transfer-gate contract specifically.
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    let _start = orch.start().await.unwrap();
+    let _ = orch
+        .handle_message(SyncMessage::Error {
+            message: "peer reported failure".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(orch.session().state, SyncState::Failed(_)),
+        "precondition: session state should be Failed"
+    );
+
+    // The contract the rename pins down:
+    //   * Failed IS terminal (the message loop must exit).
+    //   * Failed is NOT succeeded (the file-transfer gate must skip).
+    assert!(
+        orch.is_terminal(),
+        "Failed must be terminal so the run_sync_session loop exits"
+    );
+    assert!(
+        !orch.is_succeeded(),
+        "Failed must NOT pass is_succeeded — the file-transfer gate \
+         (`if orch.is_succeeded()`) must skip file transfer when the \
+         op-batch exchange ended in failure"
+    );
+
+    // ResetRequired: same contract — terminal, not succeeded.
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    orch.state = SyncState::ResetRequired;
+    assert!(orch.is_terminal(), "ResetRequired must be terminal");
+    assert!(
+        !orch.is_succeeded(),
+        "ResetRequired must NOT pass is_succeeded — file transfer must \
+         defer to snapshot catch-up instead"
+    );
+
+    // Complete: the only state that gates file transfer ON.
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    orch.state = SyncState::Complete;
+    assert!(orch.is_terminal(), "Complete is terminal");
+    assert!(
+        orch.is_succeeded(),
+        "Complete is the strict subset of terminal that gates file transfer ON"
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// #614 — orchestrator rejects HeadExchange with unexpected peer device_id
+// ======================================================================
+
+/// #2481: the cert CN (`expected_remote_id`) is the authoritative peer
+/// identity, and the advertised heads are frontier advertisements — NOT an
+/// identity claim (a peer legitimately advertises the frontiers of every
+/// device it holds, including foreign devices whose ops it replicated). So a
+/// divergent head no longer fails the session; the orchestrator attributes the
+/// session to the cert CN and proceeds. (Pre-#2481 this rejected with a "peer
+/// device_id mismatch"; that guard false-rejected multi-device advertisements.
+/// A peer presenting a cert for an unpaired device is still blocked — by the
+/// daemon's S-1 unpaired-device gate, not this per-session core.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_uses_cert_cn_identity_over_advertised_heads_2481() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("expected-peer".into());
+
+    let _start = orch.start().await.unwrap();
+
+    // HeadExchange advertising a device other than the cert CN (e.g. a foreign
+    // frontier the peer replicated) — must NOT fail the session.
+    let result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "some-other-device".into(),
+                seq: 1,
+                hash: "abc".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "a divergent advertised head must not fail the session (#2481); got {result:?}"
+    );
+    assert!(
+        !matches!(orch.session().state, SyncState::Failed(_)),
+        "session must not be Failed on a divergent head"
+    );
+    assert_eq!(
+        orch.session().remote_device_id,
+        "expected-peer",
+        "the session is attributed to the authoritative cert CN, not the head"
+    );
+
+    materializer.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_accepts_matching_peer_device_id() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("expected-peer".into());
+
+    let _start = orch.start().await.unwrap();
+
+    // Send HeadExchange with the correct device_id
+    let result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "expected-peer".into(),
+                seq: 1,
+                hash: "abc".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await;
+
+    assert!(result.is_ok(), "matching peer device_id should be accepted");
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// Orchestrator refuses to record sync with empty peer_id
+// ======================================================================
+
+/// If a HeadExchange only contains the local device_id (peer never
+/// originated ops of its own) or is empty, `remote_device_id` ends up
+/// empty. Previously the `SyncComplete` handler silently fell through
+/// with `peer_id = ""`, which created a bogus empty-string row in
+/// `peer_refs` and `peer_sync_state`, permanently corrupting the
+/// per-peer sync bookkeeping.
+///
+/// The orchestrator must now transition to `Failed` at `SyncComplete`
+/// when `remote_device_id` was never identified — both reset-required
+/// and streaming-ops earlier paths remain unchanged because they do not
+/// touch peer bookkeeping.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // Seed one local op so the remote's claim `(local-dev, seq=1)` passes
+    // `check_reset_required` — we want to drive forward into `StreamingOps`,
+    // not divert into `ResetRequired`.
+    append_local_op_at(
+        &pool,
+        "local-dev",
+        test_create_payload("SEED_BLK"),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    // Install Loro state and register a real space so
+    // `head_exchange_outgoing_loro` takes the per-space LoroSync path
+    // (transitioning to `StreamingOps`) instead of the empty-registry
+    // short-circuit (which would transition straight to `Complete` and
+    // Bypass the SyncComplete handler we are exercising here).
+    // The block payload itself is irrelevant — we just need at least
+    // one registered space.
+    let state = materializer.loro_state();
+    let space = agaric_store::space::SpaceId::from_trusted("01HZBUG27EMPTYPEERIDXXXXXXX");
+    {
+        let mut g = state
+            .registry
+            .for_space(&space, "local-dev")
+            .expect("for_space");
+        g.engine_mut()
+            .apply_create_block("01HZBUG27EMPTYPEERIDBLK000", "content", "seed", None, 0)
+            .expect("apply_create_block");
+    }
+
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    let _start = orch.start().await.unwrap();
+
+    // Peer advertises ONLY our own device_id — no non-local head, so
+    // `remote_device_id` never gets populated with a real peer identity.
+    // Drive forward through the (non-reset) head-exchange path.
+    let after_head = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "local-dev".into(),
+                seq: 1,
+                hash: "abc".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await
+        .unwrap();
+    // HeadExchange emits a `LoroSync`. The empty-registry case
+    // short-circuits to `SyncComplete`, but this test installs a real
+    // space (above) to keep the per-space LoroSync path active.
+    assert!(
+        matches!(after_head, Some(SyncMessage::LoroSync { .. })),
+        "HeadExchange with only local device_id still proceeds (it only becomes \
+         fatal once we'd record the sync), got: {after_head:?}"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::StreamingOps,
+        "must be in StreamingOps before SyncComplete arrives"
+    );
+    assert_eq!(
+        orch.session().remote_device_id,
+        "",
+        "remote_device_id stays empty because no non-local head was advertised"
+    );
+
+    // Now simulate the peer echoing SyncComplete back — at this point
+    // we'd call `peer_refs::upsert_peer_ref("")`, corrupting bookkeeping.
+    let result = orch
+        .handle_message(SyncMessage::SyncComplete {
+            last_hash: "some-hash".into(),
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "SyncComplete with empty remote_device_id must be rejected, got: {result:?}"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("empty peer_id") || err_msg.contains("device_id was never identified"),
+        "error should mention the empty peer_id, got: {err_msg}"
+    );
+    assert!(
+        matches!(orch.session().state, SyncState::Failed(ref m) if m.contains("empty peer_id")),
+        "state must transition to Failed with a descriptive message, got: {:?}",
+        orch.session().state
+    );
+
+    // Crucially: no peer_refs row was created with an empty key.
+    let empty_peer_rows: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM peer_refs WHERE peer_id = ''")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        empty_peer_rows, 0,
+        "no peer_refs row must be created with an empty peer_id"
+    );
+
+    materializer.shutdown();
+}
+
+/// #4096 companion to the test above: the empty-stream short-circuit now
+/// writes `peer_refs` **unconditionally** (it is not gated on
+/// `streamed_to_peer`, which that path never sets), so it inherits the exact
+/// hazard `orchestrator_rejects_sync_complete_with_empty_peer_id` exists to
+/// pin — with none of that test's coverage, because the short-circuit returns
+/// before the `SyncComplete` arm it guards.
+///
+/// Same setup, one difference: **no space is registered**, so
+/// `head_exchange_outgoing_loro` takes `messages.is_empty() &&
+/// op_batches.is_empty()` and replies `SyncComplete` directly instead of
+/// entering `StreamingOps`.
+///
+/// The two paths answer the unidentified peer differently on purpose, and both
+/// halves are asserted here:
+///
+///   * **It does not fail.** The `SyncComplete` arm turns "no identity" into
+///     `Failed`, because a session that pulled state and cannot attribute it
+///     has lost something. This one shipped nothing and applied nothing, so
+///     there is nothing to lose — it completes, matching
+///     `complete_pull_session`'s skip-and-warn rather than the receive arm's
+///     hard error.
+///   * **It writes nothing.** `resolve_remote_peer_id()` returns `None` and the
+///     whole bookkeeping block is skipped. A `peer_id = ""` row here would be
+///     the same permanent corruption of the per-peer bookkeeping, arrived at
+///     through a branch that previously could not reach `peer_refs` at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue4096_short_circuit_writes_no_row_when_peer_is_unidentified() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // Seed one local op so the remote's claim `(local-dev, seq=1)` passes
+    // `check_reset_required` (same reason as the test above).
+    append_local_op_at(
+        &pool,
+        "local-dev",
+        test_create_payload("SEED4096"),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    // Cert-less: no `with_expected_remote_id`, so the ONLY identity source is
+    // the advertised heads — and they carry only our own device id below.
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    let reply = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "local-dev".into(),
+                seq: 1,
+                hash: "abc".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await
+        .expect(
+            "#4096: the short-circuit must still complete an unattributable session — it \
+             shipped nothing and applied nothing, so unlike the SyncComplete arm there is \
+             no pulled state left dangling",
+        );
+
+    assert!(
+        matches!(reply, Some(SyncMessage::SyncComplete { .. })),
+        "precondition: an empty registry must take the empty-stream short-circuit, \
+         not the per-space LoroSync path — got {reply:?}"
+    );
+    assert_eq!(
+        orch.session().state,
+        SyncState::Complete,
+        "the short-circuit completes the session"
+    );
+    assert_eq!(
+        orch.session().remote_device_id,
+        "",
+        "precondition: no non-local head and no expected_remote_id, so the peer \
+         is genuinely unidentified"
+    );
+
+    let rows: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM peer_refs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows, 0,
+        "#4096: the new unconditional bookkeeping must skip entirely when the peer \
+         was never identified. `record_stream_in_tx` upserts by `peer_id`, so an \
+         unguarded write here creates a row keyed by the empty string and corrupts \
+         the per-peer bookkeeping permanently — exactly what \
+         `orchestrator_rejects_sync_complete_with_empty_peer_id` pins for the arm \
+         this branch returns before reaching"
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// Message serialization round-trip tests
+// ======================================================================
+
+// ── DeviceHead serde roundtrip ──────────────────────────────────────
+
+#[test]
+fn serde_roundtrip_device_head() {
+    let head = DeviceHead {
+        device_id: "device-A".into(),
+        seq: 42,
+        hash: "abc123def456".into(),
+    };
+    let json = serde_json::to_string(&head).expect("DeviceHead serialization must succeed");
+    let deser: DeviceHead =
+        serde_json::from_str(&json).expect("DeviceHead deserialization must succeed");
+    assert_eq!(deser, head, "DeviceHead must survive serde roundtrip");
+}
+
+// ── OpTransfer serde roundtrip ──────────────────────────────────────
+
+#[test]
+fn serde_roundtrip_op_transfer() {
+    let transfer = OpTransfer {
+        device_id: "dev-X".into(),
+        seq: 7,
+        parent_seqs: Some("5,6".into()),
+        hash: "fedcba987654".into(),
+        op_type: "edit_block".into(),
+        payload: r#"{"block_id":"BLK1","to_text":"hello"}"#.into(),
+        created_at: 1_736_942_400_000,
+        origin: "agent:test".into(),
+    };
+    let json = serde_json::to_string(&transfer).expect("OpTransfer serialization must succeed");
+    let deser: OpTransfer =
+        serde_json::from_str(&json).expect("OpTransfer deserialization must succeed");
+    assert_eq!(deser, transfer, "OpTransfer must survive serde roundtrip");
+}
+
+#[test]
+fn serde_roundtrip_op_transfer_null_parent_seqs() {
+    let transfer = OpTransfer {
+        device_id: "dev-Y".into(),
+        seq: 1,
+        parent_seqs: None,
+        hash: "0000000000".into(),
+        op_type: "create_block".into(),
+        payload: "{}".into(),
+        created_at: 1_735_689_600_000,
+        origin: "user".into(),
+    };
+    let json = serde_json::to_string(&transfer)
+        .expect("OpTransfer with null parent_seqs serialization must succeed");
+    let deser: OpTransfer = serde_json::from_str(&json)
+        .expect("OpTransfer with null parent_seqs deserialization must succeed");
+    assert_eq!(
+        deser, transfer,
+        "OpTransfer with null parent_seqs must survive serde roundtrip"
+    );
+}
+
+// ── SyncMessage individual variant roundtrips ────────────────────────
+
+#[test]
+fn serde_roundtrip_sync_message_head_exchange() {
+    let msg = SyncMessage::HeadExchange {
+        heads: vec![
+            DeviceHead {
+                device_id: "A".into(),
+                seq: 1,
+                hash: "h1".into(),
+            },
+            DeviceHead {
+                device_id: "B".into(),
+                seq: 5,
+                hash: "h5".into(),
+            },
+        ],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
+        op_log_batch_chunked: false,
+        pairing_proof: None,
+        device_name: None,
+        sender_device_id: None,
+    };
+    let json = serde_json::to_string(&msg).expect("serialize HeadExchange");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize HeadExchange");
+    assert_eq!(deser, msg, "HeadExchange must survive serde roundtrip");
+}
+
+#[test]
+fn serde_roundtrip_sync_message_reset_required() {
+    let msg = SyncMessage::ResetRequired {
+        reason: "op log compacted".into(),
+    };
+    let json = serde_json::to_string(&msg).expect("serialize ResetRequired");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize ResetRequired");
+    assert_eq!(deser, msg, "ResetRequired must survive serde roundtrip");
+}
+
+#[test]
+fn serde_roundtrip_sync_message_snapshot_offer() {
+    let msg = SyncMessage::SnapshotOffer {
+        size_bytes: 1_048_576,
+        blob_blake3: "abc123".into(),
+    };
+    let json = serde_json::to_string(&msg).expect("serialize SnapshotOffer");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotOffer");
+    assert_eq!(deser, msg, "SnapshotOffer must survive serde roundtrip");
+}
+
+#[test]
+fn serde_roundtrip_sync_message_snapshot_accept() {
+    let msg = SyncMessage::SnapshotAccept;
+    let json = serde_json::to_string(&msg).expect("serialize SnapshotAccept");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotAccept");
+    assert_eq!(deser, msg, "SnapshotAccept must survive serde roundtrip");
+}
+
+#[test]
+fn serde_roundtrip_sync_message_snapshot_reject() {
+    let msg = SyncMessage::SnapshotReject;
+    let json = serde_json::to_string(&msg).expect("serialize SnapshotReject");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SnapshotReject");
+    assert_eq!(deser, msg, "SnapshotReject must survive serde roundtrip");
+}
+
+#[test]
+fn serde_roundtrip_sync_message_sync_complete() {
+    let msg = SyncMessage::SyncComplete {
+        last_hash: "deadbeef".into(),
+    };
+    let json = serde_json::to_string(&msg).expect("serialize SyncComplete");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SyncComplete");
+    assert_eq!(deser, msg, "SyncComplete must survive serde roundtrip");
+}
+
+#[test]
+fn serde_roundtrip_sync_message_error() {
+    let msg = SyncMessage::Error {
+        message: "peer disconnected unexpectedly".into(),
+    };
+    let json = serde_json::to_string(&msg).expect("serialize Error");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize Error");
+    assert_eq!(deser, msg, "Error must survive serde roundtrip");
+}
+
+// ── Known JSON shape — wire format stability ────────────────────────
+
+#[test]
+fn json_shape_head_exchange_matches_wire_format() {
+    let msg = SyncMessage::HeadExchange {
+        heads: vec![DeviceHead {
+            device_id: "dev-A".into(),
+            seq: 3,
+            hash: "abc".into(),
+        }],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
+        op_log_batch_chunked: false,
+        pairing_proof: None,
+        device_name: None,
+        sender_device_id: None,
+    };
+    let json: serde_json::Value =
+        serde_json::to_value(&msg).expect("SyncMessage must serialize to Value");
+
+    assert_eq!(
+        json["type"], "HeadExchange",
+        "HeadExchange must use internally-tagged 'type' field"
+    );
+    assert!(
+        json["heads"].is_array(),
+        "HeadExchange must have 'heads' array"
+    );
+    let head = &json["heads"][0];
+    assert_eq!(head["device_id"], "dev-A", "head device_id must match");
+    assert_eq!(head["seq"], 3, "head seq must match");
+    assert_eq!(head["hash"], "abc", "head hash must match");
+}
+
+#[test]
+fn head_exchange_deserializes_without_loro_vvs_field() {
+    // Wire back-compat: an older peer sends `HeadExchange` with no `loro_vvs`
+    // field. `#[serde(default)]` must fill an empty vec (the responder then
+    // falls back to a full snapshot) rather than failing to parse.
+    let json = r#"{"type":"HeadExchange","heads":[{"device_id":"d","seq":1,"hash":"h"}]}"#;
+    let msg: SyncMessage =
+        serde_json::from_str(json).expect("old-format HeadExchange (no loro_vvs) must deserialize");
+    match msg {
+        SyncMessage::HeadExchange {
+            heads,
+            loro_vvs,
+            engine_format_version,
+            op_log_replication,
+            op_log_batch_chunked,
+            pairing_proof,
+            device_name,
+            sender_device_id,
+        } => {
+            assert_eq!(heads.len(), 1, "heads must round-trip");
+            assert!(
+                loro_vvs.is_empty(),
+                "a missing loro_vvs field must default to empty"
+            );
+            assert_eq!(
+                engine_format_version, 0,
+                "a missing engine_format_version field must default to 0 (legacy peer)"
+            );
+            assert!(
+                !op_log_replication,
+                "a missing op_log_replication field must default to false (#2481 old-peer)"
+            );
+            assert!(
+                !op_log_batch_chunked,
+                "a missing op_log_batch_chunked field must default to false (#2593 old-peer)"
+            );
+            assert!(
+                pairing_proof.is_none(),
+                "a missing pairing_proof field must default to None (#855 old-peer)"
+            );
+            assert!(
+                device_name.is_none(),
+                "a missing device_name field must default to None (#4298 old-peer). A \
+                 peer predating the field says nothing about what it is called, which \
+                 must read as 'no name supplied' — the receiver then keeps whatever \
+                 name it already had rather than clearing the row to an empty string"
+            );
+            assert!(
+                sender_device_id.is_none(),
+                "a missing sender_device_id field must default to None (#4380 old-peer). \
+                 This is the whole of the compatibility story for #4380: a peer predating \
+                 the field must still PARSE here, because a parse failure would end \
+                 pairing with an older device rather than degrade it. `None` is what \
+                 routes the responder back to the pre-#4380 heads-derived guess — and, \
+                 at the bind, to refusing an ambiguous one"
+            );
+        }
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+}
+
+#[test]
+fn loro_sync_chunked_deserializes_without_compressed_field() {
+    // #2200 wire back-compat: a #611 peer that predates the `compressed`
+    // flag sends `LoroSyncChunked` with no `compressed` field. `#[serde(
+    // default)]` must fill `false` (raw bytes) rather than failing to parse.
+    let json = r#"{"type":"LoroSyncChunked","header":{"kind":"snapshot","protocol_version":1,"space_id":"01HZ00000000000000000000SP","size_bytes":7},"is_last":true}"#;
+    let msg: SyncMessage = serde_json::from_str(json)
+        .expect("old-format LoroSyncChunked (no compressed) must deserialize");
+    match msg {
+        SyncMessage::LoroSyncChunked { compressed, .. } => {
+            assert!(
+                !compressed,
+                "a missing compressed field must default to false (#2200 old-peer → raw bytes)"
+            );
+        }
+        other => panic!("expected LoroSyncChunked, got {other:?}"),
+    }
+}
+
+#[test]
+fn json_shape_all_variants_have_type_tag() {
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+
+    let variants: Vec<(&str, SyncMessage)> = vec![
+        (
+            "HeadExchange",
+            SyncMessage::HeadExchange {
+                heads: vec![],
+                loro_vvs: vec![],
+                engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+                op_log_replication: false,
+                op_log_batch_chunked: false,
+                pairing_proof: None,
+                device_name: None,
+                sender_device_id: None,
+            },
+        ),
+        (
+            "LoroSync",
+            SyncMessage::LoroSync {
+                msg: LoroSyncMessage::Snapshot {
+                    protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                    space_id: agaric_store::space::SpaceId::from_trusted(
+                        "00000000000000000000000000",
+                    ),
+                    bytes: Vec::new(),
+                },
+                is_last: true,
+            },
+        ),
+        (
+            "LoroSyncChunked",
+            SyncMessage::LoroSyncChunked {
+                header: crate::sync_protocol::loro_sync_types::LoroSyncChunkedHeader::Snapshot {
+                    protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                    space_id: agaric_store::space::SpaceId::from_trusted(
+                        "00000000000000000000000000",
+                    ),
+                    size_bytes: 0,
+                },
+                is_last: true,
+                compressed: false,
+            },
+        ),
+        (
+            "ResetRequired",
+            SyncMessage::ResetRequired { reason: "r".into() },
+        ),
+        (
+            "SnapshotOffer",
+            SyncMessage::SnapshotOffer {
+                size_bytes: 0,
+                blob_blake3: String::new(),
+            },
+        ),
+        ("SnapshotAccept", SyncMessage::SnapshotAccept),
+        ("SnapshotReject", SyncMessage::SnapshotReject),
+        (
+            "SyncComplete",
+            SyncMessage::SyncComplete {
+                last_hash: "h".into(),
+            },
+        ),
+        (
+            "Error",
+            SyncMessage::Error {
+                message: "e".into(),
+            },
+        ),
+    ];
+
+    for (expected_tag, msg) in &variants {
+        let json: serde_json::Value = serde_json::to_value(msg)
+            .unwrap_or_else(|e| panic!("serialize {expected_tag} failed: {e}"));
+        assert_eq!(
+            json["type"].as_str().unwrap_or("MISSING"),
+            *expected_tag,
+            "variant {expected_tag} must have correct 'type' tag in JSON"
+        );
+    }
+}
+
+#[test]
+fn json_shape_snapshot_offer_has_size_bytes() {
+    let msg = SyncMessage::SnapshotOffer {
+        size_bytes: 999_999,
+        blob_blake3: "abc123".into(),
+    };
+    let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize SnapshotOffer");
+    assert_eq!(
+        json["type"], "SnapshotOffer",
+        "SnapshotOffer must have correct type tag"
+    );
+    assert_eq!(
+        json["size_bytes"], 999_999,
+        "SnapshotOffer must contain size_bytes field"
+    );
+}
+
+#[test]
+fn json_shape_sync_complete_has_last_hash() {
+    let msg = SyncMessage::SyncComplete {
+        last_hash: "xyz789".into(),
+    };
+    let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize SyncComplete");
+    assert_eq!(
+        json["type"], "SyncComplete",
+        "SyncComplete must have correct type tag"
+    );
+    assert_eq!(
+        json["last_hash"], "xyz789",
+        "SyncComplete must contain last_hash field"
+    );
+}
+
+#[test]
+fn json_shape_error_has_message() {
+    let msg = SyncMessage::Error {
+        message: "something broke".into(),
+    };
+    let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize Error");
+    assert_eq!(json["type"], "Error", "Error must have correct type tag");
+    assert_eq!(
+        json["message"], "something broke",
+        "Error must contain message field"
+    );
+}
+
+#[test]
+fn json_shape_reset_required_has_reason() {
+    let msg = SyncMessage::ResetRequired {
+        reason: "compacted".into(),
+    };
+    let json: serde_json::Value = serde_json::to_value(&msg).expect("serialize ResetRequired");
+    assert_eq!(
+        json["type"], "ResetRequired",
+        "ResetRequired must have correct type tag"
+    );
+    assert_eq!(
+        json["reason"], "compacted",
+        "ResetRequired must contain reason field"
+    );
+}
+
+// ── Edge cases ──────────────────────────────────────────────────────
+
+#[test]
+fn serde_roundtrip_empty_heads() {
+    let msg = SyncMessage::HeadExchange {
+        heads: vec![],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
+        op_log_batch_chunked: false,
+        pairing_proof: None,
+        device_name: None,
+        sender_device_id: None,
+    };
+    let json = serde_json::to_string(&msg).expect("serialize empty HeadExchange");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty HeadExchange");
+    assert_eq!(
+        deser, msg,
+        "HeadExchange with empty heads must survive roundtrip"
+    );
+    let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        val["heads"].as_array().unwrap().len(),
+        0,
+        "empty heads must serialize to empty array"
+    );
+}
+
+#[test]
+fn serde_roundtrip_unicode_error_message() {
+    let msg = SyncMessage::Error {
+        message: "连接失败: タイムアウト 🔥".into(),
+    };
+    let json = serde_json::to_string(&msg).expect("serialize unicode Error");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize unicode Error");
+    assert_eq!(
+        deser, msg,
+        "Error with unicode message must survive roundtrip"
+    );
+}
+
+#[test]
+fn serde_roundtrip_many_heads() {
+    let heads: Vec<DeviceHead> = (0..100)
+        .map(|i| DeviceHead {
+            device_id: format!("device-{i:03}"),
+            seq: i64::from(i) * 10,
+            hash: format!("hash_{i:03}"),
+        })
+        .collect();
+
+    let msg = SyncMessage::HeadExchange {
+        heads: heads.clone(),
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
+        op_log_batch_chunked: false,
+        pairing_proof: None,
+        device_name: None,
+        sender_device_id: None,
+    };
+    let json = serde_json::to_string(&msg).expect("serialize many-heads HeadExchange");
+    let deser: SyncMessage =
+        serde_json::from_str(&json).expect("deserialize many-heads HeadExchange");
+    assert_eq!(
+        deser, msg,
+        "HeadExchange with 100 heads must survive serde roundtrip"
+    );
+}
+
+#[test]
+fn serde_roundtrip_empty_string_fields() {
+    let msg = SyncMessage::SyncComplete {
+        last_hash: String::new(),
+    };
+    let json = serde_json::to_string(&msg).expect("serialize empty last_hash");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize empty last_hash");
+    assert_eq!(
+        deser, msg,
+        "SyncComplete with empty last_hash must survive roundtrip"
+    );
+
+    let val: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        val["last_hash"], "",
+        "empty string must serialize to empty string, not null"
+    );
+}
+
+/// Migrated from `src/sync_net/tests.rs` when the iroh cutover (#3464) deleted
+/// that file: `SyncMessage` serde is a protocol property, not a transport one,
+/// and these three cases are not covered by the roundtrips above.
+///
+/// The escaping case is the reason this one is not redundant with
+/// [`serde_roundtrip_unicode_error_message`]: a `"` inside the payload is the
+/// only character that can terminate the JSON string early, and no other test
+/// in the tree puts one in a `SyncMessage` field.
+#[test]
+fn serde_roundtrip_error_message_escaping() {
+    for msg_str in &["", "network error", "emoji: \u{1f525}", "quotes: \"hello\""] {
+        let msg = SyncMessage::Error {
+            message: (*msg_str).to_string(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize Error");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize Error");
+        assert_eq!(
+            deser, msg,
+            "SyncMessage::Error roundtrip failed for: {msg_str}"
+        );
+    }
+}
+
+/// `sync_message_serde_roundtrip` above ships a `FileRequest` through a
+/// serialize-deserialize-reserialize comparison, which catches shape drift but
+/// not a field that decodes to the wrong value. This asserts value equality.
+#[test]
+fn serde_roundtrip_sync_message_file_request() {
+    let msg = SyncMessage::FileRequest {
+        attachment_ids: vec!["ATT_A".into(), "ATT_B".into()],
+    };
+    let json = serde_json::to_string(&msg).expect("serialize FileRequest");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize FileRequest");
+    assert_eq!(deser, msg, "FileRequest must survive serde roundtrip");
+}
+
+/// `last_hash` is a hex digest in production but the type is a bare `String`;
+/// the empty and full-length forms are the two ends of what the field can hold.
+#[test]
+fn serde_roundtrip_sync_complete_hash_lengths() {
+    let long_hash = "a".repeat(64);
+    for hash in &["", "abc123", long_hash.as_str()] {
+        let msg = SyncMessage::SyncComplete {
+            last_hash: (*hash).to_string(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize SyncComplete");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SyncComplete");
+        assert_eq!(deser, msg, "SyncComplete roundtrip failed for hash: {hash}");
+    }
+}
+
+#[test]
+fn serde_roundtrip_zero_size_snapshot_offer() {
+    let msg = SyncMessage::SnapshotOffer {
+        size_bytes: 0,
+        blob_blake3: String::new(),
+    };
+    let json = serde_json::to_string(&msg).expect("serialize zero-size SnapshotOffer");
+    let deser: SyncMessage =
+        serde_json::from_str(&json).expect("deserialize zero-size SnapshotOffer");
+    assert_eq!(
+        deser, msg,
+        "SnapshotOffer with size_bytes=0 must survive roundtrip"
+    );
+}
+
+#[test]
+fn serde_roundtrip_max_u64_snapshot_offer() {
+    let msg = SyncMessage::SnapshotOffer {
+        size_bytes: u64::MAX,
+        blob_blake3: "f".repeat(64),
+    };
+    let json = serde_json::to_string(&msg).expect("serialize max-u64 SnapshotOffer");
+    let deser: SyncMessage =
+        serde_json::from_str(&json).expect("deserialize max-u64 SnapshotOffer");
+    assert_eq!(
+        deser, msg,
+        "SnapshotOffer with u64::MAX must survive roundtrip"
+    );
+}
+
+/// Sending a HeadExchange while the orchestrator is in StreamingOps state
+/// must be rejected as a state-machine violation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // start() → ExchangingHeads
+    let _start = orch.start().await.unwrap();
+    assert_eq!(
+        orch.session().state,
+        SyncState::ExchangingHeads,
+        "state should be ExchangingHeads after start"
+    );
+
+    // Directly set `state = StreamingOps`. Driving via an empty-heads
+    // HeadExchange would short-circuit to `Complete`, and a sibling
+    // test in this binary may have populated the process-global
+    // `OnceLock` registry which would route us through the per-space
+    // LoroSync path. State validation reads `self.state` directly, so
+    // this scaffolding exercises the same rejection branch
+    // deterministically.
+    orch.state = SyncState::StreamingOps;
+
+    // Send a HeadExchange — must be rejected
+    let duplicate_result = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await;
+    assert!(
+        duplicate_result.is_err(),
+        "HeadExchange in StreamingOps must be rejected"
+    );
+
+    // State should transition to Failed with a descriptive message
+    assert_eq!(
+        orch.state,
+        SyncState::Failed("HeadExchange received in wrong state".into()),
+        "state must be Failed after invalid HeadExchange"
+    );
+
+    materializer.shutdown();
+}
+
+// ── tracing span emission ─────────────────────────────────
+
+/// Thread-safe buffered writer for in-process log capture.
+///
+/// Mirrors the helper in `db.rs` tests. Kept module-local so each test
+/// module stays self-contained (see AGENTS.md § "Test helper duplication
+/// is intentional").
+#[derive(Clone, Default)]
+struct SpanBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for SpanBufWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SpanBufWriter {
+    type Writer = SpanBufWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl SpanBufWriter {
+    fn contents(&self) -> String {
+        let bytes = self.0.lock().unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+/// `SyncOrchestrator::handle_message` must execute inside a
+/// `sync_msg` span so every log line emitted during message dispatch
+/// (error events, state transitions, protocol warnings) carries the
+/// span prefix — enabling operators to correlate log lines back to the
+/// message that triggered them.
+///
+/// We verify this by installing a scoped fmt subscriber configured to
+/// render span-enter events, dispatching a call to `handle_message`, and
+/// asserting the captured buffer shows the `sync_msg` span marker.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_message_emits_within_sync_msg_span() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let writer = SpanBufWriter::default();
+    // Install a subscriber that renders span-enter events so the captured
+    // output contains a marker even if the dispatched message doesn't
+    // itself emit a tracing event.
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("agaric=trace"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false)
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::ENTER),
+        );
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // Freshly-constructed orchestrator is in SyncState::Idle. A HeadExchange
+    // message is valid in Idle, and handle_message will dispatch normally.
+    // The instrumented span entry is what we assert on: with
+    // `FmtSpan::ENTER` the subscriber emits a `new` event carrying the
+    // span name the moment the function body begins executing.
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "dev-local".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    let _ = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await;
+
+    let contents = writer.contents();
+    assert!(
+        contents.contains("sync_msg"),
+        "handle_message must execute inside a `sync_msg` span so log lines \
+         carry the span prefix for correlation, got log output: {contents:?}"
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// LoroSync wire integration tests
+// ======================================================================
+
+/// Smoke test — the orchestrator's outgoing HeadExchange path does
+/// NOT panic when Loro state is initialised. When the registry has
+/// zero registered spaces, HeadExchange short-circuits straight to
+/// `SyncComplete` so the responder can advance cleanly. When sibling
+/// tests in the same binary have already populated the shared
+/// `OnceLock` registry with spaces, the response is a real `LoroSync`
+/// and the orchestrator transitions to `StreamingOps` as in the
+/// production path.
+///
+/// Locks the no-op happy-path invariant: an orchestrator that boots
+/// into a process whose `LoroEngineRegistry` has not yet been touched
+/// still finishes a sync session cleanly.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("remote-dev".into());
+
+    // Simulate a peer that has never originated its own ops — only
+    // advertises (local-dev, 0). HeadExchange path proceeds without
+    // touching local op_log (no ops to compute).
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await
+        .expect("HeadExchange must not error under the engine path");
+
+    // Accept either response shape:
+    //
+    // * Empty-registry short-circuit → `SyncComplete` (state ==
+    //   `Complete`).
+    // * Sibling-populated registry → real `LoroSync` (state ==
+    //   `StreamingOps`).
+    //
+    // Either way: never a panic.
+    match resp {
+        Some(SyncMessage::SyncComplete { .. }) => {
+            assert_eq!(
+                orch.session().state,
+                SyncState::Complete,
+                "empty-registry short-circuit must leave the orchestrator in Complete"
+            );
+            // No further messages are expected after the
+            // short-circuit; `next_message` must return None.
+            assert!(
+                orch.next_message().is_none(),
+                "next_message must be empty after the short-circuit"
+            );
+        }
+        Some(SyncMessage::LoroSync { is_last, .. }) => {
+            assert_eq!(
+                orch.session().state,
+                SyncState::StreamingOps,
+                "non-empty-registry path must transition to StreamingOps"
+            );
+            // Drain any remaining queued LoroSync messages — exercises
+            // the `next_message` loro path. The final drained message
+            // (or the first if it was solo) MUST carry `is_last: true`.
+            let mut last_is_last = is_last;
+            while let Some(msg) = orch.next_message() {
+                match msg {
+                    SyncMessage::LoroSync { is_last, .. } => {
+                        last_is_last = is_last;
+                    }
+                    other => panic!("next_message produced non-LoroSync: {other:?}"),
+                }
+            }
+            assert!(
+                last_is_last,
+                "final drained LoroSync message must carry is_last=true"
+            );
+        }
+        other => panic!("expected SyncMessage::LoroSync or SyncComplete, got {other:?}"),
+    }
+
+    materializer.shutdown();
+}
+
+/// End-to-end — orchestrator A prepares an outgoing `LoroSync` for a
+/// space whose engine has one block, the message is serde-round-tripped
+/// through JSON (the wire format), then applied via
+/// `loro_sync::apply_remote` to a fresh registry B. Engine B's SQL
+/// projection of the block matches A's.
+///
+/// This test bypasses `agaric_engine::loro::shared` (process-global) and calls
+/// the lower-level helpers directly so test isolation across this
+/// binary's other Loro-state tests is preserved. The orchestrator path
+/// is covered by
+/// [`loro_sync_orchestrator_handles_empty_registry_without_panic`]
+/// above.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_round_trip_block_visible_on_b() {
+    use crate::sync_protocol::loro_sync;
+    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    // Use a unique space + block id pair to avoid collisions with
+    // other tests in this binary that may share installed Loro
+    // state.
+    let space = SpaceId::from_trusted("01HZPHASE3D5SYNCEEEEEEEEEE");
+    let block_id_a = "01HZPHASE3D5SYNCBLKAAAAAAAA";
+
+    // Engine A — register one block.
+    // #1257: the sender's freshness gate reads its own SQL `deleted_at`;
+    // A has no soft-deletions, so a fresh empty pool keeps the gate green.
+    let (pool_a, _dir_a) = test_pool().await;
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        g.engine_mut()
+            .apply_create_block(block_id_a, "content", "from-A", None, 7)
+            .expect("create");
+    }
+
+    // Build outgoing LoroSync via the prepare helper. Wrap into the
+    // SyncMessage envelope (the wire shape).
+    let inner =
+        loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+    let outgoing = SyncMessage::LoroSync {
+        msg: inner,
+        is_last: true,
+    };
+
+    // Serde round-trip — this is what conn.send_json/conn.recv_json
+    // do on the actual transport.
+    let json = serde_json::to_string(&outgoing).expect("serialise SyncMessage::LoroSync");
+    let received: SyncMessage =
+        serde_json::from_str(&json).expect("deserialise SyncMessage::LoroSync");
+
+    let received_inner: LoroSyncMessage = match received {
+        SyncMessage::LoroSync { msg, is_last } => {
+            assert!(is_last, "wire must preserve is_last");
+            msg
+        }
+        other => panic!("expected SyncMessage::LoroSync after round-trip, got {other:?}"),
+    };
+
+    // Apply on B (fresh registry, fresh DB).
+    let registry_b = LoroEngineRegistry::new();
+    let returned_space =
+        match loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+            .await
+            .expect("apply_remote")
+        {
+            loro_sync::ApplyOutcome::Imported { space_id: s, .. } => s,
+            loro_sync::ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
+                panic!("expected Imported, got SnapshotFallbackRequested: {reason}")
+            }
+        };
+    assert_eq!(returned_space, space);
+
+    // Engine B sees the block.
+    {
+        let mut g = registry_b.for_space(&space, "device-B").expect("for_space");
+        let snap = g
+            .engine_mut()
+            .read_block(block_id_a)
+            .expect("read")
+            .expect("block must be visible after apply_remote");
+        assert_eq!(snap.content, "from-A");
+    }
+
+    // SQL projection on B has the block.
+    let row: (String, String, String, Option<String>, i64) = sqlx::query_as(
+        "SELECT id, block_type, content, parent_id, position FROM blocks WHERE id = ?",
+    )
+    .bind(block_id_a)
+    .fetch_one(&pool_b)
+    .await
+    .expect("fetch row from B's DB");
+    assert_eq!(row.0, block_id_a);
+    assert_eq!(row.1, "content");
+    assert_eq!(row.2, "from-A");
+    assert_eq!(row.3, None);
+    // #400: the legacy sparse position 7 is mapped to a sibling slot by the
+    // engine and reprojected to the DENSE 1-based rank. Sole root child ⇒ 1.
+    assert_eq!(row.4, 1);
+
+    materializer_b.shutdown();
+}
+
+/// State-validation invariant — `SyncMessage::LoroSync` is rejected in
+/// `Idle` (before any HeadExchange).  Mirrors the OpBatch pre-
+/// HeadExchange rejection in
+/// [`orchestrator_rejects_op_batch_before_head_exchange`].
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_orchestrator_rejects_loro_sync_before_head_exchange() {
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+    use agaric_store::space::SpaceId;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // Send LoroSync from Idle state — must fail.
+    let result = orch
+        .handle_message(SyncMessage::LoroSync {
+            msg: LoroSyncMessage::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: SpaceId::from_trusted("01HZPHASE3D5IDLEEEEEEEEEEE"),
+                bytes: vec![],
+            },
+            is_last: true,
+        })
+        .await;
+
+    assert!(result.is_err(), "LoroSync from Idle state must be rejected");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("LoroSync") && err_msg.contains("HeadExchange"),
+        "rejection error should name both LoroSync and HeadExchange, got: {err_msg}"
+    );
+    assert!(
+        matches!(
+            orch.session().state,
+            SyncState::Failed(ref m) if m.contains("LoroSync")
+        ),
+        "state must transition to Failed naming LoroSync, got: {:?}",
+        orch.session().state
+    );
+
+    materializer.shutdown();
+}
+
+// ======================================================================
+// End-to-end Loro-sync integration tests
+// ======================================================================
+//
+// These tests exercise the full `prepare_outgoing` → wire round-trip →
+// `apply_remote` cycle through several scenarios. Each test drives the
+// public sync helpers directly (no real sockets) and asserts
+// engine-state convergence + the SQL projection on the receiving side.
+//
+// Coverage:
+//
+// * Scenario 1 — multi-block, multi-space initial snapshot.
+// * Scenario 2 — incremental Update against an already-seeded peer.
+// * Scenario 3 — concurrent disjoint creates → CRDT mutual import
+//   convergence (commutativity of `import`).
+//
+// Skipped intentionally:
+// * Scenario 4 (same-block concurrent edit RGA convergence) — the
+//   character-merge path is already covered by the engine-level
+//   parity corpus + spike tests; the day-12 seam test focuses on the
+//   sync wire instead of duplicating the RGA contract.
+// * Scenario 5 (SQL projection happy-path) — the day-5 E2E
+//   `loro_sync_e2e_round_trip_block_visible_on_b` already pins this.
+
+/// Scenario 1 — multi-block, multi-space initial snapshot.
+///
+/// Engine A creates 5 blocks across 2 spaces (3 in `space-X`, 2 in
+/// `space-Y`).  For each space, build a `LoroSyncMessage::Snapshot`
+/// via `prepare_outgoing(None)`, wrap it in `SyncMessage::LoroSync`,
+/// JSON-round-trip the envelope, then apply on B's empty registry +
+/// fresh DB.  Assert engine B reads back every block with the right
+/// content + parent + position, AND that the SQL `blocks` table on
+/// B mirrors the same shape per space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
+    use crate::sync_protocol::loro_sync;
+    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    let space_x = SpaceId::from_trusted("01HZPHASE3D12MULTISPACEXXXX");
+    let space_y = SpaceId::from_trusted("01HZPHASE3D12MULTISPACEYYYY");
+
+    // Distinct ULID-shaped block_ids so SQL inserts don't collide.
+    let blk_x1 = "01HZPHASE3D12BLKXSPACEXAAA1";
+    let blk_x2 = "01HZPHASE3D12BLKXSPACEXBBB2";
+    let blk_x3 = "01HZPHASE3D12BLKXSPACEXCCC3";
+    let blk_y1 = "01HZPHASE3D12BLKYSPACEYDDD4";
+    let blk_y2 = "01HZPHASE3D12BLKYSPACEYEEE5";
+
+    // Engine A — seed 3 blocks in space_x, 2 in space_y.
+    // #1257: A's freshness gate reads its own SQL `deleted_at`; A has no
+    // soft-deletions, so a fresh empty pool keeps the gate green.
+    let (pool_a, _dir_a) = test_pool().await;
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a
+            .for_space(&space_x, "device-A")
+            .expect("for_space space_x");
+        let e = g.engine_mut();
+        e.apply_create_block(blk_x1, "content", "x-one", None, 0)
+            .expect("create x1");
+        e.apply_create_block(blk_x2, "content", "x-two", Some(blk_x1), 1)
+            .expect("create x2");
+        e.apply_create_block(blk_x3, "page", "x-three", None, 2)
+            .expect("create x3");
+    }
+    {
+        let mut g = registry_a
+            .for_space(&space_y, "device-A")
+            .expect("for_space space_y");
+        let e = g.engine_mut();
+        e.apply_create_block(blk_y1, "content", "y-one", None, 0)
+            .expect("create y1");
+        e.apply_create_block(blk_y2, "content", "y-two", None, 1)
+            .expect("create y2");
+    }
+
+    // Build + wire-roundtrip + apply one snapshot per space.
+    let registry_b = LoroEngineRegistry::new();
+
+    for space in [&space_x, &space_y] {
+        let inner =
+            loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, space, "device-A", None)
+                .await
+                .expect("prepare_outgoing")
+                .expect("#1257 freshness gate must not refuse a consistent engine");
+
+        // Wrap in the day-5 wire envelope and JSON-roundtrip — this
+        // mirrors what `conn.send_json` / `conn.recv_json` do on the
+        // real transport.
+        let outgoing = SyncMessage::LoroSync {
+            msg: inner,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&outgoing).expect("serialise SyncMessage::LoroSync");
+        let received: SyncMessage =
+            serde_json::from_str(&json).expect("deserialise SyncMessage::LoroSync");
+        let received_inner: LoroSyncMessage = match received {
+            SyncMessage::LoroSync { msg, is_last } => {
+                assert!(is_last, "wire must preserve is_last");
+                msg
+            }
+            other => panic!("expected SyncMessage::LoroSync, got {other:?}"),
+        };
+
+        let returned_space =
+            match loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+                .await
+                .expect("apply_remote")
+            {
+                loro_sync::ApplyOutcome::Imported { space_id: s, .. } => s,
+                loro_sync::ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
+                    panic!("expected Imported, got SnapshotFallbackRequested: {reason}")
+                }
+            };
+        assert_eq!(&returned_space, space, "apply_remote must echo space");
+    }
+
+    // ── Engine convergence — every seeded block readable on B with
+    // the original (block_type, content, parent_id, position).
+    // #400: positions are DENSE 1-based ranks among siblings. blk_x1 and blk_x3
+    // are root children (ranks 1, 2); blk_x2 is blk_x1's sole child (rank 1).
+    let expected_x: &[(&str, &str, &str, Option<&str>, i64)] = &[
+        (blk_x1, "content", "x-one", None, 1),
+        (blk_x2, "content", "x-two", Some(blk_x1), 1),
+        (blk_x3, "page", "x-three", None, 2),
+    ];
+    {
+        let mut g = registry_b
+            .for_space(&space_x, "device-B")
+            .expect("for_space space_x B");
+        let e = g.engine_mut();
+        assert_eq!(
+            e.count_alive_blocks().expect("count"),
+            3,
+            "space_x: 3 alive"
+        );
+        for (id, ty, content, parent, pos) in expected_x {
+            let snap = e
+                .read_block(id)
+                .expect("read")
+                .unwrap_or_else(|| panic!("block {id} must be visible on B"));
+            assert_eq!(snap.block_type, *ty, "block_type for {id}");
+            assert_eq!(snap.content, *content, "content for {id}");
+            assert_eq!(snap.parent_id.as_deref(), *parent, "parent_id for {id}");
+            assert_eq!(snap.position, *pos, "position for {id}");
+        }
+    }
+
+    // #400: DENSE 1-based ranks — blk_y1, blk_y2 are root children ⇒ 1, 2.
+    let expected_y: &[(&str, &str, &str, Option<&str>, i64)] = &[
+        (blk_y1, "content", "y-one", None, 1),
+        (blk_y2, "content", "y-two", None, 2),
+    ];
+    {
+        let mut g = registry_b
+            .for_space(&space_y, "device-B")
+            .expect("for_space space_y B");
+        let e = g.engine_mut();
+        assert_eq!(
+            e.count_alive_blocks().expect("count"),
+            2,
+            "space_y: 2 alive"
+        );
+        for (id, ty, content, parent, pos) in expected_y {
+            let snap = e
+                .read_block(id)
+                .expect("read")
+                .unwrap_or_else(|| panic!("block {id} must be visible on B"));
+            assert_eq!(snap.block_type, *ty, "block_type for {id}");
+            assert_eq!(snap.content, *content, "content for {id}");
+            assert_eq!(snap.parent_id.as_deref(), *parent, "parent_id for {id}");
+            assert_eq!(snap.position, *pos, "position for {id}");
+        }
+    }
+
+    // ── SQL projection — every block also lands in the `blocks`
+    // table with matching shape.  Single query joining all 5 ids.
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?, ?, ?, ?)")
+            .bind(blk_x1)
+            .bind(blk_x2)
+            .bind(blk_x3)
+            .bind(blk_y1)
+            .bind(blk_y2)
+            .fetch_one(&pool_b)
+            .await
+            .expect("count rows");
+    assert_eq!(row_count, 5, "all 5 blocks must be projected to SQL");
+
+    // Spot-check the parented block — parent_id is the most failure-
+    // prone projection field.
+    let x2_row: (String, String, String, Option<String>, i64) = sqlx::query_as(
+        "SELECT id, block_type, content, parent_id, position FROM blocks WHERE id = ?",
+    )
+    .bind(blk_x2)
+    .fetch_one(&pool_b)
+    .await
+    .expect("fetch x2");
+    assert_eq!(x2_row.0, blk_x2);
+    assert_eq!(x2_row.1, "content");
+    assert_eq!(x2_row.2, "x-two");
+    assert_eq!(x2_row.3.as_deref(), Some(blk_x1));
+    assert_eq!(x2_row.4, 1);
+
+    materializer_b.shutdown();
+}
+
+/// Scenario 2 — incremental Update against an already-seeded peer.
+///
+/// 1. A creates BLOCK_X, exports a Snapshot, B applies it (B's vv now
+///    matches A's pre-X vv).
+/// 2. A creates BLOCK_Y.  A captures B's current `version_vector()` as
+///    `peer_vv`, then `prepare_outgoing(Some(peer_vv))` builds a
+///    `LoroSyncMessage::Update` carrying ONLY the post-vv ops.
+/// 3. B applies the Update.  Engine + SQL both show {X, Y}.
+///
+/// This pins the day-4/day-5 incremental-sync wire path that the
+/// day-5 E2E doesn't cover (it only does Snapshot).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_update_against_seeded_peer() {
+    use crate::sync_protocol::loro_sync;
+    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    let space = SpaceId::from_trusted("01HZPHASE3D12UPDATESCENARIO");
+    let block_x = "01HZPHASE3D12BLOCKXEEEEEEE1";
+    let block_y = "01HZPHASE3D12BLOCKYFFFFFFF2";
+
+    // ── Step 1 — A creates X, snapshot to B.
+    // #1257: A's freshness gate reads its own SQL `deleted_at`; A has no
+    // soft-deletions, so a fresh empty pool keeps the gate green.
+    let (pool_a, _dir_a) = test_pool().await;
+    let registry_a = LoroEngineRegistry::new();
+    let registry_b = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A");
+        g.engine_mut()
+            .apply_create_block(block_x, "content", "x-content", None, 0)
+            .expect("create X");
+    }
+    {
+        let inner =
+            loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+                .await
+                .expect("prepare_outgoing snapshot")
+                .expect("#1257 freshness gate must not refuse a consistent engine");
+        // Round-trip via the SyncMessage envelope to mirror the wire.
+        let outgoing = SyncMessage::LoroSync {
+            msg: inner,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&outgoing).expect("serialise");
+        let received: SyncMessage = serde_json::from_str(&json).expect("deserialise");
+        let received_inner = match received {
+            SyncMessage::LoroSync { msg, .. } => msg,
+            other => panic!("expected LoroSync, got {other:?}"),
+        };
+        let outcome = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+            .await
+            .expect("apply snapshot");
+        assert!(
+            matches!(outcome, loro_sync::ApplyOutcome::Imported { .. }),
+            "snapshot apply must report Imported, got {outcome:?}",
+        );
+    }
+
+    // Sanity — B has X but not Y.
+    {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-1");
+        let e = g.engine_mut();
+        assert!(
+            e.read_block(block_x).expect("read X").is_some(),
+            "X visible"
+        );
+        assert!(e.read_block(block_y).expect("read Y").is_none(), "Y absent");
+    }
+
+    // ── Step 2 — Capture B's vv, A creates Y, A builds an Update
+    // against B's vv.
+    let b_vv: Vec<u8> = {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-vv");
+        g.engine_mut().version_vector()
+    };
+    assert!(
+        !b_vv.is_empty(),
+        "B's vv after one import must be non-empty"
+    );
+
+    {
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A-2");
+        g.engine_mut()
+            .apply_create_block(block_y, "content", "y-content", None, 1)
+            .expect("create Y");
+    }
+
+    let update_msg =
+        loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", Some(&b_vv))
+            .await
+            .expect("prepare_outgoing update")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+    let (echoed_from_vv, update_bytes_len) = match &update_msg {
+        LoroSyncMessage::Update { from_vv, bytes, .. } => (from_vv.clone(), bytes.len()),
+        other => panic!("expected Update variant, got {other:?}"),
+    };
+    assert_eq!(
+        echoed_from_vv, b_vv,
+        "Update.from_vv must echo the peer-vv passed in"
+    );
+    assert!(update_bytes_len > 0, "Update bytes must be non-empty");
+
+    // ── Step 3 — Wire-roundtrip + apply on B.
+    let outgoing = SyncMessage::LoroSync {
+        msg: update_msg,
+        is_last: true,
+    };
+    let json = serde_json::to_string(&outgoing).expect("serialise update envelope");
+    let received: SyncMessage = serde_json::from_str(&json).expect("deserialise update envelope");
+    let received_inner = match received {
+        SyncMessage::LoroSync { msg, .. } => msg,
+        other => panic!("expected LoroSync, got {other:?}"),
+    };
+    let outcome = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+        .await
+        .expect("apply update");
+    assert!(
+        matches!(outcome, loro_sync::ApplyOutcome::Imported { .. }),
+        "update apply must report Imported, got {outcome:?}",
+    );
+
+    // ── Engine on B sees both X and Y.
+    {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-final");
+        let e = g.engine_mut();
+        let snap_x = e
+            .read_block(block_x)
+            .expect("read X")
+            .expect("X visible after update");
+        let snap_y = e
+            .read_block(block_y)
+            .expect("read Y")
+            .expect("Y visible after update");
+        assert_eq!(snap_x.content, "x-content");
+        assert_eq!(snap_y.content, "y-content");
+        // #400: DENSE 1-based rank — Y is the second root child ⇒ 2.
+        assert_eq!(snap_y.position, 2);
+    }
+
+    // ── SQL on B has both rows.
+    let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)")
+        .bind(block_x)
+        .bind(block_y)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count rows");
+    assert_eq!(row_count, 2, "both X and Y must land in SQL after update");
+
+    materializer_b.shutdown();
+}
+
+/// Scenario 3 — concurrent disjoint creates converge via mutual
+/// import.  Verifies `apply_remote` is commutative for non-conflicting
+/// ops: A creates X, B creates Y, the two exchange snapshots, and
+/// after both imports both engines + both SQL projections show
+/// {X, Y}.  This locks the CRDT-merge invariant at the sync seam.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
+    use crate::sync_protocol::loro_sync;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let materializer_a = Materializer::new(pool_a.clone());
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    let space = SpaceId::from_trusted("01HZPHASE3D12CONVERGENCESPC");
+    let block_x = "01HZPHASE3D12CONVBLOCKXAAA1";
+    let block_y = "01HZPHASE3D12CONVBLOCKYBBB2";
+
+    // Both peers start fresh.  A creates X locally; B creates Y
+    // locally — disjoint ops, no causal relationship.  Distinct
+    // device-ids ensure distinct Loro PeerIDs, so the ops are truly
+    // concurrent at the CRDT layer.
+    let registry_a = LoroEngineRegistry::new();
+    let registry_b = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A");
+        g.engine_mut()
+            .apply_create_block(block_x, "content", "from-A", None, 0)
+            .expect("create X on A");
+    }
+    {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B");
+        g.engine_mut()
+            .apply_create_block(block_y, "content", "from-B", None, 1)
+            .expect("create Y on B");
+    }
+
+    // Each side exports a snapshot.  Because the sender is the only
+    // writer of its own ops, a Snapshot is what `prepare_outgoing(None)`
+    // would produce — and is the safe choice when neither peer has
+    // observed the other yet.
+    let msg_from_a =
+        loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
+            .await
+            .expect("A prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+    let msg_from_b =
+        loro_sync::prepare_outgoing_for_pool(&pool_b, &registry_b, &space, "device-B", None)
+            .await
+            .expect("B prepare_outgoing")
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+
+    // Wire-roundtrip both snapshots.
+    let wire_a: SyncMessage = {
+        let env = SyncMessage::LoroSync {
+            msg: msg_from_a,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&env).expect("serialise A→B");
+        serde_json::from_str(&json).expect("deserialise A→B")
+    };
+    let wire_b: SyncMessage = {
+        let env = SyncMessage::LoroSync {
+            msg: msg_from_b,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&env).expect("serialise B→A");
+        serde_json::from_str(&json).expect("deserialise B→A")
+    };
+    let inner_a_to_b = match wire_a {
+        SyncMessage::LoroSync { msg, .. } => msg,
+        other => panic!("expected LoroSync A→B, got {other:?}"),
+    };
+    let inner_b_to_a = match wire_b {
+        SyncMessage::LoroSync { msg, .. } => msg,
+        other => panic!("expected LoroSync B→A, got {other:?}"),
+    };
+
+    // Mutual import: A applies B's snapshot, B applies A's snapshot.
+    let outcome_ab = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", inner_a_to_b)
+        .await
+        .expect("apply A→B");
+    assert!(
+        matches!(outcome_ab, loro_sync::ApplyOutcome::Imported { .. }),
+        "A→B apply must report Imported, got {outcome_ab:?}",
+    );
+    let outcome_ba = loro_sync::apply_remote(&pool_a, &registry_a, "device-A", inner_b_to_a)
+        .await
+        .expect("apply B→A");
+    assert!(
+        matches!(outcome_ba, loro_sync::ApplyOutcome::Imported { .. }),
+        "B→A apply must report Imported, got {outcome_ba:?}",
+    );
+
+    // ── Engine convergence — both engines see both blocks with the
+    // original content + position.
+    for (label, registry, pool, dev) in [
+        ("A", &registry_a, &pool_a, "device-A"),
+        ("B", &registry_b, &pool_b, "device-B"),
+    ] {
+        let mut g = registry
+            .for_space(&space, dev)
+            .unwrap_or_else(|e| panic!("for_space {label}: {e}"));
+        let e = g.engine_mut();
+        assert_eq!(
+            e.count_alive_blocks().expect("count"),
+            2,
+            "{label}: must see both blocks after mutual import"
+        );
+        let snap_x = e
+            .read_block(block_x)
+            .expect("read X")
+            .unwrap_or_else(|| panic!("{label}: X visible"));
+        let snap_y = e
+            .read_block(block_y)
+            .expect("read Y")
+            .unwrap_or_else(|| panic!("{label}: Y visible"));
+        assert_eq!(snap_x.content, "from-A", "{label}: X content");
+        assert_eq!(snap_y.content, "from-B", "{label}: Y content");
+        // #400: positions are DENSE 1-based ranks. X (created at slot 0 on A)
+        // and Y (slot 1 on B) are concurrent disjoint root creates; the CRDT
+        // merge converges to a deterministic sibling order with Y before X on
+        // both peers, so Y is rank 1 and X is rank 2.
+        assert_eq!(snap_y.position, 1, "{label}: Y position");
+        assert_eq!(snap_x.position, 2, "{label}: X position");
+
+        // SQL projection on each side mirrors the engine state.
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)")
+            .bind(block_x)
+            .bind(block_y)
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|err| panic!("{label}: count rows: {err}"));
+        assert_eq!(row_count, 2, "{label}: SQL must show both rows");
+    }
+
+    materializer_a.shutdown();
+    materializer_b.shutdown();
+}
+
+/// #2128 — inbound (remote) hard-purge parity.
+///
+/// A remote `PurgeBlock` removes the seed + its whole subtree from the
+/// sender's engine; the receiver's `import_with_changed_and_purged_blocks`
+/// surfaces those ids as the purged delta so Pass D of `import_and_project`
+/// hard-deletes them from EVERY derived SQL table. Before the #2128 fix the
+/// purged rows were invisible to the projection loop (it enumerates only the
+/// LIVE tree) and lingered in SQL forever → silent divergence.
+///
+/// This test pins the parity guard: after a remote purge, B's SQL state for
+/// the purged subtree is byte-identical to a LOCAL purge cascade run against
+/// an oracle DB seeded with the same tree. It also asserts engine removal and
+/// idempotency (re-applying the same purge sync leaves B unchanged).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
+    use crate::sync_protocol::loro_sync;
+    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::op::PurgeBlockPayload;
+    use agaric_store::space::SpaceId;
+
+    // ── Identifiers. `page` is the purge seed (subtree root); `c1`/`c2`
+    // are its children; `c1` carries a property + a tag (referencing the
+    // `tagblk` tag-block, a sibling root that must SURVIVE the purge).
+    let space = SpaceId::from_trusted("01HZ2128INBOUNDPURGEPARITYX");
+    let page = "01HZ2128PURGEPAGESEEDAAAAA1";
+    let c1 = "01HZ2128PURGECHILDONEBBBB2";
+    let c2 = "01HZ2128PURGECHILDTWOCCCC3";
+    let tagblk = "01HZ2128PURGETAGBLOCKDDDD4";
+
+    // Tables to assert empty/parity for the purged ids. fts_blocks /
+    // attachments are NOT written by the sync projection, so the test seeds
+    // them by hand (on B *and* the oracle) to prove Pass D sweeps them too.
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let (pool_oracle, _dir_oracle) = test_pool().await;
+    let materializer_b = Materializer::new(pool_b.clone());
+
+    // ── Engine A — build the tree: page → {c1, c2}; c1 has a property and
+    // a tag; `tagblk` is a separate root tag-block.
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A");
+        let e = g.engine_mut();
+        e.apply_create_block(page, "page", "Parent Page", None, 0)
+            .expect("create page");
+        e.apply_create_block(c1, "content", "child one", Some(page), 0)
+            .expect("create c1");
+        e.apply_create_block(c2, "content", "child two", Some(page), 1)
+            .expect("create c2");
+        e.apply_create_block(tagblk, "tag", "tag-X", None, 1)
+            .expect("create tagblk");
+        e.apply_set_property(c1, "effort", Some("3"))
+            .expect("set property on c1");
+        e.apply_add_tag(c1, tagblk).expect("add tag to c1");
+    }
+
+    // Helper: build outgoing sync (snapshot or update) from A, wire-roundtrip
+    // the envelope, then apply on a target registry+pool. Returns the outcome.
+    async fn sync_a_to_target(
+        pool_a: &SqlitePool,
+        registry_a: &LoroEngineRegistry,
+        space: &SpaceId,
+        peer_vv: Option<&[u8]>,
+        pool_t: &SqlitePool,
+        registry_t: &LoroEngineRegistry,
+        device_t: &str,
+    ) {
+        let inner =
+            loro_sync::prepare_outgoing_for_pool(pool_a, registry_a, space, "device-A", peer_vv)
+                .await
+                .expect("prepare_outgoing")
+                .expect("#1257 freshness gate must not refuse a consistent engine");
+        let outgoing = SyncMessage::LoroSync {
+            msg: inner,
+            is_last: true,
+        };
+        let json = serde_json::to_string(&outgoing).expect("serialise");
+        let received: SyncMessage = serde_json::from_str(&json).expect("deserialise");
+        let received_inner: LoroSyncMessage = match received {
+            SyncMessage::LoroSync { msg, .. } => msg,
+            other => panic!("expected LoroSync, got {other:?}"),
+        };
+        let outcome = loro_sync::apply_remote(pool_t, registry_t, device_t, received_inner)
+            .await
+            .expect("apply_remote");
+        assert!(
+            matches!(outcome, loro_sync::ApplyOutcome::Imported { .. }),
+            "apply must report Imported, got {outcome:?}",
+        );
+    }
+
+    // ── Sync #1 (A → B): the full tree.
+    let registry_b = LoroEngineRegistry::new();
+    sync_a_to_target(
+        &pool_a,
+        &registry_a,
+        &space,
+        None,
+        &pool_b,
+        &registry_b,
+        "device-B",
+    )
+    .await;
+
+    // B's engine + SQL must hold the full tree.
+    {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B");
+        let e = g.engine_mut();
+        for id in [page, c1, c2, tagblk] {
+            assert!(
+                e.read_block(id).expect("read").is_some(),
+                "B engine must hold {id} after first sync"
+            );
+        }
+    }
+    let present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?, ?, ?)")
+        .bind(page)
+        .bind(c1)
+        .bind(c2)
+        .bind(tagblk)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count present");
+    assert_eq!(present, 4, "B SQL must hold all 4 blocks after first sync");
+    // Property + tag projected for c1.
+    let prop_cnt: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
+            .bind(c1)
+            .fetch_one(&pool_b)
+            .await
+            .expect("count props");
+    assert_eq!(prop_cnt, 1, "c1 property projected on B");
+    let tag_cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
+        .bind(c1)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count tags");
+    assert_eq!(tag_cnt, 1, "c1 tag projected on B");
+
+    // Seed fts_blocks + attachments rows for the purged subtree on B by hand
+    // (the sync projection does not write these; we prove Pass D still sweeps
+    // them). attachments.block_id FKs blocks(id), so c1 must already exist.
+    for id in [page, c1, c2] {
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'searchable')")
+            .bind(id)
+            .execute(&pool_b)
+            .await
+            .expect("seed fts on B");
+    }
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, 'text/plain', 'a.txt', 4, 'attachments/a.txt', 0)",
+    )
+    .bind("01HZ2128ATTACHMENTROWEEEE5")
+    .bind(c1)
+    .execute(&pool_b)
+    .await
+    .expect("seed attachment on B");
+
+    // ── Build the LOCAL-purge ORACLE. Sync the full tree into a separate
+    // oracle pool (its own registry), seed the same fts/attachment rows, then
+    // run the LOCAL SQL purge cascade against it — this is the authoritative
+    // "what local purge leaves behind" baseline the remote purge must match.
+    let registry_oracle = LoroEngineRegistry::new();
+    sync_a_to_target(
+        &pool_a,
+        &registry_a,
+        &space,
+        None,
+        &pool_oracle,
+        &registry_oracle,
+        "device-O",
+    )
+    .await;
+    for id in [page, c1, c2] {
+        sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, 'searchable')")
+            .bind(id)
+            .execute(&pool_oracle)
+            .await
+            .expect("seed fts on oracle");
+    }
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, 'text/plain', 'a.txt', 4, 'attachments/a.txt', 0)",
+    )
+    .bind("01HZ2128ATTACHMENTROWEEEE5")
+    .bind(c1)
+    .execute(&pool_oracle)
+    .await
+    .expect("seed attachment on oracle");
+    {
+        let mut conn = pool_oracle.acquire().await.expect("oracle acquire");
+        agaric_engine::materializer::purge_block_sql_cascade(
+            &mut conn,
+            &PurgeBlockPayload {
+                block_id: BlockId::from_trusted(page),
+            },
+        )
+        .await
+        .expect("local purge cascade on oracle");
+    }
+
+    // ── On A: capture B's vv, hard-purge the page subtree in A's engine, then
+    // project that purge into A's SQL so the #1257 freshness gate stays green
+    // and A is internally consistent before the second export.
+    let b_vv: Vec<u8> = {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-vv");
+        g.engine_mut().version_vector()
+    };
+    {
+        let mut g = registry_a
+            .for_space(&space, "device-A")
+            .expect("for_space A-purge");
+        g.engine_mut()
+            .apply_purge_block(page)
+            .expect("purge page on A");
+    }
+    {
+        let mut conn = pool_a.acquire().await.expect("A acquire");
+        agaric_engine::materializer::purge_block_sql_cascade(
+            &mut conn,
+            &PurgeBlockPayload {
+                block_id: BlockId::from_trusted(page),
+            },
+        )
+        .await
+        .expect("project purge to A SQL");
+    }
+
+    // ── Sync #2 (A → B): the purge, as an incremental Update against B's vv.
+    sync_a_to_target(
+        &pool_a,
+        &registry_a,
+        &space,
+        Some(&b_vv),
+        &pool_b,
+        &registry_b,
+        "device-B",
+    )
+    .await;
+
+    // ── ASSERT: B's engine no longer holds the purged subtree; tagblk lives.
+    {
+        let mut g = registry_b
+            .for_space(&space, "device-B")
+            .expect("for_space B-post");
+        let e = g.engine_mut();
+        for id in [page, c1, c2] {
+            assert!(
+                e.read_block(id).expect("read").is_none(),
+                "B engine must NOT hold purged {id} after purge sync"
+            );
+        }
+        assert!(
+            e.read_block(tagblk).expect("read tagblk").is_some(),
+            "tagblk (sibling root) must survive the purge"
+        );
+    }
+
+    // ── ASSERT: B's SQL has NO rows for any purged id across EVERY derived
+    // table. Each table queried explicitly (the canonical purge table set).
+    let purged_ids = [page, c1, c2];
+    for id in purged_ids {
+        let counts: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT \
+                (SELECT COUNT(*) FROM blocks WHERE id = ?1), \
+                (SELECT COUNT(*) FROM block_properties WHERE block_id = ?1), \
+                (SELECT COUNT(*) FROM block_tags WHERE block_id = ?1 OR tag_id = ?1), \
+                (SELECT COUNT(*) FROM block_tag_inherited WHERE block_id = ?1 OR tag_id = ?1 OR inherited_from = ?1), \
+                (SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?1), \
+                (SELECT COUNT(*) FROM attachments WHERE block_id = ?1), \
+                (SELECT COUNT(*) FROM agenda_cache WHERE block_id = ?1)",
+        )
+        .bind(id)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count purged rows on B");
+        assert_eq!(
+            counts,
+            (0, 0, 0, 0, 0, 0, 0),
+            "B SQL must have zero rows for purged id {id} across all derived tables"
+        );
+    }
+    // tagblk (the tag-block) survives in SQL — only its FK edge to c1 is gone.
+    let tagblk_present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(tagblk)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count tagblk");
+    assert_eq!(tagblk_present, 1, "tagblk must survive the purge in B SQL");
+
+    // ── ASSERT PARITY: B's post-purge state == the local-purge oracle's, for
+    // each table, across both the purged subtree and the surviving tagblk.
+    // Compares the full row-id set so a stray lingering row on either side
+    // fails the test. (remote-purge projection == local-purge projection.)
+    async fn ids_of(pool: &SqlitePool, sql: &'static str) -> Vec<String> {
+        let mut v: Vec<String> = sqlx::query_scalar(sql)
+            .fetch_all(pool)
+            .await
+            .expect("fetch ids");
+        v.sort();
+        v
+    }
+    let table_queries: &[(&'static str, &'static str)] = &[
+        ("blocks", "SELECT id FROM blocks ORDER BY id"),
+        (
+            "block_properties",
+            "SELECT block_id FROM block_properties ORDER BY block_id",
+        ),
+        (
+            "block_tags",
+            "SELECT block_id FROM block_tags ORDER BY block_id",
+        ),
+        (
+            "block_tag_inherited",
+            "SELECT block_id FROM block_tag_inherited ORDER BY block_id",
+        ),
+        (
+            "fts_blocks",
+            "SELECT block_id FROM fts_blocks ORDER BY block_id",
+        ),
+        (
+            "attachments",
+            "SELECT block_id FROM attachments ORDER BY block_id",
+        ),
+        (
+            "agenda_cache",
+            "SELECT block_id FROM agenda_cache ORDER BY block_id",
+        ),
+        (
+            "pages_cache",
+            "SELECT page_id FROM pages_cache ORDER BY page_id",
+        ),
+        (
+            "tags_cache",
+            "SELECT tag_id FROM tags_cache ORDER BY tag_id",
+        ),
+    ];
+    for (table, sql) in table_queries {
+        let b_ids = ids_of(&pool_b, sql).await;
+        let oracle_ids = ids_of(&pool_oracle, sql).await;
+        assert_eq!(
+            b_ids, oracle_ids,
+            "PARITY: table {table} must match between remote-purge (B) and local-purge (oracle)"
+        );
+    }
+
+    // ── ASSERT IDEMPOTENCY: applying the SAME purge sync again is a no-op on
+    // B (no error; engine + SQL unchanged). Re-export the purge Update against
+    // B's PRE-purge vv (`b_vv` still describes B's state before sync #2 from
+    // its own perspective — re-importing the same ops is idempotent in Loro).
+    sync_a_to_target(
+        &pool_a,
+        &registry_a,
+        &space,
+        Some(&b_vv),
+        &pool_b,
+        &registry_b,
+        "device-B",
+    )
+    .await;
+    for id in purged_ids {
+        let still_gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool_b)
+            .await
+            .expect("count after idempotent re-sync");
+        assert_eq!(still_gone, 0, "idempotent re-sync must keep {id} purged");
+    }
+    let tagblk_still: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(tagblk)
+        .fetch_one(&pool_b)
+        .await
+        .expect("count tagblk after idempotent");
+    assert_eq!(
+        tagblk_still, 1,
+        "tagblk must remain after idempotent re-sync"
+    );
+
+    materializer_b.shutdown();
+}
+
+// ── #2481 phase 1: audit-only op-log replication (wire + advertisement) ──
+
+/// `start()` advertises the `op_log_replication` capability so a capable
+/// peer may stream us `OpLogBatch`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_advertises_op_log_replication_capability_2481() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    let msg = orch.start().await.unwrap();
+    match msg {
+        SyncMessage::HeadExchange {
+            op_log_replication, ..
+        } => assert!(
+            op_log_replication,
+            "start() must advertise op_log_replication=true (#2481)"
+        ),
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+    materializer.shutdown();
+}
+
+/// #3543 — `start()` no longer emits the retired `wire_compression` capability,
+/// and a peer that still does is not rejected for it.
+///
+/// This replaces `start_advertises_wire_compression_capability_2200`, which
+/// pinned the opposite. The flag advertised that the sender could zstd-inflate a
+/// compressed `LoroSyncChunked` payload; both the compressor and the chunked
+/// framing went with the WebSocket transport at the iroh cutover (#3464),
+/// leaving it write-only. The wire risk of deleting a field is entirely on the
+/// *receive* side, so that is what this pins: a `HeadExchange` from a build
+/// shipped between #2200 and #3543 still carries the key, and `SyncMessage`
+/// carries no `deny_unknown_fields`, so it must parse as an ordinary
+/// `HeadExchange` rather than failing the session at the handshake.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_omits_retired_wire_compression_and_still_accepts_a_peer_sending_it_3543() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    let msg = orch.start().await.unwrap();
+    let json = serde_json::to_value(&msg).expect("HeadExchange must serialize");
+    assert!(
+        json.get("wire_compression").is_none(),
+        "start() must not emit the retired #2200 wire_compression capability (#3543); got {json}"
+    );
+    materializer.shutdown();
+
+    // The receive direction: an older post-cutover peer still sends the key.
+    let legacy = r#"{"type":"HeadExchange","heads":[{"device_id":"d","seq":1,"hash":"h"}],
+        "op_log_replication":true,"wire_compression":true,"op_log_batch_chunked":true}"#;
+    let parsed: SyncMessage = serde_json::from_str(legacy)
+        .expect("a HeadExchange still carrying wire_compression must deserialize (#3543)");
+    match parsed {
+        SyncMessage::HeadExchange {
+            op_log_replication,
+            op_log_batch_chunked,
+            ..
+        } => {
+            assert!(
+                op_log_replication && op_log_batch_chunked,
+                "the surviving capabilities must still be read off a peer that sends the retired one"
+            );
+        }
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+}
+
+/// `OpLogBatch` round-trips losslessly on the wire, carries a `type` tag,
+/// and an older peer's record without an `origin` field defaults to
+/// `"user"` (wire back-compat).
+#[test]
+fn op_log_batch_wire_round_trips_and_defaults_origin_2481() {
+    let batch = SyncMessage::OpLogBatch {
+        records: vec![OpTransfer {
+            device_id: "dev-A".into(),
+            seq: 9,
+            parent_seqs: Some(r#"[["dev-A",8]]"#.into()),
+            hash: "a".repeat(64),
+            op_type: "edit_block".into(),
+            payload: r#"{"block_id":"B1","to_text":"x","prev_edit":["dev-A",8]}"#.into(),
+            created_at: 111,
+            origin: "agent:x".into(),
+        }],
+        is_last: true,
+    };
+
+    let json = serde_json::to_string(&batch).unwrap();
+    let back: SyncMessage = serde_json::from_str(&json).unwrap();
+    assert_eq!(batch, back, "OpLogBatch must round-trip losslessly");
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["type"], "OpLogBatch", "OpLogBatch must carry a type tag");
+
+    // Old-peer record without `origin` deserializes to the "user" default.
+    let legacy = r#"{"type":"OpLogBatch","records":[{"device_id":"d","seq":1,"parent_seqs":null,"hash":"h","op_type":"create_block","payload":"{}","created_at":5}],"is_last":false}"#;
+    let parsed: SyncMessage = serde_json::from_str(legacy)
+        .expect("a legacy OpLogBatch record without `origin` must deserialize");
+    match parsed {
+        SyncMessage::OpLogBatch { records, is_last } => {
+            assert!(!is_last);
+            assert_eq!(
+                records[0].origin, "user",
+                "a missing `origin` must default to \"user\" (#2481 wire back-compat)"
+            );
+        }
+        other => panic!("expected OpLogBatch, got {other:?}"),
+    }
+}
+
+/// Frontier advertisement (#2481): a replicated foreign op surfaces as its
+/// own device's frontier in `get_local_heads` (so the peer learns we hold
+/// it), while the LOCAL device's own frontier is unaffected by ingest.
+#[tokio::test]
+async fn replicated_foreign_op_surfaces_in_frontier_advertisement_2481() {
+    let (pool, _dir) = test_pool().await;
+
+    // Local device authors one op.
+    append_local_op_at(&pool, "device-A", test_create_payload("LOCAL1"), FIXED_TS)
+        .await
+        .unwrap();
+
+    // A foreign device's op is replicated as audit metadata.
+    let payload = r#"{"block_id":"FGN1","block_type":"content","parent_id":null,"position":0,"content":"foreign"}"#;
+    let hash = agaric_core::hash::compute_op_hash("device-Z", 7, None, "create_block", payload);
+    let transfer = OpTransfer {
+        device_id: "device-Z".into(),
+        seq: 7,
+        parent_seqs: None,
+        hash: hash.clone(),
+        op_type: "create_block".into(),
+        payload: payload.into(),
+        created_at: FIXED_TS,
+        origin: "user".into(),
+    };
+    crate::sync_protocol::insert_replicated_op(&pool, &transfer)
+        .await
+        .unwrap();
+
+    let heads = get_local_heads(&pool).await.unwrap();
+
+    let a = heads
+        .iter()
+        .find(|h| h.device_id == "device-A")
+        .expect("own frontier must still be present");
+    assert_eq!(
+        a.seq, 1,
+        "the local device's own frontier must be unaffected by ingest"
+    );
+
+    let z = heads
+        .iter()
+        .find(|h| h.device_id == "device-Z")
+        .expect("replicated foreign frontier must be advertised (#2481)");
+    assert_eq!(z.seq, 7);
+    assert_eq!(
+        z.hash, hash,
+        "advertised foreign frontier carries the replicated op's hash"
+    );
+}
+
+/// `collect_ops_for_peer` ships exactly the ops the peer lacks
+/// (`seq > peer frontier`, all devices), in `(device_id, seq)` order.
+#[tokio::test]
+async fn collect_ops_for_peer_ships_only_missing_ops_2481() {
+    let (pool, _dir) = test_pool().await;
+
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+
+    // Peer already holds device-A through seq 2 → only seq 3 is missing.
+    let peer_heads = vec![DeviceHead {
+        device_id: "device-A".into(),
+        seq: 2,
+        hash: "x".into(),
+    }];
+    let ops = collect_ops_for_peer(&pool, &peer_heads).await.unwrap();
+    assert_eq!(
+        ops.len(),
+        1,
+        "only the one op past the peer frontier is shipped"
+    );
+    assert_eq!(ops[0].seq, 3);
+    assert_eq!(ops[0].device_id, "device-A");
+
+    // A peer that advertised nothing gets every op.
+    let all = collect_ops_for_peer(&pool, &[]).await.unwrap();
+    assert_eq!(all.len(), 3, "an empty peer frontier ships all ops");
+    assert_eq!(
+        all.iter().map(|o| o.seq).collect::<Vec<_>>(),
+        vec![1, 2, 3],
+        "ops are ordered by (device_id, seq)"
+    );
+}
+
+/// `batch_ops_for_wire` partitions records so each batch stays under the
+/// byte cap, preserves order + count, and handles the empty case.
+#[test]
+fn batch_ops_for_wire_partitions_under_cap_2481() {
+    let mk = |seq: i64| OpTransfer {
+        device_id: "d".into(),
+        seq,
+        parent_seqs: None,
+        hash: "h".repeat(64),
+        op_type: "create_block".into(),
+        payload:
+            r#"{"block_id":"B","block_type":"content","parent_id":null,"position":0,"content":"c"}"#
+                .into(),
+        created_at: 1,
+        origin: "user".into(),
+    };
+    let recs: Vec<OpTransfer> = (1..=5).map(mk).collect();
+
+    // A cap that fits exactly one record → one batch per record.
+    let one = serde_json::to_string(&recs[0]).unwrap().len() + 2;
+    let batches = batch_ops_for_wire(recs.clone(), one);
+    assert_eq!(
+        batches.len(),
+        5,
+        "a one-record cap yields one batch per record"
+    );
+    let flat: Vec<OpTransfer> = batches.into_iter().flatten().collect();
+    assert_eq!(flat.len(), 5, "no record is dropped");
+    for (i, r) in flat.iter().enumerate() {
+        assert_eq!(
+            r.seq,
+            i64::try_from(i).expect("test index fits i64") + 1,
+            "record order is preserved across batches"
+        );
+    }
+
+    // A huge cap → a single batch.
+    let single = batch_ops_for_wire(recs, 10_000_000);
+    assert_eq!(single.len(), 1, "a large cap coalesces into one batch");
+
+    // Empty input → no batches (caller then sends no OpLogBatch).
+    assert!(batch_ops_for_wire(vec![], 100).is_empty());
+}
+
+// ── #2481 phase 1 sub-flow: live OpLogBatch send + ingest ────────────
+
+/// Count the audit-only (`is_replicated = 1`) rows in a pool's op_log.
+async fn count_replicated_ops(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log WHERE is_replicated = 1")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The streamer appends an `OpLogBatch` of the records the peer lacks to the
+/// tail of its `HeadExchange` reply when the peer advertised the capability.
+/// With no registered spaces the batch is the sole streamed message, so it is
+/// returned directly (`is_last: true`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_appends_op_log_batch_for_capable_peer_2481() {
+    let (pool, _dir) = test_pool().await;
+    // Responder ("device-A") authored three ops; no Loro spaces registered,
+    // so the only thing to stream is the audit batch.
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // The initiator advertises it already holds device-A through seq 1 and is
+    // op-log-replication capable → the responder should ship seqs 2 and 3.
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "device-A".into(),
+                seq: 1,
+                hash: "h".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: true,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await
+        .unwrap();
+
+    match resp {
+        Some(SyncMessage::OpLogBatch { records, is_last }) => {
+            assert!(is_last, "the sole streamed message carries is_last");
+            assert_eq!(
+                records.iter().map(|r| r.seq).collect::<Vec<_>>(),
+                vec![2, 3],
+                "only the ops past the peer's advertised frontier are shipped, in seq order"
+            );
+            assert!(records.iter().all(|r| r.device_id == "device-A"));
+        }
+        other => panic!("expected an OpLogBatch stream, got {other:?}"),
+    }
+    // No further queued messages.
+    assert!(
+        orch.next_message().is_none(),
+        "the single batch drains fully"
+    );
+    assert_eq!(orch.session().state, SyncState::StreamingOps);
+    materializer.shutdown();
+}
+
+/// Back-compat: a peer that did NOT advertise `op_log_replication` is never
+/// sent an `OpLogBatch` (it could not decode the variant). With nothing else
+/// to stream, the responder short-circuits to `SyncComplete`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
+    let (pool, _dir) = test_pool().await;
+    for i in 1..=3 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            // Older peer: capability absent.
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "an incapable peer with no state to pull gets SyncComplete, never an OpLogBatch: {resp:?}"
+    );
+    assert!(orch.next_message().is_none());
+    materializer.shutdown();
+}
+
+/// Build a device-A op log holding one op whose serialized `OpTransfer` exceeds
+/// the inline bound (~10 MB content), for the #2593 oversized-record tests.
+#[cfg(test)]
+async fn seed_oversized_op_for_2593(pool: &sqlx::SqlitePool) {
+    let big = "x".repeat(10_000_000);
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::test_id("BIG"),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(0),
+        index: None,
+        content: big,
+    });
+    append_local_op_at(pool, "device-A", payload, FIXED_TS)
+        .await
+        .unwrap();
+}
+
+/// #2593 — an op record larger than the inline bound (a lone ~10 MB record) is
+/// STREAMED as an `OpLogBatch` when the peer advertised the
+/// `op_log_batch_chunked` capability. The orchestrator emits the plain
+/// `OpLogBatch`; the wire layer ships the over-threshold batch via the chunked
+/// oversized inline `OpLogBatch` (the chunked encoding went with the WebSocket
+/// transport in #3464; QUIC's 256 MB frame cap carries it as one message).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
+    let (pool, _dir) = test_pool().await;
+    seed_oversized_op_for_2593(&pool).await;
+
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: true,
+            // Chunked-capable peer → the oversized record streams.
+            op_log_batch_chunked: true,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await
+        .unwrap();
+
+    // The oversized record is streamed as a (final) OpLogBatch, not skipped.
+    match resp {
+        Some(SyncMessage::OpLogBatch { records, is_last }) => {
+            assert_eq!(records.len(), 1, "the lone oversized record is streamed");
+            assert!(is_last, "sole batch carries the terminal is_last");
+            assert!(
+                records[0].payload.len() > crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
+                "the streamed record's payload exceeds the inline bound (chunked on the wire)"
+            );
+        }
+        other => panic!("expected an OpLogBatch carrying the oversized record, got: {other:?}"),
+    }
+    assert!(
+        orch.next_message().is_none(),
+        "the single batch was the whole stream"
+    );
+    materializer.shutdown();
+}
+
+/// #2593 back-compat guard (regression for the PR #2598 review) — a peer that
+/// advertised `op_log_replication: true` but NOT `op_log_batch_chunked` (a
+/// shipped #2481 build that knows `OpLogBatch` but not the chunked envelope)
+/// must have the oversized record SKIPPED, not shipped as an `OpLogBatchChunked`
+/// frame it cannot deserialize. Skipping keeps the session completing (the
+/// record's state still syncs via LoroSync); shipping the chunked frame would
+/// fault the session and — because the record persists — every subsequent one,
+/// breaking all state sync. With the sole record skipped and no registered
+/// spaces, the streamer replies `SyncComplete`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_skips_oversized_op_record_for_chunked_incapable_peer_2593() {
+    let (pool, _dir) = test_pool().await;
+    seed_oversized_op_for_2593(&pool).await;
+
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    let resp = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            // Op-log replication capable, but NOT chunked-OpLogBatch capable —
+            // exactly a shipped #2481 peer.
+            op_log_replication: true,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "the oversized record is skipped for a chunked-incapable peer, so no \
+         OpLogBatch(Chunked) is streamed and the session completes: {resp:?}"
+    );
+    assert!(
+        orch.next_message().is_none(),
+        "no op batch is queued for a chunked-incapable peer's oversized-only op log"
+    );
+    materializer.shutdown();
+}
+
+/// Single-direction guard: a streamer (it streamed op batches this session)
+/// that receives an `OpLogBatch` fails the session — audit replication flows
+/// responder → initiator only; the puller must not stream back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streamer_rejects_inbound_op_log_batch_2481() {
+    let (pool, _dir) = test_pool().await;
+    append_local_op_at(&pool, "device-A", test_create_payload("A1"), FIXED_TS)
+        .await
+        .unwrap();
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    // Drive the responder to stream (sets `streamed_to_peer`).
+    let streamed = orch
+        .handle_message(SyncMessage::HeadExchange {
+            heads: vec![],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: true,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(streamed, Some(SyncMessage::OpLogBatch { .. })),
+        "responder streams an OpLogBatch for its op record"
+    );
+
+    // Now a peer streams an OpLogBatch back at us — protocol violation.
+    let err = orch
+        .handle_message(SyncMessage::OpLogBatch {
+            records: vec![],
+            is_last: true,
+        })
+        .await;
+    assert!(
+        err.is_err(),
+        "the streamer must reject an inbound OpLogBatch"
+    );
+    assert!(matches!(orch.session().state, SyncState::Failed(_)));
+    materializer.shutdown();
+}
+
+/// The puller ingests a received `OpLogBatch` as append-only audit metadata
+/// (`is_replicated = 1`, never applied to state) and completes the pull.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initiator_ingests_op_log_batch_as_audit_metadata_2481() {
+    // Build valid transfers (correct blake3 hashes) from a source pool.
+    let (source, _sdir) = test_pool().await;
+    for i in 1..=2 {
+        append_local_op_at(
+            &source,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+    let records = collect_ops_for_peer(&source, &[]).await.unwrap();
+    assert_eq!(records.len(), 2);
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "device-B".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("device-A".into());
+    // Drive to ExchangingHeads so the streaming-phase message is valid.
+    let _ = orch.start().await.unwrap();
+
+    let resp = orch
+        .handle_message(SyncMessage::OpLogBatch {
+            records: records.clone(),
+            is_last: true,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "the final OpLogBatch completes the pull with SyncComplete: {resp:?}"
+    );
+    assert_eq!(orch.session().state, SyncState::Complete);
+    assert_eq!(
+        count_replicated_ops(&pool).await,
+        2,
+        "both records landed as audit-only (is_replicated = 1) rows"
+    );
+    // The stored records match the source hash + origin verbatim.
+    let stored: Vec<(String, i64, String, String)> = sqlx::query_as(
+        "SELECT device_id, seq, hash, origin FROM op_log WHERE is_replicated = 1 ORDER BY seq",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    for (i, (device_id, seq, hash, origin)) in stored.iter().enumerate() {
+        assert_eq!(device_id, "device-A");
+        assert_eq!(*seq, records[i].seq);
+        assert_eq!(hash, &records[i].hash, "hash stored verbatim");
+        assert_eq!(origin, &records[i].origin, "origin travels with the record");
+    }
+    materializer.shutdown();
+}
+
+/// A corrupt record (hash mismatch) is skipped best-effort — it does NOT fault
+/// an otherwise-successful pull — while the good records still land.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initiator_skips_corrupt_op_log_record_but_completes_2481() {
+    let (source, _sdir) = test_pool().await;
+    append_local_op_at(&source, "device-A", test_create_payload("A1"), FIXED_TS)
+        .await
+        .unwrap();
+    append_local_op_at(&source, "device-A", test_create_payload("A2"), FIXED_TS)
+        .await
+        .unwrap();
+    let mut records = collect_ops_for_peer(&source, &[]).await.unwrap();
+    // Corrupt the first record's hash so blake3 verification rejects it.
+    records[0].hash = "0".repeat(64);
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "device-B".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("device-A".into());
+    let _ = orch.start().await.unwrap();
+
+    let resp = orch
+        .handle_message(SyncMessage::OpLogBatch {
+            records,
+            is_last: true,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(resp, Some(SyncMessage::SyncComplete { .. })),
+        "a corrupt audit record must not fault the pull: {resp:?}"
+    );
+    assert_eq!(orch.session().state, SyncState::Complete);
+    assert_eq!(
+        count_replicated_ops(&pool).await,
+        1,
+        "the corrupt record is skipped; the valid one still lands"
+    );
+    materializer.shutdown();
+}
+
+/// `OpLogBatch` arriving before the streaming phase (in `Idle`) is a protocol
+/// violation and fails the session loudly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn op_log_batch_before_handshake_fails_2481() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-B".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    // No start() → still Idle.
+    let err = orch
+        .handle_message(SyncMessage::OpLogBatch {
+            records: vec![],
+            is_last: true,
+        })
+        .await;
+    assert!(err.is_err(), "OpLogBatch in Idle must be rejected");
+    assert!(matches!(orch.session().state, SyncState::Failed(_)));
+    materializer.shutdown();
+}
+
+// ── #3325 — the advertised frontier must not step over a dropped record ──
+
+/// A hash-valid replicated audit record for a foreign device.
+fn foreign_op_transfer(device_id: &str, seq: i64) -> OpTransfer {
+    let payload = format!(
+        r#"{{"block_id":"FGN{seq}","block_type":"content","parent_id":null,"position":0,"content":"foreign {seq}"}}"#
+    );
+    let hash = agaric_core::hash::compute_op_hash(device_id, seq, None, "create_block", &payload);
+    OpTransfer {
+        device_id: device_id.into(),
+        seq,
+        parent_seqs: None,
+        hash,
+        op_type: "create_block".into(),
+        payload,
+        created_at: FIXED_TS,
+        origin: "user".into(),
+    }
+}
+
+/// #3325 — a TRANSIENT ingest failure must not let the frontier we advertise
+/// step over the record it dropped.
+///
+/// There is no replication cursor on this path: `get_local_heads` derives the
+/// frontier from `MAX(seq)` per device, and the peer ships exactly `seq >`
+/// that. So landing seq 8, 9, 10 after seq 7 faulted *is* an acknowledgement
+/// of seq 7 — the next `HeadExchange` advertises 10 and the peer never offers
+/// 7 again. Since replicated records are what the History view shows for edits
+/// made on another device, the user is left with a hole in that device's
+/// history on this machine, permanently, while the originating device still
+/// holds the full chain.
+#[tokio::test]
+async fn transient_ingest_failure_defers_the_rest_of_that_devices_chain_3325() {
+    let (pool, _dir) = test_pool().await;
+
+    // Our own device has authored something, so we can also see that its
+    // frontier is untouched by any of this.
+    append_local_op_at(&pool, "device-A", test_create_payload("LOCAL1"), FIXED_TS)
+        .await
+        .unwrap();
+
+    // The peer streams two foreign devices, in the `(device_id, seq)` order
+    // `collect_ops_for_peer` emits.
+    let mut records: Vec<OpTransfer> = (1..=2)
+        .map(|s| foreign_op_transfer("device-Y", s))
+        .collect();
+    records.extend((6..=10).map(|s| foreign_op_transfer("device-Z", s)));
+
+    // device-Z seq 7 hits a busy writer — the exact case the old code named
+    // ("a rebuild task the flush did not fully settle") and mishandled.
+    let outcome = crate::sync_protocol::ingest_replicated_batch_with_fault(
+        &pool,
+        &records,
+        "device-A",
+        "device-peer",
+        &|r| {
+            (r.device_id == "device-Z" && r.seq == 7)
+                .then_some(agaric_core::error::AppError::PoolTimedOut)
+        },
+    )
+    .await;
+
+    assert_eq!(
+        outcome.ingested, 3,
+        "device-Y's two records plus device-Z seq 6 must land"
+    );
+    assert_eq!(
+        outcome.deferred, 4,
+        "device-Z seq 7..=10 must all be left for the peer to re-ship"
+    );
+    assert_eq!(outcome.rejected, 0, "nothing here is corrupt");
+
+    let heads = get_local_heads(&pool).await.unwrap();
+
+    let z = heads
+        .iter()
+        .find(|h| h.device_id == "device-Z")
+        .expect("device-Z must still advertise the part of its chain we hold");
+    assert_eq!(
+        z.seq, 6,
+        "#3325: the frontier advertised for device-Z stepped over seq 7 — the \
+         peer will only ever offer seq > {}, so seq 7 is lost for good",
+        z.seq
+    );
+
+    let y = heads
+        .iter()
+        .find(|h| h.device_id == "device-Y")
+        .expect("device-Y's records must be unaffected");
+    assert_eq!(
+        y.seq, 2,
+        "one device's stalled write must not cost every other device its records"
+    );
+
+    let a = heads
+        .iter()
+        .find(|h| h.device_id == "device-A")
+        .expect("our own frontier must survive");
+    assert_eq!(
+        a.seq, 1,
+        "our own frontier is not derived from ingest at all"
+    );
+
+    // The property that actually matters: ask a peer holding the whole chain
+    // what it would ship us next session against the frontier we now advertise.
+    let (peer_pool, _peer_dir) = test_pool().await;
+    for record in &records {
+        crate::sync_protocol::insert_replicated_op(&peer_pool, record)
+            .await
+            .unwrap();
+    }
+    let reshipped: Vec<i64> = collect_ops_for_peer(&peer_pool, &heads)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.device_id == "device-Z")
+        .map(|r| r.seq)
+        .collect();
+    assert_eq!(
+        reshipped,
+        vec![7, 8, 9, 10],
+        "the gap must be re-offered on the next session; anything short of \
+         this leaves a permanent hole in device-Z's replicated history (#3325)"
+    );
+}
+
+/// #3325 companion — a CORRUPT record must NOT stall its device's chain.
+///
+/// The asymmetry is deliberate and this pins it. Corrupt bytes fail
+/// identically every time they are re-shipped, so deferring the device would
+/// re-fetch and re-reject the same record every session forever while
+/// permanently blocking everything behind it — the "permanent backoff over
+/// non-state data" the ingest path already warns about. The frontier is
+/// allowed past it instead; the resulting gap is a state the Audit ingest
+/// profile already tolerates, since peer-side compaction produces gaps too.
+///
+/// This test uses real corruption rather than the injected fault, so it also
+/// pins the classification itself: a tampered payload must land in the
+/// "reject" arm, not the "defer" one.
+#[tokio::test]
+async fn corrupt_record_does_not_stall_the_device_chain_3325() {
+    let (pool, _dir) = test_pool().await;
+
+    let mut records: Vec<OpTransfer> = (6..=10)
+        .map(|s| foreign_op_transfer("device-Z", s))
+        .collect();
+    // Tamper with seq 7's payload, leaving its hash behind — exactly what the
+    // blake3 verification inside `insert_replicated_op` exists to catch.
+    records[1].payload = r#"{"block_id":"FGN7","block_type":"content","parent_id":null,"position":0,"content":"tampered"}"#.into();
+
+    let outcome =
+        crate::sync_protocol::ingest_replicated_batch(&pool, &records, "device-A", "device-peer")
+            .await;
+
+    assert_eq!(outcome.rejected, 1, "seq 7 must be rejected as corrupt");
+    assert_eq!(
+        outcome.ingested, 4,
+        "seq 6, 8, 9 and 10 must still land — they are not implicated"
+    );
+    assert_eq!(
+        outcome.deferred, 0,
+        "a corrupt record must not defer its device's chain, or the peer \
+         re-ships and re-rejects it every session forever"
+    );
+
+    let heads = get_local_heads(&pool).await.unwrap();
+    let z = heads
+        .iter()
+        .find(|h| h.device_id == "device-Z")
+        .expect("device-Z frontier");
+    assert_eq!(
+        z.seq, 10,
+        "the frontier is deliberately allowed past an unusable record"
+    );
+}
+
+// ── #3726 — the ascending-seq precondition the defer policy rests on ──
+
+/// Every `device-Z` seq the peer would still offer us, given the frontier we
+/// now advertise. This is the question that actually decides whether a record
+/// is lost: the op log's contents *are* the acknowledgement.
+async fn reoffered_seqs(
+    all_records: &[OpTransfer],
+    heads: &[DeviceHead],
+    device_id: &str,
+) -> Vec<i64> {
+    let (peer_pool, _peer_dir) = test_pool().await;
+    for record in all_records {
+        crate::sync_protocol::insert_replicated_op(&peer_pool, record)
+            .await
+            .unwrap();
+    }
+    collect_ops_for_peer(&peer_pool, heads)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.device_id == device_id)
+        .map(|r| r.seq)
+        .collect()
+}
+
+/// #3726 — the defer policy is correct only while each device's records are
+/// presented in ascending `seq`, and nothing enforced that.
+///
+/// Two runs over the SAME five records with the SAME injected fault, differing
+/// only in the order they are handed to `ingest_replicated_batch`. In ascending
+/// order the #3325 policy does its job: the frontier stops below the fault and
+/// the peer re-offers the gap. Shuffled — one higher seq presented first, which
+/// is all it takes — the frontier has already stepped past the fault before it
+/// happens, and the peer never offers those records again. That asymmetry is
+/// the coupling this test exists to pin: anyone who parallelises or reorders
+/// the ingest path has to come here and confront it.
+///
+/// It also pins the release-mode check #3726 added. The check does not repair
+/// anything (by the time an out-of-order record arrives the higher seq has
+/// landed and the frontier has moved), it *reports* — through
+/// `BatchIngestOutcome::out_of_order` and the process-global counter behind
+/// `StatusInfo::audit_ingest_out_of_order`.
+#[tokio::test]
+async fn shuffled_batch_breaks_the_frontier_and_is_reported_3726() {
+    use crate::sync_protocol::audit_ingest_metrics;
+
+    // A device id unique to this test: the ingest metrics are process-global.
+    let device = "device-Z-3726";
+    let ascending: Vec<OpTransfer> = (6..=10).map(|s| foreign_op_transfer(device, s)).collect();
+    // The issue's shape — a HIGHER seq presented before the one that faults.
+    let shuffled: Vec<OpTransfer> = [10, 6, 7, 8, 9]
+        .iter()
+        .map(|&s| foreign_op_transfer(device, s))
+        .collect();
+    let fault = |r: &OpTransfer| (r.seq == 7).then_some(agaric_core::error::AppError::PoolTimedOut);
+
+    // ── ascending: the precondition holds, and #3325's policy works ──
+    //
+    // The process-global counters are monotonic and shared with every other
+    // test in this binary, so only DELTAS and only lower bounds are asserted on
+    // them — the `snapshot_fallback_metrics` precedent this module follows
+    // (#3740). What this test owns exactly is `BatchIngestOutcome`, which is
+    // per-call.
+    let (in_order_pool, _d1) = test_pool().await;
+    let in_order = crate::sync_protocol::ingest_replicated_batch_with_fault(
+        &in_order_pool,
+        &ascending,
+        "device-A",
+        "device-peer",
+        &fault,
+    )
+    .await;
+    assert_eq!(
+        in_order.out_of_order, 0,
+        "records emitted by collect_ops_for_peer's ORDER BY are ascending; \
+         nothing here violates the precondition"
+    );
+    let out_of_order_after_in_order = audit_ingest_metrics::out_of_order_records();
+    let in_order_heads = get_local_heads(&in_order_pool).await.unwrap();
+    assert_eq!(
+        reoffered_seqs(&ascending, &in_order_heads, device).await,
+        vec![7, 8, 9, 10],
+        "in ascending order the frontier stops below the fault and the peer \
+         re-offers the whole tail next session (#3325)"
+    );
+
+    // ── shuffled: same records, same fault, permanent hole ──
+    let (shuffled_pool, _d2) = test_pool().await;
+    let shuffled_outcome = crate::sync_protocol::ingest_replicated_batch_with_fault(
+        &shuffled_pool,
+        &shuffled,
+        "device-A",
+        "device-peer",
+        &fault,
+    )
+    .await;
+
+    // seq 10 lands first and lifts MAX(seq) to 10; every later record is below
+    // it, so all four are precondition violations.
+    assert_eq!(
+        shuffled_outcome.out_of_order, 4,
+        "seq 6, 7, 8 and 9 each arrived below the seq 10 already presented for \
+         this device — the check must report every one of them"
+    );
+    assert!(
+        audit_ingest_metrics::out_of_order_records() - out_of_order_after_in_order >= 4,
+        "#3726: the violations must reach the process-global counter behind \
+         StatusInfo::audit_ingest_out_of_order, not just the local outcome. \
+         Measured from AFTER the in-order run, whose own `out_of_order == 0` \
+         above is this test's evidence that a clean batch reports nothing — an \
+         equality on the global counter would instead be a bet that no other \
+         test in the binary ran in between"
+    );
+
+    let shuffled_heads = get_local_heads(&shuffled_pool).await.unwrap();
+    let z = shuffled_heads
+        .iter()
+        .find(|h| h.device_id == device)
+        .expect("device frontier");
+    assert_eq!(
+        z.seq, 10,
+        "#3726: seq 10 was ingested BEFORE seq 7 faulted, so the frontier we \
+         advertise already sits above the record we failed to write — deferring \
+         seq 8 and 9 afterwards cannot claw that back"
+    );
+    assert_eq!(
+        reoffered_seqs(&shuffled, &shuffled_heads, device).await,
+        Vec::<i64>::new(),
+        "#3726: with the batch reordered, the peer ships nothing at all next \
+         session — seq 7, 8 and 9 are a permanent hole in this device's \
+         replicated history, which is exactly what ingest_replicated_batch \
+         exists to prevent and what its ascending-seq precondition buys"
+    );
+}
+
+// ── #3727 — a transient failure that never clears ──
+
+/// #3727 — `AppError::Database` is classified as transient unconditionally, so
+/// a failure that will never clear (full disk, read-only mount, corrupt
+/// `op_log` page) turns the defer policy into a permanent stall: every session
+/// the peer re-ships the device's whole tail, the first record faults
+/// identically, the rest are deferred, and nothing lands. The pull still
+/// reports success.
+///
+/// This does not change that classification — rejecting a record because the
+/// disk was briefly full would convert a recoverable stall into the permanent
+/// gap #3325 exists to avoid. It makes the condition *observable*: the run of
+/// consecutive stalls, not the single deferral, is the signal, and it is now
+/// carried on a process-global aggregate surfaced through `StatusInfo`.
+#[tokio::test]
+async fn a_never_clearing_transient_failure_shows_up_as_a_consecutive_stall_3727() {
+    use crate::sync_protocol::audit_ingest_metrics;
+
+    let device = "device-Z-3727";
+    let records: Vec<OpTransfer> = (6..=10).map(|s| foreign_op_transfer(device, s)).collect();
+    // A `Database` error that is emphatically NOT a busy writer.
+    let disk_full = || {
+        agaric_core::error::AppError::Database(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::StorageFull,
+            "database or disk is full",
+        )))
+    };
+    let fault = |r: &OpTransfer| (r.seq == 6).then_some(disk_full());
+
+    let deferred_before = audit_ingest_metrics::deferred_records();
+    let stalls_before = audit_ingest_metrics::stalls();
+
+    // Each iteration is one pull session: the peer re-ships the whole tail
+    // because our frontier for this device never advanced.
+    for session in 1..=audit_ingest_metrics::PERSISTENT_STALL_BATCHES {
+        let (pool, _dir) = test_pool().await;
+        let outcome = crate::sync_protocol::ingest_replicated_batch_with_fault(
+            &pool,
+            &records,
+            "device-A",
+            "device-peer",
+            &fault,
+        )
+        .await;
+        assert_eq!(
+            (outcome.ingested, outcome.deferred, outcome.rejected),
+            (0, 5, 0),
+            "session {session}: the first record faults and the rest are \
+             deferred, so nothing lands — this is the stall, and it repeats"
+        );
+        assert!(
+            get_local_heads(&pool)
+                .await
+                .unwrap()
+                .iter()
+                .all(|h| h.device_id != device),
+            "session {session}: with nothing written the device has no frontier \
+             at all, so the peer re-ships the identical tail next session"
+        );
+    }
+
+    // Lower bounds, not equalities: these counters are process-global and
+    // monotonic, and other tests in this binary stall devices of their own
+    // (`transient_ingest_failure_defers_the_rest_of_that_devices_chain_3325` is
+    // one). The `snapshot_fallback_metrics` precedent this module follows
+    // asserts `>=` for exactly that reason, and an equality here would be a bet
+    // on nextest's per-test process isolation rather than a property of the
+    // code (#3740).
+    let deferred_delta = audit_ingest_metrics::deferred_records() - deferred_before;
+    assert!(
+        deferred_delta >= u64::from(audit_ingest_metrics::PERSISTENT_STALL_BATCHES) * 5,
+        "#3727: every deferred record must reach the process-global counter \
+         behind StatusInfo::audit_ingest_deferred — the wasted re-download is \
+         proportional to it and was previously visible only as a warn! line \
+         (delta was {deferred_delta})"
+    );
+    assert!(
+        audit_ingest_metrics::stalls() - stalls_before
+            >= u64::from(audit_ingest_metrics::PERSISTENT_STALL_BATCHES),
+        "one stall event per batch per stalled device"
+    );
+
+    // Keyed by THIS device rather than read off the process-global `last()`,
+    // which any concurrently running test can overwrite between the act and the
+    // assertion (#3740).
+    let stall = audit_ingest_metrics::stall_run(device)
+        .expect("a stall run must be recorded for this device");
+    assert_eq!(stall.op_device_id, device);
+    assert_eq!(stall.op_seq, 6, "the seq that faulted");
+    assert_eq!(
+        stall.consecutive,
+        audit_ingest_metrics::PERSISTENT_STALL_BATCHES,
+        "#3727: the run is the signal. A single deferral is an ordinary busy \
+         writer; {} in a row with nothing landing in between is a condition \
+         that will not clear on its own, and this is the only place that \
+         distinction is recorded",
+        audit_ingest_metrics::PERSISTENT_STALL_BATCHES
+    );
+    assert!(
+        stall.error.contains("full"),
+        "the classified-as-transient error must travel with the stall for \
+         triage; got {:?}",
+        stall.error
+    );
+
+    // A session in which the device makes progress retires the run, so an
+    // ordinary busy writer can never accumulate its way to the threshold.
+    let (healthy_pool, _healthy_dir) = test_pool().await;
+    let healthy = crate::sync_protocol::ingest_replicated_batch(
+        &healthy_pool,
+        &records,
+        "device-A",
+        "device-peer",
+    )
+    .await;
+    assert_eq!(healthy.ingested, 5, "the disk cleared; the tail lands");
+
+    let (relapse_pool, _relapse_dir) = test_pool().await;
+    crate::sync_protocol::ingest_replicated_batch_with_fault(
+        &relapse_pool,
+        &records,
+        "device-A",
+        "device-peer",
+        &fault,
+    )
+    .await;
+    assert_eq!(
+        audit_ingest_metrics::stall_run(device)
+            .expect("a stall run must be recorded for this device")
+            .consecutive,
+        1,
+        "progress must reset the consecutive count, or a device that stalls \
+         once a month eventually reads as permanently stalled"
+    );
+}
+
+/// #3740 — the persistent-stall `error!` asserts the device has been "deferred
+/// N batches running without landing anything". It must not be able to say that
+/// about a device that just landed records.
+///
+/// The reset ran only for `seen.difference(&stalled)`, so a device that ingests
+/// part of its chain and then hits `SQLITE_BUSY` mid-chain kept its whole run:
+/// three such sessions in a row — with the frontier advancing every single time,
+/// the tail shrinking every single time, and nothing at all wrong — fired the
+/// escalation that tells an operator to go looking for a full disk, a read-only
+/// mount or a corrupt page. A diagnostic that states something false about the
+/// system is worse than no diagnostic.
+#[tokio::test]
+async fn a_device_that_lands_before_stalling_is_not_a_persistent_stall_3740() {
+    use crate::sync_protocol::audit_ingest_metrics;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let device = "device-Z-3740";
+    let records: Vec<OpTransfer> = (6..=10).map(|s| foreign_op_transfer(device, s)).collect();
+    let busy = || {
+        agaric_core::error::AppError::Database(sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "database is locked",
+        )))
+    };
+
+    // Build a run right up to — but not over — the escalation threshold, the
+    // honest way: sessions in which the FIRST record faults, so nothing lands.
+    let stuck = |r: &OpTransfer| (r.seq == 6).then_some(busy());
+    for _ in 1..audit_ingest_metrics::PERSISTENT_STALL_BATCHES {
+        let (pool, _dir) = test_pool().await;
+        crate::sync_protocol::ingest_replicated_batch_with_fault(
+            &pool,
+            &records,
+            "device-A",
+            "device-peer",
+            &stuck,
+        )
+        .await;
+    }
+    assert_eq!(
+        audit_ingest_metrics::stall_run(device)
+            .expect("the run must exist")
+            .consecutive,
+        audit_ingest_metrics::PERSISTENT_STALL_BATCHES - 1,
+        "precondition: one more stall with nothing landing would escalate"
+    );
+
+    // Now a session that is NOT the #3727 condition: two records land, the
+    // third faults. The frontier moves; next session the peer ships a shorter
+    // tail. Nothing here is stuck.
+    let writer = SpanBufWriter::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            "sync_protocol::audit_ingest=error",
+        ))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let guard = tracing::subscriber::set_default(subscriber);
+
+    let (pool, _dir) = test_pool().await;
+    let outcome = crate::sync_protocol::ingest_replicated_batch_with_fault(
+        &pool,
+        &records,
+        "device-A",
+        "device-peer",
+        &|r: &OpTransfer| (r.seq == 8).then_some(busy()),
+    )
+    .await;
+    drop(guard);
+
+    assert_eq!(
+        (outcome.ingested, outcome.deferred),
+        (2, 3),
+        "seq 6 and 7 land, seq 8 faults and 9/10 are deferred behind it"
+    );
+    let heads = get_local_heads(&pool).await.unwrap();
+    assert_eq!(
+        heads.iter().find(|h| h.device_id == device).map(|h| h.seq),
+        Some(7),
+        "the frontier advanced — this device is demonstrably landing records"
+    );
+
+    assert_eq!(
+        audit_ingest_metrics::stall_run(device)
+            .expect("the mid-chain stall is still a stall")
+            .consecutive,
+        1,
+        "a device whose frontier moved in this very batch starts a fresh run: \
+         the count means CONSECUTIVE batches that landed nothing, and this batch \
+         landed something"
+    );
+
+    let logged = writer.contents();
+    assert!(
+        !logged.contains("running without landing anything"),
+        "the persistent-stall escalation must not fire for a device that landed \
+         two records in the same batch — that is the claim being made, and it is \
+         false. Captured: {logged}"
+    );
+}
+
+/// #3740 — the out-of-order detector reports once per device per batch, not
+/// once per record.
+///
+/// What it detects is a reordered or parallelised batch: thousands of records
+/// over a handful of devices, all of them violations. One long `error!` line
+/// each buries the finding in its own output — `record_stall` shows the opposite
+/// restraint by staying at `debug!` below its threshold. The count travels in
+/// the single line instead, and the process-global counter still moves once per
+/// record so nothing is lost by throttling the log.
+#[tokio::test]
+async fn out_of_order_records_are_reported_once_per_device_per_batch_3740() {
+    use crate::sync_protocol::audit_ingest_metrics;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let device = "device-Z-3740-ooo";
+    let shuffled: Vec<OpTransfer> = [10, 6, 7, 8, 9]
+        .iter()
+        .map(|&s| foreign_op_transfer(device, s))
+        .collect();
+
+    let writer = SpanBufWriter::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            "sync_protocol::audit_ingest=error",
+        ))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false),
+        );
+    let guard = tracing::subscriber::set_default(subscriber);
+
+    let before = audit_ingest_metrics::out_of_order_records();
+    let (pool, _dir) = test_pool().await;
+    let outcome =
+        crate::sync_protocol::ingest_replicated_batch(&pool, &shuffled, "device-A", "device-peer")
+            .await;
+    drop(guard);
+
+    assert_eq!(
+        outcome.out_of_order, 4,
+        "seq 6, 7, 8 and 9 each arrived below the seq 10 already presented"
+    );
+    assert!(
+        audit_ingest_metrics::out_of_order_records() - before >= 4,
+        "throttling the log must not throttle the metric"
+    );
+
+    let logged = writer.contents();
+    let lines = logged.matches("#3726:").count();
+    assert_eq!(
+        lines, 1,
+        "four violations on one device must produce ONE summarised line, not \
+         four. Captured: {logged}"
+    );
+    assert!(
+        logged.contains("count=4"),
+        "the summarised line must carry how many records violated, or \
+         throttling loses the magnitude. Captured: {logged}"
+    );
+}
+
+// ── #4085 — initiator-side SyncEvent identity ───────────────────────
+
+/// Every emitted [`SyncEvent`] clones `session.remote_device_id`. That field
+/// used to be populated only by the `HeadExchange` **arm** — and `HeadExchange`
+/// is initiator-*sent* / responder-*received* — so on the initiator it stayed
+/// `String::new()` for the whole session, until the completion backfill in
+/// `resolve_remote_peer_id`. Result: every `Progress` and every early `Error`
+/// an initiator emitted carried `remote_device_id: ""`, and any UI keyed on
+/// that field mis-attributed or dropped initiator-side progress and failure.
+///
+/// `with_expected_remote_id` now seeds the field from the identity the daemon
+/// already dialled, so the *first* event carries a real id. This asserts the
+/// first event specifically — a test that only checked the terminal event
+/// would have passed before the fix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initiator_events_carry_the_peer_id_from_the_first_event_4085() {
+    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use std::sync::Arc;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    let sink = Arc::new(RecordingEventSink::new());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("remote-dev".into())
+    .with_event_sink(Box::new(sink.clone()));
+
+    // `start()` is the initiator's very first act and emits the session's
+    // first Progress event — before any inbound message exists.
+    let _head_exchange = orch.start().await.unwrap();
+
+    let events = sink.events();
+    let first = events.first().expect("start() must emit a Progress event");
+    match first {
+        SyncEvent::Progress {
+            remote_device_id, ..
+        } => assert_eq!(
+            remote_device_id, "remote-dev",
+            "#4085: the FIRST initiator event must carry the real peer id, not \
+             the empty string it used to carry until session completion"
+        ),
+        other => panic!("expected the first event to be Progress, got {other:?}"),
+    }
+
+    // An error arriving before completion must be attributable too — this is
+    // the "Sync failed" event the peer-keyed UI reads.
+    let _ = orch
+        .handle_message(SyncMessage::Error {
+            message: "peer went away".into(),
+        })
+        .await
+        .unwrap();
+
+    let events = sink.events();
+    let err_peer = events
+        .iter()
+        .find_map(|e| match e {
+            SyncEvent::Error {
+                remote_device_id, ..
+            } => Some(remote_device_id.clone()),
+            _ => None,
+        })
+        .expect("an Error event must be emitted");
+    assert_eq!(
+        err_peer, "remote-dev",
+        "#4085: an initiator-side Error must be attributable to a peer"
+    );
+
+    assert!(
+        events.iter().all(
+            |e| !matches!(e, SyncEvent::Progress { remote_device_id, .. }
+                | SyncEvent::Error { remote_device_id, .. } if remote_device_id.is_empty())
+        ),
+        "no emitted event may carry an empty remote_device_id: {events:?}"
+    );
+
+    materializer.shutdown();
+}
+
+/// The seeding must not change *resolution*, only its timing. A cert-less
+/// session (no `expected_remote_id` — the in-memory test shape) still learns
+/// the peer from the advertised heads, and a session with neither still
+/// refuses to key `peer_refs` on an empty `peer_id`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn certless_session_still_resolves_the_peer_from_heads_4085() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+
+    orch.handle_message(SyncMessage::HeadExchange {
+        heads: vec![DeviceHead {
+            device_id: "heads-dev".into(),
+            seq: 1,
+            hash: "abc".into(),
+        }],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
+        op_log_batch_chunked: false,
+        pairing_proof: None,
+        device_name: None,
+        sender_device_id: None,
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        orch.session().remote_device_id,
+        "heads-dev",
+        "with no expected_remote_id the advertised heads are still the source \
+         of the peer identity"
+    );
+
+    materializer.shutdown();
+}
+
+// ── #4298 device name on the wire ───────────────────────────────────
+
+/// The name a device advertises survives a JSON round-trip through
+/// `HeadExchange`, which is the whole mechanism: before #4298 the field did not
+/// exist and every paired peer rendered as `truncateId(peer_id)`.
+#[test]
+fn head_exchange_round_trips_the_device_name_4298() {
+    let msg = SyncMessage::HeadExchange {
+        heads: vec![],
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: true,
+        op_log_batch_chunked: true,
+        pairing_proof: None,
+        device_name: Some("javier-thinkpad".into()),
+        sender_device_id: None,
+    };
+
+    let json = serde_json::to_string(&msg).expect("HeadExchange must serialize");
+    let back: SyncMessage = serde_json::from_str(&json).expect("HeadExchange must deserialize");
+
+    match back {
+        SyncMessage::HeadExchange { device_name, .. } => assert_eq!(
+            device_name.as_deref(),
+            Some("javier-thinkpad"),
+            "the advertised device name must survive the wire verbatim"
+        ),
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+}
+
+/// `clamp_device_name` is applied on send AND on receive, and both directions
+/// are the same function — a peer is untrusted, so the receiving side re-applies
+/// every bound rather than assuming the sender applied it.
+///
+/// 64 matches `MAX_RENAME_LENGTH` in `src/components/dialogs/RenameDialog.tsx`,
+/// so a peer-supplied name occupies exactly the space a user-typed one does.
+#[test]
+fn device_name_is_clamped_to_sixty_four_chars_4298() {
+    assert_eq!(
+        crate::sync_protocol::MAX_DEVICE_NAME_CHARS,
+        64,
+        "the wire cap must stay equal to the frontend's MAX_RENAME_LENGTH; a \
+         peer-supplied name and a user-typed one have to fit the same row"
+    );
+
+    let over = "n".repeat(200);
+    let clamped = clamp_device_name(&over).expect("a long name is still a name");
+    assert_eq!(
+        clamped.chars().count(),
+        64,
+        "an over-long name must be truncated, not rejected — dropping it entirely \
+         would send the device list back to rendering a UUID"
+    );
+    assert_eq!(clamped, "n".repeat(64));
+
+    // Exactly at the bound is untouched: `.chars().take(64)` on a 64-char
+    // name takes every character, so nothing is actually truncated.
+    let exact = "x".repeat(64);
+    assert_eq!(
+        clamp_device_name(&exact).as_deref(),
+        Some(exact.as_str()),
+        "a name exactly at the cap must pass through unchanged"
+    );
+
+    // Counted in CHARACTERS, not bytes. A byte cap would truncate a CJK name to
+    // a third of the visible length it is allowed.
+    let cjk = "字".repeat(100);
+    let clamped_cjk = clamp_device_name(&cjk).expect("a CJK name is a name");
+    assert_eq!(
+        clamped_cjk.chars().count(),
+        64,
+        "the cap counts Unicode scalar values, so the bound is on what is rendered \
+         rather than on the encoding"
+    );
+}
+
+/// The trim happens before the take, so a name whose 64th surviving scalar
+/// lands on whitespace (the rest of that word is sliced off by the cap) must
+/// not keep a trailing space — that space would otherwise ride along into
+/// storage and the wire on every clamped-length name.
+#[test]
+fn clamp_device_name_has_no_trailing_space_when_the_cap_lands_on_whitespace_4298() {
+    // 63 non-space chars, then a space at index 63 (the 64th surviving
+    // scalar), then more name that the cap slices off entirely.
+    let name: String = "n".repeat(63) + " " + &"m".repeat(20);
+    let clamped = clamp_device_name(&name).expect("a long name is still a name");
+    assert_eq!(
+        clamped,
+        "n".repeat(63),
+        "the trailing space `.take(64)` lands on must not survive into the clamped name"
+    );
+}
+
+/// Empty, blank and whitespace-only names are all *no name*, so the receiver
+/// never has to distinguish "sent nothing" from "sent spaces".
+///
+/// This is what keeps a stored `NULL` meaningful: the display precedence falls
+/// through to the next level on `NULL`, and an empty string persisted instead
+/// would render a paired device as a blank row.
+#[test]
+fn blank_device_names_normalise_to_none_4298() {
+    assert_eq!(clamp_device_name(""), None, "an empty name is no name");
+    assert_eq!(
+        clamp_device_name("   \t\n "),
+        None,
+        "a whitespace-only name is no name"
+    );
+    assert_eq!(
+        clamp_device_name("  padded  ").as_deref(),
+        Some("padded"),
+        "surrounding whitespace is trimmed rather than making the name invalid"
+    );
+}
+
+/// A device name is the one string in this app that arrives from an untrusted
+/// remote and is rendered verbatim — in the device-list row, the sync-failure
+/// toast, the unpair dialog and the rename/address `aria-label`s. React escapes
+/// it, so this is not an XSS question; it is a SPOOFING one. `U+202E`
+/// RIGHT-TO-LEFT OVERRIDE reverses the display order of everything after it,
+/// the isolates do the same with a scope, and a newline breaks the name across
+/// the row it is supposed to occupy. All of them let a peer name itself such
+/// that the row reads as some other device.
+///
+/// Stripped in `clamp_device_name`, which is the shared clamp: one change
+/// covers both the send side and the load-bearing receive side.
+#[test]
+fn device_names_are_stripped_of_control_and_bidi_characters_4298() {
+    assert_eq!(
+        clamp_device_name("Javier\u{202E} desk").as_deref(),
+        Some("Javier desk"),
+        "RIGHT-TO-LEFT OVERRIDE must not survive: it reverses the display order of \
+         everything after it, so the row can be made to read as another device"
+    );
+    assert_eq!(
+        clamp_device_name("\u{2066}Javier\u{2069} laptop").as_deref(),
+        Some("Javier laptop"),
+        "the bidi isolates are the same attack with a scope"
+    );
+    assert_eq!(
+        clamp_device_name("left\u{200E}right\u{200F}mark").as_deref(),
+        Some("leftrightmark"),
+        "LRM/RLM are invisible and reorder what surrounds them"
+    );
+    assert_eq!(
+        clamp_device_name("laptop\u{061C}arabic").as_deref(),
+        Some("laptoparabic"),
+        "ARABIC LETTER MARK is the same class of invisible directional control"
+    );
+
+    assert_eq!(
+        clamp_device_name("Javier's\nLaptop").as_deref(),
+        Some("Javier'sLaptop"),
+        "a newline breaks the name across the single row it is rendered in"
+    );
+    assert_eq!(
+        clamp_device_name("bell\u{7}tab\tnul\u{0}").as_deref(),
+        Some("belltabnul"),
+        "C0 controls render as nothing or as a replacement box"
+    );
+    assert_eq!(
+        clamp_device_name("c1\u{85}next-line").as_deref(),
+        Some("c1next-line"),
+        "`char::is_control` covers C1 as well, and so must this"
+    );
+
+    assert_eq!(
+        clamp_device_name("laptop\u{200B}\u{200C}\u{200D}\u{FEFF}").as_deref(),
+        Some("laptop"),
+        "the zero-width characters have no width, so two peers could otherwise hold \
+         names that are visually identical and textually distinct"
+    );
+
+    // The strip runs BEFORE the trim, so whitespace the format characters were
+    // fencing is still removed rather than persisted as a leading space.
+    assert_eq!(
+        clamp_device_name("\u{202E}  Javier's Laptop  \u{202C}").as_deref(),
+        Some("Javier's Laptop"),
+        "stripping must expose the surrounding whitespace to the trim"
+    );
+
+    // …and a name that is ONLY hostile characters is not a name at all, which
+    // must fall through to `None` rather than persisting an empty string: the
+    // display precedence keys on NULL, and an empty string renders a blank row.
+    assert_eq!(
+        clamp_device_name("\u{202E}\u{200B}\n\t\u{FEFF}"),
+        None,
+        "a name with nothing visible left in it is no name"
+    );
+
+    // The cap counts what survives the strip: 64 scalars of actual name, not 64
+    // scalars of invisible padding.
+    let padded_over_the_cap: String = "\u{200B}".repeat(100) + &"n".repeat(80);
+    assert_eq!(
+        clamp_device_name(&padded_over_the_cap).as_deref(),
+        Some("n".repeat(64).as_str()),
+        "invisible characters must not consume the budget a visible name is owed"
+    );
+
+    // A name that needs no stripping is untouched, including non-ASCII: this is
+    // a filter on format/control characters, not on scripts.
+    assert_eq!(
+        clamp_device_name("Javier's MacBook Pro — 字 — Ünïcödé").as_deref(),
+        Some("Javier's MacBook Pro — 字 — Ünïcödé"),
+        "an ordinary name, in any script, passes through unchanged"
+    );
+
+    // General_Category=Cf (Format) code points the earlier by-name list did not
+    // enumerate, but which are exactly the same invisible-format class as the
+    // zero-width characters above.
+    assert_eq!(
+        clamp_device_name("word\u{2060}joiner").as_deref(),
+        Some("wordjoiner"),
+        "U+2060 WORD JOINER is zero-width and General_Category=Cf"
+    );
+    assert_eq!(
+        clamp_device_name("soft\u{00AD}hyphen").as_deref(),
+        Some("softhyphen"),
+        "U+00AD SOFT HYPHEN is General_Category=Cf: it renders as nothing unless a \
+         line break lands on it"
+    );
+    assert_eq!(
+        clamp_device_name("tag\u{E0001}\u{E0020}space\u{E007F}end").as_deref(),
+        Some("tagspaceend"),
+        "the Tags block (U+E0001 LANGUAGE TAG, U+E0020..U+E007F TAG characters) is \
+         General_Category=Cf and renders nothing in a font without Tags support"
+    );
+
+    // Blank-rendering code points that fall OUTSIDE Cf, so a wholesale
+    // General_Category=Cf strip does not catch them by itself.
+    assert_eq!(
+        clamp_device_name("laptop\u{3164}filler").as_deref(),
+        Some("laptopfiller"),
+        "U+3164 HANGUL FILLER renders blank but is General_Category=Lo \
+         (Other_Letter), not Cf — it must be stripped by name"
+    );
+    assert_eq!(
+        clamp_device_name("reserved\u{E0000}tag").as_deref(),
+        Some("reservedtag"),
+        "U+E0000 is the unassigned (Cn) member of the Tags block — stripped by \
+         name alongside its Cf siblings so the whole named block is covered"
+    );
+}
+
+/// The sending half of the clamp: `SyncOrchestrator::start` advertises what
+/// `app_settings` holds, bounded — this device must not be the one that puts an
+/// unreasonable value on the wire, even though the receiver re-clamps anyway.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_start_advertises_the_clamped_local_device_name_4298() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // No name published yet: the field must be absent rather than empty.
+    let mut orchestrator = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    match orchestrator.start().await.unwrap() {
+        SyncMessage::HeadExchange { device_name, .. } => assert_eq!(
+            device_name, None,
+            "with no published local name the field must be None, so the peer keeps \
+             whatever name it already had"
+        ),
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+
+    agaric_store::peer_refs::set_local_device_name(&pool, &"h".repeat(300))
+        .await
+        .unwrap();
+
+    let mut orchestrator = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    match orchestrator.start().await.unwrap() {
+        SyncMessage::HeadExchange { device_name, .. } => {
+            let name = device_name.expect("a published local name must be advertised");
+            assert_eq!(
+                name.chars().count(),
+                64,
+                "start() must clamp on send; the store keeps the OS's answer verbatim \
+                 and the wire applies the bound"
+            );
+        }
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+
+    materializer.shutdown();
+}
+
+// ── #4380: the joiner states its own device id ──────────────────────
+//
+// `get_local_heads` is `ORDER BY d.device_id`, and since #2481 a peer advertises
+// the frontier of every device it holds — so "the first non-self head" is *the
+// lowest-sorting device id in the peer's op log*, which is the peer's own id
+// only by coincidence. These tests cover the wire field that replaces the
+// coincidence, and its normalisation. The bind that used to make the
+// coincidence permanent is covered in `sync_daemon::tests` (#4380), because it
+// needs the real admission path.
+
+/// The normaliser accepts a real device id, trims, and **rejects** — never
+/// truncates — anything it cannot use whole.
+///
+/// The rejection half is the load-bearing one and is the reason this is not
+/// `clamp_device_name`. A truncated *name* is still recognisably the same name;
+/// a truncated *id* is a different id, naming a different `peer_refs` row. A
+/// clamp here would manufacture the exact mis-bind #4380 exists to close, out of
+/// a value that had at least announced itself as malformed.
+#[test]
+fn accept_stated_device_id_rejects_rather_than_truncating_4380() {
+    let real = "e3d48f0a-45a0-4c9e-9a4b-1f2e3d4c5b6a";
+    assert_eq!(
+        accept_stated_device_id(real).as_deref(),
+        Some(real),
+        "a canonical v4 UUID — what `get_or_create_device_id` produces — must survive"
+    );
+    assert_eq!(
+        accept_stated_device_id("  JOIN4380 \n").as_deref(),
+        Some("JOIN4380"),
+        "surrounding whitespace is not part of an id"
+    );
+
+    assert_eq!(accept_stated_device_id(""), None, "an empty id is no id");
+    assert_eq!(
+        accept_stated_device_id("   \t "),
+        None,
+        "a whitespace-only id is no id"
+    );
+
+    // The cap, from both sides, so this pins a boundary rather than "long is
+    // refused". Without the accepted arm, a normaliser that refused everything
+    // would pass the refused arm.
+    let at_cap = "d".repeat(MAX_DEVICE_ID_CHARS);
+    assert_eq!(
+        accept_stated_device_id(&at_cap).as_deref(),
+        Some(at_cap.as_str()),
+        "exactly at the cap is usable whole, so it is accepted"
+    );
+    let over_cap = "d".repeat(MAX_DEVICE_ID_CHARS + 1);
+    assert_eq!(
+        accept_stated_device_id(&over_cap),
+        None,
+        "one over the cap must be REFUSED, not shortened to the cap: a shortened id \
+         is a different id, and binding a peer's key to it is precisely the permanent \
+         mis-bind this issue is about"
+    );
+
+    // Display-hostile scalars, for the same reason `clamp_device_name` strips
+    // them: an id reaches the device list too. Stripping is not an option here
+    // (see above), so the whole value is refused.
+    assert_eq!(
+        accept_stated_device_id("JOIN\u{202E}4380"),
+        None,
+        "a bidi override inside an id must refuse the id, not silently remove it and \
+         bind the remainder"
+    );
+    assert_eq!(
+        accept_stated_device_id("JOIN\u{0000}4380"),
+        None,
+        "…and so must a control character"
+    );
+}
+
+/// `start()` states this device's own id, which is the only place it is known
+/// for certain.
+///
+/// The control is the *value*: asserting merely that the field is `Some`
+/// would pass for an orchestrator that stated the peer's id, the empty string,
+/// or a constant. The id under test is deliberately not one that could be
+/// derived from the (empty) op log, so the only way to produce it is to have
+/// read `self.device_id`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_start_states_this_devices_own_id_4380() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+
+    // An op authored by a LOWER-sorting device, and none of our own: exactly the
+    // #4380 shape, and it makes `heads` disagree with the stated id.
+    append_local_op_at(&pool, "AAAA-foreign", test_create_payload("B1"), FIXED_TS)
+        .await
+        .unwrap();
+
+    let mut orchestrator = SyncOrchestrator::new(
+        pool.clone(),
+        "MMMM-local".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    match orchestrator.start().await.unwrap() {
+        SyncMessage::HeadExchange {
+            sender_device_id,
+            heads,
+            ..
+        } => {
+            assert_eq!(
+                sender_device_id.as_deref(),
+                Some("MMMM-local"),
+                "the sender must state its OWN device id"
+            );
+            assert_eq!(
+                heads
+                    .iter()
+                    .map(|h| h.device_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["AAAA-foreign"],
+                "fixture control: the advertised heads name only the FOREIGN device, so \
+                 a `sender_device_id` derived from them could not have produced the \
+                 assertion above"
+            );
+        }
+        other => panic!("expected HeadExchange, got {other:?}"),
+    }
+
+    materializer.shutdown();
+}
+
+/// The receiver prefers the stated id over the lowest-sorting head, and falls
+/// back to the head only for a peer too old to state one.
+///
+/// Both arms run against the SAME `heads`, in which the foreign device sorts
+/// first — so the two results differ only by the field under test, and the
+/// legacy arm doubles as a demonstration of the defect: it is what every peer
+/// got before this field existed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn head_exchange_identifies_the_peer_by_its_stated_id_4380() {
+    async fn identified_as(sender_device_id: Option<&str>) -> String {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        // No `with_expected_remote_id`: this is the responder's pairing branch,
+        // where no bound row exists to resolve the key against and the claim is
+        // all there is.
+        let mut orch = SyncOrchestrator::new(
+            pool,
+            "HOST-4380".into(),
+            std::sync::Arc::new(materializer.clone()),
+        );
+        orch.handle_message(SyncMessage::HeadExchange {
+            // Ordered as `get_local_heads` emits them: `ORDER BY d.device_id`.
+            heads: vec![
+                DeviceHead {
+                    device_id: "AAAA-foreign".into(),
+                    seq: 1,
+                    hash: "h".into(),
+                },
+                DeviceHead {
+                    device_id: "MMMM-joiner".into(),
+                    seq: 1,
+                    hash: "h".into(),
+                },
+            ],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            sender_device_id: sender_device_id.map(str::to_owned),
+        })
+        .await
+        .unwrap();
+        let id = orch.session().remote_device_id.clone();
+        materializer.shutdown();
+        id
+    }
+
+    assert_eq!(
+        identified_as(Some("MMMM-joiner")).await,
+        "MMMM-joiner",
+        "#4380: the peer said which device it is, and it is NOT the one its heads sort \
+         first — the stated id must win"
+    );
+    assert_eq!(
+        identified_as(None).await,
+        "AAAA-foreign",
+        "the pre-#4380 behaviour, preserved for a peer that states nothing: the \
+         lowest-sorting head. This arm is the defect, kept as a control — the assertion \
+         above is only meaningful because this one shows what the same frame yields \
+         without the field"
+    );
+    assert_eq!(
+        identified_as(Some("   ")).await,
+        "AAAA-foreign",
+        "an unusable stated id is not a stated id: it falls back rather than keying the \
+         session on whitespace"
+    );
+    assert_eq!(
+        identified_as(Some("HOST-4380")).await,
+        "AAAA-foreign",
+        "and a peer stating OUR OWN id is refused the claim here too. The daemon rejects \
+         that session as `Rejection::Self_` before this core sees it; this pins the \
+         cert-less path, where taking it verbatim would key bookkeeping on our own row"
+    );
+}
+
+// ── #4451: the heads-derived fallback is gated like the stated id ────
+//
+// #4380 gated `sender_device_id` and left `heads_derived_id` beside it taking
+// `DeviceHead.device_id` verbatim off the wire. Both are unverified claims from
+// the same frame that end in the same places — a permanent `peer_refs.peer_id`
+// row, the device list, `SyncEvent::remote_device_id`, and `tracing` fields —
+// so the justification written for the new gate applied word for word to the
+// value next to it, which had none. `heads_derived_device_id` is now the single
+// definition, called by both the daemon (`server.rs`) and this core, so the two
+// interpreters cannot disagree about what a usable id is.
+
+/// The normaliser gates the fallback exactly as it gates the stated id, and an
+/// unusable first head yields "declined to identify itself" rather than the
+/// next head.
+#[test]
+fn heads_derived_device_id_gates_the_fallback_like_the_stated_id_4451() {
+    fn head(device_id: &str) -> DeviceHead {
+        DeviceHead {
+            device_id: device_id.to_owned(),
+            seq: 1,
+            hash: "h".into(),
+        }
+    }
+
+    // The accepted arm first: without it, a helper that refused everything
+    // would satisfy every refusal below while breaking legacy pairing outright.
+    assert_eq!(
+        heads_derived_device_id(&[head("HOST-4451"), head("MMMM-joiner")], "HOST-4451"),
+        "MMMM-joiner",
+        "the pre-#4380 rule is preserved: the FIRST non-self head, unchanged"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[head("HOST-4451")], "HOST-4451"),
+        "",
+        "a peer advertising only OUR head has not identified itself — `\"\"` is the \
+         value the callers already read as 'leave this session unbound'"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[], "HOST-4451"),
+        "",
+        "…and so has a peer with an empty op log (#778), which is legitimate"
+    );
+
+    // Each refusal is paired with the value it would have produced ungated, so
+    // the assertion is about the gate and not about the input being unusual.
+    let over_cap = "d".repeat(MAX_DEVICE_ID_CHARS + 1);
+    assert_eq!(
+        heads_derived_device_id(&[head(&over_cap)], "HOST-4451"),
+        "",
+        "#4451: an over-long head id must be REFUSED, not written to a `peer_refs` \
+         row `bind_endpoint_id` then refuses to re-point. This is the exact value \
+         `accept_stated_device_id` already refused one field away"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[head("JOIN\u{202E}4451")], "HOST-4451"),
+        "",
+        "a bidi override in a head id must be refused: this string reaches the device \
+         list, where it renders as a different device"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[head("JOIN\n2025-01-01 ERROR forged")], "HOST-4451"),
+        "",
+        "and a control character must be refused: the daemon logs this value as \
+         `peer_id = %…`, so a newline forges whole log lines — which the bug-report \
+         path then publishes into a public GitHub issue body (#4283)"
+    );
+
+    // Fail closed, do not search on. Which device a permanent bind names is not
+    // a thing to go looking for a passing candidate for.
+    assert_eq!(
+        heads_derived_device_id(&[head("BAD\u{202E}"), head("MMMM-joiner")], "HOST-4451"),
+        "",
+        "an unusable FIRST head must not fall through to the second: 'the first \
+         non-self head' is a statement about which device the peer is, and trying \
+         the next one answers a different question"
+    );
+
+    // The post-condition the name claims: the answer is NEVER our own id.
+    // `accept_stated_device_id` trims, so "not self" before normalisation and
+    // "not self" after are different questions — a head spelled with our id
+    // and surrounding whitespace passes the first and fails the second. Adding
+    // the normaliser without re-asking would let this helper return the
+    // caller's own id, which the pre-#4380 `find` could never do and which
+    // `server.rs` answers with `Rejection::Self_` — a refused session for a
+    // legacy peer, from a gate that was only supposed to tighten what gets
+    // written to a row.
+    assert_eq!(
+        heads_derived_device_id(&[head("  HOST-4451  ")], "HOST-4451"),
+        "",
+        "a head that is OUR id modulo whitespace must read as 'declined to \
+         identify itself', not as us: `accept_stated_device_id` trims, so the \
+         non-self test has to be asked again on the normalised value"
+    );
+    assert_eq!(
+        heads_derived_device_id(&[head("  HOST-4451  "), head("MMMM-joiner")], "HOST-4451"),
+        "",
+        "…and that refusal fails closed like every other one — it does not go \
+         looking at the next head either"
+    );
+
+    // Parity, stated as an assertion rather than as a comment: whatever the
+    // stated id accepts, the fallback accepts, and vice versa. This is the
+    // finding — the two gates must not drift.
+    for candidate in [
+        "e3d48f0a-45a0-4c9e-9a4b-1f2e3d4c5b6a",
+        "MMMM-joiner",
+        &over_cap,
+        "JOIN\u{202E}4451",
+        "JOIN\u{0000}4451",
+        "   ",
+        "",
+    ] {
+        assert_eq!(
+            heads_derived_device_id(&[head(candidate)], "HOST-4451"),
+            accept_stated_device_id(candidate).unwrap_or_default(),
+            "#4451: the fallback and the stated id must agree on {candidate:?}"
+        );
+    }
+}
+
+/// The same, driven through the interpreter rather than the helper: a legacy
+/// peer that states no id and advertises a hostile head must not have that
+/// string become the session's `remote_device_id` (#4451).
+///
+/// The pair matters — the hostile head is refused AND a well-formed one beside
+/// it is still accepted — because a fix that simply stopped deriving an id from
+/// heads would satisfy the refusal on its own while breaking every peer that
+/// predates `sender_device_id`, which is the only reason the fallback exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn head_exchange_refuses_a_display_hostile_head_derived_id_4451() {
+    async fn identified_by_heads(first_head: &str) -> String {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        let mut orch = SyncOrchestrator::new(
+            pool,
+            "HOST-4451".into(),
+            std::sync::Arc::new(materializer.clone()),
+        );
+        orch.handle_message(SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: first_head.to_owned(),
+                seq: 1,
+                hash: "h".into(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            op_log_batch_chunked: false,
+            pairing_proof: None,
+            device_name: None,
+            // The whole point: a peer too old to state an id, which is the only
+            // shape that reaches the fallback at all.
+            sender_device_id: None,
+        })
+        .await
+        .unwrap();
+        let id = orch.session().remote_device_id.clone();
+        materializer.shutdown();
+        id
+    }
+
+    assert_eq!(
+        identified_by_heads("MMMM-joiner").await,
+        "MMMM-joiner",
+        "control: a well-formed legacy peer must still be identified by its heads — \
+         the fallback is not being removed, only gated"
+    );
+    assert_eq!(
+        identified_by_heads("JOIN\u{202E}4451").await,
+        "",
+        "#4451: a display-hostile head id must not become the session's \
+         `remote_device_id`. It reaches `SyncEvent::remote_device_id`, the device \
+         list, and — through the daemon — a permanent `peer_refs.peer_id`"
+    );
+    assert_eq!(
+        identified_by_heads(&"d".repeat(MAX_DEVICE_ID_CHARS + 1)).await,
+        "",
+        "…and neither must an over-long one"
+    );
+}

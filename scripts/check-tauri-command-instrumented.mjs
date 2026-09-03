@@ -74,6 +74,15 @@ const ALLOWLIST = new Map([
     'sync_cmds.rs:get_bind_exposure_status',
     'clones a lock-guarded bind-exposure value; same shape as get_mdns_status (#3864)',
   ],
+  // ── Cross-module helpers that carry the span ──
+  [
+    'sync_cmds.rs:start_pairing',
+    'delegates to agaric_sync::pairing::start_pairing_armed, instrumented there (#3120)',
+  ],
+  [
+    'sync_cmds.rs:confirm_pairing',
+    'delegates to agaric_sync::pairing::confirm_pairing, instrumented there (#3120)',
+  ],
   [
     'sync_cmds.rs:get_os_network_block_status',
     'reads a process-global bool the JNI callback writes; no state, no I/O, nothing fallible (#4035)',

@@ -763,3 +763,9 @@ mod peer_lock_key_tests {
         }
     }
 }
+
+// #3120: repatriated from the app crate.
+#[cfg(test)]
+mod snapshot_transfer_tests;
+#[cfg(test)]
+mod tests;
