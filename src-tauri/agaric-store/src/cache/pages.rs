@@ -212,7 +212,7 @@ async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
 /// point for the dedicated `MaterializeTask::RebuildPagesCacheCounts`.
 ///
 /// Enqueue sites (as of #2042; the dispatch matrix in
-/// `src-tauri/src/materializer/dispatch.rs` is the single source of truth):
+/// `src-tauri/agaric-engine/src/materializer/dispatch.rs` is the single source of truth):
 /// this task is a member of all three global-rebuild sets there, so it runs
 /// on
 ///   - every local `delete` / `restore` / `purge` lifecycle op

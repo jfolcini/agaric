@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE materializer_retry_queue SET next_attempt_at = ?, attempts = CASE WHEN ? THEN 1 ELSE attempts END WHERE block_id = ? AND task_kind = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "dad0cb63812570a7d8feab883b4378ed258a4d882b6319e16daae8d3d74755cf"
+}

@@ -2562,7 +2562,7 @@ mod tests {
         let task = MaterializeTask::UpdateFtsBlock {
             block_id: "BLK_4208_STORM".into(),
         };
-        let past = crate::db::now_ms() - 5 * 60_000;
+        let past = agaric_store::db::now_ms() - 5 * 60_000;
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, last_error, next_attempt_at) \
