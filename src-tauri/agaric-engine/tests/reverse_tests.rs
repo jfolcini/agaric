@@ -1569,6 +1569,73 @@ async fn reverse_delete_attachment_legacy_payload_without_filename_falls_back_to
     }
 }
 
+/// #4655: the OTHER legacy shape — a PRE-C-3 `delete_attachment` op, written
+/// before the payload had an `fs_path` field either. `fs_path` is
+/// `#[serde(default)]`, so it deserializes to `""`, and that empty string is
+/// the same "nothing was recorded" sentinel the `filename` sibling above
+/// tests: the reverse must keep the original `add_attachment`'s path.
+///
+/// Adopting the empty string instead restores a row naming NO file, which the
+/// #3706 byte-existence guard then refuses — and every fixture in this suite
+/// carried a non-empty delete-time `fs_path`, so nothing distinguished
+/// "empty is a sentinel" from "empty is a path".
+#[tokio::test]
+async fn reverse_delete_attachment_pre_c3_payload_without_fs_path_keeps_the_add_path_4655() {
+    let (pool, _dir) = test_pool().await;
+    let add = append_op(
+        &pool,
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT_4655L"),
+            block_id: BlockId::test_id("BLK_4655L"),
+            mime_type: "image/png".into(),
+            filename: "photo.png".into(),
+            size_bytes: 2048,
+            fs_path: "attachments/photo.png".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+
+    // The pre-C-3 wire shape: neither `fs_path` nor `filename` present.
+    // `op_log` is append-only (migration 0036 rejects UPDATE), so the legacy
+    // shape has to be written at INSERT time, same as the #4262 sibling above.
+    let att_id = BlockId::test_id("ATT_4655L").as_str().to_owned();
+    let legacy_seq = add.seq + 1;
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, attachment_id) \
+         VALUES (?, ?, NULL, ?, 'delete_attachment', ?, ?, ?)",
+    )
+    .bind(TEST_DEVICE)
+    .bind(legacy_seq)
+    .bind("hash-legacy-4655")
+    .bind(format!(r#"{{"attachment_id":"{att_id}"}}"#))
+    .bind(FIXED_TS + 60_000)
+    .bind(&att_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    match compute_reverse(&pool, TEST_DEVICE, legacy_seq)
+        .await
+        .unwrap()
+    {
+        OpPayload::AddAttachment(p) => {
+            assert_eq!(
+                p.fs_path, "attachments/photo.png",
+                "#4655: a pre-C-3 delete op records no delete-time path, so the \
+                 reverse must keep the original add_attachment's — adopting the \
+                 empty default restores a row that names no file at all"
+            );
+            assert_eq!(
+                p.filename, "photo.png",
+                "#4262: same for the name, which this shape also lacks"
+            );
+        }
+        other => panic!("Expected AddAttachment, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn reverse_delete_attachment_no_add_op_returns_non_reversible() {
     let (pool, _dir) = test_pool().await;
@@ -1860,14 +1927,24 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     let mut create_refs: std::collections::HashMap<&str, (String, i64)> =
         std::collections::HashMap::new();
 
-    for bid in &blocks {
+    // #4656: every seeded prior is DISTINCT PER BLOCK — the create's
+    // `position`, the `priority` value, the `todo_state` value. The batch
+    // kernel reads each op-type's prefetched priors through a per-type cursor
+    // it advances itself, so a cursor that stops advancing (or advances
+    // wrongly) hands op #2 op #1's prior. With every block seeded at the same
+    // `position: Some(1)` / `"low"` / one state, the priors were
+    // INDISTINGUISHABLE and a stuck cursor produced the identical answer —
+    // the whole fixture could not see it.
+    let todo_states: [&str; 5] = ["TODO", "DOING", "DONE", "WAITING", "CANCELED"];
+    for (i, bid) in blocks.iter().enumerate() {
+        let seed_pos = i64::try_from(i + 1).expect("fixture index fits i64");
         let create_rec = append_op(
             &pool,
             OpPayload::CreateBlock(CreateBlockPayload {
                 block_id: BlockId::test_id(bid),
                 block_type: "content".into(),
                 parent_id: Some(BlockId::test_id("B3_ROOT")),
-                position: Some(1),
+                position: Some(seed_pos),
                 index: None,
                 content: format!("{bid} v0"),
             }),
@@ -1880,7 +1957,22 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             OpPayload::SetProperty(SetPropertyPayload {
                 block_id: BlockId::test_id(bid),
                 key: "priority".into(),
-                value_text: Some("low".into()),
+                value_text: Some(format!("p{i}")),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            next_ts(&mut ts),
+        )
+        .await;
+        // The prior the `delete_property` group below rolls back to.
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id(bid),
+                key: "todo_state".into(),
+                value_text: Some(todo_states[i].into()),
                 value_num: None,
                 value_date: None,
                 value_ref: None,
@@ -1990,6 +2082,29 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+            }),
+            next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(agaric_store::op::OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+    // #4656: `delete_property` — the fifth context-bearing op-type, and the
+    // one this oracle never covered. Its whole batch path was unexercised:
+    // deleting the `OpType::DeleteProperty` arm from the bucketing match, or
+    // breaking its result cursor, left the entire suite green.
+    //
+    // TWO of them, on different blocks whose `todo_state` priors DIFFER, so
+    // the cursor has to advance to answer both correctly.
+    let del_prop_base = op_refs.len();
+    for bid in &blocks[..2] {
+        let rec = append_op(
+            &pool,
+            OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: BlockId::test_id(bid),
+                key: "todo_state".into(),
             }),
             next_ts(&mut ts),
         )
@@ -2255,8 +2370,9 @@ async fn compute_reverse_batch_matches_per_op_loop() {
 
     assert_eq!(
         op_refs.len(),
-        23,
-        "test should batch exactly 23 ops (#4346 added the duplicate-id add)"
+        25,
+        "test should batch exactly 25 ops (#4346 added the duplicate-id add, \
+         #4656 the two delete_property ops)"
     );
 
     // -- legacy oracle: per-op loop ----------------------------------
@@ -2324,6 +2440,31 @@ async fn compute_reverse_batch_matches_per_op_loop() {
              replicated audit row"
         ),
         other => panic!("expected EditBlock for the peer-origin op, got {other:?}"),
+    }
+
+    // #4656: pin the ABSOLUTE answer for the two `delete_property` reverses.
+    // Each must resurrect ITS OWN block's `todo_state`, which is what makes a
+    // per-type cursor that never advances visible here rather than only in the
+    // parity comparison.
+    for (i, state) in todo_states[..2].iter().enumerate() {
+        let idx = del_prop_base + i;
+        match &batched[idx] {
+            OpPayload::SetProperty(p) => {
+                assert_eq!(
+                    p.key, "todo_state",
+                    "reverse of delete_property at idx {idx}"
+                );
+                assert_eq!(
+                    p.value_text,
+                    Some((*state).to_string()),
+                    "#4656: the reverse of delete_property #{i} must restore the \
+                     value ITS OWN block held, not another op's prior"
+                );
+            }
+            other => panic!(
+                "expected SetProperty for the delete_property reverse at idx {idx}, got {other:?}"
+            ),
+        }
     }
 
     // #3706 review: pin the ABSOLUTE answer for the attachment reverses too —
@@ -3387,4 +3528,402 @@ async fn reverse_delete_attachment_tie_breaks_on_device_id_3646() {
             other => panic!("expected AddAttachment, got {other:?}"),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// #4656 / #4655 — the batch chunker's per-chunk output base, the error triage,
+// the revert-target guard, and the two non-reversible predicates.
+//
+// Every batch prior-context helper processes its input in chunks of
+// `MAX_SQL_PARAMS / <binds per op>` and maps each chunk's rows back with a
+// bound `chunk_no * chunk_size + j` index. Until now only the `edit_block`
+// helper had a fixture that spanned more than one chunk
+// (`compute_reverse_batch_chunks_large_edit_batch_c5`), so for the position,
+// property and attachment helpers the `chunk_no * chunk_size` base was dead
+// weight: collapse it to 0 and every one-chunk fixture still passed.
+//
+// The three tests below drive one group past its own chunk boundary and assert
+// PER INDEX against a prior that is DISTINCT for every op, so a reverse built
+// from a neighbour's prior — or from no prior at all — cannot pass.
+// ---------------------------------------------------------------------------
+
+/// `fetch_prior_position_batch` chunks at `MAX_SQL_PARAMS / 7` = 142 ops, so
+/// 200 moves span two chunks. One block moved 200 times in a row: every op's
+/// prior slot is its predecessor's, so the expected position is different at
+/// every index.
+#[tokio::test]
+async fn compute_reverse_batch_move_group_stays_aligned_across_chunks_4656() {
+    let (pool, _dir) = test_pool().await;
+    let bid = BlockId::test_id("CHUNK_MV");
+    let mut ts = 0i64;
+    let next_ts = |ts: &mut i64| -> i64 {
+        *ts += 1;
+        FIXED_TS + *ts * 60_000
+    };
+
+    append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: bid.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "v0".into(),
+        }),
+        next_ts(&mut ts),
+    )
+    .await;
+
+    const N_MOVES: usize = 200;
+    let mut op_refs: Vec<OpRef> = Vec::with_capacity(N_MOVES);
+    for i in 0..N_MOVES {
+        let pos = i64::try_from(i + 2).expect("fixture index fits i64");
+        let rec = append_op(
+            &pool,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: bid.clone(),
+                new_parent_id: None,
+                new_position: pos,
+                new_index: None,
+            }),
+            next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+
+    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+        .await
+        .expect("every move in this batch has a prior placement")
+        .into_iter()
+        .map(|r| r.expect("every move in this batch is reversible"))
+        .collect();
+    assert_eq!(batched.len(), N_MOVES, "one reverse per input op, in order");
+
+    for (i, rev) in batched.iter().enumerate() {
+        let expected = i64::try_from(i + 1).expect("fixture index fits i64");
+        match rev {
+            OpPayload::MoveBlock(p) => assert_eq!(
+                p.new_position, expected,
+                "#4656: reverse #{i} must restore the slot ITS OWN predecessor \
+                 set — a chunk whose rows are written at the wrong output base \
+                 answers with a first-chunk slot instead"
+            ),
+            other => panic!("reverse #{i} should be MoveBlock, got {other:?}"),
+        }
+    }
+}
+
+/// `fetch_prior_property_batch` chunks at `MAX_SQL_PARAMS / 8` = 124 ops, so
+/// 200 `set_property` ops span two chunks. One block, one key, a distinct
+/// value at every step: the reverse of step `i` must restore step `i - 1`'s
+/// value.
+#[tokio::test]
+async fn compute_reverse_batch_property_group_stays_aligned_across_chunks_4656() {
+    let (pool, _dir) = test_pool().await;
+    let bid = BlockId::test_id("CHUNK_PROP");
+    let mut ts = 0i64;
+    let next_ts = |ts: &mut i64| -> i64 {
+        *ts += 1;
+        FIXED_TS + *ts * 60_000
+    };
+    let set_op = |value: String| {
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: bid.clone(),
+            key: "estimate".into(),
+            value_text: Some(value),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        })
+    };
+
+    // Seed value, so the FIRST batched op also has a prior to roll back to.
+    append_op(&pool, set_op("v0".into()), next_ts(&mut ts)).await;
+
+    const N_SETS: usize = 200;
+    let mut op_refs: Vec<OpRef> = Vec::with_capacity(N_SETS);
+    for i in 1..=N_SETS {
+        let rec = append_op(&pool, set_op(format!("v{i}")), next_ts(&mut ts)).await;
+        op_refs.push(OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+
+    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+        .await
+        .expect("every set_property in this batch has a prior value")
+        .into_iter()
+        .map(|r| r.expect("every set_property in this batch is reversible"))
+        .collect();
+    assert_eq!(batched.len(), N_SETS, "one reverse per input op, in order");
+
+    for (i, rev) in batched.iter().enumerate() {
+        match rev {
+            OpPayload::SetProperty(p) => assert_eq!(
+                p.value_text,
+                Some(format!("v{i}")),
+                "#4656: reverse #{i} must restore the value ITS OWN predecessor \
+                 wrote — rows written at a collapsed output base answer with a \
+                 first-chunk value, and the tail is left with no prior at all \
+                 (which reverses to DeleteProperty)"
+            ),
+            other => panic!("reverse #{i} should be SetProperty, got {other:?}"),
+        }
+    }
+}
+
+/// `fetch_prior_attachment_batch` chunks at `MAX_SQL_PARAMS / 7` = 142 ops, so
+/// 200 `delete_attachment` ops span two chunks. Add/delete pairs on one id,
+/// each add carrying a distinct `size_bytes` — the one reconstructed field
+/// nothing adopts from the delete payload, so it identifies which prior
+/// `add_attachment` the reverse was built from.
+#[tokio::test]
+async fn compute_reverse_batch_attachment_group_stays_aligned_across_chunks_4656() {
+    let (pool, _dir) = test_pool().await;
+    let att = BlockId::test_id("CHUNK_ATT");
+    let holder = BlockId::test_id("CHUNK_ATT_BLK");
+    let mut ts = 0i64;
+    let next_ts = |ts: &mut i64| -> i64 {
+        *ts += 1;
+        FIXED_TS + *ts * 60_000
+    };
+
+    const N_DELETES: usize = 200;
+    let mut op_refs: Vec<OpRef> = Vec::with_capacity(N_DELETES);
+    for i in 0..N_DELETES {
+        let size = i64::try_from(i + 1).expect("fixture index fits i64");
+        append_op(
+            &pool,
+            OpPayload::AddAttachment(AddAttachmentPayload {
+                attachment_id: att.clone(),
+                block_id: holder.clone(),
+                mime_type: "image/png".into(),
+                filename: format!("a{i}.png"),
+                size_bytes: size,
+                fs_path: format!("/tmp/a{i}.png"),
+            }),
+            next_ts(&mut ts),
+        )
+        .await;
+        let rec = append_op(
+            &pool,
+            OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+                attachment_id: att.clone(),
+                fs_path: format!("/tmp/a{i}.png"),
+                filename: format!("a{i}.png"),
+            }),
+            next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+
+    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, &records)
+        .await
+        .expect("every delete_attachment in this batch has a paired add")
+        .into_iter()
+        .map(|r| r.expect("every delete_attachment in this batch is reversible"))
+        .collect();
+    assert_eq!(
+        batched.len(),
+        N_DELETES,
+        "one reverse per input op, in order"
+    );
+
+    for (i, rev) in batched.iter().enumerate() {
+        let expected = i64::try_from(i + 1).expect("fixture index fits i64");
+        match rev {
+            OpPayload::AddAttachment(p) => assert_eq!(
+                p.size_bytes, expected,
+                "#4656: reverse #{i} must be reconstructed from ITS OWN paired \
+                 add_attachment — rows written at a collapsed output base name a \
+                 first-chunk add, and the tail resolves to no add at all \
+                 (NonReversible)"
+            ),
+            other => panic!("reverse #{i} should be AddAttachment, got {other:?}"),
+        }
+    }
+}
+
+/// #4656: `compute_reverse_batch`'s error triage. A `delete_property` whose
+/// key was never set yields `AppError::NotFound`, which
+/// `is_skippable_non_reversible` does NOT match — so the WHOLE batch must
+/// abort, exactly as the single-op kernel's `?` does. A match guard that
+/// classifies every error as skippable turns that into an inner `Err` and an
+/// outer `Ok`: silent partial progress on a fatal error, the mirror image of
+/// the #3280 bug.
+#[tokio::test]
+async fn compute_reverse_batch_aborts_on_a_fatal_non_skippable_error_4656() {
+    let (pool, _dir) = test_pool().await;
+    let bid = BlockId::test_id("BLK_FATAL");
+
+    let create = append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: bid.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "v0".into(),
+        }),
+        1_000,
+    )
+    .await;
+    // A perfectly reversible op sharing the batch, so a green run cannot be
+    // explained by an empty or all-fatal batch.
+    let edit = append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: bid.clone(),
+            to_text: "v1".into(),
+            prev_edit: Some((create.device_id.clone(), create.seq)),
+        }),
+        2_000,
+    )
+    .await;
+    let orphan_delete = append_op(
+        &pool,
+        OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: bid.clone(),
+            key: "never_set".into(),
+        }),
+        3_000,
+    )
+    .await;
+
+    let op_refs = vec![
+        OpRef {
+            device_id: edit.device_id.clone(),
+            seq: edit.seq,
+        },
+        OpRef {
+            device_id: orphan_delete.device_id.clone(),
+            seq: orphan_delete.seq,
+        },
+    ];
+    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let err = compute_reverse_batch(&pool, &records)
+        .await
+        .expect_err("a delete_property with no prior set_property is FATAL, not skippable");
+    assert!(
+        matches!(err, AppError::NotFound(_)),
+        "#4656: the missing prior must surface as the same NotFound the \
+         single-op kernel raises, got {err:?}"
+    );
+}
+
+/// #2549/#4656: the revert-target guard refuses a REPLICATED audit op and
+/// accepts local ones.
+///
+/// Both calls pass TWO refs, deliberately: the guard builds an OR-of-pairs
+/// predicate whose separator is emitted from the second ref onwards, so a
+/// separator emitted in the wrong place (or never) is invalid SQL that only a
+/// multi-ref call can reach. The accept case is what sees that — it must come
+/// back `Ok`, not "some error".
+#[tokio::test]
+async fn reject_replicated_targets_refuses_a_replicated_revert_target_2549() {
+    let (pool, _dir) = test_pool().await;
+
+    let mut local_refs: Vec<OpRef> = Vec::new();
+    for bid in ["BLK_RRT1", "BLK_RRT2"] {
+        let rec = append_op(
+            &pool,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id(bid),
+                block_type: "content".into(),
+                parent_id: None,
+                position: Some(1),
+                index: None,
+                content: "local".into(),
+            }),
+            FIXED_TS,
+        )
+        .await;
+        local_refs.push(OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+    reject_replicated_targets(&pool, &local_refs)
+        .await
+        .expect("two locally-authored targets must both be accepted");
+
+    let audit = append_replicated_op(
+        &pool,
+        "rrt-remote",
+        1,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("BLK_RRT3"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: "foreign".into(),
+        }),
+        FIXED_TS,
+    )
+    .await;
+    let mixed = vec![
+        local_refs[0].clone(),
+        OpRef {
+            device_id: audit.device_id.clone(),
+            seq: audit.seq,
+        },
+    ];
+    let err = reject_replicated_targets(&pool, &mixed)
+        .await
+        .expect_err("a replicated audit op has no local forward effect to undo");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "#2549: a replicated revert target is a Validation rejection, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("rrt-remote"),
+        "#2549: the rejection must name the offending op, got {err}"
+    );
+}
+
+/// #4656: the two halves of the non-reversible contract are predicates the
+/// restore path branches on, so each needs both answers pinned. Nothing
+/// asserted the FALSE side of either: a body replaced by a constant left the
+/// suite green.
+#[test]
+fn non_reversible_predicates_discriminate_op_type_and_error_kind_4656() {
+    assert!(
+        is_statically_non_reversible("purge_block"),
+        "purge_block has no inverse at all"
+    );
+    assert!(
+        is_statically_non_reversible("delete_attachment"),
+        "a point-in-time restore must not resurrect attachment rows"
+    );
+    assert!(
+        !is_statically_non_reversible("edit_block"),
+        "an edit_block IS reversible — a restore that skips it loses content"
+    );
+    assert!(
+        is_skippable_non_reversible(&AppError::NonReversible {
+            op_type: "purge_block".into()
+        }),
+        "NonReversible is the one skippable error kind"
+    );
+    assert!(
+        !is_skippable_non_reversible(&AppError::NotFound("op_log (dev, 1)".into())),
+        "#4656: a NotFound is a FATAL batch-level failure — classifying it as \
+         skippable makes a restore silently drop reversible ops"
+    );
 }

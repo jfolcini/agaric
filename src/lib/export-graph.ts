@@ -515,7 +515,7 @@ interface RewriteAttachmentRefsResult {
  * climbs from the page's folder depth back to the ZIP root (or, for the
  * all-spaces exporter, back to the space's own top-level folder — see
  * {@link exportSpacePagesIntoZip}) so the link resolves. `assetsPathPrefix`
- * (default `''`) is prepended to the ZIP entry the bytes are written under
+ * is prepended to the ZIP entry the bytes are written under
  * (`<assetsPathPrefix>assets/<file>`), so a per-space folder's assets land
  * nested inside that same folder rather than at the ZIP root (#2964); it does
  * NOT affect `relPrefix`, since the relative `../` hop count between a page
@@ -526,7 +526,7 @@ async function rewriteAttachmentRefs(
   zip: JSZip,
   emittedAssets: Map<string, string | null>,
   relPrefix: string,
-  assetsPathPrefix = '',
+  assetsPathPrefix: string,
 ): Promise<RewriteAttachmentRefsResult> {
   const ids = collectAttachmentIds(md)
   if (ids.size === 0) return { md, skippedAttachmentIds: [] }
