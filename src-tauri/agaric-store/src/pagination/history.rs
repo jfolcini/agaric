@@ -57,14 +57,6 @@ use agaric_core::ulid::BlockId;
 /// populates the column from the payload either way), so it proves
 /// ownership just as well.
 ///
-/// That second one is what makes #4336 hold on a synced vault, the shape
-/// this app is built for: add an attachment on device A, sync, delete it on
-/// device B. B's live `attachments` row is gone in the delete's own
-/// transaction and B's only paired add arrived by replication, so under the
-/// filter both probes were false and the delete stayed invisible — the
-/// original bug, reachable on the first cross-device delete with no
-/// `compact_op_log` sweep needed first.
-///
 /// The probes also key on `ol.attachment_id` rather than the sibling's
 /// `json_extract(payload, …)`: the column is indexed
 /// (`idx_op_log_attachment_id`, migration 0064) and the JSON path is not.
@@ -198,14 +190,15 @@ pub async fn list_block_history(
 ///     (which is what #4247/#4277/#4328 each were). If you break it,
 ///     break it deliberately and say so here.
 ///
-/// Broken deliberately once, by #4336, and only in `list_block_history`:
-/// that query drops the inner `op_type = 'delete_attachment'` gate, so an
-/// `add → rename → delete` sequence leaves the rename listed on the owning
-/// block's sheet while this one still omits it. The block sheet knows which
-/// block it is asking about, so the paired-add probe answers "is this MY
-/// attachment" with certainty; a page subtree does not, which is what
-/// #4278 narrowed the probe for. Same op, two sheets, two answers, and the
-/// asymmetry is the point.
+/// Broken deliberately in `list_block_history`, and in two predicates, both
+/// for the same reason: that query names the block it is asking about, so
+/// its paired-add probe answers "is this MY attachment" with certainty where
+/// a page subtree cannot (#4278). It drops the inner
+/// `op_type = 'delete_attachment'` gate (#4336), so an `add → rename →
+/// delete` sequence leaves the rename listed on the owning block's sheet
+/// while this one still omits it; and it drops `src_add.is_replicated = 0`
+/// — see the #4627 paragraph below for why that one stays here. Same op, two
+/// sheets, two answers, and the asymmetry is the point.
 ///
 /// Known caveat, tracked as option 1 in #4247/#4278: if `compact_op_log`
 /// has reclaimed the paired `add_attachment`, the owning page is NOT
