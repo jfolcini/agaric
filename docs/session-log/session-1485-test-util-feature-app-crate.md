@@ -25,9 +25,10 @@ self dev-dependency, `agaric = { path = ".", features = ["test-util"] }`. Cargo 
 cycle on the current package, and with the 2024 edition's resolver the feature is unified into the lib
 whenever a test target is built and absent otherwise — so `cargo nextest run` and `cargo check --all-targets`
 see the seams and `cargo check --lib` (the release surface) does not. That is checked both ways rather than
-assumed, and `cargo tree -e features` versus `-e features,no-dev` is the direct evidence. Because the change
-adds a dependency *requirement* to `src-tauri/Cargo.toml`, `src-tauri/fuzz/Cargo.lock` is invalidated too and
-was regenerated in the same commit, per the obligation `verify-lockfiles` states.
+assumed, and `cargo tree -e features` versus `-e features,no-dev` is the direct evidence. The new requirement in
+`src-tauri/Cargo.toml` is a *dev*-dependency, and the fuzz workspace does not resolve the dev-dependencies of
+a path dep, so `src-tauri/fuzz/Cargo.lock` is not invalidated — checked with `cargo metadata` there rather
+than assumed from the `verify-lockfiles` rule, which is about normal requirements.
 
 Falsification here is the absence of a behaviour change, so the proof is the negative one: the diff touches
 only visibility, `cfg` predicates, comments and the manifests; no test file moved; the crate compiles with
@@ -35,8 +36,9 @@ and without the feature; and the workspace suite is unchanged and green.
 
 Verified: `cargo nextest run --workspace`, 6,283 passed and 11 skipped, no failures; `cargo check -p agaric
 --lib` and `cargo check -p agaric --lib --features test-util` both clean, as is `--all-targets` (which is
-what compiles the benches); `cargo tree -p agaric -e features` prints `test-util` and `-e features,no-dev`
-prints nothing, which is the feature being dev-only stated as evidence rather than as a claim about the
-resolver; `cargo machete` clean, so the self dev-dependency needs no allowlist entry; `cargo metadata` in
+what compiles the benches); `agaric feature "test-util"` appears once in `cargo tree -p agaric -e features`
+and not at all in `-e features,no-dev` (grep the exact string: tokio has a `test-util` of its own that a
+bare match picks up), which is the feature being dev-only stated as evidence rather than as a claim about
+the resolver; `cargo machete` clean, so the self dev-dependency needs no allowlist entry; `cargo metadata` in
 `src-tauri/fuzz` leaves that lock untouched — a dev-dependency on a path dep is not resolved by the fuzz
 workspace — and `src-tauri/Cargo.lock` gains exactly one line. No `.sqlx` cache moved: no SQL changed.
