@@ -309,7 +309,7 @@ impl LastEditedSpec {
     /// accepted. The error carries `ValidationCode::InvalidDateFilter`, the
     /// code the frontend keys on (#2251).
     ///
-    /// This runs [`last_edited_bound_ms`] — the same parse the compiler runs,
+    /// This runs `last_edited_bound_ms` — the same parse the compiler runs,
     /// on the same derived string — so anything this accepts, the compiler can
     /// parse. Checking a looser grammar here would let a bound through that
     /// aborts there.

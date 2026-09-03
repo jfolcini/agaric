@@ -10,7 +10,7 @@
 /// occur in user content, so a literal `<mark>` typed into a block is never
 /// mistaken for a highlight boundary. The web UI parser (parseSnippet in
 /// src/components/search/SnippetHighlight.tsx) reads these directly; the MCP
-/// search tool converts them back to <mark>/</mark> so the agent-facing
+/// search tool converts them back to `<mark>`/`</mark>` so the agent-facing
 /// contract is unchanged.
 pub const SNIPPET_HL_OPEN: char = '\u{E000}';
 pub const SNIPPET_HL_CLOSE: char = '\u{E001}';
