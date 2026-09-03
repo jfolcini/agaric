@@ -317,8 +317,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // #607 / #779: wipe the Loro sidecar state in the SAME tx as the core
     // swap (see the function docs). `loro_doc_state` would otherwise
     // rehydrate the pre-reset engines at next boot; `loro_sync_inbox`
-    // would replay pre-reset peer bytes into them and `loro_sync_quarantine`
-    // parks those same bytes for re-admission (#3243); a non-zero apply
+    // would replay pre-reset peer bytes into them; a non-zero apply
     // cursor over an empty op_log is the H-4 impossible state. The
     // in-memory engines are the caller's responsibility
     // (`agaric_engine::loro::snapshot::reload_registry_from_db`).
