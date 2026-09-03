@@ -13,7 +13,8 @@ Twelve tests, every one shown red under a named mutation of the method it pins b
 
 `agaric-engine`, inline test modules:
 
-- `loro/engine/reads.rs`: `contains_block` follows index membership (true after create and after soft delete, false for an unknown id and after purge); `read_position` is the dense sibling rank before and after a move, with the exact `Validation` error for an unknown block; `children_ordered_block_ids` returns the root forest for `None` and an empty vector for an unknown parent; the sibling order was already pinned in-crate by `merge/apply.rs`.
+- `loro/engine/reads.rs`: `contains_block` follows index membership (true after create and after soft delete, false for an unknown id and after purge); `read_position` is the dense sibling rank before and after a move, with the exact `Validation` error for an unknown block.
+- `loro/engine/tree.rs`: `children_ordered_block_ids` returns the root forest for `None` and an empty vector for an unknown parent; the sibling order was already pinned in-crate by `merge/apply.rs`.
 - `loro/engine/snapshot.rs`: `live_blocks_preorder` enumerates every unpurged block depth-first in sibling order across two roots, keeps a soft-deleted block, and drops a purged subtree.
 - `loro/engine/sync.rs`: `screen_inbound_blob` reports the exporter's declared frontier with no fork on a fresh update and again on redelivery of the same bytes, reports the full own-peer fork message on a divergent lineage under the same peer id, and returns `InboundBlobScreen::default()` for bytes that are not a Loro blob.
 

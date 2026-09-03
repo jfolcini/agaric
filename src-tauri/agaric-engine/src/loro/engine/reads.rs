@@ -668,7 +668,7 @@ mod read_blocks_bulk_tests {
 #[cfg(test)]
 mod membership_and_rank_contract_tests {
     //! #3443: contract pins for the read-back getters whose only coverage
-    //! lived in the app crate — membership, dense rank, sibling order.
+    //! lived in the app crate — membership and dense rank.
     use super::{AppError, LoroEngine};
 
     /// Reddens if `contains_block` stops tracking the index — a constant
@@ -719,24 +719,6 @@ mod membership_and_rank_contract_tests {
         assert_eq!(
             err.to_string(),
             "Validation error: loro: read position: block ghost not found"
-        );
-    }
-
-    /// Reddens if `children_ordered_block_ids` stops returning the root
-    /// forest for `None` or the empty vector for a parent the engine does
-    /// not hold; the sibling order itself is pinned in `merge/apply.rs`.
-    #[test]
-    fn children_ordered_block_ids_root_forest_and_unknown_parent_3443() {
-        let mut e = LoroEngine::new();
-        e.apply_create_block_at("P", "page", "p", None, 0).unwrap();
-        e.apply_create_block_at("Q", "page", "q", None, 1).unwrap();
-        e.apply_create_block_at("C0", "leaf", "c", Some("P"), 0)
-            .unwrap();
-
-        assert_eq!(e.children_ordered_block_ids(None).unwrap(), vec!["P", "Q"]);
-        assert_eq!(
-            e.children_ordered_block_ids(Some("ghost")).unwrap(),
-            Vec::<String>::new()
         );
     }
 }
