@@ -118,8 +118,9 @@ pub trait ToolRegistry: Send + Sync + 'static {
     ///   method-not-found so agents can tell them apart).
     /// - `AppError::Validation`, `InvalidOperation` and `Ulid` for bad
     ///   arguments → `-32602`.
-    /// - everything else → `-32603` (internal) with the `AppError`
-    ///   message bubbled up.
+    /// - everything else → `-32603` (internal) carrying a generic message,
+    ///   never the `AppError`'s own (#698): the real chain is logged and
+    ///   `INTERNAL_ERROR_WIRE_MESSAGE` goes on the wire.
     ///
     /// `ctx` carries the `Actor` + `request_id` that the server scoped
     /// via `ACTOR.scope(...)` — impls read the same context from the
