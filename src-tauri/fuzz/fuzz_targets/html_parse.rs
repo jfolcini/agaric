@@ -19,8 +19,8 @@
 
 use libfuzzer_sys::fuzz_target;
 
-// Library target is named `agaric_lib` (see src-tauri/Cargo.toml `[lib]`).
-// `link_metadata::mod` re-exports these from the private `html_parser`
+// Library target is named `agaric_store` (see
+// src-tauri/agaric-store/Cargo.toml `[lib]`). `link_metadata::mod` re-exports these from the private `html_parser`
 // submodule (`pub use html_parser::{detect_auth_required, parse_description,
 // parse_favicon, parse_title};`), so they are reachable at this path without
 // widening `html_parser`'s own module visibility.

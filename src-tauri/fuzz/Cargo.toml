@@ -21,8 +21,8 @@ cargo-fuzz = true
 # cargo-machete scans a crate's `src/` for usage, but our targets live in
 # `fuzz_targets/*.rs` (non-standard [[bin]] paths it doesn't trace), so it
 # false-reports every dependency here as unused. Every entry below is genuinely
-# used by at least one target — `agaric` by `deeplink_parse`/`html_parse`,
-# `agaric-store` by `fts_strip` (#2945) and `pagination_cursor_decode`,
+# used by at least one target — `agaric` by `deeplink_parse`, `agaric-store`
+# by `fts_strip` (#2945), `pagination_cursor_decode` and `html_parse`,
 # `agaric-sync` by `snapshot_decode`, `agaric-engine` by `import_parse` and
 # `bibliography_parse`, `agaric-core` by `attachment_path_parse` — and the
 # crate fails to build without them. Ignore the false positives.
