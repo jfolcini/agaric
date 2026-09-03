@@ -33,7 +33,7 @@ npm run typecheck:e2e                         # tsc for this directory only
 
 `src/lib/tauri-mock/` is a hand-maintained second implementation of the Rust backend and drifts silently, so a Playwright green proves nothing about backend parity. The conformance harness does:
 
-- **Every state-mutating handler must be pinned by a fixture** in `conformance/fixtures/`: ops replayed against a backend-authored `expected`, asserted by both `src-tauri/src/command_integration_tests/conformance.rs` and `src/lib/tauri-mock/__tests__/conformance.test.ts`.
+- **Every state-mutating handler must be pinned by a fixture** in `conformance/fixtures/`: ops replayed against a backend-authored `expected`, asserted by both `src-tauri/tests/command_integration/conformance.rs` and `src/lib/tauri-mock/__tests__/conformance.test.ts`.
 - [`conformance-coverage.test.ts`](../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) is the ratchet: a new mutating command fails the suite unless it gains a fixture or a `NO_FIXTURE_ALLOWLIST` waiver with a written reason (stale or read-only waivers also fail).
 - Workflow: write the fixture (seed + ops + optional `scenarios` tags) without `expected`, then:
 

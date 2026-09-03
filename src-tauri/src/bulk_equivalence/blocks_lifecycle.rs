@@ -890,7 +890,7 @@ async fn restore_blocks_by_ids_omits_the_1884_ancestor_chain_restore() {
 // while the CRDT diverged from SQL on both. What is asserted instead is an
 // absolute invariant — after a LOCAL restore, the per-space Loro engine and
 // SQL agree about the restored ancestor chain — driven once through each
-// restore path. They live here rather than in `command_integration_tests`
+// restore path. They live here rather than in `tests/command_integration/`
 // because this module's fixture is the one that seeds every block into the
 // per-space engine (see `seed_block`); a SQL-only fixture would make the
 // engine assertions vacuous.

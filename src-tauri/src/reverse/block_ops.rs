@@ -28,7 +28,7 @@ use agaric_store::op_log::{OpRecord, resolve_prev_edit_target};
 // The cost is a lingering soft-deleted row + tombstone after create-then-undo,
 // surfaced in the Trash. The pinning test
 // `reverse_create_block_leaves_recoverable_soft_delete_not_purge` in
-// `command_integration_tests/undo_integration.rs` makes this design loud rather
+// `tests/command_integration/undo_integration.rs` makes this design loud rather
 // than silent; flipping that assertion (to expect a purged/absent row) is the
 // signal that the soft-delete trade-off is being renegotiated.
 pub fn reverse_create_block(record: &OpRecord) -> Result<OpPayload, AppError> {

@@ -8,7 +8,7 @@
  * the tag-space bug all shipped past a name-only check). BEHAVIORAL parity is
  * enforced by the #763 conformance harness: `conformance/fixtures/*.json`
  * replay op sequences against a backend-authored `expected`, asserted by BOTH
- * `src-tauri/src/command_integration_tests/conformance.rs` (real backend) and
+ * `src-tauri/tests/command_integration/conformance.rs` (real backend) and
  * `./conformance.test.ts` (mock).
  *
  * This file is the RATCHET on top of that harness. It fails when:
@@ -2597,7 +2597,7 @@ describe('#3083 conformance-coverage ratchet', () => {
         `so an unchecked branch is an unchecked arm of a second implementation of ` +
         `the query. FIX by EITHER (a) adding a "queries" step to a ` +
         `conformance/fixtures/*.json fixture that drives this branch's discriminator ` +
-        `arg — wire it in src-tauri/src/command_integration_tests/conformance_query.rs ` +
+        `arg — wire it in src-tauri/tests/command_integration/conformance_query.rs ` +
         `and in the WIRE table of ./conformance-query.ts, then author the expectation ` +
         `with CONFORMANCE_UPDATE=1 cargo nextest run -E ` +
         `'test(conformance_fixtures_match_backend)' — OR (b) adding an entry to ` +

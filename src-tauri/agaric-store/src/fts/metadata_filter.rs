@@ -672,7 +672,7 @@ mod tests {
     // `SearchProjection::compile_has_property`; the replacement parity
     // snapshots live in `fts::filter_builder` (`property_*_via_projection_*`),
     // and the search-path row equivalence is proved by the typed DB tests in
-    // `commands::tests::metadata_filter_tests`. The property RESOLUTION test
+    // `src-tauri/tests/commands/metadata_filter_tests.rs`. The property RESOLUTION test
     // (`property_filters_passthrough`) remains above — `prepare_metadata` still
     // carries the filters verbatim into `MetadataPredicates`, unchanged.
 }

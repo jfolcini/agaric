@@ -548,7 +548,7 @@ pub async fn list_projected_agenda_inner_with_today(
 /// [`list_projected_agenda_inner`]).
 ///
 /// `pub(crate)` so the regression test in
-/// `commands::tests::agenda_cmd_tests` can call this path directly,
+/// `src-tauri/tests/commands/agenda_cmd_tests.rs` can call this path directly,
 /// bypassing the cache-or-fallback branch in
 /// [`list_projected_agenda_inner`]. The cache rebuild itself
 /// (`cache::projected_agenda::rebuild_projected_agenda_cache_impl`) also

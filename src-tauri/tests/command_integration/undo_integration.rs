@@ -10,7 +10,7 @@
 //! selects the whole module: the sibling `conformance.rs` asserts on a
 //! before/after delta of the process-global
 //! `agaric_lib::materializer::sql_only_fallback_count()` (#891), which races under
-//! plain `cargo test`. Run `command_integration_tests::` under
+//! plain `cargo test`. Run `command_integration::` under
 //! `cargo nextest`. See `conformance.rs`'s isolation contract and
 //! `src-tauri/tests/AGENTS.md` § "Process-global state".
 

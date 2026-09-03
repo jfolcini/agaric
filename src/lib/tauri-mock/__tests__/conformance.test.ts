@@ -3,7 +3,7 @@
  *
  * The Rust backend authors the source-of-truth `expected` snapshot for each
  * shared fixture in `conformance/fixtures/*.json` (see the Rust runner at
- * `src-tauri/src/command_integration_tests/conformance.rs`, UPDATE mode). This
+ * `src-tauri/tests/command_integration/conformance.rs`, UPDATE mode). This
  * test replays the SAME seed + op sequence through the 3.5k-line tauri-mock,
  * builds the SAME normalized snapshot (`./conformance-snapshot`), and asserts
  * it equals the backend-authored `expected`.

@@ -45,7 +45,7 @@ cargo test --doc --workspace                          # doctests only — nextes
 
 cargo nextest run --workspace -E 'test(create_block_returns)'   # by name substring
 cargo nextest run -p agaric -E 'test(op_log::)'                 # by module
-cargo nextest run -p agaric -E 'test(command_integration_tests::)'
+cargo nextest run -p agaric -E 'binary(command_integration)'    # one whole test binary
 cargo nextest run -p agaric -E 'test(convergence)'
 
 cargo insta test                                      # writes .snap.new for changed snapshots
@@ -54,7 +54,7 @@ cargo insta review                                    # accept / reject
 cargo nextest run -p agaric -E 'test(specta_tests::)' --run-ignored=only   # regenerate src/lib/bindings.ts
 ```
 
-Use nextest, not plain `cargo test`, for anything under `command_integration_tests::` or `materializer::handlers::` — see "Process-global state". `cargo test` runs a crate's tests as threads in one process; nextest gives each test its own process.
+Use nextest, not plain `cargo test`, for anything in the `command_integration` binary or under `materializer::handlers::` — see "Process-global state". `cargo test` runs a crate's tests as threads in one process; nextest gives each test its own process.
 
 Nextest configuration lives in `src-tauri/.config/nextest.toml`: `fail-fast = false`, `retries = 1` (`2` in the `ci` profile), `slow-timeout` 30s (60s in CI), and a single-threaded `spy-counter-serial` test group for the counter-delta handler tests.
 
@@ -180,5 +180,5 @@ Run the bench before committing, not just `cargo check --bench`: a hand-seeded r
 - Snapshot redactions in place.
 - SQL changes: `just gen-sqlx` run and every regenerated `.sqlx/` file (all four crates) committed.
 - Tauri command types changed: regenerate `src/lib/bindings.ts` (command above).
-- New command params: update every call site in `src-tauri/src/command_integration_tests/`; the compiler finds them.
+- New command params: update every call site in `src-tauri/tests/command_integration/`; the compiler finds them.
 - No `unwrap()` outside test code; no `.ok()` swallowing errors on core paths. Mutex poisoning: `.unwrap_or_else(|e| e.into_inner())`.

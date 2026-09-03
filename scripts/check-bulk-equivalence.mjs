@@ -195,12 +195,7 @@ export function sourceRoots(tauriDir) {
  * declarations carry `#[cfg(test)]` in `lib.rs` rather than in the file
  * itself, so no amount of in-file scanning finds them.
  */
-const TEST_PATH_SEGMENTS = new Set([
-  'tests',
-  'command_integration_tests',
-  'bulk_equivalence',
-  'reconciliation_oracle',
-])
+const TEST_PATH_SEGMENTS = new Set(['tests', 'bulk_equivalence', 'reconciliation_oracle'])
 const TEST_FILE_RE =
   /(^tests?\.rs$)|(_tests?\.rs$)|(^integration_tests\.rs$)|(proptest)|(^conformance(_snapshot)?\.rs$)|(^proptest_db_harness\.rs$)/
 

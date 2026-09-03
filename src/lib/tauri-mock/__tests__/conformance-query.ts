@@ -2,7 +2,7 @@
  * #3347 — post-op READ-command query steps for the #763 conformance harness
  * (TS / tauri-mock side).
  *
- * This is the twin of `src-tauri/src/command_integration_tests/conformance_query.rs`.
+ * This is the twin of `src-tauri/tests/command_integration/conformance_query.rs`.
  * The backend AUTHORS each fixture's `expected_queries` (via the same
  * `CONFORMANCE_UPDATE=1` flow that authors `expected`); this module replays the
  * SAME `queries` steps through the tauri-mock and produces the SAME projection,
@@ -46,7 +46,7 @@ import { blocks, properties } from '@/lib/tauri-mock/seed'
 
 /**
  * The harness space id. MUST equal `TEST_SPACE_ID` in
- * `src-tauri/src/command_integration_tests/common.rs` — fixtures never spell it
+ * `src-tauri/tests/command_integration/common.rs` — fixtures never spell it
  * out, they use the `$SPACE` token which both runners expand to this literal.
  */
 export const CONFORMANCE_SPACE_ID = '01TESTSPACE000000000000001'
