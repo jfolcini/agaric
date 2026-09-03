@@ -62,6 +62,26 @@ export function LinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
+  // Filters are page-scoped: navigating to another page clears them. Done as a
+  // guarded render-phase adjust — React's "store the previous value in state
+  // and update conditionally", which is what `react/set-state-in-render`
+  // prescribes — not from `useEffect(…, [pageId])` (#4407). The effect cleared
+  // them one commit LATE, so the new page was committed once through the OLD
+  // page's filters: a wasted filtered fetch and a flash of the wrong result set.
+  // Deriving the filters from a stored pageId instead would REMEMBER them, and
+  // page A → B → A would bring A's filters back; comparing the previous key
+  // forgets on every change, which is the behaviour this replaces.
+  // The functional updaters keep an already-cleared state referentially stable,
+  // so a page change with no filters applied does not re-key the query.
+  const [filtersForPage, setFiltersForPage] = useState(pageId)
+  if (filtersForPage !== pageId) {
+    setFiltersForPage(pageId)
+    setFilters((prev) => (prev.length > 0 ? [] : prev))
+    setSort((prev) => (prev !== null ? null : prev))
+    setSourcePageIncluded((prev) => (prev.length > 0 ? [] : prev))
+    setSourcePageExcluded((prev) => (prev.length > 0 ? [] : prev))
+  }
+
   // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
   // TanStack `useInfiniteQuery` (see `useBacklinkGroups`). TanStack owns the
   // page list, cursor, loading and error state; `invalidationKey` sits in the
@@ -185,16 +205,6 @@ export function LinkedReferences({
       cancelled = true
     }
   }, [t])
-
-  // Reset filter state when navigating to a different page
-  // Uses functional updaters to avoid no-op state updates on initial mount
-  // (which would needlessly change the query key and trigger a duplicate fetch).
-  useEffect(() => {
-    setFilters((prev) => (prev.length > 0 ? [] : prev))
-    setSort((prev) => (prev !== null ? null : prev))
-    setSourcePageIncluded((prev) => (prev.length > 0 ? [] : prev))
-    setSourcePageExcluded((prev) => (prev.length > 0 ? [] : prev))
-  }, [pageId])
 
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => !prev)

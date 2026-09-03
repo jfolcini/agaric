@@ -265,6 +265,17 @@
       "rules": {
         "eslint/no-console": "off"
       }
+    },
+    // #4407 burns `react/set-state-in-effect` down a directory at a time. This
+    // one is at zero — both reference panels reset their page-scoped state with
+    // a guarded render-phase adjust instead — so it is promoted to `error` here
+    // and cannot regress, while the global level above stays `warn` for the
+    // directories still to be swept. Last in the array so it wins over it.
+    {
+      "files": ["src/components/backlinks/**/*.ts", "src/components/backlinks/**/*.tsx"],
+      "rules": {
+        "react/set-state-in-effect": "error"
+      }
     }
   ],
   "ignorePatterns": [
