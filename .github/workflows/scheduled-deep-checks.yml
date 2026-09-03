@@ -813,7 +813,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
-      # A shard that dies must not cancel the other 38: each carries a
+      # A shard that dies must not cancel the other 42: each carries a
       # different slice of the surface, and the slices that DID run are still
       # the week's deliverable.
       fail-fast: false
@@ -938,7 +938,7 @@ jobs:
         with:
           workspaces: src-tauri
           shared-key: rust-mutants
-          # ONE saver, not 39 (#3393): every shard restores the same target
+          # ONE saver, not 43 (#3393): every shard restores the same target
           # dir, and 39 concurrent saves of a multi-GB cache would churn the
           # repository's 10 GB cache quota and evict other workflows' caches
           # for no gain. `agaric` shard 0 is the saver because `agaric` is the
@@ -1096,7 +1096,7 @@ jobs:
         #
         # Per SHARD since #3393, unchanged in substance: each shard runs its
         # own baseline and writes its own outcomes.json, so a shard whose
-        # baseline broke reds that shard while the other 38 still report. A
+        # baseline broke reds that shard while the other 42 still report. A
         # merge-time-only guard would let one dead shard hide inside the
         # merged totals.
         #

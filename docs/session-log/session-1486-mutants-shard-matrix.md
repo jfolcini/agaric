@@ -62,6 +62,6 @@ The gate deliberately does not close this yet. The signal that would close it is
 
 So the order is fixed — read `mutants.json`'s semantics and `timeout`'s exit behaviour off the first cron, then decide whether a truncated shard should count as unusable. Until then the PARTIAL notice is a log line a human reads, not a gate.
 
-Declined from the same round: pinning `--shard-count` to 39 in the vitest case, which asserts only `/^[1-9]\d*$/` today. The number is derived from the matrix precisely so that no second copy of it exists to drift, and a test asserting the literal would be that second copy. What carries the load is the matrix-completeness check, which reds when a package's shard indices are not exactly `0..n-1`.
+Declined from the same round: pinning `--shard-count` to 43 in the vitest case, which asserts only `/^[1-9]\d*$/` today. The number is derived from the matrix precisely so that no second copy of it exists to drift, and a test asserting the literal would be that second copy. What carries the load is the matrix-completeness check, which reds when a package's shard indices are not exactly `0..n-1`.
 
 Out of scope, and stated here so it is not mistaken for an oversight: the `examine_globs` widening and the filer's third "untested" state were both dropped from #3393 by the maintainer on 2026-09-02. The widening is worth revisiting only after a full pass over the current surface has actually run.
