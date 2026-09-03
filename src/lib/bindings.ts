@@ -780,7 +780,7 @@ export const commands = {
 	/**
 	 *  Tauri command: flush every draft in a single `BEGIN IMMEDIATE` tx.
 	 *  Delegates to [`flush_all_drafts_inner`]. See that function's doc
-	 *  comment for the all-or-nothing atomicity contract.
+	 *  comment for the skip-the-offender failure contract.
 	 */
 	flushAllDrafts: () => typedError<FlushAllDraftsResult, AppError>(__TAURI_INVOKE("flush_all_drafts")),
 	/**  Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`]. */

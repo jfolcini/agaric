@@ -155,8 +155,10 @@ pub(super) async fn recover_single_draft(
         // paths reject this content, so recovery must not smuggle it into the
         // op log and on to peers. `Err`, not `Ok(false)`: the caller deletes
         // the draft row on `Ok`, and for a block that still exists that row is
-        // the only copy of the text the user typed. Boot reports the failure
-        // and keeps the row, so an edit down to size makes it recoverable.
+        // the only stored copy of the text — deleting it is unrecoverable.
+        // Nothing reads a draft row back today (no restore path in the UI, and
+        // the next keystroke in the block overwrites it); boot reports the
+        // failure and keeps the row because that is the conservative choice.
         if draft.content.len() > crate::commands::MAX_CONTENT_LENGTH {
             tracing::warn!(
                 block_id = %draft.block_id,

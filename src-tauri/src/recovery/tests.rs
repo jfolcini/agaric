@@ -454,10 +454,11 @@ async fn recover_single_draft_returns_err_when_enqueue_fails_1322() {
 /// recovered — boot recovery would otherwise append an over-cap `edit_block`
 /// op that `edit_block_inner` and the flush paths both reject, and replicate
 /// it to peers. `recover_single_draft` returns `Err` rather than `Ok(false)`
-/// so `recover_at_boot` keeps the `block_drafts` row: the target block still
-/// exists, so that row is the only copy of the text the user typed.
+/// because `recover_at_boot` deletes the `block_drafts` row on `Ok`; that
+/// boot-level retention is pinned by
+/// `failed_boot_recovery_keeps_draft_and_recovers_on_next_boot_2540`.
 #[tokio::test]
-async fn recover_single_draft_rejects_oversized_draft_and_keeps_row_3262() {
+async fn recover_single_draft_rejects_oversized_draft_3262() {
     use std::collections::HashSet;
 
     let (pool, _dir) = test_pool().await;
@@ -502,19 +503,6 @@ async fn recover_single_draft_rejects_oversized_draft_and_keeps_row_3262() {
         .await
         .unwrap();
     assert_eq!(ops, 0, "recovery must not append an over-cap op");
-
-    // The row survives with the user's text — `Err` is what keeps it.
-    let stored: Option<String> =
-        sqlx::query_scalar("SELECT content FROM block_drafts WHERE block_id = ?")
-            .bind(block_id)
-            .fetch_optional(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        stored.as_deref(),
-        Some(oversized.as_str()),
-        "the draft row must keep the user's unflushed text verbatim"
-    );
 
     // `blocks.content` is untouched — nothing half-applied.
     let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")

@@ -190,11 +190,13 @@ pub struct FlushAllDraftsResult {
 /// A draft this loop knows it cannot flush is skipped, not propagated:
 /// the batch commits the others and the skipped row stays in
 /// `block_drafts` for the next flush. Only an unanticipated error (a
-/// `prev_edit` lookup failure, a `block_drafts` DELETE error) escapes the
-/// loop, and the single tx then rolls the whole batch back — no drafts
-/// flushed, no op_log rows appended. The frontend caller (boot recovery,
-/// `useAppBootRecovery`) treats any error as "log warn, continue boot",
-/// and a user-driven `flush_draft` on one block still succeeds alone.
+/// `prev_edit` lookup failure, an op-log append or `block_drafts` DELETE
+/// error) escapes the loop, and the single tx then rolls the whole batch
+/// back — no drafts flushed, no op_log rows appended
+/// (`flush_all_drafts_rolls_back_the_batch_on_an_unanticipated_error_3262`).
+/// The frontend caller (boot recovery, `useAppBootRecovery`) treats any
+/// error as "log warn, continue boot", and a user-driven `flush_draft` on
+/// one block still succeeds alone.
 ///
 /// Savepoint-per-draft was considered and rejected: this command fires at
 /// boot with a small N, and a savepoint loop re-introduces the per-draft
@@ -206,8 +208,8 @@ pub struct FlushAllDraftsResult {
 ///
 /// - **H-12b: oversized content** — logged at `warn` and skipped, with
 ///   the draft row left in place. Unlike H-12a the target block still
-///   exists, so the row is the only copy of text the user typed; it
-///   flushes normally once edited down, and no other draft is affected.
+///   exists, so the row is the only stored copy of that text; no other
+///   draft is affected.
 /// - **H-12a: target block missing or soft-deleted** — the orphan draft
 ///   row is deleted in the same tx with a `warn` log, and the loop
 ///   continues to the next draft. No op_log row is appended for the
@@ -278,7 +280,10 @@ pub async fn flush_all_drafts_inner(
         // H-12b: enforce MAX_CONTENT_LENGTH. Skip the offender so the rest
         // of the batch still flushes (#3262). The row is KEPT, unlike the
         // H-12a orphan below: the target block still exists, so this row is
-        // the only copy of text the user typed. It flushes once edited down.
+        // the only stored copy of that text and deleting it is unrecoverable.
+        // Nothing reads a draft row back today — there is no restore path in
+        // the UI, and the next keystroke in the block overwrites the row — so
+        // keeping it is the conservative choice, not a recovery feature.
         if content.len() > super::MAX_CONTENT_LENGTH {
             tracing::warn!(
                 block_id = %block_id,
@@ -394,7 +399,7 @@ pub async fn flush_draft(ctx: State<'_, WriteCtx>, block_id: BlockId) -> Result<
 
 /// Tauri command: flush every draft in a single `BEGIN IMMEDIATE` tx.
 /// Delegates to [`flush_all_drafts_inner`]. See that function's doc
-/// comment for the all-or-nothing atomicity contract.
+/// comment for the skip-the-offender failure contract.
 #[tauri::command]
 #[specta::specta]
 pub async fn flush_all_drafts(ctx: State<'_, WriteCtx>) -> Result<FlushAllDraftsResult, AppError> {

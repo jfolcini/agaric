@@ -6781,6 +6781,64 @@ async fn flush_all_drafts_skips_oversized_draft_and_flushes_the_rest_3262() {
     mat.shutdown();
 }
 
+/// The other half of the #3262 contract: an error the loop does NOT
+/// anticipate still rolls the whole batch back — no op_log rows, no draft
+/// rows consumed — because every draft shares one `BEGIN IMMEDIATE` tx.
+///
+/// Trigger: a `BEFORE INSERT ON op_log` `RAISE(ABORT)`, the same technique as
+/// `failed_boot_recovery_keeps_draft_and_recovers_on_next_boot_2540`, so the
+/// first draft's op append fails where no guard is watching.
+#[tokio::test]
+async fn flush_all_drafts_rolls_back_the_batch_on_an_unanticipated_error_3262() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block_ids = ["01HZ000000000000000FA0RB01", "01HZ000000000000000FA0RB02"];
+    for id in block_ids {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'initial', NULL, 1)",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        draft::save_draft(&pool, DEV, id, "unflushed text")
+            .await
+            .unwrap();
+    }
+
+    // Poison the op-log: the loop's `flush_draft_in_tx` append aborts.
+    sqlx::query(
+        "CREATE TRIGGER op_log_abort BEFORE INSERT ON op_log \
+         BEGIN SELECT RAISE(ABORT, 'op_log inserts forbidden'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    flush_all_drafts_inner(&pool, DEV, &mat)
+        .await
+        .expect_err("an unanticipated error must escape the loop, not be skipped");
+
+    let ops: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ops, 0, "the rolled-back batch must append no op_log rows");
+
+    let drafts: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_drafts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        drafts, 2,
+        "no draft row may be consumed by a rolled-back batch"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // Phase 2 — SpaceScope parity test (blocks/queries.rs)
 // ======================================================================
