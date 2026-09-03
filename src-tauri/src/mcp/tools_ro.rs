@@ -63,7 +63,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
-use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
+use super::handler_utils::{normalize_ulid_arg, parse_args, parse_block_id_arg, to_tool_result};
 use super::registry::{
     TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS,
     TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_SEARCH,
@@ -77,7 +77,6 @@ use crate::commands::{
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
-use agaric_core::ulid::BlockId;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -1019,13 +1018,13 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     let parent_id = args
         .parent_id
         .as_deref()
-        .map(|s| BlockId::from_string(normalize_ulid_arg(s)).map(BlockId::into_string))
+        .map(parse_block_id_arg)
         .transpose()?;
     let tag_ids = args
         .tag_ids
         .map(|v| {
             v.iter()
-                .map(|s| BlockId::from_string(normalize_ulid_arg(s)).map(BlockId::into_string))
+                .map(|s| parse_block_id_arg(s))
                 .collect::<Result<Vec<String>, AppError>>()
         })
         .transpose()?;

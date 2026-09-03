@@ -116,7 +116,8 @@ pub trait ToolRegistry: Send + Sync + 'static {
     /// - `AppError::NotFound` for unknown tool names / missing resources
     ///   → `-32001` (resource-not-found; kept distinct from `-32601`
     ///   method-not-found so agents can tell them apart).
-    /// - `AppError::Validation` for bad arguments → `-32602`.
+    /// - `AppError::Validation`, `InvalidOperation` and `Ulid` for bad
+    ///   arguments → `-32602`.
     /// - everything else → `-32603` (internal) with the `AppError`
     ///   message bubbled up.
     ///
