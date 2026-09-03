@@ -1,4 +1,4 @@
-# Session 1505 — #4502: the materializer moves into `agaric-engine`
+# Session 1507 — #4502: the materializer moves into `agaric-engine`
 
 The second half of the maintainer's (C) for #4502, on top of session 1504's prep. `src-tauri/src/materializer/` is now `src-tauri/agaric-engine/src/materializer/`, re-exported by the app (`pub use agaric_engine::materializer;`) so every `crate::materializer::…` path resolves unchanged. The item census on the diff is in the PR body; the bodies did not change.
 
