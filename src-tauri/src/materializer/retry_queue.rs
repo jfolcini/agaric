@@ -433,8 +433,8 @@ impl BackoffClass {
 /// [`lease_entry`] relies on and the point below which a shorter delay buys
 /// nothing because no sweep runs to consume it. The shed ladder still
 /// escalates, so a permanently saturated queue re-offers a row at most every
-/// 5 minutes instead of spinning, and both reach their cap tier at the same
-/// `attempts >= 4` step (`metrics::note_persistent_enqueue` reads that).
+/// 5 minutes instead of spinning. Only the failure ladder's cap counts toward
+/// `retry_persist_capped`; a shed row never ran.
 pub(crate) fn backoff_delay_for(attempts: i64, class: BackoffClass) -> chrono::Duration {
     match class {
         BackoffClass::Failure => match attempts {
@@ -567,9 +567,9 @@ pub(crate) async fn record_failure(
     // class (durable retry protects a primary-state write the next boot's
     // MAX-cursor replay could permanently strand) vs. the idempotent
     // cache-rebuild class (the "mark dirty, rebuild on boot/idle" candidate).
-    // Recorded on every reach (INSERT + escalating UPSERT); `row.attempts`
-    // carries the backoff tier so measure-item 2 (does the 1h cap ever fire)
-    // is answerable from `retry_persist_capped`.
+    // Recorded on every reach (INSERT + escalating UPSERT); the cap flag is
+    // the failure ladder's `attempts >= 4` rung, so measure-item 2 (does the
+    // 1h cap ever fire) is answerable from `retry_persist_capped`.
     let persist_class = if matches!(kind, RetryKind::ApplyOp { .. }) {
         super::metrics::RetryPersistClass::ApplyOp
     } else if kind.is_global() {
@@ -577,7 +577,10 @@ pub(crate) async fn record_failure(
     } else {
         super::metrics::RetryPersistClass::CachePerBlock
     };
-    metrics.note_persistent_enqueue(persist_class, row.attempts);
+    metrics.note_persistent_enqueue(
+        persist_class,
+        class == BackoffClass::Failure && row.attempts >= 4,
+    );
 
     tracing::warn!(
         block_id = %block_id,
@@ -1912,7 +1915,9 @@ async fn sweep_until_no_progress(
     for _ in 0..MAX_SWEEPS_PER_TICK {
         let counts = sweep_once_counted(read_pool, write_pool, materializer).await?;
         total += counts.re_enqueued;
-        if (counts.advanced as i64) < SWEEP_BATCH_LIMIT {
+        let full_batch = usize::try_from(SWEEP_BATCH_LIMIT)
+            .expect("the batch limit is a small positive constant");
+        if counts.advanced < full_batch {
             break;
         }
     }
@@ -2471,6 +2476,16 @@ mod tests {
                 backoff_delay_for(attempts, BackoffClass::Failure).num_milliseconds(),
             );
         }
+        let capped = || {
+            metrics
+                .retry_persist_capped
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        assert_eq!(
+            capped(),
+            0,
+            "four sheds reach the 5 min cap without counting toward the 1h signal"
+        );
 
         // Error path: the fifth persistence is a REAL failure — the task ran
         // and errored — so the long ladder applies again from its cap tier.
@@ -2482,6 +2497,7 @@ mod tests {
         let delay = backoff_delay_for(5, BackoffClass::Failure).num_milliseconds();
         let scheduled = next_attempt(&pool).await;
         assert_eq!(delay, chrono::Duration::hours(1).num_milliseconds());
+        assert_eq!(capped(), 1, "the failure ladder's hour is the counted cap");
         assert!(
             scheduled >= before + delay && scheduled <= after + delay,
             "an execution failure must leave the shed ladder: next_attempt_at={scheduled} \
@@ -2950,7 +2966,8 @@ mod tests {
         mat.force_shed_after(ALLOWED);
         let moved = sweep_until_no_progress(&pool, &pool, &mat).await.unwrap();
         assert_eq!(
-            moved, ALLOWED as usize,
+            i64::try_from(moved).unwrap(),
+            ALLOWED,
             "the tick must stop after the first partial pass, having moved \
              only the rows that actually enqueued"
         );
@@ -3700,6 +3717,12 @@ mod tests {
             "precondition: the channel must be saturated before the sweep"
         );
 
+        // attempts = 2 → the escalated backoff (#4208: the shed ladder's
+        // second rung, +2 min). A lease keyed on the STALE attempts = 1
+        // snapshot would have rewound this to ~+1 min; 90 s sits between the
+        // rewound and the correct value. Captured before the sweep so the
+        // poll below cannot spend the margin.
+        let min_expected = crate::db::now_ms() + 90_000;
         let n = sweep_once(&pool, &pool, &mat).await.unwrap();
         assert_eq!(
             n, 0,
@@ -3736,11 +3759,6 @@ mod tests {
             Some(SHED_LAST_ERROR),
             "#2541: a shed must be recorded with the distinct shed marker"
         );
-        // attempts = 2 → the escalated backoff (#4208: the shed ladder's
-        // second rung, +2 min). A lease keyed on the STALE attempts = 1
-        // snapshot would have rewound this to ~+1 min; 90 s sits between the
-        // rewound and the correct value.
-        let min_expected = crate::db::now_ms() + 90_000;
         assert!(
             next_attempt_at > min_expected,
             "#2541: next_attempt_at must keep the escalated backoff \

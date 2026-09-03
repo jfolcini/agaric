@@ -200,11 +200,11 @@ pub struct QueueMetrics {
     /// small `retry_persist_cache_global`) is a different signal from a
     /// global-cache freshness gap (the two move together).
     pub retry_persist_cache_global: AtomicU64,
-    /// #2509: count of persistent-enqueue events that reached the **backoff
-    /// cap** tier (`attempts >= 4` on either ladder, see
-    /// [`super::retry_queue::backoff_delay_for`] — 1h for a task that keeps
-    /// failing, 5 min for a shed one since #4208). This is the counter for
-    /// issue #2509's measure-item 2 — "is the 1h-max-backoff path ever the
+    /// #2509: count of persistent-enqueue events that reached the **1h
+    /// backoff cap** (`attempts >= 4` on the failure ladder, see
+    /// [`super::retry_queue::backoff_delay_for`]). A shed row's 5 min cap
+    /// (#4208) is not counted: it is not the rung the question below asks
+    /// about. This is the counter for issue #2509's measure-item 2 — "is the 1h-max-backoff path ever the
     /// thing that saves a user, vs. the next boot doing it anyway?" If this
     /// stays ~0 in the field, nothing ever escalates past the first couple
     /// of short retries, and the deep backoff schedule is machinery no
@@ -232,9 +232,9 @@ pub enum RetryPersistClass {
 impl QueueMetrics {
     /// #2509: record one persistent-enqueue event on the class + backoff-tier
     /// counters. Called from [`super::retry_queue::record_failure`] after the
-    /// row is durably written, with the post-increment `attempts` returned by
-    /// the UPSERT (so the tier reflects the row's current backoff step).
-    pub fn note_persistent_enqueue(&self, class: RetryPersistClass, attempts: i64) {
+    /// row is durably written; `reached_failure_cap` is computed there from
+    /// the UPSERT's post-increment `attempts` and the row's ladder.
+    pub fn note_persistent_enqueue(&self, class: RetryPersistClass, reached_failure_cap: bool) {
         match class {
             RetryPersistClass::ApplyOp => {
                 self.retry_persist_apply_op.fetch_add(1, Ordering::Relaxed);
@@ -248,10 +248,7 @@ impl QueueMetrics {
                     .fetch_add(1, Ordering::Relaxed);
             }
         }
-        // attempts >= 4 is the `backoff_delay_for` cap tier — the deepest rung
-        // of the schedule (1h for a failing task, 5 min for a shed one since
-        // #4208), and measure-item 2's signal.
-        if attempts >= 4 {
+        if reached_failure_cap {
             self.retry_persist_capped.fetch_add(1, Ordering::Relaxed);
         }
     }
