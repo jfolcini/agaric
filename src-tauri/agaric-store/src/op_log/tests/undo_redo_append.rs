@@ -70,8 +70,8 @@ async fn undo_append_flags_is_undo_and_links_reversed_op_3443() {
 }
 
 /// Reddens if the redo wrapper stamps `is_undo = 1` (which would make its
-/// forward-equivalent output redo-visible), drops the `reverses_*` link to
-/// the undo op it reverses, or stops chaining its hash over the parent link.
+/// forward-equivalent output redo-visible) or drops the `reverses_*` link to
+/// the undo op it reverses.
 #[tokio::test]
 async fn redo_append_is_forward_equivalent_and_links_reversed_op_3443() {
     let (pool, _dir) = test_pool().await;
