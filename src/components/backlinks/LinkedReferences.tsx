@@ -67,15 +67,13 @@ export function LinkedReferences({
   // so the new page was queried once through the old page's filters (#4407).
   // Comparing the PREVIOUS pageId forgets; storing the current one would
   // remember, and A → B → A would bring A's filters back.
-  // The updaters return `prev` unchanged when already empty so React bails out
-  // of the render; the query key hashes structurally, so it is unaffected.
   const [filtersForPage, setFiltersForPage] = useState(pageId)
   if (filtersForPage !== pageId) {
     setFiltersForPage(pageId)
-    setFilters((prev) => (prev.length > 0 ? [] : prev))
-    setSort((prev) => (prev !== null ? null : prev))
-    setSourcePageIncluded((prev) => (prev.length > 0 ? [] : prev))
-    setSourcePageExcluded((prev) => (prev.length > 0 ? [] : prev))
+    setFilters([])
+    setSort(null)
+    setSourcePageIncluded([])
+    setSourcePageExcluded([])
   }
 
   // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
