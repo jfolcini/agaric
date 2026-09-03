@@ -14,7 +14,7 @@ A baseline and a mutant do not cost the same thing: a baseline pays a full build
 
 | package | generated | baseline | per viable mutant | per shard | shards |
 |---|--:|--:|--:|--:|--:|
-| `agaric` | 183 | ~843 s | 600 s | 7 | 27 |
+| `agaric` | 183 | ~843 s | 600 s | 7 | 31 |
 | `agaric-store` | 125 | 164 s | 117 s | 44 | 3 |
 | `agaric-engine` | 383 | not measured | not measured | 44 | 9 |
 

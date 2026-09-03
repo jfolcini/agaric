@@ -939,7 +939,7 @@ jobs:
           workspaces: src-tauri
           shared-key: rust-mutants
           # ONE saver, not 43 (#3393): every shard restores the same target
-          # dir, and 39 concurrent saves of a multi-GB cache would churn the
+          # dir, and 43 concurrent saves of a multi-GB cache would churn the
           # repository's 10 GB cache quota and evict other workflows' caches
           # for no gain. `agaric` shard 0 is the saver because `agaric` is the
           # package whose build the other shards benefit most from.
@@ -1241,8 +1241,19 @@ jobs:
           # survivor (#3364). Usable means what the per-shard zero-coverage
           # guard means by it: `Baseline` summary == Success.
           merged=0
+          # `parsed` is the subset the concatenation below may read. A shard
+          # SIGKILLed by `--kill-after` or cancelled at the job cap can upload a
+          # half-written outcomes.json, and `jq -s` over it exits non-zero under
+          # `set -e` — after the four .txt files are already written, so the
+          # artifact would ship without the outcomes.json the summary reads and
+          # a week that mostly ran would render `_No merged output_`.
+          parsed=()
           for outcome in "${outcomes[@]}"; do
-            summary=$(jq -r '([.outcomes[]? | select(.scenario == "Baseline") | .summary] | first) // "MISSING"' "$outcome" 2>/dev/null || echo MISSING)
+            if ! summary=$(jq -r '([.outcomes[]? | select(.scenario == "Baseline") | .summary] | first) // "MISSING"' "$outcome" 2>/dev/null); then
+              echo "::warning::shard '$(dirname "$outcome")' uploaded an unreadable outcomes.json — excluded from the merge and from the merged total."
+              continue
+            fi
+            parsed+=("$outcome")
             if [ "$summary" = "Success" ]; then
               merged=$((merged + 1))
             else
@@ -1258,7 +1269,7 @@ jobs:
             exit 1
           fi
           if [ "$merged" -lt "$expected" ]; then
-            echo "::warning::SHORT MERGE: only $merged of $expected mutants shards produced usable results. The missing shards' survivors are absent from this week's missed.txt, so \`file-mutation-survivors\` runs --dry-run: it would otherwise report them as resolved, drop them from the tracking issue's marker block and re-report them as new next week (#3364). The merged artifact below still unions every shard that UPLOADED, unusable ones included: such a shard contributes an empty missed.txt against its full mutants.json, which is what renders its package as \`0 of N  <-- NOT COVERED\` in the summary. Re-run the failed shards for a full week."
+            echo "::warning::SHORT MERGE: only $merged of $expected mutants shards produced usable results. The missing shards' survivors are absent from this week's missed.txt, so \`file-mutation-survivors\` runs --dry-run: it would otherwise report them as resolved, drop them from the tracking issue's marker block and re-report them as new next week (#3364). The merged artifact below still unions every shard whose output was READABLE, unusable ones included: such a shard contributes an empty missed.txt against its full mutants.json, which is what renders its package as \`0 of N  <-- NOT COVERED\` in the summary. Re-run the failed shards for a full week."
           fi
           mkdir -p mutants.out
           # The four lists are one finding per line, and the shards partition
@@ -1275,7 +1286,7 @@ jobs:
               cargo_mutants_version: (map(.cargo_mutants_version) | first),
               total_mutants: (map(.total_mutants // 0) | add),
               outcomes: (map(.outcomes // []) | add),
-            }' "${outcomes[@]}" > mutants.out/outcomes.json
+            }' "${parsed[@]}" > mutants.out/outcomes.json
           # `mutants.json` under `--shard` is that shard's slice and the shards
           # partition the mutant set, so concatenating them IS the union. No
           # `unique`: it cannot fix a double count, only hide one, and it would
