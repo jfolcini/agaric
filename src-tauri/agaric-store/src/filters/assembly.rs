@@ -76,15 +76,11 @@ impl SqlFragment {
         Self { spans, binds }
     }
 
-    /// Build from a compiled [`WhereClause`]. The caller MUST have already
-    /// rejected `unsupported()` clauses — their sentinel SQL must never reach a
-    /// statement.
+    /// Build from a compiled [`WhereClause`]. Every caller rejects
+    /// `unsupported()` clauses with a `Validation` error before reaching here,
+    /// so their sentinel SQL never arrives.
     #[must_use]
     pub fn from_where_clause(wc: WhereClause) -> Self {
-        debug_assert!(
-            !wc.is_unsupported(),
-            "an unsupported WhereClause must be rejected, not assembled",
-        );
         Self::new(&wc.sql, wc.binds)
     }
 

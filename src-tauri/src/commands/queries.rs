@@ -1432,9 +1432,9 @@ pub async fn filtered_blocks_query_inner(
     // below; `?3` is reused for LIMIT), so every increment past 6 must
     // correspond to exactly one pushed value across `prop_binds` +
     // `tag_binds`. An off-by-one in the hand-tracked index would
-    // silently misbind; this assert turns that into a debug-build panic
-    // (no production cost — values are bound, never interpolated).
-    debug_assert_eq!(
+    // silently misbind and return wrong rows, so this fails in every
+    // build.
+    assert_eq!(
         next_param - 6,
         prop_binds.len() + tag_binds.len(),
         "filtered_blocks_query placeholder index ({next_param}) drifted \

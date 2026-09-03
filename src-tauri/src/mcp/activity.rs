@@ -200,8 +200,12 @@ impl ActivityRing {
 
     /// Build a ring with a custom capacity. Primarily for tests that want
     /// to exercise overflow without allocating 100 synthetic entries.
+    ///
+    /// A zero capacity would make [`push`](Self::push) never evict (`len ==
+    /// cap` is false from the first push on), i.e. an unbounded ring, so the
+    /// bound is asserted in every build.
     pub fn with_capacity(cap: usize) -> Self {
-        debug_assert!(cap > 0, "ActivityRing capacity must be > 0");
+        assert!(cap > 0, "ActivityRing capacity must be > 0");
         Self {
             entries: VecDeque::with_capacity(cap),
             cap,
@@ -559,6 +563,14 @@ mod tests {
         assert_eq!(r.len(), 0);
         assert!(r.is_empty());
         assert_eq!(r.capacity(), ACTIVITY_RING_CAPACITY);
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity must be > 0")]
+    fn ring_zero_capacity_hard_errors_in_release() {
+        // A zero cap never satisfies `len == cap`, so `push` would grow the
+        // ring without bound.
+        let _ = ActivityRing::with_capacity(0);
     }
 
     #[test]

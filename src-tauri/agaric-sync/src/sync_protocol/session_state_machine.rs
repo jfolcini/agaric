@@ -1231,23 +1231,19 @@ impl SyncOrchestrator {
             // ---- File transfer (F-14) ---------------------------------------
             // File-transfer messages are read directly off the wire by
             // `sync_files::run_file_transfer_{initiator,responder}` after the
-            // daemon-layer loop exits on `SyncState::Complete`. They must
-            // never enter `handle_message` — if one does, it indicates a
-            // regression in the daemon dispatch path (e.g., a future change
-            // that forgets to hand the connection off after the orchestrator
-            // signals completion). debug_assert in tests, degrade gracefully
-            // in release so a stray message cannot brick a sync session.
+            // daemon-layer loop exits on `SyncState::Complete`. One reaching
+            // `handle_message` is a regression in the daemon dispatch path
+            // (e.g., a change that forgets to hand the connection off after
+            // the orchestrator signals completion) — fail loudly, same
+            // contract as `SnapshotOffer`.
             SyncMessage::FileRequest { .. }
             | SyncMessage::FileOffer { .. }
             | SyncMessage::FileReceived { .. }
-            | SyncMessage::FileTransferComplete => {
-                debug_assert!(
-                    false,
-                    "file-transfer message reached the protocol orchestrator; \
-                     these are handled by sync_files.rs after SyncComplete"
-                );
-                Ok(None)
-            }
+            | SyncMessage::FileTransferComplete => Err(AppError::InvalidOperation(
+                "file-transfer messages must be handled by sync_files after \
+                 SyncComplete, not by the orchestrator state machine"
+                    .into(),
+            )),
         }
     }
 

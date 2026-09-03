@@ -13,7 +13,6 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  addAttachmentWithBytes,
   batchResolve,
   createBlock,
   createBlocksBatch,
@@ -34,7 +33,6 @@ import {
   listBlocks,
   listBlocksLimit,
   listPageHistory,
-  listPageLinks,
   listProjectedAgenda,
   listProjectedAgendaLimit,
   listPropertyDefs,
@@ -1656,116 +1654,13 @@ describe('listProjectedAgenda', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// listPageLinks
-// ---------------------------------------------------------------------------
+// `listPageLinks` retired its `@/lib/tauri` wrapper (#4411, SCOPE —
+// `toSpaceScope` only) — coverage now lives at its call site
+// (`GraphView.helpers.test.ts`).
 
-describe('listPageLinks', () => {
-  it('invokes list_page_links with no arguments', async () => {
-    // #2298 count-then-cap — the command now ships a `PageLinksResponse`
-    // envelope (edges + true total + truncated flag), not a bare array.
-    const expected = {
-      edges: [
-        { source_id: 'PAGE1', target_id: 'PAGE2', ref_count: 3 },
-        { source_id: 'PAGE2', target_id: 'PAGE3', ref_count: 1 },
-      ],
-      total: 2,
-      truncated: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await listPageLinks()
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    // `tagIds: null` is forwarded so the backend's
-    // `(?2 IS NULL OR …)` short-circuit evaluates to TRUE, preserving
-    // the pre-Tier-4.5 unfiltered behaviour.
-    expect(mockedInvoke).toHaveBeenCalledWith('list_page_links', {
-      scope: { kind: 'global' },
-      tagIds: null,
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('returns an empty envelope when no links exist', async () => {
-    mockedInvoke.mockResolvedValueOnce({ edges: [], total: 0, truncated: false })
-
-    const result = await listPageLinks()
-
-    expect(result).toEqual({ edges: [], total: 0, truncated: false })
-  })
-
-  it('surfaces the truncated flag and true total when the edge cap fired (#2298)', async () => {
-    const expected = {
-      edges: [{ source_id: 'PAGE1', target_id: 'PAGE2', ref_count: 3 }],
-      total: 5000,
-      truncated: true,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await listPageLinks()
-
-    expect(result).toEqual(expected)
-  })
-
-  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce({ edges: [], total: 0, truncated: false })
-    await listPageLinks('SPACE_42')
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-    expect(args['tagIds']).toBeNull()
-  })
-
-  it('forwards tagIds when provided via the param-object shape', async () => {
-    mockedInvoke.mockResolvedValueOnce({ edges: [], total: 0, truncated: false })
-    await listPageLinks({ spaceId: 'SPACE_42', tagIds: ['TAG_A', 'TAG_B'] })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-    expect(args['tagIds']).toEqual(['TAG_A', 'TAG_B'])
-  })
-
-  it('normalises an empty tagIds array to null', async () => {
-    mockedInvoke.mockResolvedValueOnce({ edges: [], total: 0, truncated: false })
-    await listPageLinks({ spaceId: 'SPACE_42', tagIds: [] })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['tagIds']).toBeNull()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// addAttachmentWithBytes
-// ---------------------------------------------------------------------------
-
-describe('addAttachmentWithBytes', () => {
-  it('invokes add_attachment_with_bytes with raw bytes', async () => {
-    const expected = {
-      id: 'ATT1',
-      block_id: 'BLK001',
-      filename: 'doc.pdf',
-      mime_type: 'application/pdf',
-      size_bytes: 2048,
-      fs_path: 'attachments/ATT1',
-      created_at: '2025-01-15T00:00:00Z',
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await addAttachmentWithBytes({
-      blockId: 'BLK001',
-      filename: 'doc.pdf',
-      mimeType: 'application/pdf',
-      bytes: new Uint8Array([1, 2, 3, 255]),
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
-      blockId: 'BLK001',
-      filename: 'doc.pdf',
-      mimeType: 'application/pdf',
-      bytes: [1, 2, 3, 255],
-    })
-    expect(result).toEqual(expected)
-  })
-})
+// `addAttachmentWithBytes` retired its `@/lib/tauri` wrapper (#4411, PURE
+// passthrough) — coverage now lives at its call sites (`EditableBlock.test.tsx`,
+// `PdfViewerDialog.test.tsx`).
 
 // `readAttachment` (sanctioned raw invoke) and `importMarkdown` (Channel
 // plumbing) moved to `@/lib/ipc-helpers` (#4413, the migration floor); their

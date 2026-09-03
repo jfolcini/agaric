@@ -303,19 +303,14 @@ where
 ///
 /// # `buffer_len` must not be zero
 ///
-/// The old chunking API guarded this with `chunk_size.max(1)`. That guard is
-/// gone, and its absence is worse than its presence was: a zero-length buffer
-/// makes this return zero, which makes `copy_exact` loop forever issuing
-/// zero-byte reads — a hang with no I/O and no error, rather than a failure.
-///
-/// Unreachable today only because [`BULK_COPY_BYTES`] is a `const`, which is
-/// exactly the kind of guarantee that stops holding the moment someone makes the
-/// size configurable. The assert is debug-only because the release cost of the
-/// branch is not worth paying for a condition no production call site can
-/// currently express — its job is to fail the test run of whoever makes it
-/// expressible.
+/// A zero-length buffer makes this return zero, which makes `copy_exact` loop
+/// forever issuing zero-byte reads — a hang with no I/O and no error. The
+/// assert is active in every build: an abort beats that hang, and the branch
+/// costs one comparison per copy pass. Unreachable today only because
+/// [`BULK_COPY_BYTES`] is a `const`, which stops holding the moment someone
+/// makes the size configurable.
 fn remaining_this_pass(owed: u64, buffer_len: usize) -> usize {
-    debug_assert!(
+    assert!(
         buffer_len > 0,
         "a zero-length copy buffer would make copy_exact spin forever issuing \
          zero-byte reads; size the buffer before calling"
@@ -1332,5 +1327,14 @@ mod tests {
             total,
             "the writes must account for the whole payload and nothing more"
         );
+    }
+
+    /// #4638: a zero-length buffer would make `copy_exact` spin forever on
+    /// zero-byte reads. The assert is active in every build, so this pins the
+    /// abort rather than the hang.
+    #[test]
+    #[should_panic(expected = "zero-length copy buffer")]
+    fn a_zero_length_copy_buffer_aborts_instead_of_spinning() {
+        let _ = remaining_this_pass(1, 0);
     }
 }

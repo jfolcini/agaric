@@ -182,15 +182,26 @@ async fn status_surfaces_sql_only_fallback_count() {
     );
 }
 
+/// #4638: an `edit_block` record without a `block_id` sidecar is rejected in
+/// every build instead of silently skipping the per-block reindexes.
 #[tokio::test]
-#[should_panic(expected = "edit_block payload has empty block_id")]
-async fn dispatch_bg_empty_block_id() {
+async fn dispatch_bg_empty_block_id_returns_validation_err() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let _ = mat.dispatch_background(&fake_op_record(
+    let result = mat.dispatch_background(&fake_op_record(
         "edit_block",
         r#"{"to_text":"hello","prev_edit":null}"#,
     ));
+    match result {
+        Err(AppError::Validation { message, .. }) => {
+            assert!(
+                message.contains("edit_block payload has empty block_id"),
+                "unexpected message: {message}"
+            );
+        }
+        other => panic!("expected Err(Validation), got {other:?}"),
+    }
+    mat.shutdown();
 }
 #[tokio::test]
 async fn error_counters_zero() {

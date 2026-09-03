@@ -1,38 +1,29 @@
 /**
  * Type-drift regression guard for #4414.
  *
- * `src/lib/tauri/{attachments,properties,import,history}.ts` used to
- * hand-declare `AttachmentRow`, `PropertyRow`, `ImportResult`, `OpRef`, and
- * `UndoResult` as local `interface`s instead of re-exporting the generated
- * `@/lib/bindings` types (a sixth, `SyncSessionInfo` in `sync.ts`, got the
- * same fix, but `sync.ts` itself was later deleted entirely — #4411/#4413
- * retired both its wrapper functions — so there is no wrapper type left to
- * pin there; `commands.startSync`'s callers use the generated
- * `SyncSessionInfo` directly). `AttachmentRow` drifted silently — missing
- * `content_hash?: string | null` — because nothing checked the two
- * declarations against each other.
+ * A wrapper module that hand-declares a type the generator already owns can
+ * drift from it silently — `AttachmentRow` did, missing
+ * `content_hash?: string | null`, because nothing checked the two
+ * declarations against each other. Re-exporting instead of redeclaring makes
+ * that impossible by construction, so what needs guarding is the
+ * reintroduction of a duplicate. The `Expect<IsEqual<…>>` block below is that
+ * guard, and it is a COMPILE-TIME assertion checked by `tsc`
+ * (`npm run typecheck`), not by vitest, which strips types without checking
+ * them — which is why both are run.
  *
- * The fix (re-export instead of redeclare) makes drift impossible BY
- * CONSTRUCTION, so there is no runtime behaviour to assert here — the type
- * itself no longer has an independent existence to diverge. The guard that
- * actually catches a regression (someone reintroducing a hand-declared
- * duplicate) is the `Expect<IsEqual<…>>` block below: it is a COMPILE-TIME
- * assertion, checked by `tsc` (`npm run typecheck`, and the pre-push /
- * CI type-check), not by vitest — vitest strips types without checking them.
- * That split is why both are run (see the PR verification notes) and why
- * this file's `it()` block exists mainly to give the guard a described home
- * and to smoke-check the re-exported values still work at runtime.
+ * It pins the four wrapper types that still exist. `AttachmentRow` and
+ * `SyncSessionInfo` are no longer among them: #4411/#4413 retired
+ * `attachments.ts` and `sync.ts` outright, so their callers use the generated
+ * types directly and there is no second declaration left to diverge.
  */
 import { describe, expect, it } from 'vitest'
 
 import type {
-  AttachmentRow as WireAttachmentRow,
   ImportResult as WireImportResult,
   OpRef as WireOpRef,
   PropertyRow as WirePropertyRow,
   UndoResult as WireUndoResult,
 } from '@/lib/bindings'
-import type { AttachmentRow } from '@/lib/tauri/attachments'
 import type { OpRef, UndoResult } from '@/lib/tauri/history'
 import type { ImportResult } from '@/lib/tauri/import'
 import type { PropertyRow } from '@/lib/tauri/properties'
@@ -45,34 +36,31 @@ type IsEqual<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Expect<T extends true> = T
 
-// If any of these four wrapper modules ever goes back to a hand-declared
+// If any of these three wrapper modules ever goes back to a hand-declared
 // duplicate that diverges from `bindings.ts` — adding, dropping, or
 // retyping a field — one of these lines stops compiling and `tsc` fails,
 // naming this file. `export`ed (never imported elsewhere) so
 // `noUnusedLocals` doesn't flag them — an exported type is not "unused".
-export type _AttachmentRowMatchesWire = Expect<IsEqual<AttachmentRow, WireAttachmentRow>>
 export type _PropertyRowMatchesWire = Expect<IsEqual<PropertyRow, WirePropertyRow>>
 export type _ImportResultMatchesWire = Expect<IsEqual<ImportResult, WireImportResult>>
 export type _OpRefMatchesWire = Expect<IsEqual<OpRef, WireOpRef>>
 export type _UndoResultMatchesWire = Expect<IsEqual<UndoResult, WireUndoResult>>
 
 describe('@/lib/tauri/* wrapper types match the generated bindings (#4414)', () => {
-  it('AttachmentRow re-export carries content_hash — the field that drifted', () => {
-    // This object literal is typed as the WRAPPER's re-exported
-    // `AttachmentRow`. If the wrapper ever redeclares the interface without
-    // `content_hash` again, `content_hash: null` becomes an EXCESS PROPERTY
-    // and `tsc` rejects the literal — a second, more directly-readable
-    // compile-time trip-wire alongside the `Expect<IsEqual<…>>` block above.
-    const row: AttachmentRow = {
-      id: 'B1',
-      block_id: 'B1',
-      filename: 'a.png',
-      mime_type: 'image/png',
-      size_bytes: 1,
-      fs_path: '/x',
-      created_at: 0,
-      content_hash: null,
+  it('PropertyRow re-export carries value_bool — native boolean storage', () => {
+    // Typed as the WRAPPER's re-exported `PropertyRow`. If the wrapper ever
+    // redeclares the interface without `value_bool`, `value_bool: null`
+    // becomes an EXCESS PROPERTY and `tsc` rejects the literal — a second,
+    // more directly-readable compile-time trip-wire alongside the
+    // `Expect<IsEqual<…>>` block above.
+    const row: PropertyRow = {
+      key: 'k',
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     }
-    expect(row.content_hash).toBeNull()
+    expect(row.value_bool).toBeNull()
   })
 })
