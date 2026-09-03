@@ -86,7 +86,7 @@ pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task neve
 
 /// Rows one `sweep_once` fetches, and the loop bound in
 /// [`sweep_until_no_progress`].
-const SWEEP_BATCH_LIMIT: i64 = 64;
+const SWEEP_BATCH_LIMIT: usize = 64;
 
 /// #2831: `last_error` marker for a `RefreshTagUsageCount` row that was
 /// *pre-seeded* by the `ReindexBlockTagRefs` handler (as a durable refresh
@@ -1046,7 +1046,9 @@ async fn sweep_once_counted(
     write_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
 ) -> Result<SweepCounts, AppError> {
-    let due = fetch_due(read_pool, SWEEP_BATCH_LIMIT).await?;
+    let limit =
+        i64::try_from(SWEEP_BATCH_LIMIT).expect("the batch limit is a small positive constant");
+    let due = fetch_due(read_pool, limit).await?;
     let mut re_enqueued = 0usize;
     // Counted rather than `advanced` directly: the three arms that leave a
     // row on its original `next_attempt_at` are enumerable, the arms that
@@ -1330,9 +1332,6 @@ async fn sweep_once_counted(
                 stalled += 1;
             }
         }
-    }
-    if re_enqueued > 0 {
-        tracing::info!(re_enqueued, "materializer retry queue sweep");
     }
     Ok(SweepCounts {
         re_enqueued,
@@ -1919,11 +1918,12 @@ async fn sweep_until_no_progress(
     for _ in 0..MAX_SWEEPS_PER_TICK {
         let counts = sweep_once_counted(read_pool, write_pool, materializer).await?;
         total += counts.re_enqueued;
-        let full_batch = usize::try_from(SWEEP_BATCH_LIMIT)
-            .expect("the batch limit is a small positive constant");
-        if counts.advanced < full_batch {
+        if counts.advanced < SWEEP_BATCH_LIMIT {
             break;
         }
+    }
+    if total > 0 {
+        tracing::info!(re_enqueued = total, "materializer retry queue sweep");
     }
     Ok(total)
 }
