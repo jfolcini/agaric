@@ -1363,7 +1363,7 @@ jobs:
                 echo '```'
               fi
             else
-              echo "_No merged output — no shard produced any; see the merge step's error and the shard job logs._"
+              echo "_No merged output. Either no shard produced any, or the merge step failed before writing it — read its log first, then the shard jobs'._"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
