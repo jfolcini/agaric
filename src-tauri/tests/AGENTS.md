@@ -68,7 +68,7 @@ Two classes in this crate:
 2. **Counter-delta tests.** Any test that reads a process-global counter, does its work, reads it again and asserts on the difference. The counter here is `sql_only_fallback::count()` (re-exported as `crate::materializer::sql_only_fallback_count()`), a monotonic `AtomicU64`; the assertion is nearly always `delta == 0`, proving the op took the engine path rather than the SQL-only fallback (#891). A sibling test's fallback event in the same process flips the delta for a test that never touched the fallback. This is a shape, not a module list — find the current readers with:
 
    ```sh
-   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src src-tauri/tests
+   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src src-tauri/tests src-tauri/agaric-engine/src
    ```
 
    `src-tauri/agaric-engine/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
