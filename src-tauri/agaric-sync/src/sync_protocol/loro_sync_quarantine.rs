@@ -332,25 +332,17 @@ pub async fn read_quarantined_bytes(
 ///   them.
 ///
 /// So quarantine's job is the #535 half — never destroy the local durable
-/// record — and NOT to be a second delivery mechanism. This function exists so
-/// that "manual" means something concrete: the bytes are byte-identical to what
-/// was admitted, so re-admission remains possible at any time, by a human or a
-/// diagnostic tool, without a schema migration or a rebuild.
+/// record while its lineage is still live — and NOT to be a second delivery
+/// mechanism. This function exists so that "manual" means something concrete:
+/// the bytes are byte-identical to what was admitted, so re-admission remains
+/// possible at any time, by a human or a diagnostic tool, without a schema
+/// migration or a rebuild.
 ///
-/// # HAZARD: this table is NOT wiped by the snapshot-catch-up RESET
+/// # A snapshot catch-up empties this table (#3243)
 ///
-/// `snapshot::restore::apply_snapshot`'s RESET path deletes `loro_doc_state`,
-/// `op_log`, `log_snapshots` **and `loro_sync_inbox`** in one transaction, and
-/// bumps the #792 peer epoch, precisely so that pre-reset peer bytes cannot be
-/// replayed into the post-reset engines. `loro_sync_quarantine` is not in that
-/// wipe. Nothing automatic re-reads this table, so the RESET's invariant is not
-/// violated on its own — but calling this function on a row that predates a
-/// RESET would hand exactly those pre-reset bytes back to the boot walk, under
-/// a retired peer epoch. There is no epoch/lineage stamp on a quarantine row
-/// today, so a caller cannot detect that case: treat manual re-admission as
-/// unsafe after a snapshot catch-up until #3226's follow-up settles whether
-/// the RESET should wipe (or stamp) this table. Tracked as a review finding on
-/// the #3226 change, not by this function.
+/// `snapshot::restore::apply_snapshot`'s RESET path deletes
+/// `loro_sync_quarantine` alongside `loro_sync_inbox`, so there is never a row
+/// left to re-admit pre-reset bytes from under the retired #792 peer epoch.
 ///
 /// The move is transactional in the same direction as
 /// [`note_unresolved_slot`]'s: the inbox row is inserted and the quarantine row

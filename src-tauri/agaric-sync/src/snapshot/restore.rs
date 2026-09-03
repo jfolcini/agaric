@@ -162,6 +162,9 @@ fn cache_wipe_sql(table: &str) -> Option<&'static str> {
 /// - `loro_sync_inbox` — leftover write-ahead slots hold pre-reset peer
 ///   bytes; boot recovery (`replay_sync_inbox`) would replay them into the
 ///   post-reset engines.
+/// - `loro_sync_quarantine` — parks the same pre-reset peer bytes the inbox
+///   did, so a row re-admitted after the RESET would hand them back to the
+///   boot walk under a retired peer epoch (#3243).
 /// - `materializer_apply_cursor` — zeroed. `op_log` is empty after the wipe
 ///   (the snapshot carries table data, not ops), so any surviving non-zero
 ///   cursor points past the end of the log; the `MAX()`-gated per-op advance
@@ -322,6 +325,9 @@ pub async fn apply_snapshot<R: std::io::Read>(
         .execute(&mut *tx)
         .await?;
     sqlx::query!("DELETE FROM loro_sync_inbox")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query!("DELETE FROM loro_sync_quarantine")
         .execute(&mut *tx)
         .await?;
     // #793: stale local snapshots must die with the lineage they describe.

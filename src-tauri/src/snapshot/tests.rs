@@ -4875,11 +4875,15 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
 /// replayed pre-reset peer bytes into it, and the cursor pointed past the
 /// end of the (now empty) op_log so the MAX()-gated advance wedged.
 ///
+/// #3243 adds `loro_sync_quarantine` to the same wipe — it parks the very
+/// bytes the inbox held, so a surviving row is a standing offer to replay
+/// pre-reset content into the post-reset engines.
+///
 /// Also applies the snapshot a SECOND time on the same pool — the
 /// `benches/snapshot_bench.rs` contract is repeated application, and the
 /// added wipes must keep that path working.
 #[tokio::test]
-async fn apply_snapshot_wipes_loro_doc_state_inbox_and_zeroes_cursor_607() {
+async fn apply_snapshot_wipes_loro_doc_state_inbox_quarantine_and_zeroes_cursor_607() {
     let (pool, _dir) = test_pool().await;
     let materializer = test_materializer(&pool);
 
@@ -4902,6 +4906,21 @@ async fn apply_snapshot_wipes_loro_doc_state_inbox_and_zeroes_cursor_607() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(
+        "INSERT INTO loro_sync_quarantine \
+         (inbox_id, space_id, bytes, purged_ids, declared_end_vv, last_reason, \
+          unresolved_boots, first_seen_at_ms, quarantined_at_ms) \
+         VALUES (?, ?, ?, NULL, '[]', ?, 3, ?, ?)",
+    )
+    .bind(1_i64)
+    .bind("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    .bind(vec![8u8, 8, 8])
+    .bind("oplog shortfall")
+    .bind(1_736_942_400_000_i64)
+    .bind(1_736_942_400_000_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(
         "UPDATE materializer_apply_cursor SET materialized_through_seq = 42, updated_at = ? \
          WHERE id = 1",
@@ -4940,6 +4959,14 @@ async fn apply_snapshot_wipes_loro_doc_state_inbox_and_zeroes_cursor_607() {
     assert_eq!(
         inbox_rows, 0,
         "#607: loro_sync_inbox must be wiped by the RESET"
+    );
+    let quarantine_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_quarantine")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        quarantine_rows, 0,
+        "#3243: loro_sync_quarantine must be wiped by the RESET"
     );
     let cursor: i64 = sqlx::query_scalar(
         "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
