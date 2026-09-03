@@ -280,7 +280,8 @@ pub fn resolve_peer_address(
 /// `confirm_pairing_inner` — end with `scheduler.notify_change()`, which is
 /// precisely what Branch B is parked on, so the wake already arrives at the
 /// moment the local marker is written. No new plumbing, and no second waiter
-/// competing with Branch B for the same `Notify` permit.
+/// competing with Branch B for the same change (#4025 replaced the `Notify`
+/// permit with a counter, so a wake is observed rather than consumed).
 ///
 /// The trigger is deliberately "the window is open at this wake", **not** the
 /// `pairing_pending` false→true transition, because in the failing scenario
