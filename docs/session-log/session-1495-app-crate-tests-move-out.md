@@ -12,4 +12,19 @@ What the move exposes is the point of the exercise: a test outside the lib can o
 
 Nothing else changed. Every moved file is a `git mv` plus its `crate::` → `agaric_lib::` rewrite; the per-file count of `#[test]` / `#[tokio::test]` markers is identical to the pre-move tree, file by file, so no suite was dropped or duplicated in the shuffle.
 
-Phase 1 (`reverse/` and `link_metadata/` down into `agaric-store`) and #4502 phase 2 (the materializer into `agaric-engine` behind a spawner port) stay open on #4499 and #4502.
+Phase 1 (`reverse/` down into `agaric-engine`, `link_metadata/` into `agaric-store`) and #4502 phase 2 (the materializer into `agaric-engine` behind a spawner port) stay open on #4499 and #4502.
+
+## Review rounds
+
+The rust coverage ratchet moved 90.6 → 89.7 on the same diff the reviewer
+verified drops no test and changes no production line: the lib's own test
+binary no longer executes the moved suites, and llvm-cov measures per binary.
+Same class as the two extraction re-baselines the baseline's comment already
+lists; the baseline records this one too.
+
+`commands_bench.rs` carried inline copies of `TEST_SPACE_ID` and
+`assign_all_to_test_space` because `commands::tests` was `cfg(test)`. Benches
+resolve dev-dependencies, so `test-util` is on for them and the shared
+fixture is reachable; the copies are gone. The `metric-provable` hook's
+`files` trigger gains `src-tauri/tests`, matching the scan root this session
+gave the guard.

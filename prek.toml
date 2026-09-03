@@ -1307,7 +1307,7 @@ name = "Every metric must have a test proving it can fire (#3349)"
 entry = "node scripts/check-metric-provable.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src-tauri/(src|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs|src-tauri/Cargo\\.toml|scripts/(check-metric-provable\\.mjs|metric-firing-baseline\\.json))$"
+files = "^(src-tauri/(src|tests|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs|src-tauri/Cargo\\.toml|scripts/(check-metric-provable\\.mjs|metric-firing-baseline\\.json))$"
 stages = ["pre-commit"]
 
 # Self-test the metric-provable guard's own exit behavior whenever it
