@@ -707,6 +707,11 @@ mod tests {
     /// The app never closes its pools, so a killed process leaves the session's
     /// last commits uncheckpointed; a raw copy of the `.db` lost them.
     /// Revert-sensitive: replacing `VACUUM INTO` with `std::fs::copy` fails.
+    ///
+    /// The pool is leaked, not dropped, so the writer and the `-shm` are still
+    /// live when the snapshot runs: this pins the read-through-WAL path. A
+    /// killed process's cold `-wal` recovery would need a subprocess and is
+    /// not covered.
     #[tokio::test]
     async fn backup_includes_rows_still_in_hot_wal() {
         let dir = TempDir::new().unwrap();
