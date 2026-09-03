@@ -102,7 +102,8 @@ pub use handlers::cleanup_orphaned_attachments;
 // monotonic `AtomicU64` (relaxed load); the metrics callback reads it on each
 // collection cycle. PII-safe by construction (opaque counts only).
 // `sql_only_fallback_count` is additionally `pub` because the conformance
-// tests read it from outside the crate; its sibling has no such caller.
+// tests will read it from outside the crate once step 2 moves them into an
+// integration binary; its sibling has no caller that moves.
 pub(crate) use handlers::descendant_fanout_dropped_count;
 pub use handlers::sql_only_fallback_count;
 pub use metrics::{QueueMetrics, StatusInfo};
