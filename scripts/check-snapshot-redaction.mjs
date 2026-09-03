@@ -151,8 +151,8 @@ function derivationFailure(why) {
 }
 
 /**
- * `<member>/src` for every workspace member plus `src-tauri/tests`, relative
- * to the repo root.
+ * `<member>/src` and `<member>/tests` for every workspace member plus
+ * `src-tauri/tests`, relative to the repo root.
  *
  * @returns {string[]}
  */
@@ -186,6 +186,12 @@ function deriveRustSourceRoots() {
       derivationFailure(`workspace member \`${name}\` has no \`${rel}\``)
     }
     roots.push(rel)
+    // A member's own integration binaries (`agaric-engine/tests/` since
+    // #4499 phase 1).
+    if (name !== '.') {
+      const tests = `src-tauri/${name}/tests`
+      if (fs.existsSync(path.join(ROOT, tests))) roots.push(tests)
+    }
   }
   // #4499 phase 0d moved the app crate's suites into integration-test
   // binaries under `src-tauri/tests/`; a fixture const declared there is as
