@@ -1416,7 +1416,7 @@ export function findFiringAssertions(stripped, testRegions, tokens, seed = ZERO_
 /**
  * The directories the scan descends into, repo-relative, sorted:
  * `src-tauri/src`, `src-tauri/tests` (the integration-test binaries), plus
- * the `src` of EVERY sibling crate directory —
+ * the `src` and `tests` of EVERY sibling crate directory —
  * `agaric-core`, …, and `diagnostics`, which an `agaric-`-prefix filter
  * silently excluded even though it is a real workspace member that could
  * declare a counter tomorrow. `scripts/` is NOT among them, which is why this
@@ -1446,6 +1446,9 @@ export function scanRoots(root) {
       if (!entry.isDirectory() || SKIP_DIRS.has(entry.name)) continue
       const dir = path.join(tauri, entry.name)
       if (existsSync(path.join(dir, 'src'))) roots.push(path.join(dir, 'src'))
+      // A member's own integration binaries (`agaric-engine/tests/` since
+      // #4499 phase 1) hold firing tests the same way `src-tauri/tests/` does.
+      if (existsSync(path.join(dir, 'tests'))) roots.push(path.join(dir, 'tests'))
       // One level deeper, for a `crates/`-style container. #3349 scanned only
       // `src-tauri/<crate>/src`, so moving a counter-declaring crate under
       // `src-tauri/crates/` would have removed it from the surface with no
@@ -2397,10 +2400,12 @@ function runSelfTest() {
     'the scan roots are exactly the crate sources and test binaries under src-tauri/ (no scripts/)',
     roots.length > 1 &&
       roots.includes('src-tauri/tests') &&
+      roots.includes('src-tauri/agaric-engine/tests') &&
       roots.every(
         (r) =>
           r === 'src-tauri/src' ||
           r === 'src-tauri/tests' ||
+          /^src-tauri\/[^/]+\/tests$/.test(r) ||
           /^src-tauri\/[^/]+(?:\/[^/]+)?\/src$/.test(r),
       ),
     JSON.stringify(roots),
