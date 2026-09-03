@@ -1140,6 +1140,35 @@ mod format_version_tests {
         b.import(&bytes).unwrap();
         assert_eq!(b.count_alive_blocks().unwrap(), 1);
     }
+
+    /// The two edges of the corrupt/unknown branch: a stamp of `0` is
+    /// sub-current and accepted; `-1` is below any version and refused.
+    #[test]
+    fn import_accepts_zero_stamp_and_rejects_negative_stamp() {
+        let stamped = |v: i64| {
+            let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+            a.apply_create_block("x", "content", "X", None, 0).unwrap();
+            let meta: LoroMap = a.doc.get_map(ENGINE_META_ROOT);
+            meta.insert(FIELD_FORMAT_VERSION, LoroValue::from(v))
+                .unwrap();
+            a.doc.commit();
+            a.doc.export(ExportMode::Snapshot).unwrap()
+        };
+
+        let mut b = LoroEngine::new();
+        b.import(&stamped(0))
+            .expect("a stamp in [0, supported) is accepted, not treated as corrupt");
+        assert_eq!(b.count_alive_blocks().unwrap(), 1);
+
+        let mut c = LoroEngine::new();
+        match c.import(&stamped(-1)).unwrap_err() {
+            AppError::Validation { message: m, .. } => assert!(
+                m.contains("not a valid version integer"),
+                "a negative stamp is corrupt, got: {m}",
+            ),
+            other => panic!("expected Validation error, got {other:?}"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2001,6 +2030,159 @@ mod incremental_detection_tests {
             assert_rank_only_contract(&before, &after, &d, &format!("property walk round {round}"));
         }
     }
+
+    /// The `Vec<BlockId>` wrapper hands back the same changed set as the full
+    /// delta — parent first — and really imports.
+    #[test]
+    fn import_with_changed_blocks_returns_the_changed_set_parent_first() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("AA", "content", "a", None, 0).unwrap();
+        a.apply_create_block("BB", "content", "b", Some("AA"), 0)
+            .unwrap();
+        let mut b = LoroEngine::new();
+        let changed = b
+            .import_with_changed_blocks(&a.export_snapshot().unwrap())
+            .unwrap();
+        let changed: Vec<String> = changed.iter().map(|x| x.as_str().to_string()).collect();
+        assert_eq!(changed, vec!["AA", "BB"]);
+        assert_eq!(
+            b.count_alive_blocks().unwrap(),
+            2,
+            "the wrapper imports, not just reports"
+        );
+    }
+
+    /// `changed` is ordered by tree depth FIRST, block id second — a plain id
+    /// sort would put this leaf before its grandparent and break the caller's
+    /// `parent_id` self-FK.
+    #[test]
+    fn changed_set_is_ordered_by_depth_before_id() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("ZZ", "content", "root", None, 0)
+            .unwrap();
+        a.apply_create_block("MM", "content", "mid", Some("ZZ"), 0)
+            .unwrap();
+        a.apply_create_block("AA", "content", "leaf", Some("MM"), 0)
+            .unwrap();
+        let mut b = LoroEngine::new();
+        let upd = a.export_update_since(&b.version_vector()).unwrap();
+        let d = b.import_with_changed_purged_tagscope(&upd).unwrap();
+        let order: Vec<String> = d.changed.iter().map(|x| x.as_str().to_string()).collect();
+        assert_eq!(
+            order,
+            vec!["ZZ", "MM", "AA"],
+            "depths 0, 1, 2 — parent before child, whatever the ids sort to"
+        );
+    }
+
+    /// Tag-scope roots are deduplicated against EVERY ancestor, not just the
+    /// direct parent: `CC` is two hops below the other root `AA`.
+    #[test]
+    fn tag_scope_drops_a_root_whose_grandparent_is_also_a_root() {
+        let (mut a, mut b) = seed(); // AA → BB
+        a.apply_create_block("CC", "content", "c", Some("BB"), 0)
+            .unwrap();
+        a.apply_add_tag("AA", "T1").unwrap();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(ids(&d.changed), vec!["AA", "CC"]);
+        assert_eq!(
+            scope(&d.tag_scope),
+            Some(vec!["AA".to_string()]),
+            "CC's subtree lies inside AA's, two hops up — AA's recompute covers it"
+        );
+    }
+
+    /// A diff on a root container this resolver does not know (a peer on a
+    /// newer build) is the fallback shape: every live block reprojects and the
+    /// inherited-tag cache is rebuilt globally, even though no tree node
+    /// changed.
+    #[test]
+    fn unknown_root_container_forces_the_global_fallback() {
+        let (a, mut b) = seed();
+        a.doc
+            .get_map("future_root")
+            .insert("k", LoroValue::from(1_i64))
+            .unwrap();
+        a.doc.commit();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(
+            ids(&d.changed),
+            vec!["AA", "BB"],
+            "unrecognised diff ⇒ brute-force reproject of the whole live tree"
+        );
+        assert_eq!(d.tag_scope, TagScope::Global);
+        assert!(d.purged.is_empty());
+    }
+
+    /// Engine metadata (the format-version stamp) is not a block: a delta that
+    /// carries it alongside a content edit still resolves to just that block.
+    #[test]
+    fn engine_meta_stamp_in_an_update_does_not_force_the_fallback() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("AA", "content", "a", None, 0).unwrap();
+        a.apply_create_block("BB", "content", "b", Some("AA"), 0)
+            .unwrap();
+        // Seed from an UPDATE, so no format-version stamp has crossed yet.
+        let mut b = LoroEngine::new();
+        b.import(&a.export_update_since(&b.version_vector()).unwrap())
+            .unwrap();
+        assert_eq!(
+            LoroEngine::read_format_version(&b.doc.get_map(ENGINE_META_ROOT)),
+            None,
+            "precondition: b is unstamped"
+        );
+
+        // One content edit plus the stamp `export_snapshot` writes into
+        // `engine_meta`, in the same delta.
+        a.apply_edit_content("BB", 0, 0, "X").unwrap();
+        let _ = a.export_snapshot().unwrap();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(
+            LoroEngine::read_format_version(&b.doc.get_map(ENGINE_META_ROOT)),
+            Some(i64::from(ENGINE_FORMAT_VERSION)),
+            "precondition: the delta carried the stamp"
+        );
+        assert_eq!(
+            ids(&d.changed),
+            vec!["BB"],
+            "engine metadata is not a block: only the edited block reprojects"
+        );
+        assert_eq!(d.tag_scope, TagScope::Subtrees(vec![]));
+    }
+
+    /// A non-structural delta landing on a pre-#400 doc triggers the one-time
+    /// sibling-order migration, whose reorders are NOT in the captured diff.
+    /// The resolver must then fall back to the whole live tree — the fast path
+    /// would project only the edited block and leave the migrated ranks stale.
+    #[test]
+    fn legacy_migration_on_a_non_structural_import_falls_back_globally() {
+        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
+        b.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        for (i, id) in ["A", "B", "C"].iter().enumerate() {
+            b.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        b.force_legacy_scheme_for_test(&[("A", 3), ("B", 2), ("C", 1)]);
+        // A content-only delta from a staging fork: no tree diff, no unknown
+        // container.
+        let mut staged = b.fork_staging().unwrap();
+        staged.apply_edit_content("B", 0, 0, "X").unwrap();
+        let blob = staged.export_update_since(&b.version_vector()).unwrap();
+
+        let d = b.import_with_changed_purged_tagscope(&blob).unwrap();
+        assert_eq!(
+            b.list_children_walk("P").unwrap(),
+            vec!["C", "B", "A"],
+            "the import ran the migration"
+        );
+        let order: Vec<String> = d.changed.iter().map(|x| x.as_str().to_string()).collect();
+        assert_eq!(
+            order,
+            vec!["P", "C", "B", "A"],
+            "migration reordered siblings outside the diff ⇒ every live block, pre-order"
+        );
+        assert_eq!(d.tag_scope, TagScope::Global);
+    }
 }
 
 #[cfg(test)]
@@ -2103,40 +2285,10 @@ mod parent_id_ancestor_tests {
     /// the truncation falsified. `AA` is therefore missing for BOTH inputs.
     #[test]
     fn ancestors_outside_reports_a_walk_truncated_by_an_unreadable_parent_4111() {
-        use tracing_subscriber::layer::SubscriberExt;
-
-        #[derive(Clone, Default)]
-        struct LogBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for LogBufWriter {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBufWriter {
-            type Writer = LogBufWriter;
-            fn make_writer(&'a self) -> Self::Writer {
-                self.clone()
-            }
-        }
         let capture = |e: &LoroEngine, inputs: &[&str]| -> (Vec<String>, String) {
-            let writer = LogBufWriter::default();
-            let subscriber = tracing_subscriber::registry().with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(writer.clone())
-                    .with_ansi(false)
-                    .with_level(true)
-                    .with_target(false),
-            );
-            let out = {
-                let _guard = tracing::subscriber::set_default(subscriber);
-                ids(&e.ancestors_outside(inputs))
-            };
-            let logs = String::from_utf8_lossy(&writer.0.lock().unwrap()).into_owned();
-            (out, logs)
+            crate::loro::engine::test_log_capture::capture_logs(
+                || ids(&e.ancestors_outside(inputs)),
+            )
         };
 
         // Control: an intact chain walks to the root and says nothing.

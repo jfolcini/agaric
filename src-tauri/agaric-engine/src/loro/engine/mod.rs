@@ -781,6 +781,50 @@ fn list_find_string(list: &LoroList, needle: &str) -> Option<usize> {
     None
 }
 
+/// Test-only `tracing` capture: run `f` under a throwaway subscriber and hand
+/// back its result together with everything it logged, so a test can pin that a
+/// path warns — or stays quiet. `set_default` is thread-scoped, so this needs
+/// no process isolation.
+#[cfg(test)]
+pub(crate) mod test_log_capture {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    #[derive(Clone, Default)]
+    struct LogBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for LogBufWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBufWriter {
+        type Writer = LogBufWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    pub(crate) fn capture_logs<R>(f: impl FnOnce() -> R) -> (R, String) {
+        let writer = LogBufWriter::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false)
+                .with_level(true)
+                .with_target(false),
+        );
+        let result = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            f()
+        };
+        let logs = String::from_utf8_lossy(&writer.0.lock().unwrap()).into_owned();
+        (result, logs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::peer_id_from_device_id;
@@ -833,41 +877,9 @@ mod tests {
     #[test]
     fn from_loro_i64_warns_only_beyond_f64_exact_range() {
         use super::{AppError, LoroValue, PropertyValue};
-        use tracing_subscriber::layer::SubscriberExt;
-
-        #[derive(Clone, Default)]
-        struct LogBufWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for LogBufWriter {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBufWriter {
-            type Writer = LogBufWriter;
-            fn make_writer(&'a self) -> Self::Writer {
-                self.clone()
-            }
-        }
 
         let capture = |v: LoroValue| -> (Result<PropertyValue, AppError>, String) {
-            let writer = LogBufWriter::default();
-            let subscriber = tracing_subscriber::registry().with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(writer.clone())
-                    .with_ansi(false)
-                    .with_level(true)
-                    .with_target(false),
-            );
-            let result = {
-                let _guard = tracing::subscriber::set_default(subscriber);
-                PropertyValue::from_loro(v)
-            };
-            let logs = String::from_utf8_lossy(&writer.0.lock().unwrap()).into_owned();
-            (result, logs)
+            super::test_log_capture::capture_logs(|| PropertyValue::from_loro(v))
         };
 
         // Just past the boundary: 2^53 + 1 cannot be represented exactly as
@@ -1514,7 +1526,7 @@ mod tests {
     /// paper over a genuine gap.
     #[test]
     fn gate_replay_blobs_rejects_genuinely_unreachable_update_3164() {
-        use super::{LoroEngine, ReplayBlobGate};
+        use super::{LoroDoc, LoroEngine, ReplayBlobGate};
 
         // Producer A: op 1 (exported), then ops 2-3 where only the LAST delta
         // is queued — its base (A@2) is supplied by nothing in the batch.
@@ -1530,6 +1542,27 @@ mod tests {
             .expect("a-3");
         let orphan = a.export_update_since(&gap_base).expect("orphan delta");
 
+        // The exact gap: the orphan's own-peer range starts where A-2 ended,
+        // and the widest base this batch can build stops where blob0 ended.
+        let a_peer = a.doc.peer_id();
+        let base_counter = LoroDoc::decode_import_blob_meta(&orphan, true)
+            .expect("orphan meta")
+            .partial_start_vv
+            .get(&a_peer)
+            .copied()
+            .expect("the orphan starts at A's gap");
+        let have = LoroDoc::decode_import_blob_meta(&blob0, true)
+            .expect("blob0 meta")
+            .partial_end_vv
+            .get(&a_peer)
+            .copied()
+            .expect("blob0 ends at A");
+        assert!(
+            have < base_counter,
+            "precondition: the batch base ({have}) must stop short of the \
+             orphan's start ({base_counter})"
+        );
+
         let fresh = LoroEngine::with_peer_id("DEV-B").expect("fresh");
         let refs: Vec<&[u8]> = vec![&blob0, &orphan];
         let gates = fresh.gate_replay_blobs(&refs);
@@ -1539,9 +1572,15 @@ mod tests {
             gates[0]
         );
         match &gates[1] {
-            ReplayBlobGate::Unreachable(reason) => assert!(
-                reason.contains("#1054"),
-                "reason must be self-diagnosing, got: {reason}"
+            ReplayBlobGate::Unreachable(reason) => assert_eq!(
+                reason,
+                &format!(
+                    "boot-replay update base unreachable (#1054): requires \
+                     peer={a_peer} counter>={base_counter}, batch base has \
+                     counter={have}"
+                ),
+                "an own-peer counter gap is reported by the partial_start_vv \
+                 half, with the exact counters the base fell short at"
             ),
             other => {
                 panic!("a blob whose base the batch never supplies must be flagged: {other:?}")
@@ -1877,6 +1916,244 @@ mod tests {
         }
     }
 
+    /// #792 boundary on a doc that HOLDS own ops — the `local_counter > 0`
+    /// fork rule the batch gate decides in its first sweep. A blob carrying
+    /// our peer exactly as far as we do is our own history echoed back and
+    /// must be accepted; one op further is the fork. Both sides are pinned at
+    /// the exact counter so a drifted comparison cannot pass on values that
+    /// are merely far apart.
+    #[test]
+    fn gate_replay_blobs_forks_own_peer_exactly_one_op_past_local_792() {
+        use super::{LoroDoc, LoroEngine, ReplayBlobGate};
+        use loro::ExportMode;
+
+        let mut local = LoroEngine::with_peer_id("DEV-OWN").expect("local");
+        local
+            .apply_create_block("X", "content", "x", None, 0)
+            .expect("x");
+        let own = local.doc.peer_id();
+        let local_own = local
+            .doc
+            .oplog_vv()
+            .get(&own)
+            .copied()
+            .expect("local minted ops");
+
+        // A second lineage under the SAME peer id: the identical create (so
+        // its counters end exactly where ours do), then exactly one more op.
+        // Raw exports — `export_snapshot` would stamp the format version and
+        // add an op of its own.
+        let mut other = LoroEngine::with_peer_id("DEV-OWN").expect("other lineage");
+        other
+            .apply_create_block("X", "content", "x", None, 0)
+            .expect("x again");
+        let equal = other
+            .doc
+            .export(ExportMode::Snapshot)
+            .expect("equal export");
+        other.apply_restore_block("X").expect("one meta op");
+        let beyond = other
+            .doc
+            .export(ExportMode::Snapshot)
+            .expect("beyond export");
+
+        let end_of = |bytes: &[u8]| {
+            LoroDoc::decode_import_blob_meta(bytes, true)
+                .expect("meta")
+                .partial_end_vv
+                .get(&own)
+                .copied()
+                .unwrap_or(0)
+        };
+        assert_eq!(
+            end_of(&equal),
+            local_own,
+            "precondition: `equal` ends exactly where the local doc does"
+        );
+        assert_eq!(
+            end_of(&beyond),
+            local_own + 1,
+            "precondition: `beyond` is exactly one op further"
+        );
+
+        let refs: Vec<&[u8]> = vec![&equal];
+        let gates = local.gate_replay_blobs(&refs);
+        assert!(
+            matches!(gates[0], ReplayBlobGate::Accept { .. }),
+            "a blob that ends where we do carries nothing beyond our history \
+             and is no fork, got {:?}",
+            gates[0]
+        );
+        let refs: Vec<&[u8]> = vec![&beyond];
+        match &local.gate_replay_blobs(&refs)[0] {
+            ReplayBlobGate::Fork(reason) => assert_eq!(
+                reason,
+                &format!(
+                    "(peer,counter) fork detected for own peer id {own} (#792): inbound \
+                     blob carries our ops through counter {} but this doc only holds \
+                     {local_own} — a pre-epoch snapshot RESET reused the deterministic \
+                     peer id; importing would corrupt causal state. Snapshot catch-up \
+                     required.",
+                    local_own + 1
+                )
+            ),
+            other => panic!("one op past our own counter is the fork, got {other:?}"),
+        }
+    }
+
+    /// #3189 boundary at counter ZERO: a cross-peer dep on the very first op a
+    /// peer ever minted is `(peer, 0)`, and the base must hold that peer at
+    /// `>= 1`. The negative-counter skip just above that check must not
+    /// swallow it — `0` is the smallest id loro can encode, not a sentinel.
+    #[test]
+    fn gate_replay_blobs_checks_a_cross_peer_dep_on_counter_zero_3189() {
+        use super::{LoroDoc, LoroEngine, ReplayBlobGate};
+        use loro::ID;
+
+        // A's first-ever op is a single one — the sibling-order marker — so
+        // A's head is (A, 0). Carrying the marker also spares B a marker op of
+        // its own on import, which would put B's `partial_start_vv` ahead of
+        // the cross-peer check.
+        let a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since0 = a.version_vector();
+        a.mark_sibling_order_current();
+        a.doc.commit();
+        let blob_a = a.export_update_since(&since0).expect("blob a");
+        let a_peer = a.doc.peer_id();
+        assert_eq!(
+            a.doc.oplog_vv().get(&a_peer).copied(),
+            Some(1),
+            "precondition: exactly one op, so A's head is (A, 0)"
+        );
+
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import(&blob_a).expect("b imports a");
+        let since_b = b.version_vector();
+        b.apply_create_block("B-1", "content", "b", None, 0)
+            .expect("b-1");
+        let blob_b = b.export_update_since(&since_b).expect("blob b");
+        let meta = LoroDoc::decode_import_blob_meta(&blob_b, true).expect("meta");
+        assert_eq!(
+            meta.start_frontiers.iter().collect::<Vec<_>>(),
+            vec![ID::new(a_peer, 0)],
+            "precondition: B's change depends on (A, 0) and nothing else"
+        );
+        assert_eq!(
+            meta.partial_start_vv
+                .get(&b.doc.peer_id())
+                .copied()
+                .unwrap_or(0),
+            0,
+            "precondition: B's own range starts at 0, so only the cross-peer \
+             half can refuse this blob"
+        );
+
+        let fresh = LoroEngine::with_peer_id("DEV-C").expect("fresh");
+        let only_b: Vec<&[u8]> = vec![&blob_b];
+        match &fresh.gate_replay_blobs(&only_b)[0] {
+            ReplayBlobGate::Unreachable(reason) => assert_eq!(
+                reason,
+                &format!(
+                    "boot-replay update cross-peer dep unreachable (#1054/#3189): \
+                     requires peer={a_peer} counter>=1, batch base has no entry for \
+                     that peer"
+                )
+            ),
+            other => panic!("a dep on (peer, 0) is a real dependency, got {other:?}"),
+        }
+        // Supplied by the batch, the same dep is met at exactly counter 1.
+        let both: Vec<&[u8]> = vec![&blob_a, &blob_b];
+        let gates = fresh.gate_replay_blobs(&both);
+        assert!(
+            gates
+                .iter()
+                .all(|g| matches!(g, ReplayBlobGate::Accept { .. })),
+            "with (A, 0) in the batch the dep is covered at counter 1, got {gates:?}"
+        );
+    }
+
+    /// #3189 boundary ONE op short: the batch base holds the dep's peer, just
+    /// not far enough. `have == need - 1` must be refused and `have == need`
+    /// accepted, so the comparison cannot drift by one in either direction.
+    #[test]
+    fn gate_replay_blobs_rejects_cross_peer_dep_one_op_past_the_base_3189() {
+        use super::{LoroDoc, LoroEngine, ReplayBlobGate};
+        use loro::ID;
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since0 = a.version_vector();
+        a.apply_create_block("A-1", "content", "root", None, 0)
+            .expect("a-1");
+        let head = a.export_update_since(&since0).expect("head");
+        let since1 = a.version_vector();
+        // Exactly one more op: the format-version stamp `export_snapshot`
+        // writes.
+        let full = a.export_snapshot().expect("stamp + snapshot");
+        let tail = a.export_update_since(&since1).expect("tail");
+        let a_peer = a.doc.peer_id();
+        let end_of = |bytes: &[u8]| {
+            LoroDoc::decode_import_blob_meta(bytes, true)
+                .expect("meta")
+                .partial_end_vv
+                .get(&a_peer)
+                .copied()
+                .unwrap_or(0)
+        };
+        let have = end_of(&head);
+        let need = end_of(&tail);
+        assert_eq!(need, have + 1, "precondition: the tail is exactly one op");
+
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import(&full).expect("b holds all of A");
+        assert_eq!(
+            b.doc.oplog_vv().get(&b.doc.peer_id()).copied().unwrap_or(0),
+            0,
+            "precondition: B minted nothing yet, so its blob's own range starts \
+             at 0 and only the cross-peer half can refuse it"
+        );
+        let since_b = b.version_vector();
+        b.apply_create_block("B-1", "content", "child", Some("A-1"), 0)
+            .expect("b-1");
+        let blob_b = b.export_update_since(&since_b).expect("blob b");
+        assert_eq!(
+            LoroDoc::decode_import_blob_meta(&blob_b, true)
+                .expect("meta")
+                .start_frontiers
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![ID::new(a_peer, need - 1)],
+            "precondition: B's change depends on A's stamp op"
+        );
+
+        let fresh = LoroEngine::with_peer_id("DEV-C").expect("fresh");
+        let short: Vec<&[u8]> = vec![&head, &blob_b];
+        let gates = fresh.gate_replay_blobs(&short);
+        assert!(
+            matches!(gates[0], ReplayBlobGate::Accept { .. }),
+            "the head is self-contained, got {:?}",
+            gates[0]
+        );
+        match &gates[1] {
+            ReplayBlobGate::Unreachable(reason) => assert_eq!(
+                reason,
+                &format!(
+                    "boot-replay update cross-peer dep unreachable (#1054/#3189): \
+                     requires peer={a_peer} counter>={need}, batch base has \
+                     counter={have}"
+                )
+            ),
+            other => panic!("a base one op short of the dep must be refused, got {other:?}"),
+        }
+        let exact: Vec<&[u8]> = vec![&head, &tail, &blob_b];
+        let gates = fresh.gate_replay_blobs(&exact);
+        assert!(
+            gates
+                .iter()
+                .all(|g| matches!(g, ReplayBlobGate::Accept { .. })),
+            "with the tail in the batch the base reaches exactly `need`, got {gates:?}"
+        );
+    }
+
     /// #1054 robustness — like the #792 guard, malformed bytes must
     /// degrade to `None` (let the real import surface the error), never
     /// panic.
@@ -2209,9 +2486,14 @@ mod tests {
         // Import blob B alone, WITHOUT its dependency: loro returns Ok and parks
         // the whole change.
         let mut orphaned = LoroEngine::with_peer_id("DEV-C").expect("orphaned");
-        let delta = orphaned
-            .import_with_changed_purged_tagscope(&blob_b)
-            .expect("import must still return Ok — that is the whole problem");
+        let (delta, logs) = super::test_log_capture::capture_logs(|| {
+            orphaned.import_with_changed_purged_tagscope(&blob_b)
+        });
+        let delta = delta.expect("import must still return Ok — that is the whole problem");
+        assert!(
+            logs.contains("WARN") && logs.contains("#3194"),
+            "the buffered ranges must also be reported in the log, captured: {logs:?}"
+        );
         assert!(
             !delta.pending.is_empty(),
             "loro reports the unapplied changes in ImportStatus::pending; \
@@ -2237,9 +2519,14 @@ mod tests {
         // Converse: with the dependency present the same blob settles, the
         // op-log reaches the declared frontier and nothing is withheld.
         let mut settled = LoroEngine::with_peer_id("DEV-D").expect("settled");
-        let delta = settled
-            .import_batch_with_changed_purged_tagscope(&[blob_a, blob_b])
-            .expect("batch import");
+        let (delta, logs) = super::test_log_capture::capture_logs(|| {
+            settled.import_batch_with_changed_purged_tagscope(&[blob_a, blob_b])
+        });
+        let delta = delta.expect("batch import");
+        assert!(
+            !logs.contains("#3194"),
+            "a fully-applied payload has nothing buffered to warn about, captured: {logs:?}"
+        );
         assert!(
             delta.pending.is_empty(),
             "a batch that supplies its own deps must leave nothing buffered, \
@@ -2482,6 +2769,43 @@ mod op_coverage_tests {
         // BLOCK_B must survive untouched.
         let snap_b = engine.read_block(BLOCK_B).unwrap().expect("B present");
         assert_eq!(snap_b.content, "world");
+    }
+
+    /// Out-of-order replay can leave `block_properties` / `block_tags`
+    /// entries for a block that has no tree node (its ops arrived before its
+    /// create, or after a concurrent purge). Purging that id must still sweep
+    /// those entries — the idempotent-cleanup half of `apply_purge_block`.
+    #[test]
+    fn apply_purge_block_sweeps_entries_of_a_block_with_no_tree_node() {
+        let mut engine = LoroEngine::new();
+        engine
+            .apply_set_property(BLOCK_A, "k", Some("v"))
+            .expect("set prop");
+        engine.apply_add_tag(BLOCK_A, TAG_X).expect("add tag");
+        assert!(
+            engine.read_block(BLOCK_A).unwrap().is_none(),
+            "precondition: no tree node"
+        );
+        assert!(
+            engine.read_property_typed(BLOCK_A, "k").unwrap().is_some(),
+            "precondition: the property entry exists without a node"
+        );
+        assert_eq!(
+            engine.read_tags(BLOCK_A).unwrap(),
+            vec![TAG_X.to_string()],
+            "precondition: the tag entry exists without a node"
+        );
+
+        engine.apply_purge_block(BLOCK_A).expect("purge");
+
+        assert!(
+            engine.read_property_typed(BLOCK_A, "k").unwrap().is_none(),
+            "purge must sweep the node-less block's property entry"
+        );
+        assert!(
+            engine.read_tags(BLOCK_A).unwrap().is_empty(),
+            "purge must sweep the node-less block's tag entry"
+        );
     }
 
     // ── DeleteProperty ────────────────────────────────────────────────
@@ -3336,6 +3660,74 @@ mod tree_tests {
         assert_eq!(e.list_children_walk("P").unwrap(), vec!["B", "D", "C"]);
     }
 
+    /// The cycle skip is for `CyclicMoveError` ONLY. Any other `mov_to`
+    /// failure — here the node is gone from the tree while the index still
+    /// names it — must surface as the validation error, not be logged and
+    /// counted as a cross-peer cycle. Reads the process-global
+    /// `cycle_rejected_metrics` counter as a before/after delta (nextest
+    /// isolates the process).
+    #[test]
+    fn move_of_a_node_missing_from_the_tree_is_an_error_not_a_cycle_skip() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "p", None, 0).unwrap();
+        e.apply_create_block_at("X", "leaf", "x", None, 1).unwrap();
+        let x = e.node_for("X").expect("X indexed");
+        e.tree().delete(x).expect("drop X's node behind the index");
+        e.doc.commit();
+
+        let before = cycle_rejected_metrics::count();
+        let err = e
+            .apply_move_block_to("X", Some("P"), 0)
+            .expect_err("a non-cycle mov_to failure must propagate");
+        match err {
+            AppError::Validation { message, .. } => assert!(
+                message.contains("move block X: tree.mov_to"),
+                "the error must name the failing tree call, got: {message}"
+            ),
+            other => panic!("expected Validation, got {other:?}"),
+        }
+        assert_eq!(
+            cycle_rejected_metrics::count(),
+            before,
+            "a non-cycle failure is not a cycle rejection"
+        );
+    }
+
+    /// The migration runs at IMPORT time — where a pre-#400 snapshot actually
+    /// arrives — not only when called directly. A fresh engine importing a
+    /// legacy doc must come up in position order with the marker stamped.
+    #[test]
+    fn import_migrates_a_legacy_snapshot_onto_the_fractional_index() {
+        let mut a = LoroEngine::new();
+        a.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        for (i, id) in ["A", "B", "C"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        a.force_legacy_scheme_for_test(&[("A", 3), ("B", 2), ("C", 1)]);
+        let bytes = a.export_snapshot().unwrap();
+
+        let mut b = LoroEngine::new();
+        b.import(&bytes).unwrap();
+        assert_eq!(b.list_children_walk("P").unwrap(), vec!["C", "B", "A"]);
+        assert_eq!(b.sibling_order_version(), SIBLING_ORDER_VERSION);
+    }
+
+    /// The smallest parent the reorder loop must not skip: exactly two legacy
+    /// children in the wrong order.
+    #[test]
+    fn migrate_legacy_sibling_order_reorders_a_two_child_parent() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        e.apply_create_block_at("A", "content", "", Some("P"), 0)
+            .unwrap();
+        e.apply_create_block_at("B", "content", "", Some("P"), 1)
+            .unwrap();
+        e.force_legacy_scheme_for_test(&[("A", 2), ("B", 1)]);
+        e.migrate_legacy_sibling_order_if_needed().unwrap();
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["B", "A"]);
+    }
+
     /// A genuine pre-#400 doc (legacy `position` meta, NO marker, tree order
     /// DISAGREEING with position order) is reordered to the old
     /// `ORDER BY position ASC, id ASC` by the migration. This actually drives
@@ -3683,6 +4075,17 @@ mod tag_convergence_tests {
             fresh.read_tags(BLOCK_A).expect("read tags"),
             vec![TAG_Y.to_string(), TAG_X.to_string()],
         );
+        // The dedupe is a real no-op on the legacy list, not a read-side
+        // illusion: the raw list holds exactly [Y, X].
+        let tags_root: super::LoroMap = fresh.doc.get_map(super::BLOCK_TAGS_ROOT);
+        match super::tags_slot(&tags_root, BLOCK_A, "test").expect("tags slot") {
+            Some(super::TagsSlot::List(list)) => assert_eq!(
+                list.len(),
+                2,
+                "a duplicate re-add must not push a second X onto the legacy list"
+            ),
+            _ => panic!("fixture must still be a legacy list slot"),
+        }
     }
 
     /// Name-keyed identity (#709 Phase 1): the map key is the
