@@ -220,17 +220,11 @@ pub async fn list_block_history(
 /// local delete of a peer-added attachment, with no `compact_op_log` sweep
 /// (a maintenance operation, not a routine one) required first.
 ///
-/// Still open here, tracked as #4627. The reason this doc used to give —
-/// that the probe cannot prove ownership of a peer-added attachment without
-/// a local paired add — is false: `ingest_remote_op_in_tx` populates
-/// `op_log.block_id` for a replicated row exactly as the local path does,
-/// and attachments are never reparented, so a replicated add identifies its
-/// owner as well as a local one. `list_block_history` dropped the filter on
-/// that basis (#4336). It stays here because `src_add.is_replicated = 0` is
-/// one of the five predicates this query shares with the three undo queries,
-/// so removing it decides whether Ctrl+Z starts offering a peer-added
-/// attachment's delete — a design call for #4627, not a constraint this
-/// query can settle alone.
+/// Still open here, tracked as #4627: `src_add.is_replicated = 0` is one of
+/// the five predicates this query shares with the three undo queries, so
+/// removing it decides whether Ctrl+Z starts offering a peer-added
+/// attachment's delete — a design call, not a constraint this query can
+/// settle alone.
 ///
 /// Residual divergence NOT closed here, and no longer load-bearing
 /// (#4328): this query has no `is_undo = 0` / `is_replicated = 0` filter
