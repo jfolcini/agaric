@@ -16,12 +16,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { LinkPreviewState } from '@/hooks/useLinkPreview'
+import type { LinkMetadata } from '@/lib/bindings'
 import {
   EXTERNAL_IMAGE_ALLOWLIST_KEY,
   EXTERNAL_IMAGE_POLICY_KEY,
 } from '@/lib/external-image-policy'
 import { logger } from '@/lib/logger'
-import type { LinkMetadata } from '@/lib/tauri'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 

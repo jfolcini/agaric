@@ -43,21 +43,25 @@ import { t } from '@/lib/i18n'
 // `listTagsByPrefix` retired its `@/lib/tauri` wrapper too (#4411) — the
 // component now calls `commands.listTagsByPrefix` directly and unwraps the
 // `Result` envelope, so its mock backs the `commands.*` surface and resolves
-// the `{ status: 'ok', data }` shape.
-const { mockListPropertyKeys, mockListTagsByPrefix } = vi.hoisted(() => ({
-  mockListPropertyKeys: vi.fn(),
-  mockListTagsByPrefix: vi.fn(),
-}))
+// the `{ status: 'ok', data }` shape. Same for `listUnlinkedReferences`
+// (#4411, the links domain): `useUnlinkedReferences` now dispatches
+// `commands.listUnlinkedReferences`, so its spy resolves/rejects with the bare
+// `GroupedBacklinkResponse` and the shim adds the envelope.
+const { mockListPropertyKeys, mockListTagsByPrefix, mockListUnlinkedReferences } = vi.hoisted(
+  () => ({
+    mockListPropertyKeys: vi.fn(),
+    mockListTagsByPrefix: vi.fn(),
+    mockListUnlinkedReferences: vi.fn(),
+  }),
+)
 
 vi.mock('@/lib/tauri', () => ({
-  listUnlinkedReferences: vi.fn(),
   editBlock: vi.fn(),
   // `handleLinkIt` now reads aliases via `getPageAliases` so
   // alias-only mentions can be rewritten. Default mock returns no
   // aliases so the legacy title-only test paths stay unaffected;
   // -specific cases override per-test.
   getPageAliases: vi.fn(),
-  paginationLimit: (n: number) => n,
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -69,6 +73,8 @@ vi.mock('@/lib/bindings', async () => {
       listPropertyKeys: mockListPropertyKeys,
       listTagsByPrefix: (...args: unknown[]) =>
         mockListTagsByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listUnlinkedReferences: (...args: unknown[]) =>
+        mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -151,9 +157,9 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
-import { editBlock, getPageAliases, listUnlinkedReferences } from '@/lib/tauri'
+import { editBlock, getPageAliases } from '@/lib/tauri'
 
-const mockedListUnlinked = vi.mocked(listUnlinkedReferences)
+const mockedListUnlinked = mockListUnlinkedReferences
 const mockedEditBlock = vi.mocked(editBlock)
 const mockedListTagsByPrefix = mockListTagsByPrefix
 const mockedListPropertyKeys = mockListPropertyKeys
@@ -255,7 +261,12 @@ describe('UnlinkedReferences', () => {
     // Wait for eager fetch to complete
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith(
-        expect.objectContaining({ pageId: 'PAGE1', cursor: null }),
+        'PAGE1',
+        null,
+        null,
+        null,
+        expect.any(Number),
+        { kind: 'global' },
       )
     })
 
@@ -324,13 +335,8 @@ describe('UnlinkedReferences', () => {
 
     // Should call the API
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith({
-        pageId: 'PAGE1',
-        filters: null,
-        sort: null,
-        cursor: null,
-        limit: 20,
-        spaceId: null,
+      expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE1', null, null, null, 20, {
+        kind: 'global',
       })
     })
 
@@ -613,7 +619,9 @@ describe('UnlinkedReferences', () => {
     // collapsed panel now issues its own cheap counts-only fetch (limit 1), and
     // expanding re-keys the query, so "page 1" is no longer literally the first
     // call.
-    mockedListUnlinked.mockImplementation(async (args) => (args.cursor == null ? page1 : page2))
+    mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, cursor) =>
+      cursor == null ? page1 : page2,
+    )
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
@@ -632,13 +640,8 @@ describe('UnlinkedReferences', () => {
 
     // Should have called with cursor
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith({
-        pageId: 'PAGE1',
-        filters: null,
-        sort: null,
-        cursor: 'cursor_page2',
-        limit: 20,
-        spaceId: null,
+      expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE1', null, null, 'cursor_page2', 20, {
+        kind: 'global',
       })
     })
 
@@ -674,7 +677,9 @@ describe('UnlinkedReferences', () => {
       truncated: false,
     }
     // #3316 item 2: cursor-keyed, not call-count-keyed — see the load-more test.
-    mockedListUnlinked.mockImplementation(async (args) => (args.cursor == null ? page1 : page2))
+    mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, cursor) =>
+      cursor == null ? page1 : page2,
+    )
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
@@ -740,13 +745,8 @@ describe('UnlinkedReferences', () => {
     await user.click(header)
 
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith({
-        pageId: 'PAGE2',
-        filters: null,
-        sort: null,
-        cursor: null,
-        limit: 20,
-        spaceId: null,
+      expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE2', null, null, null, 20, {
+        kind: 'global',
       })
     })
   })
@@ -761,7 +761,12 @@ describe('UnlinkedReferences', () => {
     // Wait for eager fetch to complete
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith(
-        expect.objectContaining({ pageId: 'PAGE1', cursor: null }),
+        'PAGE1',
+        null,
+        null,
+        null,
+        expect.any(Number),
+        { kind: 'global' },
       )
     })
 
@@ -1027,7 +1032,12 @@ describe('UnlinkedReferences', () => {
     // Wait for eager fetch
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith(
-        expect.objectContaining({ pageId: 'PAGE1', cursor: null }),
+        'PAGE1',
+        null,
+        null,
+        null,
+        expect.any(Number),
+        { kind: 'global' },
       )
     })
 
@@ -1206,9 +1216,9 @@ describe('UnlinkedReferences', () => {
     expect(screen.getByTestId('backlink-filter-builder')).toBeInTheDocument()
 
     // Initial fetch had no filters
-    expect(mockedListUnlinked).toHaveBeenCalledWith(
-      expect.objectContaining({ filters: null, sort: null }),
-    )
+    expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE1', null, null, null, expect.any(Number), {
+      kind: 'global',
+    })
 
     mockedListUnlinked.mockClear()
 
@@ -1217,14 +1227,14 @@ describe('UnlinkedReferences', () => {
 
     // Refetch should fire with the new filter list
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith({
-        pageId: 'PAGE1',
-        filters: [{ type: 'HasTag', tag_id: 'TEST_TAG' }],
-        sort: null,
-        cursor: null,
-        limit: 20,
-        spaceId: null,
-      })
+      expect(mockedListUnlinked).toHaveBeenCalledWith(
+        'PAGE1',
+        [{ type: 'HasTag', tag_id: 'TEST_TAG' }],
+        null,
+        null,
+        20,
+        { kind: 'global' },
+      )
     })
   })
 
@@ -1252,14 +1262,14 @@ describe('UnlinkedReferences', () => {
     await user.click(screen.getByTestId('test-apply-sort'))
 
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith({
-        pageId: 'PAGE1',
-        filters: null,
-        sort: { type: 'Created', dir: 'Desc' },
-        cursor: null,
-        limit: 20,
-        spaceId: null,
-      })
+      expect(mockedListUnlinked).toHaveBeenCalledWith(
+        'PAGE1',
+        null,
+        { type: 'Created', dir: 'Desc' },
+        null,
+        20,
+        { kind: 'global' },
+      )
     })
   })
 
@@ -1274,7 +1284,12 @@ describe('UnlinkedReferences', () => {
 
     await waitFor(() => {
       expect(mockedListUnlinked).toHaveBeenCalledWith(
-        expect.objectContaining({ pageId: 'PAGE1', cursor: null }),
+        'PAGE1',
+        null,
+        null,
+        null,
+        expect.any(Number),
+        { kind: 'global' },
       )
     })
 

@@ -42,17 +42,22 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 const virtualWindow = vi.hoisted(() => ({ size: null as number | null }))
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: () => virtualWindow.size }))
 
-const { mockListPropertyKeys, mockListTagsByPrefix } = vi.hoisted(() => ({
-  mockListPropertyKeys: vi.fn(),
-  mockListTagsByPrefix: vi.fn(),
-}))
+// `listUnlinkedReferences` retired its `@/lib/tauri` wrapper (#4411) —
+// `useUnlinkedReferences` dispatches `commands.listUnlinkedReferences`, so the
+// spy resolves/rejects with the bare `GroupedBacklinkResponse` and the shim
+// below adds the `{ status: 'ok', data }` envelope `unwrap` expects.
+const { mockListPropertyKeys, mockListTagsByPrefix, mockListUnlinkedReferences } = vi.hoisted(
+  () => ({
+    mockListPropertyKeys: vi.fn(),
+    mockListTagsByPrefix: vi.fn(),
+    mockListUnlinkedReferences: vi.fn(),
+  }),
+)
 
 vi.mock('@/lib/tauri', () => ({
-  listUnlinkedReferences: vi.fn(),
   editBlock: vi.fn(),
   listPropertyKeys: mockListPropertyKeys,
   getPageAliases: vi.fn(),
-  paginationLimit: (n: number) => n,
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -63,6 +68,8 @@ vi.mock('@/lib/bindings', async () => {
       ...actual.commands,
       listPropertyKeys: mockListPropertyKeys,
       listTagsByPrefix: mockListTagsByPrefix,
+      listUnlinkedReferences: (...args: unknown[]) =>
+        mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -80,12 +87,12 @@ vi.mock('@/components/pages/PageLink', () => ({
 import { UnlinkedReferences } from '@/components/backlinks/UnlinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
+import type { GroupedBacklinkResponse } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
-import type { GroupedBacklinkResponse } from '@/lib/tauri'
-import { editBlock, getPageAliases, listUnlinkedReferences } from '@/lib/tauri'
+import { editBlock, getPageAliases } from '@/lib/tauri'
 
-const mockedListUnlinked = vi.mocked(listUnlinkedReferences)
+const mockedListUnlinked = mockListUnlinkedReferences
 const mockedEditBlock = vi.mocked(editBlock)
 const mockedGetPageAliases = vi.mocked(getPageAliases)
 
@@ -182,8 +189,8 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
   // #3733 note 1.
   it('"Link it" under an active filter leaves "Showing N of M" agreeing with the rows', async () => {
     const user = userEvent.setup()
-    mockedListUnlinked.mockImplementation(async (args) =>
-      args.filters
+    mockedListUnlinked.mockImplementation(async (_pageId, filters) =>
+      filters
         ? makeResponse({ ids: ['B1', 'B2', 'B3', 'B4'], total: 40, filtered: 4 })
         : makeResponse({ ids: ['B1'], total: 40, filtered: 40 }),
     )
@@ -215,10 +222,10 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
   it('expanding does not flash "No Unlinked References" over a known count', async () => {
     const user = userEvent.setup()
     let releaseExpanded: ((v: GroupedBacklinkResponse) => void) | undefined
-    mockedListUnlinked.mockImplementation(async (args) => {
+    mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, _cursor, limit) => {
       // The collapsed panel asks for a single group (#3316 item 2) and gets the
       // exact counts back; expanding re-keys the query to the full page.
-      if (Number(args.limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
+      if (Number(limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
       return new Promise<GroupedBacklinkResponse>((resolve) => {
         releaseExpanded = resolve
       })
@@ -234,7 +241,14 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
     // The expand fetch is in flight — the count was already known, so nothing
     // may claim there are none.
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith(expect.objectContaining({ limit: 20 }))
+      expect(mockedListUnlinked).toHaveBeenCalledWith(
+        expect.anything(),
+        null,
+        null,
+        null,
+        20,
+        expect.anything(),
+      )
     })
     expect(screen.queryByText(t('unlinkedRefs.headerNone'))).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: new RegExp(twelve, 'i') })).toBeInTheDocument()
@@ -254,8 +268,8 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
   describe('a failed expand', () => {
     /** Collapsed fetch succeeds with a count; the expanded one rejects. */
     function mockFailingExpand() {
-      mockedListUnlinked.mockImplementation(async (args) => {
-        if (Number(args.limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
+      mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, _cursor, limit) => {
+        if (Number(limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
         throw new Error('expand failed')
       })
     }
@@ -283,8 +297,8 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
     it('Retry re-runs the fetch and the rows arrive', async () => {
       const user = userEvent.setup()
       let expandFails = true
-      mockedListUnlinked.mockImplementation(async (args) => {
-        if (Number(args.limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
+      mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, _cursor, limit) => {
+        if (Number(limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
         if (expandFails) throw new Error('expand failed')
         return makeResponse({ ids: ['B1', 'B2'], total: 12, filtered: 12 })
       })
@@ -313,8 +327,8 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
   it('"Link it" while expanded also decrements the collapsed panel\'s count', async () => {
     const user = userEvent.setup()
     let collapsedFetches = 0
-    mockedListUnlinked.mockImplementation(async (args) => {
-      if (Number(args.limit) === 1) {
+    mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, _cursor, limit) => {
+      if (Number(limit) === 1) {
         collapsedFetches += 1
         if (collapsedFetches === 1) return makeResponse({ ids: ['B1'], total: 40, filtered: 40 })
         // Belt and braces: if collapsing ever DID refetch, this never settles,

@@ -11,8 +11,8 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useLinkMetadata } from '@/hooks/useLinkMetadata'
+import type { LinkMetadata } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { LinkMetadata } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 
