@@ -196,10 +196,8 @@ async fn backup_db_before_migration(db_path: &Path) {
         // `_sqlx_migrations` is treated as PENDING precisely so this runs. A
         // raw copy cannot carry a `-wal` tail, but nothing can read one beside
         // a main file SQLite rejects, so a byte copy is the only thing left to
-        // keep. `VACUUM INTO` refuses a target that already exists, so a
-        // partial one is removed first.
+        // keep.
         Err(e) => {
-            let _ = std::fs::remove_file(&backup);
             match std::fs::copy(db_path, &backup) {
                 Ok(bytes) => tracing::warn!(
                     error = %e,
@@ -245,13 +243,15 @@ async fn snapshot_vault(db_path: &Path, backup: &Path) -> Result<(), sqlx::Error
         .create_if_missing(false)
         .connect()
         .await?;
-    // dynamic-sql: VACUUM is not a preparable statement, so the compile-checked
-    // macro form cannot validate it against the schema.
+    // dynamic-sql: VACUUM INTO has no result schema for the compile-checked
+    // macro form to validate against.
     let vacuumed = sqlx::query("VACUUM INTO ?")
         .bind(backup.to_string_lossy().into_owned())
         .execute(&mut conn)
         .await;
-    conn.close().await?;
+    // A close error after a successful VACUUM must not turn into `Err`: the
+    // caller would delete the good snapshot and fall back to the raw copy.
+    let _ = conn.close().await;
     vacuumed.map(|_| ())
 }
 
@@ -623,14 +623,23 @@ mod tests {
         assert_eq!(count, 0);
     }
 
-    /// Count `<db_name>.pre-migration-*` siblings in `dir`.
-    fn count_pre_migration_backups(dir: &Path, db_name: &str) -> usize {
+    /// The `<db_name>.pre-migration-*` siblings in `dir`.
+    fn pre_migration_backups(dir: &Path, db_name: &str) -> Vec<std::path::PathBuf> {
         let prefix = format!("{db_name}.pre-migration-");
         std::fs::read_dir(dir)
             .unwrap()
             .filter_map(std::result::Result::ok)
-            .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
-            .count()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&prefix))
+            })
+            .collect()
+    }
+
+    fn count_pre_migration_backups(dir: &Path, db_name: &str) -> usize {
+        pre_migration_backups(dir, db_name).len()
     }
 
     /// Remove the newest `_sqlx_migrations` record from a migrated `pool` so
@@ -651,17 +660,7 @@ mod tests {
 
     /// The single `<db_name>.pre-migration-*` sibling in `dir`.
     fn single_pre_migration_backup(dir: &Path, db_name: &str) -> std::path::PathBuf {
-        let prefix = format!("{db_name}.pre-migration-");
-        let backups: Vec<_> = std::fs::read_dir(dir)
-            .unwrap()
-            .filter_map(std::result::Result::ok)
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(&prefix))
-            })
-            .collect();
+        let backups = pre_migration_backups(dir, db_name);
         assert_eq!(
             backups.len(),
             1,
