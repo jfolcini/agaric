@@ -25,6 +25,10 @@ lists; the baseline records this one too.
 `commands_bench.rs` carried inline copies of `TEST_SPACE_ID` and
 `assign_all_to_test_space` because `commands::tests` was `cfg(test)`. Benches
 resolve dev-dependencies, so `test-util` is on for them and the shared
-fixture is reachable; the copies are gone. The `metric-provable` hook's
+fixture is reachable; the copies are gone. The two had drifted: the shared
+fixture also stamps `page_id = id` on rows without one and skips the space
+block, so `list_blocks_at_scale` now seeds rows with a `page_id` and the
+weekly `list_blocks_*` bench numbers may move on the next run. The
+`metric-provable` hook's
 `files` trigger gains `src-tauri/tests`, matching the scan root this session
 gave the guard.
