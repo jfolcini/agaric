@@ -53,15 +53,11 @@ use agaric_core::ulid::BlockId;
 /// the owning block's sheet and omitted from the page's; that divergence is
 /// recorded on the page side too.
 ///
-/// It is NOT byte-identical to the sibling's, and deliberately. The page
-/// version correlates each candidate row against `json_extract(payload, …)`,
-/// which no index can serve, and pays for it with a `LIMIT 51` that a page's
-/// op count short-circuits early; a single block rarely has 51 ops, so the
-/// same shape here would be a full `op_log` walk on every sheet open. The
-/// candidate set for ONE block is two indexed seeks, so this asks
-/// `ol.attachment_id IN (…)` instead — `OpPayload::attachment_id` populates
-/// that column for all three attachment op types (`op.rs`), and
-/// `idx_op_log_attachment_id` (migration 0064) covers it.
+/// The probes also key on `ol.attachment_id` rather than the sibling's
+/// `json_extract(payload, …)`: the column is indexed
+/// (`idx_op_log_attachment_id`, migration 0064) and the JSON path is not.
+/// A page affords the scan because `LIMIT 51` short-circuits early; a single
+/// block rarely has 51 ops.
 pub async fn list_block_history(
     pool: &SqlitePool,
     block_id: &BlockId,
