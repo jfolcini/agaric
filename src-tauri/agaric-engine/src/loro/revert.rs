@@ -48,7 +48,8 @@
 //! production [`for_space`](crate::loro::registry::LoroEngineRegistry::for_space) is exclusively a MUTATION chokepoint (every non-test
 //! caller is a write handler), so an armed log never records a concurrent
 //! reader either. Arming a log that is already armed is a bug (nested write tx)
-//! and trips a debug assert.
+//! and panics in every build: the un-keyed log would silently merge two txs'
+//! checkpoints and rewind the wrong one on abort.
 //!
 //! [`checkpoint_frontiers`]: crate::loro::engine::LoroEngine::checkpoint_frontiers
 
@@ -114,15 +115,15 @@ impl RevertLog {
         });
     }
 
-    /// Arm the log for a new in-flight tx. Debug-asserts it was not already
-    /// armed (a nested write tx would violate the single-in-flight invariant).
+    /// Arm the log for a new in-flight tx. Panics if it was already armed (a
+    /// nested write tx would violate the single-in-flight invariant).
     ///
     /// `pub` (not `pub(crate)`) so the app-crate LOCAL command path
     /// (`db::command_tx`) can arm the log directly across the crate boundary
     /// (#2621, wave E1).
     pub fn arm(&self) {
         let mut slot = self.inner.lock();
-        debug_assert!(
+        assert!(
             slot.is_none(),
             "RevertLog armed while already armed — a nested engine-mutating write \
              tx would break the single-in-flight invariant the un-keyed log relies on"
@@ -240,5 +241,26 @@ impl DetachedRevert {
     /// it never stays ahead of the rolled-back SQL.
     pub fn revert(self) {
         revert_entries(self.entries);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RevertLog;
+
+    #[test]
+    #[should_panic(expected = "RevertLog armed while already armed")]
+    fn arming_an_armed_log_panics() {
+        let log = RevertLog::new();
+        log.arm();
+        log.arm();
+    }
+
+    #[test]
+    fn detach_disarms_so_the_next_tx_can_arm() {
+        let log = RevertLog::new();
+        log.arm();
+        drop(log.detach());
+        log.arm();
     }
 }

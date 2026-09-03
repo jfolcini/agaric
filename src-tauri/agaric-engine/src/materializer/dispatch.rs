@@ -1459,24 +1459,25 @@ pub fn invalidations_for_op(
             // dispatch path no longer re-parses `record.payload`
             // for the same value.
             let block_id = record.block_id.as_deref().unwrap_or_default();
-            debug_assert!(
-                !block_id.is_empty(),
-                "edit_block payload has empty block_id"
-            );
-            if !block_id.is_empty() {
-                tasks.push(MaterializeTask::ReindexBlockLinks {
-                    block_id: Arc::from(block_id),
-                });
-                // Reindex inline tag refs regardless of
-                // `block_type_hint` — every content edit may gain or
-                // lose `#[ULID]` tokens. Tag/page blocks typically
-                // don't contain inline refs themselves but the cost
-                // of scanning an empty diff is negligible vs. the
-                // correctness risk of skipping.
-                tasks.push(MaterializeTask::ReindexBlockTagRefs {
-                    block_id: Arc::from(block_id),
-                });
+            // Every per-block reindex below keys on it; skipping them would
+            // leave backlinks, inline tag refs, and FTS stale with no trace.
+            if block_id.is_empty() {
+                return Err(AppError::validation(
+                    "edit_block payload has empty block_id".into(),
+                ));
             }
+            tasks.push(MaterializeTask::ReindexBlockLinks {
+                block_id: Arc::from(block_id),
+            });
+            // Reindex inline tag refs regardless of
+            // `block_type_hint` — every content edit may gain or
+            // lose `#[ULID]` tokens. Tag/page blocks typically
+            // don't contain inline refs themselves but the cost
+            // of scanning an empty diff is negligible vs. the
+            // correctness risk of skipping.
+            tasks.push(MaterializeTask::ReindexBlockTagRefs {
+                block_id: Arc::from(block_id),
+            });
             match block_type_hint {
                 Some("tag") => {
                     tasks.push(MaterializeTask::RebuildTagsCache);
@@ -1493,19 +1494,15 @@ pub fn invalidations_for_op(
                     // `RebuildAgendaCache` in the no-hint fallback and the
                     // AddTag/RemoveTag arms.
                     tasks.push(MaterializeTask::RebuildAgendaCache);
-                    if !block_id.is_empty() {
-                        tasks.push(MaterializeTask::ReindexFtsReferences {
-                            block_id: Arc::from(block_id),
-                        });
-                    }
+                    tasks.push(MaterializeTask::ReindexFtsReferences {
+                        block_id: Arc::from(block_id),
+                    });
                 }
                 Some("page") => {
                     tasks.push(MaterializeTask::RebuildPagesCache);
-                    if !block_id.is_empty() {
-                        tasks.push(MaterializeTask::ReindexFtsReferences {
-                            block_id: Arc::from(block_id),
-                        });
-                    }
+                    tasks.push(MaterializeTask::ReindexFtsReferences {
+                        block_id: Arc::from(block_id),
+                    });
                 }
                 Some("content") => {}
                 _ => {
@@ -1536,18 +1533,14 @@ pub fn invalidations_for_op(
                     // post-rename name — searching the restored name missed
                     // them, searching the undone name still matched. Remote
                     // replay / inbound sync take the same unhinted path.
-                    if !block_id.is_empty() {
-                        tasks.push(MaterializeTask::ReindexFtsReferences {
-                            block_id: Arc::from(block_id),
-                        });
-                    }
+                    tasks.push(MaterializeTask::ReindexFtsReferences {
+                        block_id: Arc::from(block_id),
+                    });
                 }
             }
-            if !block_id.is_empty() {
-                tasks.push(MaterializeTask::UpdateFtsBlock {
-                    block_id: Arc::from(block_id),
-                });
-            }
+            tasks.push(MaterializeTask::UpdateFtsBlock {
+                block_id: Arc::from(block_id),
+            });
             // FTS-optimize threshold (metric-driven) is enqueued
             // separately by `Materializer::maybe_enqueue_fts_optimize`
             // after the caller has drained this vec.

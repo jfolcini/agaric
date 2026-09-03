@@ -63,22 +63,9 @@ pub async fn handle_foreground_task(
             // future caller mixes devices in one batch, this cursor
             // advancement must be PARTITIONED per `device_id` (track and
             // advance a separate watermark for each device's seq), not
-            // collapsed into one `max_seq`. The `debug_assert!` below
-            // makes the assumption loud in debug/test builds rather than
-            // silently advancing the cursor past another device's ops.
-            debug_assert!(
-                records
-                    .first()
-                    .is_none_or(|first| records.iter().all(|r| r.device_id == first.device_id)),
-                "BatchApplyOps assumes a single-device batch (op_log seq is per-device); \
-                 mixing devices requires per-device cursor partitioning — see #382"
-            );
-            // #412: release-build counterpart to the debug_assert above. A
-            // mixed-device batch cannot be represented by the single global
-            // apply cursor (it would advance past another device's
-            // unmaterialised ops), so reject it loudly in ALL builds rather
-            // than silently corrupting the cursor. Removed once the per-device
-            // watermark cursor lands (deferred with multi-device sync).
+            // collapsed into one `max_seq`. Until then (#412) a mixed-device
+            // batch is rejected in ALL builds rather than silently advancing
+            // the cursor past another device's unmaterialised ops.
             if let Some(first) = records.first()
                 && records.iter().any(|r| r.device_id != first.device_id)
             {
@@ -181,7 +168,7 @@ pub async fn handle_foreground_task(
             // #382: `seq` here is the max of a PER-DEVICE counter and the
             // cursor is a single global scalar — correct only under the
             // single-device-batch assumption documented (and
-            // `debug_assert!`ed) at the top of this arm. A multi-device
+            // enforced) at the top of this arm. A multi-device
             // batch would need this advancement partitioned per device_id.
             if let Some(seq) = max_seq {
                 advance_apply_cursor(&mut tx, seq).await?;

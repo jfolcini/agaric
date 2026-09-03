@@ -336,9 +336,10 @@ impl EngineRow {
 // Engine
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Recursively gate every leaf key in `expr` against [`QUERY_ALLOWED_KEYS`],
-/// rejecting the first unsupported leaf with [`AppError::Validation`].
-fn gate_leaf_keys(expr: &FilterExpr) -> Result<(), AppError> {
+/// Recursively gate every leaf in `expr`: the key against
+/// [`QUERY_ALLOWED_KEYS`], and a `last-edited` bound against what the compiler
+/// can parse. The first offender is rejected with [`AppError::Validation`].
+fn gate_leaves(expr: &FilterExpr) -> Result<(), AppError> {
     match expr {
         FilterExpr::Leaf { primitive } => {
             let key = primitive.allowed_key();
@@ -348,23 +349,28 @@ fn gate_leaf_keys(expr: &FilterExpr) -> Result<(), AppError> {
                     format!("`{key}` is not a valid filter on the advanced-query surface"),
                 ));
             }
+            // A malformed `last-edited` bound would panic in the compiler
+            // (#383); reject it here like the Pages and Search surfaces do.
+            if let crate::filters::primitive::FilterPrimitive::LastEdited { spec } = primitive {
+                spec.validate()?;
+            }
             // #1455 — `has-parent-matching` carries a nested FilterExpr (the
             // parent matcher); its leaves must be gated too, or an unsupported
             // key could slip in via the sub-expression.
             if let crate::filters::primitive::FilterPrimitive::HasParentMatching { matcher } =
                 primitive
             {
-                gate_leaf_keys(matcher)?;
+                gate_leaves(matcher)?;
             }
             Ok(())
         }
         FilterExpr::And { children } | FilterExpr::Or { children } => {
             for child in children {
-                gate_leaf_keys(child)?;
+                gate_leaves(child)?;
             }
             Ok(())
         }
-        FilterExpr::Not { child } => gate_leaf_keys(child),
+        FilterExpr::Not { child } => gate_leaves(child),
     }
 }
 
@@ -565,8 +571,8 @@ pub async fn compile_and_run(
     // 1. Depth gate — bound the unbounded compile recursion.
     request.filter.validate_depth()?;
 
-    // 2. Allow-list gate — reject unsupported leaf keys before compiling.
-    gate_leaf_keys(&request.filter)?;
+    // 2. Leaf gate — reject unsupported keys and malformed values before compiling.
+    gate_leaves(&request.filter)?;
 
     // Validate limit (mirror PageRequest::new's policy).
     let limit = match request.limit {

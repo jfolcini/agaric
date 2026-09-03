@@ -1765,7 +1765,7 @@ fn record_initiator_failure(
 /// multiple is what has to be rechecked: the invariant is
 /// `window > resync_interval + RESYNC_TICK`, not the literal `2`.
 ///
-/// #4120 note 1: that recheck is no longer advisory. The body `debug_assert!`s
+/// #4120 note 1: that recheck is no longer advisory. The body asserts
 /// the invariant against the same [`RESYNC_TICK`] the daemon ticks on, so a
 /// `resync_interval` at or below the tick — where `resync_interval * 2` stops
 /// clearing a healthy peer's own period — fails a test instead of intermittently
@@ -1789,13 +1789,9 @@ fn peer_pulled_from_us_recently(
     };
     let window = scheduler.resync_interval.saturating_mul(2);
     // The doc above derives the multiple `2` from the daemon's own cadence;
-    // this is that derivation made executable. A `resync_interval` at or below
-    // `RESYNC_TICK` makes `interval * 2` narrower than a *healthy* peer's own
-    // stamping period, and the suppressed toast comes back at random on a pair
-    // that is working — the #4084 symptom, re-introduced by a constant nobody
-    // thought was related. Debug-only: the cost of being wrong is a spurious
-    // toast, not corruption, so a release build should not abort over it.
-    debug_assert!(
+    // this is that derivation made executable. Both operands are constants,
+    // so it can only fire on a constant edit, which a test run catches first.
+    assert!(
         window > scheduler.resync_interval + RESYNC_TICK,
         "the freshness window ({window:?}) must stay strictly wider than a healthy \
          peer's own stamping period (resync_interval {:?} + RESYNC_TICK {RESYNC_TICK:?}); \
@@ -3716,11 +3712,10 @@ mod tests {
     /// A `resync_interval` equal to the daemon tick makes the doubled window
     /// exactly a healthy peer's worst-case period — the first value at which
     /// suppression starts going false on a pair that is exchanging data, i.e.
-    /// the #4084 toast returning intermittently. The `debug_assert!` in
+    /// the #4084 toast returning intermittently. The `assert!` in
     /// `peer_pulled_from_us_recently` is what turns that into a test failure,
     /// so this pins the assert itself: delete it and this test goes green
     /// while the freshness window is wrong.
-    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "must stay strictly wider")]
     fn a_resync_interval_at_the_daemon_tick_trips_the_window_invariant_4120() {

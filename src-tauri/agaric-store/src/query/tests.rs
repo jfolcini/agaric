@@ -2848,3 +2848,27 @@ async fn grouped_date_bucket_key_is_correlated_index_seek_2269() {
         "grouped date-bucket key must not materialise an op_log-wide aggregate; plan was:\n{plan}"
     );
 }
+
+/// #4638: a malformed `last-edited` range bound is rejected at the
+/// advanced-query boundary (IPC and the markdown-persisted `v2:` payload);
+/// letting it through would panic in the projection compiler.
+#[tokio::test]
+async fn malformed_last_edited_range_is_rejected_before_compile_4638() {
+    let (pool, _dir) = test_pool().await;
+    let request = req(leaf(FilterPrimitive::LastEdited {
+        spec: crate::filters::LastEditedSpec::Range {
+            start: "not-a-date".into(),
+            end: "2026-03-01".into(),
+        },
+    }));
+    match compile_and_run(&pool, request).await {
+        Err(AppError::Validation { code, message }) => {
+            assert_eq!(
+                code,
+                Some(agaric_core::error::ValidationCode::InvalidDateFilter)
+            );
+            assert!(message.contains("range start"), "got: {message}");
+        }
+        other => panic!("expected Err(Validation), got {other:?}"),
+    }
+}

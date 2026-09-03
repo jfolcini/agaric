@@ -195,7 +195,6 @@ fn skip_balanced(
     key: &str,
     at_line: usize,
 ) -> Result<(), AppError> {
-    debug_assert_eq!(chars.get(*pos), Some(&'{'));
     let mut depth = 0usize;
     while *pos < chars.len() {
         match chars[*pos] {
@@ -778,7 +777,6 @@ fn decode_latex(s: &str, had_unknown: &mut bool) -> String {
 /// and the number of chars consumed, or `None` when the command is outside
 /// the supported subset.
 fn decode_latex_escape(slice: &[char]) -> Option<(char, usize)> {
-    debug_assert_eq!(slice.first(), Some(&'\\'));
     let next = *slice.get(1)?;
     // Literal escapes.
     if matches!(next, '{' | '}' | '&' | '%') {
