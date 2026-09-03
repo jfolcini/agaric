@@ -269,8 +269,11 @@
     // #4407 burns `react/set-state-in-effect` down a directory at a time. This
     // one is at zero — both reference panels reset their page-scoped state with
     // a guarded render-phase adjust instead — so it is promoted to `error` here
-    // and cannot regress, while the global level above stays `warn` for the
-    // directories still to be swept.
+    // and cannot regress, EXCEPT inside `BacklinkRowInner`: its
+    // `react-hooks/exhaustive-deps` directive triggers the compiler bailout
+    // described above, so every `react/*` rule is silent for that function and
+    // a `setState` in an effect there reports nothing even at `error`. The
+    // global level above stays `warn` for the directories still to be swept.
     {
       "files": ["src/components/backlinks/**/*.ts", "src/components/backlinks/**/*.tsx"],
       "rules": {
