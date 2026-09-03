@@ -194,6 +194,14 @@ pub struct Materializer {
     /// [`Self::wait_for_pending_shed_persists`].
     #[cfg(test)]
     pub(super) shed_persist_test_hooks: PendingTaskGate,
+    /// #4208 test-only: force [`Self::try_enqueue_background`] down its Full
+    /// arm without a genuinely saturated channel. The established idiom for
+    /// saturating it takes the writer hostage, which also blocks the
+    /// `lease_entry` a mixed shed/enqueue batch needs to succeed — the two
+    /// cannot hold at once, so the sweep case this flag covers is otherwise
+    /// unreachable from a test.
+    #[cfg(test)]
+    pub(super) force_shed_after: std::sync::Arc<std::sync::atomic::AtomicI64>,
     /// C-3c — OS-correct app data directory used by the
     /// `CleanupOrphanedAttachments` background task to walk the
     /// `attachments/` subtree and reconcile orphaned files against
@@ -477,6 +485,8 @@ impl Materializer {
         let block_count_test_hooks = BlockCountTestHooks::new();
         #[cfg(test)]
         let shed_persist_test_hooks = PendingTaskGate::new();
+        #[cfg(test)]
+        let force_shed_after = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1));
         let app_data_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
         // #2291: shared trailing-debounce state for the inbound-sync
         // cache-rebuild fan-out; the driver task is spawned after `Self` is
@@ -575,6 +585,8 @@ impl Materializer {
             block_count_test_hooks,
             #[cfg(test)]
             shed_persist_test_hooks,
+            #[cfg(test)]
+            force_shed_after,
             app_data_dir,
             loro,
             inbound_rebuild_debounce,
@@ -935,6 +947,14 @@ impl Materializer {
     /// Returns immediately when nothing is in flight (one `Acquire` load).
     /// Test-only: the backing gate is `#[cfg(test)]`, so production still
     /// carries no coordination for this path.
+    /// #4208 test-only: let the next `n` background enqueues through, then
+    /// shed every one after that. `-1` restores normal behaviour.
+    #[cfg(test)]
+    pub fn force_shed_after(&self, n: i64) {
+        self.force_shed_after
+            .store(n, std::sync::atomic::Ordering::Release);
+    }
+
     #[cfg(test)]
     pub async fn wait_for_pending_shed_persists(&self) {
         self.shed_persist_test_hooks.wait_for_drain().await;
@@ -1025,7 +1045,22 @@ impl Materializer {
         // Occupancy BEFORE the send — a post-send `capacity()` read races the
         // consumer draining our task (see `enqueue_background`).
         let occupancy_before = BACKGROUND_CAPACITY - tx.capacity();
-        match tx.try_send(task) {
+        #[cfg(test)]
+        let sent = {
+            use std::sync::atomic::Ordering as O;
+            let allowance = self.force_shed_after.load(O::Acquire);
+            if allowance < 0 {
+                tx.try_send(task)
+            } else if allowance == 0 {
+                Err(mpsc::error::TrySendError::Full(task))
+            } else {
+                self.force_shed_after.fetch_sub(1, O::AcqRel);
+                tx.try_send(task)
+            }
+        };
+        #[cfg(not(test))]
+        let sent = tx.try_send(task);
+        match sent {
             Ok(()) => {
                 let depth = (occupancy_before + 1).min(BACKGROUND_CAPACITY);
                 self.metrics

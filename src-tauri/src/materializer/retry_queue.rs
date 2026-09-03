@@ -82,6 +82,11 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 /// #4208: [`BackoffClass::of`] reads the same marker to put shed rows on a
 /// much shorter re-attempt ladder — a task that never ran is waiting on
 /// capacity, not on a fix.
+/// Rows one `sweep_once` fetches. Also the loop condition in
+/// [`sweep_until_no_progress`]: a pass that enqueues fewer than this had a
+/// row it did not push forward, so continuing would re-fetch it.
+const SWEEP_BATCH_LIMIT: i64 = 64;
+
 pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task never executed)";
 
 /// #2831: `last_error` marker for a `RefreshTagUsageCount` row that was
@@ -1012,7 +1017,6 @@ pub async fn sweep_once(
     write_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
 ) -> Result<usize, AppError> {
-    const SWEEP_BATCH_LIMIT: i64 = 64;
     let due = fetch_due(read_pool, SWEEP_BATCH_LIMIT).await?;
     let mut re_enqueued = 0usize;
     for row in &due {
@@ -1840,19 +1844,29 @@ async fn try_reenqueue_apply_op(
     Ok(ApplyOpSweepDisposition::Enqueued)
 }
 
-/// #4208 — sweep until a pass re-enqueues nothing, instead of once per tick.
+/// #4208 — drain the due backlog in one tick, instead of one batch per tick.
 ///
 /// A large import offers far more background work than the drain can take and
 /// the surplus is shed into this queue at enqueue time; one 64-row batch per
 /// 60 s tick retires tens of thousands of those rows in hours, and the derived
 /// state (FTS, link graphs, page ids) is stale for all of it.
 ///
-/// Termination is the back-pressure signal rather than a guess. Every
-/// disposition in [`sweep_once`] either deletes the row or pushes its
-/// `next_attempt_at` forward, so no pass can see a row twice; and a pass that
-/// re-enqueues nothing means either nothing is due or the background queue is
-/// full, and sweeping again this tick would only re-shed rows and inflate
-/// `attempts`. The cap bounds one tick's work whatever the queue does.
+/// Continue only while a pass enqueued a FULL batch. That is the condition
+/// under which every row it fetched was leased — `lease_entry` pushed
+/// `next_attempt_at` forward — so the next `fetch_due` cannot return any of
+/// them again. A shorter pass had at least one row it did not push forward:
+/// `fetch_due` orders by `next_attempt_at ASC`, so a shed row (whose
+/// `record_failure` the shed path spawns fire-and-forget, and which
+/// `sweep_once` deliberately does not lease, #2541) or an `Err` row keeps the
+/// oldest timestamp and comes straight back at the head of the next batch, to
+/// be shed again. `re_enqueued == 0` would not catch that: a batch mixing
+/// `ApplyOp` rows — which go to the foreground queue and enqueue fine — with
+/// background rows that shed is positive and still re-grinds the shed ones.
+///
+/// `MAX_SWEEPS_PER_TICK` is not a spin guard; the condition above is. It
+/// bounds one tick's wall clock so `spawn_sweeper` keeps reaching its
+/// `shutdown_flag` check: the loop itself has none, and a vault with a
+/// six-figure backlog would otherwise hold shutdown for minutes.
 async fn sweep_until_no_progress(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
@@ -1862,10 +1876,10 @@ async fn sweep_until_no_progress(
     let mut total = 0usize;
     for _ in 0..MAX_SWEEPS_PER_TICK {
         let re_enqueued = sweep_once(read_pool, write_pool, materializer).await?;
-        if re_enqueued == 0 {
+        total += re_enqueued;
+        if (re_enqueued as i64) < SWEEP_BATCH_LIMIT {
             break;
         }
-        total += re_enqueued;
     }
     Ok(total)
 }
@@ -2794,6 +2808,90 @@ mod tests {
             one + rest,
             DUE_ROWS,
             "the loop must retire every remaining due row in this tick"
+        );
+
+        mat.shutdown();
+    }
+
+    /// #4208 — a pass that sheds must END the tick, not just a pass that
+    /// enqueues nothing.
+    ///
+    /// `sweep_once` deliberately does not `lease_entry` a shed row (#2541):
+    /// the shed path's `record_failure` is spawned fire-and-forget, so when
+    /// `sweep_once` returns the row still holds its original
+    /// `next_attempt_at`. `fetch_due` orders by `next_attempt_at ASC`, so it
+    /// comes straight back at the head of the next batch and sheds again,
+    /// inflating `attempts` and spawning another write.
+    ///
+    /// A `re_enqueued == 0` stop does not catch this: a batch that mixes rows
+    /// which enqueue with rows which shed is positive and still re-grinds the
+    /// shed ones. Only "the pass filled a batch", i.e. every fetched row was
+    /// leased forward, rules it out.
+    ///
+    /// Determinism: `force_shed_after` drives the Full arm directly. The
+    /// established idiom for a genuinely saturated channel takes the writer
+    /// hostage, which would also block the `lease_entry` the enqueueing half
+    /// of this batch needs — the two cannot hold at once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_until_no_progress_stops_on_a_shedding_pass_4208() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Staggered `next_attempt_at` makes the fetch order total, so which
+        // rows land in the first batch is not a coin toss.
+        const DUE_ROWS: i64 = 128;
+        const ALLOWED: i64 = 4;
+        let past = crate::db::now_ms() - 5 * 60_000;
+        for i in 0..DUE_ROWS {
+            sqlx::query(
+                "INSERT INTO materializer_retry_queue \
+                     (block_id, task_kind, attempts, next_attempt_at, last_error) \
+                 VALUES (?, ?, 1, ?, ?)",
+            )
+            .bind(format!("BLK_4208_S{i:04}"))
+            .bind("UpdateFtsBlock")
+            .bind(past + i)
+            .bind("boom")
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Let the first `ALLOWED` enqueues through; everything after sheds.
+        // The pass is therefore partial (4 of 64) but NOT empty.
+        mat.force_shed_after(ALLOWED);
+        let moved = sweep_until_no_progress(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            moved, ALLOWED as usize,
+            "the tick must stop after the first partial pass, having moved \
+             only the rows that actually enqueued"
+        );
+
+        mat.wait_for_pending_shed_persists().await;
+
+        // The load-bearing assertion, and it is deliberately about a row the
+        // FIRST batch never reached. Asserting on a row inside that batch
+        // does not discriminate: whether it is shed a second time depends on
+        // whether its spawned `record_failure` committed before the next
+        // `fetch_due`, which on an idle test writer it usually has. (Written
+        // that way first, the mutation below came back FLAKY, not red.)
+        //
+        // Row 65 has no such race. Pass 1 fetches rows 0..=63, so it is
+        // untouched by it. A second pass fetches it either way — with the
+        // sheds committed the window is 64..=127, without them 4..=67, and
+        // 65 is in both. So: attempts 1 means the tick stopped on the
+        // partial pass; 2 means it swept again.
+        let attempts: i64 =
+            sqlx::query_scalar("SELECT attempts FROM materializer_retry_queue WHERE block_id = ?")
+                .bind("BLK_4208_S0065")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            attempts, 1,
+            "a row past the first batch must be left alone: the tick ends on \
+             a pass that did not fill a batch"
         );
 
         mat.shutdown();
