@@ -117,7 +117,7 @@ One file per session at `docs/session-log/session-NNNN-<slug>.md`; never edit a 
 
 Do not wait for CI. Record the PR as a task and start the next batch from the latest `origin/main`. Reconcile at the next batch boundary (or when the 10-PR cap blocks you):
 
-- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`); an approval with findings is not "nothing to address". Fix quick in-scope findings in a new commit; otherwise dispose of them per §4. Then `gh pr merge <n> --squash --delete-branch --admin`: the ruleset requires one approving review and the reviewer app's approval does not count, so an own PR is always `REVIEW_REQUIRED`; `--admin` is sanctioned once `validate-all` and `dco` are green and the reviewer body has been read.
+- Green and mergeable → read the full `agaric-reviewer` body and inline comments first (`gh pr view <n> --json reviews --jq '.reviews[].body'`, `gh api repos/jfolcini/agaric/pulls/<n>/comments`). A finding with a concrete failure gets a fix commit. A non-blocking note never gets a push of its own: every push is another review round, so fold a trivial one into a commit that is going out anyway, reply once to the rest or let them go, and file per §4 only when it names a victim. Then `gh pr merge <n> --squash --delete-branch --admin`: the ruleset requires one approving review and the reviewer app's approval does not count, so an own PR is always `REVIEW_REQUIRED`; `--admin` is sanctioned once `validate-all` and `dco` are green and the reviewer body has been read.
 - Red → diagnose (`gh run view --log-failed`), push a fix, leave for the next sweep.
 - Running → leave it.
 
