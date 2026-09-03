@@ -315,7 +315,7 @@ export function useDuePanelData({
       }
     }
 
-    fetchOverdue()
+    void fetchOverdue()
     return () => {
       stale = true
     }
@@ -395,7 +395,7 @@ export function useDuePanelData({
       }
     }
 
-    fetchUpcoming()
+    void fetchUpcoming()
     return () => {
       stale = true
     }
@@ -512,7 +512,7 @@ export function useDuePanelData({
         if (!cancelled) setLoading(false)
       }
     }
-    doFetch()
+    void doFetch()
     return () => {
       cancelled = true
     }
@@ -617,7 +617,8 @@ export function useDuePanelData({
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
-      fetchBlocks(nextCursor)
+      // `fetchBlocks` catches and logs its own failure; never rejects.
+      void fetchBlocks(nextCursor)
     }
   }, [nextCursor, fetchBlocks])
 

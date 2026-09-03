@@ -279,7 +279,8 @@ export function PdfViewerDialog({
       }
     }
 
-    loadPdf()
+    // Body catches every failure into `setError`, so this cannot reject.
+    void loadPdf()
 
     return () => {
       cancelled = true

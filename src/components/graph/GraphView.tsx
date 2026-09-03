@@ -324,7 +324,7 @@ export function GraphView(): React.ReactElement {
       }
     }
 
-    run()
+    void run()
     return () => {
       cancelled = true
     }

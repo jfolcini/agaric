@@ -249,7 +249,8 @@ export function TagFilterPanel(): React.ReactElement {
   )
 
   const debounced = useDebouncedCallback((value) => {
-    searchTags(value)
+    // `searchTags` toasts its own failure; never rejects.
+    void searchTags(value)
   }, 300)
 
   function handlePrefixChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -484,7 +485,8 @@ export function TagFilterPanel(): React.ReactElement {
     pageUpDown: true,
     onSelect: (index: number) => {
       const block = results[index]
-      if (block) handleResultClick(block)
+      // `handleResultClick` toasts its own failure; never rejects.
+      if (block) void handleResultClick(block)
     },
   })
 

@@ -111,7 +111,8 @@ export function TemplatesView(): React.ReactElement {
   }, [t, currentSpaceId])
 
   useEffect(() => {
-    loadTemplates()
+    // `loadTemplates` reports its own failure (reportIpcError); never rejects.
+    void loadTemplates()
   }, [loadTemplates])
 
   const handleCreateTemplate = useCallback(async () => {
@@ -182,7 +183,8 @@ export function TemplatesView(): React.ReactElement {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          handleCreateTemplate()
+          // `handleCreateTemplate` reports its own failure; never rejects.
+          void handleCreateTemplate()
         }}
         className="flex flex-col sm:flex-row sm:items-center gap-2"
       >
@@ -345,7 +347,8 @@ export function TemplatesView(): React.ReactElement {
         values={{ name: pendingRemoval?.name ?? '' }}
         onConfirm={() => {
           if (pendingRemoval) {
-            handleRemoveTemplate(pendingRemoval.id, pendingRemoval.name)
+            // `handleRemoveTemplate` reports its own failure; never rejects.
+            void handleRemoveTemplate(pendingRemoval.id, pendingRemoval.name)
             setPendingRemoval(null)
           }
         }}

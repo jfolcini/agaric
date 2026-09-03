@@ -167,7 +167,8 @@ export function StaticBlockAttachments({
           }}
           onOpenExternal={() => {
             const current = lightboxState.images[lightboxState.index]
-            if (current) openUrl(current.fsPath)
+            // `openUrl` never rejects — it returns a boolean (see open-url.ts).
+            if (current) void openUrl(current.fsPath)
           }}
         />
       )}

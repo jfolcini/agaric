@@ -400,7 +400,9 @@ export function UnfinishedTasks({
       return
     }
     let cancelled = false
-    resolvePageTitles(parentIds).then((titles) => {
+    // `resolvePageTitles` swallows its own errors (returns an empty map), and
+    // the handler below only sets state — nothing here can reject.
+    void resolvePageTitles(parentIds).then((titles) => {
       if (!cancelled) setPageTitles(titles)
     })
     return () => {

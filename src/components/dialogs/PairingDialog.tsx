@@ -809,7 +809,9 @@ export function PairingDialog({
         }
       } else if (e.key === 'Enter') {
         e.preventDefault()
-        handlePair()
+        // `executePair` consumes its own rejection (useIpcCommand), so this
+        // cannot reject.
+        void handlePair()
       }
     },
     [handlePair, getWordInputs],
@@ -1047,7 +1049,9 @@ export function PairingDialog({
       setConfirmCloseOpen(true)
       return
     }
-    handleCancel()
+    // Awaits only `executeCancelPairingExplicit`, which consumes its own
+    // rejection (useIpcCommand), so this cannot reject.
+    void handleCancel()
   }, [pairLoading, joinerPhase, hostWindowShowing, handleCancel])
 
   const parts = useDialogOrSheet('dialog')
@@ -1247,7 +1251,8 @@ export function PairingDialog({
           if (!o) setUnpairPeerId(null)
         }}
         onConfirm={() => {
-          if (unpairPeerId) handleUnpair(unpairPeerId)
+          // `executeUnpair` consumes its own rejection; nothing to await.
+          if (unpairPeerId) void handleUnpair(unpairPeerId)
         }}
         className="pairing-unpair-confirm"
       />

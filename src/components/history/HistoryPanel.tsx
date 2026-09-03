@@ -355,7 +355,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
             action: {
               label: t('action.undo'),
               onClick: () => {
-                handleUndoRestore(blockId, captured, isPage, spaceId)
+                void handleUndoRestore(blockId, captured, isPage, spaceId)
               },
             },
           })
@@ -412,7 +412,8 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
       if (e.key === 'Enter' && currentIdx >= 0) {
         e.preventDefault()
         const target = restorableEntries[currentIdx]
-        if (target) handleRestore(target)
+        // `handleRestore` toasts + logs its own failure; never rejects.
+        if (target) void handleRestore(target)
         return
       }
       if (e.key === 'Escape') {

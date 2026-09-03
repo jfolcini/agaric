@@ -523,7 +523,8 @@ export function useSearchResults({
     pageUpDown: true,
     onSelect: (idx) => {
       const block = visibleRows[idx]
-      if (block) handleResultClick(block)
+      // `handleResultClick` reports its own failure; never rejects.
+      if (block) void handleResultClick(block)
     },
   })
 

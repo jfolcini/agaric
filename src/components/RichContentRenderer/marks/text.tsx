@@ -13,6 +13,8 @@ import { isAllowedUrl } from '@/lib/url-validation'
  * directly visible on the JSX element. Runtime a11y is preserved — the span
  * still has a valid role + keyboard handler.
  */
+// `openUrl` never rejects — it returns a boolean (see open-url.ts), which is
+// why both handlers below can drop its promise.
 function externalLinkProps(
   href: string,
   interactive: boolean | undefined,
@@ -21,13 +23,13 @@ function externalLinkProps(
     role: 'link',
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation()
-      openUrl(href)
+      void openUrl(href)
     },
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         e.stopPropagation()
-        openUrl(href)
+        void openUrl(href)
       }
     },
   }

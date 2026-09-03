@@ -125,7 +125,8 @@ export function DeviceManagement(): React.ReactElement {
   }, [executeLoadData])
 
   useEffect(() => {
-    loadData()
+    // `executeLoadData` consumes its own rejection (useIpcCommand).
+    void loadData()
   }, [loadData])
 
   // Unpair a peer device. The success path filters the row
@@ -207,7 +208,8 @@ export function DeviceManagement(): React.ReactElement {
   const handlePairingClose = useCallback(
     (open: boolean) => {
       setPairingOpen(open)
-      if (!open) loadData()
+      // `executeLoadData` consumes its own rejection; nothing to await.
+      if (!open) void loadData()
     },
     [loadData],
   )
@@ -438,7 +440,8 @@ export function DeviceManagement(): React.ReactElement {
           if (!o) setUnpairPeerId(null)
         }}
         onConfirm={() => {
-          if (unpairPeerId) handleUnpair(unpairPeerId)
+          // `executeUnpair` consumes its own rejection; nothing to await.
+          if (unpairPeerId) void handleUnpair(unpairPeerId)
         }}
         deviceName={peerDisplayNameOrId(
           peers.find((p) => p.peer_id === unpairPeerId),

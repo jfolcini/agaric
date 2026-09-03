@@ -65,6 +65,7 @@ import {
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 
 /** Stable empty set — the tonable-base set before the dataset resolves. */
@@ -200,9 +201,15 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
   const [dataset, setDataset] = useState<EmojiDataset | null>(null)
   useEffect(() => {
     let cancelled = false
-    loadEmojiDataset().then((d) => {
-      if (!cancelled) setDataset(d)
-    })
+    loadEmojiDataset()
+      .then((d) => {
+        if (!cancelled) setDataset(d)
+      })
+      .catch((err: unknown) => {
+        // A failed dynamic import leaves the grid on its loading placeholder
+        // forever (#4628); log it rather than dropping an unhandled rejection.
+        logger.error('EmojiPicker', 'Failed to load emoji dataset', undefined, err)
+      })
     return () => {
       cancelled = true
     }

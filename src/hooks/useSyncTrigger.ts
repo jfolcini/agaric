@@ -342,7 +342,8 @@ export function useSyncTrigger() {
       // `.then(scheduleNext)` resolves.
       if (timerRef.current) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => {
-        syncAll().then(() => {
+        // `syncAll` catches and toasts its own failure; never rejects.
+        void syncAll().then(() => {
           if (mountedRef.current) scheduleNext()
         })
       }, intervalRef.current)
@@ -360,7 +361,8 @@ export function useSyncTrigger() {
     // letting it fire and arm a SECOND concurrent chain alongside the
     // resume-armed one.
     timerRef.current = setTimeout(() => {
-      syncAll().then(() => {
+      // `syncAll` catches and toasts its own failure; never rejects.
+      void syncAll().then(() => {
         if (mountedRef.current) scheduleNext()
       })
     }, 2_000)
@@ -380,7 +382,8 @@ export function useSyncTrigger() {
       if (useSyncStore.getState().state === 'offline') {
         notify.info(i18n.t('sync.backOnline'))
       }
-      syncAll()
+      // `syncAll` catches and toasts its own failure; never rejects.
+      void syncAll()
     }
     window.addEventListener('online', handleOnline)
     return () => window.removeEventListener('online', handleOnline)

@@ -340,7 +340,8 @@ export function TrashView(): React.ReactElement {
     if (selected.size > BATCH_RESTORE_CONFIRM_THRESHOLD) {
       setConfirmBatchRestore(true)
     } else {
-      handleBatchRestore()
+      // `handleBatchRestore` toasts + logs its own failure; never rejects.
+      void handleBatchRestore()
     }
   }, [selected.size, handleBatchRestore])
 

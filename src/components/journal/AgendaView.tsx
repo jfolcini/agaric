@@ -130,7 +130,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
       }
     }
 
-    runFilters()
+    void runFilters()
     return () => {
       cancelled = true
     }

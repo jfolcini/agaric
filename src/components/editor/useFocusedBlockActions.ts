@@ -42,7 +42,8 @@ export function useFocusedBlockActions({
   rovingEditor,
 }: UseFocusedBlockActionsParams): UseFocusedBlockActionsResult {
   const handleToggleFocusedTodo = useCallback(() => {
-    if (focusedBlockId) handleToggleTodo(focusedBlockId)
+    // `handleToggleTodo` toasts its own failure; never rejects.
+    if (focusedBlockId) void handleToggleTodo(focusedBlockId)
   }, [focusedBlockId, handleToggleTodo])
   const handleToggleFocusedCollapse = useCallback(() => {
     if (focusedBlockId) toggleCollapse(focusedBlockId)

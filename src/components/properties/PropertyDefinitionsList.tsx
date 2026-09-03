@@ -95,7 +95,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
   }, [t])
 
   useEffect(() => {
-    loadDefinitions()
+    // `loadDefinitions` reports its own failure (reportIpcError); never rejects.
+    void loadDefinitions()
   }, [loadDefinitions])
 
   const handleCreate = useCallback(async () => {
@@ -140,7 +141,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
   const handleConfirmDelete = useCallback(() => {
     if (deleteTarget) {
-      handleDelete(deleteTarget)
+      // `handleDelete` reports its own failure; never rejects.
+      void handleDelete(deleteTarget)
     }
   }, [deleteTarget, handleDelete])
 
@@ -205,7 +207,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          handleCreate()
+          // `handleCreate` reports its own failure; never rejects.
+          void handleCreate()
         }}
         className="flex flex-col sm:flex-row sm:items-center gap-2"
       >

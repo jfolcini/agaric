@@ -10,16 +10,18 @@
  * open until the test manually resolves it — every other EmojiPicker test
  * wants the real, already-resolving loader, not a deferred one.
  */
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import type { EmojiDataset } from '@/editor/emoji-data'
+import { logger } from '@/lib/logger'
 
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 80 }))
 
-/** Set by the mocked `loadEmojiDataset()` below; each test resolves it explicitly. */
+/** Set by the mocked `loadEmojiDataset()` below; each test settles it explicitly. */
 let resolveDataset: ((dataset: EmojiDataset) => void) | undefined
+let rejectDataset: ((err: unknown) => void) | undefined
 let loadCalls = 0
 
 // `vi.mock` factories are hoisted above every import in this file (including
@@ -31,8 +33,9 @@ vi.mock('@/editor/emoji-data', async () => {
     ...actual,
     loadEmojiDataset: () => {
       loadCalls++
-      return new Promise<EmojiDataset>((resolve) => {
+      return new Promise<EmojiDataset>((resolve, reject) => {
         resolveDataset = resolve
+        rejectDataset = reject
       })
     },
   }
@@ -42,7 +45,9 @@ import { EmojiPicker } from '@/components/EmojiPicker/EmojiPicker'
 
 afterEach(() => {
   resolveDataset = undefined
+  rejectDataset = undefined
   loadCalls = 0
+  vi.restoreAllMocks()
 })
 
 describe('<EmojiPicker> — lazy dataset loading window (#2671)', () => {
@@ -75,5 +80,28 @@ describe('<EmojiPicker> — lazy dataset loading window (#2671)', () => {
     expect(await screen.findByRole('gridcell', { name: 'grinning' })).toBeInTheDocument()
     expect(screen.queryByTestId('emoji-loading')).not.toBeInTheDocument()
     expect(screen.getByRole('tablist', { name: /emoji categories/i })).toBeInTheDocument()
+  })
+
+  // #4445 — the loader is a dynamic `import()`, so it CAN reject (a chunk that
+  // fails to fetch). Without a `.catch` that rejection was unhandled: no log,
+  // no toast, and the grid sits on its placeholder with nothing to diagnose.
+  it('logs the failure and keeps the picker usable when the dataset load rejects', async () => {
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {})
+    const loadErr = new Error('chunk load failed')
+
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    rejectDataset?.(loadErr)
+
+    await waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith(
+        'EmojiPicker',
+        'Failed to load emoji dataset',
+        undefined,
+        loadErr,
+      )
+    })
+    // The picker stays mounted on its loading placeholder rather than crashing.
+    expect(screen.getByRole('searchbox', { name: /search emoji/i })).toBeInTheDocument()
+    expect(screen.getByTestId('emoji-loading')).toBeInTheDocument()
   })
 })

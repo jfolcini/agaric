@@ -178,7 +178,7 @@ export function useBlockLinkResolve(
         )
       }
     }
-    resolveUncachedLinks()
+    void resolveUncachedLinks()
     return () => {
       cancelled = true
     }

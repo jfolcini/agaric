@@ -102,7 +102,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
   }, [t])
 
   useEffect(() => {
-    loadTags()
+    // `loadTags` toasts its own failure; never rejects.
+    void loadTags()
   }, [loadTags])
 
   const handleCreateTag = useCallback(async () => {
@@ -205,7 +206,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
 
   const handleConfirmDelete = useCallback(() => {
     if (deleteTarget) {
-      handleDeleteTag(deleteTarget.id)
+      // `handleDeleteTag` toasts its own failure; never rejects.
+      void handleDeleteTag(deleteTarget.id)
       setDeleteTarget(null)
     }
   }, [deleteTarget, handleDeleteTag])
@@ -289,7 +291,8 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          handleCreateTag()
+          // `handleCreateTag` toasts its own failure; never rejects.
+          void handleCreateTag()
         }}
         className="flex flex-col sm:flex-row sm:items-center gap-2"
       >

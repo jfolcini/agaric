@@ -130,7 +130,7 @@ export function DependencyIndicator({
       }
     }
 
-    loadDependency()
+    void loadDependency()
     return () => {
       cancelled = true
     }
