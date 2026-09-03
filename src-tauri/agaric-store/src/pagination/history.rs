@@ -48,10 +48,12 @@ use agaric_core::ulid::BlockId;
 /// block for why both probes exist and for the divergence this scoping
 /// creates.
 ///
-/// Two of their filters come off here: the inner `op_type =
-/// 'delete_attachment'` gate (#4336) and `src_add.is_replicated = 0`
-/// (#4620). `list_page_history`'s doc block has the reason both can go and
-/// the asymmetry that leaves between the two sheets.
+/// Two of their filters come off here, for two different reasons: the inner
+/// `op_type = 'delete_attachment'` gate (#4336) because this query names the
+/// block it is asking about, and `src_add.is_replicated = 0` (#4620) because
+/// a replicated `add_attachment` carries `block_id` exactly as a local one
+/// does. `list_page_history`'s doc block has both in full, and the asymmetry
+/// they leave between the two sheets.
 ///
 /// The probes also key on `ol.attachment_id` rather than the sibling's
 /// `json_extract(payload, …)`: the column is indexed
@@ -186,15 +188,22 @@ pub async fn list_block_history(
 ///     (which is what #4247/#4277/#4328 each were). If you break it,
 ///     break it deliberately and say so here.
 ///
-/// Broken deliberately in `list_block_history`, and in two predicates, both
-/// for the same reason: that query names the block it is asking about, so
-/// its paired-add probe answers "is this MY attachment" with certainty where
-/// a page subtree cannot (#4278). It drops the inner
-/// `op_type = 'delete_attachment'` gate (#4336), so an `add → rename →
-/// delete` sequence leaves the rename listed on the owning block's sheet
-/// while this one still omits it; and it drops `src_add.is_replicated = 0`
-/// — see the #4627 paragraph below for why that one stays here. Same op, two
-/// sheets, two answers, and the asymmetry is the point.
+/// Broken deliberately in `list_block_history`, in two predicates, for two
+/// different reasons.
+///
+/// It drops the inner `op_type = 'delete_attachment'` gate (#4336) because
+/// that query names the block it is asking about, so its paired-add probe
+/// settles "is this MY attachment" where a page subtree cannot (#4278); an
+/// `add → rename → delete` sequence therefore leaves the rename listed on
+/// the owning block's sheet while this one still omits it.
+///
+/// It drops `src_add.is_replicated = 0` (#4620) for a reason that holds
+/// here too: `ingest_remote_op_in_tx` populates `op_log.block_id` for a
+/// replicated row exactly as the local append path does, and attachments
+/// are never reparented, so that filter pruned correct matches rather than
+/// unsafe ones. This query keeps it anyway — see the #4627 paragraph below.
+///
+/// Same op, two sheets, two answers, and the asymmetry is the point.
 ///
 /// Known caveat, tracked as option 1 in #4247/#4278: if `compact_op_log`
 /// has reclaimed the paired `add_attachment`, the owning page is NOT
