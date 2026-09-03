@@ -158,7 +158,7 @@ Components past ~500 lines: extract hooks first, then presentational sub-compone
 
 - **Errors:** `AppError` (`src-tauri/agaric-core/src/error.rs`) serializes to `{ kind, message, code? }`; `Validation` carries a structured `ValidationCode` (construct with `AppError::validation_coded`, read with `validationCode(err)` in TS).
 - **Undo:** in-editor via ProseMirror history; page-level via `reverse.rs` inverse ops. `purge_block` and `delete_attachment` are non-reversible.
-- **Materializer:** foreground queue (256, core tables + `BatchApplyOps`) and background queue (1024, caches/FTS). Failed or dropped tasks persist to `materializer_retry_queue` and are retried with backoff (1m → 1h cap); `ApplyOp` rows are a correctness backstop, cache rebuilds are staleness backstops. `ApplyOp` / `BatchApplyOps` handlers propagate errors for retry, never `.ok()` them.
+- **Materializer:** foreground queue (256, core tables + `BatchApplyOps`) and background queue (1024, caches/FTS). Failed or dropped tasks persist to `materializer_retry_queue` and are retried with backoff (a task that ran and failed: 1 min → 1 h cap; a task a saturated queue shed before it ran: 1 → 5 min cap, #4208); `ApplyOp` rows are a correctness backstop, cache rebuilds are staleness backstops. `ApplyOp` / `BatchApplyOps` handlers propagate errors for retry, never `.ok()` them.
 - **Tag inheritance:** materialized `block_tag_inherited`, maintained transactionally plus a background rebuild.
 - **Commands:** `src-tauri/src/commands/`, one module per domain; every command pairs a thin `#[tauri::command]` wrapper with a `*_inner(&SqlitePool, …)` function. Recipe: [`src-tauri/src/commands/AGENTS.md`](src-tauri/src/commands/AGENTS.md).
 - **Sync:** `sync_daemon/` (mDNS discovery, QUIC server, `SyncOrchestrator`, per-peer `SyncScheduler`) over iroh in `transport/`. `endpoint::lan_only` keeps iroh's relay and DNS publishing off; its guard tests exist so a `cargo update` cannot re-enable them. `transport/identity.rs` holds the persistent device key that `peer_refs.endpoint_id` pins against.
@@ -238,7 +238,7 @@ The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second i
 
 ### Running tests efficiently
 
-- Rust: `cd src-tauri && cargo nextest run --workspace -E 'test(name)'`. Use nextest, not `cargo test`, for anything that reads a process-global counter and asserts on the delta (`command_integration_tests::conformance` does); see `src-tauri/tests/AGENTS.md` § "Process-global state".
+- Rust: `cd src-tauri && cargo nextest run --workspace -E 'test(name)'`. Use nextest, not `cargo test`, for anything that reads a process-global counter and asserts on the delta (`tests/command_integration/conformance.rs` does); see `src-tauri/tests/AGENTS.md` § "Process-global state".
 - TS: `npx vitest run <paths>`.
 - Do not run clippy/fmt/oxlint/oxfmt by hand; the hooks do.
 

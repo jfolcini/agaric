@@ -169,16 +169,9 @@ async fn pairing_lifecycle_arms_pending_window_with_proof() {
 
     // Confirm pairing with remote device
     let passphrase = info.passphrase.clone();
-    confirm_pairing_inner(
-        &pool,
-        &pairing.0,
-        &scheduler,
-        device_id,
-        info.passphrase.clone(),
-        "dev-remote".into(),
-    )
-    .await
-    .unwrap();
+    confirm_pairing_inner(&pool, &pairing.0, &scheduler, info.passphrase.clone())
+        .await
+        .unwrap();
 
     // #855: confirm arms the pending-pairing window with the passphrase proof
     // rather than persisting a peer_ref directly — the peer_ref is established by
@@ -286,16 +279,9 @@ async fn confirm_without_prior_start_arms_proof_and_creates_no_peer_3463() {
 
     let host_passphrase = "some random phrase";
 
-    confirm_pairing_inner(
-        &pool,
-        &pairing.0,
-        &scheduler,
-        "dev-1",
-        host_passphrase.into(),
-        String::new(),
-    )
-    .await
-    .expect("#3463: the joiner path has no local session and must still confirm");
+    confirm_pairing_inner(&pool, &pairing.0, &scheduler, host_passphrase.into())
+        .await
+        .expect("#3463: the joiner path has no local session and must still confirm");
 
     let proof = agaric_store::peer_refs::get_pending_pairing_proof(&pool)
         .await
@@ -419,16 +405,9 @@ async fn full_pair_then_sync_workflow() {
     );
 
     // Now the user types the passphrase displayed on the remote device.
-    confirm_pairing_inner(
-        &pool,
-        &pairing.0,
-        &scheduler,
-        "dev-local",
-        host_passphrase.clone(),
-        "dev-remote".into(),
-    )
-    .await
-    .unwrap();
+    confirm_pairing_inner(&pool, &pairing.0, &scheduler, host_passphrase.clone())
+        .await
+        .unwrap();
 
     // Sync
     let sync_info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into())
