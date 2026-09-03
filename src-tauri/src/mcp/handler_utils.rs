@@ -81,9 +81,8 @@ pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
 /// Prefer a strict parse for a new `*_id` argument — `BlockId::from_string`
 /// or `SpaceId::from_string`, which uppercase the same way and then reject
 /// what this helper waves through. A waved-through id binds a string that
-/// matches nothing, and an agent reads an empty result as an answer (#3301).
-/// The call sites below it keep it because their inner functions produce
-/// that error themselves.
+/// matches nothing; where the query answers with an empty list instead of
+/// `NotFound`, an agent reads that as an answer and does not retry (#3301).
 pub(crate) fn normalize_ulid_arg(s: &str) -> String {
     // Crockford base32 alphabet (no I/L/O/U) — but accepting all base32
     // ASCII-alpha+digit here is fine: any stricter check would just

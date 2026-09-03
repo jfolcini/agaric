@@ -1201,6 +1201,64 @@ async fn list_backlinks_happy_path() {
     );
 }
 
+/// #3301 — `list_backlinks` waved `block_id` through `normalize_ulid_arg`,
+/// and `list_backlinks_grouped_inner` rejects only an EMPTY id, so a
+/// malformed one bound a string that matched nothing and came back as an
+/// empty grouped response: an agent reads "this block has no backlinks"
+/// and does not retry. `BlockId::from_string` rejects it instead. The
+/// lowercase arm is the other half of the pair — that constructor must
+/// still uppercase, or the fix would trade a false negative for a
+/// regression on the case the boundary normalisation existed to serve.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_malformed_block_id_errors_rather_than_empty() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let target = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    for bad in ["NOT-A-VALID-ULID", "01ARZ3NDEKTSV4RRFFQ69G5FA", ""] {
+        let err = tools
+            .call_tool("list_backlinks", json!({"block_id": bad}), &test_ctx())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Ulid(_)),
+            "block_id {bad:?} must surface as AppError::Ulid, got {err:?}"
+        );
+    }
+
+    // Lowercase still resolves: `canonical_ulid` compares against the
+    // uppercased input, so dropping `normalize_ulid_arg` here changed
+    // nothing for the case an agent actually mangles.
+    let lower = target.id.as_str().to_lowercase();
+    assert_ne!(lower, target.id.as_str(), "test setup: id has letters");
+    let via_lower = tools
+        .call_tool("list_backlinks", json!({"block_id": lower}), &test_ctx())
+        .await
+        .expect("a lowercase ULID must still be accepted");
+    let via_upper = tools
+        .call_tool(
+            "list_backlinks",
+            json!({"block_id": target.id}),
+            &test_ctx(),
+        )
+        .await
+        .expect("the canonical id must be accepted");
+    assert_eq!(
+        via_lower, via_upper,
+        "lowercase must resolve to the same block"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_backlinks_missing_block_id_validation() {
     let (tools, _mat, _dir) = mk_tools().await;

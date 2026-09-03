@@ -1112,8 +1112,11 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListBacklinksArgs = parse_args(TOOL_LIST_BACKLINKS, args)?;
     let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
-    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
-    let block_id = normalize_ulid_arg(&args.block_id);
+    // #3301 — parse, don't wave through. `list_backlinks_grouped_inner`
+    // rejects only an EMPTY `block_id`; a malformed one binds a string that
+    // matches nothing and comes back as an empty grouped response, which an
+    // agent reads as "this block has no backlinks" and does not retry.
+    let block_id = BlockId::from_string(args.block_id)?;
     // Phase 2 — translate the JSON-side `space_id: Option<String>`
     // into a `SpaceScope` before crossing into `_inner`. The wire shape
     // stays the same; the type-system gate moves to the call boundary.
@@ -1121,16 +1124,8 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
         Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
         None => SpaceScope::Global,
     };
-    let resp = list_backlinks_grouped_inner(
-        pool,
-        BlockId::from(block_id),
-        None,
-        None,
-        args.cursor,
-        limit,
-        &scope,
-    )
-    .await?;
+    let resp = list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit, &scope)
+        .await?;
     to_tool_result(&resp)
 }
 
