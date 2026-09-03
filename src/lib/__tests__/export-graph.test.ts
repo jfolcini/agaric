@@ -1517,10 +1517,13 @@ describe('downloadBlob', () => {
  *      0 times) via a sweep that was never committed. #3804 — re-verified over
  *      50,000 cases (0 differing) with a harness since deleted by #4556.
  *
- * 529:22 [StringLiteral] "\"Stryker was here!\""  (NoCoverage)
- *      The `assetsPathPrefix = ''` DEFAULT parameter of `rewriteAttachmentRefs`.
- *      The function has exactly one call site (line 332) and it always passes
- *      the argument explicitly, so the default is never evaluated.
+ * (REMOVED — formerly 529:22 [StringLiteral], the `assetsPathPrefix = ''` DEFAULT
+ *      parameter of `rewriteAttachmentRefs`. The sole call site (line 332) always
+ *      passed the argument, so the default was never evaluated and no test could
+ *      reach it; the parameter is now required, which `tsc` checks, and the mutant
+ *      is gone from the population. Drop the argument at that call site and the
+ *      four asset-path tests above go red, so the prefix actually passed stays
+ *      pinned.)
  *
  * 532:7  [ConditionalExpression] "false"  (`if (ids.size === 0) return …`)
  *      A pure fast path. When `ids` is empty, every ref the regex finds must
@@ -1592,7 +1595,11 @@ describe('downloadBlob', () => {
  *    108 returns the identical `'Untitled'`. There is no input for which the two
  *    paths differ. It is kept as explicit security intent — belt-and-braces, not
  *    load-bearing — and now says so in a comment at the guard itself.
- * 3. STILL OPEN. `rewriteAttachmentRefs`'s `assetsPathPrefix = ''` default (529)
- *    and `collectAttachmentIds`'s `m[3] ?? ''` (491) are both unreachable
- *    defensive code, as is the `|| 'attachment'` fallback on 554.
+ * 3. PARTLY RESOLVED. `rewriteAttachmentRefs`'s dead `assetsPathPrefix = ''`
+ *    default is gone (see the REMOVED entry above). The other two are not
+ *    deletable: `collectAttachmentIds`'s `m[3] ?? ''` (491) is forced by
+ *    `noUncheckedIndexedAccess`, which types `m[3]` as `string | undefined`, and
+ *    oxlint's `no-non-null-assertion` rules out the alternative; the
+ *    `|| 'attachment'` fallback (554) is kept as explicit intent for the same
+ *    reason as line 105 (finding 2). Both mutants are permanently accepted.
  */

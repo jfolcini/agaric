@@ -14,7 +14,9 @@
 //! ([`Bind`], [`WhereClause`], [`Projection`], the projection structs)
 //! stay backend-only — they are NOT serde/specta.
 
+use agaric_core::error::{AppError, ValidationCode};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 // ── Primitive enum ────────────────────────────────────────────────────────
@@ -294,6 +296,65 @@ pub enum LastEditedSpec {
     /// Older than the given rolling N-days window (the inverse of
     /// `Rolling`). Used by `last-edited:older` chip.
     OlderThan { days: u32 },
+}
+
+impl LastEditedSpec {
+    /// Reject a `Range` bound the compiler cannot parse. Every surface that
+    /// accepts a spec from IPC or a persisted query runs this at its boundary,
+    /// because `PagesProjection::compile_last_edited` panics on a malformed
+    /// bound (#383) rather than silently matching nothing.
+    ///
+    /// Bounds compare against `op_log.created_at` (full ISO timestamps), so a
+    /// bare calendar date (`YYYY-MM-DD`) or a full RFC 3339 timestamp is
+    /// accepted. The error carries `ValidationCode::InvalidDateFilter`, the
+    /// code the frontend keys on (#2251).
+    ///
+    /// This runs [`last_edited_bound_ms`] — the same parse the compiler runs,
+    /// on the same derived string — so anything this accepts, the compiler can
+    /// parse. Checking a looser grammar here would let a bound through that
+    /// aborts there.
+    pub fn validate(&self) -> Result<(), AppError> {
+        let Self::Range { start, end } = self else {
+            return Ok(());
+        };
+        for (label, value, anchor) in [
+            ("range start", start, DAY_START),
+            ("range end", end, DAY_END),
+        ] {
+            if last_edited_bound_ms(value, anchor).is_none() {
+                return Err(AppError::validation_coded(
+                    ValidationCode::InvalidDateFilter,
+                    format!("{label} expected YYYY-MM-DD or RFC 3339, got '{value}'"),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Time-of-day appended to a bare-date `start` bound: midnight, at or before
+/// any same-day edit.
+const DAY_START: &str = "T00:00:00Z";
+/// Time-of-day appended to a bare-date `end` bound: the last instant of the
+/// day, so daytime edits on the end day are included.
+const DAY_END: &str = "T23:59:59.999Z";
+
+/// Epoch-ms for one `LastEdited` `Range` bound, or `None` when the bound is not
+/// a timestamp this can parse.
+///
+/// A bound that already carries a `T` is a full RFC 3339 instant and converts
+/// verbatim; a bare calendar date is anchored with `anchor` first. Both
+/// [`LastEditedSpec::validate`] and `PagesProjection::compile_last_edited` go
+/// through here, so the set of strings they accept cannot drift apart.
+fn last_edited_bound_ms(value: &str, anchor: &str) -> Option<i64> {
+    let ts = if value.contains('T') {
+        Cow::Borrowed(value)
+    } else {
+        Cow::Owned(format!("{value}{anchor}"))
+    };
+    chrono::DateTime::parse_from_rfc3339(&ts)
+        .ok()
+        .map(|d| d.timestamp_millis())
 }
 
 /// Snippet-rendering parameters threaded through to the FTS5 `snippet()`
@@ -1064,29 +1125,24 @@ impl Projection for PagesProjection {
         // no such treatment: a bare `'2026-02-01'` converts to midnight,
         // already at/before any same-day edit, so `>= start_ms` correctly
         // admits the entire start day. An `end` that already carries a `T`
-        // (full RFC 3339, also accepted by `validate_last_edited_date`) is
+        // (full RFC 3339, also accepted by `LastEditedSpec::validate`) is
         // converted verbatim — the caller asked for an exact instant.
         //
         // The "now − N days" boundary is computed in SQLite as epoch-ms:
         // `CAST(strftime('%s','now',?) AS INTEGER) * 1000` (the `?` is the
         // `-N days` modifier), matching the column's units.
         const EPOCH: &str = "0"; // 1970-01-01T00:00:00Z in epoch-ms
-        // Parse an RFC 3339 timestamp to epoch-ms. Bounds are pre-validated
-        // by `validate_last_edited_date`; the fallback to `0` keeps a
-        // malformed value from panicking (it would simply match nothing).
-        fn to_ms(ts: &str) -> i64 {
-            let parsed = chrono::DateTime::parse_from_rfc3339(ts);
-            // #383: bounds are pre-validated by `validate_last_edited_date`, so
-            // a parse failure here means a validation bypass. Fail loudly in
-            // debug (mirrors the `none`-sentinel debug_assert! in
-            // metadata_filter.rs) while keeping the `unwrap_or(0)` no-panic
-            // fallback in release — an epoch-0 bound simply matches nothing.
-            debug_assert!(
-                parsed.is_ok(),
-                "last_edited Range bound must be a valid RFC 3339 timestamp \
-                 (pre-validated by validate_last_edited_date), got: '{ts}'"
-            );
-            parsed.map_or(0, |d| d.timestamp_millis())
+        // #383: every surface runs `LastEditedSpec::validate` at its boundary,
+        // against this same function, so `None` here means a validation bypass.
+        // An epoch-0 bound matches nothing, so the user's filter would quietly
+        // return the wrong rows — fail loudly in every build instead.
+        fn to_ms(value: &str, anchor: &str) -> i64 {
+            last_edited_bound_ms(value, anchor).unwrap_or_else(|| {
+                panic!(
+                    "last_edited Range bound must be a timestamp \
+                     `LastEditedSpec::validate` accepts, got '{value}'"
+                )
+            })
         }
         match spec {
             LastEditedSpec::Rolling { days } => WhereClause::new(
@@ -1108,16 +1164,8 @@ impl Projection for PagesProjection {
                 // calendar day so daytime edits on the end day are INCLUDED
                 // A bare-date `start` is anchored at midnight.
                 // Both are then converted to epoch-ms to match the column.
-                let start_ms = to_ms(&if start.contains('T') {
-                    start.clone()
-                } else {
-                    format!("{start}T00:00:00Z")
-                });
-                let end_ms = to_ms(&if end.contains('T') {
-                    end.clone()
-                } else {
-                    format!("{end}T23:59:59.999Z")
-                });
+                let start_ms = to_ms(start, DAY_START);
+                let end_ms = to_ms(end, DAY_END);
                 WhereClause::new(
                     format!(
                         "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {alias}.id), {EPOCH}) \
@@ -1910,6 +1958,59 @@ mod tests {
         // Both bind a "-7 days" sentinel.
         assert_eq!(rolling.binds, vec![Bind::Text("-7 days".to_string())]);
         assert_eq!(older.binds, vec![Bind::Text("-7 days".to_string())]);
+    }
+
+    #[test]
+    fn last_edited_validate_rejects_what_the_compiler_cannot_parse() {
+        for (start, end, offender) in [
+            ("not-a-date", "2026-03-01", "range start"),
+            ("2026-03-01", "", "range end"),
+            ("2026-03-01T00:00:00Z", "2026-03-01T25:00:00Z", "range end"),
+            // chrono's `%Y-%m-%d` ignores zero-padding and leading space, but
+            // the derived `2026-3-1T00:00:00Z` is not RFC 3339 — the grammar
+            // gap that made a stored inline query abort the app.
+            ("2026-3-1", "2026-03-31", "range start"),
+            ("2026-03-01", " 2026-03-31", "range end"),
+        ] {
+            let spec = LastEditedSpec::Range {
+                start: start.into(),
+                end: end.into(),
+            };
+            match spec.validate() {
+                Err(AppError::Validation { code, message }) => {
+                    assert_eq!(code, Some(ValidationCode::InvalidDateFilter));
+                    assert!(message.contains(offender), "got: {message}");
+                }
+                other => panic!("expected Err(Validation) for {start:?}..{end:?}, got {other:?}"),
+            }
+        }
+        for (start, end) in [
+            ("2026-03-01", "2026-03-31"),
+            ("2026-03-01T00:00:00Z", "2026-03-31T23:59:59+02:00"),
+        ] {
+            LastEditedSpec::Range {
+                start: start.into(),
+                end: end.into(),
+            }
+            .validate()
+            .unwrap();
+        }
+        LastEditedSpec::Rolling { days: 7 }.validate().unwrap();
+        LastEditedSpec::OlderThan { days: 30 }.validate().unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "must be a timestamp `LastEditedSpec::validate` accepts")]
+    fn last_edited_range_unvalidated_bound_hard_errors_in_release() {
+        // #383 — reaching `compile_last_edited` with a bound
+        // `LastEditedSpec::validate` would have rejected means a validation
+        // bypass; an epoch-0 fallback would silently match nothing.
+        let _ = PagesProjection.compile(&FilterPrimitive::LastEdited {
+            spec: LastEditedSpec::Range {
+                start: "not-a-date".into(),
+                end: "2026-03-01".into(),
+            },
+        });
     }
 
     #[test]

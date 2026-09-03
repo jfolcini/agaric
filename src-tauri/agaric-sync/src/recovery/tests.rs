@@ -1645,15 +1645,85 @@ async fn draft_with_valid_parent_is_recovered() {
     );
 }
 
-// === 10c. #29: debug_assert on ULID format ===
+// === 10c. #29 / #4638: block_id shape is validated in every build ===
 
 #[tokio::test]
-#[should_panic(expected = "block_id must be alphanumeric")]
-async fn find_prev_edit_panics_on_like_wildcard_block_id() {
+async fn find_prev_edit_rejects_like_wildcard_block_id() {
     let (pool, _dir) = test_pool().await;
-    // Calling find_prev_edit with a LIKE wildcard should trigger the
-    // debug_assert (active in test/debug builds).
-    let _ = find_prev_edit(&pool, "block%id", "dev-1").await;
+    let result = find_prev_edit(&pool, "block%id", "dev-1").await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a malformed block_id must be Err(Validation), got: {result:?}"
+    );
+}
+
+/// #4638: the same shape check on the draft path, pinned at its own site. A
+/// `create_block` op for the malformed id makes the supersession COUNT
+/// positive, so without the check `recover_single_draft` answers `Ok(false)`
+/// and `recover_at_boot` deletes the draft as already flushed. It must
+/// surface as `Err` so the boot loop records it in `draft_errors` and keeps
+/// the row.
+#[tokio::test]
+async fn recover_single_draft_rejects_malformed_block_id_4638() {
+    use std::collections::HashSet;
+
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-4638";
+    let block_id = "BLOCK%ID";
+
+    insert_test_block(&pool, block_id, "old content").await;
+    append_local_op(
+        &pool,
+        device_id,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            block_type: "content".to_owned(),
+            parent_id: None,
+            position: Some(0),
+            index: None,
+            content: "old content".to_owned(),
+        }),
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind("draft content")
+        .bind(FAR_FUTURE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
+    let draft = drafts.into_iter().next().expect("one draft");
+
+    let materializer = Materializer::new(pool.clone());
+    let mut existing_block_ids = HashSet::new();
+    existing_block_ids.insert(block_id.to_string());
+
+    let result = super::draft_recovery::recover_single_draft(
+        &pool,
+        device_id,
+        &materializer,
+        &draft,
+        &existing_block_ids,
+    )
+    .await;
+    materializer.shutdown();
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "a malformed draft block_id must be Err(Validation), got: {result:?}"
+    );
+    let edits: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM op_log WHERE op_type = 'edit_block'"#
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        edits, 0,
+        "no synthetic op may be appended for a malformed block_id"
+    );
 }
 
 #[tokio::test]
@@ -3295,7 +3365,7 @@ async fn recover_at_boot_includes_replay_step_c2b() {
     // Add a draft for a block that exists in `blocks` (we must insert
     // it manually because replay applies via the materializer queue,
     // and the draft path requires the row to exist before flushing).
-    // The id must be alphanumeric per the draft-recovery debug_assert.
+    // The id must be alphanumeric per the draft-recovery shape check.
     let draft_block_id = "BOOTDRAFTBLK";
     insert_test_block(&pool, draft_block_id, "old draft target").await;
     save_draft(&pool, device_id, draft_block_id, "draft content")

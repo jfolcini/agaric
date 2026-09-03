@@ -225,12 +225,12 @@ pub fn prepare_metadata_with_today(
     out.property_includes = filter.property_filters.clone();
     out.property_excludes = filter.excluded_property_filters.clone();
 
-    // #1320-C — `last-edited:` window. Carried verbatim; the builder
-    // splices it through `SearchProjection::compile_last_edited`. Unlike the
-    // pages-view path (which runs `validate_last_edited_date`), the search
-    // path does NOT pre-validate the bounds: `compile_last_edited`'s `to_ms`
-    // debug-asserts and falls back to `0` on a malformed bound (release: an
-    // empty result; never an injection — the bound is always a bound `?`).
+    // #1320-C — `last-edited:` window. The builder splices it through
+    // `SearchProjection::compile_last_edited`, which panics on a malformed
+    // `Range` bound (#383), so the bounds are validated here first.
+    if let Some(spec) = &filter.last_edited {
+        spec.validate()?;
+    }
     out.last_edited = filter.last_edited.clone();
 
     Ok(out)
@@ -380,6 +380,26 @@ mod tests {
         let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
         assert_eq!(m.state_values, vec!["TODO".to_string()]);
         assert!(m.state_is_null);
+    }
+
+    /// #4638: a malformed `last-edited` range bound is rejected at the search
+    /// boundary; letting it through would panic in the projection compiler.
+    #[test]
+    fn malformed_last_edited_range_is_rejected_before_compile() {
+        let f = SearchFilter {
+            last_edited: Some(LastEditedSpec::Range {
+                start: "not-a-date".into(),
+                end: "2026-03-01".into(),
+            }),
+            ..Default::default()
+        };
+        match prepare_metadata_with_today(&f, fixed_today()) {
+            Err(AppError::Validation { code, message }) => {
+                assert_eq!(code, Some(ValidationCode::InvalidDateFilter));
+                assert!(message.contains("range start"), "got: {message}");
+            }
+            other => panic!("expected Err(Validation), got {other:?}"),
+        }
     }
 
     #[test]

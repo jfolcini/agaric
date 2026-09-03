@@ -122,6 +122,38 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
             "tampered op_type must fail verification"
         );
     }
+    // parent_seqs (covered) — needs a NON-GENESIS op. Seq 1's `parent_seqs`
+    // is NULL and `compute_op_hash` canonicalises NULL and `""` to the same
+    // preimage, so over a genesis record an accessor that returned nothing at
+    // all would still verify.
+    {
+        append_local_op_at(
+            &pool,
+            "dev-tamper",
+            make_create_payload("BLK-TMP2"),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+        let chained = get_op_by_seq(&ReadPool(pool.clone()), "dev-tamper", 2)
+            .await
+            .unwrap();
+        assert!(
+            chained.parent_seqs.is_some(),
+            "seq 2 must carry a parent chain, or this arm proves nothing"
+        );
+        assert!(
+            agaric_core::hash::verify_op_record(&chained).is_ok(),
+            "pristine chained op must pass verification"
+        );
+
+        let mut tampered = chained.clone();
+        tampered.parent_seqs = Some(r#"[["dev-evil",1]]"#.to_string());
+        assert!(
+            agaric_core::hash::verify_op_record(&tampered).is_err(),
+            "tampered parent_seqs must fail verification"
+        );
+    }
 
     // (4) Mutating a field OUTSIDE the hash preimage must NOT trip it —
     // this pins exactly what the hash protects.

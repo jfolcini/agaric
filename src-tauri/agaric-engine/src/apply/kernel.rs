@@ -77,21 +77,15 @@ pub async fn apply_op_projected_with_mode(
         // device is only sound when the entire op_log belongs to that ONE
         // device — otherwise the cursor jumps past another device's
         // unmaterialised ops (which sit at `seq <= cursor`) and boot replay
-        // silently drops them. The batch arm `debug_assert!`s the equivalent
-        // within-batch invariant, and boot replay (`recovery::replay`)
-        // hard-errors on a multi-device op_log in ALL builds; this is the
-        // missing single-op counterpart.
-        //
-        // It is a `debug_assert!` (not a release-build `return Err`) on
-        // purpose: multi-device single-op apply is NOT a supported production
-        // path. Multi-device sync is unshipped (the remote-apply path is
-        // test-only and the SyncDaemon is dormant until a peer is paired), and
-        // the `advance_cursor = true` caller (`apply_op`) is reached only via
-        // the test-only `dispatch_op` helper today. The release-build guard
-        // already lives at boot (`replay.rs` `#412`); this assert exists to
-        // catch a test/dev regression that wires a multi-device single-op apply
-        // before the per-device watermark cursor lands. Remove once that cursor
-        // ships.
+        // silently drops them. The batch arm rejects a mixed-device batch in
+        // every build by inspecting the records it already holds; this
+        // single-op path has no equivalent release check, because deciding
+        // "is the whole op_log one device" costs an extra `MIN`/`MAX` query
+        // over `op_log` on EVERY applied op. That per-op query is the reason
+        // this stays `debug_assert!` (AGENTS.md "Patterns caught in review"
+        // 5). Boot replay (`recovery::replay`, #412) hard-errors on a
+        // multi-device op_log in every build, but only at boot. Remove once
+        // the per-device watermark cursor ships.
         #[cfg(debug_assertions)]
         {
             // #2282 — index-backed O(log N) single-device probe. The op_log PK

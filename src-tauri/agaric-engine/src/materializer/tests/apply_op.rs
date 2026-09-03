@@ -541,7 +541,7 @@ async fn apply_op_success() {
 }
 
 // #412 / #667 — single-op apply mirror of the `BatchApplyOps`
-// single-device-cursor `debug_assert!`. `apply_op` advances a single
+// single-device-cursor `return Err`. `apply_op` advances a single
 // global apply cursor for `record.seq`, which is only sound when the
 // op_log belongs to ONE device (op_log seq is a per-device counter).
 // These two tests pin the new `debug_assert!`: it fires when the op_log
@@ -549,7 +549,7 @@ async fn apply_op_success() {
 // single-device op_log.
 //
 // We drive `handle_foreground_task` directly (the same pattern used by
-// `dispatch_bg_empty_block_id` / `handle_*_returns_validation_err`) so
+// `handle_*_returns_validation_err`) so
 // the assert panics on the test's own task rather than on a detached
 // consumer worker, letting `#[should_panic]` catch it. Gated on
 // `debug_assertions` because the guard compiles out in release builds

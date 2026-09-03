@@ -46,7 +46,7 @@ import {
   _resetAttachmentInvalidationForTest,
   recordAttachmentInvalidation,
 } from '@/lib/attachment-invalidation'
-import type { AttachmentRow } from '@/lib/tauri'
+import type { AttachmentRow } from '@/lib/bindings'
 
 const mockedInvoke = vi.mocked(invoke)
 

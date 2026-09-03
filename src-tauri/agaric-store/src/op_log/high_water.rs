@@ -421,7 +421,11 @@ mod corrupt_mark_tests {
     /// `loro::peer_epoch::load_peer_epoch`. What must NOT happen is silence.
     #[tokio::test]
     async fn corrupt_high_water_mark_warns_instead_of_silently_restarting_seq() {
-        for garbage in ["nonsense", "12abc", "-5", ""] {
+        // `"0"` parses cleanly and is still not a mark: the guard is
+        // `seq > 0`, and a mark of 0 would compute a floor of 1 — the seq
+        // restart this module exists to prevent. It is the only case here
+        // that separates `> 0` from `>= 0`.
+        for garbage in ["nonsense", "12abc", "-5", "0", ""] {
             let (pool, _dir) = crate::test_support::test_pool().await;
             // A distinct device per case: the report is throttled to once per
             // device per PROCESS (see `first_report_for`), and every case here
