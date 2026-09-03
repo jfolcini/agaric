@@ -17,7 +17,9 @@
 //! sentinel `block_id = '__GLOBAL__'` so the sweeper re-enqueues them on
 //! the same exponential-backoff schedule.
 //!
-//! Backoff schedule: 1 min → 5 min → 30 min → 1 h (cap).
+//! Backoff schedule: 1 min → 5 min → 30 min → 1 h (cap) for a task that ran
+//! and failed; 1 min → 2 min → 3 min → 5 min (cap) for one persisted by a
+//! SHED, which never ran (#4208 — see [`BackoffClass`]).
 //!
 //! ## Two-tier retry semantics
 //!
@@ -76,6 +78,10 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 /// schema change; the `attempts` column still counts every persistence
 /// (shed or execution failure), only the give-up guard's interpretation
 /// changes.
+///
+/// #4208: [`BackoffClass::of`] reads the same marker to put shed rows on a
+/// much shorter re-attempt ladder — a task that never ran is waiting on
+/// capacity, not on a fix.
 pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task never executed)";
 
 /// #2831: `last_error` marker for a `RefreshTagUsageCount` row that was
@@ -389,15 +395,56 @@ impl RetryKind {
     }
 }
 
-/// Compute the next attempt timestamp for a task with `attempts` prior
-/// failures (including the one we just recorded). Schedule:
-///   1 → +1 min, 2 → +5 min, 3 → +30 min, 4+ → +1 hour cap.
-pub(crate) fn backoff_delay_for(attempts: i64) -> chrono::Duration {
-    match attempts {
-        ..=1 => chrono::Duration::minutes(1),
-        2 => chrono::Duration::minutes(5),
-        3 => chrono::Duration::minutes(30),
-        _ => chrono::Duration::hours(1),
+/// #4208: which backoff ladder a row is on. A row persisted by a SHED
+/// ([`SHED_LAST_ERROR`]) never executed — it lost a race for a queue slot,
+/// which the next sweep can win — so it must not wait out the schedule built
+/// for a task that keeps erroring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BackoffClass {
+    /// The task ran and failed. Long ladder: something is wrong with it.
+    Failure,
+    /// The task was shed at enqueue time and has never run.
+    Shed,
+}
+
+impl BackoffClass {
+    /// Classify from a row's (or a [`record_failure`] call's) `last_error`.
+    pub(crate) fn of(last_error: Option<&str>) -> Self {
+        if last_error == Some(SHED_LAST_ERROR) {
+            Self::Shed
+        } else {
+            Self::Failure
+        }
+    }
+}
+
+/// Compute the delay before the next attempt for a task with `attempts`
+/// prior persistences (including the one we just recorded). Schedules:
+///   - [`BackoffClass::Failure`]: 1 → +1 min, 2 → +5 min, 3 → +30 min,
+///     4+ → +1 hour cap.
+///   - [`BackoffClass::Shed`] (#4208): 1 → +1 min, 2 → +2 min, 3 → +3 min,
+///     4+ → +5 min cap.
+///
+/// Both ladders start at 1 minute — the sweeper's tick interval, the floor
+/// [`lease_entry`] relies on and the point below which a shorter delay buys
+/// nothing because no sweep runs to consume it. The shed ladder still
+/// escalates, so a permanently saturated queue re-offers a row at most every
+/// 5 minutes instead of spinning, and both reach their cap tier at the same
+/// `attempts >= 4` step (`metrics::note_persistent_enqueue` reads that).
+pub(crate) fn backoff_delay_for(attempts: i64, class: BackoffClass) -> chrono::Duration {
+    match class {
+        BackoffClass::Failure => match attempts {
+            ..=1 => chrono::Duration::minutes(1),
+            2 => chrono::Duration::minutes(5),
+            3 => chrono::Duration::minutes(30),
+            _ => chrono::Duration::hours(1),
+        },
+        BackoffClass::Shed => match attempts {
+            ..=1 => chrono::Duration::minutes(1),
+            2 => chrono::Duration::minutes(2),
+            3 => chrono::Duration::minutes(3),
+            _ => chrono::Duration::minutes(5),
+        },
     }
 }
 
@@ -426,9 +473,15 @@ pub(crate) fn backoff_delay_for(attempts: i64) -> chrono::Duration {
 /// with the wrong (too-short) backoff. A `CASE` on the post-increment
 /// `attempts + 1` computes the correct delay inline, so the whole
 /// failure record is one atomic statement (and one round-trip) for both
-/// the first-failure and escalation paths. The `CASE` mirrors
-/// [`backoff_delay_for`] step-for-step:
-///   attempts 1 → +1 min, 2 → +5 min, 3 → +30 min, 4+ → +1 hour.
+/// the first-failure and escalation paths. The `CASE` selects among four
+/// delays bound from [`backoff_delay_for`], so the schedule stays defined
+/// in exactly one place.
+///
+/// #4208: which of the two ladders those four delays come from is decided
+/// by `last_error` — a shed persistence ([`SHED_LAST_ERROR`]) gets the short
+/// [`BackoffClass::Shed`] ladder, because the task never ran and is waiting
+/// on capacity, not on a fix. The SQL is identical either way; only the
+/// bound constants differ.
 ///
 /// Issue #378: the `DO UPDATE` branch deliberately does NOT assign
 /// `created_at`, so the original first-failure timestamp is preserved
@@ -460,10 +513,11 @@ pub(crate) async fn record_failure(
     // `retry_backoff_matches_schedule` test asserts the SQL CASE and the
     // fn agree.
     let now = crate::db::now_ms();
-    let d1 = backoff_delay_for(1).num_milliseconds();
-    let d2 = backoff_delay_for(2).num_milliseconds();
-    let d3 = backoff_delay_for(3).num_milliseconds();
-    let d4 = backoff_delay_for(4).num_milliseconds();
+    let class = BackoffClass::of(Some(last_error));
+    let d1 = backoff_delay_for(1, class).num_milliseconds();
+    let d2 = backoff_delay_for(2, class).num_milliseconds();
+    let d3 = backoff_delay_for(3, class).num_milliseconds();
+    let d4 = backoff_delay_for(4, class).num_milliseconds();
     // First-failure INSERT lands attempts = 1 → delay d1.
     let initial_next_attempt = now + d1;
 
@@ -727,8 +781,11 @@ pub(crate) async fn clear_on_success(
 /// the just-enqueued re-run is still in flight.
 ///
 /// The lease interval reuses the existing backoff schedule
-/// ([`backoff_delay_for`]) keyed on the row's *current* `attempts`. The
-/// minimum delay in that schedule is 1 minute, which equals the
+/// ([`backoff_delay_for`]) keyed on the row's *current* `attempts` and
+/// `class` (#4208: a shed row leases on the short ladder, so an enqueue that
+/// then resolves neither way — a shutdown before the re-run committed — costs
+/// at most 5 minutes of staleness instead of an hour). The minimum delay in
+/// both schedules is 1 minute, which equals the
 /// sweeper's tick interval (`spawn_sweeper`, 60 s), so a leased row is
 /// never visible to the very next sweep tick — by which time the
 /// re-run's in-memory retry budget (sub-second) has long since resolved
@@ -747,8 +804,10 @@ pub(crate) async fn lease_entry(
     block_id: &str,
     task_kind: &str,
     attempts: i64,
+    class: BackoffClass,
 ) -> Result<(), AppError> {
-    let next_attempt_at = crate::db::now_ms() + backoff_delay_for(attempts).num_milliseconds();
+    let next_attempt_at =
+        crate::db::now_ms() + backoff_delay_for(attempts, class).num_milliseconds();
     sqlx::query!(
         "UPDATE materializer_retry_queue SET next_attempt_at = ? \
          WHERE block_id = ? AND task_kind = ?",
@@ -1022,7 +1081,14 @@ pub async fn sweep_once(
                     // clears it via `clear_on_success` only on durable
                     // success. The lease prevents the same in-flight op
                     // being swept twice before it resolves.
-                    lease_entry(write_pool, &row.block_id, &row.task_kind, row.attempts).await?;
+                    lease_entry(
+                        write_pool,
+                        &row.block_id,
+                        &row.task_kind,
+                        row.attempts,
+                        BackoffClass::of(row.last_error.as_deref()),
+                    )
+                    .await?;
                     re_enqueued += 1;
                 }
                 Ok(ApplyOpSweepDisposition::OpRowMissing) => {
@@ -1184,7 +1250,14 @@ pub async fn sweep_once(
                 // durably. The lease bumps `next_attempt_at` forward so
                 // the same in-flight task is not swept twice before it
                 // resolves.
-                lease_entry(write_pool, &row.block_id, &row.task_kind, row.attempts).await?;
+                lease_entry(
+                    write_pool,
+                    &row.block_id,
+                    &row.task_kind,
+                    row.attempts,
+                    BackoffClass::of(row.last_error.as_deref()),
+                )
+                .await?;
                 re_enqueued += 1;
             }
             Ok(crate::materializer::BackgroundEnqueueOutcome::Shed) => {
@@ -1763,8 +1836,38 @@ async fn try_reenqueue_apply_op(
     Ok(ApplyOpSweepDisposition::Enqueued)
 }
 
-/// Spawn a long-lived task that sweeps the retry queue every 60 seconds
-/// and exits when `shutdown_flag` is set.
+/// #4208 — sweep until a pass re-enqueues nothing, instead of once per tick.
+///
+/// A large import offers far more background work than the drain can take and
+/// the surplus is shed into this queue at enqueue time; one 64-row batch per
+/// 60 s tick retires tens of thousands of those rows in hours, and the derived
+/// state (FTS, link graphs, page ids) is stale for all of it.
+///
+/// Termination is the back-pressure signal rather than a guess. Every
+/// disposition in [`sweep_once`] either deletes the row or pushes its
+/// `next_attempt_at` forward, so no pass can see a row twice; and a pass that
+/// re-enqueues nothing means either nothing is due or the background queue is
+/// full, and sweeping again this tick would only re-shed rows and inflate
+/// `attempts`. The cap bounds one tick's work whatever the queue does.
+async fn sweep_until_no_progress(
+    read_pool: &SqlitePool,
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+) -> Result<usize, AppError> {
+    const MAX_SWEEPS_PER_TICK: usize = 512;
+    let mut total = 0usize;
+    for _ in 0..MAX_SWEEPS_PER_TICK {
+        let re_enqueued = sweep_once(read_pool, write_pool, materializer).await?;
+        if re_enqueued == 0 {
+            break;
+        }
+        total += re_enqueued;
+    }
+    Ok(total)
+}
+
+/// Spawn a long-lived task that drains the retry queue every 60 seconds
+/// ([`sweep_until_no_progress`]) and exits when `shutdown_flag` is set.
 ///
 /// I-Materializer-1: takes both pools so `sweep_once` can route SELECTs
 /// to the reader pool and DELETEs to the writer pool, mirroring the
@@ -1804,7 +1907,7 @@ pub fn spawn_sweeper(
             materializer.metrics().seed_pending_retry_rows(c);
         }
         // First pass at boot to drain entries left by a previous session.
-        if let Err(e) = sweep_once(&read_pool, &write_pool, &materializer).await {
+        if let Err(e) = sweep_until_no_progress(&read_pool, &write_pool, &materializer).await {
             tracing::warn!(error = %e, "boot-time retry queue sweep failed");
         }
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -1815,7 +1918,7 @@ pub fn spawn_sweeper(
             if shutdown_flag.load(std::sync::atomic::Ordering::Acquire) {
                 break;
             }
-            if let Err(e) = sweep_once(&read_pool, &write_pool, &materializer).await {
+            if let Err(e) = sweep_until_no_progress(&read_pool, &write_pool, &materializer).await {
                 tracing::warn!(error = %e, "periodic retry queue sweep failed");
             }
         }
@@ -1845,13 +1948,53 @@ mod tests {
 
     #[test]
     fn backoff_schedule_escalates_then_caps() {
-        assert_eq!(backoff_delay_for(1), chrono::Duration::minutes(1));
-        assert_eq!(backoff_delay_for(2), chrono::Duration::minutes(5));
-        assert_eq!(backoff_delay_for(3), chrono::Duration::minutes(30));
-        assert_eq!(backoff_delay_for(4), chrono::Duration::hours(1));
-        assert_eq!(backoff_delay_for(10), chrono::Duration::hours(1));
+        use BackoffClass::Failure;
+        assert_eq!(backoff_delay_for(1, Failure), chrono::Duration::minutes(1));
+        assert_eq!(backoff_delay_for(2, Failure), chrono::Duration::minutes(5));
+        assert_eq!(backoff_delay_for(3, Failure), chrono::Duration::minutes(30));
+        assert_eq!(backoff_delay_for(4, Failure), chrono::Duration::hours(1));
+        assert_eq!(backoff_delay_for(10, Failure), chrono::Duration::hours(1));
         // 0 or negative treated as first attempt
-        assert_eq!(backoff_delay_for(0), chrono::Duration::minutes(1));
+        assert_eq!(backoff_delay_for(0, Failure), chrono::Duration::minutes(1));
+    }
+
+    /// #4208: a row persisted by a SHED never ran, so it gets its own short
+    /// ladder — same 1-minute first rung (the sweeper's tick, below which a
+    /// shorter delay buys nothing), bounded escalation to a 5-minute cap so a
+    /// permanently saturated queue cannot spin, and never the failure
+    /// ladder's 30-minute / 1-hour rungs.
+    #[test]
+    fn shed_backoff_schedule_is_short_and_capped_4208() {
+        use BackoffClass::{Failure, Shed};
+        assert_eq!(backoff_delay_for(1, Shed), chrono::Duration::minutes(1));
+        assert_eq!(backoff_delay_for(2, Shed), chrono::Duration::minutes(2));
+        assert_eq!(backoff_delay_for(3, Shed), chrono::Duration::minutes(3));
+        assert_eq!(backoff_delay_for(4, Shed), chrono::Duration::minutes(5));
+        assert_eq!(backoff_delay_for(50, Shed), chrono::Duration::minutes(5));
+        // Escalates (no spin) but never as far as the failure ladder.
+        for attempts in 2..=50 {
+            assert!(
+                backoff_delay_for(attempts, Shed) < backoff_delay_for(attempts, Failure),
+                "attempts {attempts}: shed delay {} must stay under the failure \
+                 delay {}",
+                backoff_delay_for(attempts, Shed),
+                backoff_delay_for(attempts, Failure),
+            );
+        }
+    }
+
+    /// #4208: the ladder is selected by the `SHED_LAST_ERROR` marker alone —
+    /// every other `last_error` (including the other seed markers and a
+    /// never-persisted `None`) stays on the failure ladder.
+    #[test]
+    fn backoff_class_reads_only_the_shed_marker_4208() {
+        assert_eq!(BackoffClass::of(Some(SHED_LAST_ERROR)), BackoffClass::Shed);
+        assert_eq!(BackoffClass::of(Some("boom")), BackoffClass::Failure);
+        assert_eq!(
+            BackoffClass::of(Some(SEED_OBLIGATION_LAST_ERROR)),
+            BackoffClass::Failure
+        );
+        assert_eq!(BackoffClass::of(None), BackoffClass::Failure);
     }
 
     #[test]
@@ -2178,7 +2321,7 @@ mod tests {
     /// UPDATE` must produce the SAME `next_attempt_at` schedule the prior
     /// two-statement (UPSERT + follow-up UPDATE) form did, for every step
     /// 1→2→3→4(cap). Asserts `next_attempt_at - now` lands in the
-    /// `backoff_delay_for(attempts)` window on each failure, confirming
+    /// `backoff_delay_for(attempts, Failure)` window on each failure, confirming
     /// the SQL `CASE` and the Rust schedule agree and that the escalation
     /// path no longer leaves the row at the too-short first-failure delay.
     #[tokio::test]
@@ -2213,7 +2356,8 @@ mod tests {
                 "attempts must accumulate atomically"
             );
 
-            let delay = backoff_delay_for(expected_attempts).num_milliseconds();
+            let delay =
+                backoff_delay_for(expected_attempts, BackoffClass::Failure).num_milliseconds();
             // next_attempt_at was computed as `now_inside_sql + delay`,
             // where now_inside_sql is bracketed by [before, after].
             assert!(
@@ -2225,6 +2369,130 @@ mod tests {
                 after + delay,
             );
         }
+    }
+
+    /// #4208: a row persisted by a SHED must be rescheduled on the SHED
+    /// ladder, not the failure ladder. Drives one task through four shed
+    /// persistences and pins `next_attempt_at` to the shed schedule at every
+    /// step — step 4 is the one that hurt in the field: 5 minutes, where the
+    /// failure ladder would have parked the row for an hour.
+    ///
+    /// Error path: the same row, once it actually RUNS and fails, must go
+    /// straight back to the failure ladder — the marker is the only thing
+    /// that grants the short schedule.
+    #[tokio::test]
+    async fn record_failure_shed_row_uses_the_shed_ladder_4208() {
+        let (pool, _dir) = test_pool().await;
+        let task = MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_4208".into(),
+        };
+        let metrics = test_metrics();
+
+        async fn next_attempt(pool: &SqlitePool) -> i64 {
+            sqlx::query_scalar!(
+                "SELECT next_attempt_at FROM materializer_retry_queue \
+                 WHERE block_id = ? AND task_kind = ?",
+                "BLK_4208",
+                "UpdateFtsBlock",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap()
+        }
+
+        for attempts in 1..=4_i64 {
+            let before = crate::db::now_ms();
+            record_failure(&pool, &task, SHED_LAST_ERROR, &metrics)
+                .await
+                .unwrap();
+            let after = crate::db::now_ms();
+
+            let delay = backoff_delay_for(attempts, BackoffClass::Shed).num_milliseconds();
+            let scheduled = next_attempt(&pool).await;
+            assert!(
+                scheduled >= before + delay && scheduled <= after + delay,
+                "shed {attempts}: next_attempt_at={scheduled} must be SQL now + {delay}ms \
+                 (window [{}, {}]), not the failure ladder's {}ms",
+                before + delay,
+                after + delay,
+                backoff_delay_for(attempts, BackoffClass::Failure).num_milliseconds(),
+            );
+        }
+
+        // Error path: the fifth persistence is a REAL failure — the task ran
+        // and errored — so the long ladder applies again from its cap tier.
+        let before = crate::db::now_ms();
+        record_failure(&pool, &task, "boom", &metrics)
+            .await
+            .unwrap();
+        let after = crate::db::now_ms();
+        let delay = backoff_delay_for(5, BackoffClass::Failure).num_milliseconds();
+        let scheduled = next_attempt(&pool).await;
+        assert_eq!(delay, chrono::Duration::hours(1).num_milliseconds());
+        assert!(
+            scheduled >= before + delay && scheduled <= after + delay,
+            "an execution failure must leave the shed ladder: next_attempt_at={scheduled} \
+             must be SQL now + {delay}ms (window [{}, {}])",
+            before + delay,
+            after + delay,
+        );
+    }
+
+    /// #4208: the sweeper's enqueue-time lease reads the row's own marker, so
+    /// a shed row that IS re-enqueued is deferred by the shed ladder (5 min at
+    /// the cap) rather than parked for the failure ladder's hour — the window
+    /// that matters when the re-run resolves neither way (a shutdown before
+    /// it committed), because `fetch_due` will not look at the row again until
+    /// it expires.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_once_leases_shed_rows_on_the_shed_ladder_4208() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let past = crate::db::now_ms() - 5 * 60_000;
+        sqlx::query(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, last_error, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("BLK_4208_SW")
+        .bind("UpdateFtsBlock")
+        .bind(4_i64)
+        .bind(SHED_LAST_ERROR)
+        .bind(past)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The pending-retry gauge is deliberately NOT seeded (unlike
+        // `sweep_once_reenqueues_due_rows_then_consumer_clears_them_378`), so
+        // the live consumer's `clear_on_success` takes its fast-path skip and
+        // the leased row stays put for this assertion instead of racing it.
+        let before = crate::db::now_ms();
+        assert_eq!(sweep_once(&pool, &pool, &mat).await.unwrap(), 1);
+        let after = crate::db::now_ms();
+
+        let scheduled = sqlx::query_scalar!(
+            "SELECT next_attempt_at FROM materializer_retry_queue \
+             WHERE block_id = ? AND task_kind = ?",
+            "BLK_4208_SW",
+            "UpdateFtsBlock",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let delay = backoff_delay_for(4, BackoffClass::Shed).num_milliseconds();
+        assert_eq!(delay, chrono::Duration::minutes(5).num_milliseconds());
+        assert!(
+            scheduled >= before + delay && scheduled <= after + delay,
+            "lease must use the shed ladder: next_attempt_at={scheduled} must be \
+             now + {delay}ms (window [{}, {}]), not the failure ladder's {}ms",
+            before + delay,
+            after + delay,
+            backoff_delay_for(4, BackoffClass::Failure).num_milliseconds(),
+        );
     }
 
     #[tokio::test]
@@ -2479,6 +2747,54 @@ mod tests {
         mat.shutdown();
     }
 
+    /// #4208 — one tick must retire the whole due backlog, not one 64-row
+    /// batch. An import sheds tens of thousands of rows at enqueue time, and
+    /// at a batch per 60 s tick the derived state stays stale for hours; the
+    /// shorter shed ladder does nothing about that, because the ceiling is the
+    /// sweep batch, not the backoff.
+    ///
+    /// `sweep_once` alone is asserted in the same test so the pair is pinned:
+    /// the improvement is the loop, not a bigger batch.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_until_no_progress_retires_more_than_one_batch_4208() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        const DUE_ROWS: usize = 200;
+        let past = crate::db::now_ms() - 5 * 60_000;
+        for i in 0..DUE_ROWS {
+            let block_id = format!("BLK_4208_D{i:04}");
+            sqlx::query(
+                "INSERT INTO materializer_retry_queue \
+                     (block_id, task_kind, attempts, next_attempt_at) \
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(&block_id)
+            .bind("UpdateFtsBlock")
+            .bind(2_i64)
+            .bind(past)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let seeded = pending_count(&pool).await.unwrap();
+        mat.metrics().seed_pending_retry_rows(seeded);
+
+        // One sweep is capped at the batch limit — the ceiling this fixes.
+        let one = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(one, 64, "a single sweep must move exactly one batch");
+
+        let rest = sweep_until_no_progress(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            one + rest,
+            DUE_ROWS,
+            "the loop must retire every remaining due row in this tick"
+        );
+
+        mat.shutdown();
+    }
+
     /// #3909 — the retry sweeper is a SECOND `SetBlockPageId` enqueue site.
     ///
     /// `dispatch.rs`'s create arm is the only site that enqueues
@@ -2663,7 +2979,9 @@ mod tests {
 
             // Sweeper enqueue-time action: lease the row (do NOT clear).
             let (lease_attempts, _) = read_row(&pool).await.expect("row due for lease");
-            lease_entry(&pool, BID, KIND, lease_attempts).await.unwrap();
+            lease_entry(&pool, BID, KIND, lease_attempts, BackoffClass::Failure)
+                .await
+                .unwrap();
             let (after_lease_attempts, after_lease_created) = read_row(&pool)
                 .await
                 .expect("leased row must survive the sweep");
@@ -2892,9 +3210,15 @@ mod tests {
         // Due before the lease.
         assert_eq!(fetch_due(&pool, 10).await.unwrap().len(), 1);
 
-        lease_entry(&pool, "BLK_378_LEASE", "UpdateFtsBlock", 3)
-            .await
-            .unwrap();
+        lease_entry(
+            &pool,
+            "BLK_378_LEASE",
+            "UpdateFtsBlock",
+            3,
+            BackoffClass::Failure,
+        )
+        .await
+        .unwrap();
 
         let row = sqlx::query!(
             "SELECT attempts AS \"attempts!: i64\", \
@@ -3223,9 +3547,11 @@ mod tests {
             Some(SHED_LAST_ERROR),
             "#2541: a shed must be recorded with the distinct shed marker"
         );
-        // attempts = 2 → the escalated +5 min backoff. A lease keyed on the
-        // STALE attempts = 1 snapshot would have rewound this to ~+1 min.
-        let min_expected = crate::db::now_ms() + 2 * 60_000;
+        // attempts = 2 → the escalated backoff (#4208: the shed ladder's
+        // second rung, +2 min). A lease keyed on the STALE attempts = 1
+        // snapshot would have rewound this to ~+1 min; 90 s sits between the
+        // rewound and the correct value.
+        let min_expected = crate::db::now_ms() + 90_000;
         assert!(
             next_attempt_at > min_expected,
             "#2541: next_attempt_at must keep the escalated backoff \

@@ -200,9 +200,10 @@ pub struct QueueMetrics {
     /// small `retry_persist_cache_global`) is a different signal from a
     /// global-cache freshness gap (the two move together).
     pub retry_persist_cache_global: AtomicU64,
-    /// #2509: count of persistent-enqueue events that reached the **1h
-    /// backoff cap** tier (`attempts >= 4`, see
-    /// [`super::retry_queue::backoff_delay_for`]). This is the counter for
+    /// #2509: count of persistent-enqueue events that reached the **backoff
+    /// cap** tier (`attempts >= 4` on either ladder, see
+    /// [`super::retry_queue::backoff_delay_for`] — 1h for a task that keeps
+    /// failing, 5 min for a shed one since #4208). This is the counter for
     /// issue #2509's measure-item 2 — "is the 1h-max-backoff path ever the
     /// thing that saves a user, vs. the next boot doing it anyway?" If this
     /// stays ~0 in the field, nothing ever escalates past the first couple
@@ -247,8 +248,9 @@ impl QueueMetrics {
                     .fetch_add(1, Ordering::Relaxed);
             }
         }
-        // attempts >= 4 is the `backoff_delay_for` 1h-cap tier — the deepest
-        // rung of the schedule, and measure-item 2's signal.
+        // attempts >= 4 is the `backoff_delay_for` cap tier — the deepest rung
+        // of the schedule (1h for a failing task, 5 min for a shed one since
+        // #4208), and measure-item 2's signal.
         if attempts >= 4 {
             self.retry_persist_capped.fetch_add(1, Ordering::Relaxed);
         }
