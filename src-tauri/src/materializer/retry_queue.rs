@@ -82,12 +82,11 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 /// #4208: [`BackoffClass::of`] reads the same marker to put shed rows on a
 /// much shorter re-attempt ladder — a task that never ran is waiting on
 /// capacity, not on a fix.
-/// Rows one `sweep_once` fetches. Also the loop condition in
-/// [`sweep_until_no_progress`]: a pass that enqueues fewer than this had a
-/// row it did not push forward, so continuing would re-fetch it.
-const SWEEP_BATCH_LIMIT: i64 = 64;
-
 pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task never executed)";
+
+/// Rows one `sweep_once` fetches, and the loop bound in
+/// [`sweep_until_no_progress`].
+const SWEEP_BATCH_LIMIT: i64 = 64;
 
 /// #2831: `last_error` marker for a `RefreshTagUsageCount` row that was
 /// *pre-seeded* by the `ReindexBlockTagRefs` handler (as a durable refresh
@@ -1017,8 +1016,35 @@ pub async fn sweep_once(
     write_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
 ) -> Result<usize, AppError> {
+    Ok(sweep_once_counted(read_pool, write_pool, materializer)
+        .await?
+        .re_enqueued)
+}
+
+/// What one [`sweep_once`] pass did to the rows it fetched.
+struct SweepCounts {
+    /// Rows leased after a successful enqueue. [`sweep_once`]'s return value
+    /// and the `re_enqueued` log field, which both count dispatches.
+    re_enqueued: usize,
+    /// Rows this pass pushed out of the next `fetch_due` batch — leased, or
+    /// deleted by one of the retirement arms. [`sweep_until_no_progress`]
+    /// needs this rather than `re_enqueued`: a full batch of retirements
+    /// re-enqueues nothing yet is pure forward progress, and stopping there
+    /// would cap retirement at one batch per 60 s tick.
+    advanced: usize,
+}
+
+async fn sweep_once_counted(
+    read_pool: &SqlitePool,
+    write_pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+) -> Result<SweepCounts, AppError> {
     let due = fetch_due(read_pool, SWEEP_BATCH_LIMIT).await?;
     let mut re_enqueued = 0usize;
+    // Counted rather than `advanced` directly: the three arms that leave a
+    // row on its original `next_attempt_at` are enumerable, the arms that
+    // move it are not (every retirement reason is its own branch).
+    let mut stalled = 0usize;
     for row in &due {
         let apply_op_kind = match RetryKind::from_str(&row.task_kind) {
             Some(RetryKind::ApplyOp { device_id, seq }) => Some((device_id, seq)),
@@ -1221,6 +1247,7 @@ pub async fn sweep_once(
                         error = %e,
                         "failed to re-enqueue  ApplyOp row — will try again next sweep"
                     );
+                    stalled += 1;
                 }
             }
             continue;
@@ -1284,6 +1311,7 @@ pub async fn sweep_once(
                     "retry row shed at re-enqueue (background queue full) — \
                      rescheduled by the shed path's record_failure (#2541)"
                 );
+                stalled += 1;
             }
             Err(e) => {
                 tracing::warn!(
@@ -1292,13 +1320,17 @@ pub async fn sweep_once(
                     error = %e,
                     "failed to re-enqueue retry row — will try again next sweep"
                 );
+                stalled += 1;
             }
         }
     }
     if re_enqueued > 0 {
         tracing::info!(re_enqueued, "materializer retry queue sweep");
     }
-    Ok(re_enqueued)
+    Ok(SweepCounts {
+        re_enqueued,
+        advanced: due.len() - stalled,
+    })
 }
 
 /// #621: what [`try_reenqueue_apply_op`] decided about a persisted ApplyOp
@@ -1851,17 +1883,21 @@ async fn try_reenqueue_apply_op(
 /// 60 s tick retires tens of thousands of those rows in hours, and the derived
 /// state (FTS, link graphs, page ids) is stale for all of it.
 ///
-/// Continue only while a pass enqueued a FULL batch. That is the condition
-/// under which every row it fetched was leased — `lease_entry` pushed
-/// `next_attempt_at` forward — so the next `fetch_due` cannot return any of
-/// them again. A shorter pass had at least one row it did not push forward:
-/// `fetch_due` orders by `next_attempt_at ASC`, so a shed row (whose
-/// `record_failure` the shed path spawns fire-and-forget, and which
-/// `sweep_once` deliberately does not lease, #2541) or an `Err` row keeps the
-/// oldest timestamp and comes straight back at the head of the next batch, to
-/// be shed again. `re_enqueued == 0` would not catch that: a batch mixing
+/// Continue only while a pass ADVANCED a full batch — every row it fetched was
+/// either leased (`lease_entry` pushed `next_attempt_at` forward) or retired
+/// (deleted), so the next `fetch_due` cannot return any of them again. A
+/// shorter pass left a row where it was: `fetch_due` orders by
+/// `next_attempt_at ASC`, so a shed row (whose `record_failure` the shed path
+/// spawns fire-and-forget, and which `sweep_once` deliberately does not lease,
+/// #2541) or an `Err` row keeps the oldest timestamp and comes straight back at
+/// the head of the next batch, to be shed again.
+///
+/// Neither weaker condition works. `re_enqueued == 0` misses a batch mixing
 /// `ApplyOp` rows — which go to the foreground queue and enqueue fine — with
-/// background rows that shed is positive and still re-grinds the shed ones.
+/// background rows that shed: positive, and still re-grinding the shed ones.
+/// A full batch of `re_enqueued` misses the retirement arms, which dispatch
+/// nothing and would cap a backlog of superseded or unknown-kind rows at one
+/// batch per tick — the ceiling this function exists to remove.
 ///
 /// `MAX_SWEEPS_PER_TICK` is not a spin guard; the condition above is. It
 /// bounds one tick's wall clock so `spawn_sweeper` keeps reaching its
@@ -1875,9 +1911,9 @@ async fn sweep_until_no_progress(
     const MAX_SWEEPS_PER_TICK: usize = 512;
     let mut total = 0usize;
     for _ in 0..MAX_SWEEPS_PER_TICK {
-        let re_enqueued = sweep_once(read_pool, write_pool, materializer).await?;
-        total += re_enqueued;
-        if (re_enqueued as i64) < SWEEP_BATCH_LIMIT {
+        let counts = sweep_once_counted(read_pool, write_pool, materializer).await?;
+        total += counts.re_enqueued;
+        if (counts.advanced as i64) < SWEEP_BATCH_LIMIT {
             break;
         }
     }
@@ -2808,6 +2844,58 @@ mod tests {
             one + rest,
             DUE_ROWS,
             "the loop must retire every remaining due row in this tick"
+        );
+
+        mat.shutdown();
+    }
+
+    /// #4208 — a pass that only RETIRES rows is still forward progress.
+    ///
+    /// The retirement arms (give-up, unknown `task_kind`, the five superseded
+    /// -`ApplyOp` gates) delete the row and dispatch nothing, so a batch of 64
+    /// of them re-enqueues 0. Stopping the tick there would cap retirement at
+    /// one batch per 60 s — the ceiling `sweep_until_no_progress` exists to
+    /// remove — for exactly the backlog most likely to be large, since a
+    /// compaction or a burst of superseding edits retires rows wholesale.
+    ///
+    /// Unknown `task_kind` is the cheapest of the arms to seed: no op_log
+    /// rows, no ordering setup.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_until_no_progress_drains_a_retire_only_backlog_4208() {
+        use crate::materializer::Materializer;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        const DUE_ROWS: usize = 128;
+        let past = crate::db::now_ms() - 5 * 60_000;
+        for i in 0..DUE_ROWS {
+            let block_id = format!("BLK_4208_R{i:04}");
+            sqlx::query(
+                "INSERT INTO materializer_retry_queue \
+                     (block_id, task_kind, attempts, next_attempt_at) \
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(&block_id)
+            .bind("TaskKindFromAFutureVersion")
+            .bind(1_i64)
+            .bind(past)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let seeded = pending_count(&pool).await.unwrap();
+        mat.metrics().seed_pending_retry_rows(seeded);
+
+        let re_enqueued = sweep_until_no_progress(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            re_enqueued, 0,
+            "an unknown task_kind dispatches nothing — the premise of the case"
+        );
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "one tick must retire the whole backlog; stopping after the first \
+             batch would leave 64 rows for the next tick"
         );
 
         mat.shutdown();
