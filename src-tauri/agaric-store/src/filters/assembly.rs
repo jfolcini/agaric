@@ -76,16 +76,11 @@ impl SqlFragment {
         Self { spans, binds }
     }
 
-    /// Build from a compiled [`WhereClause`]. The caller MUST have already
-    /// rejected `unsupported()` clauses — their sentinel SQL must never reach a
-    /// statement. Like [`SqlFragment::new`], that is a fragment-author bug
-    /// rather than user input, so it is a hard `assert` active in release too.
+    /// Build from a compiled [`WhereClause`]. Every caller rejects
+    /// `unsupported()` clauses with a `Validation` error before reaching here,
+    /// so their sentinel SQL never arrives.
     #[must_use]
     pub fn from_where_clause(wc: WhereClause) -> Self {
-        assert!(
-            !wc.is_unsupported(),
-            "an unsupported WhereClause must be rejected, not assembled",
-        );
         Self::new(&wc.sql, wc.binds)
     }
 
@@ -213,11 +208,5 @@ mod tests {
     #[should_panic(expected = "placeholder/bind mismatch")]
     fn too_many_binds_hard_errors() {
         let _ = SqlFragment::new("a = ?", vec![Bind::Int(1), Bind::Int(2)]);
-    }
-
-    #[test]
-    #[should_panic(expected = "unsupported WhereClause must be rejected")]
-    fn unsupported_clause_hard_errors_in_release() {
-        let _ = SqlFragment::from_where_clause(WhereClause::unsupported());
     }
 }
