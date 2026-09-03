@@ -1105,12 +1105,14 @@ async fn sweep_once_counted(
                     // clears it via `clear_on_success` only on durable
                     // success. The lease prevents the same in-flight op
                     // being swept twice before it resolves.
+                    // Foreground-routed rows are never shed, so this
+                    // lease is always on the failure ladder.
                     lease_entry(
                         write_pool,
                         &row.block_id,
                         &row.task_kind,
                         row.attempts,
-                        BackoffClass::of(row.last_error.as_deref()),
+                        BackoffClass::Failure,
                     )
                     .await?;
                     re_enqueued += 1;
