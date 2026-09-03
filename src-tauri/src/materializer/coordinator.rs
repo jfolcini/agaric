@@ -1048,13 +1048,15 @@ impl Materializer {
         #[cfg(test)]
         let sent = {
             use std::sync::atomic::Ordering as O;
-            let allowance = self.force_shed_after.load(O::Acquire);
-            if allowance < 0 {
-                tx.try_send(task)
-            } else if allowance == 0 {
+            // One atomic step: two enqueuers that both read `1` must not both
+            // decrement past the `-1` "hook off" sentinel.
+            let allowance = self
+                .force_shed_after
+                .fetch_update(O::AcqRel, O::Acquire, |n| (n > 0).then(|| n - 1))
+                .unwrap_or_else(|unchanged| unchanged);
+            if allowance == 0 {
                 Err(mpsc::error::TrySendError::Full(task))
             } else {
-                self.force_shed_after.fetch_sub(1, O::AcqRel);
                 tx.try_send(task)
             }
         };

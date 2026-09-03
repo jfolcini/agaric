@@ -1883,6 +1883,11 @@ async fn try_reenqueue_apply_op(
 /// row (shed, or `Err`) on its original `next_attempt_at`, and `fetch_due`
 /// would hand that row straight back. `MAX_SWEEPS_PER_TICK` keeps
 /// `spawn_sweeper` reaching its `shutdown_flag` check.
+///
+/// Draining until a pass sheds fills the background channel, so a live
+/// edit's cache task that arrives mid-drain is shed and retried a minute
+/// later; accepted over leaving headroom, since the drain is what ends the
+/// staleness for every other block.
 async fn sweep_until_no_progress(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
