@@ -805,11 +805,15 @@ pub(crate) async fn clear_on_success(
 ///
 /// The lease does not touch `last_error` or `created_at`, and leaves a
 /// failure row's `attempts` alone — accumulation is `record_failure`'s. A
-/// shed row's `attempts` restart at 1 (#4208): every one of them came from
-/// losing a queue slot, and the slot is won now, so the execution budget
+/// shed row's `attempts` restart at 1 (#4208): its last persistence lost a
+/// queue slot, and the slot is won now, so the execution budget
 /// `give_up_reason` counts starts here. Otherwise ten sheds in 41 minutes of
 /// backpressure followed by one real failure would retire the row with no
-/// retry ever made.
+/// retry ever made. `attempts` is one counter for both ladders, so a row that
+/// failed for real and was then shed restarts too, and a `record_failure` the
+/// consumer lands between the enqueue and this write is overwritten by it.
+/// Both cost extra retries, never a lost row, and `created_at` still bounds
+/// them by age.
 pub(crate) async fn lease_entry(
     pool: &SqlitePool,
     block_id: &str,
@@ -2593,9 +2597,10 @@ mod tests {
         // Make it due so `fetch_due` returns the row `give_up_reason` reads.
         sqlx::query!(
             "UPDATE materializer_retry_queue SET next_attempt_at = ? \
-             WHERE block_id = ?",
+             WHERE block_id = ? AND task_kind = ?",
             past,
             "BLK_4208_STORM",
+            "UpdateFtsBlock",
         )
         .execute(&pool)
         .await
