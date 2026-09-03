@@ -296,9 +296,9 @@ pub async fn handle_incoming_sync(
     session: InboundSession,
     pool: sqlx::SqlitePool,
     device_id: String,
-    // #2621 (agaric-sync inversion): accept a `Materializer` (tests) or an already-erased
-    // `Arc<dyn ApplyHost>` (production) uniformly, then hand the `Arc<dyn ApplyHost>` to
-    // the responder session — the concrete coordinator is never named here.
+    // #2621 (agaric-sync inversion): the already-erased `Arc<dyn ApplyHost>` is handed
+    // to the responder session — the concrete coordinator is never named here (callers
+    // wrap it with `Arc::new`; since #4502 there is no `From` to hide that).
     materializer: Arc<dyn ApplyHost>,
     scheduler: Arc<SyncScheduler>,
     event_sink: Arc<dyn SyncEventSink>,

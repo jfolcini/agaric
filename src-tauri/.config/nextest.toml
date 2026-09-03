@@ -236,9 +236,9 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = 'test(/materializer::handlers::(apply_reproject_proptest|create_edit_convergence_tests|delete_restore_convergence_tests|import_scaling_tests|move_convergence_tests|space_hydration_tests|tag_convergence_tests)::/)'
+filter = 'test(/materializer(::handlers|_app_tests)::(apply_reproject_proptest|create_edit_convergence_tests|delete_restore_convergence_tests|import_scaling_tests|move_convergence_tests|space_hydration_tests|tag_convergence_tests)::/)'
 test-group = 'spy-counter-serial'
 
 [[profile.ci.overrides]]
-filter = 'test(/materializer::handlers::(apply_reproject_proptest|create_edit_convergence_tests|delete_restore_convergence_tests|import_scaling_tests|move_convergence_tests|space_hydration_tests|tag_convergence_tests)::/)'
+filter = 'test(/materializer(::handlers|_app_tests)::(apply_reproject_proptest|create_edit_convergence_tests|delete_restore_convergence_tests|import_scaling_tests|move_convergence_tests|space_hydration_tests|tag_convergence_tests)::/)'
 test-group = 'spy-counter-serial'

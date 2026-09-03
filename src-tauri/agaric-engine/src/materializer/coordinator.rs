@@ -1436,10 +1436,10 @@ impl std::fmt::Debug for Materializer {
 /// `RebuildPagesCacheCounts` (tail) are enqueued separately in
 /// [`Materializer::enqueue_post_snapshot_rebuilds`] — see that method for the
 /// ordering rationale.
-/// #3328: `pub(super)` so `materializer::tests` can hold this list against
-/// `agaric_sync::snapshot::CACHE_TABLES` — the wipe half of the same
-/// contract, which the restore path issues in another crate. Widened for the
-/// parity test only; nothing outside `materializer` consumes it.
+/// #3328: `pub` so the parity test in `agaric_sync::snapshot::restore` can
+/// hold this list against `CACHE_TABLES` — the wipe half of the same
+/// contract, which the restore path issues in that crate. Widened for the
+/// parity test only.
 pub const POST_SNAPSHOT_CACHE_REBUILDS: &[(&str, MaterializeTask)] = &[
     ("agenda_cache", MaterializeTask::RebuildAgendaCache),
     ("pages_cache", MaterializeTask::RebuildPagesCache),

@@ -346,10 +346,10 @@ tauri = { version = "2", features = ["test"] }
 # constructors are available to this crate's ~510 test call sites (#2621).
 # Only enabled for test builds; the normal `[dependencies]` entry stays lean.
 agaric-core = { path = "agaric-core", version = "0.1.0", features = ["test-util"] }
-# Re-declare agaric-engine with `test-util` so loro's `reproject_call_spy`
-# counter is visible to the `materializer::handlers::import_scaling_tests`
-# reprojection assertions (#2621, wave E1). Only enabled for test builds; the
-# normal `[dependencies]` entry stays lean.
+# Re-declare agaric-engine with `test-util` so the four `materializer_app_tests`
+# modules reach the engine's handler seams and loro's `reproject_call_spy`
+# counter (#2621 wave E1, #4502). Only enabled for test builds; the normal
+# `[dependencies]` entry stays lean.
 agaric-engine = { path = "agaric-engine", version = "0.1.0", features = ["test-util"] }
 # #2621 Sync-D: re-declare agaric-sync with `test-util` so the app-hosted sync
 # tests can reach the cross-crate test helpers gated behind that feature

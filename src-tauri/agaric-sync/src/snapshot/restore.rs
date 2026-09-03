@@ -9,16 +9,13 @@ use agaric_store::db::MAX_SQL_PARAMS;
 /// (d): inventory of cache tables wiped by the RESET path. Each entry is
 /// wiped by the literal statement [`cache_wipe_sql`] pairs with it.
 ///
-/// #3328: `pub` — and re-exported from [`crate::snapshot`] — so this
-/// inventory is checkable from outside the crate. Its counterpart,
-/// `POST_SNAPSHOT_CACHE_REBUILDS` in the app crate's materializer
-/// coordinator, lists the rebuild task that refills each of these tables
-/// after the restore commits; while this list was private nothing could
-/// compare the two, so a new cache table added HERE and forgotten THERE
-/// would truncate on every snapshot catch-up and never rebuild — bit for bit
-/// the #617/#794 failure, which has already shipped once. The app-crate
-/// parity test over the two lists is what closes that, and it needs this to
-/// be public.
+/// #3328: its counterpart, `POST_SNAPSHOT_CACHE_REBUILDS` in the engine's
+/// materializer coordinator, lists the rebuild task that refills each of
+/// these tables after the restore commits. A new cache table added HERE and
+/// forgotten THERE would truncate on every snapshot catch-up and never
+/// rebuild — bit for bit the #617/#794 failure, which has already shipped
+/// once. The `wipe_inventory_tests` parity test below holds the two lists
+/// against each other.
 ///
 /// #2621 (agaric-sync inversion): this list used to pair each table with the
 /// `MaterializeTask` that repopulates it, but naming `MaterializeTask` (an
@@ -53,7 +50,7 @@ use agaric_store::db::MAX_SQL_PARAMS;
 /// `REFERENCES blocks(id) ON DELETE CASCADE`, so the `DELETE FROM blocks` below
 /// wiped it IMPLICITLY — listing it here makes the wipe explicit (idempotent
 /// with the cascade) so a RESET can never leave the links/backlinks UI stale.
-pub const CACHE_TABLES: &[&str] = &[
+const CACHE_TABLES: &[&str] = &[
     "agenda_cache",
     "pages_cache",
     "tags_cache",
