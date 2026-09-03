@@ -381,6 +381,43 @@ function uploadsIn(lines) {
 const normalizeUploadPath = (path) => path?.replace(/^src-tauri\//, '').replace(/\/$/, '')
 
 /**
+ * Every `mutants.out`-ish path a job's steps READ, checked against where
+ * cargo-mutants actually writes. A reader one level short of the real files —
+ * or one run behind, since `mutants.out.old` is the PREVIOUS run — reports
+ * zero coverage and zero survivors however healthy the run was (#3386).
+ *
+ * `skipSpan` is the `cargo mutants` invocation's own lines, whose flags name
+ * the directory rather than read it; pass `[-1, -1]` for a job without one.
+ */
+function checkReaders({ lines, writeDir, skipSpan, jobId, push }) {
+  const [from, to] = skipSpan
+  // A prefix test is NOT a path test: `'mutants.out.old/missed.txt'
+  // .startsWith('mutants.out')` is true, so a bare `startsWith` waves through
+  // a reader pointed at last week's results. Require a segment boundary.
+  const under = (ref) => ref === writeDir || ref.startsWith(`${writeDir}/`)
+  let step = '<unnamed step>'
+  for (let i = 0; i < lines.length; i++) {
+    const stepName = /^\s*-\s+name:\s*(.+?)\s*$/.exec(lines[i])
+    if (stepName) step = `step '${stepName[1]}'`
+    if (i >= from && i <= to) continue
+    // `name:` is a step name or an ARTIFACT name, and `pattern:` is an
+    // artifact-name GLOB (`mutants-out-*`) — none of the three is a path.
+    // Scanning them would flag the artifact this lane deliberately calls
+    // `mutants-out` as a reader pointed one level short.
+    const refs = /^\s*-?\s*(name|pattern):\s*/.test(lines[i])
+      ? []
+      : new Set(lines[i].match(/mutants[-.]out[^\s"'`)]*/g) ?? [])
+    for (const ref of refs) {
+      if (under(ref)) continue
+      push(
+        'output-path-mismatch',
+        `${jobId} ${step} reads '${ref}', but cargo-mutants writes to '${writeDir}' (\`--output DIR\` creates DIR/mutants.out, it does not USE DIR; \`${writeDir}.old\` is the PREVIOUS run). A step reading one level short of — or one run behind — the real files reports zero coverage and zero survivors however healthy the run was.`,
+      )
+    }
+  }
+}
+
+/**
  * Every path the lane's own steps read must be where cargo-mutants writes.
  * `-o/--output DIR` creates `DIR/mutants.out`, so a reader pointed at `DIR`
  * finds nothing however healthy the run was.
@@ -395,7 +432,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   // true — so a bare `startsWith` waves through a reader pointed at LAST
   // week's results, which is a silent-staleness bug of the same family this
   // guard exists to catch. Require a path-segment boundary.
-  const under = (ref) => ref === writeDir || ref.startsWith(`${writeDir}/`)
+  checkReaders({ lines, writeDir, skipSpan: [from, to], jobId: `\`${JOB_ID}\``, push })
 
   // The artifact steps are collected rather than checked inline, because the
   // interesting failures are ABSENCES: a `path:` that no longer mentions
@@ -404,24 +441,6 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   // already looked roughly right — a guard that validates a value only when
   // it is nearly correct cannot fail on the cases that matter.
   const uploads = uploadsIn(lines)
-  let step = '<unnamed step>'
-  for (let i = 0; i < lines.length; i++) {
-    const stepName = /^\s*-\s+name:\s*(.+?)\s*$/.exec(lines[i])
-    if (stepName) step = `step '${stepName[1]}'`
-    if (i >= from && i <= to) continue
-    // `name:` values are step names and the upload-artifact ARTIFACT name —
-    // never paths. Scanning them would flag `name: mutants-out` as a reader.
-    const refs = /^\s*-?\s*name:\s*/.test(lines[i])
-      ? []
-      : new Set(lines[i].match(/mutants[-.]out[^\s"'`)]*/g) ?? [])
-    for (const ref of refs) {
-      if (under(ref)) continue
-      push(
-        'output-path-mismatch',
-        `${step} reads '${ref}', but cargo-mutants writes to '${writeDir}' (\`--output DIR\` creates DIR/mutants.out, it does not USE DIR; \`${writeDir}.old\` is the PREVIOUS run). A step reading one level short of — or one run behind — the real files reports zero coverage and zero survivors however healthy the run was.`,
-      )
-    }
-  }
 
   if (uploads.length === 0) {
     push(
@@ -466,6 +485,18 @@ export function checkMergeProducer({ lines, writeDir, push }) {
     )
     return
   }
+
+  // The merge job READS `mutants.out/...` too — it reassembles into that
+  // directory and the summary step renders from it. Guarding only its upload
+  // would leave a drifted reader here showing up as a wrong summary rather
+  // than a red, which is the #3386 shape one job over.
+  checkReaders({
+    lines,
+    writeDir,
+    skipSpan: [-1, -1],
+    jobId: `\`${MERGE_JOB_ID}\``,
+    push,
+  })
 
   const upload = uploadsIn(lines).find((u) => u.name === ARTIFACT_NAME)
 
