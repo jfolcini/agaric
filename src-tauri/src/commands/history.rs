@@ -1387,7 +1387,7 @@ async fn revert_ops_in_tx(
     skip_non_reversible: bool,
     app_data_dir: Option<&std::path::Path>,
 ) -> Result<(Vec<UndoResult>, u64), AppError> {
-    use crate::reverse;
+    use agaric_engine::reverse;
 
     if ops.is_empty() {
         return Ok((vec![], 0));
@@ -1873,7 +1873,7 @@ pub async fn restore_page_to_op_inner(
     let mut static_non_reversible_skipped: u64 = 0;
     let mut candidate_ops: Vec<OpRef> = Vec::with_capacity(ops_after.len());
     for (dev_id, seq, op_type) in &ops_after {
-        if crate::reverse::is_statically_non_reversible(op_type) {
+        if agaric_engine::reverse::is_statically_non_reversible(op_type) {
             // STATIC half of the contract: op-types a restore skips on
             // sight (`purge_block`, `delete_attachment`). `delete_attachment`
             // is skipped even when an inverse could be reconstructed,
@@ -1964,7 +1964,7 @@ pub async fn undo_page_op_inner(
         ));
     }
 
-    use crate::reverse;
+    use agaric_engine::reverse;
 
     // Find the op to undo: page ops ordered newest first, offset by undo_depth.
     // Uses the write pool for consistency — these reads feed into the write
@@ -2228,7 +2228,7 @@ pub async fn redo_page_op_inner(
     undo_device_id: String,
     undo_seq: i64,
 ) -> Result<UndoResult, AppError> {
-    use crate::reverse;
+    use agaric_engine::reverse;
 
     // Fetch the undo op's op_type (surfaced to the frontend as
     // `reversed_op_type` for descriptive toasts), its `is_undo` flag, and its
@@ -3113,7 +3113,7 @@ pub async fn compute_edit_diff_inner(
     // #382: pass the op's own `device_id` so `find_prior_text` tie-breaks
     // strictly before this op on the canonical `(created_at, seq,
     // device_id)` order — this op is identified by `(device_id, seq)`.
-    let prior = crate::reverse::find_prior_text(
+    let prior = agaric_engine::reverse::find_prior_text(
         pool,
         payload.block_id.as_str(),
         row.created_at,

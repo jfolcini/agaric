@@ -92,9 +92,9 @@ use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::str::FromStr;
 
 use super::{attachment_ops, block_ops, tag_ops};
-use crate::db::MAX_SQL_PARAMS;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
+use agaric_store::db::MAX_SQL_PARAMS;
 use agaric_store::op::{
     CreateBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     OpType, SetPropertyPayload,
@@ -113,7 +113,7 @@ use agaric_store::op_log::OpRecord;
 //   * property:        idx, block_id, key, created_at, created_at, seq, seq, device_id → 8
 //   * attachment:      idx, attachment_id, created_at, created_at, seq, seq, device_id → 7
 //   * op-record fetch: idx, device_id, seq                                             → 3
-// `MAX_SQL_PARAMS` is the crate-wide 999 bound from `crate::db` (the
+// `MAX_SQL_PARAMS` is the crate-wide 999 bound from `agaric_store::db` (the
 // same conservative `SQLITE_MAX_VARIABLE_NUMBER` floor the snapshot
 // `batch_insert_snapshot_rows!` chunker uses) — well under the real
 // 3.32+ limit of 32766, so the chunked statements never overflow.

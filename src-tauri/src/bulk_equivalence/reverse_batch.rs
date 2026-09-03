@@ -65,7 +65,7 @@ use super::{ArmEnv, Normalisation, assert_batch_equals_fold};
 use crate::proptest_db_harness::{
     HARNESS_DEVICE, OpKind, op_chain_strategy, resolve_chain, ts_for,
 };
-use crate::reverse::{compute_reverse, compute_reverse_batch, get_op_records_batch};
+use agaric_engine::reverse::{compute_reverse, compute_reverse_batch, get_op_records_batch};
 
 /// Each case builds two fresh migrated databases, so the budget is kept low
 /// deliberately; the value is in running the relation over many SHAPES, not in

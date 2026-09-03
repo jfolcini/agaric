@@ -10,8 +10,8 @@ use tokio::sync::watch;
 
 use super::sanitize_internal_error;
 use crate::db::{ReadPool, WritePool};
-use crate::link_metadata::{self, LinkMetadata};
 use agaric_core::error::AppError;
+use agaric_store::link_metadata::{self, LinkMetadata};
 
 // ---------------------------------------------------------------------------
 // #2200 — fetch_link_metadata single-flight dedup
@@ -245,7 +245,7 @@ pub async fn get_link_metadata(
 mod tests {
     use super::*;
     use crate::db::{DbPools, init_pool, init_pools};
-    use crate::link_metadata::{self, LinkMetadata};
+    use agaric_store::link_metadata::{self, LinkMetadata};
     use sqlx::SqlitePool;
     use tempfile::TempDir;
 
@@ -347,11 +347,16 @@ mod tests {
     async fn cache_miss_triggers_http_fetch() {
         let (pool, _dir) = test_pool().await;
 
-        // No cached entry exists. Call with an unreachable URL so the HTTP
-        // fetch fails, proving the function attempted a network call.
-        let result =
-            fetch_link_metadata_inner(&pool, &pool, "http://127.0.0.1:1/nonexistent".to_string())
-                .await;
+        // No cached entry exists. Call with a host that cannot resolve so the
+        // HTTP fetch fails, proving the function attempted a network call.
+        // Not a loopback address: the SSRF guard's loopback allowance is
+        // `cfg(test)` in `agaric-store`, which this binary does not see.
+        let result = fetch_link_metadata_inner(
+            &pool,
+            &pool,
+            "http://nonexistent.invalid/nonexistent".to_string(),
+        )
+        .await;
 
         assert!(
             result.is_err(),
@@ -371,7 +376,7 @@ mod tests {
         // Insert metadata that is 8 days old (stale by the 7-day threshold).
         let eight_days_ago = crate::db::now_ms() - 8 * 86_400_000;
         let meta = LinkMetadata {
-            url: "http://127.0.0.1:1/stale-entry".to_string(),
+            url: "http://stale.invalid/stale-entry".to_string(),
             title: Some("Stale Title".to_string()),
             favicon_url: None,
             description: None,
@@ -384,7 +389,7 @@ mod tests {
         // The stale entry should cause a refetch attempt, which will fail
         // because the URL is unreachable.
         let result =
-            fetch_link_metadata_inner(&pool, &pool, "http://127.0.0.1:1/stale-entry".to_string())
+            fetch_link_metadata_inner(&pool, &pool, "http://stale.invalid/stale-entry".to_string())
                 .await;
 
         assert!(
@@ -510,7 +515,7 @@ mod tests {
         let result = fetch_link_metadata_inner(
             &pools.read,
             &pools.write,
-            "http://127.0.0.1:1/split-miss".to_string(),
+            "http://split.invalid/split-miss".to_string(),
         )
         .await;
 

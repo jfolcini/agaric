@@ -2853,7 +2853,7 @@ name = "cargo-mutants scope is live and reachable"
 entry = "node scripts/check-mutants-scope.mjs"
 language = "system"
 pass_filenames = false
-files = '^(src-tauri/(\.cargo/)?mutants\.toml|src-tauri/Cargo\.toml|\.github/workflows/scheduled-deep-checks\.yml|src-tauri/(src/reverse|agaric-store/src|agaric-engine/src/loro)/.*\.rs)$'
+files = '^(src-tauri/(\.cargo/)?mutants\.toml|src-tauri/Cargo\.toml|\.github/workflows/scheduled-deep-checks\.yml|src-tauri/(agaric-engine/src/reverse|agaric-store/src|agaric-engine/src/loro)/.*\.rs)$'
 stages = ["manual"]
 
 # git-fixture-isolation (#3722 meta-guard): fixing ONE script that ran git in

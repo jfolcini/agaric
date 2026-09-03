@@ -14,13 +14,13 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group};
 
+use agaric_engine::reverse;
 use agaric_lib::commands::{
     compute_edit_diff_inner, redo_page_op_inner, restore_page_to_op_inner, revert_ops_inner,
     undo_page_op_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_lib::reverse;
 use agaric_store::op::OpRef;
 use agaric_store::pagination::{self, PageRequest};
 

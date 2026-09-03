@@ -6,17 +6,17 @@ mod block_ops;
 mod property_ops;
 mod tag_ops;
 
-pub(crate) use batch::{
+pub use batch::{
     compute_reverse_batch, get_op_records_batch, is_skippable_non_reversible,
     is_statically_non_reversible, reject_replicated_targets,
 };
-pub(crate) use block_ops::find_prior_text;
+pub use block_ops::find_prior_text;
 
 use sqlx::SqlitePool;
 use std::str::FromStr;
 
-use crate::db::ReadPool;
 use agaric_core::error::AppError;
+use agaric_store::db::ReadPool;
 use agaric_store::op::{OpPayload, OpType};
 
 pub async fn compute_reverse(
@@ -49,12 +49,3 @@ pub async fn compute_reverse(
         }),
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-// B1 (#150): property tests for `compute_reverse` — inverse law,
-// determinism, and exhaustive OpType -> inverse classification. Driven by
-// the shared seeded-DB harness (`crate::proptest_db_harness`).
-#[cfg(test)]
-mod proptest_b1;

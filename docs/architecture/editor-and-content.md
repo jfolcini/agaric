@@ -93,7 +93,7 @@ Suggestion-popup passthrough: when a picker is visible, `Enter / Tab / Escape / 
 Two-tier:
 
 - **In-editor undo**: ProseMirror history. Scoped to one edit session. Survives only until the editor unmounts.
-- **Page-level undo**: `UndoStore` over the op log. Reversed via `src-tauri/src/reverse/` (one reverse-op per source op type; see table below). Coalesces consecutive ops within `UNDO_GROUP_WINDOW_MS`; redo stack capped at `MAX_REDO_STACK`. Both constants live in `src/stores/undo.ts`.
+- **Page-level undo**: `UndoStore` over the op log. Reversed via `src-tauri/agaric-engine/src/reverse/` (one reverse-op per source op type; see table below). Coalesces consecutive ops within `UNDO_GROUP_WINDOW_MS`; redo stack capped at `MAX_REDO_STACK`. Both constants live in `src/stores/undo.ts`.
 
 ### Addressing model (#2468)
 

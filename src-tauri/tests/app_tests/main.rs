@@ -11,3 +11,5 @@ mod fts_app_tests;
 mod op_log_app_tests;
 mod pagination_app_tests;
 mod peer_refs_app_tests;
+mod reverse_proptest_b1;
+mod reverse_tests;

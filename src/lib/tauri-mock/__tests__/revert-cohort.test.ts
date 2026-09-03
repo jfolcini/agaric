@@ -4,7 +4,7 @@
  * The forward `delete_block` handler stamps ONE `deleted_at` marker across the
  * target and its whole active subtree and appends a SINGLE `delete_block` op —
  * exactly like the backend's single-op cascade. Reversal must therefore walk
- * the cohort too: `src-tauri/src/reverse/block_ops.rs` reverses `DeleteBlock`
+ * the cohort too: `src-tauri/agaric-engine/src/reverse/block_ops.rs` reverses `DeleteBlock`
  * into `RestoreBlock { deleted_at_ref: record.created_at }`, and the apply arm
  * in `src-tauri/src/commands/history.rs` clears the whole
  * `DescendantWalkFilter::Cohort(ref)` set. Symmetrically, `reverse_create_block`

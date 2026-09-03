@@ -1850,7 +1850,7 @@ async fn undo_of_delete_attachment_whose_fs_path_names_a_directory_refuses_3706(
          got {err:?}"
     );
     assert!(
-        !crate::reverse::is_skippable_non_reversible(&err),
+        !agaric_engine::reverse::is_skippable_non_reversible(&err),
         "#4268: the classification is the whole point — a skippable class is a \
          licence for the skip_non_reversible restore path to DROP this op, and \
          dropping an op because the vault is corrupt is the wrong response to \
@@ -2024,7 +2024,7 @@ async fn undo_of_delete_attachment_with_a_non_notfound_stat_error_is_not_skippab
          silently drop this op (#3706 review); got {err:?}"
     );
     assert!(
-        !crate::reverse::is_skippable_non_reversible(&err),
+        !agaric_engine::reverse::is_skippable_non_reversible(&err),
         "the whole point of the distinction: this refusal must be fatal to a \
          batch/restore, not skippable"
     );

@@ -51,7 +51,8 @@ use agaric_store::space::{SpaceId, SpaceScope};
 /// deliberately NOT `created_at`) is unchanged: #1526 depends on the pointer
 /// naming the causal predecessor, which is what makes it trustworthy under
 /// cross-device clock skew.
-pub(crate) async fn find_prev_edit_in_tx(
+// `pub` so `tests/app_tests/reverse_tests.rs` can pin the #3644 stamping site.
+pub async fn find_prev_edit_in_tx(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<Option<(String, i64)>, AppError> {

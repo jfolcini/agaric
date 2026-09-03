@@ -261,57 +261,57 @@
     "reason": "ALREADY A FOLD on the WRITE path: the per-block core (cross-space validation, orphan adoption, op append) is apply_tag_to_block_in_tx, shared with add_tag_inner. The batched PRE-checks (resolve_block_spaces_batch, the bulk block_tags dup set) are read-only lookups replacing per-iteration SELECTs, so the residual fork risk is skip-vs-tag selection, not divergent writes"
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::compute_reverse_batch",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::compute_reverse_batch",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold"
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::fetch_live_attachment_state_batch",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::fetch_live_attachment_state_batch",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_loop",
     "pin": "#4259's batch-side live-row fetch, sibling to the five fetch_*_batch kernels and covered by `reverse::tests::compute_reverse_batch_matches_per_op_loop` \u2014 NOT by the `compute_reverse_batch_matches_per_op_fold` proptest the siblings name. That distinction is load-bearing: the proptest only appends to op_log and never inserts `attachments` rows, so every add_attachment in it resolves to None on both kernels, they agree via the row-is-gone fallback, and the entry would stay green with this fetch stubbed to return all-None \u2014 the blind-oracle failure this fix exists to close. The _loop test seeds live rows whose fs_path AND filename both differ from the add payload's and pins the absolute value, so a fetch returning the wrong row reddens it. It does NOT cover a duplicate attachment_id within one chunk: its four add_attachment ops carry four distinct ids, and its delete_attachment ops bucket separately. The by-id remap that handles duplicates is therefore unpinned \u2014 stated rather than implied, since over-claiming an oracle's reach is the exact failure this entry was corrected for once already."
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::fetch_prev_edit_rows_batch",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::fetch_prev_edit_rows_batch",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold"
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::fetch_prior_attachment_batch",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::fetch_prior_attachment_batch",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold"
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::fetch_prior_position_batch",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::fetch_prior_position_batch",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold"
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::fetch_prior_property_batch",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::fetch_prior_property_batch",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold"
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::fetch_prior_text_batch",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::fetch_prior_text_batch",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold"
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::fetch_prior_text_fallback_only",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::fetch_prior_text_fallback_only",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold",
     "pin": "NOT bulk-named (no batch/bulk/by_ids segment), so the name heuristic cannot see it \u2014 but it is the sixth of compute_reverse_batch's hand-copied prior-state kernels, sibling to five *_batch names the heuristic does catch. Pinned by exact key so deleting it fails the guard as a stale entry instead of vanishing silently"
   },
   {
-    "fn": "src-tauri/src/reverse/batch.rs::get_op_records_batch",
+    "fn": "src-tauri/agaric-engine/src/reverse/batch.rs::get_op_records_batch",
     "kind": "read-only",
     "status": "covered",
     "test": "compute_reverse_batch_matches_per_op_fold"

@@ -89,8 +89,6 @@
 //! `deleted_at` that the minted ref matches exactly, so the SQL cohort restore
 //! is a real un-delete rather than a silent no-op.
 
-#![cfg(test)]
-
 use proptest::prelude::*;
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;

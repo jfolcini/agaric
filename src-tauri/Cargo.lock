@@ -76,7 +76,6 @@ dependencies = [
  "proptest",
  "rand 0.10.2",
  "regex",
- "reqwest",
  "rfd",
  "rmcp",
  "rustc-hash",
@@ -205,6 +204,7 @@ dependencies = [
  "iroh-base",
  "proptest",
  "regex",
+ "reqwest",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -215,6 +215,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "url",
+ "wiremock",
 ]
 
 [[package]]

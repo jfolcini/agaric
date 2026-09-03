@@ -8,18 +8,8 @@ use super::{
     LinkMetadata, MAX_BODY_SIZE, cleanup_stale, fetch_metadata, get_cached, is_blocked_ip,
     read_body_limited, upsert,
 };
-use crate::db::init_pool;
 use crate::db::now_ms;
-use sqlx::SqlitePool;
-use std::path::PathBuf;
-use tempfile::TempDir;
-
-async fn test_pool() -> (SqlitePool, TempDir) {
-    let dir = TempDir::new().unwrap();
-    let db_path: PathBuf = dir.path().join("test.db");
-    let pool = init_pool(&db_path).await.unwrap();
-    (pool, dir)
-}
+use crate::test_support::test_pool;
 
 // ======================================================================
 // parse_title tests
