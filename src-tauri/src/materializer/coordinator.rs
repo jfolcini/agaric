@@ -947,17 +947,17 @@ impl Materializer {
     /// Returns immediately when nothing is in flight (one `Acquire` load).
     /// Test-only: the backing gate is `#[cfg(test)]`, so production still
     /// carries no coordination for this path.
+    #[cfg(test)]
+    pub async fn wait_for_pending_shed_persists(&self) {
+        self.shed_persist_test_hooks.wait_for_drain().await;
+    }
+
     /// #4208 test-only: let the next `n` background enqueues through, then
     /// shed every one after that. `-1` restores normal behaviour.
     #[cfg(test)]
     pub fn force_shed_after(&self, n: i64) {
         self.force_shed_after
             .store(n, std::sync::atomic::Ordering::Release);
-    }
-
-    #[cfg(test)]
-    pub async fn wait_for_pending_shed_persists(&self) {
-        self.shed_persist_test_hooks.wait_for_drain().await;
     }
 
     pub async fn enqueue_foreground(&self, task: MaterializeTask) -> Result<(), AppError> {
