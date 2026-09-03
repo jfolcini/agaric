@@ -72,16 +72,13 @@ pub use agenda::{
 // Tests bypass the cache (which itself reads `chrono::Local::now()` and
 // produces today-anchored rows that drift over time) and call this path
 // directly with a fixed `today`. Production callers use
-// `list_projected_agenda_inner` (above) — they do not need `_on_the_fly`,
-// so this re-export is gated on `#[cfg(test)]` / `test-util`.
-#[cfg(any(test, feature = "test-util"))]
+// `list_projected_agenda_inner` (above) — they do not need `_on_the_fly`.
 pub use agenda::list_projected_agenda_on_the_fly;
 // #2601 — pinned-`today` reader variant, used by the agenda cache/fallback
 // parity + prefilter tests so a fixture's future-dated repeat rules and the
 // horizon fallback anchor to an injected reference date, not the wall clock.
 // The non-test wrapper `list_projected_agenda_inner` calls it directly, so
 // the re-export is only needed for the tests.
-#[cfg(any(test, feature = "test-util"))]
 pub use agenda::list_projected_agenda_inner_with_today;
 pub use attachments::{
     add_attachment_with_bytes, add_attachment_with_bytes_inner, delete_attachment,

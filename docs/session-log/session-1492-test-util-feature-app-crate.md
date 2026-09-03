@@ -6,16 +6,16 @@ binaries. Nothing there moves for free: an integration binary links the lib as a
 never sees `cfg(test)` and cannot name a `pub(crate)` item. This session is step 1 alone, the enabling
 change: widen what a future test binary must reach, move no test file, change no behaviour.
 
-Two classes of item needed work. The first is plain visibility — the 22 `commands::*` domain submodules
-and the two materializer counter accessors the OTel pipeline already surfaces (`sql_only_fallback_count`,
-`descendant_fanout_dropped_count`) were `pub(crate)`; they are compiled into release today and only their
-*names* were crate-private, so widening them to `pub` changes name resolution and nothing else. The second
-is the five seams that vanish entirely when the lib is built without `cfg(test)`: the agenda `_on_the_fly`
-and `_with_today` pinned-clock readers, the attachment GC pass `cleanup_orphaned_attachments`, the spaces
-`bootstrap_spaces_for_test` shim, the recovery once-guard `reset_recovery_guard`, and the `write_fault`
-attachment fault injector. Those are re-gated `#[cfg(any(test, feature = "test-util"))] pub`, behind a new
-`test-util` cargo feature on the app crate — the same shape `agaric-core`, `-store`, `-engine` and `-sync`
-already carry. `write_fault` deliberately did **not** become unconditionally `pub`: its own doc comment
+Two classes of item needed work. The first is plain visibility — the 22 `commands::*` domain submodules,
+the agenda `_on_the_fly` and `_with_today` pinned-clock readers, and the materializer counter accessor
+`sql_only_fallback_count` were `pub(crate)`; they are compiled into release today and only their *names*
+were crate-private, so widening them to `pub` changes name resolution and nothing else. Its sibling
+`descendant_fanout_dropped_count` stays `pub(crate)`: no test that moves reaches it, and the one caller that
+does is `lib.rs`. The second class is the three seams that vanish entirely when the lib is built without
+`cfg(test)`: the attachment GC pass `cleanup_orphaned_attachments`, the spaces `bootstrap_spaces_for_test`
+shim, and the recovery once-guard `reset_recovery_guard`, joined by the `write_fault` attachment fault
+injector. Those are re-gated `#[cfg(any(test, feature = "test-util"))] pub`, behind a new `test-util` cargo
+feature on the app crate — the same shape `agaric-core`, `-store`, `-engine` and `-sync` already carry. `write_fault` deliberately did **not** become unconditionally `pub`: its own doc comment
 says no release binary may contain the markers or the stat that looks for them, so the gate stays and its
 production call site moved to the same `any(test, feature = ...)` condition, otherwise the injector would
 compile without the site that fires it.

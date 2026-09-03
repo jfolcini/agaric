@@ -101,7 +101,10 @@ pub use handlers::cleanup_orphaned_attachments;
 // touching the underlying statics directly. Each is a thin getter over a
 // monotonic `AtomicU64` (relaxed load); the metrics callback reads it on each
 // collection cycle. PII-safe by construction (opaque counts only).
-pub use handlers::{descendant_fanout_dropped_count, sql_only_fallback_count};
+// `sql_only_fallback_count` is additionally `pub` because the conformance
+// tests read it from outside the crate; its sibling has no such caller.
+pub(crate) use handlers::descendant_fanout_dropped_count;
+pub use handlers::sql_only_fallback_count;
 pub use metrics::{QueueMetrics, StatusInfo};
 use serde::Deserialize;
 use std::sync::Arc;

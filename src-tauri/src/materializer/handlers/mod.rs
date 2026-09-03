@@ -72,7 +72,7 @@ pub(crate) use attachments::GC_RACE_RENDEZVOUS;
 // #2110 M6 — the two process-global counter accessors, re-exported with
 // disambiguating names (both submodules name their getter `count()`) so
 // `materializer/mod.rs` can surface them to the OTel metrics pipeline.
-pub use descendant_fanout_dropped::count as descendant_fanout_dropped_count;
+pub(crate) use descendant_fanout_dropped::count as descendant_fanout_dropped_count;
 pub use sql_only_fallback::count as sql_only_fallback_count;
 // #2621: the LOCAL command paths now route their engine-apply through the moved
 // kernel `apply_op_projected` (see `domain::block_ops`), not these per-op

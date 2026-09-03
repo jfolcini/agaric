@@ -46,7 +46,7 @@ pub(crate) fn record() {
 /// builder, which surfaces this through
 /// `StatusInfo::descendant_fanout_dropped` (#2031); it is additionally
 /// exercised by the unit tests.
-pub fn count() -> u64 {
+pub(crate) fn count() -> u64 {
     DESCENDANT_FANOUT_DROPPED.load(Ordering::Relaxed)
 }
 
