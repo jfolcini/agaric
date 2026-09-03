@@ -369,7 +369,10 @@ function uploadsIn(lines) {
       continue
     }
     if (!current) continue
-    const artifactName = /^\s+name:\s*(\S+)\s*$/.exec(line)
+    // `(.+?)`, not `(\S+)`: the per-shard name interpolates
+    // `${{ matrix.package }}`, whose braces contain spaces. Dropping it would
+    // leave the one name `pattern:` has to agree with unreadable.
+    const artifactName = /^\s+name:\s*(.+?)\s*$/.exec(line)
     if (artifactName && current.name === undefined) current.name = artifactName[1]
     const pathLine = /^\s+path:\s*(\S+)\s*$/.exec(line)
     if (pathLine && current.path === undefined) current.path = pathLine[1]
@@ -466,6 +469,38 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
 }
 
 /**
+ * The shard artifact name and the glob `MERGE_JOB_ID` downloads it by are a
+ * pair nothing else relates: `JOB_ID` names its upload and `MERGE_JOB_ID`
+ * globs `pattern:`, in two jobs 40 lines apart. Rename either alone and the
+ * merge downloads zero artifacts while every check here, the self-test and the
+ * vitest suite stay green — it reds a week later as `merged=0`, one cron after
+ * the survivors went unfiled (#3364).
+ */
+function checkShardPattern({ lines, shardLines, push }) {
+  if (!shardLines) return
+  const pattern = lines.map((l) => /^\s+pattern:\s*(\S+)\s*$/.exec(l)?.[1]).find(Boolean)
+  if (pattern === undefined) {
+    push(
+      'merge-download-pattern-missing',
+      `the \`${MERGE_JOB_ID}\` job has no \`pattern:\`, so it downloads by exact name — but \`${JOB_ID}\` uploads one artifact PER SHARD, and no single name covers them. The merge would reassemble nothing.`,
+    )
+    return
+  }
+  const glob = new RegExp(
+    `^${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replaceAll('\\*', '.*')}$`,
+  )
+  const names = uploadsIn(shardLines)
+    .map((u) => u.name)
+    .filter((n) => n !== undefined)
+  if (names.length > 0 && !names.some((n) => glob.test(n))) {
+    push(
+      'shard-artifact-pattern-mismatch',
+      `\`${MERGE_JOB_ID}\` downloads \`pattern: ${pattern}\`, which matches none of the artifact names \`${JOB_ID}\` uploads (${names.map((n) => `'${n}'`).join(', ')}). The merge would download zero shards and exit \`merged=0\`, a week after the survivors it should have filed.`,
+    )
+  }
+}
+
+/**
  * The producer of `ARTIFACT_NAME` (#3393). Before sharding, `JOB_ID` uploaded
  * it directly and `checkOutputPlumbing` covered it. Now `JOB_ID` uploads
  * `mutants-out-<package>-<shard>` and `MERGE_JOB_ID` produces the single
@@ -477,7 +512,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
  * reassembles into and must upload as-is: the filer reads `missed.txt` flat
  * off the artifact root, so uploading a parent buries it one level down.
  */
-export function checkMergeProducer({ lines, writeDir, push }) {
+export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
   if (!lines) {
     push(
       'merge-job-missing',
@@ -497,6 +532,8 @@ export function checkMergeProducer({ lines, writeDir, push }) {
     jobId: `\`${MERGE_JOB_ID}\``,
     push,
   })
+
+  checkShardPattern({ lines, shardLines, push })
 
   const upload = uploadsIn(lines).find((u) => u.name === ARTIFACT_NAME)
 
@@ -691,6 +728,7 @@ export function analyzeMutantsScope({ root, overrideArgv }) {
   if (workflow && invocation) {
     checkMergeProducer({
       lines: jobLines(workflow, MERGE_JOB_ID),
+      shardLines: lines,
       writeDir: outputDirFor(invocation.argv),
       push,
     })
@@ -849,9 +887,14 @@ function selfTestPlumbing(ok, fail) {
  * between, which is the whole reason the check exists.
  */
 function selfTestMergeProducer(ok, fail) {
-  const kinds = (lines) => {
+  const kinds = (lines, shardLines) => {
     const found = []
-    checkMergeProducer({ lines, writeDir: 'mutants.out', push: (kind) => found.push(kind) })
+    checkMergeProducer({
+      lines,
+      shardLines,
+      writeDir: 'mutants.out',
+      push: (kind) => found.push(kind),
+    })
     return found
   }
   const job = ({ name = ARTIFACT_NAME, path = 'mutants.out/' } = {}) => [
@@ -883,6 +926,34 @@ function selfTestMergeProducer(ok, fail) {
   const gone = kinds(undefined)
   if (gone.includes('merge-job-missing')) ok('a deleted mutants-merge job is flagged')
   else fail('missing merge job is flagged', JSON.stringify(gone))
+
+  // The shard name / download glob pair, which lives in two jobs and which
+  // nothing else relates.
+  const withPattern = (pattern) => [...job(), `          pattern: ${pattern}`]
+  const shards = (name) => [
+    `  ${JOB_ID}:`,
+    '    steps:',
+    '      - name: Upload shard results',
+    '        uses: actions/upload-artifact@0000',
+    '        with:',
+    `          name: ${name}`,
+    '          path: src-tauri/mutants.out/',
+  ]
+  const interpolated = 'mutants-out-${{ matrix.package }}-${{ matrix.shard }}'
+
+  const paired = kinds(withPattern('mutants-out-*'), shards(interpolated))
+  if (paired.length === 0) ok('a shard name the merge pattern globs reports no problem')
+  else fail('matching shard name is clean', JSON.stringify(paired))
+
+  const drifted = kinds(withPattern('mutants-out-*'), shards('shard-${{ matrix.shard }}'))
+  if (drifted.includes('shard-artifact-pattern-mismatch'))
+    ok('a shard artifact renamed out from under the merge pattern is flagged')
+  else fail('drifted shard name is flagged', JSON.stringify(drifted))
+
+  const unglobbed = kinds(job(), shards(interpolated))
+  if (unglobbed.includes('merge-download-pattern-missing'))
+    ok('a merge that downloads by exact name rather than a glob is flagged')
+  else fail('missing download pattern is flagged', JSON.stringify(unglobbed))
 }
 
 /**

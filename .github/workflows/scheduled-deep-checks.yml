@@ -1256,7 +1256,7 @@ jobs:
             exit 1
           fi
           if [ "$merged" -lt "$expected" ]; then
-            echo "::warning::SHORT MERGE: only $merged of $expected mutants shards produced usable results. The missing shards' survivors are absent from this week's missed.txt, so \`file-mutation-survivors\` runs --dry-run: it would otherwise report them as resolved, drop them from the tracking issue's marker block and re-report them as new next week (#3364). The merged artifact and summary below cover only the $merged shards that ran; re-run the failed ones for a full week."
+            echo "::warning::SHORT MERGE: only $merged of $expected mutants shards produced usable results. The missing shards' survivors are absent from this week's missed.txt, so \`file-mutation-survivors\` runs --dry-run: it would otherwise report them as resolved, drop them from the tracking issue's marker block and re-report them as new next week (#3364). The merged artifact below still unions every shard that UPLOADED, unusable ones included: such a shard contributes an empty missed.txt against its full mutants.json, which is what renders its package as \`0 of N  <-- NOT COVERED\` in the summary. Re-run the failed shards for a full week."
           fi
           mkdir -p mutants.out
           # The four lists are one finding per line, and the shards partition
