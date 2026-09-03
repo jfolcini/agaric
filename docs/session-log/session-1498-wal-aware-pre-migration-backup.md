@@ -1,4 +1,4 @@
-# Session 1496 — the pre-migration backup did not include the WAL tail
+# Session 1498 — the pre-migration backup did not include the WAL tail
 
 #3267 was narrowed on 2026-09-02 to one of its three findings: replace the raw `std::fs::copy` in `backup_db_before_migration` with a WAL-aware snapshot, drop the `PRAGMA wal_checkpoint(TRUNCATE)` from the `make_migration_pending` fixture, and add a test that leaks a hot `-wal`. Widening the trigger to damaged at-head vaults and the partial-copy cleanup were dropped.
 
