@@ -571,9 +571,7 @@ pub async fn record_failure(
     // class (durable retry protects a primary-state write the next boot's
     // MAX-cursor replay could permanently strand) vs. the idempotent
     // cache-rebuild class (the "mark dirty, rebuild on boot/idle" candidate).
-    // Recorded on every reach (INSERT + escalating UPSERT); the cap flag is
-    // the failure ladder's `attempts >= 4` rung, so measure-item 2 (does the
-    // 1h cap ever fire) is answerable from `retry_persist_capped`.
+    // Recorded on every reach (INSERT + escalating UPSERT).
     let persist_class = if matches!(kind, RetryKind::ApplyOp { .. }) {
         super::metrics::RetryPersistClass::ApplyOp
     } else if kind.is_global() {
@@ -581,10 +579,7 @@ pub async fn record_failure(
     } else {
         super::metrics::RetryPersistClass::CachePerBlock
     };
-    metrics.note_persistent_enqueue(
-        persist_class,
-        class == BackoffClass::Failure && row.attempts >= 4,
-    );
+    metrics.note_persistent_enqueue(persist_class, row.attempts, class);
 
     tracing::warn!(
         block_id = %block_id,
@@ -1029,11 +1024,6 @@ struct SweepCounts {
 /// writes) to match the "background tasks use split read/write pools"
 /// pattern documented in AGENTS.md. Tests pass the same pool for both
 /// arguments.
-// #647: the retry sweeper is the documented worst-case path (a stuck retry
-// row, the 1-hour cache-staleness ceiling) — yet it had no span.
-// `skip_all` (#632): pools + the Materializer handle carry no PII but are
-// not useful in a log line either.
-#[instrument(name = "materializer.sweep_once", skip_all, err)]
 async fn sweep_once_counted(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
@@ -1885,6 +1875,11 @@ async fn try_reenqueue_apply_op(
 /// edit's cache task that arrives mid-drain is shed and retried a minute
 /// later; accepted over leaving headroom, since the drain is what ends the
 /// staleness for every other block.
+// #647: the retry sweeper is the documented worst-case path (a stuck retry
+// row, the 1-hour cache-staleness ceiling) — yet it had no span. One span
+// per tick, over the whole drain. `skip_all` (#632): pools + the
+// Materializer handle carry no PII but are not useful in a log line either.
+#[instrument(name = "materializer.sweep", skip_all, err)]
 async fn sweep_until_no_progress(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,

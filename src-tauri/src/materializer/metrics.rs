@@ -1,3 +1,4 @@
+use super::retry_queue::BackoffClass;
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -232,9 +233,16 @@ pub enum RetryPersistClass {
 impl QueueMetrics {
     /// #2509: record one persistent-enqueue event on the class + backoff-tier
     /// counters. Called from [`super::retry_queue::record_failure`] after the
-    /// row is durably written; `reached_failure_cap` is computed there from
-    /// the UPSERT's post-increment `attempts` and the row's ladder.
-    pub fn note_persistent_enqueue(&self, class: RetryPersistClass, reached_failure_cap: bool) {
+    /// row is durably written with the UPSERT's post-increment `attempts`.
+    /// `retry_persist_capped` counts only the failure ladder's `attempts >= 4`
+    /// rung (the 1 h cap), so measure-item 2 keeps asking about that rung;
+    /// a shed row never ran (#4208).
+    pub fn note_persistent_enqueue(
+        &self,
+        class: RetryPersistClass,
+        attempts: i64,
+        backoff: BackoffClass,
+    ) {
         match class {
             RetryPersistClass::ApplyOp => {
                 self.retry_persist_apply_op.fetch_add(1, Ordering::Relaxed);
@@ -248,7 +256,7 @@ impl QueueMetrics {
                     .fetch_add(1, Ordering::Relaxed);
             }
         }
-        if reached_failure_cap {
+        if backoff == BackoffClass::Failure && attempts >= 4 {
             self.retry_persist_capped.fetch_add(1, Ordering::Relaxed);
         }
     }
