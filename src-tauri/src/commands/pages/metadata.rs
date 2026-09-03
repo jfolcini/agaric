@@ -180,8 +180,8 @@ pub struct PageWithMetadataRow {
     pub flags: PagePropertyFlags,
 }
 
-/// Build the `position` slot's encoded sort-mode tag. Used by
-/// [`encode_pages_metadata_cursor`] / [`validate_pages_metadata_cursor`]
+/// Build the `position` slot's encoded sort-mode tag. Stamped into every
+/// outgoing cursor and read back by [`validate_pages_metadata_cursor`]
 /// to refuse a cursor whose sort-mode discriminator doesn't match the
 /// request — the user-visible alternative is a silent "scrolled past
 /// end" with no recovery, which Review Round 1 flagged across three

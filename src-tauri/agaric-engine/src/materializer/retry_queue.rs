@@ -499,7 +499,7 @@ pub(crate) fn backoff_delay_for(attempts: i64, class: BackoffClass) -> chrono::D
 /// (`attempts >= MAX_ATTEMPTS`, `now - created_at >= GIVE_UP_AGE_DAYS`)
 /// can finally fire. The `created_at` default (migration 0077) only
 /// applies on the INSERT (first-failure) branch.
-/// #4499: `pub`, like [`sweep_once`] and [`spawn_sweeper`], because the
+/// #4499: `pub`, like `sweep_once` (test-util) and [`spawn_sweeper`], because the
 /// command-status tests now live in the `commands` integration binary and seed
 /// a retry row through the same path the consumer uses rather than hand-writing
 /// the schema.

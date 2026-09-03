@@ -200,7 +200,7 @@ pub(super) async fn apply_op_with_mode(
 /// ## Implementation note
 ///
 /// We call `engine_apply` directly with a synthesised
-/// [`OpPayload::RestoreBlock`] — synthetic per-descendant records have
+/// [`agaric_store::op::OpPayload::RestoreBlock`] — synthetic per-descendant records have
 /// no stored payload to JSON-parse, so going direct keeps the per-call
 /// cost bounded by the per-space engine lock + the engine's per-block-id
 /// mutation (single-digit microseconds).
