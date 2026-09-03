@@ -462,17 +462,18 @@ async fn search_missing_query_returns_validation() {
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
-/// #2956 — a malformed / truncated `space_id` must be REJECTED at the
-/// boundary via the strict `SpaceId::from_string` gate (an `AppError::Ulid`,
-/// like every sibling tool: `list_backlinks`, `list_property_defs`,
-/// `create_page`), NOT silently coerced through `from_trusted` into an
-/// `Active` id that matches nothing. Before this fix `handle_search` used
-/// `from_trusted`, so this call returned `Ok` with an empty `items` array —
-/// an agent that mangled the id would wrongly conclude the vault was empty.
-/// A seeded matching block confirms the vault is in fact non-empty, so the
-/// pre-fix "empty results" was a false negative, not a true miss.
+/// #2956 (`space_id`) and #3301 (`parent_id`, `tag_ids`) — a malformed or
+/// truncated id must be REJECTED at the boundary via the strict
+/// `from_string` gate (an `AppError::Ulid`, like every sibling tool:
+/// `list_backlinks`, `list_property_defs`, `create_page`), NOT coerced
+/// through `from_trusted` or waved past by `normalize_ulid_arg` into an id
+/// that matches nothing. Before these fixes each returned `Ok` with an empty
+/// `items` array, so an agent that mangled an id would wrongly conclude the
+/// vault held nothing — a false negative, not a true miss. The seeded block
+/// and the closing control call are what make that distinction provable, and
+/// they serve all three ids, which is why the cases share one test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn search_malformed_space_id_errors_not_empty() {
+async fn search_malformed_ids_error_rather_than_empty() {
     let (tools, mat, _dir) = mk_tools().await;
     create_block_inner(
         &tools.pool,
@@ -518,46 +519,8 @@ async fn search_malformed_space_id_errors_not_empty() {
         "empty space_id must surface as AppError::Ulid, got {err:?}"
     );
 
-    // Control: the SAME query under the VALID space still returns the hit —
-    // proving the rejections above were about the bad id, not an empty vault.
-    let ok = tools
-        .call_tool(
-            "search",
-            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
-            &test_ctx(),
-        )
-        .await
-        .expect("valid space_id must still return the seeded match");
-    assert_eq!(
-        ok["items"].as_array().expect("items").len(),
-        1,
-        "the vault is non-empty for a valid space_id"
-    );
-}
-
-/// #3301 — the same asymmetry #2956 closed for `space_id`, for the other
-/// two id arguments: a malformed `parent_id` or `tag_ids` entry was only
-/// `normalize_ulid_arg`-ed, so it bound a string that matched nothing and
-/// the tool answered `{items: []}`. An agent that dropped a character off
-/// a tag ULID would conclude no block carries that tag. Both must now
-/// error; the control call proves the vault is not in fact empty.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn search_malformed_parent_and_tag_ids_error_not_empty() {
-    let (tools, mat, _dir) = mk_tools().await;
-    create_block_inner(
-        &tools.pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "needle in the haystack".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-    settle(&mat).await;
-    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
-
+    // #3301 — `parent_id`: only `normalize_ulid_arg`-ed before the fix, so a
+    // non-ULID bound a string that matched nothing.
     let err = tools
         .call_tool(
             "search",
@@ -575,7 +538,8 @@ async fn search_malformed_parent_and_tag_ids_error_not_empty() {
         "malformed parent_id must surface as AppError::Ulid, got {err:?}"
     );
 
-    // A truncated (25-char) tag ULID — the realistic copy/paste slip.
+    // #3301 — `tag_ids`: a truncated (25-char) tag ULID, the realistic
+    // copy/paste slip. An agent would conclude no block carries that tag.
     let err = tools
         .call_tool(
             "search",
@@ -593,8 +557,8 @@ async fn search_malformed_parent_and_tag_ids_error_not_empty() {
         "malformed tag_ids entry must surface as AppError::Ulid, got {err:?}"
     );
 
-    // Control: the same query with neither id still finds the seeded hit,
-    // so the rejections above were about the bad ids, not an empty vault.
+    // Control: the SAME query under the VALID space still returns the hit —
+    // proving the rejections above were about the bad id, not an empty vault.
     let ok = tools
         .call_tool(
             "search",
@@ -602,11 +566,11 @@ async fn search_malformed_parent_and_tag_ids_error_not_empty() {
             &test_ctx(),
         )
         .await
-        .expect("valid args must still return the seeded match");
+        .expect("valid space_id must still return the seeded match");
     assert_eq!(
         ok["items"].as_array().expect("items").len(),
         1,
-        "the vault is non-empty once the malformed ids are gone"
+        "the vault is non-empty for a valid space_id"
     );
 }
 
