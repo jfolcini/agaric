@@ -191,12 +191,6 @@ async fn backup_db_before_migration(db_path: &Path) {
             backup = %backup.display(),
             "pre-migration DB backup created"
         ),
-        // #3267 — a vault SQLite cannot open has no logical snapshot to take,
-        // and that is the fail-safe branch above: an unreadable
-        // `_sqlx_migrations` is treated as PENDING precisely so this runs. A
-        // raw copy cannot carry a `-wal` tail, but nothing can read one beside
-        // a main file SQLite rejects, so a byte copy is the only thing left to
-        // keep.
         Err(e) => {
             match std::fs::copy(db_path, &backup) {
                 Ok(bytes) => tracing::warn!(
