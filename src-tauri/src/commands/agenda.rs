@@ -547,7 +547,7 @@ pub async fn list_projected_agenda_inner_with_today(
 /// (#3206 — `(date, id)` alone is not unique, see
 /// [`list_projected_agenda_inner`]).
 ///
-/// `pub(crate)` so the regression test in
+/// `pub` so the regression test in
 /// `src-tauri/tests/commands/agenda_cmd_tests.rs` can call this path directly,
 /// bypassing the cache-or-fallback branch in
 /// [`list_projected_agenda_inner`]. The cache rebuild itself
