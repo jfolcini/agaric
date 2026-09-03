@@ -556,6 +556,7 @@ async fn resolve_referrers_of(
 /// #2831: the production background consumer routes through
 /// [`handle_background_task_metered`], so in a non-test lib build this
 /// unmetered wrapper is exercised only by the materializer test suite.
+#[cfg(any(test, feature = "test-util"))]
 pub async fn handle_background_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
