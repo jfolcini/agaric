@@ -4839,14 +4839,6 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
         "every op on the owning block must be listed newest-first, attachment ops included; \
          got op_types {op_types:?}"
     );
-    assert_eq!(
-        op_types[1], "delete_attachment",
-        "the delete_attachment must sit between the newest edit and the rename"
-    );
-    assert_eq!(
-        op_types[2], "rename_attachment",
-        "the rename_attachment must sit directly below the delete_attachment"
-    );
 
     // The sheet's op-type dropdown offers these types; before the fix
     // selecting either always yielded an empty list.

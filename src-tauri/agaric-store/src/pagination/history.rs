@@ -47,6 +47,14 @@ use agaric_core::ulid::BlockId;
 /// this one block instead of a page subtree; see `list_page_history`'s doc
 /// block for why both probes exist, why they must stay byte-identical, and
 /// which rows they deliberately still omit.
+///
+/// The cost trade differs from the page sheet's, so do not read it across:
+/// a page accumulates enough matching ops for `LIMIT 51` to short-circuit,
+/// a single block rarely does, so this walks op_log in `seq` order instead
+/// of seeking `idx_op_log_block_id`. That is the ~22 ms path at 50k rows,
+/// and it grows with total vault history rather than with the block. Taken
+/// deliberately: the sheet is user-opened, and omitting a block's own
+/// attachment ops is the worse failure.
 pub async fn list_block_history(
     pool: &SqlitePool,
     block_id: &BlockId,
