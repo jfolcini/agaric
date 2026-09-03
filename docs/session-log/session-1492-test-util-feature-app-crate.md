@@ -34,13 +34,22 @@ Falsification here is the absence of a behaviour change, so the proof is the neg
 only visibility, `cfg` predicates, comments and the manifests; no test file moved; the crate compiles with
 and without the feature; and the workspace suite is unchanged and green.
 
-The one cost the feature carries: a bench is a dev target, so the self dev-dependency turns `test-util` on for
-`attachment_bench` too, and every write there now pays `write_fault::apply`'s two marker stats on a bench whose
-empty buffer was chosen to keep the filesystem portion small. Keeping the two `write_fault` callers in-crate
-would avoid it, and was rejected: Phase 0d's premise is that no command test stays in the app crate, and a
-carve-out for two would be re-litigated by every phase after this one. The cost is constant per iteration, so
-the weekly trend still reads; the absolute number stepped once. Noted at the bench's own comment, where the
-"filesystem portion minimal" line would otherwise mislead.
+The feature does reach one non-test target: a bench is a dev target, so the self dev-dependency turns
+`test-util` on for `attachment_bench`, whose empty buffer was chosen precisely to keep the filesystem portion
+small — and `write_fault::apply` was adding two marker stats to every write there. Keeping the two `write_fault`
+callers in-crate would have avoided it and was the wrong trade: Phase 0d's premise is that no command test stays
+in the app crate, and a carve-out for two would be re-litigated by every phase after this one. Review found the
+third option, which is better than either: a `static ARMED: AtomicBool` set by `arm_truncate` / `arm_unlink` and
+loaded first in `apply`. Only `arm_*` creates a marker, so "nothing in this process armed anything" is
+sufficient to skip both stats, and the bench — which never arms — measures the release path exactly again. The
+per-directory semantics are untouched: a thread that armed a different `TempDir` still falls through to the same
+two checks.
+
+Note for step 2: the self dev-dependency gives test and bench targets an `--extern agaric_lib` pointing at a
+second, separately compiled copy of the crate, whose statics are distinct from the `cfg(test)` copy's. Nothing
+writes `agaric_lib::` paths today, so it is inert — but a moved file that reads a process-global counter delta
+(`sql_only_fallback::count()` in `command_integration_tests/conformance.rs`, and now `ARMED`) would read a
+counter nothing increments. Keep those paths `crate::` until the file actually leaves the lib.
 
 Verified: `cargo nextest run --workspace`, 6,283 passed and 11 skipped, no failures; `cargo check -p agaric
 --lib` and `cargo check -p agaric --lib --features test-util` both clean, as is `--all-targets` (which is
