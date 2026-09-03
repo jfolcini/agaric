@@ -130,7 +130,8 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
       }
     }
 
-    runFilters()
+    // Body catches every failure into `setAgendaError`, so this cannot reject.
+    void runFilters()
     return () => {
       cancelled = true
     }

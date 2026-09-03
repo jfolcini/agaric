@@ -56,7 +56,9 @@ const resources = {
   },
 }
 
-i18n.use(initReactI18next).init({
+// No backend plugin and no async resource loading — the resources above are
+// inline, so `init` resolves on its own and cannot reject.
+void i18n.use(initReactI18next).init({
   resources,
   lng: 'en',
   fallbackLng: 'en',

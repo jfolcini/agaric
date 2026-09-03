@@ -105,7 +105,8 @@ export function usePollingQuery<T>(
       setLoading(false)
       return
     }
-    load()
+    // `load` catches into `error` state; never rejects (same as `tick` below).
+    void load()
     // Wrap `load` for the interval/listeners so the auto-polling paths never
     // pass `{ force }` (an Event arg would also be rejected by TS now that
     // `load` takes a typed options param — #1596).
@@ -119,7 +120,7 @@ export function usePollingQuery<T>(
     // up to `intervalMs` for the next tick.
     const onVisibilityChange = (): void => {
       if (typeof document !== 'undefined' && !document.hidden) {
-        load()
+        void load()
       }
     }
     if (typeof document !== 'undefined') {

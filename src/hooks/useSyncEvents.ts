@@ -131,7 +131,8 @@ function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
     // reverse the wrong op. Keyed by the same pageId the block reload uses,
     // and fired ONCE per page however many provider stores it has.
     reanchorUndo(pageId)
-    for (const pageStore of pageStores) pageStore.getState().load()
+    // The store's `load` logs its own failure; never rejects.
+    for (const pageStore of pageStores) void pageStore.getState().load()
   })
 
   // Resolve-cache preload — a changed page's / tag's title may have moved.
@@ -144,7 +145,8 @@ function reloadChangedPageStores(changedPageIds: string[] | undefined): void {
   // types); its tag half still runs unconditionally because tags carry no
   // changed-id signal. `null` (the fallback branch) keeps the full scan.
   const refreshSpaceId = useSpaceStore.getState().currentSpaceId
-  useResolveStore.getState().preload(refreshSpaceId ?? undefined, true, targeted ?? undefined)
+  // `preload` catches its scan failures internally; never rejects.
+  void useResolveStore.getState().preload(refreshSpaceId ?? undefined, true, targeted ?? undefined)
 
   // #1530 — out-of-band ops also change the page-link graph topology; bump the
   // graph-structure signal so a mounted GraphView refetches (stale-while-

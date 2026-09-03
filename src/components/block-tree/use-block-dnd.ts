@@ -390,8 +390,10 @@ export function useBlockDnD({
       // On success restore focus on the dragged block so EditableBlock's
       // `isFocused` effect re-fires `scrollIntoView` and the viewport tracks it.
       // Only restore on success — if the move rejects, leave focus cleared.
-      const restoreFocusOnSuccess = (label: string, p: Promise<unknown>) =>
-        p
+      // Terminal handler: the `.catch` below ends the chain, so callers have
+      // nothing left to await or handle.
+      const restoreFocusOnSuccess = (label: string, p: Promise<unknown>): void => {
+        void p
           .then(() => setFocused(blockId))
           .catch((err: unknown) => {
             logger.warn(
@@ -401,6 +403,7 @@ export function useBlockDnD({
               err,
             )
           })
+      }
 
       // #914 — multi-select drag. When the dragged block is one of >1 selection
       // roots, relocate the WHOLE selection (contiguous, order-preserving) to

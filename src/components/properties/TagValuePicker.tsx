@@ -64,7 +64,8 @@ export function TagValuePicker({
   }, [])
 
   const debounced = useDebouncedCallback((value) => {
-    search(value)
+    // `search` logs its own failure; never rejects.
+    void search(value)
   }, 300)
 
   const handleChange = useCallback(

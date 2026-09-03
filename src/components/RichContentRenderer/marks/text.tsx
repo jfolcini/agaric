@@ -21,13 +21,15 @@ function externalLinkProps(
     role: 'link',
     onClick: (e: React.MouseEvent) => {
       e.stopPropagation()
-      openUrl(href)
+      // `openUrl` never rejects — it returns a boolean (see open-url.ts).
+      void openUrl(href)
     },
     onKeyDown: (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         e.stopPropagation()
-        openUrl(href)
+        // `openUrl` never rejects — it returns a boolean (see open-url.ts).
+        void openUrl(href)
       }
     },
   }

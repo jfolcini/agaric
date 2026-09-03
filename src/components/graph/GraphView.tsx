@@ -324,7 +324,8 @@ export function GraphView(): React.ReactElement {
       }
     }
 
-    run()
+    // Body catches every failure into `setError`, so this cannot reject.
+    void run()
     return () => {
       cancelled = true
     }

@@ -315,7 +315,8 @@ export function useDuePanelData({
       }
     }
 
-    fetchOverdue()
+    // Body catches and logs every failure, so this cannot reject.
+    void fetchOverdue()
     return () => {
       stale = true
     }
@@ -395,7 +396,8 @@ export function useDuePanelData({
       }
     }
 
-    fetchUpcoming()
+    // Body catches and logs every failure, so this cannot reject.
+    void fetchUpcoming()
     return () => {
       stale = true
     }
@@ -512,7 +514,8 @@ export function useDuePanelData({
         if (!cancelled) setLoading(false)
       }
     }
-    doFetch()
+    // Body catches and logs every failure, so this cannot reject.
+    void doFetch()
     return () => {
       cancelled = true
     }
@@ -617,7 +620,8 @@ export function useDuePanelData({
 
   const loadMore = useCallback(() => {
     if (nextCursor) {
-      fetchBlocks(nextCursor)
+      // `fetchBlocks` catches and logs its own failure; never rejects.
+      void fetchBlocks(nextCursor)
     }
   }, [nextCursor, fetchBlocks])
 

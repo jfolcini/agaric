@@ -48,7 +48,8 @@ export function useAppSpaceLifecycle(): void {
   // Preload the resolve cache (pages + tags) once on app boot, and
   // Again whenever the active space changes.
   useEffect(() => {
-    useResolveStore.getState().preload(currentSpaceId ?? undefined)
+    // `preload` catches its scan failures internally; never rejects.
+    void useResolveStore.getState().preload(currentSpaceId ?? undefined)
   }, [currentSpaceId])
 
   // Cross-space link enforcement. Order matters: read

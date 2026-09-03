@@ -130,7 +130,8 @@ export function DependencyIndicator({
       }
     }
 
-    loadDependency()
+    // Body catches and logs every failure, so this cannot reject.
+    void loadDependency()
     return () => {
       cancelled = true
     }

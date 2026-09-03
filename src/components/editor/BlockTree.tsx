@@ -689,7 +689,8 @@ export function BlockTree({
   // `zoomToRoot` are stable identities, so listing them is safe and only
   // `parentId` actually drives re-runs.
   useEffect(() => {
-    load()
+    // The store's `load` logs its own failure; never rejects.
+    void load()
     zoomToRoot()
   }, [load, parentId, zoomToRoot])
 
@@ -1093,7 +1094,8 @@ export function BlockTree({
       justCreatedBlockIds.current.delete(prevId)
       const block = pageStore.getState().blocksById.get(prevId)
       if (block && (!block.content || block.content.trim() === '')) {
-        remove(prevId)
+        // The store's `remove` logs its own failure; never rejects.
+        void remove(prevId)
       }
     }
   }, [focusedBlockId, remove, pageStore])

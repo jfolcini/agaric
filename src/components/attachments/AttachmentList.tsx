@@ -67,7 +67,8 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
           window.clearTimeout(pendingDeleteClearRef.current)
           pendingDeleteClearRef.current = null
         }
-        handleDeleteAttachment(attachment.id)
+        // Toasts + logs its own failure (useBlockAttachments); never rejects.
+        void handleDeleteAttachment(attachment.id)
         setPendingDeleteId(null)
         notify.success(t('attachments.deleted', { name: attachment.filename }))
       } else {
@@ -142,7 +143,8 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                         if (e.key === 'Enter') {
                           const trimmed = editValue.trim()
                           if (trimmed && trimmed !== attachment.filename) {
-                            handleRenameAttachment(attachment.id, trimmed)
+                            // Toasts + logs its own failure; never rejects.
+                            void handleRenameAttachment(attachment.id, trimmed)
                           }
                           setEditingId(null)
                         } else if (e.key === 'Escape') {

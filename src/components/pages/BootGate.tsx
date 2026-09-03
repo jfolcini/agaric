@@ -39,7 +39,8 @@ export function BootGate({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
-    boot()
+    // `boot` records its failure in the store's `error` state; never rejects.
+    void boot()
   }, [boot])
 
   useEffect(() => {
@@ -72,7 +73,8 @@ export function BootGate({ children }: { children: React.ReactNode }) {
             variant="outline"
             onClick={() => {
               setRetrying(true)
-              boot()
+              // `boot` records its failure in the store's `error` state.
+              void boot()
             }}
             disabled={retrying}
           >

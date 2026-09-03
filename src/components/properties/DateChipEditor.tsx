@@ -81,24 +81,26 @@ export function DateChipEditor({
     [blockId, dateType, onSuccess, setDueDate, setScheduledDate, t],
   )
 
+  // Every `applyDate` call below is fire-and-forget: it reports its own
+  // failure through `reportIpcError` + `announce` and never rejects.
   const handleQuickOption = useCallback(
     (option: 'today' | 'tomorrow' | 'nextWeek' | 'clear') => {
       if (option === 'clear') {
-        applyDate(null)
+        void applyDate(null)
         return
       }
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       if (option === 'today') {
-        applyDate(formatDate(today))
+        void applyDate(formatDate(today))
       } else if (option === 'tomorrow') {
         const d = new Date(today)
         d.setDate(d.getDate() + 1)
-        applyDate(formatDate(d))
+        void applyDate(formatDate(d))
       } else if (option === 'nextWeek') {
         const d = new Date(today)
         d.setDate(d.getDate() + 7)
-        applyDate(formatDate(d))
+        void applyDate(formatDate(d))
       }
     },
     [applyDate],
@@ -117,7 +119,7 @@ export function DateChipEditor({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && datePreview) {
               e.preventDefault()
-              applyDate(datePreview)
+              void applyDate(datePreview)
             }
           }}
           aria-label={t('dateChip.inputLabel')}

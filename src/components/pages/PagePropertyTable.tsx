@@ -63,7 +63,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     // leak into this page's table (drafts are transient, never persisted).
     // Mirrors `BlockPropertyDrawer`'s per-blockId draft reset (#2656).
     setDraftKeys((prev) => (prev.size > 0 ? new Set() : prev))
-    Promise.allSettled([
+    // `allSettled` never rejects, so the chain below cannot either.
+    void Promise.allSettled([
       commands.getProperties(pageId).then(unwrap),
       commands.listPropertyDefs(null, null).then(unwrap),
     ]).then(([propsResult, defsResult]) => {
@@ -152,7 +153,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const handleConfirmDelete = useCallback(() => {
     if (deleteTarget) {
-      doDeleteProperty(deleteTarget)
+      // `usePropertySave` toasts its own failure; never rejects.
+      void doDeleteProperty(deleteTarget)
       setDeleteTarget(null)
     }
   }, [deleteTarget, doDeleteProperty])
