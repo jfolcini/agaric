@@ -157,12 +157,6 @@ pub(super) async fn recover_single_draft(
         // the draft row on `Ok`, and the row is kept for the reason given at
         // the H-12b arm in `commands::drafts::flush_all_drafts_inner`.
         if draft.content.len() > crate::commands::MAX_CONTENT_LENGTH {
-            tracing::warn!(
-                block_id = %draft.block_id,
-                content_len = draft.content.len(),
-                max = crate::commands::MAX_CONTENT_LENGTH,
-                "skipping draft: content exceeds the maximum; draft row kept"
-            );
             return Err(AppError::validation(format!(
                 "draft content {} exceeds maximum {}",
                 draft.content.len(),
