@@ -1021,7 +1021,7 @@ jobs:
         # `-p "$PACKAGE"`, so the phase `--timeout` applies to is ONE package's
         # suite: 473 s for `agaric` (1.90x under the 900 s), 87 s for
         # `agaric-store`. `agaric`'s grows every week and is still what bites
-        # first, now across 27 shards at once.
+        # first, now across 31 shards at once.
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
         # can't expand into the shell as code (zizmor template-injection);
         # the matrix values ride the same way for the same reason.
@@ -1072,12 +1072,6 @@ jobs:
         # 27.1.0: a SIGINT'd run left `total_mutants: 5` against a 20-mutant
         # `mutants.json`).
         #
-        # Harmless here, a trap locally: `--in-place` mutates TRACKED files,
-        # and neither an interrupted run's restoration nor cargo-mutants'
-        # cleanup covers the `<pkg>/proptest-regressions/<mod>.txt` a
-        # mutant-killing proptest writes — recording a seed that only fails
-        # under that mutant, in files the repo deliberately tracks. After a
-        # local run check `git status` and delete them; never commit them.
         env:
           MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
           MUTANTS_BUILD_TIMEOUT: '600'
@@ -1242,7 +1236,7 @@ jobs:
           # still writes an outcomes.json (carrying that Baseline verdict) and
           # an empty missed.txt. Counting files would therefore read the exact
           # week this gate exists to catch — the `agaric` suite outgrowing
-          # `--timeout`, all 27 of its shards aborting on a Timeout baseline —
+          # `--timeout`, all 31 of its shards aborting on a Timeout baseline —
           # as a FULL merge, and let the filer resolve away every `agaric`
           # survivor (#3364). Usable means what the per-shard zero-coverage
           # guard means by it: `Baseline` summary == Success.
