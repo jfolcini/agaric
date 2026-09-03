@@ -86,7 +86,6 @@ export function BlockPropertyDrawer({
     // whole load. Each fetch reports its own failure via `reportIpcError`, and
     // the failed slice falls back to an empty array so the user still sees the
     // half that loaded.
-    // `allSettled` never rejects, so the chain below cannot either.
     void Promise.allSettled([getProperties(blockId), listPropertyDefs()]).then(
       ([propsResult, defsResult]) => {
         if (propsResult.status === 'fulfilled') {

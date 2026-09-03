@@ -207,7 +207,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
       })
       .catch((err: unknown) => {
         // A failed dynamic import leaves the grid on its loading placeholder
-        // forever; log it rather than dropping an unhandled rejection.
+        // forever (#4628); log it rather than dropping an unhandled rejection.
         logger.error('EmojiPicker', 'Failed to load emoji dataset', undefined, err)
       })
     return () => {
