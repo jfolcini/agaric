@@ -45,8 +45,9 @@ Measured, both trees built from source rather than taken from a claim: `oxlint -
 diagnostics unchanged at 477. `npm run typecheck` exit 0; the 100 vitest files covering the touched modules run
 2,925 tests green; `oxfmt --check` clean over all 34 changed files.
 
-Two pre-existing defects surfaced while reading and are **not** fixed here, since neither is a floating promise:
-`PagePropertyTable` omits `usePropertySave`'s `logTag` where `BlockPropertyDrawer` supplies it, so a failed
-page-property save toasts but writes no structured log; and `AttachmentList.tsx:71` fires a success toast
+Two pre-existing defects surfaced while reading. `PagePropertyTable` omitted `usePropertySave`'s `logTag` where
+`BlockPropertyDrawer` supplies it, so a failed page-property save toasted but wrote no structured log — one line,
+so it is fixed here rather than described. The other is not: `AttachmentList.tsx:71` fires a success toast
 unconditionally after `void handleDeleteAttachment(...)`, so a failed delete shows an error and a success toast
-together (#4626 — the fix belongs in `useBlockAttachments`, where the success arm is).
+together. That one needs a behaviour change in `useBlockAttachments`, where the success arm is, and a test of its
+own — #4626.

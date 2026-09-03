@@ -115,6 +115,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
       saveFailed: 'pageProperty.saveFailed',
       deleteFailed: 'pageProperty.deleteFailed',
     },
+    logTag: 'PagePropertyTable',
   })
 
   /**
@@ -153,7 +154,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const handleConfirmDelete = useCallback(() => {
     if (deleteTarget) {
-      // `usePropertySave` toasts its own failure; never rejects.
+      // `usePropertySave` toasts and logs its own failure; never rejects.
       void doDeleteProperty(deleteTarget)
       setDeleteTarget(null)
     }
