@@ -158,9 +158,7 @@ pub async fn confirm_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
     scheduler: &SyncScheduler,
-    _device_id: &str,
     passphrase: String,
-    _remote_device_id: String,
 ) -> Result<(), AppError> {
     agaric_sync::pairing::confirm_pairing(pool, pairing_state, scheduler, passphrase).await
 }
@@ -474,22 +472,16 @@ pub async fn start_pairing(
 #[specta::specta]
 pub async fn confirm_pairing(
     passphrase: String,
-    remote_device_id: String,
+    // Part of the IPC shape (`bindings.ts`), not of the pairing: since #3463
+    // the joiner learns the host's id from the pairing proof, not from here.
+    _remote_device_id: String,
     pool: State<'_, WritePool>,
     pairing_state: State<'_, PairingState>,
-    device_id: State<'_, DeviceId>,
     scheduler: State<'_, Arc<SyncScheduler>>,
 ) -> Result<(), AppError> {
-    confirm_pairing_inner(
-        &pool.0,
-        &pairing_state.0,
-        &scheduler,
-        device_id.as_str(),
-        passphrase,
-        remote_device_id,
-    )
-    .await
-    .map_err(sanitize_internal_error)
+    confirm_pairing_inner(&pool.0, &pairing_state.0, &scheduler, passphrase)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: cancel an in-progress pairing session.
