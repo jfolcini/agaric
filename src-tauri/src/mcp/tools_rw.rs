@@ -610,12 +610,19 @@ async fn handle_set_property(
             crate::commands::MAX_CONTENT_LENGTH,
         )));
     }
-    // Normalise ULID-shaped IDs to uppercase at the MCP boundary
-    // (block_id is required, value_ref is optional and only meaningful
-    // when the property is a ref-typed value).
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
-    let value_ref = args.value_ref.as_deref().map(normalize_ulid_arg);
     let space_id = normalize_ulid_arg(&args.space_id);
+    // #3301 — parse, don't wave through. The schema calls `value_ref` a
+    // "Block ULID reference", but a malformed one used to be stored verbatim:
+    // `validate_ref_property_cross_space` tolerates a target that resolves to
+    // no space, so the tool answered Ok and the agent believed it had linked
+    // a block that does not exist.
+    let value_ref = args
+        .value_ref
+        .as_deref()
+        .map(|s| BlockId::from_string(s).map(BlockId::into_string))
+        .transpose()?;
     // Refuse cross-space writes at the MCP boundary. We
     // intentionally do NOT validate `value_ref` against `space_id`: a
     // ref-typed property may legitimately point at a global block

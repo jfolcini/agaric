@@ -1612,6 +1612,76 @@ async fn set_property_reserved_space_key_rejected() {
     );
 }
 
+/// #3301 — a malformed `value_ref` used to be stored verbatim. The
+/// cross-space guard tolerates a target that resolves to no space, so
+/// `set_property` answered Ok and the agent believed it had linked a block
+/// that does not exist. The lowercase arm pins that the strict parse did not
+/// cost the case-insensitivity `normalize_ulid_arg` used to provide.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_malformed_value_ref_errors_rather_than_dangling() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let page_a = mk_page(&pool, &mat, &space_a, "PageA").await;
+    let target = mk_in_space_content_block(&pool, &mat, &space_a, "target").await;
+    settle(&mat).await;
+
+    for bad in ["NOT-A-VALID-ULID", "01ARZ3NDEKTSV4RRFFQ69G5FA", ""] {
+        let err = tools
+            .call_tool(
+                "set_property",
+                json!({
+                    "block_id": page_a.clone(),
+                    "key": "linked_page",
+                    "value_ref": bad,
+                    "space_id": space_a.clone(),
+                }),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect_err("a malformed value_ref must not be stored");
+        assert!(
+            matches!(err, AppError::Ulid(_)),
+            "value_ref {bad:?} must surface as AppError::Ulid, got {err:?}",
+        );
+    }
+    settle(&mat).await;
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'linked_page'",
+    )
+    .bind(&page_a)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, 0, "no dangling ref row may survive the rejections");
+
+    // A lowercase but well-formed ref still resolves.
+    tools
+        .call_tool(
+            "set_property",
+            json!({
+                "block_id": page_a.clone(),
+                "key": "linked_page",
+                "value_ref": target.id.as_str().to_lowercase(),
+                "space_id": space_a.clone(),
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a lowercase well-formed ref must still be accepted");
+    settle(&mat).await;
+    let saved: Option<String> = sqlx::query_scalar(
+        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'linked_page'",
+    )
+    .bind(&page_a)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        saved.as_deref(),
+        Some(target.id.as_str()),
+        "the lowercase ref must be stored in canonical uppercase form",
+    );
+}
+
 /// Agent in space A, target block in space B, tag is
 /// global → reject. Verifies the helper checks the *target* block
 /// (`block_id`) and not the global `tag_id`.
