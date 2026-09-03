@@ -116,16 +116,11 @@ export function UnlinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
-  // The panel closes again when the page changes. Done as a guarded
-  // render-phase adjust — React's "store the previous value in state and update
-  // conditionally", which is what `react/set-state-in-render` prescribes — not
-  // from `useEffect(…, [pageId])` (#4407). `collapsed` also gates the fetch size
-  // below (#3316 item 2), so resetting it a commit late meant the new page was
-  // committed once with the OLD page's panel still open: it flashed open and
-  // issued the 20-group fetch that being collapsed exists to avoid. Deriving
-  // `collapsed` from a stored pageId instead would REMEMBER it, and page
-  // A → B → A would reopen the panel; comparing the previous key closes it on
-  // every change, which is the behaviour this replaces.
+  // Page-scoped: the panel closes on a page change. A guarded render-phase
+  // adjust, not an effect — `collapsed` gates the fetch size (#3316 item 2), so
+  // an effect's late commit issued the 20-group fetch it exists to avoid (#4407).
+  // Comparing the PREVIOUS pageId forgets; storing the current one would
+  // remember, and A → B → A would reopen the panel.
   const [panelForPage, setPanelForPage] = useState(pageId)
   if (panelForPage !== pageId) {
     setPanelForPage(pageId)
@@ -191,19 +186,16 @@ export function UnlinkedReferences({
     }
   }, [isError, t])
 
-  // Reset per-group expand state when the query identity changes. The old load
-  // effect did `setExpandedGroups({})` on pageId/query change. Groups default to
-  // expanded (`expandedGroups[page_id] ?? true` + `CollapsibleGroupList
-  // defaultExpanded`), so there is no ≤5/i<3 seeding — just clear overrides.
+  // Groups default to expanded (`expandedGroups[page_id] ?? true` +
+  // `CollapsibleGroupList defaultExpanded`), so a reset clears overrides rather
+  // than seeding them.
   const queryIdentity = useMemo(
     () => JSON.stringify([currentSpaceId, pageId, filters, sort]),
     [currentSpaceId, pageId, filters, sort],
   )
-  // Same guarded render-phase adjust as `collapsed` above, for the same reason
-  // (#4407): from `useEffect(…, [queryIdentity])` the clear landed a commit
-  // after the new query's groups had already been committed under the previous
-  // query's overrides, so a group the user had collapsed rendered collapsed once
-  // more before springing open.
+  // Query-scoped, same adjust as `collapsed` above: an effect cleared these a
+  // commit after the new query's groups had rendered under the old query's
+  // overrides (#4407).
   const [overridesForIdentity, setOverridesForIdentity] = useState(queryIdentity)
   if (overridesForIdentity !== queryIdentity) {
     setOverridesForIdentity(queryIdentity)

@@ -62,17 +62,13 @@ export function LinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
-  // Filters are page-scoped: navigating to another page clears them. Done as a
-  // guarded render-phase adjust — React's "store the previous value in state
-  // and update conditionally", which is what `react/set-state-in-render`
-  // prescribes — not from `useEffect(…, [pageId])` (#4407). The effect cleared
-  // them one commit LATE, so the new page was committed once through the OLD
-  // page's filters: a wasted filtered fetch and a flash of the wrong result set.
-  // Deriving the filters from a stored pageId instead would REMEMBER them, and
-  // page A → B → A would bring A's filters back; comparing the previous key
-  // forgets on every change, which is the behaviour this replaces.
-  // The functional updaters keep an already-cleared state referentially stable,
-  // so a page change with no filters applied does not re-key the query.
+  // Page-scoped: navigating clears filter, sort and source-page. A guarded
+  // render-phase adjust, not an effect — an effect cleared them a commit late,
+  // so the new page was queried once through the old page's filters (#4407).
+  // Comparing the PREVIOUS pageId forgets; storing the current one would
+  // remember, and A → B → A would bring A's filters back.
+  // The updaters return `prev` unchanged when already empty so React bails out
+  // of the render; the query key hashes structurally, so it is unaffected.
   const [filtersForPage, setFiltersForPage] = useState(pageId)
   if (filtersForPage !== pageId) {
     setFiltersForPage(pageId)
