@@ -114,9 +114,7 @@ pub use task_handlers::{handle_background_task_metered, handle_foreground_task};
 // consumer routes through `handle_background_task_metered`.
 #[cfg(any(test, feature = "test-util"))]
 pub use task_handlers::handle_background_task;
-// #4502: the app-coupled materializer tests reach the per-op apply glue and
-// the temp-reap window's sync-side pin through these.
-pub use apply::apply_op;
+// #4502: `agaric-sync` pins the temp-reap window against its receive timeout.
 pub use attachments::TRANSFER_TEMP_REAP_AFTER;
 
 #[cfg(test)]

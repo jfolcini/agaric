@@ -107,10 +107,10 @@ pub use handlers::sql_only_fallback_count;
 pub use metrics::{QueueMetrics, StatusInfo, SyncStatus};
 // #4502: the app crate keeps the materializer tests that drive its command
 // layer, `CommandTx` or the reconciliation oracle (`materializer_app_tests`);
-// they reach the per-op apply glue and the queue handlers through `test-util`.
+// they reach the queue handlers through `test-util`.
 #[cfg(any(test, feature = "test-util"))]
 pub use handlers::{
-    GC_RACE_RENDEZVOUS, apply_op, handle_background_task, handle_background_task_metered,
+    GC_RACE_RENDEZVOUS, handle_background_task, handle_background_task_metered,
     handle_foreground_task,
 };
 // Pinned from `agaric-sync`, which sees both halves of each pair: the snapshot
