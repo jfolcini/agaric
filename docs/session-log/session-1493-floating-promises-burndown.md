@@ -13,11 +13,22 @@ each gets a different fix:
 1. **The callee already reports it** — it toasts through `notify`, or calls `reportIpcError`, or its whole body
    is inside `try`/`catch`. There is nothing to add, and the fix is `void` plus one line naming the reporter, so
    the next reader does not re-derive it. 59 sites.
-2. **Nothing reports it, and the promise can reject** — one site: `use-block-dnd.ts:393` returned a promise all
-   four of its callers dropped. That one is structural, and the fix is in the function, not at the call sites.
+2. **The chain is already terminal, but the wrapper hands its callers a promise anyway** — one site:
+   `use-block-dnd.ts:393` ends in a `.catch` that predates this diff, so no rejection ever went unhandled; what
+   tripped the lint is that all four callers dropped the promise it returned. The fix is in the function — it
+   returns `void` now — not at the call sites.
 3. **The promise cannot reject** — `i18n.init` with `options.resources` set: i18next 26.4.0's `dist/esm` settles
    its deferred only through `deferred.resolve(t)`; `deferred.reject` does not appear in the file. A `.catch`
    there is a branch no production change can reach, so `void` with the version-pinned reason is the honest fix.
+
+Reading the call sites for answer 1 turned up one that was wrong. `BootGate`'s Retry button set `retrying` and
+dropped `boot()`, clearing the flag from a `useEffect` on `state` — but a hard boot failure re-`set`s the *same*
+`error` state, so a second failure changes nothing for that effect to observe and the button stays disabled,
+spinner and all, until the app is restarted. `useBootStore.boot`'s own doc says it returns a promise "so the
+BootGate retry button can `await` the transition and gate its disabled-during-refresh UI on it"; it now does
+(`void boot().finally(…)`), and the effect that stood in for it is gone. The existing test covered only the arm
+where the state leaves `error`; the reject arm is now pinned too, and shown red against a copy of the shipped
+shape.
 
 The `void` sites are 59 different callees, so the repetition is in the justification and not in the code; a
 `fireAndForget()` wrapper would hide which callee owns the reporting and still need the per-site line. Where a

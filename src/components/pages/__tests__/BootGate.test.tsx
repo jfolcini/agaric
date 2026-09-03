@@ -17,7 +17,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -261,7 +261,43 @@ describe('BootGate', () => {
     expect(payload).toContain('User-Agent:')
   })
 
-  it('retry button resets disabled state when state changes from error', async () => {
+  it('retry button re-enables when boot fails again and the state stays error', async () => {
+    const user = userEvent.setup()
+    let settleBoot: (() => void) | undefined
+    // A hard failure re-`set`s the SAME `error` state, so nothing about
+    // `state` changes between the first failure and the second — the only
+    // signal the button can gate on is the promise settling.
+    const failingBoot = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleBoot = resolve
+        }),
+    )
+
+    useBootStore.setState({ state: 'error', error: 'Something went wrong', boot: failingBoot })
+
+    render(
+      <BootGate>
+        <p>App content</p>
+      </BootGate>,
+    )
+
+    // Held by reference, not re-queried: while disabled the button renders
+    // only a spinner, so its accessible name is no longer "Retry".
+    const retryBtn = screen.getByRole('button', { name: /Retry/i })
+    await user.click(retryBtn)
+    await waitFor(() => {
+      expect(retryBtn).toBeDisabled()
+    })
+
+    await act(async () => {
+      settleBoot?.()
+    })
+
+    expect(retryBtn).not.toBeDisabled()
+  })
+
+  it('the error UI is replaced when the state leaves error', async () => {
     const user = userEvent.setup()
     let resolveBootFn: (() => void) | undefined
     const controllableBoot = vi.fn(

@@ -43,10 +43,6 @@ export function BootGate({ children }: { children: React.ReactNode }) {
     void boot()
   }, [boot])
 
-  useEffect(() => {
-    if (state !== 'error') setRetrying(false)
-  }, [state])
-
   if (state === 'booting') {
     return (
       <output
@@ -73,8 +69,11 @@ export function BootGate({ children }: { children: React.ReactNode }) {
             variant="outline"
             onClick={() => {
               setRetrying(true)
-              // `boot` records its failure in the store's `error` state.
-              void boot()
+              // Gate on the promise, not on `state`: `boot` records a hard
+              // failure by re-`set`ting the same `error` state, so a second
+              // failure changes nothing for an effect to observe and the
+              // button would stay disabled forever.
+              void boot().finally(() => setRetrying(false))
             }}
             disabled={retrying}
           >
