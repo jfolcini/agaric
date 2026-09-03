@@ -757,10 +757,10 @@ async fn retry_with_backoff_isolates_a_panicking_attempt_where_the_build_unwinds
 /// inversion from a synonym swap.
 #[test]
 fn release_profile_still_sets_panic_abort() {
-    // `CARGO_MANIFEST_DIR` is `<repo>/src-tauri`, which is the workspace
-    // root manifest — the one whose `[profile.release]` every shipped
-    // build inherits.
-    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    // `CARGO_MANIFEST_DIR` is `<repo>/src-tauri/agaric-engine`; the
+    // workspace root manifest one level up is the one whose
+    // `[profile.release]` every shipped build inherits.
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
     let manifest = std::fs::read_to_string(&manifest_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", manifest_path.display()));
     let after_header = manifest

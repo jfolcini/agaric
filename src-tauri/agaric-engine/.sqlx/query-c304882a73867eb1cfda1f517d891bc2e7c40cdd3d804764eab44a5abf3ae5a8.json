@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT attempts, next_attempt_at FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "attempts",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "name": "next_attempt_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "next_attempt_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "c304882a73867eb1cfda1f517d891bc2e7c40cdd3d804764eab44a5abf3ae5a8"
+}

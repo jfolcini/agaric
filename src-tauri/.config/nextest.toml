@@ -207,7 +207,7 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 # statement of the mechanism now lives in the module docs of
 # `agaric-engine/src/loro/shared.rs` (the canonical statement, #3983); the
 # delta-asserting files themselves (e.g.
-# `src/materializer/handlers/tag_convergence_tests.rs`) carry only a
+# `agaric-engine/src/materializer/handlers/tag_convergence_tests.rs`) carry only a
 # one-line pointer back to `shared.rs`, not a restatement, and those files
 # cite THIS file only for the fact of the pin, never for the reason.
 #

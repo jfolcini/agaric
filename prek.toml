@@ -1362,7 +1362,7 @@ name = "Metric-provability guard self-test"
 entry = "node scripts/check-metric-provable.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^(scripts/check-metric-provable\\.mjs|src-tauri/src/materializer/metrics\\.rs)$"
+files = "^(scripts/check-metric-provable\\.mjs|src-tauri/agaric-engine/src/materializer/metrics\\.rs)$"
 stages = ["manual"]
 
 # snapshot-redaction: scan every `*.snap` file under `src/` and
