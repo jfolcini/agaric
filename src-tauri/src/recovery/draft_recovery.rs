@@ -154,11 +154,8 @@ pub(super) async fn recover_single_draft(
         // #3262: never append an over-cap op. `edit_block_inner` and the flush
         // paths reject this content, so recovery must not smuggle it into the
         // op log and on to peers. `Err`, not `Ok(false)`: the caller deletes
-        // the draft row on `Ok`, and for a block that still exists that row is
-        // the only stored copy of the text — deleting it is unrecoverable.
-        // Nothing reads a draft row back today (no restore path in the UI, and
-        // the next keystroke in the block overwrites it); boot reports the
-        // failure and keeps the row because that is the conservative choice.
+        // the draft row on `Ok`, and the row is kept for the reason given at
+        // the H-12b arm in `commands::drafts::flush_all_drafts_inner`.
         if draft.content.len() > crate::commands::MAX_CONTENT_LENGTH {
             tracing::warn!(
                 block_id = %draft.block_id,

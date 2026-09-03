@@ -279,11 +279,13 @@ pub async fn flush_all_drafts_inner(
 
         // H-12b: enforce MAX_CONTENT_LENGTH. Skip the offender so the rest
         // of the batch still flushes (#3262). The row is KEPT, unlike the
-        // H-12a orphan below: the target block still exists, so this row is
-        // the only stored copy of that text and deleting it is unrecoverable.
-        // Nothing reads a draft row back today — there is no restore path in
-        // the UI, and the next keystroke in the block overwrites the row — so
-        // keeping it is the conservative choice, not a recovery feature.
+        // H-12a orphan below — not to preserve the text, which nothing reads
+        // back, but so a row we failed to process is never silently dropped
+        // (#2540). The next keystroke overwrites it.
+        //
+        // This cap sits ABOVE the orphan and supersession checks here and
+        // BELOW them in `recover_single_draft`, so an oversized draft for a
+        // deleted block outlives this flush and is cleared at the next boot.
         if content.len() > super::MAX_CONTENT_LENGTH {
             tracing::warn!(
                 block_id = %block_id,
