@@ -27,13 +27,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use agaric_store::peer_refs::PeerRef;
 
 use rand::RngExt;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, watch};
 
 use crate::sync_events::SyncEventSink;
 
@@ -110,8 +110,18 @@ pub struct SyncScheduler {
     /// consume (and reset) it.
     active_sessions: AtomicUsize,
 
-    /// Fires when local changes are detected (debounced).
-    change_notify: Notify,
+    /// Counts local changes signalled by [`Self::notify_change`].
+    ///
+    /// #4025: a count rather than a `Notify` permit because
+    /// [`Self::wait_for_debounced_change`] is one arm of `daemon_loop`'s
+    /// `select!` and is dropped whenever a sibling arm wins. A permit
+    /// consumed by the dropped future is gone; a count is scheduler state
+    /// the drop cannot reach.
+    change_count: watch::Sender<u64>,
+
+    /// The highest [`Self::change_count`] a debounce window has run to
+    /// completion for. Changes above it are still owed a sync round.
+    debounced_through: AtomicU64,
 
     /// Debounce window for change-triggered sync.
     pub debounce_window: Duration,
@@ -548,7 +558,8 @@ impl SyncScheduler {
             backoff: std::sync::Mutex::new(HashMap::new()),
             channels: std::sync::Mutex::new(HashMap::new()),
             active_sessions: AtomicUsize::new(0),
-            change_notify: Notify::new(),
+            change_count: watch::Sender::new(0),
+            debounced_through: AtomicU64::new(0),
             debounce_window: DEFAULT_DEBOUNCE,
             resync_interval: DEFAULT_RESYNC,
         }
@@ -975,20 +986,33 @@ impl SyncScheduler {
     /// Signal that a local change occurred.  Callers (e.g. the materializer
     /// or command handlers) invoke this after writing ops.
     pub fn notify_change(&self) {
-        self.change_notify.notify_one();
+        self.change_count.send_modify(|count| *count += 1);
     }
 
     /// Wait for a debounced change signal.  Returns after `debounce_window`
     /// of inactivity following at least one `notify_change()` call.
+    ///
+    /// Cancelling this future — which `daemon_loop` does on every round a
+    /// sibling `select!` arm wins, including Branch C's first resync tick at
+    /// startup — never loses a change: the count it is waiting on outlives the
+    /// future, so the next call picks the same change back up (#4025).
     pub async fn wait_for_debounced_change(&self) {
-        // Wait for the first notification.
-        self.change_notify.notified().await;
-        // Then keep waiting while notifications keep coming within the window.
+        // `self` owns the sender, so the receiver can never see it closed and
+        // `changed()` cannot fail while this borrow is alive.
+        let mut changes = self.change_count.subscribe();
+        let mut count = *changes.borrow_and_update();
+
+        while count <= self.debounced_through.load(Ordering::Acquire) {
+            let _ = changes.changed().await;
+            count = *changes.borrow_and_update();
+        }
+
+        // Keep waiting while changes keep arriving within the window.
         loop {
             tokio::select! {
-                () = self.change_notify.notified() => {
+                _ = changes.changed() => {
                     // Another change arrived — restart the window.
-                    continue;
+                    count = *changes.borrow_and_update();
                 }
                 () = tokio::time::sleep(self.debounce_window) => {
                     // Quiet period elapsed — debounce complete.
@@ -996,6 +1020,8 @@ impl SyncScheduler {
                 }
             }
         }
+
+        self.debounced_through.store(count, Ordering::Release);
     }
 
     // -- Periodic resync (#385) -----------------------------------------------
@@ -1571,6 +1597,38 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
+    }
+
+    /// #4025 — a signalled change must survive a debounce that another
+    /// `select!` branch cancels.
+    ///
+    /// `daemon_loop` waits on this future as one arm of a `select!`, and
+    /// Branch C's resync interval fires its first tick the instant the loop
+    /// starts. A `notify_change()` landing in that startup window opens a
+    /// debounce window that Branch C then cancels — and before #4025 the
+    /// signal died with the dropped future, because `Notify` stores one
+    /// permit and the debounce consumed it up front. `start_pairing_armed_inner`
+    /// notifies on exactly that path, so the swallowed wake was a real
+    /// pairing dialog that never dialled.
+    #[tokio::test]
+    async fn debounced_change_survives_cancelled_window_4025() {
+        let sched = SyncScheduler::with_intervals(Duration::from_millis(100), DEFAULT_RESYNC);
+
+        sched.notify_change();
+
+        // Stand in for Branch C's immediate first tick: a sibling branch wins
+        // the `select!` while the debounce window is still open.
+        tokio::select! {
+            () = sched.wait_for_debounced_change() => {
+                panic!("debounce completed before the sibling branch; the test proves nothing")
+            }
+            () = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+
+        // Nothing consumed the change, so the next wait must still see it.
+        tokio::time::timeout(Duration::from_secs(1), sched.wait_for_debounced_change())
+            .await
+            .expect("#4025: a change signalled before a cancelled debounce was swallowed");
     }
 
     /// Test helper: build a `PeerRef` with only the two fields
