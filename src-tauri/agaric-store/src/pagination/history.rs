@@ -189,10 +189,11 @@ pub async fn list_block_history(
 ///     (which is what #4247/#4277/#4328 each were). If you break it,
 ///     break it deliberately and say so here.
 ///
-/// Broken deliberately in `list_block_history`, in two predicates, for two
-/// different reasons.
+/// Broken deliberately in `list_block_history`, in the inner
+/// `op_type = 'delete_attachment'` gate here and in `src_add.is_replicated
+/// = 0` below, for two unrelated reasons.
 ///
-/// It drops the inner `op_type = 'delete_attachment'` gate (#4336) because
+/// It drops the gate (#4336) because
 /// that query names the block it is asking about, so its paired-add probe
 /// settles "is this MY attachment" where a page subtree cannot (#4278); an
 /// `add → rename → delete` sequence therefore leaves the rename listed on
@@ -220,11 +221,13 @@ pub async fn list_block_history(
 /// local delete of a peer-added attachment, with no `compact_op_log` sweep
 /// (a maintenance operation, not a routine one) required first.
 ///
-/// Still open here, tracked as #4627: `src_add.is_replicated = 0` is one of
-/// the five predicates this query shares with the three undo queries, so
-/// removing it decides whether Ctrl+Z starts offering a peer-added
-/// attachment's delete — a design call, not a constraint this query can
-/// settle alone.
+/// Still open here, tracked as #4627, and the second of the two divergences
+/// above: `list_block_history` drops `src_add.is_replicated = 0` (#4620),
+/// this query keeps it. Not because the ownership argument differs — it
+/// does not — but because the predicate is one of five this query shares
+/// with the three undo queries, so removing it decides whether Ctrl+Z
+/// starts offering a peer-added attachment's delete. A design call, not a
+/// constraint this query can settle alone.
 ///
 /// Residual divergence NOT closed here, and no longer load-bearing
 /// (#4328): this query has no `is_undo = 0` / `is_replicated = 0` filter
