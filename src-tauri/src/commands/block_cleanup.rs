@@ -18,7 +18,7 @@
 //!   restored subtree read stale space membership after an undo until
 //!   the async `RebuildPageIds` chain landed.
 //!
-//! Collapsing every call site onto [`rederive_page_and_space_ids`] makes
+//! Collapsing every call site onto [`rederive_page_and_space_ids`](agaric_store::block_descendants::rederive_page_and_space_ids) makes
 //! the complete (both-column) behaviour structurally impossible to drift
 //! again, and [`purge_subtree_tables`] gives the satellite-table list one
 //! home.

@@ -528,7 +528,7 @@ pub async fn rebuild_page_ownership_from_base(
 ///
 /// A MOVE deliberately does NOT enqueue it (#2200): the local move command
 /// re-derives the moved subtree synchronously in-transaction via
-/// `commands::block_cleanup::rederive_page_and_space_ids`. A driver that
+/// `agaric_store::block_descendants::rederive_page_and_space_ids`. A driver that
 /// re-derived after every op would therefore repair exactly the arm most
 /// likely to be wrong, so callers run this only where production does.
 pub async fn settle_derived_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
@@ -1971,7 +1971,7 @@ pub async fn reconcile(pool: &SqlitePool) -> Result<Vec<Divergence>, AppError> {
                     .unwrap_or_else(|| "NULL (no page ancestor via parent_id)".to_owned()),
                 actual: actual_owner.map_or_else(|| "NULL".to_owned(), str::to_owned),
                 owner: "set_block_page_id_from_parent_in_tx (the scoped leaf-create arm) / \
-                        commands::block_cleanup::rederive_page_and_space_ids (the in-tx \
+                        agaric_store::block_descendants::rederive_page_and_space_ids (the in-tx \
                         move arm — a MOVE deliberately does NOT enqueue the vault-wide \
                         rebuild, #2200) / cache::rebuild_page_ids (the vault-wide arm \
                         dispatch enqueues for create/delete/restore/purge and inbound \
