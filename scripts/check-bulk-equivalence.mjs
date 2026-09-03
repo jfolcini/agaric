@@ -571,7 +571,7 @@ export function inventory({ root, srcDirs, pinned = new Set() }) {
   for (const srcDir of srcDirs) {
     for (const file of listRustFiles(srcDir)) {
       const rel = toPosix(path.relative(root, file))
-      if (isTestPath(toPosix(path.relative(srcDir, file)))) continue
+      if (isTestPath(rel)) continue
       const src = fs.readFileSync(file, 'utf8')
       for (const { name, kind } of scanFile(src, (n) => pinned.has(`${rel}::${n}`))) {
         // A name can legitimately appear once per file; keep the first (and
