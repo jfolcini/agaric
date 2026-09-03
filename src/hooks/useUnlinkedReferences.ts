@@ -28,15 +28,18 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo, useRef } from 'react'
 
-import { logger } from '@/lib/logger'
-import { queryClient } from '@/lib/query-client'
+import { unwrap } from '@/lib/app-error'
 import type {
   BacklinkFilter,
   BacklinkGroup,
   BacklinkSort,
   GroupedBacklinkResponse,
-} from '@/lib/tauri'
-import { listUnlinkedReferences, paginationLimit } from '@/lib/tauri'
+} from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
+import { paginationLimit } from '@/lib/safe-limit'
+import { toSpaceScope } from '@/lib/space-scope'
 
 /**
  * Groups requested per page once the panel is open. Unchanged from the value
@@ -146,14 +149,16 @@ export function useUnlinkedReferences(
         queryKey,
         queryFn: async ({ pageParam }): Promise<GroupedBacklinkResponse> => {
           try {
-            return await listUnlinkedReferences({
-              pageId,
-              filters: filters.length > 0 ? filters : null,
-              sort,
-              cursor: pageParam ?? null,
-              limit: groupLimit,
-              spaceId,
-            })
+            return unwrap(
+              await commands.listUnlinkedReferences(
+                pageId,
+                filters.length > 0 ? filters : null,
+                sort,
+                pageParam ?? null,
+                groupLimit,
+                toSpaceScope(spaceId),
+              ),
+            )
           } catch (err) {
             // Preserve the pre-migration component's observability: it logged
             // every fetch failure before surfacing it. Log here, then rethrow

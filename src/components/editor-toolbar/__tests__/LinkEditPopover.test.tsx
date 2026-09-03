@@ -50,12 +50,23 @@ vi.mock('@/components/ui/label', () => ({
   ),
 }))
 
-// Mock Tauri IPC functions used for link metadata prefetch
-const mockFetchLinkMetadata = vi.fn().mockResolvedValue({})
+// `useLinkMetadata` calls `commands.fetchLinkMetadata` from `@/lib/bindings`
+// directly (#4411, the links domain). The spy still resolves/rejects with the
+// bare metadata; the shim adds the `{ status: 'ok', data }` envelope `unwrap`
+// expects and lets rejections through untouched.
+const mockFetchLinkMetadata = vi.hoisted(() => vi.fn().mockResolvedValue({}))
 
-vi.mock('@/lib/tauri', () => ({
-  fetchLinkMetadata: (...args: unknown[]) => mockFetchLinkMetadata(...args),
-}))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      fetchLinkMetadata: (...args: unknown[]) =>
+        mockFetchLinkMetadata(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {

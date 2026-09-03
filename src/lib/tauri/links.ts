@@ -1,12 +1,6 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import type {
-  BacklinkFilter,
-  BacklinkSort,
-  GroupedBacklinkResponse,
-  PageLinksResponse,
-} from '@/lib/bindings'
-import type { SafeLimit } from '@/lib/safe-limit'
+import type { PageLinksResponse } from '@/lib/bindings'
 import { toSpaceScope } from '@/lib/tauri/_shared'
 
 /** List all page-to-page links for graph visualization.
@@ -50,85 +44,12 @@ export async function listPageLinks(
   return unwrap(await commands.listPageLinks(toSpaceScope(params.spaceId), tagIds))
 }
 
-/** Query backlinks grouped by source page, with filters and pagination.
- *
- * `spaceId` (Phase 4) — when set, restricts the source set to
- * blocks whose owning page carries `space = <spaceId>`. `null` /
- * `undefined` leaves the result set unscoped.
- */
-export async function listBacklinksGrouped(params: {
-  blockId: string
-  filters?: BacklinkFilter[] | undefined
-  sort?: BacklinkSort | undefined
-  cursor?: string | undefined
-  limit?: SafeLimit | undefined
-  spaceId?: string | null | undefined
-}): Promise<GroupedBacklinkResponse> {
-  return unwrap(
-    await commands.listBacklinksGrouped(
-      params.blockId,
-      params.filters ?? null,
-      params.sort ?? null,
-      params.cursor ?? null,
-      params.limit ?? null,
-      toSpaceScope(params.spaceId),
-    ),
-  )
-}
-
-/** Query unlinked references grouped by source page, with filters, sort, and pagination.
- *
- * `spaceId` (Phase 4) — when set, restricts the candidate set
- * to blocks whose owning page carries `space = <spaceId>`. `null` /
- * `undefined` leaves the result set unscoped.
- */
-export async function listUnlinkedReferences(params: {
-  pageId: string
-  filters?: BacklinkFilter[] | null | undefined
-  sort?: BacklinkSort | null | undefined
-  cursor?: string | null | undefined
-  limit?: SafeLimit | null | undefined
-  spaceId?: string | null | undefined
-}): Promise<GroupedBacklinkResponse> {
-  return unwrap(
-    await commands.listUnlinkedReferences(
-      params.pageId,
-      params.filters ?? null,
-      params.sort ?? null,
-      params.cursor ?? null,
-      params.limit ?? null,
-      toSpaceScope(params.spaceId),
-    ),
-  )
-}
-
-export interface LinkMetadata {
-  url: string
-  title: string | null
-  favicon_url: string | null
-  description: string | null
-  /** Milliseconds since the UNIX epoch (UTC). #109 Phase 2: was an RFC 3339 string. */
-  fetched_at: number
-  auth_required: boolean
-  /**
-   * (follow-up): `true` when the most recent
-   * fetch saw a terminal "gone" status (HTTP 404 or 410). Distinct
-   * from `auth_required` (401/403, sign-in card) and from transient
-   * 5xx (both flags `false` plus `title === null`). Optional so a
-   * legacy serialized blob without the field still deserializes.
-   */
-  not_found?: boolean
-}
-
-/** Fetch and cache link metadata (triggers HTTP fetch if not cached). */
-export async function fetchLinkMetadata(url: string): Promise<LinkMetadata> {
-  return unwrap(await commands.fetchLinkMetadata(url))
-}
-
-/** Get cached link metadata (no network fetch). */
-export async function getLinkMetadata(url: string): Promise<LinkMetadata | null> {
-  return unwrap(await commands.getLinkMetadata(url))
-}
+// The link-metadata wrappers (`fetchLinkMetadata`, `getLinkMetadata`) and the
+// grouped-reference wrappers (`listBacklinksGrouped`, `listUnlinkedReferences`)
+// were removed in #4411 — call `commands.*` directly, unwrap with the helper
+// from `@/lib/app-error`, and build the scope with `toSpaceScope` from
+// `@/lib/space-scope`. The hand-declared `LinkMetadata` type went with them;
+// the generated one lives in `@/lib/bindings`.
 
 // The bug-report wrappers (`collectBugReportMetadata`, `readLogsForReport`)
 // and their `BugReport` / `LogFileEntry` types were removed in #2927 — call

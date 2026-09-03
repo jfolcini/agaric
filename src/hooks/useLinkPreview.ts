@@ -21,8 +21,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands, type LinkMetadata } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { fetchLinkMetadata, getLinkMetadata, type LinkMetadata } from '@/lib/tauri'
 
 export interface LinkPreviewState {
   url: string | null
@@ -78,7 +79,9 @@ export function useLinkPreview(container: HTMLElement | null): LinkPreviewState 
         if (activeUrlRef.current !== href) return
 
         // Try cache first
-        getLinkMetadata(href)
+        commands
+          .getLinkMetadata(href)
+          .then(unwrap)
           .then((cached) => {
             if (activeUrlRef.current !== href) return
             if (cached) {
@@ -90,14 +93,17 @@ export function useLinkPreview(container: HTMLElement | null): LinkPreviewState 
               return
             }
             // Cache miss — fetch from network
-            return fetchLinkMetadata(href).then((fetched) => {
-              if (activeUrlRef.current !== href) return
-              setState((prev) => ({
-                ...prev,
-                metadata: fetched,
-                isLoading: false,
-              }))
-            })
+            return commands
+              .fetchLinkMetadata(href)
+              .then(unwrap)
+              .then((fetched) => {
+                if (activeUrlRef.current !== href) return
+                setState((prev) => ({
+                  ...prev,
+                  metadata: fetched,
+                  isLoading: false,
+                }))
+              })
           })
           .catch((err: unknown) => {
             if (activeUrlRef.current !== href) return

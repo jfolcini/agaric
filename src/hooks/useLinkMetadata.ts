@@ -1,8 +1,8 @@
 /**
- * useLinkMetadata — typed wrapper around fetchLinkMetadata.
+ * useLinkMetadata — typed wrapper around `commands.fetchLinkMetadata`.
  *
  * Centralizes the link-metadata IPC call so LinkEditPopover doesn't
- * import directly from `src/lib/tauri`. Wraps with structured
+ * dispatch it itself. Wraps with structured
  * logger.warn on failure and re-throws so callers retain their
  * existing fire-and-forget / await error handling.
  *
@@ -11,8 +11,9 @@
 
 import { useCallback } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands, type LinkMetadata } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { fetchLinkMetadata, type LinkMetadata } from '@/lib/tauri'
 
 export interface UseLinkMetadataReturn {
   /** Fetch (and cache) link metadata for a URL. Throws on failure. */
@@ -22,7 +23,7 @@ export interface UseLinkMetadataReturn {
 export function useLinkMetadata(): UseLinkMetadataReturn {
   const fetch = useCallback(async (url: string): Promise<LinkMetadata> => {
     try {
-      return await fetchLinkMetadata(url)
+      return unwrap(await commands.fetchLinkMetadata(url))
     } catch (err) {
       logger.warn('useLinkMetadata', 'fetchLinkMetadata failed', { url }, err)
       throw err

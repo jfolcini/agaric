@@ -22,18 +22,15 @@ import {
   deleteProperty,
   editBlock,
   exportPageMarkdown,
-  fetchLinkMetadata,
   filteredBlocksQuery,
   firstChildForBlocks,
   getBatchProperties,
   getBlock,
   getBlockHistory,
-  getLinkMetadata,
   getPageAliases,
   getProperties,
   getProperty,
   getPropertyDef,
-  listBacklinksGrouped,
   listBlocks,
   listBlocksLimit,
   listPageHistory,
@@ -42,7 +39,6 @@ import {
   listProjectedAgendaLimit,
   listPropertyDefs,
   listUndatedTasks,
-  listUnlinkedReferences,
   logFrontend,
   paginationLimit,
   purgeBlock,
@@ -1310,121 +1306,11 @@ describe('thin fixed-field commands', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// listBacklinksGrouped
-// ---------------------------------------------------------------------------
-
-describe('listBacklinksGrouped', () => {
-  const emptyResponse = {
-    groups: [],
-    next_cursor: null,
-    has_more: false,
-    total_count: 0,
-    filtered_count: 0,
-    truncated: false,
-  }
-
-  it('invokes list_backlinks_grouped with pageId mapped to blockId', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-
-    const result = await listBacklinksGrouped({ blockId: 'PAGE1' })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
-      blockId: 'PAGE1',
-      filters: null,
-      sort: null,
-      cursor: null,
-      limit: null,
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(emptyResponse)
-  })
-
-  it('passes filters and sort when provided', async () => {
-    const filters = [{ type: 'Contains' as const, query: 'hello' }]
-    const sort = { type: 'Created' as const, dir: 'Desc' as const }
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-
-    await listBacklinksGrouped({
-      blockId: 'PAGE1',
-      filters,
-      sort,
-      cursor: 'cur1',
-      limit: paginationLimit(10),
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', {
-      blockId: 'PAGE1',
-      filters,
-      sort,
-      cursor: 'cur1',
-      limit: 10,
-      scope: { kind: 'global' },
-    })
-  })
-
-  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-    await listBacklinksGrouped({ blockId: 'PAGE1', spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// listUnlinkedReferences
-// ---------------------------------------------------------------------------
-
-describe('listUnlinkedReferences', () => {
-  const emptyResponse = {
-    groups: [],
-    next_cursor: null,
-    has_more: false,
-    total_count: 0,
-    filtered_count: 0,
-    truncated: false,
-  }
-
-  it('invokes list_unlinked_references with pageId', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-
-    const result = await listUnlinkedReferences({ pageId: 'PAGE1' })
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('list_unlinked_references', {
-      pageId: 'PAGE1',
-      filters: null,
-      sort: null,
-      cursor: null,
-      limit: null,
-      scope: { kind: 'global' },
-    })
-    expect(result).toEqual(emptyResponse)
-  })
-
-  it('passes cursor and limit when provided', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-
-    await listUnlinkedReferences({ pageId: 'PAGE1', cursor: 'cur1', limit: paginationLimit(20) })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('list_unlinked_references', {
-      pageId: 'PAGE1',
-      filters: null,
-      sort: null,
-      cursor: 'cur1',
-      limit: 20,
-      scope: { kind: 'global' },
-    })
-  })
-
-  it('forwards spaceId as an active scope to the binding (Phase 3)', async () => {
-    mockedInvoke.mockResolvedValueOnce(emptyResponse)
-    await listUnlinkedReferences({ pageId: 'PAGE1', spaceId: 'SPACE_42' })
-    const args = (mockedInvoke.mock.calls[0] as unknown[])[1] as Record<string, unknown>
-    expect(args['scope']).toEqual({ kind: 'active', space_id: 'SPACE_42' })
-  })
-})
+// `listBacklinksGrouped` / `listUnlinkedReferences` retired their `@/lib/tauri`
+// wrappers (#4411) — `useBacklinkGroups` / `useUnlinkedReferences` call
+// `commands.*` directly. Their hook tests already drive the same
+// `list_backlinks_grouped` / `list_unlinked_references` invokes by command
+// name, so wire coverage is unchanged.
 
 // ---------------------------------------------------------------------------
 // listPropertyDefs
@@ -1927,67 +1813,9 @@ describe('logFrontend', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// fetchLinkMetadata
-// ---------------------------------------------------------------------------
-
-describe('fetchLinkMetadata', () => {
-  it('invokes fetch_link_metadata with url', async () => {
-    const expected = {
-      url: 'https://example.com',
-      title: 'Example',
-      favicon_url: 'https://example.com/favicon.ico',
-      description: 'An example site',
-      fetched_at: 1736899200000, // 2025-01-15T00:00:00Z
-      auth_required: false,
-      not_found: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await fetchLinkMetadata('https://example.com')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('fetch_link_metadata', {
-      url: 'https://example.com',
-    })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// getLinkMetadata
-// ---------------------------------------------------------------------------
-
-describe('getLinkMetadata', () => {
-  it('invokes get_link_metadata with url', async () => {
-    const expected = {
-      url: 'https://example.com',
-      title: 'Example',
-      favicon_url: null,
-      description: null,
-      fetched_at: 1736899200000, // 2025-01-15T00:00:00Z
-      auth_required: false,
-      not_found: false,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await getLinkMetadata('https://example.com')
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_link_metadata', {
-      url: 'https://example.com',
-    })
-    expect(result).toEqual(expected)
-  })
-
-  it('returns null when not cached', async () => {
-    mockedInvoke.mockResolvedValueOnce(null)
-
-    const result = await getLinkMetadata('https://uncached.example')
-
-    expect(result).toBeNull()
-  })
-})
+// `fetchLinkMetadata` / `getLinkMetadata` retired their `@/lib/tauri` wrappers
+// (#4411, the whole link-metadata pair) — `useLinkMetadata` / `useLinkPreview`
+// call `commands.*` directly and coverage lives in their hook tests.
 
 // `listSpaces` / `createPageInSpace` retired their `@/lib/tauri` wrappers
 // (#4411) — the whole `system.ts` domain module graduated in one step
@@ -2021,8 +1849,6 @@ describe('cross-cutting', () => {
     await queryByProperty({ key: 'k' })
     await undoPageOp({ pageId: 'id', undoDepth: 1 })
     await redoPageOp({ undoDeviceId: 'd', undoSeq: 1 })
-    await listBacklinksGrouped({ blockId: 'id' })
-    await listUnlinkedReferences({ pageId: 'id' })
     await getPropertyDef('k')
     await listPropertyDefs()
     await getPageAliases('id')
@@ -2050,8 +1876,6 @@ describe('cross-cutting', () => {
       'query_by_property',
       'undo_page_op',
       'redo_page_op',
-      'list_backlinks_grouped',
-      'list_unlinked_references',
       'get_property_def',
       'list_property_defs',
       'get_page_aliases',

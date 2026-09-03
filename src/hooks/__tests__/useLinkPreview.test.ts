@@ -15,17 +15,33 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { LinkMetadata } from '@/lib/tauri'
+import type { LinkMetadata } from '@/lib/bindings'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
-const mockGetLinkMetadata = vi.fn<(url: string) => Promise<LinkMetadata | null>>()
-const mockFetchLinkMetadata = vi.fn<(url: string) => Promise<LinkMetadata>>()
-
-vi.mock('@/lib/tauri', () => ({
-  getLinkMetadata: (...args: unknown[]) => mockGetLinkMetadata(...(args as [string])),
-  fetchLinkMetadata: (...args: unknown[]) => mockFetchLinkMetadata(...(args as [string])),
+// #4411 — `useLinkPreview` calls `commands.getLinkMetadata` /
+// `commands.fetchLinkMetadata` from `@/lib/bindings` directly. The spies still
+// resolve/reject with the bare metadata; the shims wrap a fulfilment in the
+// `{ status: 'ok', data }` envelope `unwrap` expects and let rejections through
+// untouched.
+const { mockGetLinkMetadata, mockFetchLinkMetadata } = vi.hoisted(() => ({
+  mockGetLinkMetadata: vi.fn<(url: string) => Promise<LinkMetadata | null>>(),
+  mockFetchLinkMetadata: vi.fn<(url: string) => Promise<LinkMetadata>>(),
 }))
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getLinkMetadata: (...args: unknown[]) =>
+        mockGetLinkMetadata(...(args as [string])).then((data) => ({ status: 'ok', data })),
+      fetchLinkMetadata: (...args: unknown[]) =>
+        mockFetchLinkMetadata(...(args as [string])).then((data) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {

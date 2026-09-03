@@ -16,16 +16,18 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 
-import { PAGINATION_LIMIT } from '@/lib/constants'
-import { logger } from '@/lib/logger'
-import { queryClient } from '@/lib/query-client'
+import { unwrap } from '@/lib/app-error'
 import type {
   BacklinkFilter,
   BacklinkGroup,
   BacklinkSort,
   GroupedBacklinkResponse,
-} from '@/lib/tauri'
-import { listBacklinksGrouped } from '@/lib/tauri'
+} from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
+import { PAGINATION_LIMIT } from '@/lib/constants'
+import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
+import { toSpaceScope } from '@/lib/space-scope'
 
 export interface UseBacklinkGroupsParams {
   pageId: string
@@ -107,14 +109,16 @@ export function useBacklinkGroups(params: UseBacklinkGroupsParams): UseBacklinkG
                 excluded: sourcePageExcluded,
               })
             }
-            return await listBacklinksGrouped({
-              blockId: pageId,
-              ...(allFilters.length > 0 && { filters: allFilters }),
-              ...(sort != null && { sort }),
-              limit: PAGINATION_LIMIT,
-              ...(pageParam != null && { cursor: pageParam }),
-              spaceId,
-            })
+            return unwrap(
+              await commands.listBacklinksGrouped(
+                pageId,
+                allFilters.length > 0 ? allFilters : null,
+                sort,
+                pageParam ?? null,
+                PAGINATION_LIMIT,
+                toSpaceScope(spaceId),
+              ),
+            )
           } catch (err) {
             // Preserve the pre-migration component's observability: it logged
             // every fetch failure before surfacing it. Log here, then rethrow
