@@ -55,7 +55,17 @@ serde = { version = "1", features = ["derive"] }
 # features mirror the app crate exactly for cargo feature-unification.
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # The Loro CRDT crate — `LoroEngine` wraps `LoroDoc`, `Frontiers`, tree/map
-# containers. Version mirrors the app crate exactly.
+# containers. This is the workspace's owning entry since #3120 (the app crate
+# no longer depends on it); agaric-sync mirrors it. Not part of any coupled
+# dep stack per AGENTS.md §"Coupled Dependency Updates".
+# HELD at 1.13.6 via Cargo.lock + a dependabot `ignore` (#3161). This caret
+# range ALLOWS 1.13.7 — deliberately not tightened to `=1.13.6`, because that
+# still resolves `loro-internal` 1.13.7 transitively, so the lockfile is the
+# real hold either way and a false sense of pinning here would be worse.
+# 1.13.7 makes `find_common_ancestor` quadratic in history at frontier
+# width > 1 (215x at 1000 rounds). Our regression test can no longer detect
+# it — #3187 narrowed it to width 1, dag.rs's fast path. Do not `cargo update`
+# loro without re-measuring at width 2.
 loro = "1.12"
 # `loro/engine/mod.rs` derives peer ids + block-content hashes via `xxh3_64`.
 # Version/features mirror the app crate exactly.

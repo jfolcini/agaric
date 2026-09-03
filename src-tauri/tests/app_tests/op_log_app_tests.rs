@@ -239,16 +239,18 @@ async fn remote_op_insert_defaults_origin_to_user() {
 /// covering `idx_op_log_block_id` index) and every INSERT path
 /// populates it; migration 0048 dropped the legacy expression index,
 /// so any surviving `json_extract` lookup would degrade to a full
-/// `op_log` scan. This regression guard reads `src/dag.rs` from disk
-/// and asserts the expression has not been re-introduced.
+/// `op_log` scan. This regression guard reads the engine's `dag.rs`
+/// from disk and asserts the expression has not been re-introduced
+/// (#3120: the app-side `src/dag.rs` it used to scan was a test shim
+/// with no SQL in it).
 #[test]
 fn dag_queries_no_longer_use_json_extract_block_id() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/dag.rs");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/agaric-engine/src/dag.rs");
     let contents =
         std::fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
     assert!(
         !contents.contains("json_extract(payload, '$.block_id')"),
-        "src/dag.rs must not contain `json_extract(payload, '$.block_id')` — \
+        "agaric-engine/src/dag.rs must not contain `json_extract(payload, '$.block_id')` — \
              use the native indexed `block_id` column instead (see migration 0030 \
              and SQL-review B-2)."
     );

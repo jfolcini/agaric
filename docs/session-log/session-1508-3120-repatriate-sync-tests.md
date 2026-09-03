@@ -1,0 +1,16 @@
+# Session 1508 — #3120: the stranded sync tests go home, and `recovery/` goes with them
+
+Phase 3 of #4499, on top of #4643. The five app-side shim modules (`sync_daemon`, `sync_protocol`, `snapshot`, `sync_files`, `dag`) held about 40K lines of tests and no production code; they now live in `agaric-sync` next to the code they cover, and the two `_host` wrapper modules that existed only to rebuild a namespace across the crate boundary are gone. Test attributes across the moved trees: 718 before, 718 after.
+
+What held them in the app crate, and what each became:
+
+- **`crate::materializer` (17) and `crate::db::{now_ms, begin_immediate_logged, ReadPool, MAX_SQL_PARAMS}`** resolve to `agaric_engine::materializer` and `agaric_store::db` since #4502; `crate::db::init_pool` (8) becomes `agaric_store::test_support::init_pool`, which runs the migrations and nothing else: every one of these tests starts from a fresh temp database, so the app's boot-recovery passes were no-ops for them.
+- **`crate::recovery` (19).** `recovery/` had no app-only production dependency left after #4502, but it reads this crate's inbox replay, quarantine counts and attachment-file helpers, so it moves into `agaric-sync` (not the engine) as `agaric_sync::recovery`; the app re-exports it and its boot wiring is unchanged.
+- **The three pairing wrappers (6 sites).** `start_pairing_inner`, `start_pairing_armed_inner` and `confirm_pairing_inner` were the only `commands` functions the sync tests called, and nothing in them was Tauri-specific. Their bodies (with `lock_pairing_state`, `clear_unpaired_flags_on_pairing_act` and the `PairingInfo` payload) move to `agaric_sync::pairing::{start_pairing, start_pairing_armed, confirm_pairing}`; the commands keep their names and delegate, so `bindings.ts` does not change.
+- **`undo_page_op_inner` (1 site).** The undo kernel is still app-side (#3122), so the one #2474 test that exercises it stays in the app as `src/sync_app_tests.rs`; the other half of that pin moved with the snapshot suite.
+
+One app-side test was scanning the wrong file: `dag_queries_no_longer_use_json_extract_block_id` read `src/dag.rs`, which had been a test shim with no SQL in it since the DAG moved to the engine; it now reads `agaric-engine/src/dag.rs`.
+
+`cargo machete` then finds `zstd`, `ciborium` and `loro` unused in the app crate (they went with `recovery/` and the suites), so they leave it, and the loro 1.13.6 hold note moves to `agaric-engine`'s entry, the workspace's owning one now. `tauri-command-instrumented` cannot see the pairing spans from `commands/` any more, so `start_pairing` and `confirm_pairing` join its allowlist under the cross-module-helper category it already defines.
+
+The guards followed the files: the `check-raw-tx` allowlist and the dynamic-SQL baseline carry `recovery/` at its new path, `detect-private-key`'s exclude names the moved `sync_daemon/tests.rs`, and the two self-tests that used `dag/proptest_b2.rs` as a fixture path name the new one. Verification, one gate at a time on the final head: `just gen-sqlx` (`agaric-sync/.sqlx` +67, root unchanged), clippy 0 warnings, `cargo nextest run --workspace` 6311 run / 6311 passed after the two fixes above (the shim-path test, and the pairing doc comment restored so `bindings.ts` stays byte-identical), `specta_tests` bindings unchanged.

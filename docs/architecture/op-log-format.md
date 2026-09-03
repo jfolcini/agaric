@@ -224,7 +224,7 @@ verification recipe (#2481 phase 1):
 
 - **Strict** (`insert_remote_op`) — the dormant Wave 1B remote-merge
   path; unresolved parents are a hard error. No production caller today;
-  exercised only by tests (`src-tauri/src/dag/tests.rs`,
+  exercised only by tests (`src-tauri/agaric-sync/src/dag_tests/tests.rs`,
   `src-tauri/agaric-store/src/op_log/tests/origin.rs`).
 - **Audit** (`insert_replicated_op`, the wire shim over
   `dag::ingest_replicated_record`) — the #2481 audit-only

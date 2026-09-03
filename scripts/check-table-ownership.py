@@ -598,7 +598,7 @@ def run_self_test() -> int:
     exclusion_cases: list[tuple[str, bool]] = [
         ("src-tauri/src/materializer_app_tests/apply_reproject_proptest.rs",
          True),
-        ("src-tauri/src/dag/proptest_b2.rs", True),
+        ("src-tauri/agaric-sync/src/dag_tests/proptest_b2.rs", True),
         ("src-tauri/src/soft_delete/proptest_b3.rs", True),
         ("src-tauri/agaric-store/src/test_support.rs", True),
         ("src-tauri/diagnostics/src/bin/audit_cross_space_refs.rs", True),

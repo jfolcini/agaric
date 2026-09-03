@@ -30,6 +30,12 @@
 //! no application-layer crypto in this module.
 
 use agaric_core::error::AppError;
+use agaric_store::peer_refs;
+use sqlx::SqlitePool;
+use std::sync::{Mutex, MutexGuard};
+use tracing::instrument;
+
+use crate::sync_scheduler::SyncScheduler;
 
 use rand::seq::IndexedRandom;
 use std::sync::LazyLock;
@@ -206,6 +212,243 @@ impl PairingSession {
             created_at: std::time::Instant::now(),
         }
     }
+}
+
+/// Response payload returned by [`start_pairing`].
+///
+/// The QR payload + [`PairingInfo`] both carry only the passphrase.
+/// mDNS owns discovery + address resolution end-to-end; there is no
+/// scan-bootstrap path that would need a `host`/`port` here.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct PairingInfo {
+    pub passphrase: String,
+    pub qr_svg: String,
+}
+
+/// Acquire the pairing-state mutex, mapping a poisoned-lock failure
+/// to a stable [`AppError::InvalidOperation`]. The error message is fixed
+/// at `"pairing state lock poisoned"` so callers and tests can pattern-match
+/// on it.
+pub fn lock_pairing_state(
+    pairing_state: &Mutex<Option<PairingSession>>,
+) -> Result<MutexGuard<'_, Option<PairingSession>>, AppError> {
+    pairing_state
+        .lock()
+        .map_err(|_| AppError::InvalidOperation("pairing state lock poisoned".into()))
+}
+
+/// Clear the #4297 "this peer says we are not paired" flag from every peer row,
+/// on a user-initiated pairing act.
+///
+/// The companion to [`SyncScheduler::clear_backoff`] at the same two call sites,
+/// and clears every peer for the same #3547 reason: a pairing act is new
+/// information about the whole device list, and neither pairing role has a peer
+/// id at this point — the flow carries a passphrase, and which peer it resolves
+/// to is only known once the first authenticated connection lands.
+///
+/// A failure is logged and swallowed rather than propagated. The flag is a
+/// display hint; refusing to start a pairing because a display hint could not be
+/// cleared would turn a cosmetic problem into the loss of the one action that
+/// fixes the underlying one. The stale flag also self-corrects: any session that
+/// then moves data clears it, and if the pairing did not take, the next refusal
+/// re-records it.
+async fn clear_unpaired_flags_on_pairing_act(pool: &SqlitePool) {
+    match peer_refs::clear_unpaired_by_peer_all(pool).await {
+        Ok(0) => {}
+        Ok(cleared) => tracing::info!(
+            cleared,
+            "cleared the 'peer has unpaired us' flag on a pairing act (#4297)"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "could not clear the 'peer has unpaired us' flag on a pairing act (#4297); a \
+             stale re-pair prompt may linger until the next successful sync"
+        ),
+    }
+}
+
+/// Start a new pairing session.
+///
+/// Generates a fresh passphrase, creates a QR code SVG for sharing,
+/// stores the session in `pairing_state`, and returns the pairing info
+/// to the frontend.
+///
+/// The QR payload + [`PairingInfo`] both carry only the passphrase.
+/// mDNS owns discovery + address resolution end-to-end; the QR is not a
+/// scan-bootstrap channel for a direct `host:port` connection.
+#[instrument(skip(pairing_state), err)]
+pub fn start_pairing(
+    pairing_state: &Mutex<Option<PairingSession>>,
+    device_id: &str,
+) -> Result<PairingInfo, AppError> {
+    let session = PairingSession::new(device_id, "");
+    let passphrase = session.passphrase.clone();
+    let qr_svg = generate_qr_svg(&pairing_qr_payload(&passphrase))?;
+
+    *lock_pairing_state(pairing_state)? = Some(session);
+
+    Ok(PairingInfo { passphrase, qr_svg })
+}
+
+/// Start pairing AND arm the pairing window so the host's dormant daemon
+/// activates for the duration.
+///
+/// #2008: a first-ever pair has zero peers, so on the host
+/// [`crate::sync_daemon::SyncDaemon::should_start_active`] would return
+/// `false` and the daemon would stay dormant — not announcing over mDNS,
+/// not listening — so the joining device could neither discover nor connect
+/// to it and pairing would deadlock. Setting the pending-pairing marker
+/// (the same TTL-bounded marker the joiner's [`confirm_pairing`] sets)
+/// flips `should_start_active` to `true`; `notify_change()` wakes a dormant
+/// daemon immediately instead of waiting for its next poll. The marker is
+/// cleared once a real `peer_ref` exists (`should_start_active`).
+#[instrument(skip(pool, pairing_state, scheduler, device_id), err)]
+pub async fn start_pairing_armed(
+    pool: &SqlitePool,
+    pairing_state: &Mutex<Option<PairingSession>>,
+    scheduler: &SyncScheduler,
+    device_id: &str,
+) -> Result<PairingInfo, AppError> {
+    let info = start_pairing(pairing_state, device_id)?;
+    // #855: store the passphrase proof in the pending-pairing marker so the
+    // responder can require the joiner to prove knowledge of the passphrase
+    // before we TOFU-pin it (closes the CN-spoof window).
+    peer_refs::set_pending_pairing(pool, &pairing_proof(&info.passphrase)).await?;
+    // #3547: the wake below is a SINGLE wake, and it is what Branch B turns into
+    // the dial a first-ever pair depends on. Backoff standing against a peer
+    // would let `may_retry` skip it, and nothing would retry until the next
+    // scheduled round. See `SyncScheduler::clear_backoff` for why a user-initiated
+    // pairing act is new information, and why it clears every peer.
+    scheduler.clear_backoff();
+    // #4297: same act, same reasoning — see `clear_unpaired_flags_on_pairing_act`.
+    clear_unpaired_flags_on_pairing_act(pool).await;
+    scheduler.notify_change();
+    Ok(info)
+}
+
+/// Confirm pairing with a remote device — the **joiner** half of the flow.
+///
+/// The user typed the passphrase displayed on the *other* device. This arms
+/// **this** device's TTL-bounded pending-pairing marker with
+/// `pairing_proof(typed)` and clears the local offer session, because a device
+/// that accepts someone else's passphrase is a joiner, not a host.
+///
+/// # #3463 — why there is no local comparison any more
+///
+/// Before #3463 this compared the typed passphrase against the passphrase in
+/// *this* device's own `pairing_state` slot. Two-device pairing therefore could
+/// never succeed: the pairing dialog starts a session on every device that
+/// opens it, so the two devices hold independently-random passphrases and the
+/// joiner's comparison mismatched with probability ~1.
+///
+/// Removing it costs nothing, because it never authenticated anything: the slot
+/// is local state the local user created seconds earlier, so "matches the local
+/// slot" is a statement about this device only. The check that actually gates
+/// trust is on the wire and is untouched — `sync_daemon::server` admits an
+/// unpaired device during the pairing window only if the `pairing_proof` it
+/// offers constant-time-matches the proof in the responder's own marker (#855),
+/// and the initiator sources that offered proof from its own marker
+/// (`session_state_machine::start`). The protocol's precondition is thus
+/// "both devices hold a marker for the SAME passphrase", and establishing that
+/// is exactly this function's job.
+///
+/// # Attempt limiting (#1603) is gone — deliberately
+///
+/// `MAX_PASSPHRASE_ATTEMPTS` / `pairing.attempts_exhausted` bounded repeated
+/// *local* guesses against the local slot. With no local comparison there is no
+/// local guess to count, so keeping the counter would be dead code that reads
+/// like a security control. The bound that matters is on the wire and already
+/// exists: the pending-pairing marker expires after
+/// `agaric_store::peer_refs::PAIRING_TIMEOUT` (5 minutes), after which
+/// `get_pending_pairing_proof` reads as absent and an unpaired peer is rejected
+/// outright. A remote guesser must produce `pairing_proof(P)` for a ~51.7-bit
+/// passphrase inside that window, one TLS connection per try.
+///
+/// # Errors
+///
+/// No longer fails on passphrase content. #3463 removed both the local
+/// comparison and the "a pairing session must exist" precondition, so this
+/// function is infallible apart from DB and lock failures — it arms a local
+/// marker, which is a local act that cannot be wrong about a value the user
+/// just typed. In particular `pairing.no_active_session` is **not** returned
+/// here any more; a correct joiner has no local session by construction.
+///
+/// The consequence is that a mistyped passphrase succeeds here and only fails
+/// later, at the wire-side proof check. The UI must not claim success on the
+/// strength of this returning `Ok` — see #3469.
+///
+/// On success the pending-pairing marker is armed and the scheduler is
+/// signalled so a dormant sync daemon transitions to active mode without
+/// waiting for its next poll interval.
+#[instrument(skip(pool, pairing_state, scheduler, passphrase), err)]
+pub async fn confirm_pairing(
+    pool: &SqlitePool,
+    pairing_state: &Mutex<Option<PairingSession>>,
+    scheduler: &SyncScheduler,
+    _device_id: &str,
+    passphrase: String,
+    _remote_device_id: String,
+) -> Result<(), AppError> {
+    // #3463: there is deliberately NO "a local pairing session must exist" guard
+    // here, and removing it is part of the fix rather than a relaxation of it.
+    //
+    // A correct joiner never has a local session. It did not generate a
+    // passphrase — it was handed one. Requiring a session would mean requiring
+    // the joiner to first mint a competing passphrase of its own, which is
+    // exactly the role confusion that made two-device pairing impossible: both
+    // devices offering, neither accepting.
+    //
+    // The guard that used to live here read like a safety check but could only
+    // ever be satisfied by a device in the *wrong* role, so it was not
+    // protecting an invariant — it was enforcing the defect.
+    //
+    // Nothing security-relevant is lost. It tested state this same frontend had
+    // written seconds earlier via `start_pairing`, so it authenticated nothing;
+    // and arming the marker is inert without a passphrase the user typed. The
+    // real bound is the marker's 5-minute TTL plus the wire-side constant-time
+    // proof check in `sync_daemon::server`.
+    //
+    // Role exclusivity now lives where the roles actually are: the UI, which
+    // requires an explicit host/joiner choice before either path can run. Making
+    // that unrepresentable in the *backend* type (a `PairingRole` enum replacing
+    // `Option<PairingSession>`) is the right end state and is scoped into the
+    // pairing rewrite on plan #3464, where the passphrase becomes an iroh ticket.
+
+    // The FE has no remote device_id at confirm time — the QR carries only the
+    // passphrase, and mDNS + TOFU establish the real peer on the first
+    // authenticated connection. So we set a persistent pending-pairing marker
+    // that wakes the dormant daemon to *accept* that first connection, instead
+    // of writing a junk empty-string `peer_refs` row (which used to be the only
+    // thing tripping `should_start_active`, but showed as a blank ghost peer and
+    // lingered forever). `_remote_device_id` is consequently always `""` from
+    // the FE; the old branch that pre-created a NULL-`cert_hash` `peer_ref` for
+    // a supplied device id was the CN-spoof pinning surface removed by #855.
+    //
+    // #855/#3463: the marker carries `pairing_proof` of the TYPED passphrase, so
+    // this device and the host end up holding the same proof — each can then
+    // both offer it (as initiator) and require it (as responder).
+    peer_refs::set_pending_pairing(pool, &pairing_proof(&passphrase)).await?;
+
+    // Clear the local offer session: this device is a joiner, and leaving its
+    // own competing passphrase on display invites the role confusion of #3463.
+    *lock_pairing_state(pairing_state)? = None;
+
+    // #3547: this is the confirm the whole #3502 fix exists to serve — the
+    // moment the two markers finally agree — and the wake below is the single
+    // wake that turns it into a dial. Every pre-confirm dial in this window was
+    // doomed by construction (the user had not typed yet), so any backoff they
+    // left behind is not evidence about *this* dial; it would just make the one
+    // that matters probabilistic. See `SyncScheduler::clear_backoff`.
+    scheduler.clear_backoff();
+    // #4297: same act, same reasoning — see `clear_unpaired_flags_on_pairing_act`.
+    clear_unpaired_flags_on_pairing_act(pool).await;
+
+    // Wake a dormant daemon (if any). Harmless if the daemon is
+    // already active — `notify_change` is debounced by
+    // `wait_for_debounced_change`.
+    scheduler.notify_change();
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
