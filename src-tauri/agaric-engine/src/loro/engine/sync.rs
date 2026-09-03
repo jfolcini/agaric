@@ -878,7 +878,7 @@ mod screen_inbound_blob_tests {
     //! #3443: contract pins for the one-decode inbound screen (#3213) that
     //! `sync_protocol::loro_sync::apply_remote` reads its fork verdict and its
     //! slot-delete condition off.
-    use super::{Counter, LoroEngine, PeerID, VersionVector};
+    use super::{Counter, LoroEngine, VersionVector};
 
     fn own_counter(e: &LoroEngine) -> Counter {
         VersionVector::decode(&e.version_vector())
