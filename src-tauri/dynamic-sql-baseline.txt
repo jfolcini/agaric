@@ -32,6 +32,7 @@
 1 src-tauri/agaric-store/src/fts/search/fetch.rs
 2 src-tauri/agaric-store/src/fts/strip.rs
 2 src-tauri/agaric-store/src/fts/toggle_filter.rs
+3 src-tauri/agaric-store/src/link_metadata/mod.rs
 2 src-tauri/agaric-store/src/op_log/bypass.rs
 2 src-tauri/agaric-store/src/pagination/properties.rs
 6 src-tauri/agaric-store/src/query/engine.rs
@@ -60,7 +61,6 @@
 5 src-tauri/src/db/pool.rs
 54 src-tauri/src/db/recovery.rs
 4 src-tauri/src/lib.rs
-3 src-tauri/src/link_metadata/mod.rs
 2 src-tauri/src/maintenance.rs
 4 src-tauri/src/materializer/coordinator.rs
 4 src-tauri/src/materializer/handlers/attachments.rs

@@ -477,7 +477,7 @@ mod tests {
     //! [`resolve_or_create_journal_page`]. The broader contract
     //! (today_journal/navigate_journal idempotency, quick-capture
     //! happy path) is covered by the
-    //! `command_integration_tests/page_integration` module; the tests
+    //! `tests/command_integration/page_integration` module; the tests
     //! here exercise the private resolver directly so the regression
     //! guards for the duplicate-page race and per-space scoping live
     //! next to the code they protect.

@@ -12,13 +12,9 @@ use agaric_lib::commands::{
     batch_resolve_inner, create_block_inner, edit_block_inner, get_batch_properties_inner,
     get_block_history_inner, get_block_inner, list_blocks_inner, set_property_inner,
 };
-// Inline copies of the test helpers, mirrored from
-// `agaric_lib::commands::tests::common`. The `tests` module is
-// `#[cfg(test)]`-gated so it is invisible to bench targets; duplicating
-// the constants + helper here is the simplest way to keep benches
-// self-contained without exposing test-only code in the production
-// surface. Mirror any signature change across both copies.
-const TEST_SPACE_ID: &str = "01TESTSPACE000000000000001";
+// #4499: `test-util` is on for bench targets (they resolve dev-dependencies),
+// so the shared fixture is reachable and the inline copies are gone.
+use agaric_lib::commands::tests::common::{TEST_SPACE_ID, assign_all_to_test_space};
 
 /// Base `op_log.created_at` value, epoch milliseconds (2025-01-15T12:00:00Z).
 /// `created_at` is INTEGER-NOT-NULL since migration 0079 (#109 Phase 2); the
@@ -26,38 +22,6 @@ const TEST_SPACE_ID: &str = "01TESTSPACE000000000000001";
 /// a monotonic per-op offset so ordering matches the old string ordering.
 const BASE_TS_MS: i64 = 1_736_942_400_000;
 
-async fn assign_all_to_test_space(pool: &SqlitePool) {
-    // A 'page' block must set `page_id = id` (migration 0073's
-    // `page_id_self_for_pages` CHECK); omitting it makes INSERT OR IGNORE
-    // silently drop the row, leaving TEST_SPACE_ID absent and the space_id FK
-    // below unsatisfiable.
-    sqlx::query(
-        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
-         VALUES (?, 'page', 'TestSpace', NULL, NULL, ?)",
-    )
-    .bind(TEST_SPACE_ID)
-    .bind(TEST_SPACE_ID)
-    .execute(pool)
-    .await
-    .unwrap();
-    // Register the page in the `spaces` registry (#708, migration 0089):
-    // `blocks.space_id` REFERENCES spaces(id), so the space owner must exist
-    // there before any block can point its space_id at it.
-    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
-        .bind(TEST_SPACE_ID)
-        .execute(pool)
-        .await
-        .unwrap();
-    // Space membership is the first-class `blocks.space_id` column (#533,
-    // migration 0086); the canonical filter is `b.space_id = ?` and `space`
-    // is a reserved key the 0088 CHECK forbids in `block_properties`.
-    sqlx::query("UPDATE blocks SET space_id = ? WHERE id <> ?")
-        .bind(TEST_SPACE_ID)
-        .bind(TEST_SPACE_ID)
-        .execute(pool)
-        .await
-        .unwrap();
-}
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
 

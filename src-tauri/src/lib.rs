@@ -9,14 +9,10 @@ pub mod appimage_integration;
 // honouring `AGARIC_DATA_DIR` and refusing to fall back to the real vault under
 // `AGARIC_E2E_SANDBOX`. Nothing else may call `app.path().app_data_dir()`.
 pub mod app_paths;
-#[cfg(test)]
-mod cache_app_tests;
 pub mod commands;
 pub mod dag;
 pub mod db;
 pub mod deeplink;
-#[cfg(test)]
-mod fts_app_tests;
 // `import` — the query-free markdown→spec parser lives in `agaric-engine`
 // (#2621, wave E4-import); consumers reach it via `agaric_engine::import::…`.
 // This app-side module hosts only the Tauri-integration seam
@@ -24,22 +20,11 @@ mod fts_app_tests;
 // the framework-free engine crate.
 pub mod import;
 pub mod lifecycle;
-pub mod link_metadata;
 pub mod maintenance;
 pub mod materializer;
 pub mod mcp;
-// The op_log tests that couple to app-only modules (`mcp::actor`, `dag`) could
-// not move down into the store with the rest of op_log's tests (#2621, wave
-// S3b-ii); they live here in the app crate instead.
-#[cfg(test)]
-mod op_log_app_tests;
-#[cfg(test)]
-mod pagination_app_tests;
-#[cfg(test)]
-mod peer_refs_app_tests;
 pub mod recovery;
 pub mod recurrence;
-pub mod reverse;
 // #2621 Sync-D: `snapshot` production moved into `agaric-sync`; `src/snapshot/
 // mod.rs` is now a shim that re-exports it and hosts the app-coupled tests.
 pub mod snapshot;
@@ -410,15 +395,7 @@ fn has_directive_for_target(filter: &str, target: &str) -> bool {
 #[cfg(test)]
 mod bulk_equivalence;
 #[cfg(test)]
-mod command_integration_tests;
-#[cfg(test)]
 mod integration_tests;
-/// TEST-PROPTEST-B (#150): shared seeded-DB proptest fixture harness —
-/// random valid block trees + op chains over a real pool. Reused by the
-/// Tier-B property tests (`reverse::proptest` for B1; materializer / sync
-/// for B2-B4).
-#[cfg(test)]
-mod proptest_db_harness;
 /// #3345 (programme #3351, theme T3): the reconciliation oracle — rebuild each
 /// covered derived artefact from base tables and diff it against the
 /// incrementally-maintained state. Consumed by
@@ -428,6 +405,9 @@ mod proptest_db_harness;
 mod reconciliation_oracle;
 // LoroSync end-to-end integration tests live in
 // `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).
+// #4499 phase 0d: the command suites, the command-integration suites and the
+// five `*_app_tests` modules left this crate for the `commands`,
+// `command_integration` and `app_tests` binaries under `src-tauri/tests/`.
 
 /// Wrap a boot-time `SELECT COUNT(*)` result so DB errors get a tracing
 /// breadcrumb instead of being silently coerced to `0`. The fall-through
@@ -1305,7 +1285,7 @@ fn spawn_boot_maintenance(
         let materializer_handle = materializer.clone();
         tauri::async_runtime::spawn(async move {
             // Clean up stale link metadata entries (>30 days, non-auth).
-            match crate::link_metadata::cleanup_stale(&write_pool, 30).await {
+            match agaric_store::link_metadata::cleanup_stale(&write_pool, 30).await {
                 Ok(deleted) => {
                     if deleted > 0 {
                         tracing::info!(deleted, "cleaned up stale link metadata entries");

@@ -72,5 +72,5 @@ The Rust side is a Cargo workspace rooted at `src-tauri/`. Its members (see `[wo
 - **Schema / migrations**: `src-tauri/migrations/*.sql` (auto-run; `sqlx` compile-time validated; offline caches in `.sqlx/`, one per crate that holds query macros).
 - **Frontend code**: `src/` (components, editor, hooks, stores, lib).
 - **Bindings**: `src/lib/bindings.ts` (specta-generated; checked in; CI fails on drift). Frontend call sites are mid-migration (#2927) from the hand-written wrappers in `src/lib/tauri/` onto the generated bindings; `src/lib/tauri.ts` is now just a barrel re-exporting that directory.
-- **Tests**: Rust unit + integration tests are colocated under `src-tauri/` as `#[cfg(test)] mod tests`, `*/tests.rs`, `integration_tests.rs`, and `command_integration_tests/` — see [`src-tauri/tests/AGENTS.md`](../src-tauri/tests/AGENTS.md) for the layering. Frontend tests live in `src/**/__tests__/`, e2e specs in `e2e/`.
+- **Tests**: Rust unit + integration tests are colocated under `src-tauri/` as `#[cfg(test)] mod tests`, `*/tests.rs`, `integration_tests.rs`, and `tests/command_integration/` — see [`src-tauri/tests/AGENTS.md`](../src-tauri/tests/AGENTS.md) for the layering. Frontend tests live in `src/**/__tests__/`, e2e specs in `e2e/`.
 - **Backlog**: tracked on the GitHub issue tracker.

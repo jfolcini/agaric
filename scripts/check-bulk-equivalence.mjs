@@ -169,9 +169,10 @@ const APP_SRC_DIR = path.join(TAURI_DIR, 'src')
 const BASELINE_FILE = path.join(ROOT, 'scripts', 'bulk-equivalence-baseline.json')
 
 /**
- * Every Rust source root in the workspace: the app crate plus every sibling
- * crate under `src-tauri/`. DISCOVERED, never hardcoded — a crate added
- * tomorrow is in scope tomorrow. Returned sorted so output order is stable.
+ * Every Rust source root in the workspace: the app crate, its integration
+ * tests, and every sibling crate under `src-tauri/`. DISCOVERED, never hardcoded — a crate added
+ * tomorrow is in scope tomorrow. App roots first, then the sibling crates in name order, so
+ * output order is stable.
  *
  * @param {string} tauriDir
  * @returns {string[]}
@@ -179,6 +180,9 @@ const BASELINE_FILE = path.join(ROOT, 'scripts', 'bulk-equivalence-baseline.json
 export function sourceRoots(tauriDir) {
   const roots = []
   if (fs.existsSync(path.join(tauriDir, 'src'))) roots.push(path.join(tauriDir, 'src'))
+  // #4499: the app crate's suites are integration binaries under
+  // `src-tauri/tests/`, and a `covered` entry's equivalence test lives there.
+  if (fs.existsSync(path.join(tauriDir, 'tests'))) roots.push(path.join(tauriDir, 'tests'))
   if (!fs.existsSync(tauriDir)) return roots
   for (const entry of fs
     .readdirSync(tauriDir, { withFileTypes: true })
@@ -186,6 +190,10 @@ export function sourceRoots(tauriDir) {
     if (!entry.isDirectory() || entry.name === 'src') continue
     const src = path.join(tauriDir, entry.name, 'src')
     if (fs.existsSync(src)) roots.push(src)
+    // A member's own integration binaries (`agaric-engine/tests/` holds the
+    // `compute_reverse_batch` oracle since #4499 phase 1).
+    const tests = path.join(tauriDir, entry.name, 'tests')
+    if (fs.existsSync(tests)) roots.push(tests)
   }
   return roots
 }
@@ -195,12 +203,7 @@ export function sourceRoots(tauriDir) {
  * declarations carry `#[cfg(test)]` in `lib.rs` rather than in the file
  * itself, so no amount of in-file scanning finds them.
  */
-const TEST_PATH_SEGMENTS = new Set([
-  'tests',
-  'command_integration_tests',
-  'bulk_equivalence',
-  'reconciliation_oracle',
-])
+const TEST_PATH_SEGMENTS = new Set(['tests', 'bulk_equivalence', 'reconciliation_oracle'])
 const TEST_FILE_RE =
   /(^tests?\.rs$)|(_tests?\.rs$)|(^integration_tests\.rs$)|(proptest)|(^conformance(_snapshot)?\.rs$)|(^proptest_db_harness\.rs$)/
 
@@ -568,7 +571,7 @@ export function inventory({ root, srcDirs, pinned = new Set() }) {
   for (const srcDir of srcDirs) {
     for (const file of listRustFiles(srcDir)) {
       const rel = toPosix(path.relative(root, file))
-      if (isTestPath(toPosix(path.relative(srcDir, file)))) continue
+      if (isTestPath(rel)) continue
       const src = fs.readFileSync(file, 'utf8')
       for (const { name, kind } of scanFile(src, (n) => pinned.has(`${rel}::${n}`))) {
         // A name can legitimately appear once per file; keep the first (and

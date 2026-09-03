@@ -29,7 +29,7 @@ const MAX_TREE_DEPTH = 1000
 /**
  * Maximum nesting depth the backend permits for a block subtree (#928). Mirrors
  * the Rust `MAX_BLOCK_DEPTH` in `src-tauri/agaric-store/src/block_descendants.rs`
- * (pinned by the `move_block` depth-limit tests in `commands/tests/block_cmd_tests.rs`).
+ * (pinned by the `move_block` depth-limit tests in `src-tauri/tests/commands/block_cmd_tests.rs`).
  * Depth is 0-based here (root-level blocks are depth 0), so the deepest legal
  * block depth is `MAX_BLOCK_DEPTH - 1`. The frontend uses this to PREVENT an
  * over-deep drop/indent up front instead of letting the IPC fail with an error

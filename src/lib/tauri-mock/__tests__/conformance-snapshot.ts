@@ -2,7 +2,7 @@
  * #763 — the shared normalized-snapshot builder (TS / tauri-mock side).
  *
  * This is the TS twin of the Rust snapshot builder at
- * `src-tauri/src/command_integration_tests/conformance_snapshot.rs`. It must
+ * `src-tauri/tests/command_integration/conformance_snapshot.rs`. It must
  * produce a snapshot that is BYTE-IDENTICAL (after canonical key sorting) to
  * the one the backend authors for the same logical state. Keep the two in
  * lockstep — the canonical id relabeling, field projection, sort order, and

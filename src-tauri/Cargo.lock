@@ -76,7 +76,6 @@ dependencies = [
  "proptest",
  "rand 0.10.2",
  "regex",
- "reqwest",
  "rfd",
  "rmcp",
  "rustc-hash",
@@ -111,7 +110,6 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "url",
- "wiremock",
  "zstd",
 ]
 
@@ -153,6 +151,7 @@ name = "agaric-engine"
 version = "0.1.0"
 dependencies = [
  "agaric-core",
+ "agaric-engine",
  "agaric-store",
  "chrono",
  "insta",
@@ -205,6 +204,7 @@ dependencies = [
  "iroh-base",
  "proptest",
  "regex",
+ "reqwest",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -215,6 +215,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+ "url",
+ "wiremock",
 ]
 
 [[package]]

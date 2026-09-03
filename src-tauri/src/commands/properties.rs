@@ -24,16 +24,16 @@ use super::*;
 /// Declared once here (rather than re-typed as a literal at each
 /// `validate_reserved_property_value` call site) so a future seed
 /// change only needs one edit; `todo_state_and_priority_fallback_defaults_match_seeded_options`
-/// (in `commands::tests::property_cmd_tests`) asserts this constant
+/// (in `src-tauri/tests/commands/property_cmd_tests.rs`) asserts this constant
 /// stays in sync with the actual seeded options as a drift guard
 /// (#3124 — the fallback previously omitted CANCELLED).
-pub(crate) const TODO_STATE_FALLBACK_DEFAULTS: &[&str] = &["TODO", "DOING", "DONE", "CANCELLED"];
+pub const TODO_STATE_FALLBACK_DEFAULTS: &[&str] = &["TODO", "DOING", "DONE", "CANCELLED"];
 
 /// Built-in fallback vocabulary for the `priority` reserved key —
 /// must mirror the live `property_definitions.options` seeded by
 /// migration 0014 (`["1","2","3"]`, never changed since). See
 /// [`TODO_STATE_FALLBACK_DEFAULTS`] for why this is a named constant.
-pub(crate) const PRIORITY_FALLBACK_DEFAULTS: &[&str] = &["1", "2", "3"];
+pub const PRIORITY_FALLBACK_DEFAULTS: &[&str] = &["1", "2", "3"];
 
 /// Defensive fallback validation for reserved property
 /// keys (`todo_state`, `priority`) when the corresponding row in
@@ -2169,7 +2169,7 @@ pub async fn delete_property_def(
 /// which reinstates #4382's trap for those two types — left all 518 property
 /// tests green. The matrix below is the missing pin; the arms are also
 /// exercised end-to-end through the command path in
-/// `commands::tests::property_cmd_tests`
+/// `src-tauri/tests/commands/property_cmd_tests.rs`
 /// (`create_property_def_admits_stored_refs_under_text_4399`,
 /// `create_property_def_refuses_ref_and_boolean_over_stored_text_4399`),
 /// which is what proves the mirror agrees with the real engine rather than

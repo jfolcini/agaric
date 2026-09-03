@@ -1415,7 +1415,8 @@ export function findFiringAssertions(stripped, testRegions, tokens, seed = ZERO_
 
 /**
  * The directories the scan descends into, repo-relative, sorted:
- * `src-tauri/src` plus the `src` of EVERY sibling crate directory —
+ * `src-tauri/src`, `src-tauri/tests` (the integration-test binaries), plus
+ * the `src` and `tests` of EVERY sibling crate directory —
  * `agaric-core`, …, and `diagnostics`, which an `agaric-`-prefix filter
  * silently excluded even though it is a real workspace member that could
  * declare a counter tomorrow. `scripts/` is NOT among them, which is why this
@@ -1434,11 +1435,20 @@ export function scanRoots(root) {
   const roots = []
   const tauri = path.join(root, 'src-tauri')
   if (existsSync(path.join(tauri, 'src'))) roots.push(path.join(tauri, 'src'))
+  // #4499 phase 0d moved the app crate's suites into integration-test binaries
+  // under `src-tauri/tests/`. They are where the firing tests for the
+  // `QueueMetrics` counters live, and a root shaped `<dir>/src` cannot reach
+  // them, so the move alone turned two proven metrics unproven. `isTestPath`
+  // already classifies anything under a `tests/` segment as test code.
+  if (existsSync(path.join(tauri, 'tests'))) roots.push(path.join(tauri, 'tests'))
   if (existsSync(tauri)) {
     for (const entry of readdirSync(tauri, { withFileTypes: true })) {
       if (!entry.isDirectory() || SKIP_DIRS.has(entry.name)) continue
       const dir = path.join(tauri, entry.name)
       if (existsSync(path.join(dir, 'src'))) roots.push(path.join(dir, 'src'))
+      // A member's own integration binaries (`agaric-engine/tests/` since
+      // #4499 phase 1) hold firing tests the same way `src-tauri/tests/` does.
+      if (existsSync(path.join(dir, 'tests'))) roots.push(path.join(dir, 'tests'))
       // One level deeper, for a `crates/`-style container. #3349 scanned only
       // `src-tauri/<crate>/src`, so moving a counter-declaring crate under
       // `src-tauri/crates/` would have removed it from the surface with no
@@ -2387,9 +2397,17 @@ function runSelfTest() {
   const live = analyze({ root: ROOT })
   const roots = scanRoots(ROOT)
   expect(
-    'the scan roots are exactly the crate sources under src-tauri/ (no scripts/)',
+    'the scan roots are exactly the crate sources and test binaries under src-tauri/ (no scripts/)',
     roots.length > 1 &&
-      roots.every((r) => r === 'src-tauri/src' || /^src-tauri\/[^/]+(?:\/[^/]+)?\/src$/.test(r)),
+      roots.includes('src-tauri/tests') &&
+      roots.includes('src-tauri/agaric-engine/tests') &&
+      roots.every(
+        (r) =>
+          r === 'src-tauri/src' ||
+          r === 'src-tauri/tests' ||
+          /^src-tauri\/[^/]+\/tests$/.test(r) ||
+          /^src-tauri\/[^/]+(?:\/[^/]+)?\/src$/.test(r),
+      ),
     JSON.stringify(roots),
   )
   // The SCOPE ratchet. `live.metrics.length >= 25` against a live surface of

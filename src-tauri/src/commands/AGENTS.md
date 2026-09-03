@@ -6,7 +6,7 @@ Root [`AGENTS.md`](../../../AGENTS.md) covers cross-cutting invariants (error sh
 
 Every command is two functions:
 
-1. **`*_inner`** — the logic. Takes `&SqlitePool` (not `State`), returns `Result<T, AppError>`, no `#[tauri::command]`. Tested from `src-tauri/src/commands/tests/`.
+1. **`*_inner`** — the logic. Takes `&SqlitePool` (not `State`), returns `Result<T, AppError>`, no `#[tauri::command]`. Tested from `src-tauri/tests/commands/`.
 2. **`*`** — thin wrapper with `#[tauri::command] #[specta::specta]`. Resolves `State`, delegates, ends with `.map_err(sanitize_internal_error)`. No business logic.
 
 ```rust
@@ -122,7 +122,7 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob)); // tests
 
 ## Testing
 
-Every `_inner` gets a test in `src-tauri/src/commands/tests/` using `test_pool()` + `TempDir` (see [`src-tauri/tests/AGENTS.md`](../../tests/AGENTS.md)):
+Every `_inner` gets a test in `src-tauri/tests/commands/` using `test_pool()` + `TempDir` (see [`src-tauri/tests/AGENTS.md`](../../tests/AGENTS.md)):
 
 - Happy path
 - Bulk commands: empty-list rejection, oversize-list rejection, op-log seq range contiguity

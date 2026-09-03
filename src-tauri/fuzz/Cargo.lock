@@ -71,7 +71,6 @@ dependencies = [
  "notify-rust",
  "rand 0.10.2",
  "regex",
- "reqwest",
  "rfd",
  "rmcp",
  "rustc-hash",
@@ -187,6 +186,7 @@ dependencies = [
  "futures-util",
  "iroh-base",
  "regex",
+ "reqwest",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -195,6 +195,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ulid",
+ "url",
 ]
 
 [[package]]

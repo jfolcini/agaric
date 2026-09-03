@@ -144,7 +144,7 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
 /// (under the `BEGIN IMMEDIATE` writer lock, on every delete/purge) was pure
 /// O(vault) waste. Proven equivalent by
 /// `{delete,purge}_content_subtree_inheritance_matches_full_rebuild_2934` in
-/// `command_integration_tests::conformance`.
+/// `command_integration::conformance`.
 ///
 /// RESTORE is DELIBERATELY EXCLUDED from this narrowing — historically its
 /// scoped `tag_inheritance::recompute_subtree_inheritance` did NOT reproduce
@@ -224,7 +224,7 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
 /// #3876 removed the exclusion and settled the table's definition on
 /// `rebuild_all`'s; that fixture now converges, pinned by
 /// `restore_content_subtree_inheritance_matches_rebuild_3876` in
-/// `command_integration_tests::conformance`. The rebuild is RETAINED here
+/// `command_integration::conformance`. The rebuild is RETAINED here
 /// anyway: narrowing restore to [`CONTENT_LIFECYCLE_REBUILD_TASKS`] is a
 /// separate change that must first rule out the remaining divergence classes
 /// (notably the `inherited_from` provenance class pinned by

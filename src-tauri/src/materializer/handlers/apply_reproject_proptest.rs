@@ -59,10 +59,12 @@
 //!   `block_properties` / `block_links` SQL state.
 
 use crate::db::init_pool;
-use crate::proptest_db_harness::{HARNESS_DEVICE, op_chain_strategy, resolve_chain, ts_for};
 use agaric_core::ulid::BlockId;
 use agaric_engine::loro::projection::reproject_dense_positions;
 use agaric_engine::loro::registry::LoroEngineRegistry;
+use agaric_engine::proptest_db_harness::{
+    HARNESS_DEVICE, op_chain_strategy, resolve_chain, ts_for,
+};
 use agaric_store::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload};
 use agaric_store::op_log::{OpRecord, append_local_op_at};
 use agaric_store::space::SpaceId;
@@ -1431,7 +1433,7 @@ async fn build_peer_snapshot(
     name: &str,
     device_id: &str,
     base: &[u8],
-    sketches: &[crate::proptest_db_harness::OpKind],
+    sketches: &[agaric_engine::proptest_db_harness::OpKind],
 ) -> Result<Vec<u8>, TestCaseError> {
     state.registry.clear();
     let (pool, _dir) = fresh_pool(name).await;

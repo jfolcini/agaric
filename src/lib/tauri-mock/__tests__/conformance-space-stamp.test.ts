@@ -1,6 +1,6 @@
 /**
  * #3833 item 1 — `stampMockSpace` must be the MIRROR of the Rust harness's
- * `assign_all_to_test_space` (`src-tauri/src/command_integration_tests/common.rs`),
+ * `assign_all_to_test_space` (`src-tauri/tests/command_integration/common.rs`),
  * not merely its rough equivalent.
  *
  * The two functions place a fixture's rows in the harness space on their own

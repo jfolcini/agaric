@@ -138,7 +138,7 @@ export function isInvalidOperation(
  * Was this an "op has no applicable inverse" rejection? #3353 —
  * `undoOp`/`undoOps`/`redoPageOp` reject with this kind when the backend
  * cannot reverse the target: `purge_block` has no inverse at all
- * (`src-tauri/src/reverse/mod.rs`), an `edit_block` whose prior text is
+ * (`src-tauri/agaric-engine/src/reverse/mod.rs`), an `edit_block` whose prior text is
  * unreconstructible has none either (`reverse/block_ops.rs`), and the
  * reverse-move preflight (`src-tauri/src/commands/history.rs`) refuses a
  * move whose prior parent is gone/soft-deleted or has become a descendant

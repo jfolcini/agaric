@@ -1,0 +1,511 @@
+//! Reverse functions for property ops (set, delete).
+
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
+use agaric_store::op_log::OpRecord;
+use sqlx::SqlitePool;
+
+struct PriorPropertyRow {
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+    /// Undoing `set_property` / `delete_property` must restore the
+    /// prior typed value across all five columns. Dropping `value_bool` here
+    /// would silently emit an all-None payload that fails
+    /// `validate_set_property` (count == 0) when the prior op was a boolean.
+    value_bool: Option<bool>,
+}
+
+pub async fn reverse_set_property(
+    pool: &SqlitePool,
+    record: &OpRecord,
+) -> Result<OpPayload, AppError> {
+    let payload: SetPropertyPayload = serde_json::from_str(&record.payload)?;
+    let prior = find_prior_property(
+        pool,
+        payload.block_id.as_str(),
+        &payload.key,
+        record.created_at,
+        record.seq,
+        &record.device_id,
+    )
+    .await?;
+    match prior {
+        Some(p) => Ok(OpPayload::SetProperty(SetPropertyPayload {
+            block_id: payload.block_id,
+            key: payload.key,
+            value_text: p.value_text,
+            value_num: p.value_num,
+            value_date: p.value_date,
+            value_ref: p.value_ref.map(BlockId::from),
+            value_bool: p.value_bool,
+        })),
+        None => Ok(OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: payload.block_id,
+            key: payload.key,
+        })),
+    }
+}
+
+pub async fn reverse_delete_property(
+    pool: &SqlitePool,
+    record: &OpRecord,
+) -> Result<OpPayload, AppError> {
+    let payload: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
+    let prior = find_prior_property(
+        pool,
+        payload.block_id.as_str(),
+        &payload.key,
+        record.created_at,
+        record.seq,
+        &record.device_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        AppError::NotFound(format!(
+            "no prior set_property found for block '{}' key '{}' — cannot reverse delete_property",
+            payload.block_id, payload.key
+        ))
+    })?;
+    Ok(OpPayload::SetProperty(SetPropertyPayload {
+        block_id: payload.block_id,
+        key: payload.key,
+        value_text: prior.value_text,
+        value_num: prior.value_num,
+        value_date: prior.value_date,
+        value_ref: prior.value_ref.map(BlockId::from),
+        value_bool: prior.value_bool,
+    }))
+}
+
+async fn find_prior_property(
+    pool: &SqlitePool,
+    block_id: &str,
+    key: &str,
+    created_at: i64,
+    seq: i64,
+    device_id: &str,
+) -> Result<Option<PriorPropertyRow>, AppError> {
+    // Switch the block_id predicate from `json_extract(payload, '$.block_id')`
+    // to the indexed `block_id` column added by migration 0030 (idx_op_log_block_id).
+    // The key predicate stays on `json_extract` — there is no covering index for
+    // (block_id, key), but the block_id filter alone narrows the scan dramatically.
+    //
+    // Per AGENTS.md invariant #8 (ULID uppercase normalization for blake3
+    // determinism), uppercase the bound parameter before binding so it matches
+    // The canonical form stored in the indexed column. Mirrors the fix in
+    // block_ops.rs and recovery/draft_recovery.rs:84.
+    let bid_upper = block_id.to_ascii_uppercase();
+    // #181: the prior value of a property is whatever the MOST RECENT op
+    // touching (block, key) left it as — which may be a `delete_property`,
+    // not just a `set_property`. Querying only `set_property` rows ignores
+    // an intervening delete, so for `Set(K="A"); Delete(K); Set(K="a")` the
+    // prior state of the final Set is ABSENT (the property had been deleted),
+    // and its reverse must be `DeleteProperty(K)` — not a resurrected
+    // `SetProperty(K="A")`. So consider BOTH op types and inspect the single
+    // most-recent one: if it is a `delete_property`, the prior state is None.
+    // #382: the op_log PK is `(device_id, seq)` and `seq` is a PER-DEVICE
+    // counter, so the "strictly before" predicate must tie-break on the
+    // full canonical `(created_at, seq, device_id)` total order (the same
+    // order used by `commands/history.rs` and `pagination/history.rs`).
+    // Omitting `device_id` leaves the bound ambiguous when two devices
+    // share a `(created_at, seq)` pair.
+    // #3646 seeded that collision (`reverse_set_property_tie_breaks_on_device_id_3646`)
+    // and found this one scan's `ORDER BY … device_id DESC` to be an
+    // EQUIVALENT MUTANT today: the plan is
+    // `SEARCH op_log USING INDEX idx_op_log_block_key_created`, whose key is
+    // `(block_id, json_extract(payload,'$.key'), created_at, seq, device_id)`,
+    // so the index already yields the `device_id` tie-break and deleting the
+    // clause returns the same row (verified with `EXPLAIN QUERY PLAN`). Do
+    // NOT read that as "the clause is dead code": the index is free to change,
+    // and the ORDER BY is what states the required order independently of it.
+    // The three sibling scans (block text, block position, attachment) have no
+    // such covering index and DO redden when the tie-break is removed.
+    // #2549: `AND is_replicated = 0` — the prior value of a property must be
+    // reconstructed from locally-applied set/delete ops only. #2495 audit-only
+    // replicated rows (`is_replicated = 1`) were never applied to local state,
+    // so honouring one here would resurrect a property value this device never
+    // held. Mirrors `block_ops::find_prior_text` / `find_prior_position`.
+    let row = sqlx::query!(
+        "SELECT op_type, payload FROM op_log \
+         WHERE block_id = ?1 \
+           AND json_extract(payload, '$.key') = ?2 \
+           AND op_type IN ('set_property', 'delete_property') \
+           AND is_replicated = 0 \
+           AND (created_at < ?3 \
+                OR (created_at = ?3 AND (seq < ?4 OR (seq = ?4 AND device_id < ?5)))) \
+         ORDER BY created_at DESC, seq DESC, device_id DESC \
+         LIMIT 1",
+        bid_upper,
+        key,
+        created_at,
+        seq,
+        device_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    match row {
+        // Most recent prior op was a set — its value is the prior state.
+        Some(r) if r.op_type == "set_property" => {
+            let p: SetPropertyPayload = serde_json::from_str(&r.payload)?;
+            Ok(Some(PriorPropertyRow {
+                value_text: p.value_text,
+                value_num: p.value_num,
+                value_date: p.value_date,
+                value_ref: p.value_ref.map(BlockId::into_string),
+                value_bool: p.value_bool,
+            }))
+        }
+        // Most recent prior op was a delete (or there is no prior op at all):
+        // the property was ABSENT immediately before the op being reversed.
+        _ => Ok(None),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inline tests for the indexed `block_id` predicate switch.
+// ---------------------------------------------------------------------------
+//
+// These tests verify that `reverse_set_property` / `reverse_delete_property`
+// correctly use the indexed `op_log.block_id` column (added in migration
+// 0030) to scope the prior-value lookup to a single block, rather than
+// relying on `json_extract(payload, '$.block_id')` which performs a
+// full-table JSON scan.
+//
+// Coverage:
+//   * `reverse_set_property_uses_block_id_column` — multi-block seed,
+//     correct prior is returned.
+//   * `reverse_delete_property_uses_block_id_column` — analogous.
+//   * `reverse_set_property_uppercase_normalization` — lowercase input
+//     to the inner helper still finds prior data stored under its
+//     canonical uppercase ULID form.
+#[cfg(test)]
+mod tests_m64 {
+    use super::*;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
+    use agaric_store::op_log::{OpRecord, append_local_op_at};
+    use agaric_store::test_support::test_pool;
+
+    const TEST_DEVICE: &str = "test-device";
+
+    async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: i64) -> OpRecord {
+        append_local_op_at(pool, TEST_DEVICE, payload, ts)
+            .await
+            .unwrap()
+    }
+
+    /// Seed two blocks with `set_property` ops sharing the same key, then
+    /// reverse a later `set_property` on block A. The result must reflect
+    /// block A's prior value, not block B's — proving the block_id
+    /// predicate actually scopes the lookup.
+    #[tokio::test]
+    async fn reverse_set_property_uses_block_id_column() {
+        let (pool, _dir) = test_pool().await;
+
+        // Block A: priority=low, then priority=high (the "current" op
+        // we will reverse).
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK_M64A"),
+                key: "priority".into(),
+                value_text: Some("low".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_400_000,
+        )
+        .await;
+
+        // Block B: priority=DECOY at a strictly later timestamp than the
+        // BLK_M64A "low" op. If the query failed to scope by block_id,
+        // the ORDER BY created_at DESC would surface this row instead of
+        // BLK_M64A's "low".
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK_M64B"),
+                key: "priority".into(),
+                value_text: Some("decoy".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_430_000,
+        )
+        .await;
+
+        // Block A: priority=high — the op we are reversing.
+        let rec = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK_M64A"),
+                key: "priority".into(),
+                value_text: Some("high".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_460_000,
+        )
+        .await;
+
+        let reverse = reverse_set_property(&pool, &rec).await.unwrap();
+        match reverse {
+            OpPayload::SetProperty(p) => {
+                assert_eq!(p.block_id, "BLK_M64A");
+                assert_eq!(
+                    p.value_text,
+                    Some("low".into()),
+                    "prior must come from block A, not the later decoy on block B"
+                );
+            }
+            other => panic!("expected SetProperty, got {other:?}"),
+        }
+    }
+
+    /// Same shape as above but for `reverse_delete_property`: two blocks,
+    /// same key, ensure we recover block A's prior text (not block B's).
+    #[tokio::test]
+    async fn reverse_delete_property_uses_block_id_column() {
+        let (pool, _dir) = test_pool().await;
+
+        // Block A: color=red.
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK_M64C"),
+                key: "color".into(),
+                value_text: Some("red".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_400_000,
+        )
+        .await;
+
+        // Block B: color=green at a later ts. If the predicate is not
+        // scoped by block_id, the ORDER BY would surface this row.
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK_M64D"),
+                key: "color".into(),
+                value_text: Some("green".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_430_000,
+        )
+        .await;
+
+        // The op we are reversing: delete color from block A.
+        let rec = append_op(
+            &pool,
+            OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: BlockId::test_id("BLK_M64C"),
+                key: "color".into(),
+            }),
+            1_736_942_460_000,
+        )
+        .await;
+
+        let reverse = reverse_delete_property(&pool, &rec).await.unwrap();
+        match reverse {
+            OpPayload::SetProperty(p) => {
+                assert_eq!(p.block_id, "BLK_M64C");
+                assert_eq!(
+                    p.value_text,
+                    Some("red".into()),
+                    "prior must come from block A, not block B's later set"
+                );
+            }
+            other => panic!("expected SetProperty, got {other:?}"),
+        }
+    }
+
+    /// Invariant #8 (ULID uppercase normalization): calling the inner
+    /// helper with a lowercase block_id must find the same row as
+    /// uppercase, because the bound parameter is uppercased before
+    /// sqlx binds it. The op_log row stores `BlockId` payloads in
+    /// canonical uppercase via the BlockId Deserialize impl, so
+    /// without the uppercase step a lowercase caller would silently
+    /// miss every prior set.
+    #[tokio::test]
+    async fn reverse_set_property_uppercase_normalization() {
+        let (pool, _dir) = test_pool().await;
+
+        // BlockId always stores/serializes uppercase, so the indexed
+        // column in op_log holds "BLK_M64E_NORM".
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::test_id("BLK_M64E_NORM"),
+                key: "status".into(),
+                value_text: Some("draft".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_400_000,
+        )
+        .await;
+
+        // Reference call with the canonical (uppercase) form.
+        let upper = find_prior_property(
+            &pool,
+            "BLK_M64E_NORM",
+            "status",
+            1_736_942_460_000,
+            i64::MAX,
+            TEST_DEVICE,
+        )
+        .await
+        .unwrap()
+        .expect("uppercase lookup must find the seeded set_property");
+
+        // Lowercase input — the implementation must uppercase before
+        // binding, otherwise the index lookup silently returns nothing.
+        let lower = find_prior_property(
+            &pool,
+            "blk_m64e_norm",
+            "status",
+            1_736_942_460_000,
+            i64::MAX,
+            TEST_DEVICE,
+        )
+        .await
+        .unwrap()
+        .expect("lowercase lookup must find the same row after uppercasing");
+
+        assert_eq!(upper.value_text, Some("draft".into()));
+        assert_eq!(
+            lower.value_text, upper.value_text,
+            "lowercase block_id must yield the same prior as uppercase"
+        );
+        assert_eq!(lower.value_num, upper.value_num);
+        assert_eq!(lower.value_date, upper.value_date);
+        assert_eq!(lower.value_ref, upper.value_ref);
+    }
+
+    /// #2201 Tier-3 item 6: the reverse lookup gained an expression index
+    /// `idx_op_log_block_key_created` on
+    /// `(block_id, json_extract(payload,'$.key'), created_at, seq, device_id)`
+    /// (migration 0098). The index is purely additive — it must not change
+    /// which prior row `find_prior_property` selects. This drives a
+    /// `Set -> Delete -> Set` history for a single key and asserts the reverse
+    /// of every op is byte-identical to the pre-index semantics:
+    ///   * reverse of the FINAL set  -> DeleteProperty (property was absent,
+    ///     having been deleted before the final set),
+    ///   * reverse of the delete     -> SetProperty("A") (the first set),
+    ///   * reverse of the FIRST set  -> DeleteProperty (no prior op at all).
+    /// A decoy op on a different key at a later timestamp guards against the
+    /// index widening the equality seek past the `$.key` predicate.
+    #[tokio::test]
+    async fn reverse_across_set_delete_set_history_is_index_stable() {
+        let (pool, _dir) = test_pool().await;
+        let blk = || BlockId::test_id("BLK_2201_IDX");
+
+        // 1) Set space="A".
+        let first_set = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: blk(),
+                key: "space".into(),
+                value_text: Some("A".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_400_000,
+        )
+        .await;
+
+        // 2) Delete space.
+        let delete = append_op(
+            &pool,
+            OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: blk(),
+                key: "space".into(),
+            }),
+            1_736_942_430_000,
+        )
+        .await;
+
+        // Decoy: a DIFFERENT key on the SAME block at a later ts. If the
+        // expression index let the `$.key` equality leak, this row could be
+        // surfaced by the ORDER BY for the `space` lookups below.
+        append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: blk(),
+                key: "title".into(),
+                value_text: Some("decoy".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_445_000,
+        )
+        .await;
+
+        // 3) Set space="a" (final).
+        let final_set = append_op(
+            &pool,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: blk(),
+                key: "space".into(),
+                value_text: Some("a".into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+            1_736_942_460_000,
+        )
+        .await;
+
+        // Reverse of the final set: prior state is ABSENT (deleted), so the
+        // reverse must be a DeleteProperty, NOT a resurrected SetProperty("A").
+        match reverse_set_property(&pool, &final_set).await.unwrap() {
+            OpPayload::DeleteProperty(p) => {
+                assert_eq!(p.block_id, "BLK_2201_IDX");
+                assert_eq!(p.key, "space");
+            }
+            other => panic!("expected DeleteProperty for final set, got {other:?}"),
+        }
+
+        // Reverse of the delete: prior is the first set, value "A".
+        match reverse_delete_property(&pool, &delete).await.unwrap() {
+            OpPayload::SetProperty(p) => {
+                assert_eq!(p.block_id, "BLK_2201_IDX");
+                assert_eq!(p.key, "space");
+                assert_eq!(p.value_text, Some("A".into()));
+            }
+            other => panic!("expected SetProperty for delete, got {other:?}"),
+        }
+
+        // Reverse of the first set: no prior op -> DeleteProperty.
+        match reverse_set_property(&pool, &first_set).await.unwrap() {
+            OpPayload::DeleteProperty(p) => {
+                assert_eq!(p.block_id, "BLK_2201_IDX");
+                assert_eq!(p.key, "space");
+            }
+            other => panic!("expected DeleteProperty for first set, got {other:?}"),
+        }
+    }
+}

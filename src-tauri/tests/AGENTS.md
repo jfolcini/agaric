@@ -7,10 +7,27 @@
 | Layer | Where | What |
 |---|---|---|
 | Unit | `#[cfg(test)] mod tests` in the module, or a sibling `tests.rs` | Single-module logic |
-| Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/src/command_integration_tests/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
-| Conformance | `src-tauri/src/command_integration_tests/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
+| Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/tests/command_integration/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
+| Conformance | `src-tauri/tests/command_integration/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
 | Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/src/sync_daemon/tests.rs`, `src-tauri/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer |
 | Bench | `src-tauri/benches/*.rs` (`harness = false`) | Criterion microbenchmarks; weekly CI lane only, see `src-tauri/benches/AGENTS.md` |
+
+### The three integration-test binaries
+
+`src-tauri/tests/` holds `app_tests/`, `commands/` and `command_integration/`,
+each a directory with a `main.rs` root and its suites as sibling modules. The
+`main.rs` shape is load-bearing: for a *crate root*, `mod foo;` resolves against
+the root's own directory, so a `tests/commands.rs` root would look for
+`tests/foo.rs`, not `tests/commands/foo.rs` (E0583). Cargo auto-discovers
+`tests/<name>/main.rs` and names the binary `<name>`, so no `[[test]]` entry is
+needed.
+
+One binary per group, not per file: every integration-test root links
+`agaric_lib` afresh, and the module tree gives the same isolation for free.
+Inside them `crate::` means the test binary, so lib paths are `agaric_lib::`,
+and anything they reach must be visible to an external crate — either `pub`, or
+`#[cfg(any(test, feature = "test-util"))]` where it must stay out of a release
+build (`commands::tests::common` is the fixture that takes this route).
 
 `src-tauri/src/lib.rs` also carries `specta_tests` (TypeScript binding verification) and the `log_bridge_tests` / `boot_path_tests` / `log_dir_tests` modules.
 
@@ -28,7 +45,7 @@ cargo test --doc --workspace                          # doctests only — nextes
 
 cargo nextest run --workspace -E 'test(create_block_returns)'   # by name substring
 cargo nextest run -p agaric -E 'test(op_log::)'                 # by module
-cargo nextest run -p agaric -E 'test(command_integration_tests::)'
+cargo nextest run -p agaric -E 'binary(command_integration)'    # one whole test binary
 cargo nextest run -p agaric -E 'test(convergence)'
 
 cargo insta test                                      # writes .snap.new for changed snapshots
@@ -37,7 +54,7 @@ cargo insta review                                    # accept / reject
 cargo nextest run -p agaric -E 'test(specta_tests::)' --run-ignored=only   # regenerate src/lib/bindings.ts
 ```
 
-Use nextest, not plain `cargo test`, for anything under `command_integration_tests::` or `materializer::handlers::` — see "Process-global state". `cargo test` runs a crate's tests as threads in one process; nextest gives each test its own process.
+Use nextest, not plain `cargo test`, for anything in the `command_integration` binary or under `materializer::handlers::` — see "Process-global state". `cargo test` runs a crate's tests as threads in one process; nextest gives each test its own process.
 
 Nextest configuration lives in `src-tauri/.config/nextest.toml`: `fail-fast = false`, `retries = 1` (`2` in the `ci` profile), `slow-timeout` 30s (60s in CI), and a single-threaded `spy-counter-serial` test group for the counter-delta handler tests.
 
@@ -51,7 +68,7 @@ Two classes in this crate:
 2. **Counter-delta tests.** Any test that reads a process-global counter, does its work, reads it again and asserts on the difference. The counter here is `sql_only_fallback::count()` (re-exported as `crate::materializer::sql_only_fallback_count()`), a monotonic `AtomicU64`; the assertion is nearly always `delta == 0`, proving the op took the engine path rather than the SQL-only fallback (#891). A sibling test's fallback event in the same process flips the delta for a test that never touched the fallback. This is a shape, not a module list — find the current readers with:
 
    ```sh
-   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src
+   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src src-tauri/tests
    ```
 
    `src-tauri/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
@@ -112,7 +129,7 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));   // typed
 - Every assertion carries a message.
 - Exact counts: `assert_eq!(count, 5)`, never `assert!(count >= 1)` — inequality hides duplicate-result and missing-filter bugs.
 - Every command tests nonexistent ID → `NotFound`, deleted block → `NotFound`, invalid input → `Validation`.
-- State-changing ops verify the op log: count, `op_type`, payload, hash chain. The log is append-only; reverse ops (`src-tauri/src/reverse/tests.rs`) are appended, never mutate existing records. Non-reversible ops return `AppError::NonReversible`, not a panic.
+- State-changing ops verify the op log: count, `op_type`, payload, hash chain. The log is append-only; reverse ops (`src-tauri/agaric-engine/tests/reverse_tests.rs`) are appended, never mutate existing records. Non-reversible ops return `AppError::NonReversible`, not a panic.
 - Recursive-CTE tests verify `is_conflict = 0` and `depth < 100` (root `AGENTS.md` invariant #9).
 
 ### Determinism
@@ -124,7 +141,7 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));   // typed
 
 ## Snapshot testing (insta)
 
-Snapshots live in a `snapshots/` directory beside the tests (`src-tauri/src/commands/tests/snapshots/`, `src-tauri/src/mcp/tools_ro/snapshots/`, `src-tauri/agaric-store/src/snapshots/`, …). File name: `agaric_lib__<module>__tests__<test_name>.snap` for app-crate modules, `agaric_store__…` for `agaric-store`. A new snapshot-testing module gets its own sibling `snapshots/`.
+Snapshots live in a `snapshots/` directory beside the tests (`src-tauri/tests/commands/snapshots/`, `src-tauri/src/mcp/tools_ro/snapshots/`, `src-tauri/agaric-store/src/snapshots/`, …). File name: `agaric_lib__<module>__tests__<test_name>.snap` for in-lib app-crate modules, `commands__snapshot_tests__<test_name>.snap` for the `tests/commands/` binary, `agaric_store__…` for `agaric-store`. A new snapshot-testing module gets its own sibling `snapshots/`.
 
 Redact non-deterministic fields:
 
@@ -163,5 +180,5 @@ Run the bench before committing, not just `cargo check --bench`: a hand-seeded r
 - Snapshot redactions in place.
 - SQL changes: `just gen-sqlx` run and every regenerated `.sqlx/` file (all four crates) committed.
 - Tauri command types changed: regenerate `src/lib/bindings.ts` (command above).
-- New command params: update every call site in `src-tauri/src/command_integration_tests/`; the compiler finds them.
+- New command params: update every call site in `src-tauri/tests/command_integration/`; the compiler finds them.
 - No `unwrap()` outside test code; no `.ok()` swallowing errors on core paths. Mutex poisoning: `.unwrap_or_else(|e| e.into_inner())`.

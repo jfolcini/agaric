@@ -1,26 +1,10 @@
-mod agenda_cmd_tests;
-mod bibliography_cmd_tests;
-mod block_cmd_tests;
+//! Shared command-test fixture (#4499 phase 0d).
+//!
+//! The 25 domain suites that used to live here moved to the `commands`
+//! integration-test binary (`src-tauri/tests/commands/`). Only [`common`]
+//! stays: `crate::integration_tests` and `crate::mcp::tools_ro::tests` are
+//! still in-lib `#[cfg(test)]` modules that consume it, so moving it out would
+//! fork the fixture in two. It is reachable from the test binaries as
+//! `agaric_lib::commands::tests::common` via the `test-util` feature.
+
 pub mod common;
-mod compaction_cmd_tests;
-mod edge_case_tests;
-mod engine_parity_tests;
-mod glob_filter_tests;
-mod history_cmd_tests;
-mod list_pages_with_metadata_tests;
-mod metadata_filter_tests;
-mod page_cmd_tests;
-mod pages_filter_primitive_conformance_tests;
-mod pages_metadata_conformance_tests;
-mod pages_orphan_conformance_tests;
-mod pages_path_glob_conformance_tests;
-mod pages_tag_property_conformance_tests;
-mod property_cmd_tests;
-mod query_cmd_tests;
-mod search_blocks_struct_tests;
-mod snapshot_tests;
-mod status_cmd_tests;
-mod sync_cmd_tests;
-mod tag_cmd_tests;
-mod toggle_filter_tests;
-mod undo_redo_tests;

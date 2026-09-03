@@ -29,7 +29,7 @@ describe('check-mutants-scope.mjs', () => {
     // Name the two assertions that carry the load, so a self-test quietly
     // reduced to trivia fails here.
     expect(out).toContain('a bare invocation examines only the root package')
-    expect(out).toContain('dropping --workspace flags all three moved-out globs')
+    expect(out).toContain('dropping --workspace flags all four moved-out globs')
   })
 
   it('--shard-count reports the matrix total, and fails closed without a matrix', () => {

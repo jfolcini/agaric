@@ -179,7 +179,7 @@ pub use projected_agenda::{rebuild_projected_agenda_cache, rebuild_projected_age
 pub use purge::purge_block_satellite_caches;
 // Pinned-today variant for the on-the-fly / cached parity test. Now `pub`
 // (not `#[cfg(test)]`) because the app-layer agenda command tests
-// (`crate::commands::tests::agenda_cmd_tests`, which stay in the app crate)
+// (`src-tauri/tests/commands/agenda_cmd_tests.rs`, which stay in the app crate)
 // reach it via `crate::cache::…` — a `#[cfg(test)]` re-export is invisible
 // when the store is built as the app's dependency (#2621, wave S4c).
 pub use projected_agenda::rebuild_projected_agenda_cache_with_today;

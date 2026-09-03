@@ -3,7 +3,7 @@
  * projection.
  *
  * `cursorShape` is a hand-mirrored twin of `shape_of_cursor` in
- * `src-tauri/src/command_integration_tests/conformance_query.rs`, and the twin
+ * `src-tauri/tests/command_integration/conformance_query.rs`, and the twin
  * relationship is the whole mechanism: the backend AUTHORS each fixture's
  * `cursor` field and the mock leg must reproduce it byte-for-byte, so a
  * rendering difference between the two functions is a harness lie rather than a

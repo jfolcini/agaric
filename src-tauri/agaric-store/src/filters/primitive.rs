@@ -2635,7 +2635,7 @@ mod tests {
 // into a query plan that hits an indexed `pages_cache` row read rather
 // than a correlated-subquery shape. Mirrors the
 // `most_linked_query_plan_uses_pages_cache_not_block_links` snapshot in
-// `commands::tests::list_pages_with_metadata_tests`.
+// `src-tauri/tests/commands/list_pages_with_metadata_tests.rs`.
 //
 // We assert *presence* and *absence* of table-name tokens in the plan,
 // not the full plan string — SQLite is allowed to reword

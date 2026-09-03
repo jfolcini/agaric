@@ -10,7 +10,7 @@ leave the mock stale while every suite stays green (#1886).
 `sort-cursor.vectors.json` closes that gap for sort + cursor. It is the single
 source of truth, asserted from both sides:
 
-- **Rust** — `src-tauri/src/commands/tests/pages_metadata_conformance_tests.rs`
+- **Rust** — `src-tauri/tests/commands/pages_metadata_conformance_tests.rs`
   seeds a temp DB from `rows` and drives the real
   `list_pages_with_metadata_inner` query path.
 - **TypeScript** — `src/lib/tauri-mock/__tests__/sort-cursor-conformance.test.ts`
@@ -63,7 +63,7 @@ SQLite `GLOB` dialect in #1320-A; the mock had drifted to a stale LIKE
 translation (`globMatchesTitle`), so brace expansion, `[class]` ranges,
 validation and ASCII-only folding all diverged silently (#1910).
 
-- **Rust** — `src-tauri/src/commands/tests/pages_path_glob_conformance_tests.rs`
+- **Rust** — `src-tauri/tests/commands/pages_path_glob_conformance_tests.rs`
   seeds `pages_cache` titles and drives the real `list_pages_with_metadata_inner`
   with a `PathGlob` filter (`prepare_globs` → `LOWER(title) GLOB ?`).
 - **TypeScript** — `src/lib/search-query/__tests__/glob-conformance.test.ts`
@@ -86,7 +86,7 @@ behaviour. This increment covers the primitives evaluable **purely over a
 and `LastEdited`'s `Range` variant, plus **AND-composition** across a primitive
 list.
 
-- **Rust** — `src-tauri/src/commands/tests/pages_filter_primitive_conformance_tests.rs`
+- **Rust** — `src-tauri/tests/commands/pages_filter_primitive_conformance_tests.rs`
   seeds `pages_cache` counts, `blocks.priority`, and `op_log.created_at`, then
   drives the real `list_pages_with_metadata_inner` with the fixture's
   `FilterPrimitive` list (each primitive compiled to SQL in

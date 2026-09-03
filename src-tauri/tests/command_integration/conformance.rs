@@ -1,0 +1,5244 @@
+//! #763 — mock-vs-backend conformance harness (Rust side / source of truth).
+//!
+//! The Rust backend is the SOURCE OF TRUTH for the expected resulting state of
+//! every shared fixture in `conformance/fixtures/*.json`. This module:
+//!
+//!   1. Loads each fixture (seed state + op sequence).
+//!   2. Inserts the seed blocks/properties/tags with their LITERAL expanded
+//!      ids, scoped to one test space.
+//!   3. Translates each fixture command into its durable serialized `OpPayload`,
+//!      appends it to the op log, and replays it through the materializer,
+//!      `settle()`-ing after each op so derived caches (`block_links`) are
+//!      populated.
+//!   4. Reads the full DB state and builds a *normalized snapshot* with
+//!      canonical id relabeling (see `snapshot.rs` — shared with the TS side).
+//!   5. Asserts the snapshot equals the fixture's `expected`.
+//!
+//! UPDATE mode: run with `CONFORMANCE_UPDATE=1` to WRITE the backend-derived
+//! `expected` back into each fixture JSON. This is how the source-of-truth
+//! expected is authored; never hand-write `expected`.
+//!
+//! ## Engine path (#891 — production parity)
+//!
+//! Production constructs the Loro engine state unconditionally at boot
+//! (#2249: an `Arc<LoroState>` built at the top of `agaric_lib::run` setup and
+//! handed to the `Materializer` as a constructor argument). Since #2325,
+//! local `*_inner` command paths append their op and call `apply_op_projected`
+//! in the command transaction. Boot recovery deserializes those durable records
+//! through `ReplayApplyOp` / `ApplyMode::ReplaySuppressed` and reaches the same
+//! projection. Inbound sync is different: it imports Loro bytes through
+//! `import_and_project`, not through this op-record dispatcher.
+//!
+//! This runner intentionally tests the durable serialized-op boundary: it
+//! builds an `OpPayload`, appends it, and feeds the resulting record to the
+//! test-only `Materializer::dispatch_op` helper (`ApplyOp` in normal mode plus
+//! background fan-out). It does not exercise validation that exists only in
+//! the command layer before an op is appended; those contracts belong in
+//! command integration tests.
+//!
+//! The runner therefore SEEDS each fixture's seed blocks into the test
+//! materializer's per-space Loro tree (mirroring the raw-SQL seed insert) so
+//! replayed ops resolve their space and route through the engine, not the
+//! SQL-only fallback — whose provisional `index+1` positions DIFFER from
+//! production, producing the spurious `position_reproject_drift` (#763).
+//! Both live fallback reasons remain relevant: `SpaceUnresolved`, and
+//! `EngineMissingTarget` when a block (or a move's target parent) is absent
+//! from the resolved space's engine. The fixture-local parity checks below run
+//! after setup and after every op, catching a fallback whenever its SQL result
+//! diverges from the isolated engine — in particular the #763 position drift —
+//! without consulting the process-global fallback metric.
+//!
+//! The TS runner (`src/lib/tauri-mock/__tests__/conformance.test.ts`) builds
+//! the SAME normalized snapshot from the tauri-mock and asserts it matches the
+//! backend-authored `expected`. Behavioral drift between the 3.5k-line mock and
+//! the real backend then fails CI.
+//!
+//! ## Isolation contract (#1079 → resolved by #2249), and what still isn't isolated
+//!
+//! ENGINE state is isolated: each test's engine registry is its own
+//! `Materializer`'s per-instance `LoroState` — there is no process-global
+//! registry anymore, so no test in this module can observe another's engine.
+//! The historical registry-based nextest-only constraint
+//! (<https://github.com/jfolcini/agaric/issues/1079>) is gone.
+//!
+//! That does NOT make this module runner-agnostic. The
+//! `*_local_matches_remote_*` (both the `_parity_` and `_converges_` names)
+//! / `local_delete_block_cohort_engine_fanout_*`
+//! tests below read the PROCESS-GLOBAL
+//! `agaric_lib::materializer::sql_only_fallback_count()` before and after their op
+//! and assert the DELTA is 0 ("took the engine path, not the SQL-only
+//! fallback", #891). That counter is a monotonic `AtomicU64` shared by
+//! the whole process, so under plain `cargo test` — which runs a crate's tests
+//! as threads in one process — a *sibling* test's fallback event lands inside
+//! the window and flips the delta nonzero for a test that never touched the
+//! fallback path. `cargo nextest run` gives each test its own process, which is
+//! what makes the delta honest. So: run this module under `cargo nextest`, and
+//! if you add a test of that before/after shape anywhere, say so in its doc
+//! comment. The rule and the authoritative grep for every counter reader live in
+//! `src-tauri/tests/AGENTS.md` § "Process-global state".
+
+use super::common::*;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
+    AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
+    MoveBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
+    SetPropertyPayload,
+};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+
+use super::conformance_snapshot::{Snapshot, build_snapshot_with_order};
+
+// ---------------------------------------------------------------------------
+// Fixture model
+// ---------------------------------------------------------------------------
+
+/// Expand a stable seed label (`S1`, `S2`, …) to its 26-char block id. The
+/// expansion is `label` right-justified in 26 `'0'` chars — a valid
+/// `[0-9A-Z]{26}` ULID shape so `[[id]]` link tokens and FK refs work. The
+/// SAME expansion is implemented in the TS runner (`seedIdToBlockId`).
+pub fn seed_label_to_id(label: &str) -> String {
+    if label.len() >= 26 {
+        return label.to_owned();
+    }
+    let pad = 26 - label.len();
+    format!("{}{}", "0".repeat(pad), label)
+}
+
+/// List the fixture files, sorted by name for deterministic test order.
+fn fixture_paths() -> Vec<PathBuf> {
+    // CARGO_MANIFEST_DIR == <repo>/src-tauri; fixtures live at <repo>/conformance.
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri has a parent")
+        .join("conformance")
+        .join("fixtures");
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read conformance dir {}: {e}", dir.display()))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    paths.sort();
+    paths
+}
+
+// ---------------------------------------------------------------------------
+// Seed + op application against the real backend
+// ---------------------------------------------------------------------------
+
+/// Insert a seed block with its literal expanded id, bypassing the command
+/// layer (mirrors the mock's `seedBlocks` direct-store insert).
+async fn insert_seed_block(pool: &SqlitePool, b: &Value) {
+    let label = b["id"].as_str().expect("seed block id");
+    let id = seed_label_to_id(label);
+    let block_type = b["block_type"].as_str().expect("seed block_type");
+    let content = b["content"].as_str();
+    let parent_id = b["parent_id"].as_str().map(seed_label_to_id);
+    let position = b["position"].as_i64();
+    insert_block(
+        pool,
+        &id,
+        block_type,
+        content.unwrap_or(""),
+        parent_id.as_deref(),
+        position,
+    )
+    .await;
+}
+
+/// Seed one block into the per-space Loro ENGINE tree (#891), mirroring the
+/// raw-SQL `insert_seed_block` so the engine and SQL stay in lockstep BEFORE any
+/// op runs. Production never seeds blocks out-of-band (every block is born from
+/// a `CreateBlock` op → engine), but the conformance seed is a synthetic
+/// pre-existing state, so we replay it straight into the engine here — NOT
+/// through the op-log (that would inflate `op_log_digest` and the create-order
+/// relabel). The fixture seed arrays are page-first (parents precede children),
+/// so a single forward pass satisfies the engine's parent-before-child
+/// requirement.
+fn seed_block_into_engine(state: &agaric_engine::loro::shared::LoroState, b: &Value) {
+    let label = b["id"].as_str().expect("seed block id");
+    let id = seed_label_to_id(label);
+    let block_type = b["block_type"].as_str().expect("seed block_type");
+    let content = b["content"].as_str().unwrap_or("");
+    let parent_id = b["parent_id"].as_str().map(seed_label_to_id);
+    let position = b["position"].as_i64().unwrap_or(0);
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space (seed)");
+    guard
+        .engine_mut()
+        .apply_create_block(&id, block_type, content, parent_id.as_deref(), position)
+        .expect("seed apply_create_block into engine");
+    drop(guard);
+}
+
+/// Dispatch one fixture op through the durable-op test path (#891).
+///
+/// The op is appended to the op-log (`append_local_op`) and applied via the
+/// materializer's test-only `dispatch_op` helper — the foreground `ApplyOp`
+/// task, which runs `apply_op_projected` in normal mode (engine apply + dense
+/// rank reprojection), followed by the matching background cache fan-out
+/// (`block_links`, FTS, derived caches). Boot recovery uses `ReplayApplyOp`
+/// with `ApplyMode::ReplaySuppressed`; inbound sync instead imports Loro bytes
+/// through `import_and_project`.
+///
+/// NOTE on path choice: since #2325, LOCAL `*_inner` commands also route their
+/// just-appended op through `apply_op_projected` in the command transaction.
+/// This runner deliberately stays below those commands: it serializes the
+/// fixture operation as an `OpPayload`, appends the durable record, and drives
+/// the test dispatcher. That pins the shared projection and durable op
+/// representation, but intentionally excludes command-only validation
+/// performed before an op is appended.
+///
+/// Reserved column-backed keys (`set_todo_state` / `set_priority` /
+/// `set_due_date` / `set_scheduled_date`) map to a `SetProperty` op with the
+/// reserved key — exactly what the `*_inner` commands emit and what
+/// `project_set_property_to_sql` writes to the dedicated `blocks` column.
+async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value) {
+    let command = op["command"].as_str().expect("op command");
+    let args = &op["args"];
+    let arg = |k: &str| args.get(k);
+    let arg_str = |k: &str| arg(k).and_then(Value::as_str).map(str::to_owned);
+    let arg_label_id = |k: &str| arg(k).and_then(Value::as_str).map(seed_label_to_id);
+    let label_block_id = |k: &str| BlockId::from(arg_label_id(k).expect("blockId").as_str());
+    // Build a SetProperty payload for a reserved column-backed key. The value
+    // goes in the typed field the projection reads for that key
+    // (`project_set_property_to_sql`): todo_state/priority → `value_text`;
+    // due_date/scheduled_date → `value_date`. This mirrors how the `*_inner`
+    // commands (`set_todo_state_inner` vs `set_due_date_inner`) populate the op.
+    let reserved = |key: &str, value: Option<String>, is_date: bool| {
+        let (value_text, value_date) = if is_date {
+            (None, value)
+        } else {
+            (value, None)
+        };
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: label_block_id("blockId"),
+            key: key.to_owned(),
+            value_text,
+            value_num: None,
+            value_date,
+            value_ref: None,
+            value_bool: None,
+        })
+    };
+
+    let payload = match command {
+        "create_block" => OpPayload::CreateBlock(CreateBlockPayload {
+            // Created blocks get a fresh ULID (the canonical relabel reads
+            // create order from the op-log's `block_id` sidecar, so the random
+            // id is fine — it is relabeled to B2, B3, … exactly as on the mock).
+            block_id: BlockId::new(),
+            block_type: arg_str("blockType").expect("create_block.blockType"),
+            parent_id: arg_label_id("parentId").map(|s| BlockId::from(s.as_str())),
+            position: None,
+            index: arg("index").and_then(Value::as_i64),
+            content: arg_str("content").unwrap_or_default(),
+        }),
+        "edit_block" => OpPayload::EditBlock(EditBlockPayload {
+            block_id: label_block_id("blockId"),
+            to_text: arg_str("toText").unwrap_or_default(),
+            prev_edit: None,
+        }),
+        "move_block" => {
+            let new_index = arg("newIndex").and_then(Value::as_i64).expect("newIndex");
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: label_block_id("blockId"),
+                new_parent_id: arg_label_id("newParentId").map(|s| BlockId::from(s.as_str())),
+                // #400 ops route on `new_index`; `new_position` mirrors it as a
+                // non-authoritative breadcrumb (see MoveBlockPayload docs).
+                new_position: new_index,
+                new_index: Some(new_index),
+            })
+        }
+        "delete_block" => OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: label_block_id("blockId"),
+        }),
+        "set_property" => {
+            let key = arg_str("key").expect("set_property.key");
+            let v = arg("value").cloned().unwrap_or(Value::Null);
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: label_block_id("blockId"),
+                key,
+                value_text: v
+                    .get("value_text")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                value_num: v.get("value_num").and_then(Value::as_f64),
+                value_date: v
+                    .get("value_date")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                // value_ref is a block id — expand it through the seed-label map.
+                value_ref: v
+                    .get("value_ref")
+                    .and_then(Value::as_str)
+                    .map(|s| BlockId::from(seed_label_to_id(s).as_str())),
+                value_bool: v.get("value_bool").and_then(Value::as_bool),
+            })
+        }
+        "set_todo_state" => reserved("todo_state", arg_str("state"), false),
+        "set_priority" => reserved("priority", arg_str("level"), false),
+        "set_due_date" => reserved("due_date", arg_str("date"), true),
+        "set_scheduled_date" => reserved("scheduled_date", arg_str("date"), true),
+        "add_tag" => OpPayload::AddTag(AddTagPayload {
+            block_id: label_block_id("blockId"),
+            tag_id: label_block_id("tagId"),
+        }),
+        "remove_tag" => OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: label_block_id("blockId"),
+            tag_id: label_block_id("tagId"),
+        }),
+        "restore_block" => {
+            // The restore op's `deleted_at_ref` is the originating delete op's
+            // `created_at` — the epoch-ms guard the projection matches against
+            // `blocks.deleted_at` to scope the un-delete to that delete's
+            // cohort. The mock's `restore_block` carries no such guard (it
+            // clears `deleted_at` unconditionally), so the fixture op args have
+            // none; the runner sources it the way `restore_block_inner` does —
+            // by reading the live tombstone's `deleted_at` from the DB now.
+            let id = arg_label_id("blockId").expect("restore_block.blockId");
+            let deleted_at_ref: i64 =
+                sqlx::query_as::<_, (Option<i64>,)>("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(&id)
+                    .fetch_one(pool)
+                    .await
+                    .expect("restore_block: fetch deleted_at")
+                    .0
+                    .expect("restore_block: target block must be tombstoned");
+            OpPayload::RestoreBlock(RestoreBlockPayload {
+                block_id: BlockId::from(id.as_str()),
+                deleted_at_ref,
+            })
+        }
+        "purge_block" => OpPayload::PurgeBlock(PurgeBlockPayload {
+            block_id: label_block_id("blockId"),
+        }),
+        "delete_property" => OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: label_block_id("blockId"),
+            key: arg_str("key").expect("delete_property.key"),
+        }),
+        other => panic!("conformance op '{other}' is not wired in the Rust runner"),
+    };
+
+    let record = agaric_store::op_log::append_local_op(pool, DEV, payload)
+        .await
+        .expect("append_local_op");
+    // `dispatch_op` runs the foreground ApplyOp (engine apply + reproject),
+    // flushes the foreground queue, then enqueues the background fan-out;
+    // `settle` (flush_background) drains block_links / FTS / cache rebuilds.
+    mat.dispatch_op(&record).await.expect("dispatch_op");
+    settle(mat).await;
+}
+
+// ---------------------------------------------------------------------------
+// Raw DB read → RawState (pre-relabel). Shared snapshot builder relabels it.
+// ---------------------------------------------------------------------------
+
+/// Read the full materialized state into the relabel-agnostic intermediate
+/// shape the shared snapshot builder consumes.
+async fn read_raw_state(pool: &SqlitePool) -> super::conformance_snapshot::RawState {
+    use super::conformance_snapshot::{RawBlock, RawLink, RawOp, RawProperty, RawState, RawTag};
+
+    // Blocks — every row (incl. tombstoned) except the synthetic test space.
+    let block_rows = sqlx::query_as::<
+        _,
+        (
+            String,         // id
+            String,         // block_type
+            Option<String>, // content
+            Option<String>, // parent_id
+            Option<i64>,    // position
+            Option<i64>,    // deleted_at (epoch-ms)
+            Option<String>, // todo_state
+            Option<String>, // priority
+            Option<String>, // due_date
+            Option<String>, // scheduled_date
+            Option<String>, // page_id
+        ),
+    >(
+        "SELECT id, block_type, content, parent_id, position, deleted_at, \
+                todo_state, priority, due_date, scheduled_date, page_id \
+         FROM blocks WHERE id <> ? ORDER BY id",
+    )
+    .bind(TEST_SPACE_ID)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let blocks = block_rows
+        .into_iter()
+        .map(|r| RawBlock {
+            id: r.0,
+            block_type: r.1,
+            content: r.2,
+            parent_id: r.3,
+            position: r.4,
+            deleted: r.5.is_some(),
+            todo_state: r.6,
+            priority: r.7,
+            due_date: r.8,
+            scheduled_date: r.9,
+            page_id: r.10,
+        })
+        .collect();
+
+    // Properties — block_properties rows. Exclude auto-derived timestamp keys
+    // (created_at/completed_at) — they carry today's date and the mock does
+    // not model them; they are intentionally outside the conformance surface.
+    let prop_rows = sqlx::query_as::<
+        _,
+        (
+            String,         // block_id
+            String,         // key
+            Option<String>, // value_text
+            Option<f64>,    // value_num
+            Option<String>, // value_date
+            Option<String>, // value_ref
+            Option<i64>,    // value_bool
+        ),
+    >(
+        "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool \
+         FROM block_properties \
+         WHERE key NOT IN ('created_at', 'completed_at')",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let properties = prop_rows
+        .into_iter()
+        .map(|r| RawProperty {
+            block_id: r.0,
+            key: r.1,
+            value_text: r.2,
+            value_num: r.3,
+            value_date: r.4,
+            value_ref: r.5,
+            value_bool: r.6.map(|n| n != 0),
+        })
+        .collect();
+
+    // Block tags.
+    let tag_rows = sqlx::query_as::<_, (String, String)>("SELECT block_id, tag_id FROM block_tags")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    let block_tags = tag_rows
+        .into_iter()
+        .map(|r| RawTag {
+            block_id: r.0,
+            tag_id: r.1,
+        })
+        .collect();
+
+    // Page links — the migration-0070 surface. Derive `source_page_id` by
+    // joining each `block_links` edge to its source block's `page_id`. This is
+    // the projection the mock reimplements in `deriveLinkEdges` / `pageLinkStats`.
+    let link_rows = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT bl.source_id, bl.target_id, src.page_id \
+         FROM block_links bl \
+         JOIN blocks src ON src.id = bl.source_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let page_links = link_rows
+        .into_iter()
+        .map(|r| RawLink {
+            source_id: r.0,
+            target_id: r.1,
+            source_page_id: r.2,
+        })
+        .collect();
+
+    // Op log digest — ordered by seq, with reserved-key set_property ops
+    // canonicalized to their `set_<key>` logical name (so the mock's
+    // dedicated op_types line up) and auto-timestamp ops dropped.
+    let op_rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT op_type, payload FROM op_log WHERE device_id = ? ORDER BY seq",
+    )
+    .bind(DEV)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let op_log = op_rows
+        .into_iter()
+        .filter_map(|(op_type, payload)| {
+            let key = serde_json::from_str::<Value>(&payload).ok().and_then(|p| {
+                // SetProperty payload nests under `SetProperty` (enum tag);
+                // fall back to a flat `key` field.
+                p.get("SetProperty")
+                    .and_then(|sp| sp.get("key"))
+                    .or_else(|| p.get("key"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+            RawOp::canonicalize(&op_type, key.as_deref())
+        })
+        .collect();
+
+    RawState {
+        blocks,
+        properties,
+        block_tags,
+        page_links,
+        op_log,
+    }
+}
+
+/// Read the ids of blocks CREATED via ops, in creation (seq) order, from the
+/// op_log's indexed `block_id` sidecar. Drives the canonical relabel order for
+/// the post-seed portion of the block set.
+async fn read_created_block_ids_in_op_order(pool: &SqlitePool) -> Vec<String> {
+    let rows = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT block_id FROM op_log WHERE device_id = ? AND op_type = 'create_block' ORDER BY seq",
+    )
+    .bind(DEV)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    rows.into_iter().filter_map(|r| r.0).collect()
+}
+
+// ---------------------------------------------------------------------------
+// Fixture-local SQL ↔ engine path guard
+// ---------------------------------------------------------------------------
+
+fn parity_property_key(key: &str) -> bool {
+    // Auto timestamps are deliberately outside the shared conformance surface.
+    // `space` is projected to `blocks.space_id` and hydrates the per-space doc;
+    // it is membership metadata, not an engine property entry.
+    !matches!(key, "created_at" | "completed_at" | "space")
+}
+
+/// Read the pre-op `parent_id` of a structural op's target block.
+///
+/// #3429: this was inlined in `run_fixture` as
+/// `fetch_one(…).expect("read structural op parent")`, so a fixture whose op
+/// list moves or purges a block that has no `blocks` row at that point — a
+/// double purge, a typo'd `blockId`, an op ordered before the create that makes
+/// its target — failed with a bare sqlx `RowNotFound` that named neither the
+/// fixture, nor the command, nor the block. That is a dead end for exactly the
+/// person it fires on: the author of a brand-new fixture. `fetch_optional`
+/// turns the absence into a diagnostic the reader can act on without opening
+/// the harness.
+async fn read_structural_op_parent(
+    pool: &SqlitePool,
+    fixture_name: &str,
+    command: &str,
+    block_id: &str,
+) -> Result<Option<String>, String> {
+    sqlx::query_as::<_, (Option<String>,)>("SELECT parent_id FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| {
+            format!("fixture '{fixture_name}': read parent of {command} target {block_id}: {error}")
+        })?
+        .map(|row| row.0)
+        .ok_or_else(|| {
+            format!(
+                "fixture '{fixture_name}': op '{command}' targets block {block_id}, which has no \
+                 `blocks` row at that point in the op list — the fixture's ops are inconsistent \
+                 with its seed, or an earlier op already removed the block"
+            )
+        })
+}
+
+async fn verify_fixture_engine_parity(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    fixture_name: &str,
+    known_ids: &[String],
+    // #3429: `&mut` because the guard RE-TIGHTENS this allowance (see the pass
+    // after the order comparison below) instead of letting it stand for the rest
+    // of the fixture.
+    gapped_parents: &mut BTreeSet<Option<String>>,
+) -> Result<(), String> {
+    use agaric_engine::loro::engine::PropertyValue;
+
+    let raw = read_raw_state(pool).await;
+    let known: BTreeSet<&str> = known_ids.iter().map(String::as_str).collect();
+    let sql_blocks: BTreeMap<&str, &super::conformance_snapshot::RawBlock> = raw
+        .blocks
+        .iter()
+        .filter(|block| known.contains(block.id.as_str()))
+        .map(|block| (block.id.as_str(), block))
+        .collect();
+    let op_rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT op_type, payload FROM op_log \
+         WHERE device_id = ? AND is_replicated = 0 ORDER BY seq",
+    )
+    .bind(DEV)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| format!("fixture '{fixture_name}': read property op history: {error}"))?;
+    // `Some(target)` means the latest durable op for this property is exactly
+    // a value_ref setter. `None` records any later non-ref set/delete so a stale
+    // historical ref cannot qualify for the narrow purge-dangling exception.
+    let mut latest_ref_targets: BTreeMap<(String, String), Option<String>> = BTreeMap::new();
+    for (op_type, payload) in op_rows {
+        match op_type.as_str() {
+            "set_property" => {
+                let property: SetPropertyPayload =
+                    serde_json::from_str(&payload).map_err(|error| {
+                        format!("fixture '{fixture_name}': parse set_property: {error}")
+                    })?;
+                latest_ref_targets.insert(
+                    (property.block_id.to_string(), property.key),
+                    property.value_ref.map(|target| target.to_string()),
+                );
+            }
+            "delete_property" => {
+                let property: DeletePropertyPayload =
+                    serde_json::from_str(&payload).map_err(|error| {
+                        format!("fixture '{fixture_name}': parse delete_property: {error}")
+                    })?;
+                latest_ref_targets.insert((property.block_id.to_string(), property.key), None);
+            }
+            _ => {}
+        }
+    }
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space (conformance parity)");
+    let engine = guard.engine_mut();
+
+    let fail = |detail: String| {
+        Err(format!(
+            "fixture '{fixture_name}': SQL/Loro parity failed after fixture setup/op: {detail} \
+             (#891 engine-path guard)"
+        ))
+    };
+
+    for id in known_ids {
+        let sql = sql_blocks.get(id.as_str()).copied();
+        let loro = engine
+            .read_block(id)
+            .map_err(|error| format!("fixture '{fixture_name}': read Loro block {id}: {error}"))?;
+        if sql.is_none() || loro.is_none() {
+            if sql.is_none() && loro.is_none() {
+                let properties = engine.read_all_properties_typed(id).map_err(|error| {
+                    format!("fixture '{fixture_name}': read purged properties {id}: {error}")
+                })?;
+                let tags = engine.read_tags(id).map_err(|error| {
+                    format!("fixture '{fixture_name}': read purged tags {id}: {error}")
+                })?;
+                if !properties.is_empty() || !tags.is_empty() {
+                    return fail(format!(
+                        "purged block {id} retained Loro satellites \
+                         (properties={properties:?}, tags={tags:?})"
+                    ));
+                }
+                continue;
+            }
+            return fail(format!(
+                "block {id} presence differs (SQL={}, Loro={})",
+                sql.is_some(),
+                loro.is_some()
+            ));
+        }
+        let sql = sql.expect("SQL presence checked");
+        let loro = loro.expect("Loro presence checked");
+        let loro_deleted = engine
+            .read_deleted(id)
+            .map_err(|error| format!("fixture '{fixture_name}': read deleted {id}: {error}"))?;
+        if sql.block_type != loro.block_type
+            || sql.content.as_deref().unwrap_or("") != loro.content
+            || sql.parent_id != loro.parent_id
+            || sql.deleted != loro_deleted
+        {
+            return fail(format!(
+                "block {id} core differs (SQL type/content/parent/deleted={:?}/{:?}/{:?}/{}, \
+                 Loro={:?}/{:?}/{:?}/{})",
+                sql.block_type,
+                sql.content,
+                sql.parent_id,
+                sql.deleted,
+                loro.block_type,
+                loro.content,
+                loro.parent_id,
+                loro_deleted
+            ));
+        }
+        if !gapped_parents.contains(&sql.parent_id) && sql.position != Some(loro.position) {
+            return fail(format!(
+                "block {id} position differs (SQL={:?}, Loro={}); parent {:?} is not a \
+                 purge-gapped group",
+                sql.position, loro.position, sql.parent_id
+            ));
+        }
+    }
+
+    // Purge does not re-rank surviving SQL siblings. Only parent groups that a
+    // fixture purge actually touched may carry a numeric gap; their relative
+    // order must still equal the engine's order exactly.
+    for parent in gapped_parents.iter() {
+        let mut sql_order: Vec<_> = sql_blocks
+            .values()
+            .filter(|block| block.parent_id == *parent)
+            .map(|block| (block.position.unwrap_or(i64::MAX), block.id.as_str()))
+            .collect();
+        sql_order.sort_unstable();
+        let sql_order: Vec<_> = sql_order.into_iter().map(|(_, id)| id).collect();
+        let mut loro_order = Vec::new();
+        for id in &sql_order {
+            let position = engine.read_position(id).map_err(|error| {
+                format!("fixture '{fixture_name}': read position {id}: {error}")
+            })?;
+            loro_order.push((position, *id));
+        }
+        loro_order.sort_unstable();
+        let loro_order: Vec<_> = loro_order.into_iter().map(|(_, id)| id).collect();
+        if sql_order != loro_order {
+            return fail(format!(
+                "purge-gapped parent {parent:?} order differs (SQL={sql_order:?}, \
+                 Loro={loro_order:?})"
+            ));
+        }
+    }
+
+    // #3429: RE-TIGHTEN the allowance. A purge grants it for a parent group and,
+    // before this pass, nothing ever took it back — the caller only drops it when
+    // a later create/move happens to name that group, so for every other fixture
+    // shape the group's exact positions went unchecked for the remainder of the
+    // run, and any subsequent SQL/engine position divergence inside it was
+    // invisible (order parity above is strictly weaker: a group can hold the same
+    // sequence at the wrong ranks). An allowance is only ever needed while the
+    // gap is actually there, so drop it the moment the group's SQL positions
+    // agree with the engine's again — including immediately, for a purge that
+    // left no gap at all (an only child, or a trailing sibling). Every later
+    // comparison of that group is then exact again.
+    let healed: Vec<Option<String>> = {
+        let mut healed = Vec::new();
+        for parent in gapped_parents.iter() {
+            let mut agrees = true;
+            for block in sql_blocks
+                .values()
+                .filter(|block| block.parent_id == *parent)
+            {
+                let position = engine.read_position(&block.id).map_err(|error| {
+                    format!(
+                        "fixture '{fixture_name}': read position {}: {error}",
+                        block.id
+                    )
+                })?;
+                if block.position != Some(position) {
+                    agrees = false;
+                    break;
+                }
+            }
+            if agrees {
+                healed.push(parent.clone());
+            }
+        }
+        healed
+    };
+    for parent in healed {
+        gapped_parents.remove(&parent);
+    }
+
+    // Every surviving SQL property/tag must be in Loro. Engine-only entries
+    // are rejected below except for an exactly identified latest-op value_ref
+    // or tag whose canonical target has since been purged from SQL.
+    let mut sql_property_keys = BTreeSet::new();
+    for property in raw
+        .properties
+        .iter()
+        .filter(|property| parity_property_key(&property.key))
+    {
+        sql_property_keys.insert((property.block_id.clone(), property.key.clone()));
+        let expected = if let Some(value) = &property.value_text {
+            PropertyValue::Str(value.clone())
+        } else if let Some(value) = property.value_num {
+            PropertyValue::Num(value)
+        } else if let Some(value) = &property.value_date {
+            PropertyValue::Str(value.clone())
+        } else if let Some(value) = &property.value_ref {
+            PropertyValue::Str(value.clone())
+        } else if let Some(value) = property.value_bool {
+            PropertyValue::Bool(value)
+        } else {
+            return fail(format!(
+                "SQL property {}/{} has no typed value",
+                property.block_id, property.key
+            ));
+        };
+        let actual = engine
+            .read_all_properties_typed(&property.block_id)
+            .map_err(|error| {
+                format!(
+                    "fixture '{fixture_name}': read properties {}: {error}",
+                    property.block_id
+                )
+            })?
+            .into_iter()
+            .find(|(key, _)| key == &property.key)
+            .map(|(_, value)| value);
+        if actual.as_ref() != Some(&expected) {
+            return fail(format!(
+                "property {}/{} differs (SQL={expected:?}, Loro={actual:?})",
+                property.block_id, property.key
+            ));
+        }
+    }
+    for block in sql_blocks.values() {
+        let loro_properties = engine
+            .read_all_properties_typed(&block.id)
+            .map_err(|error| format!("fixture '{fixture_name}': read properties: {error}"))?;
+        for (key, value) in [
+            ("todo_state", block.todo_state.as_ref()),
+            ("priority", block.priority.as_ref()),
+            ("due_date", block.due_date.as_ref()),
+            ("scheduled_date", block.scheduled_date.as_ref()),
+        ] {
+            if let Some(expected) = value {
+                sql_property_keys.insert((block.id.clone(), key.to_owned()));
+                let actual = loro_properties
+                    .iter()
+                    .find(|(candidate, _)| candidate == key);
+                if !matches!(actual, Some((_, PropertyValue::Str(value))) if value == expected) {
+                    return fail(format!(
+                        "reserved property {}/{} differs (SQL={expected:?}, Loro={actual:?})",
+                        block.id, key
+                    ));
+                }
+            }
+        }
+        for (key, value) in loro_properties {
+            if !parity_property_key(&key)
+                || matches!(value, PropertyValue::Null)
+                || sql_property_keys.contains(&(block.id.clone(), key.clone()))
+            {
+                continue;
+            }
+            let allowed_dangling_ref = match &value {
+                PropertyValue::Str(target) => {
+                    latest_ref_targets
+                        .get(&(block.id.clone(), key.clone()))
+                        .is_some_and(|latest| latest.as_deref() == Some(target.as_str()))
+                        && known.contains(target.as_str())
+                        && !sql_blocks.contains_key(target.as_str())
+                }
+                _ => false,
+            };
+            if !allowed_dangling_ref {
+                return fail(format!(
+                    "engine-only property {}/{} has no matching SQL row or exact purged \
+                     value_ref evidence: {value:?}",
+                    block.id, key
+                ));
+            }
+        }
+    }
+    let sql_tags: BTreeSet<_> = raw
+        .block_tags
+        .iter()
+        .map(|tag| (tag.block_id.as_str(), tag.tag_id.as_str()))
+        .collect();
+    for tag in &raw.block_tags {
+        if !known.contains(tag.block_id.as_str()) || !sql_blocks.contains_key(tag.tag_id.as_str()) {
+            continue;
+        }
+        let tags = engine
+            .read_tags(&tag.block_id)
+            .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?;
+        if !tags.contains(&tag.tag_id) {
+            return fail(format!(
+                "direct tag {}/{} exists in SQL but not Loro",
+                tag.block_id, tag.tag_id
+            ));
+        }
+    }
+    for block in sql_blocks.values() {
+        for tag_id in engine
+            .read_tags(&block.id)
+            .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?
+        {
+            if sql_tags.contains(&(block.id.as_str(), tag_id.as_str())) {
+                continue;
+            }
+            let allowed_dangling_tag =
+                known.contains(tag_id.as_str()) && !sql_blocks.contains_key(tag_id.as_str());
+            if !allowed_dangling_tag {
+                return fail(format!(
+                    "engine-only direct tag {}/{} still targets a surviving/unknown block",
+                    block.id, tag_id
+                ));
+            }
+        }
+    }
+    drop(guard);
+    Ok(())
+}
+
+fn fixture_set_property_is_clear(args: &Value) -> bool {
+    const TYPED_FIELDS: [&str; 5] = [
+        "value_text",
+        "value_num",
+        "value_date",
+        "value_ref",
+        "value_bool",
+    ];
+    let value = args.get("value").unwrap_or(&Value::Null);
+    TYPED_FIELDS
+        .iter()
+        .all(|field| value.get(field).is_none_or(Value::is_null))
+}
+
+fn verify_removed_value_in_engine(
+    state: &agaric_engine::loro::shared::LoroState,
+    fixture_name: &str,
+    op: &Value,
+) -> Result<(), String> {
+    use agaric_engine::loro::engine::PropertyValue;
+
+    let command = op["command"].as_str().expect("op command");
+    let args = &op["args"];
+    let block_id = args["blockId"].as_str().map(seed_label_to_id);
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space (negative parity)");
+    let engine = guard.engine_mut();
+    let fail = |detail| Err(format!("fixture '{fixture_name}': {detail}"));
+
+    if command == "delete_property" {
+        let block_id = block_id.expect("delete_property blockId");
+        let key = args["key"].as_str().expect("delete_property key");
+        let value = engine
+            .read_all_properties_typed(&block_id)
+            .map_err(|error| format!("fixture '{fixture_name}': read properties: {error}"))?
+            .into_iter()
+            .find(|(candidate, _)| candidate == key);
+        if value.is_some() {
+            return fail(format!(
+                "delete_property left {block_id}/{key} in Loro: {value:?}"
+            ));
+        }
+    } else if command == "remove_tag" {
+        let block_id = block_id.expect("remove_tag blockId");
+        let tag_id = seed_label_to_id(args["tagId"].as_str().expect("remove_tag tagId"));
+        let tags = engine
+            .read_tags(&block_id)
+            .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?;
+        if tags.contains(&tag_id) {
+            return fail(format!("remove_tag left {block_id}/{tag_id} in Loro"));
+        }
+    } else if matches!(
+        command,
+        "set_property" | "set_todo_state" | "set_priority" | "set_due_date" | "set_scheduled_date"
+    ) {
+        let (key, cleared) = match command {
+            "set_property" => (
+                args["key"].as_str().expect("set_property key"),
+                fixture_set_property_is_clear(args),
+            ),
+            "set_todo_state" => ("todo_state", args["state"].is_null()),
+            "set_priority" => ("priority", args["level"].is_null()),
+            "set_due_date" => ("due_date", args["date"].is_null()),
+            "set_scheduled_date" => ("scheduled_date", args["date"].is_null()),
+            _ => unreachable!(),
+        };
+        if cleared {
+            let block_id = block_id.expect("cleared property blockId");
+            let value = engine
+                .read_all_properties_typed(&block_id)
+                .map_err(|error| format!("fixture '{fixture_name}': read properties: {error}"))?
+                .into_iter()
+                .find(|(candidate, _)| candidate == key)
+                .map(|(_, value)| value);
+            if !matches!(value, None | Some(PropertyValue::Null)) {
+                return fail(format!(
+                    "cleared property {block_id}/{key} remains non-null in Loro: {value:?}"
+                ));
+            }
+        }
+    }
+    drop(guard);
+    Ok(())
+}
+
+#[test]
+fn set_property_clear_detection_matches_fixture_payload_projection() {
+    assert!(fixture_set_property_is_clear(&json!({})));
+    assert!(fixture_set_property_is_clear(&json!({ "value": null })));
+    assert!(fixture_set_property_is_clear(&json!({ "value": {} })));
+    assert!(fixture_set_property_is_clear(&json!({
+        "value": {
+            "value_text": null,
+            "value_num": null,
+            "value_date": null,
+            "value_ref": null,
+            "value_bool": null,
+        }
+    })));
+    for value in [
+        json!({ "value_text": "x" }),
+        json!({ "value_num": 0 }),
+        json!({ "value_date": "2026-08-05" }),
+        json!({ "value_ref": "S1" }),
+        json!({ "value_bool": false }),
+    ] {
+        assert!(!fixture_set_property_is_clear(&json!({ "value": value })));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-fixture run + assert / update
+// ---------------------------------------------------------------------------
+
+async fn run_fixture(path: &PathBuf) {
+    let raw = std::fs::read_to_string(path).unwrap();
+    let mut fixture: Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("parse fixture {}: {e}", path.display()));
+    let name = fixture["name"].as_str().unwrap_or("<unnamed>").to_owned();
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // #2249: every fresh Materializer owns a fresh per-instance LoroState. The
+    // fixture therefore has an isolated engine tree even when plain
+    // `cargo test` runs this module concurrently with other tests.
+    let state = mat.loro_state();
+
+    // 1. Seed blocks (literal expanded ids), then scope every seed block to one
+    //    test space so created children inherit it and same-space ref/link
+    //    validation passes.
+    let seed = &fixture["seed"];
+    if let Some(blocks) = seed["blocks"].as_array() {
+        for b in blocks {
+            insert_seed_block(&pool, b).await;
+        }
+    }
+    // #891: scope the seed blocks to TEST_SPACE_ID NOW (before any property/tag
+    // seed op or fixture op) so `resolve_block_space` returns a space and the
+    // engine path engages instead of the SQL-only fallback.
+    assign_all_to_test_space(&pool).await;
+    // #891: replay each seed block into the per-space engine tree so the engine
+    // and SQL agree on the pre-op state. Page-first seed order satisfies the
+    // engine's parent-before-child requirement.
+    if let Some(blocks) = seed["blocks"].as_array() {
+        for b in blocks {
+            seed_block_into_engine(state, b);
+        }
+    }
+    // Seed properties (non-reserved keys only — reserved ones are column-backed).
+    if let Some(props) = seed["properties"].as_array() {
+        for p in props {
+            let block_id: agaric_core::ulid::ActiveBlockId =
+                seed_label_to_id(p["block_id"].as_str().expect("seed prop block_id"))
+                    .as_str()
+                    .into();
+            let key = p["key"].as_str().expect("seed prop key").to_owned();
+            let v = &p["value"];
+            set_property_inner(
+                &pool,
+                DEV,
+                &mat,
+                block_id,
+                key,
+                v.get("value_text")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                v.get("value_num").and_then(Value::as_f64),
+                v.get("value_date")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                v.get("value_ref")
+                    .and_then(Value::as_str)
+                    .map(seed_label_to_id),
+                v.get("value_bool").and_then(Value::as_bool),
+                None,
+            )
+            .await
+            .expect("seed set_property");
+            settle(&mat).await;
+        }
+    }
+    // Seed tags.
+    if let Some(tags) = seed["tags"].as_array() {
+        for t in tags {
+            let block_id = seed_label_to_id(t["block_id"].as_str().expect("seed tag block_id"));
+            let tag_id = seed_label_to_id(t["tag_id"].as_str().expect("seed tag tag_id"));
+            add_tag_inner(
+                &pool,
+                DEV,
+                &mat,
+                BlockId::from(block_id.as_str()),
+                BlockId::from(tag_id.as_str()),
+            )
+            .await
+            .expect("seed add_tag");
+            settle(&mat).await;
+        }
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let mut canonical_order: Vec<String> = seed["blocks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|block| seed_label_to_id(block["id"].as_str().expect("seed block id")))
+        .collect();
+    let mut purge_gapped_parents: BTreeSet<Option<String>> = BTreeSet::new();
+
+    // Guard setup before fixture ops can remove/overwrite a seeded property or
+    // tag and erase evidence that its command took a SQL-only fallback.
+    verify_fixture_engine_parity(
+        &pool,
+        state,
+        &name,
+        &canonical_order,
+        &mut purge_gapped_parents,
+    )
+    .await
+    .unwrap_or_else(|message| panic!("{message}"));
+
+    // 2. Apply ops and guard EACH settled boundary. Structural comparisons use
+    // exact raw SQL positions except for the one parent group a successful
+    // purge is known to leave gapped. A later create/move touching that group
+    // owes a dense reproject, so it removes the allowance before comparison.
+    if let Some(ops) = fixture["ops"].as_array() {
+        for op in ops.clone() {
+            let command = op["command"].as_str().expect("op command");
+            let old_parent = if matches!(command, "move_block" | "purge_block") {
+                let block_id = seed_label_to_id(
+                    op["args"]["blockId"]
+                        .as_str()
+                        .expect("structural op blockId"),
+                );
+                read_structural_op_parent(&pool, &name, command, &block_id)
+                    .await
+                    .unwrap_or_else(|message| panic!("{message}"))
+            } else {
+                None
+            };
+            apply_op(&pool, &mat, &op).await;
+
+            match command {
+                "create_block" => {
+                    let parent = op["args"]["parentId"].as_str().map(seed_label_to_id);
+                    purge_gapped_parents.remove(&parent);
+                }
+                "move_block" => {
+                    let new_parent = op["args"]["newParentId"].as_str().map(seed_label_to_id);
+                    purge_gapped_parents.remove(&old_parent);
+                    purge_gapped_parents.remove(&new_parent);
+                }
+                "purge_block" => {
+                    purge_gapped_parents.insert(old_parent);
+                }
+                _ => {}
+            }
+            for created in read_created_block_ids_in_op_order(&pool).await {
+                if !canonical_order.contains(&created) {
+                    canonical_order.push(created);
+                }
+            }
+            verify_fixture_engine_parity(
+                &pool,
+                state,
+                &name,
+                &canonical_order,
+                &mut purge_gapped_parents,
+            )
+            .await
+            .unwrap_or_else(|message| panic!("{message}"));
+            verify_removed_value_in_engine(state, &name, &op)
+                .unwrap_or_else(|message| panic!("{message}"));
+        }
+    }
+    // Catch any top-level pages created mid-op so their descendants resolve a
+    // space (otherwise a follow-up cross-space ref/link op would be rejected).
+    assign_all_to_test_space(&pool).await;
+
+    // 3. Canonical order: seed blocks first, then op-created blocks in seq
+    // order. The loop maintains this after every op; this final read is an
+    // idempotent safeguard for fixtures with an empty/non-array op list.
+    for created in read_created_block_ids_in_op_order(&pool).await {
+        if !canonical_order.contains(&created) {
+            canonical_order.push(created);
+        }
+    }
+
+    // 4. Build the mock-comparison snapshot. Per-op parity reads never mutate
+    // this state, so canonical relabeling and fixture output remain unchanged.
+    let raw_state = read_raw_state(&pool).await;
+    let snapshot: Snapshot = build_snapshot_with_order(raw_state, &canonical_order);
+    let snapshot_value = serde_json::to_value(&snapshot).unwrap();
+
+    // 5. #3347 — optional post-op READ steps. Each runs one query command
+    // against the real backend and projects its response into the same
+    // canonical `Bn` vocabulary the snapshot uses. Authored by the SAME
+    // `CONFORMANCE_UPDATE=1` flow, asserted by the SAME two runners.
+    let labels = super::conformance_snapshot::canonical_label_map(&canonical_order);
+    let queries_value = super::conformance_query::run_query_steps(&pool, &fixture, &labels).await;
+
+    if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
+        fixture["expected"] = snapshot_value;
+        if queries_value.is_null() {
+            // A fixture with no `queries` keeps no `expected_queries` key.
+            if let Some(obj) = fixture.as_object_mut() {
+                obj.remove("expected_queries");
+            }
+        } else {
+            fixture["expected_queries"] = queries_value;
+        }
+        // Pretty-print with a trailing newline so the file stays diff-friendly.
+        let mut out = serde_json::to_string_pretty(&fixture).unwrap();
+        out.push('\n');
+        std::fs::write(path, out).unwrap();
+        eprintln!("CONFORMANCE_UPDATE: wrote expected for fixture '{name}'");
+        return;
+    }
+
+    let expected = &fixture["expected"];
+    assert!(
+        !expected.is_null(),
+        "fixture '{name}' has no `expected` — run with CONFORMANCE_UPDATE=1 to author it",
+    );
+    // Compare via canonical BTreeMap round-trip so key order never matters.
+    let expected_canon: BTreeMap<String, Value> = serde_json::from_value(expected.clone()).unwrap();
+    let actual_canon: BTreeMap<String, Value> =
+        serde_json::from_value(snapshot_value.clone()).unwrap();
+    assert_eq!(
+        json!(actual_canon),
+        json!(expected_canon),
+        "conformance snapshot mismatch for fixture '{name}' (backend is source of truth; \
+         re-author with CONFORMANCE_UPDATE=1 if the backend behaviour changed intentionally)",
+    );
+
+    // #3347 — the read-command leg. Same contract as the snapshot: the backend
+    // authors, both runners assert.
+    let expected_queries = &fixture["expected_queries"];
+    if queries_value.is_null() {
+        assert!(
+            expected_queries.is_null(),
+            "fixture '{name}' carries `expected_queries` but declares no `queries` steps — \
+             delete the stale key (or add the steps back)",
+        );
+    } else {
+        assert!(
+            !expected_queries.is_null(),
+            "fixture '{name}' declares `queries` but has no `expected_queries` — \
+             run with CONFORMANCE_UPDATE=1 to author it",
+        );
+        assert_eq!(
+            &queries_value, expected_queries,
+            "conformance QUERY mismatch for fixture '{name}' (backend is source of truth; \
+             re-author with CONFORMANCE_UPDATE=1 if the backend behaviour changed \
+             intentionally)",
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn conformance_fixtures_match_backend() {
+    let paths = fixture_paths();
+    assert!(!paths.is_empty(), "no conformance fixtures found");
+    for path in &paths {
+        run_fixture(path).await;
+    }
+}
+
+/// #3333 — the engine-path guard must cover a real fixture whose op list has
+/// no `create_block`: move_dedent taking the SQL-only arm changes the target row
+/// while this fixture's isolated engine does not, and the SAME state capture +
+/// comparator `run_fixture` uses must fail on that.
+///
+/// #3429: the divergence is now produced by CALLING
+/// `apply_move_block_sql_only` — the exact function `apply_move_block_via_loro`
+/// dispatches to when a block's space cannot be resolved — instead of the
+/// hand-rolled `UPDATE blocks SET parent_id = ?, position = ?` this test used
+/// to simulate it with. A simulated write only ever reproduces the effect its
+/// author already had in mind, so the guard was measured against the test's own
+/// model of the fallback rather than against the fallback. The real function
+/// carries behaviour the simulation had no way to express — the shared cycle
+/// probe, the `new_index`-over-`new_position` preference, the
+/// `project_move_block_to_sql` UPDATE shape it shares with the engine arm, and
+/// the tag-inheritance recompute — and if any of that changes such that the
+/// SQL-only arm stops diverging from the engine here, this test now notices.
+///
+/// It drives the fallback IMPLEMENTATION directly, as `move_convergence_tests`'
+/// fallback arm does; the routing decision that reaches it (and the
+/// `sql_only_fallback::record` metric, which lives in the router, not in the
+/// fallback) is that test's subject, not this one's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn engine_parity_guard_rejects_sql_only_move_dedent_divergence() {
+    let path = fixture_paths()
+        .into_iter()
+        .find(|path| path.file_stem().is_some_and(|stem| stem == "move_dedent"))
+        .expect("move_dedent fixture path");
+    let fixture: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read move_dedent fixture"))
+            .expect("parse move_dedent fixture");
+    assert_eq!(fixture["name"].as_str(), Some("move_dedent"));
+    let ops = fixture["ops"].as_array().expect("move_dedent ops");
+    assert!(
+        ops.iter().all(|op| op["command"] != "create_block"),
+        "move_dedent must remain a no-create fixture for this regression"
+    );
+    let move_op = ops
+        .iter()
+        .find(|op| op["command"] == "move_block")
+        .expect("move_dedent move op");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+    let seed = &fixture["seed"];
+    let blocks = seed["blocks"].as_array().expect("move_dedent seed blocks");
+    for block in blocks {
+        insert_seed_block(&pool, block).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for block in blocks {
+        seed_block_into_engine(state, block);
+    }
+
+    let canonical_order: Vec<String> = blocks
+        .iter()
+        .map(|block| seed_label_to_id(block["id"].as_str().expect("seed block id")))
+        .collect();
+    let moved_id = seed_label_to_id(move_op["args"]["blockId"].as_str().expect("move blockId"));
+    let new_parent_id = seed_label_to_id(
+        move_op["args"]["newParentId"]
+            .as_str()
+            .expect("move newParentId"),
+    );
+    let new_position = agaric_store::pagination::index_to_provisional_position(
+        move_op["args"]["newIndex"].as_i64().expect("move newIndex"),
+    );
+    // The real engine-less fallback, on the fixture's own args — no simulation.
+    let mut conn = pool
+        .acquire()
+        .await
+        .expect("acquire a connection for the fallback apply");
+    agaric_engine::apply::sql_only::apply_move_block_sql_only(
+        &mut conn,
+        MoveBlockPayload {
+            block_id: BlockId::from_trusted(&moved_id),
+            new_parent_id: Some(BlockId::from_trusted(&new_parent_id)),
+            new_position,
+            new_index: move_op["args"]["newIndex"].as_i64(),
+        },
+    )
+    .await
+    .expect("apply_move_block_sql_only (the engine-less fallback arm)");
+    drop(conn);
+
+    let message = verify_fixture_engine_parity(
+        &pool,
+        state,
+        "move_dedent",
+        &canonical_order,
+        &mut BTreeSet::new(),
+    )
+    .await
+    .expect_err("move-only SQL/engine divergence must fail the fixture-local guard");
+    assert!(
+        message.contains("fixture 'move_dedent'") && message.contains(&moved_id),
+        "guard diagnostic must identify the real fixture and divergent block: {message}"
+    );
+}
+
+/// #3429 (gap 2) — the purge-gap allowance must be RE-TIGHTENED once the gap it
+/// excuses is gone, not carried for the rest of the fixture.
+///
+/// The allowance suppresses the exact-position comparison for one parent group.
+/// The order comparison that stays behind is strictly weaker: a group can hold
+/// the right SEQUENCE at the wrong RANKS. So while the allowance stands, a
+/// SQL/engine position divergence inside that group is invisible — and it stood
+/// until a later `create_block`/`move_block` happened to name the group, which
+/// for most fixture shapes never happens.
+///
+/// Seed `S1 > {A, B, C}` into SQL and the engine in agreement, then hand the
+/// guard an allowance for `S1` as if an earlier purge had granted it and the
+/// group had since been reprojected. The guard must hand the allowance back.
+/// Then diverge position WITHOUT disturbing order — `apply_move_block_sql_only`
+/// puts C at index 3, so SQL ranks it 4 while the engine still ranks it 3, and
+/// the sequence is `A, B, C` on both sides — which only the exact-position
+/// comparison can see. With a sticky allowance that divergence passes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn engine_parity_guard_retightens_a_healed_purge_gap_allowance() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "GA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "GB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+        json!({"id": "GC", "block_type": "content", "content": "C",    "parent_id": "S1", "position": 3}),
+    ];
+    for block in &seed {
+        insert_seed_block(&pool, block).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for block in &seed {
+        seed_block_into_engine(state, block);
+    }
+    let known: Vec<String> = seed
+        .iter()
+        .map(|block| seed_label_to_id(block["id"].as_str().expect("seed block id")))
+        .collect();
+    let s1 = seed_label_to_id("S1");
+    let c = seed_label_to_id("GC");
+
+    let mut gapped: BTreeSet<Option<String>> = BTreeSet::from([Some(s1.clone())]);
+    verify_fixture_engine_parity(&pool, state, "healed_gap", &known, &mut gapped)
+        .await
+        .expect("a group whose positions already agree must pass the guard");
+    assert!(
+        gapped.is_empty(),
+        "an allowance for a group that is back in exact agreement must be handed back, not held \
+         for the rest of the fixture: {gapped:?}"
+    );
+
+    let mut conn = pool
+        .acquire()
+        .await
+        .expect("acquire a connection for the fallback apply");
+    agaric_engine::apply::sql_only::apply_move_block_sql_only(
+        &mut conn,
+        MoveBlockPayload {
+            block_id: BlockId::from_trusted(&c),
+            new_parent_id: Some(BlockId::from_trusted(&s1)),
+            new_position: 4,
+            new_index: Some(3),
+        },
+    )
+    .await
+    .expect("apply_move_block_sql_only (the engine-less fallback arm)");
+    drop(conn);
+
+    let message = verify_fixture_engine_parity(&pool, state, "healed_gap", &known, &mut gapped)
+        .await
+        .expect_err(
+            "an order-preserving position divergence must fail once the stale allowance is gone",
+        );
+    assert!(
+        message.contains(&c) && message.contains("position differs"),
+        "guard diagnostic must name the divergent block and the position comparison: {message}"
+    );
+
+    mat.shutdown();
+}
+
+/// #3429 (gap 3) — a structural op whose target has no `blocks` row must fail
+/// with a diagnostic naming the fixture, the command and the block, instead of
+/// the bare sqlx `RowNotFound` the previous `fetch_one` produced. The happy path
+/// is asserted alongside it so the helper cannot degenerate into "always Err".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn structural_op_parent_read_names_an_absent_target() {
+    let (pool, _dir) = test_pool().await;
+    let parent = seed_label_to_id("P1");
+    let child = seed_label_to_id("C1");
+    insert_block(&pool, &parent, "page", "Home", None, Some(1)).await;
+    insert_block(&pool, &child, "content", "child", Some(&parent), Some(1)).await;
+
+    assert_eq!(
+        read_structural_op_parent(&pool, "made_up", "move_block", &child)
+            .await
+            .expect("a present block's parent must read back"),
+        Some(parent),
+        "the helper must still return the pre-op parent for a block that exists"
+    );
+
+    let absent = seed_label_to_id("GHOST");
+    let message = read_structural_op_parent(&pool, "made_up", "purge_block", &absent)
+        .await
+        .expect_err("a structural op aimed at an absent block must be an explicit failure");
+    assert!(
+        message.contains("made_up") && message.contains("purge_block") && message.contains(&absent),
+        "the diagnostic must name the fixture, the command and the block: {message}"
+    );
+}
+
+/// #928 f7 — FE-`newIndex` ↔ engine-clamp parity at the sibling-group TAIL.
+///
+/// The engine's `move_block_impl` (`agaric-engine/src/loro/engine/`) clamps a SAME-PARENT
+/// (already-child) move's slot to `count - 1`: the node vacates its own slot
+/// first, so the addressable range among the OTHER children shrinks by one.
+/// The FE replicates the symmetric slot math separately — `moveDown`
+/// (`src/stores/page-blocks.ts:1233`) emits `newIndex = sibIndex + 1`, which
+/// for the LAST sibling lands one past the shrunk range. Nothing cross-checks
+/// that the FE-emitted `newIndex` and the engine clamp agree at the tail.
+///
+/// This drives the SAME engine path production runs (seed → `dispatch_op` →
+/// foreground engine apply + dense reproject → settle) for a same-parent group
+/// `S1 > {A, B, C}` and pins:
+///   1. `move_block(C, S1, 0)` — last child to the HEAD (slot 0, no clamp).
+///   2. `move_block(A, S1, 2)` — A to the TAIL using the exact `sibIndex + 1`
+///      basis `moveDown` emits for the last position (3 children, A vacates
+///      slot 0 ⇒ 2 others ⇒ engine clamps slot 2 → `count - 1 = 1`… i.e. the
+///      tail of the remaining group, NOT out of range / panic / a gap).
+/// After settle, asserts the engine placed C at the head and A at the last
+/// slot, and that the sibling group is dense 1-based with no duplicates.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_same_parent_tail_clamp_matches_fe_new_index() {
+    // 26-char ids so `seed_label_to_id` / `apply_op` treat them as literal ids.
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+    let c = seed_label_to_id("BC");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Install the process-global engine so ops route through the production
+    // `apply_*_via_loro` ENGINE path (dense reproject), not the SQL-only
+    // fallback. `registry.clear()` gives this test a fresh per-space tree.
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    // Seed S1 > {A, B, C} into BOTH SQL and the engine tree (parent-first so the
+    // engine's parent-before-child requirement holds), then scope to one space.
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+        json!({"id": "BC", "block_type": "content", "content": "C",    "parent_id": "S1", "position": 3}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    // Read the settled dense 1-based rank for each child of S1 from the DB
+    // (the engine reproject writes `blocks.position`). Returns (parent, pos).
+    async fn child_pos(pool: &SqlitePool, id: &str) -> (Option<String>, Option<i64>) {
+        let row = sqlx::query_as::<_, (Option<String>, Option<i64>)>(
+            "SELECT parent_id, position FROM blocks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (row.0, row.1)
+    }
+
+    // 1. Move LAST child C to the HEAD (slot 0 — no clamp engages). Expected
+    //    settled order: C, A, B → ranks C=1, A=2, B=3.
+    apply_op(
+        &pool,
+        &mat,
+        &json!({"command": "move_block", "args": {"blockId": "BC", "newParentId": "S1", "newIndex": 0}}),
+    )
+    .await;
+
+    {
+        let (cp, cpos) = child_pos(&pool, &c).await;
+        let (_, apos) = child_pos(&pool, &a).await;
+        let (_, bpos) = child_pos(&pool, &b).await;
+        assert_eq!(cp.as_deref(), Some(s1.as_str()), "C stays under S1");
+        assert_eq!(cpos, Some(1), "C moved to slot 0 ⇒ dense head rank 1");
+        assert_eq!(apos, Some(2), "A slides to rank 2 after C jumps the head");
+        assert_eq!(bpos, Some(3), "B slides to rank 3");
+    }
+
+    // 2. Move A to the TAIL with the exact FE `moveDown` last-position basis:
+    //    `newIndex = sibIndex + 1`. Group is now [C, A, B]; A is at sibIndex 1,
+    //    so the next slot is 2. A vacates its own slot first (already-child) ⇒
+    //    only {C, B} remain addressable (count - 1 = 1), so the engine CLAMPS
+    //    slot 2 → the last remaining slot. A must land at the TAIL, not out of
+    //    range / panic / a gap. Expected settled order: C, B, A.
+    apply_op(
+        &pool,
+        &mat,
+        &json!({"command": "move_block", "args": {"blockId": "BA", "newParentId": "S1", "newIndex": 2}}),
+    )
+    .await;
+
+    let (cp, cpos) = child_pos(&pool, &c).await;
+    let (bp, bpos) = child_pos(&pool, &b).await;
+    let (ap, apos) = child_pos(&pool, &a).await;
+
+    // All three remain children of S1 (no reparent, no orphan).
+    assert_eq!(cp.as_deref(), Some(s1.as_str()), "C stays under S1");
+    assert_eq!(bp.as_deref(), Some(s1.as_str()), "B stays under S1");
+    assert_eq!(ap.as_deref(), Some(s1.as_str()), "A stays under S1");
+
+    // A clamped to the LAST slot — the engine did NOT honor the raw `newIndex`
+    // of 2 against the FULL count (which would be a gap / past-the-end), it
+    // clamped to `count - 1` so A sits at the dense tail.
+    assert_eq!(cpos, Some(1), "C remains at the head (rank 1)");
+    assert_eq!(bpos, Some(2), "B slides up to rank 2 after A vacates");
+    assert_eq!(
+        apos,
+        Some(3),
+        "A clamped to the TAIL (rank 3 of 3) — FE newIndex 2 == engine clamp"
+    );
+
+    // Dense 1-based with NO duplicates / NO gaps across the whole group.
+    let mut ranks = [cpos, apos, bpos]
+        .into_iter()
+        .map(|p| p.expect("every child has a settled position"))
+        .collect::<Vec<_>>();
+    ranks.sort_unstable();
+    assert_eq!(
+        ranks,
+        vec![1, 2, 3],
+        "sibling group must be dense 1-based {{1,2,3}} with no duplicate / out-of-range rank after the tail clamp",
+    );
+
+    // ENGINE-PATH GUARD: A is present in the per-space engine tree, proving the
+    // moves ran the production engine path (clamp + reproject), not the
+    // SQL-only fallback (which never clamps and never touches the engine).
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        assert!(
+            guard
+                .engine_mut()
+                .read_block(&a)
+                .expect("read_block")
+                .is_some(),
+            "moved block A absent from the engine tree — the move took the SQL-only FALLBACK, not the engine clamp path",
+        );
+        drop(guard);
+    }
+}
+
+/// #1257 LOCAL `create_block` is engine-fresh and densely positioned
+/// IN-TRANSACTION, with the apply cursor PINNED.
+///
+/// Before the LOCAL command path (`create_block_inner` →
+/// `create_block_in_tx`) wrote a PROVISIONAL `index + 1` SQL position and NEVER
+/// touched the Loro engine: positions were reconciled to dense ranks only on the
+/// Next boot replay (the #1245 / #1249 bug). routes the create through
+/// `apply_create_block_via_loro` inside the same `CommandTx` — engine apply +
+/// `project_create_block_to_sql` + `reproject_dense_positions` — but
+/// deliberately does NOT advance `materializer_apply_cursor` (so boot replay
+/// re-applies idempotently; #1248).
+///
+/// This test drives the REAL command path (`create_block_inner` + `settle()`)
+/// for an insert at index 0 BETWEEN two existing siblings and asserts, WITHOUT
+/// any boot replay:
+///   (a) the engine `read_block` / `children_ordered_block_ids(S1)` reflects the
+///       new block at the head of the sibling list;
+///   (b) the SQL `blocks.position` equals the engine's DENSE rank — new block at
+///       rank 1, the two pre-existing siblings reprojected to ranks 2 and 3.
+///       Under the OLD provisional path the index-0 insert would have written
+///       position `index_to_provisional_position(0)` and left the siblings at
+///       their seeded 1/2, so this dense-rank assertion would FAIL — exactly the
+/// Drift closes; and
+///   (c) the apply cursor (`materialized_through_seq`) did NOT advance.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_create_is_engine_fresh_and_dense_1257() {
+    // 26-char ids so `seed_label_to_id` treats them as literal ids.
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Install the process-global engine so the LOCAL create routes through the
+    // production `apply_create_block_via_loro` ENGINE path (dense reproject), not
+    // the SQL-only fallback. `registry.clear()` gives this test a fresh tree.
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    // Seed S1 > {A, B} into BOTH SQL and the engine tree (parent-first), then
+    // scope every seed block to one space so `resolve_block_space` succeeds and
+    // the LOCAL create engages the engine path for the child insert.
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    // Cursor + op_log baselines BEFORE the local create.
+    async fn apply_cursor(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn max_seq(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    let cursor_before = apply_cursor(&pool).await;
+    let seq_before = max_seq(&pool).await;
+
+    // Drive the REAL local command path: insert a new content block at index 0
+    // (BEFORE A and B) under S1.
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "inserted-at-head".into(),
+        Some(BlockId::from(s1.as_str())),
+        Some(0),
+    )
+    .await
+    .expect("create_block_inner");
+    let new_id = created.id.clone().into_string();
+
+    // The dense rank is projected synchronously in the CommandTx — even before
+    // settling background work. Drain background tasks anyway to prove they
+    // don't perturb the dense ranks (and to mirror the production lifecycle).
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT any boot replay, the engine already has the
+    //     new block and orders it at the HEAD of S1's children.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let snap = guard
+            .engine_mut()
+            .read_block(&new_id)
+            .expect("read_block")
+            .expect("engine has the freshly-created block (no boot replay)");
+        assert_eq!(snap.content, "inserted-at-head");
+        assert_eq!(snap.parent_id.as_deref(), Some(s1.as_str()));
+        let order = guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(s1.as_str()))
+            .expect("children_ordered_block_ids");
+        drop(guard);
+        assert_eq!(
+            order,
+            vec![new_id.clone(), a.clone(), b.clone()],
+            "engine sibling order must place the index-0 insert at the head: \
+             [new, A, B]; got {order:?}",
+        );
+    }
+
+    // (b) SQL `blocks.position` must equal the engine's DENSE rank for EVERY
+    //     sibling — new=1, A=2, B=3. Under the OLD provisional path the new
+    //     block would carry `index_to_provisional_position(0)` and A/B would
+    //     keep their seeded 1/2, so this block would FAIL.
+    async fn pos(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    assert_eq!(
+        pos(&pool, &new_id).await,
+        Some(1),
+        "new block must be densely ranked 1 (head of S1)",
+    );
+    assert_eq!(
+        pos(&pool, &a).await,
+        Some(2),
+        "A must reproject to dense rank 2 after the head insert (was seeded 1)",
+    );
+    assert_eq!(
+        pos(&pool, &b).await,
+        Some(3),
+        "B must reproject to dense rank 3 after the head insert (was seeded 2)",
+    );
+    // The returned BlockRow must also carry the persisted dense rank, not a
+    // provisional value.
+    assert_eq!(
+        created.position,
+        Some(1),
+        "create_block_inner must return the persisted dense rank",
+    );
+
+    // (c) Apply cursor must NOT advance: the LOCAL path engine-applies but boot
+    //     replay still owns cursor progress (#1248 / #1257). The op DID land in
+    //     the op_log.
+    let cursor_after = apply_cursor(&pool).await;
+    let seq_after = max_seq(&pool).await;
+    assert!(
+        seq_after > seq_before,
+        "local create_block must append to op_log: {seq_before} -> {seq_after}",
+    );
+    assert_eq!(
+        cursor_after, cursor_before,
+        "local command path must NOT advance the apply cursor even though it now \
+         engine-applies in-tx (#1248 / #1257); cursor moved {cursor_before} -> {cursor_after}",
+    );
+
+    mat.shutdown();
+}
+
+/// #2250 — LOCAL and SYNC apply of the SAME op project byte-identical SQL.
+///
+/// The two op-projection entry points — the LOCAL command path
+/// (`create_block_inner`, which engine-applies in-tx and does NOT advance
+/// the apply cursor) and the SYNC/boot-replay path
+/// (`MaterializeTask::ApplyOp` → `apply_op` → `apply_op_tx`, which advances
+/// the cursor) — both funnel through the single shared
+/// `apply_create_block_via_loro` helper. This test drives the SAME
+/// CreateBlock op down BOTH entry points, on two identically-seeded
+/// databases, and asserts the projected `blocks` rows (content, type,
+/// parent, dense position) are identical for the new block AND for the two
+/// reprojected siblings. If the paths ever diverge (the #2250 risk), the
+/// row comparison fails instead of a drift counter silently ticking.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_and_sync_apply_project_identical_rows_2250() {
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A", "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B", "parent_id": "S1", "position": 2}),
+    ];
+
+    // The columns both entry points must project identically post-`settle()`.
+    // `page_id`/`space_id` are now INCLUDED: the SYNC `apply_op_tx` Create arm
+    // stamps them in-tx (mirroring LOCAL `create_block_in_tx`), and the deferred
+    // cache rebuilds are idempotent backstops that converge on the same value —
+    // so a fully-settled LOCAL and SYNC create must agree on them too. This is
+    // the LOCAL==REMOTE create-parity proof.
+    async fn projected_row(
+        pool: &SqlitePool,
+        id: &str,
+    ) -> (
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    ) {
+        sqlx::query_as(
+            "SELECT content, block_type, parent_id, position, page_id, space_id \
+             FROM blocks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    // ── LOCAL command path ────────────────────────────────────────────────
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    let state_l = mat_l.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_l, blk).await;
+    }
+    assign_all_to_test_space(&pool_l).await;
+    for blk in &seed {
+        seed_block_into_engine(state_l, blk);
+    }
+    let created = create_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        "content".into(),
+        "shared-content".into(),
+        Some(BlockId::from(s1.as_str())),
+        Some(0),
+    )
+    .await
+    .expect("local create_block_inner");
+    settle(&mat_l).await;
+    let new_id = created.id.clone().into_string();
+
+    // Capture the exact CreateBlock op the LOCAL path emitted into the op_log
+    // so the SYNC side replays a byte-identical op (same block_id / index).
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'create_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local create op must be in op_log");
+    let payload: CreateBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize CreateBlock payload");
+    assert_eq!(
+        payload.block_id.as_str(),
+        new_id,
+        "captured the create op for the freshly-created block",
+    );
+
+    // ── SYNC / boot-replay path (fresh DB, identical seed, same op) ────────
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    let state_s = mat_s.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_s, blk).await;
+    }
+    assign_all_to_test_space(&pool_s).await;
+    for blk in &seed {
+        seed_block_into_engine(state_s, blk);
+    }
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::CreateBlock(payload))
+            .await
+            .expect("append sync op");
+    mat_s
+        .enqueue_foreground(agaric_lib::materializer::MaterializeTask::ApplyOp(
+            std::sync::Arc::new(record_s),
+        ))
+        .await
+        .expect("enqueue ApplyOp");
+    mat_s.flush_foreground().await.expect("flush foreground");
+    settle(&mat_s).await;
+
+    // ── The two entry points must project identically ─────────────────────
+    assert_eq!(
+        projected_row(&pool_l, &new_id).await,
+        projected_row(&pool_s, &new_id).await,
+        "LOCAL and SYNC apply must project the new block's row identically (#2250)",
+    );
+    assert_eq!(
+        projected_row(&pool_l, &a).await,
+        projected_row(&pool_s, &a).await,
+        "sibling A dense reprojection must match across LOCAL and SYNC (#2250)",
+    );
+    assert_eq!(
+        projected_row(&pool_l, &b).await,
+        projected_row(&pool_s, &b).await,
+        "sibling B dense reprojection must match across LOCAL and SYNC (#2250)",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
+
+/// #2344/#2325 — LOCAL `edit_block_inner` ≡ REMOTE `apply_op` link-parity.
+///
+/// The EditBlock arm of the #2325 apply-path collapse: `edit_block_inner` now
+/// routes its just-appended op through `apply_op_projected(advance_cursor=false)`
+/// — the SAME entry point the REMOTE/boot-replay path drives via
+/// `apply_op → apply_op_projected(advance_cursor=true)`. Before this, the LOCAL
+/// path deferred the `reindex_block_links` + `inbound_link_count` recompute to
+/// the background `enqueue_edit_background` fan-out while the REMOTE Edit arm did
+/// it in-tx; this test pins that they now converge on ALL link-derived state.
+///
+/// The Stage-2 B5 proptest does NOT cover this: its content strategy never emits
+/// `[[ULID]]` tokens, so `block_links` is always empty and the comparison is
+/// vacuous. Here the edit writes a REAL `[[<page>]]` token so a concrete
+/// `block_links` edge AND a non-zero `pages_cache.inbound_link_count` are
+/// produced, and the two paths are asserted byte-identical on:
+///   * `blocks.content` of the edited block,
+///   * `block_links` (source_id, target_id) — the link edge, and
+///   * the linked page's `pages_cache.inbound_link_count`.
+/// Plus a per-drive `sql_only_fallback::count()` delta of 0 on BOTH sides — the
+/// #891 engine-path discipline: prove the engine path ran, not the SQL-only
+/// fallback (which would make the equivalence a false green).
+///
+/// The link SOURCE (`BA`, owned by page `S2`) is a DIFFERENT page than the link
+/// TARGET (page `S1`) on purpose: the `inbound_link_count` recompute excludes
+/// same-page edges (`src.page_id != pages_cache.page_id`), so a within-page link
+/// would leave the count at 0 and make the assertion vacuous.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_edit_block_link_parity_local_matches_remote_2344() {
+    let s1 = seed_label_to_id("S1"); // link TARGET page
+    let ba = seed_label_to_id("BA"); // link SOURCE content block (owned by S2)
+    // Two pages (S1, S2) + a content block BA under S2. Editing BA to contain
+    // `[[S1]]` creates a cross-page link edge BA -> S1.
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Target", "parent_id": null, "position": 1}),
+        json!({"id": "S2", "block_type": "page", "content": "Source", "parent_id": null, "position": 2}),
+        json!({"id": "BA", "block_type": "content", "content": "before", "parent_id": "S2", "position": 1}),
+    ];
+    // Content that creates a real `block_links` edge to the S1 page.
+    let edit_text = format!("[[{s1}]]");
+
+    // Reads (runtime queries — no sqlx macro, no `.sqlx` regen needed).
+    async fn block_content(pool: &SqlitePool, id: &str) -> String {
+        sqlx::query_scalar::<_, String>("SELECT content FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    async fn all_block_links(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT source_id, target_id FROM block_links ORDER BY source_id, target_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn inbound_link_count(pool: &SqlitePool, page_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    // Seed a `pages_cache` row for the link target so the in-tx
+    // `inbound_link_count` recompute (an UPDATE, not an upsert) has a row to
+    // touch — otherwise the count would be invisible on BOTH sides (vacuous).
+    async fn seed_pages_cache_row(pool: &SqlitePool, page_id: &str) {
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, 'Target', 0, 0, 0)",
+        )
+        .bind(page_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // ── LOCAL command path (edit_block_inner → apply_op_projected(false)) ──
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    let state_l = mat_l.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_l, blk).await;
+    }
+    assign_all_to_test_space(&pool_l).await;
+    for blk in &seed {
+        seed_block_into_engine(state_l, blk);
+    }
+    seed_pages_cache_row(&pool_l, &s1).await;
+
+    let fb_l = agaric_lib::materializer::sql_only_fallback_count();
+    edit_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        BlockId::from(ba.as_str()),
+        edit_text.clone(),
+    )
+    .await
+    .expect("local edit_block_inner");
+    settle(&mat_l).await;
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_l,
+        0,
+        "LOCAL edit took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // Capture the exact EditBlock op the LOCAL path emitted so the REMOTE side
+    // replays a byte-identical op.
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'edit_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local edit op must be in op_log");
+    let edit_payload: EditBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize EditBlock payload");
+    assert_eq!(
+        edit_payload.block_id.as_str(),
+        ba,
+        "captured the edit op for the edited block",
+    );
+
+    // ── REMOTE / sync path (append_local_op → apply_op → apply_op_projected(true)) ──
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    let state_s = mat_s.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_s, blk).await;
+    }
+    assign_all_to_test_space(&pool_s).await;
+    for blk in &seed {
+        seed_block_into_engine(state_s, blk);
+    }
+    seed_pages_cache_row(&pool_s, &s1).await;
+
+    let fb_s = agaric_lib::materializer::sql_only_fallback_count();
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::EditBlock(edit_payload))
+            .await
+            .expect("append sync edit op");
+    // `dispatch_op` runs the foreground ApplyOp (apply_op → apply_op_projected,
+    // advance_cursor=true) + enqueues the background fan-out; `settle` drains it.
+    mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
+    settle(&mat_s).await;
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_s,
+        0,
+        "REMOTE edit took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // ── The two entry points must project the link-derived state identically ──
+    assert_eq!(
+        block_content(&pool_l, &ba).await,
+        block_content(&pool_s, &ba).await,
+        "LOCAL and REMOTE edit must project the block content identically",
+    );
+    let links_l = all_block_links(&pool_l).await;
+    let links_s = all_block_links(&pool_s).await;
+    assert_eq!(
+        links_l, links_s,
+        "block_links (source_id, target_id) diverged LOCAL vs REMOTE (#2344)",
+    );
+    // Non-vacuity: the edit produced exactly the BA -> S1 edge.
+    assert_eq!(
+        links_l,
+        vec![(ba.clone(), s1.clone())],
+        "the edit must create exactly the BA -> S1 link edge",
+    );
+    let inbound_l = inbound_link_count(&pool_l, &s1).await;
+    let inbound_s = inbound_link_count(&pool_s, &s1).await;
+    assert_eq!(
+        inbound_l, inbound_s,
+        "pages_cache.inbound_link_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    // Non-vacuity: the cross-page link bumped the count to 1.
+    assert_eq!(
+        inbound_l, 1,
+        "the cross-page [[S1]] link must set S1's inbound_link_count to 1",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
+
+/// #2344/#2325 — LOCAL `move_block_inner` ≡ REMOTE `apply_op` move-parity.
+///
+/// The MoveBlock arm of the #2325 apply-path collapse: `move_block_in_tx` now
+/// routes its just-appended op through `apply_op_projected(advance_cursor=false)`
+/// — the SAME entry point the REMOTE/boot-replay path drives via
+/// `apply_op → apply_op_projected(advance_cursor=true)`. This test pins that the
+/// two entry points converge on ALL move-derived state: `parent_id`/`position`,
+/// the `page_id`/`space_id` re-stamp, and the page-keyed `child_block_count` /
+/// `inbound_link_count` recompute.
+///
+/// The setup is a genuinely non-vacuous CROSS-PAGE move. Two pages S1/S2 and a
+/// two-block subtree under S1: parent `P` (owned by S1) and leaf `L` (under P)
+/// whose content is `[[S2]]`. Because L is on page S1 pre-move, the L -> S2 edge
+/// is a CROSS-page link, so S2's `pages_cache.inbound_link_count` starts at 1
+/// (the recompute's `src.page_id != pages_cache.page_id` filter keeps it). We
+/// then move P (and its subtree L) UNDER S2: `rederive_page_and_space_ids`
+/// re-stamps P/L from page S1 to page S2, so the L -> S2 edge becomes a
+/// SAME-page link — which the same filter now EXCLUDES — and the recompute
+/// drops S2's inbound to 0. The 1 -> 0 transition is asserted on the LOCAL pool
+/// BEFORE the move (proving the pre-state) and 0 on BOTH pools after.
+///
+/// What the 1 -> 0 signal actually guards: skipping `rederive_page_and_space_ids`
+/// (so L keeps page_id S1, stays cross-page) leaves S2 inbound at 1 and trips
+/// the assertion — this pin catches a dropped/wrong page-id re-stamp on either
+/// entry point. It does NOT isolate the affected-set's *outbound-target* branch:
+/// on a cross->same move the destination page IS the link target, so S2 already
+/// enters the recompute set as the moved subtree's new owning page; the
+/// outbound-target term is only uniquely load-bearing for a move-to-top-level
+/// (page_id -> NULL) case, which a separate fixture would need to pin.
+///
+/// Both sides carry a per-drive `sql_only_fallback::count()` delta of 0 — the
+/// #891 engine-path discipline: prove the engine move path ran, not the SQL-only
+/// fallback (which would make the equivalence a false green).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_block_parity_local_matches_remote_2344() {
+    let s1 = seed_label_to_id("S1"); // page the subtree STARTS on
+    let s2 = seed_label_to_id("S2"); // page the subtree moves TO (and link target)
+    let p = seed_label_to_id("P"); // moved parent (under S1)
+    let l = seed_label_to_id("L"); // moved leaf (under P), links [[S2]]
+    // Two pages + a P -> L subtree under S1. L's content links S2 cross-page.
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Page One", "parent_id": null, "position": 1}),
+        json!({"id": "S2", "block_type": "page", "content": "Page Two", "parent_id": null, "position": 2}),
+        json!({"id": "P", "block_type": "content", "content": "parent", "parent_id": "S1", "position": 1}),
+        json!({"id": "L", "block_type": "content", "content": "before", "parent_id": "P", "position": 1}),
+    ];
+    // The cross-page link L -> S2, established via a real edit so `block_links`
+    // AND `inbound_link_count` are populated exactly as production would.
+    let link_text = format!("[[{s2}]]");
+
+    // Reads (runtime queries — no sqlx macro, no `.sqlx` regen needed).
+    async fn block_row(
+        pool: &SqlitePool,
+        id: &str,
+    ) -> (Option<String>, Option<i64>, Option<String>, Option<String>) {
+        sqlx::query_as::<_, (Option<String>, Option<i64>, Option<String>, Option<String>)>(
+            "SELECT parent_id, position, page_id, space_id FROM blocks WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn all_block_links(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT source_id, target_id FROM block_links ORDER BY source_id, target_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn inbound_link_count(pool: &SqlitePool, page_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    async fn child_block_count(pool: &SqlitePool, page_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT child_block_count FROM pages_cache WHERE page_id = ?")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    // Seed a `pages_cache` row so the in-tx count recompute (an UPDATE, not an
+    // upsert — see `recompute_pages_cache_counts_for_pages`) has a row to touch.
+    async fn seed_pages_cache_row(pool: &SqlitePool, page_id: &str, title: &str) {
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, ?, 0, 0, 0)",
+        )
+        .bind(page_id)
+        .bind(title)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    // Seed each pool identically: SQL rows + engine tree + space stamp + the
+    // cross-page link established through a real edit + the two pages_cache rows.
+    async fn seed_pool(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        seed: &[Value; 4],
+        s1: &str,
+        s2: &str,
+        l: &str,
+        link_text: &str,
+    ) {
+        let state = mat.loro_state();
+        for blk in seed {
+            insert_seed_block(pool, blk).await;
+        }
+        // L is two levels deep (L -> P -> S1); `insert_seed_block` stamps a
+        // non-page block's `page_id` from its DIRECT parent (P), so pin L's
+        // owning page to S1 (its nearest ancestor page) BEFORE the space
+        // derivation runs, so L resolves into the test space (engine path, not
+        // the SpaceUnresolved SQL-only fallback) and starts on page S1.
+        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+            .bind(s1)
+            .bind(l)
+            .execute(pool)
+            .await
+            .unwrap();
+        assign_all_to_test_space(pool).await;
+        for blk in seed {
+            seed_block_into_engine(state, blk);
+        }
+        seed_pages_cache_row(pool, s1, "Page One").await;
+        seed_pages_cache_row(pool, s2, "Page Two").await;
+        // Establish the L -> S2 cross-page link through the real edit path so
+        // `block_links` and S2's `inbound_link_count` are populated in-tx.
+        edit_block_inner(pool, DEV, mat, BlockId::from(l), link_text.to_owned())
+            .await
+            .expect("seed edit: establish L -> S2 link");
+        settle(mat).await;
+    }
+
+    // ── LOCAL command path (move_block_inner → apply_op_projected(false)) ──
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    seed_pool(&pool_l, &mat_l, &seed, &s1, &s2, &l, &link_text).await;
+
+    // Pre-move non-vacuity: the cross-page L -> S2 link put S2's inbound at 1,
+    // and P still owns page S1. These are the values the move must FLIP.
+    assert_eq!(
+        inbound_link_count(&pool_l, &s2).await,
+        1,
+        "pre-move: cross-page [[S2]] link must set S2's inbound_link_count to 1",
+    );
+    assert_eq!(
+        block_row(&pool_l, &p).await.2.as_deref(),
+        Some(s1.as_str()),
+        "pre-move: P must own page S1 before the move re-stamps it to S2",
+    );
+
+    let fb_l = agaric_lib::materializer::sql_only_fallback_count();
+    agaric_lib::commands::blocks::move_ops::move_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        BlockId::from(p.as_str()),
+        Some(BlockId::from(s2.as_str())),
+        0,
+    )
+    .await
+    .expect("local move_block_inner");
+    settle(&mat_l).await;
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_l,
+        0,
+        "LOCAL move took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // Capture the exact MoveBlock op the LOCAL path emitted so REMOTE replays a
+    // byte-identical op.
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'move_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local move op must be in op_log");
+    let move_payload: MoveBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize MoveBlock payload");
+    assert_eq!(
+        move_payload.block_id.as_str(),
+        p,
+        "captured the move op for the moved block",
+    );
+
+    // ── REMOTE / sync path (append_local_op → apply_op → apply_op_projected(true)) ──
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    seed_pool(&pool_s, &mat_s, &seed, &s1, &s2, &l, &link_text).await;
+
+    let fb_s = agaric_lib::materializer::sql_only_fallback_count();
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::MoveBlock(move_payload))
+            .await
+            .expect("append sync move op");
+    mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
+    settle(&mat_s).await;
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_s,
+        0,
+        "REMOTE move took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // ── The two entry points must project the move-derived state identically ──
+    // 1. Both moved blocks' (parent_id, position, page_id, space_id).
+    for id in [&p, &l] {
+        assert_eq!(
+            block_row(&pool_l, id).await,
+            block_row(&pool_s, id).await,
+            "moved block row (parent/position/page/space) diverged LOCAL vs REMOTE (#2344)",
+        );
+    }
+    // 2. child_block_count of S1 and S2.
+    assert_eq!(
+        child_block_count(&pool_l, &s1).await,
+        child_block_count(&pool_s, &s1).await,
+        "S1 child_block_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    assert_eq!(
+        child_block_count(&pool_l, &s2).await,
+        child_block_count(&pool_s, &s2).await,
+        "S2 child_block_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    // 3. inbound_link_count of S2.
+    assert_eq!(
+        inbound_link_count(&pool_l, &s2).await,
+        inbound_link_count(&pool_s, &s2).await,
+        "S2 inbound_link_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    // 4. block_links (all rows, ordered), and non-vacuity that the L -> S2 edge
+    //    survived the move.
+    let links_l = all_block_links(&pool_l).await;
+    let links_s = all_block_links(&pool_s).await;
+    assert_eq!(
+        links_l, links_s,
+        "block_links diverged LOCAL vs REMOTE (#2344)",
+    );
+    assert_eq!(
+        links_l,
+        vec![(l.clone(), s2.clone())],
+        "the L -> S2 link edge must survive the move",
+    );
+
+    // 5. Non-vacuity of the move maintenance (the whole point).
+    // P re-stamped its owning page S1 -> S2; L moved along, so its page is S2 too.
+    assert_eq!(
+        block_row(&pool_l, &p).await.2.as_deref(),
+        Some(s2.as_str()),
+        "LOCAL: P's page_id must be re-stamped S1 -> S2 by the move",
+    );
+    assert_eq!(
+        block_row(&pool_s, &p).await.2.as_deref(),
+        Some(s2.as_str()),
+        "REMOTE: P's page_id must be re-stamped S1 -> S2 by the move",
+    );
+    assert_eq!(
+        block_row(&pool_l, &l).await.2.as_deref(),
+        Some(s2.as_str()),
+        "LOCAL: L's page_id must follow the subtree onto S2",
+    );
+    assert_eq!(
+        block_row(&pool_s, &l).await.2.as_deref(),
+        Some(s2.as_str()),
+        "REMOTE: L's page_id must follow the subtree onto S2",
+    );
+    // Pre-move S2 inbound was 1 (cross-page L -> S2); the move re-stamps L onto
+    // page S2 (same-page, excluded by the recompute filter), so a correct
+    // page-id re-stamp + recompute drops it to 0 — skipping the re-stamp would
+    // leave L cross-page and S2 inbound at 1, diverging.
+    assert_eq!(
+        inbound_link_count(&pool_l, &s2).await,
+        0,
+        "LOCAL: cross-page L -> S2 became same-page; S2 inbound must drop 1 -> 0",
+    );
+    assert_eq!(
+        inbound_link_count(&pool_s, &s2).await,
+        0,
+        "REMOTE: cross-page L -> S2 became same-page; S2 inbound must drop 1 -> 0",
+    );
+    // S1 shed the subtree (P left) and S2 gained it (P + L arrived).
+    assert_eq!(
+        child_block_count(&pool_l, &s1).await,
+        0,
+        "LOCAL: S1 child_block_count must drop to 0 after P's subtree leaves",
+    );
+    assert!(
+        child_block_count(&pool_l, &s2).await > 0,
+        "LOCAL: S2 child_block_count must rise above 0 after P's subtree arrives",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
+
+/// #2397 — pins the **Option A** contract for the denormalised
+/// `page_link_cache` `(source_page_id, target_page_id, edge_count)` rollup read
+/// by `list_page_links_inner`.
+///
+/// Unlike `block_links` + `pages_cache.inbound_link_count` — which #2344 made
+/// the in-tx `apply_op_projected` maintain synchronously — the `page_link_cache`
+/// rollup is written by the BACKGROUND `ReindexBlockLinks` task alone (via
+/// `cache::page_links::reindex_page_link_cache_for_block`, enqueued from
+/// `edit_block_inner`). Option A keeps it eventually-consistent: it is NOT fresh
+/// after the foreground edit, only after the background drain (`settle`).
+///
+/// This test edits a content block `BA` (owned by page `S2`) to contain a real
+/// `[[S1]]` token, so the rollup should gain exactly the cross-page edge
+/// `(source_page=S2, target_page=S1, edge_count=1)` — `BA` rolls up to its
+/// owning page `S2`. It asserts:
+///   * pre-edit non-vacuity: no `(S2, S1)` row exists on LOCAL before the edit;
+///   * post-`settle` the `(S2, S1, 1)` row is present on LOCAL;
+///   * the REMOTE replay of the captured op converges to the SAME rows;
+///   * both sides equal exactly `[(S2, S1, 1)]` (the one cross-page edge);
+///   * per-drive `sql_only_fallback` delta 0 on BOTH sides (engine path, #891).
+///
+/// The `ReindexBlockLinks` task is the SOLE writer of `page_link_cache`, so this
+/// guards against that background enqueue being dropped as "redundant" now that
+/// the in-tx apply covers the other link-derived caches (#2397).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_edit_page_link_cache_converges_local_matches_remote_2397() {
+    let s1 = seed_label_to_id("S1"); // link TARGET page
+    let s2 = seed_label_to_id("S2"); // link SOURCE page (owns BA)
+    let ba = seed_label_to_id("BA"); // link SOURCE content block (owned by S2)
+    // Same seed as the #2344 edit pin: two pages (S1, S2) + a content block BA
+    // under S2. Editing BA to contain `[[S1]]` creates a cross-page link edge
+    // BA -> S1, which rolls up to the page-level edge S2 -> S1.
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Target", "parent_id": null, "position": 1}),
+        json!({"id": "S2", "block_type": "page", "content": "Source", "parent_id": null, "position": 2}),
+        json!({"id": "BA", "block_type": "content", "content": "before", "parent_id": "S2", "position": 1}),
+    ];
+    let edit_text = format!("[[{s1}]]");
+
+    // Reader for the denormalised page-level rollup (runtime query — no sqlx
+    // macro, no `.sqlx` regen needed).
+    async fn page_link_rows(pool: &SqlitePool) -> Vec<(String, String, i64)> {
+        sqlx::query_as::<_, (String, String, i64)>(
+            "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+             ORDER BY source_page_id, target_page_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    // Seed `pages_cache` rows for both pages so the in-tx count recompute has
+    // rows to touch — mirrors the #2344 edit pin (which seeds S1); S2 is the
+    // source page for the rollup and is seeded here for symmetry.
+    async fn seed_pages_cache_row(pool: &SqlitePool, page_id: &str) {
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, 'Page', 0, 0, 0)",
+        )
+        .bind(page_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // ── LOCAL command path (edit_block_inner → apply_op_projected(false)) ──
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    let state_l = mat_l.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_l, blk).await;
+    }
+    assign_all_to_test_space(&pool_l).await;
+    for blk in &seed {
+        seed_block_into_engine(state_l, blk);
+    }
+    seed_pages_cache_row(&pool_l, &s1).await;
+    seed_pages_cache_row(&pool_l, &s2).await;
+
+    // Pre-state non-vacuity: no (S2, S1) rollup row exists before the edit.
+    let pre_rows = page_link_rows(&pool_l).await;
+    assert!(
+        !pre_rows
+            .iter()
+            .any(|(src, tgt, _)| src == &s2 && tgt == &s1),
+        "pre-edit: no (S2, S1) page_link_cache row must exist (non-vacuity)",
+    );
+
+    let fb_l = agaric_lib::materializer::sql_only_fallback_count();
+    edit_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        BlockId::from(ba.as_str()),
+        edit_text.clone(),
+    )
+    .await
+    .expect("local edit_block_inner");
+    // Option A: `page_link_cache` is written by the BACKGROUND `ReindexBlockLinks`
+    // task, so it is intentionally NOT guaranteed fresh here — only after
+    // `settle` drains the background work. Pre-settle freshness is deliberately
+    // not asserted (it would be racy).
+    settle(&mat_l).await;
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_l,
+        0,
+        "LOCAL edit took the SQL-only fallback — not the engine path (#891)",
+    );
+    // After the background drain the rollup edge is present.
+    let rows_l = page_link_rows(&pool_l).await;
+    assert!(
+        rows_l
+            .iter()
+            .any(|(src, tgt, cnt)| src == &s2 && tgt == &s1 && *cnt == 1),
+        "post-settle LOCAL: (S2, S1, 1) page_link_cache row must be present; got {rows_l:?}",
+    );
+
+    // Capture the exact EditBlock op the LOCAL path emitted so the REMOTE side
+    // replays a byte-identical op.
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'edit_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local edit op must be in op_log");
+    let edit_payload: EditBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize EditBlock payload");
+    assert_eq!(
+        edit_payload.block_id.as_str(),
+        ba,
+        "captured the edit op for the edited block",
+    );
+
+    // ── REMOTE / sync path (append_local_op → apply_op → apply_op_projected(true)) ──
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    let state_s = mat_s.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_s, blk).await;
+    }
+    assign_all_to_test_space(&pool_s).await;
+    for blk in &seed {
+        seed_block_into_engine(state_s, blk);
+    }
+    seed_pages_cache_row(&pool_s, &s1).await;
+    seed_pages_cache_row(&pool_s, &s2).await;
+
+    let fb_s = agaric_lib::materializer::sql_only_fallback_count();
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::EditBlock(edit_payload))
+            .await
+            .expect("append sync edit op");
+    mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
+    settle(&mat_s).await;
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_s,
+        0,
+        "REMOTE edit took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // ── Convergence: both entry points converge (after background drain) to the
+    //    identical `page_link_cache` rollup ──
+    let rows_l = page_link_rows(&pool_l).await;
+    let rows_s = page_link_rows(&pool_s).await;
+    assert_eq!(
+        rows_l, rows_s,
+        "page_link_cache diverged LOCAL vs REMOTE after settle (#2397)",
+    );
+    // Non-vacuity: exactly the one cross-page edge S2 -> S1 with edge_count 1.
+    assert_eq!(
+        rows_l,
+        vec![(s2.clone(), s1.clone(), 1)],
+        "the edit must produce exactly the S2 -> S1 page_link_cache edge (count 1)",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
+/// #2344 prereq — a REMOTE `ApplyOp` CreateBlock of a content block that links
+/// `[[<PAGE>]]` must stamp the new block's `page_id`/`space_id` AND leave the
+/// linked page's `pages_cache.inbound_link_count` correct IN-TX — i.e. already
+/// right after the foreground apply, BEFORE any background settle drains the
+/// deferred `SetBlockPageId` / `ReindexBlockLinks` / count-rebuild backstops.
+///
+/// This pins that `apply_op_tx`'s Create arm stamps a non-page block's
+/// `page_id`/`space_id` BEFORE the count recompute (which keys on
+/// `blocks.page_id`), closing the transiently-wrong-low window: the inbound
+/// recompute's source-side filter is `src.page_id IS NOT NULL AND src.page_id !=
+/// pages_cache.page_id`, so an unstamped (NULL) source `page_id` would EXCLUDE
+/// the new edge and leave the target's `inbound_link_count` at 0 until the async
+/// `SetBlockPageId` task caught up. With the in-tx stamp it is 1 immediately.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_apply_op_create_stamps_page_id_and_inbound_in_tx_2344() {
+    let src = seed_label_to_id("SRC");
+    let tgt = seed_label_to_id("TGT");
+    let seed = [
+        json!({"id": "SRC", "block_type": "page", "content": "Source", "parent_id": null, "position": 1}),
+        json!({"id": "TGT", "block_type": "page", "content": "Target", "parent_id": null, "position": 2}),
+    ];
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    // Give the seeded pages their own `page_id` (self) and a `pages_cache` row so
+    // the in-tx inbound recompute has a target row to UPDATE and the link token
+    // resolves to a page.
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_pages_cache(&pool)
+        .await
+        .unwrap();
+
+    // A fresh content block under SRC whose content links `[[TGT]]`.
+    let new_id = BlockId::from(seed_label_to_id("NEW").as_str());
+    let payload = CreateBlockPayload {
+        block_id: new_id.clone(),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from(src.as_str())),
+        position: None,
+        index: Some(0),
+        content: format!("see [[{tgt}]]"),
+    };
+    let record = agaric_store::op_log::append_local_op(&pool, DEV, OpPayload::CreateBlock(payload))
+        .await
+        .expect("append remote create op");
+    mat.enqueue_foreground(agaric_lib::materializer::MaterializeTask::ApplyOp(
+        std::sync::Arc::new(record),
+    ))
+    .await
+    .expect("enqueue ApplyOp");
+    // Run ONLY the foreground apply (`apply_op_tx`); do NOT settle yet, so the
+    // deferred background backstops have not run — this is the in-tx window.
+    mat.flush_foreground().await.expect("flush foreground");
+
+    // (a) The new block's page_id/space_id are stamped in-tx (not left NULL).
+    let new_id_str = new_id.clone().into_string();
+    let (page_id, space_id): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT page_id, space_id FROM blocks WHERE id = ?")
+            .bind(&new_id_str)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        page_id.as_deref(),
+        Some(src.as_str()),
+        "REMOTE apply_op_tx must stamp the new block's page_id to its owning page \
+         IN-TX (not leave it NULL until the async SetBlockPageId backstop)",
+    );
+    assert!(
+        space_id.is_some(),
+        "REMOTE apply_op_tx must stamp the new block's space_id IN-TX",
+    );
+
+    // (b) The linked page's inbound_link_count is already correct in-tx — the
+    // wrong-low window is closed.
+    let tgt_inbound: i64 =
+        sqlx::query_scalar("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(tgt.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        tgt_inbound, 1,
+        "TGT.inbound_link_count must be 1 IN-TX (before any background settle): the \
+         Create arm stamps the source block's page_id BEFORE the recompute whose \
+         src.page_id filter would otherwise exclude the just-created NULL-page edge",
+    );
+
+    // The background backstops are idempotent: a full settle leaves it at 1.
+    settle(&mat).await;
+    let tgt_inbound_after: i64 =
+        sqlx::query_scalar("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(tgt.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        tgt_inbound_after, 1,
+        "settle must be idempotent — the async backstops converge on the same count",
+    );
+
+    mat.shutdown();
+}
+
+/// #2344 — command-level LOCAL `DeleteBlock` cascade + engine-fan-out
+/// correctness, proving the REAL command path (not just the
+/// `apply_op_projected`-direct fixture).
+///
+/// Drives the REAL `delete_block_inner` (now routed through
+/// `apply_op_projected(false)` — the DeleteBlock arm of the #2325 collapse) on a
+/// PAGE(S1) -> PARENT(BP) -> CHILD(BC) tree, deleting the PARENT so the cascade
+/// has a genuine descendant to fan out. The CHILD's content holds a `[[S1]]`
+/// page link (fidelity — a linked, deleted subtree). Asserts, WITHOUT any boot
+/// replay:
+///   (a) the WHOLE deleted cohort (seed BP + descendant BC) carries
+///       `deleted_at == DeleteResponse.deleted_at` (the cascade ran under ONE
+///       cohort id), while the un-targeted page S1 stays alive;
+///   (b) `DeleteResponse.descendants_affected` == the cohort size (2) — the seed
+///       IS counted, so it equals the old cascade UPDATE's `rows_affected()`;
+///   (c) the per-space ENGINE received the DESCENDANT delete: `read_deleted(BC)`
+///       AND `read_deleted(BP)` are `true` while `read_deleted(S1)` is `false`.
+///       The in-tx engine apply (`apply_delete_block_via_loro`) reaches only the
+///       SEED, so a still-live BC in the engine would mean the post-commit
+///       `dispatch_delete_descendants` fan-out never ran — this is the direct
+///       proof of the NEW wire;
+///   (d) a subsequent `restore_block_inner(BP, deleted_at)` restores the WHOLE
+///       cohort (both BP and BC back to `deleted_at IS NULL`), proving the
+///       `deleted_at` cohort id is preserved end-to-end through the routed path;
+///   (e) the delete took ZERO `sql_only_fallback` — it ran the engine path, not
+///       the SQL-only fallback (#891 discipline), so none of the above is a
+///       false green.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_delete_block_cohort_engine_fanout_2344() {
+    let s1 = seed_label_to_id("S1"); // PAGE — owning page + link target (NOT deleted)
+    let bp = seed_label_to_id("BP"); // PARENT content block under S1 (delete root)
+    let bc = seed_label_to_id("BC"); // CHILD content block under BP, links [[S1]]
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Page", "parent_id": null, "position": 1}),
+        json!({"id": "BP", "block_type": "content", "content": "parent", "parent_id": "S1", "position": 1}),
+        json!({"id": "BC", "block_type": "content", "content": format!("[[{s1}]]"), "parent_id": "BP", "position": 1}),
+    ];
+
+    // Runtime reads (no sqlx macro → no `.sqlx` regen).
+    async fn deleted_at_of(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    // ── REAL LOCAL command: delete the PARENT (cascades onto the CHILD) ──
+    let fb_before = agaric_lib::materializer::sql_only_fallback_count();
+    let resp = delete_block_inner(&pool, DEV, &mat, BlockId::from(bp.as_str()))
+        .await
+        .expect("local delete_block_inner");
+    settle(&mat).await;
+
+    // (e) engine path, not the SQL-only fallback.
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_before,
+        0,
+        "LOCAL delete took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // (b) descendants_affected counts the seed (BP) + descendant (BC) = 2.
+    assert_eq!(
+        resp.descendants_affected, 2,
+        "descendants_affected must equal the cohort size (seed BP + descendant BC)",
+    );
+
+    // (a) the whole cohort shares ONE cohort id == DeleteResponse.deleted_at;
+    // the un-targeted page stays alive.
+    let now = resp.deleted_at;
+    assert_eq!(
+        deleted_at_of(&pool, &bp).await,
+        Some(now),
+        "seed BP must be soft-deleted with deleted_at == now",
+    );
+    assert_eq!(
+        deleted_at_of(&pool, &bc).await,
+        Some(now),
+        "descendant BC must be soft-deleted with the SAME cohort id as the seed",
+    );
+    assert_eq!(
+        deleted_at_of(&pool, &s1).await,
+        None,
+        "the un-targeted owning page S1 must remain alive",
+    );
+
+    // (c) the per-space engine received the DESCENDANT delete — the direct proof
+    // that `dispatch_delete_descendants` fanned the cohort onto the engine
+    // post-commit (the in-tx apply reached only the seed BP).
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let engine = guard.engine_mut();
+        assert!(
+            engine.read_deleted(&bc).expect("engine read_deleted(BC)"),
+            "descendant BC still alive in the engine — dispatch_delete_descendants \
+             fan-out did not run on the LOCAL command path (#2344)",
+        );
+        assert!(
+            engine.read_deleted(&bp).expect("engine read_deleted(BP)"),
+            "seed BP not deleted in the engine",
+        );
+        assert!(
+            !engine.read_deleted(&s1).expect("engine read_deleted(S1)"),
+            "owning page S1 must stay alive in the engine (non-vacuity)",
+        );
+        drop(guard);
+    }
+
+    // (d) restore by the preserved cohort id un-deletes the WHOLE cohort.
+    restore_block_inner(&pool, DEV, &mat, BlockId::from(bp.as_str()), now)
+        .await
+        .expect("local restore_block_inner");
+    settle(&mat).await;
+    assert_eq!(
+        deleted_at_of(&pool, &bp).await,
+        None,
+        "restore must un-delete the seed BP (cohort id preserved)",
+    );
+    assert_eq!(
+        deleted_at_of(&pool, &bc).await,
+        None,
+        "restore must un-delete the descendant BC (whole cohort restored)",
+    );
+
+    mat.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// #1257 local simple-op engine-freshness conformance.
+//
+// Routes the LOCAL edit_block / set_property / delete_property /
+// add_tag / remove_tag command paths through their `apply_*_via_loro` engine
+// helpers IN-TRANSACTION (instead of writing SQL directly and never touching
+// the Loro engine). None of these ops touch `position`, so there is NO
+// dense-reprojection subtlety (unlike create / move). Each test below drives
+// the REAL local command (`edit_block_inner` / `set_property_inner` /
+// `add_tag_inner`) + `settle()` with the engine installed, then asserts —
+// WITHOUT any boot replay — that:
+//   (a) the ENGINE reflects the change (read_block content / read_property_typed
+//       / read_tags membership),
+//   (b) the SQL matches the engine, AND
+//   (c) the apply cursor (`materialized_through_seq`) did NOT advance while
+//       `op_log.seq` DID — proving boot replay still owns cursor progress and
+//       the local path is the engine-apply-without-cursor-advance shape (#1248
+//       / #1257).
+//
+// Each test constructs its OWN materializer (`test_materializer`) and thus its
+// OWN `Arc<LoroState>` / engine registry (#2249 — no process global), so tests
+// are isolated by construction and run safely under BOTH `cargo nextest`
+// (process-per-test) and plain `cargo test` (one process, many threads).
+// ---------------------------------------------------------------------------
+
+/// Read the apply cursor (`materialized_through_seq`).
+async fn pr3_apply_cursor(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Read the max op_log seq.
+async fn pr3_max_seq(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A LOCAL `edit_block_inner` routes the content write through
+/// `apply_edit_block_via_loro` IN-TX, so the engine's `read_block` reflects the
+/// new content (no boot replay) AND the SQL `content` matches, AND the apply
+/// cursor stays put while op_log advances.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_edit_block_is_engine_fresh_1257() {
+    let target = seed_label_to_id("BA");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "before","parent_id": "S1", "position": 1}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let cursor_before = pr3_apply_cursor(&pool).await;
+    let seq_before = pr3_max_seq(&pool).await;
+
+    let edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(target.as_str()),
+        "after-edit".into(),
+    )
+    .await
+    .expect("edit_block_inner");
+    assert_eq!(edited.content.as_deref(), Some("after-edit"));
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT boot replay the engine already has the edit.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let snap = guard
+            .engine_mut()
+            .read_block(&target)
+            .expect("read_block")
+            .expect("engine has the edited block (no boot replay)");
+        drop(guard);
+        assert_eq!(
+            snap.content, "after-edit",
+            "engine read_block must reflect the local edit in-tx, no boot replay",
+        );
+    }
+
+    // (b) SQL matches the engine.
+    let sql_content: String =
+        sqlx::query_scalar::<_, String>("SELECT content FROM blocks WHERE id = ?")
+            .bind(&target)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        sql_content, "after-edit",
+        "SQL content must match the engine"
+    );
+
+    // (c) cursor unmoved, op_log advanced.
+    assert!(
+        pr3_max_seq(&pool).await > seq_before,
+        "local edit_block must append to op_log",
+    );
+    assert_eq!(
+        pr3_apply_cursor(&pool).await,
+        cursor_before,
+        "local edit_block must NOT advance the apply cursor (#1248 / #1257)",
+    );
+
+    mat.shutdown();
+}
+
+/// A LOCAL `set_property_inner` routes the property write through
+/// `apply_set_property_via_loro` IN-TX, so the engine's `read_property_typed`
+/// reflects the value (no boot replay) AND the SQL `block_properties` row
+/// matches, AND the apply cursor stays put while op_log advances.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_set_property_is_engine_fresh_1257() {
+    use agaric_engine::loro::engine::PropertyValue;
+
+    let target = seed_label_to_id("BA");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let cursor_before = pr3_apply_cursor(&pool).await;
+    let seq_before = pr3_max_seq(&pool).await;
+
+    // Non-reserved text property → `block_properties` row.
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.as_str().into(),
+        "status".into(),
+        Some("active".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("set_property_inner");
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT boot replay the engine has the property.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let v = guard
+            .engine_mut()
+            .read_property_typed(&target, "status")
+            .expect("read_property_typed")
+            .expect("engine has the freshly-set property (no boot replay)");
+        drop(guard);
+        assert_eq!(
+            v,
+            PropertyValue::Str("active".into()),
+            "engine read_property_typed must reflect the local set_property in-tx",
+        );
+    }
+
+    // (b) SQL `block_properties` matches the engine.
+    let sql_val: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = ?",
+    )
+    .bind(&target)
+    .bind("status")
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(
+        sql_val.as_deref(),
+        Some("active"),
+        "SQL block_properties.value_text must match the engine",
+    );
+
+    // (c) cursor unmoved, op_log advanced.
+    assert!(
+        pr3_max_seq(&pool).await > seq_before,
+        "local set_property must append to op_log",
+    );
+    assert_eq!(
+        pr3_apply_cursor(&pool).await,
+        cursor_before,
+        "local set_property must NOT advance the apply cursor (#1248 / #1257)",
+    );
+
+    mat.shutdown();
+}
+
+/// A LOCAL `add_tag_inner` routes the `block_tags` write + inheritance
+/// fan-out through `apply_add_tag_via_loro` IN-TX, so the engine's `read_tags`
+/// reflects the membership (no boot replay) AND the SQL `block_tags` row
+/// matches, AND the apply cursor stays put while op_log advances.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_add_tag_is_engine_fresh_1257() {
+    let target = seed_label_to_id("BA");
+    let tag = seed_label_to_id("TG");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    // S1 > {BA}; TG is a top-level tag block. All scoped to one space so
+    // `resolve_block_space` succeeds and add_tag engages the engine path.
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "TG", "block_type": "tag",     "content": "todo", "parent_id": null, "position": 2}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let cursor_before = pr3_apply_cursor(&pool).await;
+    let seq_before = pr3_max_seq(&pool).await;
+
+    add_tag_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(target.as_str()),
+        BlockId::from(tag.as_str()),
+    )
+    .await
+    .expect("add_tag_inner");
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT boot replay the engine has the tag.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let tags = guard.engine_mut().read_tags(&target).expect("read_tags");
+        drop(guard);
+        assert!(
+            tags.contains(&tag),
+            "engine read_tags must reflect the local add_tag in-tx (no boot replay); got {tags:?}",
+        );
+    }
+
+    // (b) SQL `block_tags` matches the engine.
+    let sql_present: Option<i32> =
+        sqlx::query_scalar::<_, i32>("SELECT 1 FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(&target)
+            .bind(&tag)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(
+        sql_present.is_some(),
+        "SQL block_tags row must match the engine tag membership",
+    );
+
+    // (c) cursor unmoved, op_log advanced.
+    assert!(
+        pr3_max_seq(&pool).await > seq_before,
+        "local add_tag must append to op_log",
+    );
+    assert_eq!(
+        pr3_apply_cursor(&pool).await,
+        cursor_before,
+        "local add_tag must NOT advance the apply cursor (#1248 / #1257)",
+    );
+
+    mat.shutdown();
+}
+
+/// #1257 LOCAL `move_block` is engine-fresh and densely positioned in
+/// BOTH the source and target parents IN-TRANSACTION, with the apply cursor
+/// PINNED.
+///
+/// Before the LOCAL command path (`move_block_inner`) wrote a PROVISIONAL
+/// `new_index + 1` SQL position via a raw `UPDATE blocks SET parent_id,
+/// position` and NEVER touched the Loro engine: positions were reconciled to
+/// dense ranks (and the source/target sibling groups re-ranked) only on the next
+/// Boot replay (the #1245 / #1249 bug, the move counterpart of create).
+/// Routes the move through `apply_move_block_via_loro` inside the same
+/// `CommandTx` — engine apply + `project_move_block_to_sql` +
+/// `reproject_dense_positions` over BOTH the old and new parent sibling groups —
+/// but deliberately does NOT advance `materialized_through_seq` (so boot replay
+/// re-applies idempotently; #1248).
+///
+/// This test drives the REAL command path (`move_block_inner` + `settle()`) to
+/// move a block from parent A into parent B at a MIDDLE index and asserts,
+/// WITHOUT any boot replay:
+///   (a) the engine `children_ordered_block_ids` for BOTH A (the source, now
+///       shrunk) and B (the target, with the moved block spliced in at the
+///       middle) reflect the move;
+///   (b) the SQL `blocks.position` equals the engine's DENSE rank in BOTH
+///       parents — A's survivors re-rank to a gap-free 1..N, B's children
+///       (including the moved block at its middle slot) re-rank to 1..M. Under
+///       the OLD provisional path the moved block would carry
+///       `index_to_provisional_position(new_index)` and the siblings would keep
+///       their seeded ranks, so this dense-rank assertion would FAIL — exactly
+/// The drift closes;
+///   (c) the moved block's `parent_id` is updated to B; and
+///   (d) the apply cursor (`materialized_through_seq`) did NOT advance while
+///       `op_log.seq` did.
+/// Finally, a cycle-forming move is still rejected.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_is_engine_fresh_and_dense_1257() {
+    // 26-char ids so `seed_label_to_id` treats them as literal ids.
+    let pa = seed_label_to_id("PA");
+    let pb = seed_label_to_id("PB");
+    let a1 = seed_label_to_id("A1");
+    let a2 = seed_label_to_id("A2");
+    let a3 = seed_label_to_id("A3");
+    let b1 = seed_label_to_id("B1");
+    let b2 = seed_label_to_id("B2");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Install the process-global engine so the LOCAL move routes through the
+    // production `apply_move_block_via_loro` ENGINE path (dense reproject of both
+    // parents), not the SQL-only fallback. `registry.clear()` gives a fresh tree.
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    // Seed two pages: PA > {A1, A2, A3}, PB > {B1, B2}. Parent-first so the
+    // engine seed satisfies parent-before-child.
+    let seed = [
+        json!({"id": "PA", "block_type": "page",    "content": "Page A", "parent_id": null, "position": 1}),
+        json!({"id": "PB", "block_type": "page",    "content": "Page B", "parent_id": null, "position": 2}),
+        json!({"id": "A1", "block_type": "content", "content": "a1", "parent_id": "PA", "position": 1}),
+        json!({"id": "A2", "block_type": "content", "content": "a2", "parent_id": "PA", "position": 2}),
+        json!({"id": "A3", "block_type": "content", "content": "a3", "parent_id": "PA", "position": 3}),
+        json!({"id": "B1", "block_type": "content", "content": "b1", "parent_id": "PB", "position": 1}),
+        json!({"id": "B2", "block_type": "content", "content": "b2", "parent_id": "PB", "position": 2}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    async fn apply_cursor(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn max_seq(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    let cursor_before = apply_cursor(&pool).await;
+    let seq_before = max_seq(&pool).await;
+
+    // Drive the REAL local command path: move A2 from PA into PB at index 1
+    // (BETWEEN B1 and B2).
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(a2.as_str()),
+        Some(BlockId::from(pb.as_str())),
+        1,
+    )
+    .await
+    .expect("move_block_inner");
+
+    // Dense ranks are projected synchronously in the CommandTx — even before
+    // settling background work. Drain background tasks anyway to prove they don't
+    // perturb the dense ranks (and to mirror the production lifecycle).
+    settle(&mat).await;
+
+    // (a) ENGINE freshness — WITHOUT boot replay, the engine reflects the move in
+    //     BOTH parents: A2 left A's children; A2 sits between B1 and B2 in B.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        let a_order = guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(pa.as_str()))
+            .expect("children_ordered_block_ids(PA)");
+        let b_order = guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(pb.as_str()))
+            .expect("children_ordered_block_ids(PB)");
+        let moved_parent = guard
+            .engine_mut()
+            .read_parent(&a2)
+            .expect("read_parent(A2)");
+        drop(guard);
+        assert_eq!(
+            a_order,
+            vec![a1.clone(), a3.clone()],
+            "source parent A must lose A2: [A1, A3]; got {a_order:?}",
+        );
+        assert_eq!(
+            b_order,
+            vec![b1.clone(), a2.clone(), b2.clone()],
+            "target parent B must splice A2 at the middle slot: [B1, A2, B2]; got {b_order:?}",
+        );
+        assert_eq!(
+            moved_parent.as_deref(),
+            Some(pb.as_str()),
+            "engine parent of A2 must now be PB",
+        );
+    }
+
+    // (b) SQL `blocks.position` must equal the engine's DENSE rank for EVERY
+    //     sibling in BOTH parents. Source A re-ranks to A1=1, A3=2 (gap-free
+    //     after A2 left); target B re-ranks to B1=1, A2=2, B2=3. Under the OLD
+    //     provisional path A2 would carry `index_to_provisional_position(1)` (=2)
+    //     and the siblings would keep their seeded ranks (A3 still 3, B2 still 2),
+    //     so this block would FAIL.
+    async fn pos(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    assert_eq!(pos(&pool, &a1).await, Some(1), "A1 dense rank 1 in PA");
+    assert_eq!(
+        pos(&pool, &a3).await,
+        Some(2),
+        "A3 must reproject to dense rank 2 in PA after A2 left (was seeded 3)",
+    );
+    assert_eq!(pos(&pool, &b1).await, Some(1), "B1 dense rank 1 in PB");
+    assert_eq!(
+        pos(&pool, &a2).await,
+        Some(2),
+        "moved A2 must be densely ranked 2 in PB (middle slot)",
+    );
+    assert_eq!(
+        pos(&pool, &b2).await,
+        Some(3),
+        "B2 must reproject to dense rank 3 in PB after the middle insert (was seeded 2)",
+    );
+
+    // (c) `parent_id` updated to PB in SQL.
+    let parent_in_sql: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(&a2)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent_in_sql.as_deref(),
+        Some(pb.as_str()),
+        "SQL parent_id of A2 must be PB",
+    );
+
+    // (d) Apply cursor must NOT advance; the op DID land in the op_log.
+    let cursor_after = apply_cursor(&pool).await;
+    let seq_after = max_seq(&pool).await;
+    assert!(
+        seq_after > seq_before,
+        "local move_block must append to op_log: {seq_before} -> {seq_after}",
+    );
+    assert_eq!(
+        cursor_after, cursor_before,
+        "local command path must NOT advance the apply cursor even though it now \
+         engine-applies in-tx (#1248 / #1257); cursor moved {cursor_before} -> {cursor_after}",
+    );
+
+    // A cycle-forming move is still rejected (PA cannot become a child of its own
+    // descendant A1). The shared `move_would_cycle` probe gates the command path.
+    let cyclic = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(pa.as_str()),
+        Some(BlockId::from(a1.as_str())),
+        0,
+    )
+    .await;
+    assert!(
+        matches!(cyclic, Err(AppError::Validation { .. })),
+        "moving PA under its own descendant A1 must be rejected as a cycle; got {cyclic:?}",
+    );
+
+    mat.shutdown();
+}
+
+/// #1257 LOCAL `delete_blocks_by_ids` tombstones the WHOLE subtree
+/// cohort on the engine IN the CommandTx, with NO #1257 phantom and the apply
+/// cursor PINNED; then `restore_blocks_by_ids` restores the cohort on both
+/// sides.
+///
+/// Before the LOCAL batch-delete command path ran ONLY the multi-root SQL
+/// soft-delete cascade and never told the per-space Loro engine — so the engine
+/// kept the deleted subtree LIVE while SQL reported it gone. That is exactly the
+/// Engine-live-but-SQL-deleted divergence the freshness gate
+/// (`prepare_outgoing` / `live_block_ids` ∩ SQL-deleted) refuses to ship: a
+/// "phantom". PRE-CAPTURES each root's active subtree cohort + space BELOW
+/// the SQL UPDATE (a post-delete `resolve_block_space` would return None for
+/// every now-deleted row) and fans the captured cohort onto the engine
+/// post-commit (`dispatch_delete_descendants`).
+///
+/// Drives the REAL `delete_blocks_by_ids_inner` on a 3-level subtree
+/// (parent→child→grandchild) and asserts, WITHOUT any boot replay:
+///   (a) the engine tombstones the WHOLE cohort (`read_deleted` true for parent,
+///       child AND grandchild — not just the parent root);
+///   (b) SQL `deleted_at` is set on the whole cohort;
+///   (c) the apply cursor (`materialized_through_seq`) did NOT advance while
+///       `op_log.seq` did;
+/// (d) the #1257 gate sees NO phantom — `live_block_ids()` ∩
+///       SQL-deleted is empty (no block is engine-live yet SQL-deleted).
+/// Then drives `restore_blocks_by_ids_inner` on the root and asserts the cohort
+/// is restored in BOTH the engine (`read_deleted` false) and SQL (`deleted_at`
+/// NULL).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
+    // 26-char ids so `seed_label_to_id` treats them as literal ids.
+    let _s1 = seed_label_to_id("S1");
+    let p = seed_label_to_id("PP"); // parent (delete root)
+    let c = seed_label_to_id("CC"); // child
+    let g = seed_label_to_id("GG"); // grandchild
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Install the process-global engine so the LOCAL delete/restore route
+    // through the ENGINE path (not the SQL-only fallback). `registry.clear()`
+    // gives this test a fresh tree.
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    // Seed S1 > P > C > G into BOTH SQL and the engine tree (parent-first), then
+    // scope every seed block to one space so `resolve_block_space` succeeds and
+    // the cohort/space pre-capture engages the engine path.
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "PP", "block_type": "content", "content": "P",    "parent_id": "S1", "position": 1}),
+        json!({"id": "CC", "block_type": "content", "content": "C",    "parent_id": "PP", "position": 1}),
+        json!({"id": "GG", "block_type": "content", "content": "G",    "parent_id": "CC", "position": 1}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    async fn apply_cursor(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+    async fn max_seq(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    async fn sql_deleted(pool: &SqlitePool, id: &str) -> bool {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    let cursor_before = apply_cursor(&pool).await;
+    let seq_before = max_seq(&pool).await;
+
+    // --- DELETE: drive the REAL batch-delete command path on the parent root.
+    let deleted = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from(p.as_str())])
+        .await
+        .expect("delete_blocks_by_ids_inner")
+        .deleted_count;
+    // Engine fan-out runs post-commit (after `commit_and_dispatch`); the
+    // command returns once it has fired. Drain background tasks for parity with
+    // the production lifecycle.
+    settle(&mat).await;
+
+    assert_eq!(
+        deleted, 3,
+        "the cascade must soft-delete the whole subtree P+C+G (got {deleted})",
+    );
+
+    // (a) ENGINE — WITHOUT any boot replay, the engine tombstones the WHOLE
+    //     cohort: parent, child AND grandchild. Pre-PR-5 only SQL was deleted
+    //     and the engine kept all three LIVE, so this would FAIL on C and G.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        for id in [&p, &c, &g] {
+            let deleted = guard.engine_mut().read_deleted(id).expect("read_deleted");
+            assert!(
+                deleted,
+                "engine must tombstone the whole delete cohort (id {id} not deleted) \
+                 — the #1257 cascade must reach the engine, not just SQL",
+            );
+        }
+        drop(guard);
+    }
+
+    // (b) SQL — the whole cohort carries `deleted_at`.
+    for id in [&p, &c, &g] {
+        assert!(
+            sql_deleted(&pool, id).await,
+            "SQL must soft-delete the whole cohort (id {id} not deleted)",
+        );
+    }
+
+    // (c) Apply cursor must NOT advance while op_log.seq did. The LOCAL path
+    //     engine-applies but boot replay still owns cursor progress.
+    let cursor_after = apply_cursor(&pool).await;
+    let seq_after = max_seq(&pool).await;
+    assert!(
+        seq_after > seq_before,
+        "local delete must append to op_log: {seq_before} -> {seq_after}",
+    );
+    assert_eq!(
+        cursor_after, cursor_before,
+        "local command path must NOT advance the apply cursor (#1248 / #1257); \
+         cursor moved {cursor_before} -> {cursor_after}",
+    );
+
+    // (d) #1257 GATE — NO phantom. The set of blocks the engine still
+    //     holds LIVE must contain NONE that SQL has soft-deleted. This is the
+    //     whole point: an eager local delete that did NOT reach the engine
+    //     would leave P/C/G engine-live-but-SQL-deleted, and `prepare_outgoing`
+    //     would refuse to export this space.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let live: Vec<String> = {
+            let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+            guard.engine_mut().live_block_ids().expect("live_block_ids")
+        };
+        let sql_deleted_set: std::collections::HashSet<String> =
+            sqlx::query_scalar::<_, String>("SELECT id FROM blocks WHERE deleted_at IS NOT NULL")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .collect();
+        let phantom: Vec<&String> = live
+            .iter()
+            .filter(|id| sql_deleted_set.contains(*id))
+            .collect();
+        assert!(
+            phantom.is_empty(),
+            "#1257 phantom: engine holds blocks SQL has soft-deleted (engine-live ∩ \
+             SQL-deleted = {phantom:?}); the eager local delete must reach the engine",
+        );
+    }
+
+    // --- RESTORE: drive the REAL batch-restore command path on the root.
+    let restored = restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from(p.as_str())])
+        .await
+        .expect("restore_blocks_by_ids_inner");
+    settle(&mat).await;
+    assert_eq!(
+        restored.affected_count, 3,
+        "restore must clear the whole cohort P+C+G (got {})",
+        restored.affected_count,
+    );
+
+    // ENGINE — the whole cohort is restored (read_deleted false).
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
+        for id in [&p, &c, &g] {
+            let deleted = guard.engine_mut().read_deleted(id).expect("read_deleted");
+            assert!(
+                !deleted,
+                "engine must restore the whole cohort (id {id} still deleted)",
+            );
+        }
+        drop(guard);
+    }
+    // SQL — the whole cohort is alive again.
+    for id in [&p, &c, &g] {
+        assert!(
+            !sql_deleted(&pool, id).await,
+            "SQL must restore the whole cohort (id {id} still deleted)",
+        );
+    }
+
+    mat.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// #1549 — restore must NOT over-restore an independently-deleted nested
+// subtree, EVEN when both deletes land in the same wall-clock millisecond.
+//
+// Tree: S1 > P > C > G. The grandchild G is soft-deleted INDEPENDENTLY first
+// (its own delete op + cohort timestamp). Then the parent P is deleted: the
+// cascade marks P + C but SKIPS the already-deleted G (the recursive arm
+// filters `deleted_at IS NULL`), so G keeps its OWN cohort timestamp. The two
+// deletes are issued back-to-back, so on a real machine their wall-clock
+// `now_ms()` would collide — which, pre-#1549, made G's `deleted_at`
+// structurally indistinguishable from the P/C cohort. Restoring P then
+// resurrected G via the `WHERE deleted_at = deleted_at_ref` cohort filter.
+//
+// With the monotonic-per-process delete clock (`next_delete_ms()`), G's delete
+// and P's delete get DISTINCT `deleted_at` values even within one wall-clock
+// ms, so restoring P (keyed on P's `deleted_at`) restores ONLY P + C and
+// leaves the independently-deleted G trashed. Driven through the production
+// pipeline (`test_materializer`'s real per-instance `LoroState` + real
+// `delete_block_inner` / `restore_block_inner`); asserted on the SETTLED
+// SQL + engine state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549() {
+    let s1 = seed_label_to_id("S1");
+    let p = seed_label_to_id("PP"); // parent (restore root)
+    let c = seed_label_to_id("CC"); // child (in P's cohort)
+    let g = seed_label_to_id("GG"); // grandchild (deleted INDEPENDENTLY)
+    let _ = &s1;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "PP", "block_type": "content", "content": "P",    "parent_id": "S1", "position": 1}),
+        json!({"id": "CC", "block_type": "content", "content": "C",    "parent_id": "PP", "position": 1}),
+        json!({"id": "GG", "block_type": "content", "content": "G",    "parent_id": "CC", "position": 1}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    async fn deleted_at_of(pool: &SqlitePool, id: &str) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    // 1) Delete the grandchild G INDEPENDENTLY (its own root + cohort stamp).
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(g.as_str()))
+        .await
+        .expect("delete grandchild");
+    settle(&mat).await;
+    let g_deleted_at = deleted_at_of(&pool, &g)
+        .await
+        .expect("grandchild must be soft-deleted");
+
+    // 2) Delete the parent P back-to-back. The cascade marks P + C but skips
+    //    the already-deleted G. On a real machine these two deletes share a
+    //    wall-clock ms; the monotonic clock must still give P a DISTINCT stamp.
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(p.as_str()))
+        .await
+        .expect("delete parent");
+    settle(&mat).await;
+    let p_deleted_at = deleted_at_of(&pool, &p)
+        .await
+        .expect("parent must be soft-deleted");
+
+    // The crux of #1549: distinct deletes get distinct cohort timestamps.
+    assert_ne!(
+        g_deleted_at, p_deleted_at,
+        "#1549: independently-deleted grandchild and parent must have DISTINCT \
+         deleted_at (monotonic-per-process delete clock), even back-to-back",
+    );
+    // G untouched by P's cascade — still carries its OWN cohort stamp.
+    assert_eq!(
+        deleted_at_of(&pool, &g).await,
+        Some(g_deleted_at),
+        "grandchild must retain its own cohort timestamp after the parent cascade",
+    );
+
+    // 3) Restore the parent via the SINGLE-block production path, keyed on P's
+    //    own cohort timestamp (what the trash UI / restore_block command pass).
+    let restored = restore_block_inner(&pool, DEV, &mat, BlockId::from(p.as_str()), p_deleted_at)
+        .await
+        .expect("restore parent");
+    settle(&mat).await;
+
+    assert_eq!(
+        restored.restored_count, 2,
+        "restore must clear ONLY P's cohort (P + C), not the independently-\
+         deleted grandchild G (got {})",
+        restored.restored_count,
+    );
+
+    // SQL — P and C are alive; G STAYS deleted (the #1549 acceptance assertion).
+    assert!(
+        deleted_at_of(&pool, &p).await.is_none(),
+        "parent P must be restored",
+    );
+    assert!(
+        deleted_at_of(&pool, &c).await.is_none(),
+        "child C (in P's cohort) must be restored",
+    );
+    assert_eq!(
+        deleted_at_of(&pool, &g).await,
+        Some(g_deleted_at),
+        "#1549: the independently-deleted grandchild G MUST stay trashed — \
+         restoring the outer cohort must NOT resurrect the inner subtree",
+    );
+
+    // The emitted RestoreBlock op must carry P's OWN cohort timestamp (the
+    // exact cohort a peer's replay would restore — never G's).
+    let ops = agaric_store::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let restore_ops: Vec<_> = ops
+        .iter()
+        .filter(|o| o.op_type == "restore_block")
+        .collect();
+    assert_eq!(restore_ops.len(), 1, "exactly one restore_block op");
+    assert!(
+        restore_ops[0].payload.contains(&format!("{p_deleted_at}")),
+        "restore op's deleted_at_ref must be P's cohort timestamp ({p_deleted_at}); \
+         payload = {}",
+        restore_ops[0].payload,
+    );
+
+    mat.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// #1392 — move tag-inheritance recompute is owned by the engine helper on BOTH
+// arms.
+//
+// `move_block_inner` USED to call `recompute_subtree_inheritance` explicitly
+// AFTER routing the move through `apply_move_block_via_loro` — but that helper
+// (and its engine-absent `apply_move_block_sql_only` fallback) ALREADY
+// recompute the moved subtree's inheritance, so the explicit call was a
+// redundant second subtree walk on every move. #1392 dropped it. These two
+// tests pin that `block_tag_inherited` stays correct after a move WITHOUT the
+// explicit call, on EACH arm:
+//   * `local_move_inheritance_engine_arm_1392`  — engine seeded → the move
+//     routes through `apply_move_block_via_loro`'s engine path;
+//   * `local_move_inheritance_sql_fallback_arm_1392` — blocks left WITHOUT a
+//     space (`SpaceUnresolved`; the old EngineUninit arm is structurally gone,
+//     while `EngineMissingTarget` remains a separate live fallback) → the move
+//     falls back to `apply_move_block_sql_only`.
+//
+// Fixture (both arms): S1 > {PA > XX, PB}; PB carries a direct tag TG. Moving
+// XX from PA into PB must make XX inherit TG from PB (the move's recompute
+// walks XX's NEW ancestor chain). Inheritance recompute is pure SQL (reads the
+// `block_tags` of ancestors + walks `blocks.parent_id`), so the assertion is
+// identical on both arms — only the move's apply path differs.
+// ---------------------------------------------------------------------------
+
+/// Seed the shared #1392 fixture into SQL; `assign_space` scopes every block
+/// to the test space (the engine arm needs it so `resolve_block_space`
+/// succeeds; the fallback arm passes `false` so the move hits the
+/// `SpaceUnresolved` sql_only arm, #2250). Returns `(pa, pb, xx, tg)` literal
+/// ids. Does NOT touch the
+/// engine — callers seed the engine themselves on the engine arm only.
+async fn seed_move_inheritance_fixture_1392(
+    pool: &SqlitePool,
+    assign_space: bool,
+) -> (String, String, String, String) {
+    let pa = seed_label_to_id("PA");
+    let pb = seed_label_to_id("PB");
+    let xx = seed_label_to_id("XX");
+    let tg = seed_label_to_id("TG");
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "PA", "block_type": "content", "content": "PA",   "parent_id": "S1", "position": 1}),
+        json!({"id": "PB", "block_type": "content", "content": "PB",   "parent_id": "S1", "position": 2}),
+        json!({"id": "XX", "block_type": "content", "content": "X",    "parent_id": "PA", "position": 1}),
+        json!({"id": "TG", "block_type": "tag",     "content": "todo", "parent_id": null, "position": 3}),
+    ];
+    for blk in &seed {
+        insert_seed_block(pool, blk).await;
+    }
+    if assign_space {
+        assign_all_to_test_space(pool).await;
+    }
+    // PB carries TG directly. The move's `recompute_subtree_inheritance` reads
+    // ancestor `block_tags`, so a direct SQL row is exactly the source it walks.
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(&pb)
+        .bind(&tg)
+        .execute(pool)
+        .await
+        .unwrap();
+    (pa, pb, xx, tg)
+}
+
+/// Read whether `block_id` inherits `tag_id` from `inherited_from`.
+async fn xx_inherits_from(pool: &SqlitePool, block_id: &str, tag_id: &str, from: &str) -> bool {
+    sqlx::query_scalar::<_, i32>(
+        "SELECT 1 FROM block_tag_inherited \
+         WHERE block_id = ? AND tag_id = ? AND inherited_from = ?",
+    )
+    .bind(block_id)
+    .bind(tag_id)
+    .bind(from)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .is_some()
+}
+
+/// #1392 ENGINE ARM — with the engine installed, moving XX under the tagged PB
+/// routes through `apply_move_block_via_loro`, whose own
+/// `recompute_subtree_inheritance` makes XX inherit TG from PB — WITHOUT the
+/// dropped explicit call in `move_block_inner`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_inheritance_engine_arm_1392() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    let (pa, pb, xx, tg) = seed_move_inheritance_fixture_1392(&pool, true).await;
+    // Engine seed (parent-first) so the move routes through the engine arm.
+    for blk in [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "PA", "block_type": "content", "content": "PA",   "parent_id": "S1", "position": 1}),
+        json!({"id": "PB", "block_type": "content", "content": "PB",   "parent_id": "S1", "position": 2}),
+        json!({"id": "XX", "block_type": "content", "content": "X",    "parent_id": "PA", "position": 1}),
+    ] {
+        seed_block_into_engine(state, &blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    // Pre-move: XX under PA (untagged) must NOT inherit TG.
+    assert!(
+        !xx_inherits_from(&pool, &xx, &tg, &pb).await,
+        "precondition: XX must not inherit TG before the move",
+    );
+
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(xx.as_str()),
+        Some(BlockId::from(pb.as_str())),
+        0,
+    )
+    .await
+    .expect("move_block_inner");
+    settle(&mat).await;
+
+    // The move re-parented XX under PB ...
+    let parent: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(&xx)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some(pb.as_str()),
+        "XX must be re-parented to PB"
+    );
+    // ... and the engine-arm recompute made XX inherit TG from PB — proving the
+    // dropped explicit `recompute_subtree_inheritance` is unnecessary on this arm.
+    assert!(
+        xx_inherits_from(&pool, &xx, &tg, &pb).await,
+        "engine arm: XX must inherit TG from PB after the move (#1392)",
+    );
+    // PA is unused beyond the seed; reference it to keep the binding meaningful.
+    let _ = pa;
+
+    mat.shutdown();
+}
+
+/// #1392 SQL-FALLBACK ARM — with the blocks left OUTSIDE any space
+/// (`resolve_block_space` misses → `SpaceUnresolved`, one of the live sql_only
+/// triggers after #2249/#2250 deleted EngineUninit), the same move
+/// falls back to `apply_move_block_sql_only`, whose own
+/// `recompute_subtree_inheritance` likewise makes XX inherit TG from PB —
+/// confirming the dropped explicit call is unnecessary on the fallback arm
+/// too (the regression #1392 guards).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_inheritance_sql_fallback_arm_1392() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Deliberately do NOT assign the blocks to a space —
+    // `resolve_block_space` returns None, so `apply_move_block_via_loro`
+    // records a `SpaceUnresolved` fallback and routes the move through
+    // `apply_move_block_sql_only` (#2250: the engine is always present now;
+    // an unresolvable space is the only legitimate sql_only trigger).
+    let (pa, pb, xx, tg) = seed_move_inheritance_fixture_1392(&pool, false).await;
+
+    assert!(
+        !xx_inherits_from(&pool, &xx, &tg, &pb).await,
+        "precondition: XX must not inherit TG before the move",
+    );
+
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        BlockId::from(xx.as_str()),
+        Some(BlockId::from(pb.as_str())),
+        0,
+    )
+    .await
+    .expect("move_block_inner");
+    settle(&mat).await;
+
+    let parent: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(&xx)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        parent.as_deref(),
+        Some(pb.as_str()),
+        "XX must be re-parented to PB"
+    );
+    assert!(
+        xx_inherits_from(&pool, &xx, &tg, &pb).await,
+        "fallback arm: XX must inherit TG from PB after the move (#1392)",
+    );
+    let _ = pa;
+
+    mat.shutdown();
+}
+
+/// #2274/#2305 ENGINE-path ground truth for a SAME-parent batched move whose
+/// selection INTERLEAVES with non-moved siblings.
+///
+/// Contiguous-run semantics (Refs #914 / Closes #2305): `move_blocks_batch`
+/// lands the selection as ONE contiguous run, in selection order, among the
+/// target parent's NON-selected children at base position `newIndex` — a
+/// remove-then-splice outcome:
+///
+///   S1 > [A, B, C, D]; batch-move [A, C] at base position 2:
+///     non-selected = [B, D]; base position 2 == append past D ⇒ B, D, A, C
+///
+/// The old sequential per-move slots produced B, A, D, C (the #2305 bug — a
+/// non-contiguous run that violated #914's promise). The FE's
+/// `reconcileBatchMove` and the tauri-mock handler must reproduce THIS order;
+/// mirrored FE-side in `page-blocks.test.ts` ("interleaved same-parent
+/// selection").
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_interleaved_same_parent_engine_ground_truth_2274() {
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+    let c = seed_label_to_id("BC");
+    let d = seed_label_to_id("BD");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Production ENGINE path (dense reproject), not the SQL-only fallback.
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+        json!({"id": "BC", "block_type": "content", "content": "C",    "parent_id": "S1", "position": 3}),
+        json!({"id": "BD", "block_type": "content", "content": "D",    "parent_id": "S1", "position": 4}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    agaric_lib::commands::move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![a.as_str().into(), c.as_str().into()],
+        Some(s1.as_str().into()),
+        2,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let order: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position ASC, id ASC",
+    )
+    .bind(&s1)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        order,
+        vec![b.clone(), d.clone(), a.clone(), c.clone()],
+        "contiguous-run (engine path): B, D, A, C"
+    );
+
+    // Dense 1-based ranks — proves the engine reproject ran (fallback leaves
+    // provisional slots + seed positions, which tie-break by id instead).
+    let ranks: Vec<Option<i64>> = sqlx::query_scalar(
+        "SELECT position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position ASC, id ASC",
+    )
+    .bind(&s1)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ranks,
+        vec![Some(1), Some(2), Some(3), Some(4)],
+        "engine path reprojects dense 1-based ranks"
+    );
+
+    mat.shutdown();
+}
+
+/// #2274 × #2190 interplay, ENGINE path: a batched multi-select move lands K
+/// same-device `MoveBlock` ops in one tx, so ONE `undo_page_group` must revert
+/// the WHOLE batch as a single group; one redo pass (popping each undo's
+/// `new_op_ref` oldest-original-first, as the FE redo stack does — #659) must
+/// land the batch layout back; and a second grouped undo must restore the
+/// original layout again. The full Ctrl+Z / Ctrl+Y / Ctrl+Z trace with settled
+/// layout assertions, on the INTERLEAVED fixture whose contiguous-run ground
+/// truth is pinned above (B, D, A, C). The reverse of each `move_block` op is
+/// reconstructed from the block's OWN prior op (`find_prior_position`), so the
+/// grouped undo restores the exact pre-batch layout INDEPENDENT of how the
+/// forward batch computed slots (Closes #2305 undo story).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batched_move_undo_group_redo_undo_roundtrip_engine_2274() {
+    let s1 = seed_label_to_id("S1");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    // #2249: the engine state is the materializer's own per-instance
+    // registry — the very state the command/apply pipeline mutates. A
+    // fresh materializer means a fresh, isolated per-test tree (no
+    // process-global registry, no `registry.clear()` cross-talk, and
+    // plain `cargo test` is safe — see `loro::shared`).
+    let state = mat.loro_state();
+
+    // Seed only the page shell; the children are born through REAL
+    // `create_block` ops (by a DIFFERENT device, so the DEV move group is
+    // bounded by the same-device rule) — undoing a move needs each block's
+    // prior placement in the op_log (`find_prior_position`), which raw seeds
+    // don't have.
+    let seed_page = json!({"id": "S1", "block_type": "page", "content": "Home", "parent_id": null, "position": 1});
+    insert_seed_block(&pool, &seed_page).await;
+    assign_all_to_test_space(&pool).await;
+    seed_block_into_engine(state, &seed_page);
+
+    const OTHER_DEV: &str = "cmd-test-device-OTHER";
+    let mut ids = Vec::new();
+    for (i, label) in ["A", "B", "C", "D"].iter().enumerate() {
+        let blk = agaric_lib::commands::create_block_inner(
+            &pool,
+            OTHER_DEV,
+            &mat,
+            "content".into(),
+            (*label).into(),
+            Some(s1.as_str().into()),
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await
+        .unwrap();
+        ids.push(blk.id.clone().into_string());
+    }
+    settle(&mat).await;
+    let (a, b, c, d) = (
+        ids[0].clone(),
+        ids[1].clone(),
+        ids[2].clone(),
+        ids[3].clone(),
+    );
+
+    // Backdate the creates 10 s (H-13 bypass sentinel): in production the
+    // creates precede the drag by wall-clock time, and `find_prior_position`'s
+    // cross-device `(created_at, seq, device_id)` tie-break is arbitrary when
+    // an entire test runs inside one millisecond.
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = created_at - 10000 WHERE device_id = ?")
+        .bind(OTHER_DEV)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let layout = |pool: &SqlitePool| {
+        let pool = pool.clone();
+        let s1 = s1.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<i64>)>(
+                "SELECT id, position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(&s1)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = layout(&pool).await;
+
+    // Batched same-page move: [A, C] → slot 2 (interleaved with B, D).
+    let resp = agaric_lib::commands::move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![a.as_str().into(), c.as_str().into()],
+        Some(s1.as_str().into()),
+        2,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(resp.len(), 2);
+    let after_move = layout(&pool).await;
+    assert_eq!(
+        after_move
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>(),
+        vec![b.clone(), d.clone(), a.clone(), c.clone()],
+        "contiguous-run (engine path): B, D, A, C"
+    );
+
+    // ── Ctrl+Z: ONE grouped undo reverts the WHOLE 2-op batch ────────────
+    let undo = agaric_lib::commands::undo_page_group_inner(
+        &pool,
+        DEV,
+        &mat,
+        s1.clone(),
+        0,
+        500, // UNDO_GROUP_WINDOW_MS
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        undo.len(),
+        2,
+        "both MoveBlock ops share device + window → one group, whole batch undone"
+    );
+    assert!(
+        undo.iter().all(|r| r.reversed_op_type == "move_block"),
+        "the group is exactly the two moves"
+    );
+    assert_eq!(
+        layout(&pool).await,
+        before,
+        "grouped undo must restore the pre-batch layout exactly (dense ranks)"
+    );
+
+    // ── Ctrl+Y: redo pops each undo's new_op_ref, OLDEST original first ──
+    // (`results` is newest-first; the FE prepends each `new_op_ref`, so the
+    // front of its redo stack is `undo[1].new_op_ref`.)
+    for r in [&undo[1], &undo[0]] {
+        let redone = agaric_lib::commands::redo_page_op_inner(
+            &pool,
+            DEV,
+            &mat,
+            r.new_op_ref.device_id.clone(),
+            r.new_op_ref.seq,
+        )
+        .await
+        .unwrap();
+        assert!(redone.is_redo);
+    }
+    settle(&mat).await;
+    assert_eq!(
+        layout(&pool).await,
+        after_move,
+        "redoing the group oldest-first must land the batch layout again"
+    );
+
+    // ── Ctrl+Z again: the two REDO ops form the next group ───────────────
+    // Push the redo ops 10 s later (H-13 bypass sentinel) so the second
+    // grouped undo cannot chain past them into the original move ops (which
+    // are still is_undo = 0 in the stream).
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE op_log SET created_at = created_at + 10000 \
+         WHERE device_id = ? AND is_undo = 0 AND op_type = 'move_block' \
+         AND seq > (SELECT MAX(seq) FROM op_log WHERE device_id = ? AND is_undo = 1)",
+    )
+    .bind(DEV)
+    .bind(DEV)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let undo2 = agaric_lib::commands::undo_page_group_inner(&pool, DEV, &mat, s1.clone(), 0, 500)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(undo2.len(), 2, "the redo pair groups and undoes together");
+    assert_eq!(
+        layout(&pool).await,
+        before,
+        "undoing the redo group restores the original layout"
+    );
+    mat.shutdown();
+}
+
+/// #2305 (Refs #914) — a non-contiguous DOWNWARD same-parent selection lands as
+/// a CONTIGUOUS run, in selection order, at the base position among the target
+/// parent's non-selected children. Exercises the anchor arithmetic's tail term
+/// (a not-yet-moved selected member sits before the anchor at k=0). ENGINE path.
+///
+/// S1 > [A, B, C, D, E]; batch-move [A, C] at base position 2:
+///   non-selected = [B, D, E]; anchor = E (the 2nd non-selected) ⇒ B, D, A, C, E
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_noncontiguous_downward_same_parent_contiguous_2305() {
+    let s1 = seed_label_to_id("S1");
+    let a = seed_label_to_id("BA");
+    let b = seed_label_to_id("BB");
+    let c = seed_label_to_id("BC");
+    let d = seed_label_to_id("BD");
+    let e = seed_label_to_id("BE");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "S1", "position": 2}),
+        json!({"id": "BC", "block_type": "content", "content": "C",    "parent_id": "S1", "position": 3}),
+        json!({"id": "BD", "block_type": "content", "content": "D",    "parent_id": "S1", "position": 4}),
+        json!({"id": "BE", "block_type": "content", "content": "E",    "parent_id": "S1", "position": 5}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    agaric_lib::commands::move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![a.as_str().into(), c.as_str().into()],
+        Some(s1.as_str().into()),
+        2,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let rows: Vec<(String, Option<i64>)> = sqlx::query_as(
+        "SELECT id, position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position ASC, id ASC",
+    )
+    .bind(&s1)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+        vec![b.clone(), d.clone(), a.clone(), c.clone(), e.clone()],
+        "contiguous run B, D, [A, C], E"
+    );
+    // Tree invariant: dense, gap-free 1-based ranks after reprojection.
+    assert_eq!(
+        rows.iter().map(|(_, p)| *p).collect::<Vec<_>>(),
+        vec![Some(1), Some(2), Some(3), Some(4), Some(5)],
+        "dense 1-based ranks (no gaps / collisions)"
+    );
+    mat.shutdown();
+}
+
+/// #2305 (Refs #914) — a selection SPANNING TWO source parents lands as a
+/// contiguous run in the destination parent's middle, and each vacated source
+/// group is left dense. ENGINE path.
+///
+/// S1 > [P{X, Y}, G{C}, A]; batch-move [A, C] under P at base position 1:
+///   P's non-selected = [X, Y]; anchor = Y ⇒ P > [X, A, C, Y]; G and S1 collapse.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_cross_parent_selection_contiguous_2305() {
+    let s1 = seed_label_to_id("S1");
+    let p = seed_label_to_id("BP");
+    let g = seed_label_to_id("BG");
+    let x = seed_label_to_id("BX");
+    let y = seed_label_to_id("BY");
+    let a = seed_label_to_id("BA");
+    let c = seed_label_to_id("BC");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "BP", "block_type": "content", "content": "P",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BX", "block_type": "content", "content": "X",    "parent_id": "BP", "position": 1}),
+        json!({"id": "BY", "block_type": "content", "content": "Y",    "parent_id": "BP", "position": 2}),
+        json!({"id": "BG", "block_type": "content", "content": "G",    "parent_id": "S1", "position": 2}),
+        json!({"id": "BC", "block_type": "content", "content": "C",    "parent_id": "BG", "position": 1}),
+        json!({"id": "BA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 3}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    // The batch preserves the caller-supplied run order (the FE sorts by
+    // document position first); pass [A, C] and assert that exact run lands.
+    agaric_lib::commands::move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![a.as_str().into(), c.as_str().into()],
+        Some(p.as_str().into()),
+        1,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let under = |parent: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(&parent)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(
+        under(p.clone()).await,
+        vec![x.clone(), a.clone(), c.clone(), y.clone()],
+        "contiguous run spliced into P: X, [A, C], Y"
+    );
+    // Source groups collapse dense: S1 keeps only P, G; G is now empty.
+    assert_eq!(
+        under(s1.clone()).await,
+        vec![p.clone(), g.clone()],
+        "S1 loses A"
+    );
+    assert!(under(g.clone()).await.is_empty(), "G loses C");
+    mat.shutdown();
+}
+
+/// #2305 (Refs #914) — grouped undo of a contiguous-run batch restores the
+/// EXACT pre-batch layout (ids AND dense positions). The reverse of each
+/// `move_block` op comes from the block's own prior op, so undo is independent
+/// of the forward slot arithmetic. ENGINE path, non-contiguous downward fixture.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_batch_undo_restores_exact_original_layout_2305() {
+    let s1 = seed_label_to_id("S1");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let seed_page = json!({"id": "S1", "block_type": "page", "content": "Home", "parent_id": null, "position": 1});
+    insert_seed_block(&pool, &seed_page).await;
+    assign_all_to_test_space(&pool).await;
+    seed_block_into_engine(state, &seed_page);
+
+    // Children born via REAL create ops (a DIFFERENT device, so the DEV move
+    // group is bounded) — undo needs each block's prior placement in the op_log.
+    const OTHER_DEV: &str = "cmd-test-device-OTHER-2305";
+    let mut ids = Vec::new();
+    for (i, label) in ["A", "B", "C", "D", "E"].iter().enumerate() {
+        let blk = agaric_lib::commands::create_block_inner(
+            &pool,
+            OTHER_DEV,
+            &mat,
+            "content".into(),
+            (*label).into(),
+            Some(s1.as_str().into()),
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await
+        .unwrap();
+        ids.push(blk.id.clone().into_string());
+    }
+    settle(&mat).await;
+    let (a, c) = (ids[0].clone(), ids[2].clone());
+
+    // Backdate the creates 10 s (H-13 bypass sentinel) so the cross-device
+    // `(created_at, seq, device_id)` prior lookup is unambiguous.
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = created_at - 10000 WHERE device_id = ?")
+        .bind(OTHER_DEV)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let layout = |pool: &SqlitePool| {
+        let pool = pool.clone();
+        let s1 = s1.clone();
+        async move {
+            sqlx::query_as::<_, (String, Option<i64>)>(
+                "SELECT id, position FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(&s1)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = layout(&pool).await;
+
+    // Non-contiguous downward run [A, C] at base position 2 ⇒ B, D, A, C, E.
+    agaric_lib::commands::move_blocks_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![a.as_str().into(), c.as_str().into()],
+        Some(s1.as_str().into()),
+        2,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        layout(&pool)
+            .await
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            ids[1].clone(),
+            ids[3].clone(),
+            ids[0].clone(),
+            ids[2].clone(),
+            ids[4].clone()
+        ],
+        "contiguous run B, D, A, C, E"
+    );
+
+    // ONE grouped undo reverts the whole 2-op batch → EXACT original layout.
+    let undo = agaric_lib::commands::undo_page_group_inner(&pool, DEV, &mat, s1.clone(), 0, 500)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        undo.len(),
+        2,
+        "both moves share device + window → one group"
+    );
+    assert_eq!(
+        layout(&pool).await,
+        before,
+        "grouped undo restores the EXACT pre-batch layout (ids + dense ranks)"
+    );
+    mat.shutdown();
+}
+
+/// #2305 (Refs #914) — ADVERSARIAL: two SEPARATE single-block moves that swap
+/// a block each BETWEEN two parents (A: P1→P2, B: P2→P1), issued back-to-back
+/// by the same device, get grouped into ONE `undo_page_group_inner` batch
+/// (#2190 same-device/within-window grouping — NOT a single `move_blocks_batch`
+/// call, so this is a DIFFERENT code path than the fixtures above). Both
+/// reverses are `MoveBlock` on distinct block ids, so the new ascending
+/// `(parent, slot)` application order in `revert_ops_in_tx` activates instead
+/// of newest-first LIFO.
+///
+/// `reverse_move_block` computes each block's re-insertion slot against the
+/// CURRENT live children of its ORIGINAL parent — which, at the time the
+/// ascending-order pass reaches the first reverse, still contains the OTHER
+/// swapped block (its own reverse hasn't run yet). That not-yet-reverted
+/// member is a foreign "intruder" sitting in the frame; if it happens to sit
+/// BEFORE the target insertion slot, the insertion index is off by one and the
+/// restored block lands one slot too early — even though the two blocks never
+/// interact within a single `move_blocks_batch` call. This must still
+/// reconstruct the EXACT pre-move layout in BOTH parents.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_group_cross_parent_swap_restores_exact_layout_2305() {
+    let s1 = seed_label_to_id("S1");
+    let p1 = seed_label_to_id("P1");
+    let p2 = seed_label_to_id("P2");
+    let x = seed_label_to_id("BX");
+    let y = seed_label_to_id("BY");
+    let z = seed_label_to_id("BZ");
+    let w = seed_label_to_id("BW");
+    let v = seed_label_to_id("BV");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    // X, Y, Z, W, V never move and are never reverted, so they can be raw
+    // fixture seeds. A and B DO get reverted, and the reverse machinery
+    // (`find_prior_position`) needs a real prior op in `op_log` to reconstruct
+    // where each came from — so they are born via a REAL `create_block_inner`
+    // call on a DIFFERENT device (bounding the DEV undo group at exactly the
+    // two swap moves below).
+    let seed = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "P1", "block_type": "content", "content": "P1",   "parent_id": "S1", "position": 1}),
+        json!({"id": "BX", "block_type": "content", "content": "X",    "parent_id": "P1", "position": 1}),
+        json!({"id": "BY", "block_type": "content", "content": "Y",    "parent_id": "P1", "position": 3}),
+        json!({"id": "BZ", "block_type": "content", "content": "Z",    "parent_id": "P1", "position": 4}),
+        json!({"id": "P2", "block_type": "content", "content": "P2",   "parent_id": "S1", "position": 2}),
+        json!({"id": "BW", "block_type": "content", "content": "W",    "parent_id": "P2", "position": 1}),
+        json!({"id": "BV", "block_type": "content", "content": "V",    "parent_id": "P2", "position": 3}),
+    ];
+    for blk in &seed {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &seed {
+        seed_block_into_engine(state, blk);
+    }
+
+    const OTHER_DEV: &str = "cmd-test-device-OTHER-2305-swap";
+    let a = agaric_lib::commands::create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "A".into(),
+        Some(p1.as_str().into()),
+        Some(1),
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string();
+    let b = agaric_lib::commands::create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "B".into(),
+        Some(p2.as_str().into()),
+        Some(1),
+    )
+    .await
+    .unwrap()
+    .id
+    .into_string();
+    settle(&mat).await;
+
+    // Backdate the OTHER_DEV creates 10 s (H-13 bypass sentinel) so the
+    // cross-device `(created_at, seq, device_id)` prior lookup is unambiguous,
+    // matching `move_blocks_batch_undo_restores_exact_original_layout_2305`.
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE op_log SET created_at = created_at - 10000 WHERE device_id = ?")
+        .bind(OTHER_DEV)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let under = |parent: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
+                 ORDER BY position ASC, id ASC",
+            )
+            .bind(&parent)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let p1_before = under(p1.clone()).await;
+    let p2_before = under(p2.clone()).await;
+    assert_eq!(p1_before, vec![x.clone(), a.clone(), y.clone(), z.clone()]);
+    assert_eq!(p2_before, vec![w.clone(), b.clone(), v.clone()]);
+
+    // Move 1: A leaves P1, lands at the front of P2.
+    agaric_lib::commands::blocks::move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        a.as_str().into(),
+        Some(p2.as_str().into()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Move 2: B leaves P2, lands at the front of P1 (same device, same
+    // window — both moves group into one undo).
+    agaric_lib::commands::blocks::move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b.as_str().into(),
+        Some(p1.as_str().into()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Sanity: the forward swap landed as expected before touching undo.
+    assert_eq!(
+        under(p1.clone()).await,
+        vec![b.clone(), x.clone(), y.clone(), z.clone()],
+        "forward: B now fronts P1"
+    );
+    assert_eq!(
+        under(p2.clone()).await,
+        vec![a.clone(), w.clone(), v.clone()],
+        "forward: A now fronts P2, B has left"
+    );
+
+    // ONE grouped undo reverts both moves (distinct-block MoveBlock group).
+    let undo =
+        agaric_lib::commands::undo_page_group_inner(&pool, DEV, &mat, s1.clone(), 0, 1_000_000)
+            .await
+            .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        undo.len(),
+        2,
+        "both swap moves share device + window → one group"
+    );
+
+    assert_eq!(
+        under(p1.clone()).await,
+        p1_before,
+        "grouped undo must restore P1's EXACT original layout (X, A, Y, Z)"
+    );
+    assert_eq!(
+        under(p2.clone()).await,
+        p2_before,
+        "grouped undo must restore P2's EXACT original layout (W, B, V)"
+    );
+    mat.shutdown();
+}
+
+/// #2344/#2325 — LOCAL `create_block_inner` ≡ REMOTE `apply_op` link-parity.
+///
+/// The CreateBlock arm of the #2325 apply-path collapse: `create_block_in_tx`
+/// now routes its just-appended op through
+/// `apply_op_projected(advance_cursor=false)` — the SAME entry point the
+/// REMOTE/boot-replay path drives via `apply_op → apply_op_projected(true)`.
+/// Before this, the LOCAL create wrote the `page_id`/`space_id` stamp + count
+/// recompute inline and deferred `reindex_block_links` to the background
+/// fan-out; the REMOTE Create arm (post-#2349) does all three in-tx. This test
+/// pins that they now converge on ALL link-derived state through ONE shared
+/// helper.
+///
+/// The `..._identical_rows_2250` pin already compares content/type/parent/
+/// position/page_id/space_id, but its created block has NO `[[ULID]]` content,
+/// so `block_links` / `inbound_link_count` parity is vacuous there. Here the
+/// new block carries a REAL cross-page `[[<page>]]` token so a concrete
+/// `block_links` edge AND a non-zero `pages_cache.inbound_link_count` are
+/// produced, and the two paths are asserted byte-identical on:
+///   * `blocks.content` of the new block,
+///   * `block_links` (source_id, target_id) — the link edge, and
+///   * the linked page's `pages_cache.inbound_link_count`.
+/// Plus a per-drive `sql_only_fallback_count()` delta of 0 on BOTH sides — the
+/// #891 engine-path discipline: prove the engine path ran, not the SQL-only
+/// fallback (which would make the equivalence a false green).
+///
+/// The link SOURCE (the new block, owned by page `S2`) is a DIFFERENT page than
+/// the link TARGET (page `S1`) on purpose: the `inbound_link_count` recompute
+/// excludes same-page edges (`src.page_id != pages_cache.page_id`), so a
+/// within-page link would leave the count at 0 and make the assertion vacuous.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_create_block_link_parity_local_matches_remote_2344() {
+    let s1 = seed_label_to_id("S1"); // link TARGET page
+    let s2 = seed_label_to_id("S2"); // link SOURCE page (owns the new block)
+    let seed = [
+        json!({"id": "S1", "block_type": "page", "content": "Target", "parent_id": null, "position": 1}),
+        json!({"id": "S2", "block_type": "page", "content": "Source", "parent_id": null, "position": 2}),
+    ];
+    // The new block's content creates a real cross-page `block_links` edge to S1.
+    let create_text = format!("see [[{s1}]]");
+
+    // Reads (runtime queries — no sqlx macro, no `.sqlx` regen needed).
+    async fn block_content(pool: &SqlitePool, id: &str) -> String {
+        sqlx::query_scalar::<_, String>("SELECT content FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    async fn all_block_links(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT source_id, target_id FROM block_links ORDER BY source_id, target_id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+    async fn inbound_link_count(pool: &SqlitePool, page_id: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT inbound_link_count FROM pages_cache WHERE page_id = ?")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+    // Seed both pages' `page_id` (self) + `pages_cache` rows so the in-tx
+    // inbound recompute has a target row to UPDATE and the link token resolves
+    // to a page.
+    async fn prime(pool: &SqlitePool) {
+        agaric_store::cache::rebuild_page_ids(pool).await.unwrap();
+        agaric_store::cache::rebuild_pages_cache(pool)
+            .await
+            .unwrap();
+    }
+
+    // ── LOCAL command path (create_block_inner → apply_op_projected(false)) ──
+    let (pool_l, _dir_l) = test_pool().await;
+    let mat_l = test_materializer(&pool_l);
+    let state_l = mat_l.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_l, blk).await;
+    }
+    assign_all_to_test_space(&pool_l).await;
+    for blk in &seed {
+        seed_block_into_engine(state_l, blk);
+    }
+    prime(&pool_l).await;
+
+    let fb_l = agaric_lib::materializer::sql_only_fallback_count();
+    let created = create_block_inner(
+        &pool_l,
+        DEV,
+        &mat_l,
+        "content".into(),
+        create_text.clone(),
+        Some(BlockId::from(s2.as_str())),
+        Some(0),
+    )
+    .await
+    .expect("local create_block_inner");
+    settle(&mat_l).await;
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_l,
+        0,
+        "LOCAL create took the SQL-only fallback — not the engine path (#891)",
+    );
+    let new_id = created.id.clone().into_string();
+    // The routed maintenance step stamped the new block's owning page in-tx.
+    assert_eq!(
+        created.page_id.as_ref().map(BlockId::as_str),
+        Some(s2.as_str()),
+        "LOCAL create's returned BlockRow.page_id must be the owning page S2",
+    );
+
+    // Capture the exact CreateBlock op the LOCAL path emitted so the REMOTE side
+    // replays a byte-identical op (same block_id / index).
+    let payload_json: String = sqlx::query_scalar(
+        "SELECT payload FROM op_log WHERE device_id = ? AND op_type = 'create_block' \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(DEV)
+    .fetch_one(&pool_l)
+    .await
+    .expect("local create op must be in op_log");
+    let payload: CreateBlockPayload =
+        serde_json::from_str(&payload_json).expect("deserialize CreateBlock payload");
+    assert_eq!(
+        payload.block_id.as_str(),
+        new_id,
+        "captured the create op for the freshly-created block",
+    );
+
+    // ── REMOTE / sync path (append_local_op → apply_op → apply_op_projected(true)) ──
+    let (pool_s, _dir_s) = test_pool().await;
+    let mat_s = test_materializer(&pool_s);
+    let state_s = mat_s.loro_state();
+    for blk in &seed {
+        insert_seed_block(&pool_s, blk).await;
+    }
+    assign_all_to_test_space(&pool_s).await;
+    for blk in &seed {
+        seed_block_into_engine(state_s, blk);
+    }
+    prime(&pool_s).await;
+
+    let fb_s = agaric_lib::materializer::sql_only_fallback_count();
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::CreateBlock(payload))
+            .await
+            .expect("append sync create op");
+    // `dispatch_op` runs the foreground ApplyOp (apply_op → apply_op_projected,
+    // advance_cursor=true) + enqueues the background fan-out; `settle` drains it.
+    mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
+    settle(&mat_s).await;
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count() - fb_s,
+        0,
+        "REMOTE create took the SQL-only fallback — not the engine path (#891)",
+    );
+
+    // ── The two entry points must project the link-derived state identically ──
+    assert_eq!(
+        block_content(&pool_l, &new_id).await,
+        block_content(&pool_s, &new_id).await,
+        "LOCAL and REMOTE create must project the block content identically",
+    );
+    let links_l = all_block_links(&pool_l).await;
+    let links_s = all_block_links(&pool_s).await;
+    assert_eq!(
+        links_l, links_s,
+        "block_links (source_id, target_id) diverged LOCAL vs REMOTE (#2344)",
+    );
+    // Non-vacuity: the create produced exactly the NEW -> S1 edge.
+    assert_eq!(
+        links_l,
+        vec![(new_id.clone(), s1.clone())],
+        "the create must produce exactly the new-block -> S1 link edge",
+    );
+    let inbound_l = inbound_link_count(&pool_l, &s1).await;
+    let inbound_s = inbound_link_count(&pool_s, &s1).await;
+    assert_eq!(
+        inbound_l, inbound_s,
+        "pages_cache.inbound_link_count diverged LOCAL vs REMOTE (#2344)",
+    );
+    // Non-vacuity: the cross-page link bumped the count to 1.
+    assert_eq!(
+        inbound_l, 1,
+        "the cross-page [[S1]] link must set S1's inbound_link_count to 1",
+    );
+
+    mat_l.shutdown();
+    mat_s.shutdown();
+}
+
+// ===========================================================================
+// #2934 — lifecycle-op tag-inheritance equivalence (extends the #2669 class).
+//
+// A local `delete_block` / `restore_block` / `purge_block` maintains
+// `block_tag_inherited` SYNCHRONOUSLY, inside the command transaction, scoped
+// to exactly the affected subtree:
+//   * delete  -> `tag_inheritance::remove_subtree_inherited`       (crud.rs)
+//   * restore -> `tag_inheritance::recompute_subtree_inheritance`  (crud.rs)
+//   * purge   -> the `block_cleanup::purge_subtree_tables` cascade (crud.rs)
+// so the whole-vault `RebuildTagInheritanceCache` the lifecycle fan-out used to
+// enqueue (a `DELETE FROM block_tag_inherited` + recursive-CTE recompute under
+// the `BEGIN IMMEDIATE` writer lock, on EVERY lifecycle op) was pure redundant
+// O(vault) work — the exact redundancy #2669 removed for MoveBlock/RemoveTag
+// and #2265 for inbound sync.
+//
+// These three tests PROVE the scoped in-tx update is BYTE-IDENTICAL to a
+// from-scratch full `rebuild_all` for a CONTENT-block lifecycle op, driven
+// through the real command pipeline (`*_inner` + per-space engine + `settle`)
+// and asserted on the SETTLED `block_tag_inherited`. This is the invariant that
+// justifies dropping `RebuildTagInheritanceCache` from
+// `CONTENT_LIFECYCLE_REBUILD_TASKS`. They pass BOTH before the drop (the
+// redundant rebuild is a no-op over an already-correct table) and after it (the
+// scoped update is now the ONLY maintainer, so equality proves it suffices).
+//
+// `scoped` (snapshot taken BEFORE `settle`, i.e. before the debounced lifecycle
+// fan-out can fire) isolates the command tx's own scoped update; asserting it
+// equals a fresh `rebuild_all` is the non-vacuous equivalence proof even while
+// the (soon-removed) rebuild still runs on `settle`.
+//
+// Fixture: S1(page) > AA[#T1] > { BB[#T2] > CC, DD }.
+//   AA tags T1  -> BB, CC, DD inherit T1 from AA.
+//   BB tags T2  -> CC inherits T2 from BB.
+// initial block_tag_inherited = {(BB,T1,AA),(CC,T1,AA),(CC,T2,BB),(DD,T1,AA)}.
+// ===========================================================================
+
+/// Snapshot `block_tag_inherited` as a deterministically-ordered
+/// `(block_id, tag_id, inherited_from)` triple list.
+async fn read_inherited_2934(pool: &SqlitePool) -> Vec<(String, String, String)> {
+    sqlx::query_as::<_, (String, String, String)>(
+        "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited \
+         ORDER BY block_id, tag_id, inherited_from",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Read a block's `deleted_at` cohort stamp (the value `restore_block_inner` /
+/// the trash UI key the cohort restore on).
+async fn deleted_at_2934(pool: &SqlitePool, id: &str) -> Option<i64> {
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Seed the shared #2934 fixture into SQL + the per-space engine, assign the
+/// test space, wire the two direct tag edges, and populate the initial
+/// `block_tag_inherited` via a full rebuild. Returns the expanded
+/// `(s1, aa, bb, cc, dd, t1, t2)` ids.
+#[allow(clippy::type_complexity)]
+async fn seed_inheritance_fixture_2934(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+) -> (String, String, String, String, String, String, String) {
+    let tree = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "AA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "AA", "position": 1}),
+        json!({"id": "CC", "block_type": "content", "content": "C",    "parent_id": "BB", "position": 1}),
+        json!({"id": "DD", "block_type": "content", "content": "D",    "parent_id": "AA", "position": 2}),
+    ];
+    let tags = [
+        json!({"id": "T1", "block_type": "tag", "content": "t1", "parent_id": null, "position": 3}),
+        json!({"id": "T2", "block_type": "tag", "content": "t2", "parent_id": null, "position": 4}),
+    ];
+    // Tag blocks live in SQL only (the inheritance recompute reads `block_tags`
+    // + walks `blocks.parent_id`; it never touches the engine). Content/page
+    // blocks are seeded into the engine too so the lifecycle ops route through
+    // the production engine path (mirrors the #1392 / #1549 conformance tests).
+    for blk in tags.iter().chain(tree.iter()) {
+        insert_seed_block(pool, blk).await;
+    }
+    assign_all_to_test_space(pool).await;
+    for blk in &tree {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(pool).await;
+
+    let aa = seed_label_to_id("AA");
+    let bb = seed_label_to_id("BB");
+    let t1 = seed_label_to_id("T1");
+    let t2 = seed_label_to_id("T2");
+    for (block, tag) in [(&aa, &t1), (&bb, &t2)] {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block)
+            .bind(tag)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    // Populate the initial inherited cache the way a live vault would have it.
+    agaric_store::tag_inheritance::rebuild_all(pool)
+        .await
+        .unwrap();
+
+    (
+        seed_label_to_id("S1"),
+        aa,
+        bb,
+        seed_label_to_id("CC"),
+        seed_label_to_id("DD"),
+        t1,
+        t2,
+    )
+}
+
+/// #2934 DELETE — `remove_subtree_inherited` (run in the delete command tx)
+/// reproduces the full rebuild byte-for-byte: soft-deleting the middle tagger
+/// BB (cascading to CC) drops every inherited row of the {BB, CC} subtree and
+/// leaves the surviving sibling DD's `(DD,T1,AA)` row intact — exactly what a
+/// from-scratch rebuild over the post-delete live tree yields. Proves the
+/// whole-vault `RebuildTagInheritanceCache` was redundant for a content delete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_content_subtree_inheritance_matches_full_rebuild_2934() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let (_s1, aa, bb, cc, dd, t1, t2) = seed_inheritance_fixture_2934(&pool, state).await;
+
+    // Non-vacuity: the fixture really does inherit across the subtree.
+    let mut initial = vec![
+        (bb.clone(), t1.clone(), aa.clone()),
+        (cc.clone(), t1.clone(), aa.clone()),
+        (cc.clone(), t2.clone(), bb.clone()),
+        (dd.clone(), t1.clone(), aa.clone()),
+    ];
+    initial.sort();
+    assert_eq!(
+        read_inherited_2934(&pool).await,
+        initial,
+        "fixture precondition: BB/CC/DD inherit T1 from AA and CC inherits T2 from BB",
+    );
+
+    // Delete BB (a CONTENT block) through the real command pipeline; the cascade
+    // soft-deletes CC too. Snapshot BEFORE settle so `scoped` reflects the
+    // command tx's own `remove_subtree_inherited`, not any debounced rebuild.
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
+        .await
+        .expect("delete BB");
+    let scoped = read_inherited_2934(&pool).await;
+    settle(&mat).await;
+    let settled = read_inherited_2934(&pool).await;
+
+    // Full rebuild over the post-delete live tree = the ground truth.
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
+    let rebuilt = read_inherited_2934(&pool).await;
+
+    assert_eq!(
+        scoped, rebuilt,
+        "#2934: delete's scoped remove_subtree_inherited must equal the full rebuild",
+    );
+    assert_eq!(
+        settled, rebuilt,
+        "#2934: the SETTLED block_tag_inherited after a content delete must equal the full rebuild",
+    );
+    // Non-vacuity: only DD's row survives (BB/CC gone, AA has no other live
+    // tagged descendants).
+    assert_eq!(
+        rebuilt,
+        vec![(dd.clone(), t1.clone(), aa.clone())],
+        "#2934: after deleting the BB/CC subtree only DD's inherited T1 row must remain",
+    );
+
+    mat.shutdown();
+}
+
+/// #2934 / #3876 RESTORE — restore's scoped `recompute_subtree_inheritance`
+/// reproduces the full rebuild for the fixture that used to diverge.
+///
+/// Historically divergent fixture: S1(page) → AA[#T1] → BB → CC[#T1]. CC is
+/// BOTH a direct T1 tagger AND an inheritor of T1 from the live ancestor AA
+/// above the deleted cohort. After deleting then restoring BB (cohort
+/// {BB, CC}):
+///   * `rebuild_all` ground truth = {(BB,T1,AA), (CC,T1,AA)} — the rebuild has
+///     no self-tag exclusion, so CC gets its inherited-from-AA row too.
+///   * the scoped `recompute_subtree_inheritance` USED TO yield only
+///     {(BB,T1,AA)}: its step 3 carried a `WHERE st.id NOT IN (SELECT block_id
+///     FROM block_tags WHERE tag_id = …)` exclusion that refused to write CC's
+///     inherited row because CC directly holds T1, so `(CC,T1,AA)` was DROPPED.
+///
+/// #3876 removed that exclusion and settled the definition on `rebuild_all`'s
+/// (the inheritance relation holds independently of a direct tag; consumers
+/// that want "inherited but not direct" subtract). This test now asserts the
+/// scoped recompute CONVERGES with the full rebuild — the property the
+/// `*_converges_with_rebuild_3876` unit tests pin directly in `agaric-store`.
+///
+/// `RebuildTagInheritanceCache` is still RETAINED for restore
+/// ([`CONTENT_RESTORE_REBUILD_TASKS`]): it is now redundant rather than
+/// load-bearing here, and dropping it is a separate change that must first
+/// audit the remaining restore-path divergence classes (e.g. the `inherited_from`
+/// provenance class of `add_tag_nested_diverges_from_rebuild_provenance_only_2669`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_content_subtree_inheritance_matches_rebuild_3876() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    // Divergent fixture: CC is a direct T1 tagger AND inherits T1 from AA above.
+    let tree = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "AA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "AA", "position": 1}),
+        json!({"id": "CC", "block_type": "content", "content": "C",    "parent_id": "BB", "position": 1}),
+    ];
+    let t1_seed =
+        json!({"id": "T1", "block_type": "tag", "content": "t1", "parent_id": null, "position": 2});
+    insert_seed_block(&pool, &t1_seed).await;
+    for blk in &tree {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &tree {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let aa = seed_label_to_id("AA");
+    let bb = seed_label_to_id("BB");
+    let cc = seed_label_to_id("CC");
+    let t1 = seed_label_to_id("T1");
+    // AA and CC both directly tag T1.
+    for block in [&aa, &cc] {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block)
+            .bind(&t1)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
+
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
+        .await
+        .expect("delete BB");
+    settle(&mat).await;
+    let bb_deleted_at = deleted_at_2934(&pool, &bb)
+        .await
+        .expect("BB must be soft-deleted");
+
+    // Restore the BB/CC cohort (keyed on BB's own delete stamp), then snapshot
+    // BEFORE settle to isolate the command tx's own `recompute_subtree_inheritance`.
+    restore_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()), bb_deleted_at)
+        .await
+        .expect("restore BB");
+    let scoped = read_inherited_2934(&pool).await;
+    settle(&mat).await;
+    let settled = read_inherited_2934(&pool).await;
+
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
+    let rebuilt = read_inherited_2934(&pool).await;
+
+    // Ground truth: the rebuild emits CC's inherited-from-AA row despite CC
+    // directly tagging T1.
+    let mut expected = vec![
+        (bb.clone(), t1.clone(), aa.clone()),
+        (cc.clone(), t1.clone(), aa.clone()),
+    ];
+    expected.sort();
+    assert_eq!(
+        rebuilt, expected,
+        "#2934: the full rebuild must include CC's inherited T1-from-AA row",
+    );
+
+    // #3876: the scoped recompute now KEEPS (CC,T1,AA) — a block that holds
+    // the tag directly still inherits it from the ancestor that also holds it.
+    assert!(
+        scoped.contains(&(cc.clone(), t1.clone(), aa.clone())),
+        "#3876: restore's scoped recompute must KEEP (CC,T1,AA) — the removed \
+         step-3 self-tag exclusion used to drop it. scoped = {scoped:?}",
+    );
+    assert_eq!(
+        scoped, rebuilt,
+        "#3876: restore's scoped recompute must CONVERGE with the full rebuild \
+         (this fixture is the one that used to diverge)",
+    );
+
+    // The retained (now redundant) rebuild leaves the SETTLED table equal to
+    // the full rebuild too.
+    assert_eq!(
+        settled, rebuilt,
+        "#2934: the SETTLED block_tag_inherited after a content restore must equal \
+         the full rebuild (RebuildTagInheritanceCache is RETAINED for restore)",
+    );
+
+    mat.shutdown();
+}
+
+/// #2934 PURGE — the `purge_subtree_tables` cascade (run in the purge command
+/// tx) leaves `block_tag_inherited` byte-identical to a full rebuild: purging
+/// the already-soft-deleted BB/CC subtree removes any of its inherited rows and
+/// touches no surviving row (a survivor can never inherit from within a purged
+/// subtree). Proves the whole-vault `RebuildTagInheritanceCache` was redundant
+/// for a content purge.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_content_subtree_inheritance_matches_full_rebuild_2934() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let (_s1, aa, bb, _cc, dd, t1, _t2) = seed_inheritance_fixture_2934(&pool, state).await;
+
+    // A block must be soft-deleted before it can be purged.
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
+        .await
+        .expect("delete BB");
+    settle(&mat).await;
+
+    purge_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
+        .await
+        .expect("purge BB");
+    let scoped = read_inherited_2934(&pool).await;
+    settle(&mat).await;
+    let settled = read_inherited_2934(&pool).await;
+
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
+    let rebuilt = read_inherited_2934(&pool).await;
+
+    assert_eq!(
+        scoped, rebuilt,
+        "#2934: purge's scoped cascade must leave block_tag_inherited equal to the full rebuild",
+    );
+    assert_eq!(
+        settled, rebuilt,
+        "#2934: the SETTLED block_tag_inherited after a content purge must equal the full rebuild",
+    );
+    // Non-vacuity: DD's inherited row survives the purge of the BB/CC subtree.
+    assert_eq!(
+        rebuilt,
+        vec![(dd.clone(), t1.clone(), aa.clone())],
+        "#2934: after purging the BB/CC subtree only DD's inherited T1 row must remain",
+    );
+
+    mat.shutdown();
+}

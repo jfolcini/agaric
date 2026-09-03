@@ -240,7 +240,7 @@ pub async fn list_block_history(
 ///
 /// The population of that skew grew with #4277/#4335: reversing an
 /// `add_attachment` op appends an `is_undo = 1` `delete_attachment` row
-/// (`reverse_add_attachment`, `src/reverse/attachment_ops.rs`), and probe 2
+/// (`reverse_add_attachment`, `agaric-engine/src/reverse/attachment_ops.rs`), and probe 2
 /// above admits that row into this list — via `src_add.block_id IN (...)`,
 /// which the reverse row itself satisfies once its `add_attachment` source
 /// is resolved — while `undo_page_op_inner` excludes it via its own `AND

@@ -803,7 +803,7 @@ function selfTestReaders(ok, fail) {
   // exclude_globs matching, used to prove a glob is not fully excluded.
   if (
     globMatches('**/tests/**', 'agaric-store/src/op_log/tests/x.rs') &&
-    !globMatches('**/tests/**', 'src/reverse/batch.rs')
+    !globMatches('**/tests/**', 'src/materializer/retry_queue.rs')
   )
     ok('exclude_globs matching distinguishes harness files from sources')
   else fail('exclude_globs matching', 'pattern semantics wrong')
@@ -1050,7 +1050,7 @@ function runSelfTest() {
     !insideAny('agaric-store/src/op.rs', bare, MEMBERS) &&
     // …while the root package's OWN files stay reachable, or the check would
     // "pass" by rejecting everything.
-    insideAny('src/reverse/batch.rs', bare, MEMBERS)
+    insideAny('src/materializer/retry_queue.rs', bare, MEMBERS)
   )
     ok('a bare invocation examines only the root package, so a moved-out glob is unreachable')
   else fail('bare invocation package selection', JSON.stringify(bare))
@@ -1059,21 +1059,21 @@ function runSelfTest() {
   const all = examinedPackageDirs(['cargo', 'mutants', '--workspace'], ws)
   if (
     insideAny('agaric-store/src/op.rs', all, MEMBERS) &&
-    insideAny('src/reverse/batch.rs', all, MEMBERS)
+    insideAny('src/materializer/retry_queue.rs', all, MEMBERS)
   )
     ok('--workspace makes a moved-out glob reachable')
   else fail('--workspace package selection', JSON.stringify(all))
 
   // 4. End-to-end: the REAL config, analysed against an invocation with no
-  //    `--workspace`, must report all three moved-out globs. This is the
-  //    guard's whole reason to exist, exercised through `analyzeMutantsScope`
-  //    rather than its helpers.
+  //    `--workspace`, must report all four moved-out globs (op.rs, op_log/**,
+  //    reverse/** and loro/engine/**). This is the guard's whole reason to
+  //    exist, exercised through `analyzeMutantsScope` rather than its helpers.
   const drifted = analyzeMutantsScope({
     root: REPO_ROOT,
     overrideArgv: ['cargo', 'mutants', '--in-place'],
   })
-  if (drifted.problems.filter((p) => p.kind === 'glob-outside-examined-packages').length === 3)
-    ok('dropping --workspace flags all three moved-out globs (the #2621 drift)')
+  if (drifted.problems.filter((p) => p.kind === 'glob-outside-examined-packages').length === 4)
+    ok('dropping --workspace flags all four moved-out globs (the #2621 drift)')
   else fail('moved-out globs are flagged', JSON.stringify(drifted.problems.map((p) => p.kind)))
 
   // 3b. #3393, the sharded shape: `-p "$PACKAGE"` names the matrix column, so
@@ -1093,7 +1093,7 @@ function runSelfTest() {
   if (
     entries.length === 3 &&
     insideAny('agaric-store/src/op.rs', sharded, MEMBERS) &&
-    insideAny('src/reverse/batch.rs', sharded, MEMBERS) &&
+    insideAny('src/materializer/retry_queue.rs', sharded, MEMBERS) &&
     examinedPackageDirs(['cargo', 'mutants', '-p', '"$PACKAGE"'], ws, []) === undefined
   )
     ok('a shard matrix resolves `-p "$PACKAGE"` to its column, and nothing else does')

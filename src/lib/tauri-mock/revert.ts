@@ -204,7 +204,7 @@ function revertTagSet(
  * #3331 — reverse a soft-delete lifecycle op the way the backend does: as a
  * COHORT operation, not a single-row edit.
  *
- * `src-tauri/src/reverse/block_ops.rs` reverses these three op types into
+ * `src-tauri/agaric-engine/src/reverse/block_ops.rs` reverses these three op types into
  * exactly two payloads, and both apply arms
  * (`src-tauri/src/commands/history.rs`, `OpPayload::DeleteBlock` /
  * `OpPayload::RestoreBlock`) walk a whole subtree:

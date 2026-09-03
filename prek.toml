@@ -85,7 +85,7 @@ hooks = [
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
     # scripts/ mixes .sh, .mjs, and .py files that all rely on shebangs + +x bits. `*.rs` is excluded
     # because Rust's inner-attribute syntax `#![...]` looks like a shebang to this builtin and gives
-    # unactionable false positives on every test module under src-tauri/src/commands/tests/.
+    # unactionable false positives on every test module under src-tauri/tests/commands/.
     # WHY: a script added without chmod +x fails only when something tries to run it — upstream builtin
     { id = "check-shebang-scripts-are-executable", exclude = "\\.rs$", stages = [
         "pre-commit",
@@ -1307,7 +1307,7 @@ name = "Every metric must have a test proving it can fire (#3349)"
 entry = "node scripts/check-metric-provable.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src-tauri/(src|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs|src-tauri/Cargo\\.toml|scripts/(check-metric-provable\\.mjs|metric-firing-baseline\\.json))$"
+files = "^(src-tauri/(src|tests|[^/]+/src|[^/]+/tests|[^/]+/[^/]+/src)/.*\\.rs|src-tauri/Cargo\\.toml|scripts/(check-metric-provable\\.mjs|metric-firing-baseline\\.json))$"
 stages = ["pre-commit"]
 
 # Self-test the metric-provable guard's own exit behavior whenever it
@@ -1384,10 +1384,11 @@ entry = "node scripts/check-snapshot-redaction.mjs"
 language = "system"
 pass_filenames = false
 # The `.rs` half of the trigger covers EVERY workspace member, not just the
-# app crate (#3465): the fixture allowlist is built from all of them, so a
-# fixture const added in `agaric-sync/src` changes this guard's verdict.
+# app crate (#3465), and the `src-tauri/tests` binaries (#4499): the fixture
+# allowlist is built from all of them, so a fixture const added in
+# `agaric-sync/src` changes this guard's verdict.
 # `Cargo.toml` is a trigger too — the member list is derived from it.
-files = "(\\.snap$|^src-tauri/(src|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs$|^src-tauri/Cargo\\.toml$)"
+files = "(\\.snap$|^src-tauri/(src|tests|[^/]+/src|[^/]+/tests|[^/]+/[^/]+/src)/.*\\.rs$|^src-tauri/Cargo\\.toml$)"
 stages = ["pre-commit"]
 
 # Session-log numbering: the number must be free in the MERGE TARGET, not
@@ -2853,7 +2854,7 @@ name = "cargo-mutants scope is live and reachable"
 entry = "node scripts/check-mutants-scope.mjs"
 language = "system"
 pass_filenames = false
-files = '^(src-tauri/(\.cargo/)?mutants\.toml|src-tauri/Cargo\.toml|\.github/workflows/scheduled-deep-checks\.yml|src-tauri/(src/reverse|agaric-store/src|agaric-engine/src/loro)/.*\.rs)$'
+files = '^(src-tauri/(\.cargo/)?mutants\.toml|src-tauri/Cargo\.toml|\.github/workflows/scheduled-deep-checks\.yml|src-tauri/(agaric-engine/src/reverse|agaric-store/src|agaric-engine/src/loro)/.*\.rs)$'
 stages = ["manual"]
 
 # git-fixture-isolation (#3722 meta-guard): fixing ONE script that ran git in

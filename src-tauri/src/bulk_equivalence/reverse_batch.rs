@@ -23,7 +23,7 @@
 //!
 //! # Why this test is randomized and the old fixture is KEPT
 //!
-//! `reverse::tests::compute_reverse_batch_matches_per_op_loop` is the
+//! `agaric-engine/tests/reverse_tests.rs::compute_reverse_batch_matches_per_op_loop` is the
 //! hand-rolled ancestor of this test. It is deliberately NOT deleted:
 //!
 //! * It pins ABSOLUTE answers (`"B3_BLK1 v0.5"`, `"CORRECT-causal-prev"`,
@@ -62,10 +62,10 @@ use sqlx::{Row as _, SqlitePool};
 use tokio::runtime::Runtime;
 
 use super::{ArmEnv, Normalisation, assert_batch_equals_fold};
-use crate::proptest_db_harness::{
+use agaric_engine::proptest_db_harness::{
     HARNESS_DEVICE, OpKind, op_chain_strategy, resolve_chain, ts_for,
 };
-use crate::reverse::{compute_reverse, compute_reverse_batch, get_op_records_batch};
+use agaric_engine::reverse::{compute_reverse, compute_reverse_batch, get_op_records_batch};
 
 /// Each case builds two fresh migrated databases, so the budget is kept low
 /// deliberately; the value is in running the relation over many SHAPES, not in

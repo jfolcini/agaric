@@ -26,7 +26,7 @@
  *   * `handlers/history.ts`  — the positional `undo_page_op`.
  *
  * Reversal fidelity (the #3331 defect): the backend's `reverse_delete_block`
- * (src-tauri/src/reverse/block_ops.rs) returns
+ * (src-tauri/agaric-engine/src/reverse/block_ops.rs) returns
  * `RestoreBlock { deleted_at_ref: record.created_at }`, and the apply arm for
  * `OpPayload::RestoreBlock` (src-tauri/src/commands/history.rs) walks the
  * cohort. Symmetrically, `reverse_create_block` and `reverse_restore_block`
