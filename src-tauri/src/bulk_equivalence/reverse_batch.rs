@@ -23,7 +23,7 @@
 //!
 //! # Why this test is randomized and the old fixture is KEPT
 //!
-//! `reverse::tests::compute_reverse_batch_matches_per_op_loop` is the
+//! `agaric-engine/tests/reverse_tests.rs::compute_reverse_batch_matches_per_op_loop` is the
 //! hand-rolled ancestor of this test. It is deliberately NOT deleted:
 //!
 //! * It pins ABSOLUTE answers (`"B3_BLK1 v0.5"`, `"CORRECT-causal-prev"`,

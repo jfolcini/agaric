@@ -11,7 +11,7 @@ use agaric_store::op_log;
 /// through the real sync-ingest core (`dag::insert_replicated_op`) so the
 /// denormalized `block_id` column is populated and `is_replicated = 1` is
 /// stamped exactly as a synced audit row would be. Mirrors
-/// `reverse::tests::append_replicated_op`.
+/// `agaric-engine/tests/reverse_tests.rs::append_replicated_op`.
 async fn append_replicated_op(
     pool: &SqlitePool,
     device_id: &str,
@@ -6847,7 +6847,7 @@ async fn undo_page_op_all_ops_replicated_returns_not_found_2481() {
 /// computed. This exercises the guard through #2481's construction
 /// (`append_local_op_at` + `mark_op_replicated`), complementing the real
 /// sync-ingest path covered by
-/// `reverse::tests::revert_ops_rejects_replicated_target_2549`.
+/// `tests/app_tests/reverse_tests.rs::revert_ops_rejects_replicated_target_2549`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn revert_ops_rejects_replicated_ref_explicitly_2549() {
     let (pool, _dir) = test_pool().await;

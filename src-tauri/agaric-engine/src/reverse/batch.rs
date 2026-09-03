@@ -780,7 +780,7 @@ async fn fetch_prior_attachment_batch(
 /// batch containing the SAME `attachment_id` twice (an add, undone and redone,
 /// reverted again in one sweep) resolve every occurrence to the same row
 /// instead of only the first. #4346 seeded the fixture that holds that: the
-/// duplicate-id pair inside `reverse::tests::compute_reverse_batch_matches_per_op_loop`.
+/// duplicate-id pair inside `tests/reverse_tests.rs::compute_reverse_batch_matches_per_op_loop`.
 /// Until it existed, every `add_attachment` in every fixture carried a
 /// DISTINCT id, so a regression from this by-id remap back to index-based
 /// mapping reddened nothing in the suite.

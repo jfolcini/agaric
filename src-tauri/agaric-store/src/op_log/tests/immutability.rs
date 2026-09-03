@@ -698,5 +698,5 @@ async fn op_log_attachment_id_column_and_index_exist() {
 // NOTE (#2621, wave S3b-ii): `dag_queries_no_longer_use_json_extract_block_id`
 // reads the app crate's `src/dag.rs` from disk via `CARGO_MANIFEST_DIR`, which
 // resolves to a nonexistent path under `agaric-store`. It relocated to the app
-// crate at `src-tauri/src/op_log_app_tests.rs`, where `CARGO_MANIFEST_DIR/src/dag.rs`
+// crate at `src-tauri/tests/app_tests/op_log_app_tests.rs`, where `CARGO_MANIFEST_DIR/src/dag.rs`
 // resolves correctly.

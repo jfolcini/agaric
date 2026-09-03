@@ -843,9 +843,13 @@ jobs:
         # per-mutant cost; the app package has no examine_glob left and no
         # shard. `-p` runs only the examined package's tests, so the suites
         # that kill those mutants moved with them: `agaric-engine/tests/
-        # reverse_tests.rs` and `reverse_proptest_b1.rs`. Only the eleven
-        # reverse tests that need the app's `Materializer` stayed behind in
-        # `tests/app_tests/`, and they kill nothing this lane counts.
+        # reverse_tests.rs` and `reverse_proptest_b1.rs`. Two suites stayed in
+        # the app package and kill nothing this lane counts: the eleven
+        # reverse tests that need the app's `Materializer` in
+        # `tests/app_tests/reverse_tests.rs`, and the
+        # `compute_reverse_batch_matches_per_op_fold` parity oracle in
+        # `src/bulk_equivalence/reverse_batch.rs`, which `-p agaric-engine`
+        # never runs.
         #
         # `shards` is the denominator every shard of that package must agree on
         # (cargo-mutants: "all shards must be run with the same arguments and

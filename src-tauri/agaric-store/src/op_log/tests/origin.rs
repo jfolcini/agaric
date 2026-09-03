@@ -67,7 +67,7 @@ async fn append_outside_actor_scope_stamps_origin_user() {
 // `origin_falls_back_to_user_after_agent_scope_ends`,
 // `origin_does_not_affect_op_hash`, `remote_op_insert_defaults_origin_to_user`)
 // cannot compile in the store crate. They relocated to the app crate at
-// `src-tauri/src/op_log_app_tests.rs`, rewritten against
+// `src-tauri/tests/app_tests/op_log_app_tests.rs`, rewritten against
 // `agaric_store::op_log::…` + `crate::mcp` / `crate::dag`.
 
 /// Slice 3: `append_local_op_in_tx` must populate the
