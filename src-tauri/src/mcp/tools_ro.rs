@@ -933,7 +933,7 @@ fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
     // their combined size) so a handful of multi-megabyte strings can't
     // slip under the count cap and force huge allocations / expensive
     // glob / regex / SQL matching. `tag_ids`, `parent_id` and `space_id`
-    // are ULID tokens normalised/validated elsewhere, but the
+    // are ULID tokens, parsed strictly just below, but the
     // state/priority/block-type filter strings are NOT enum-validated —
     // `prepare_metadata_with_today` clones them verbatim and binds them
     // into the `IN (…)` predicate (`metadata_filter.rs`), so a single
