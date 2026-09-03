@@ -449,6 +449,10 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 debug = false
+# A silent wrap in seq or position arithmetic is data corruption; with
+# `panic = "abort"` it is an abort instead. Tests (dev profile) always ran
+# with checks on, so release now matches them.
+overflow-checks = true
 # `panic = "abort"` shrinks the binary 5-10% (drops the unwind tables) and
 # shaves a small amount of cold-start cost. This manifest is the workspace
 # root, so the setting reaches every crate in every shipped build. What it
