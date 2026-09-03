@@ -77,6 +77,7 @@ use crate::commands::{
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -851,8 +852,8 @@ fn tool_desc_list_spaces() -> ToolDescription {
 // `[1, cap]` advertised range, (3) delegate to `*_inner`,
 // (4) serialise result to `serde_json::Value`. Errors from `*_inner`
 // propagate as `AppError` — the server translates them to JSON-RPC codes
-// (`-32001` for `NotFound`, `-32602` for `Validation`/`InvalidOperation`,
-// `-32603` otherwise).
+// (`-32001` for `NotFound`, `-32602` for `Validation`/`InvalidOperation`/
+// `Ulid`, `-32603` otherwise).
 // ---------------------------------------------------------------------------
 
 /// Reject `limit` values outside the documented `[1, cap]` range with
@@ -932,7 +933,7 @@ fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
     // their combined size) so a handful of multi-megabyte strings can't
     // slip under the count cap and force huge allocations / expensive
     // glob / regex / SQL matching. `tag_ids`, `parent_id` and `space_id`
-    // are ULID tokens normalised/validated elsewhere, but the
+    // are ULID tokens, parsed strictly just below, but the
     // state/priority/block-type filter strings are NOT enum-validated —
     // `prepare_metadata_with_today` clones them verbatim and binds them
     // into the `IN (…)` predicate (`metadata_filter.rs`), so a single
@@ -1008,12 +1009,24 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
     // #699 — bound the input vectors before they reach SQL.
     validate_search_term_budget(&args)?;
-    // Normalise ULID-shaped IDs (parent, each tag, and space) at the
-    // MCP boundary so a lowercase ULID matches the canonical uppercase store.
-    let parent_id = args.parent_id.as_deref().map(normalize_ulid_arg);
+    // #3301 — PARSE the ULID-shaped ids, as `space_id` has always done: a
+    // malformed or truncated one must error rather than bind a string that
+    // matches nothing, which an agent reads as "no block carries that tag"
+    // and does not retry. No normalise step ahead of this — `canonical_ulid`
+    // compares against the uppercased input, so `from_string` already accepts
+    // any case. Runs after `validate_search_term_budget` so an oversized
+    // vector still gets its own actionable message.
+    let parent_id = args
+        .parent_id
+        .as_deref()
+        .map(|s| BlockId::from_string(s).map(BlockId::into_string))
+        .transpose()?;
     let tag_ids = args
         .tag_ids
-        .map(|v| v.iter().map(|s| normalize_ulid_arg(s)).collect());
+        .unwrap_or_default()
+        .iter()
+        .map(|s| BlockId::from_string(s).map(BlockId::into_string))
+        .collect::<Result<Vec<String>, AppError>>()?;
     // Fold the optional structured `filter` arg into the
     // `SearchFilter` passed to `search_blocks_inner`. Omitting `filter`
     // Preserves the pre-existing contract (no metadata / glob / toggle
@@ -1034,19 +1047,18 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         limit,
         crate::commands::SearchFilter {
             parent_id,
-            tag_ids: tag_ids.unwrap_or_default(),
+            tag_ids,
             // #2248 c — `SearchFilter` now carries a `SpaceScope`. The MCP
             // `search` tool is always space-scoped, so wrap the (required)
-            // normalized arg as `Active`.
+            // arg as `Active`.
             // #2956 — validate the id via the strict `from_string` constructor
             // like every sibling tool (`list_backlinks`, `list_property_defs`,
             // `create_page`): a malformed / truncated / empty `space_id` must
-            // error (`AppError::Ulid`, which `app_error_to_rmcp`'s catch-all
-            // maps to JSON-RPC -32603) rather than silently become an `Active`
-            // id that matches nothing (which would make an agent wrongly
-            // conclude the vault is empty). Kept consistent with the siblings,
-            // which surface the same `AppError::Ulid` → -32603.
-            scope: SpaceScope::Active(SpaceId::from_string(normalize_ulid_arg(&args.space_id))?),
+            // error (`AppError::Ulid`, which `app_error_to_rmcp` maps to
+            // JSON-RPC -32602 invalid-params, #3301) rather than silently
+            // become an `Active` id that matches nothing (which would make an
+            // agent wrongly conclude the vault is empty).
+            scope: SpaceScope::Active(SpaceId::from_string(args.space_id.as_str())?),
             include_page_globs: f.include_page_globs,
             exclude_page_globs: f.exclude_page_globs,
             case_sensitive: f.case_sensitive,
@@ -1100,8 +1112,11 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListBacklinksArgs = parse_args(TOOL_LIST_BACKLINKS, args)?;
     let limit = validate_limit(TOOL_LIST_BACKLINKS, args.limit, LIST_RESULT_CAP)?;
-    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
-    let block_id = normalize_ulid_arg(&args.block_id);
+    // #3301 — parse, don't wave through. `list_backlinks_grouped_inner`
+    // rejects only an EMPTY `block_id`; a malformed one binds a string that
+    // matches nothing and comes back as an empty grouped response, which an
+    // agent reads as "this block has no backlinks" and does not retry.
+    let block_id = BlockId::from_string(args.block_id)?;
     // Phase 2 — translate the JSON-side `space_id: Option<String>`
     // into a `SpaceScope` before crossing into `_inner`. The wire shape
     // stays the same; the type-system gate moves to the call boundary.
@@ -1109,16 +1124,8 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
         Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
         None => SpaceScope::Global,
     };
-    let resp = list_backlinks_grouped_inner(
-        pool,
-        agaric_core::ulid::BlockId::from(block_id),
-        None,
-        None,
-        args.cursor,
-        limit,
-        &scope,
-    )
-    .await?;
+    let resp = list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit, &scope)
+        .await?;
     to_tool_result(&resp)
 }
 

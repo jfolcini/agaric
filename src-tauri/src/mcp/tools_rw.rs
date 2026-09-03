@@ -32,6 +32,8 @@
 //! - `purge_block` / `delete_attachment` (non-reversible)
 //! - Tag creation (blocks with `block_type = 'tag'`)
 //! - Property-definition mutation
+//! - Space membership (the reserved `space` property key, #3301): setting it
+//!   is the canonical cross-space move, not a content write
 //! - Conflict resolution, compaction, recovery
 //! - Anything that touches sync peers or the device id
 //!
@@ -345,7 +347,7 @@ fn tool_desc_set_property() -> ToolDescription {
             "required": ["block_id", "key", "space_id"],
             "properties": {
                 "block_id": { "type": "string", "description": "ULID of the target block." },
-                "key":      { "type": "string", "description": "Property key (see list_property_defs)." },
+                "key":      { "type": "string", "description": "Property key (see list_property_defs). The reserved key `space` is rejected — space membership is not a content property." },
                 "value_text": { "type": "string", "description": "Text value (exactly one value_* must be set)." },
                 "value_num":  { "type": "number", "description": "Numeric value (exactly one value_* must be set)." },
                 "value_date": { "type": "string", "description": "ISO-8601 date (exactly one value_* must be set)." },
@@ -582,6 +584,18 @@ async fn handle_set_property(
     args: Value,
 ) -> Result<Value, AppError> {
     let args: SetPropertyArgs = parse_args(TOOL_SET_PROPERTY, args)?;
+    // #3301 — `space` is not a content property: it is the column-backed
+    // space-membership key, and writing it runs the canonical cross-space
+    // move (`UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`),
+    // re-homing the page and every descendant. `validate_block_in_space`
+    // below checks only where the block is *now*, so it cannot catch this.
+    if args.key == agaric_store::op::SPACE_PROPERTY_KEY {
+        return Err(AppError::validation(format!(
+            "tool `{TOOL_SET_PROPERTY}`: `{}` is space membership, not a content property, \
+             and is not settable through the MCP surface",
+            agaric_store::op::SPACE_PROPERTY_KEY,
+        )));
+    }
     // #699 — cap `value_text` at the same MAX_CONTENT_LENGTH the IPC
     // layer enforces on block content (`create_block_in_tx`,
     // `edit_block_inner`; see `commands/mod.rs`). `block_properties`

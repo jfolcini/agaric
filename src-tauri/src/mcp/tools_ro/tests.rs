@@ -462,17 +462,18 @@ async fn search_missing_query_returns_validation() {
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
-/// #2956 — a malformed / truncated `space_id` must be REJECTED at the
-/// boundary via the strict `SpaceId::from_string` gate (an `AppError::Ulid`,
-/// like every sibling tool: `list_backlinks`, `list_property_defs`,
-/// `create_page`), NOT silently coerced through `from_trusted` into an
-/// `Active` id that matches nothing. Before this fix `handle_search` used
-/// `from_trusted`, so this call returned `Ok` with an empty `items` array —
-/// an agent that mangled the id would wrongly conclude the vault was empty.
-/// A seeded matching block confirms the vault is in fact non-empty, so the
-/// pre-fix "empty results" was a false negative, not a true miss.
+/// #2956 (`space_id`) and #3301 (`parent_id`, `tag_ids`) — a malformed or
+/// truncated id must be REJECTED at the boundary via the strict
+/// `from_string` gate (an `AppError::Ulid`, like every sibling tool:
+/// `list_backlinks`, `list_property_defs`, `create_page`), NOT coerced
+/// through `from_trusted` or waved past by `normalize_ulid_arg` into an id
+/// that matches nothing. Before these fixes each returned `Ok` with an empty
+/// `items` array, so an agent that mangled an id would wrongly conclude the
+/// vault held nothing — a false negative, not a true miss. The seeded block
+/// and the closing control call are what make that distinction provable, and
+/// they serve all three ids, which is why the cases share one test.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn search_malformed_space_id_errors_not_empty() {
+async fn search_malformed_ids_error_rather_than_empty() {
     let (tools, mat, _dir) = mk_tools().await;
     create_block_inner(
         &tools.pool,
@@ -516,6 +517,44 @@ async fn search_malformed_space_id_errors_not_empty() {
     assert!(
         matches!(err, AppError::Ulid(_)),
         "empty space_id must surface as AppError::Ulid, got {err:?}"
+    );
+
+    // #3301 — `parent_id`: only `normalize_ulid_arg`-ed before the fix, so a
+    // non-ULID bound a string that matched nothing.
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "parent_id": "NOT-A-VALID-ULID",
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a malformed parent_id must be rejected, not return empty results");
+    assert!(
+        matches!(err, AppError::Ulid(_)),
+        "malformed parent_id must surface as AppError::Ulid, got {err:?}"
+    );
+
+    // #3301 — `tag_ids`: a truncated (25-char) tag ULID, the realistic
+    // copy/paste slip. An agent would conclude no block carries that tag.
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "tag_ids": ["01ARZ3NDEKTSV4RRFFQ69G5FA"],
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a malformed tag_ids entry must be rejected, not return empty results");
+    assert!(
+        matches!(err, AppError::Ulid(_)),
+        "malformed tag_ids entry must surface as AppError::Ulid, got {err:?}"
     );
 
     // Control: the SAME query under the VALID space still returns the hit —
@@ -1159,6 +1198,64 @@ async fn list_backlinks_happy_path() {
             .and_then(serde_json::Value::as_u64),
         Some(0),
         "no results → total_count must be 0",
+    );
+}
+
+/// #3301 — `list_backlinks` waved `block_id` through `normalize_ulid_arg`,
+/// and `list_backlinks_grouped_inner` rejects only an EMPTY id, so a
+/// malformed one bound a string that matched nothing and came back as an
+/// empty grouped response: an agent reads "this block has no backlinks"
+/// and does not retry. `BlockId::from_string` rejects it instead. The
+/// lowercase arm is the other half of the pair — that constructor must
+/// still uppercase, or the fix would trade a false negative for a
+/// regression on the case the boundary normalisation existed to serve.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_backlinks_malformed_block_id_errors_rather_than_empty() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let target = create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    for bad in ["NOT-A-VALID-ULID", "01ARZ3NDEKTSV4RRFFQ69G5FA", ""] {
+        let err = tools
+            .call_tool("list_backlinks", json!({"block_id": bad}), &test_ctx())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Ulid(_)),
+            "block_id {bad:?} must surface as AppError::Ulid, got {err:?}"
+        );
+    }
+
+    // Lowercase still resolves: `canonical_ulid` compares against the
+    // uppercased input, so dropping `normalize_ulid_arg` here changed
+    // nothing for the case an agent actually mangles.
+    let lower = target.id.as_str().to_lowercase();
+    assert_ne!(lower, target.id.as_str(), "test setup: id has letters");
+    let via_lower = tools
+        .call_tool("list_backlinks", json!({"block_id": lower}), &test_ctx())
+        .await
+        .expect("a lowercase ULID must still be accepted");
+    let via_upper = tools
+        .call_tool(
+            "list_backlinks",
+            json!({"block_id": target.id}),
+            &test_ctx(),
+        )
+        .await
+        .expect("the canonical id must be accepted");
+    assert_eq!(
+        via_lower, via_upper,
+        "lowercase must resolve to the same block"
     );
 }
 

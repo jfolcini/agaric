@@ -418,7 +418,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
             Ok(value) => Ok(CallToolResult::structured(value)),
             // Map AppError variants to JSON-RPC error codes:
             // NotFound → resource-not-found (-32001),
-            // Validation / InvalidOperation → invalid-params (-32602),
+            // Validation / InvalidOperation / Ulid → invalid-params (-32602),
             // everything else → internal-error (-32603).
             Err(err) => Err(app_error_to_rmcp(&err)),
         }
@@ -544,7 +544,12 @@ fn app_error_to_rmcp(err: &AppError) -> ErrorData {
                 .expect("JSONRPC_RESOURCE_NOT_FOUND fits in i32");
             ErrorData::new(ErrorCode(code), err.to_string(), None)
         }
-        AppError::Validation { .. } | AppError::InvalidOperation(_) => {
+        AppError::Validation { .. } | AppError::InvalidOperation(_) | AppError::Ulid(_) => {
+            // #3301 — `Ulid` is produced by `BlockId`/`SpaceId::from_string`
+            // on an agent-supplied argument, so it is a bad parameter, not a
+            // server fault. Its `Display` ("ULID error: …") names the offending
+            // string and carries no internal detail, so the #698 scrubbing
+            // contract is unaffected.
             ErrorData::invalid_params(err.to_string(), None)
         }
         _ => {
@@ -1349,6 +1354,15 @@ mod tests {
                 "Invalid operation: cannot do that",
             ),
             (
+                // #3301 — a malformed ULID is an agent-supplied bad
+                // argument, so it joins the invalid-params arm rather
+                // than being reported as an internal server fault.
+                "Ulid → -32602",
+                AppError::Ulid("Invalid ULID 'personal': invalid length".into()),
+                -32602,
+                "ULID error: Invalid ULID 'personal': invalid length",
+            ),
+            (
                 // #698 — the catch-all arm sends a GENERIC message;
                 // the sqlx detail goes to tracing, not the wire. The
                 // previous revision of this test pinned the raw
@@ -1378,8 +1392,8 @@ mod tests {
 
     /// #698 — exhaustive leak guard for the catch-all arm: internal
     /// `AppError` variants must never put their `Display` payload on
-    /// the wire. NotFound / Validation / InvalidOperation keep their
-    /// crafted, agent-actionable messages (covered above); everything
+    /// the wire. NotFound / Validation / InvalidOperation / Ulid keep
+    /// their crafted, agent-actionable messages (covered above); everything
     /// else collapses to the generic `-32603` sentence.
     #[test]
     fn rmcp_internal_errors_never_leak_detail_to_the_wire() {

@@ -78,9 +78,11 @@ pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
 ///   through unchanged so the downstream `*_inner` validation still
 ///   produces the right error message.
 ///
-/// Apply to every `*_id` field in the typed-arg structs of
-/// [`tools_ro`](super::tools_ro) and [`tools_rw`](super::tools_rw)
-/// AFTER `parse_args` and BEFORE the inner call.
+/// Prefer a strict parse for a new `*_id` argument — `BlockId::from_string`
+/// or `SpaceId::from_string`, which uppercase the same way and then reject
+/// what this helper waves through. A waved-through id binds a string that
+/// matches nothing; where the query answers with an empty list instead of
+/// `NotFound`, an agent reads that as an answer and does not retry (#3301).
 pub(crate) fn normalize_ulid_arg(s: &str) -> String {
     // Crockford base32 alphabet (no I/L/O/U) — but accepting all base32
     // ASCII-alpha+digit here is fine: any stricter check would just
