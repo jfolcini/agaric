@@ -56,7 +56,7 @@ use agaric_store::op_log::OpRecord;
 /// `delete_block` op (FULL_CACHE_REBUILD_TASKS, incl. `RebuildPageLinkCache`
 /// and `RemoveFtsBlock`) and can never drift from it — which is what the
 /// `cascade_soft_delete_dispatches_materializer` test asserts. See
-/// [`synthesize_delete_op`].
+/// `synthesize_delete_op`.
 pub async fn cascade_soft_delete(
     pool: &SqlitePool,
     materializer: &Materializer,

@@ -180,7 +180,7 @@ pub enum PropertyPredicate {
     Ne { value: PropertyValue },
     /// #1280 — property value is strictly less than the operand. The
     /// compared column is chosen from the [`PropertyValue`] variant (see
-    /// [`property_value_column`]).
+    /// `property_value_column`).
     Lt { value: PropertyValue },
     /// #1280 — property value is strictly greater than the operand.
     Gt { value: PropertyValue },
@@ -366,9 +366,8 @@ pub enum Bind {
     Text(String),
     Int(i64),
     /// #1280 — a real (`f64`) value. Emitted by the property `Num`-valued
-    /// predicates routed through [`BacklinkProjection`](crate::backlink::projection::BacklinkProjection)
-    /// so a numeric property value keeps its native SQLite affinity rather
-    /// than being stringified.
+    /// predicates routed through `BacklinkProjection` so a numeric property
+    /// value keeps its native SQLite affinity rather than being stringified.
     Real(f64),
 }
 

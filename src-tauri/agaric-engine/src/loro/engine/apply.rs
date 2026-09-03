@@ -335,14 +335,14 @@ impl LoroEngine {
     /// An **unknown** `new_parent_id` (a target not yet in the engine — an
     /// out-of-order replayed/remote move) does NOT detach the node to root:
     /// the reparent is skipped (the node keeps its current parent) and the
-    /// intent is recorded in [`Self::pending_parent`] so it re-fires when the
+    /// intent is recorded in `Self::pending_parent` so it re-fires when the
     /// parent appears. Yanking a node to root on a *move* would be
     /// data-destructive vs the prior tree state (unlike a create, which had
     /// no prior home). `None` is an explicit move to top-level (root).
     ///
     /// **Legacy op-replay path** (pre-#400 ops carrying a 1-based `position`).
-    /// It writes the `i64` [`FIELD_POSITION`] meta and derives a fractional slot
-    /// via [`Self::legacy_slot`] so a replayed historical op reproduces the old
+    /// It writes the `i64` `FIELD_POSITION` meta and derives a fractional slot
+    /// via `Self::legacy_slot` so a replayed historical op reproduces the old
     /// `ORDER BY position ASC, id ASC`. New ops carry a 0-based slot and go
     /// through [`Self::apply_move_block_to`]; sibling order is the tree's
     /// fractional index (the SQL `position` is a derived dense rank — see the

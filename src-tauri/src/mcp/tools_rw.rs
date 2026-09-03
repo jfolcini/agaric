@@ -11,13 +11,13 @@
 //!
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
-//! | `append_block` | [`create_block_inner`](crate::commands::create_block_inner) | `block_type` hard-coded to `"content"`. `parent_id` required. |
-//! | `update_block_content` | [`edit_block_inner`](crate::commands::edit_block_inner) | |
-//! | `set_property` | [`set_property_inner`](crate::commands::set_property_inner) | Exactly one of `value_*` must be provided. |
-//! | `add_tag` | [`add_tag_inner`](crate::commands::add_tag_inner) | Tag block must already exist — no tag creation. |
-//! | `create_page` | [`create_block_inner`](crate::commands::create_block_inner) | `block_type = "page"`, `parent_id = None`. |
-//! | `delete_block` | [`delete_block_inner`](crate::commands::delete_block_inner) | Soft delete. Reversible via `reverse.rs`. |
-//! | `list_spaces` | [`list_spaces_registry_inner`](crate::commands::list_spaces_registry_inner) | #2728 — pure read, no `*_inner` mutation. Registered here too (mirroring `tools_ro.rs`) so an RW-only agent can discover the `space_id` every tool above requires. |
+//! | `append_block` | [`create_block_inner`] | `block_type` hard-coded to `"content"`. `parent_id` required. |
+//! | `update_block_content` | [`edit_block_inner`] | |
+//! | `set_property` | [`set_property_inner`] | Exactly one of `value_*` must be provided. |
+//! | `add_tag` | [`add_tag_inner`] | Tag block must already exist — no tag creation. |
+//! | `create_page` | [`create_block_inner`] | `block_type = "page"`, `parent_id = None`. |
+//! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
+//! | `list_spaces` | [`list_spaces_registry_inner`] | #2728 — pure read, no `*_inner` mutation. Registered here too (mirroring `tools_ro.rs`) so an RW-only agent can discover the `space_id` every tool above requires. |
 //!
 //! # Actor scoping
 //!

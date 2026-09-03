@@ -105,7 +105,7 @@ pub(crate) use crate::cache::PAGE_LINK_RE;
 ///
 /// `tag_names` maps tag block_id → tag name (content).
 /// `page_titles` maps page block_id → page title (content).
-/// `block_id` is threaded through solely so [`cap_indexed_text`] can name the
+/// `block_id` is threaded through solely so `cap_indexed_text` can name the
 /// offending block in its truncation warning (#1321). It does not affect the
 /// stripped output.
 // #2945 — widened `pub(crate)` → `pub` so the libFuzzer `fts_strip` harness
@@ -239,7 +239,7 @@ pub(crate) async fn load_ref_maps(
 /// appear in `block_id`'s own content.
 ///
 /// Audit #418 — the per-block `UpdateFtsBlock` path previously called
-/// [`load_ref_maps`], which scans every `page` and `tag` block in the vault
+/// `load_ref_maps`, which scans every `page` and `tag` block in the vault
 /// into a `HashMap` on *every single edited block* (O(pages + tags) per
 /// edit). A block only references the handful of tags/pages in its own
 /// content, so this extracts those ids (via [`TAG_REF_RE`] / [`PAGE_LINK_RE`],

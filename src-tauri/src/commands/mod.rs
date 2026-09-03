@@ -1084,7 +1084,7 @@ pub async fn get_block_history(
 /// `tauri_plugin_updater` under Flatpak in the first place, so this is
 /// belt-and-suspenders for the (mobile-excluded) desktop boot path.
 ///
-/// Delegates to [`crate::running_under_flatpak`], the same
+/// Delegates to `crate::running_under_flatpak`, the same
 /// `/.flatpak-info`-existence check the plugin-registration guard
 /// uses, so the two can't drift. Infallible in practice (a filesystem
 /// `exists()` check), but returns `Result<bool, AppError>` to match

@@ -94,7 +94,7 @@ pub(crate) const MAX_TAG_INHERITANCE_DEPTH: i32 = 100;
 /// Recursive CTE body: walk the descendants of `?1` (children-and-below).
 ///
 /// Filters `deleted_at IS NULL` in both the seed and the recursive
-/// member, and bounds recursion at [`MAX_TAG_INHERITANCE_DEPTH`].
+/// member, and bounds recursion at `MAX_TAG_INHERITANCE_DEPTH`.
 ///
 /// # #4121 — the seed also refuses to START at a soft-deleted `?1`
 ///
@@ -152,7 +152,7 @@ macro_rules! tag_inh_descendants_active {
 /// (subtree including the seed).
 ///
 /// Filters `deleted_at IS NULL` in the recursive member, and bounds
-/// recursion at [`MAX_TAG_INHERITANCE_DEPTH`].
+/// recursion at `MAX_TAG_INHERITANCE_DEPTH`.
 ///
 /// # #3944 — the seed deliberately does NOT filter `?1`
 ///
@@ -286,7 +286,7 @@ macro_rules! tag_inh_subtree_unfiltered {
 /// all-live-climb argument. That argument is specific to `anc` and does not
 /// extend to this seed.
 ///
-/// Bounds recursion at [`MAX_TAG_INHERITANCE_DEPTH`].
+/// Bounds recursion at `MAX_TAG_INHERITANCE_DEPTH`.
 ///
 /// CTE name `ancestors(id, depth)`, recursive alias `a`. Caller must bind
 /// the seed block-id to position `?1`.
@@ -325,7 +325,7 @@ macro_rules! tag_inh_ancestors_walk {
 ///
 /// Caller responsibility: emit a [`tag_inh_subtree_active`](crate::tag_inh_subtree_active) CTE earlier
 /// in the same `WITH RECURSIVE` block. Bound is
-/// [`MAX_TAG_INHERITANCE_DEPTH`].
+/// `MAX_TAG_INHERITANCE_DEPTH`.
 ///
 /// CTE name `tagged_descendants(block_id, tag_id, inherited_from, depth)`,
 /// recursive alias `td`.
@@ -359,7 +359,7 @@ macro_rules! tag_inh_tagged_descendants_in_subtree {
 ///
 /// Used exclusively by `rebuild_all` / `rebuild_all_split` to recompute
 /// the entire `block_tag_inherited` table from scratch. The bound is
-/// [`MAX_TAG_INHERITANCE_DEPTH`].
+/// `MAX_TAG_INHERITANCE_DEPTH`.
 ///
 /// CTE name `descendant_tags(block_id, tag_id, inherited_from, depth)`,
 /// recursive alias `dt`.

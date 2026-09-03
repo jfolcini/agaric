@@ -1222,12 +1222,12 @@ impl Materializer {
     /// Stop the materializer.
     ///
     /// Steps, in order:
-    ///   1. Flip [`Self::shutdown_flag`] (Release) so cooperative
+    ///   1. Flip `Self::shutdown_flag` (Release) so cooperative
     ///      consumers exit their loops on the next iteration.
     ///   2. Drop the foreground / background mpsc senders so any
     ///      future `enqueue_*` call returns `AppError::Channel` and the
     ///      consumer-side `recv()` resolves to `None`.
-    /// 3. `abort_all()` every task tracked on [`Self::tasks`].
+    /// 3. `abort_all()` every task tracked on `Self::tasks`.
     ///    This covers long-running futures (e.g. an in-progress FTS
     ///    rebuild) that would otherwise outlive the shutdown signal
     ///    and try to use the writer pool after the surrounding

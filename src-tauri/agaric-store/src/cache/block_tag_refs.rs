@@ -28,7 +28,7 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 ///
 /// 1. Read the block's current content (single transaction, consistent
 ///    snapshot).
-/// 2. Parse all `#[ULID]` tokens via [`super::tag_ref_re`].
+/// 2. Parse all `#[ULID]` tokens via `super::tag_ref_re`.
 /// 3. Diff against existing rows; DELETE removed, INSERT added.
 ///
 /// Guards: INSERTs use `WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?

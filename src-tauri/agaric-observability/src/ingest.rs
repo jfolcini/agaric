@@ -126,7 +126,7 @@ pub struct FrontendSpanAttr {
 /// Writes ingested [`FrontendSpan`]s to the local `traces/` sink.
 ///
 /// Owns an `Option<RollingFileSink>`: `Some` when observability is enabled and
-/// the sink built, `None` otherwise. The inner [`RollingFileSink`] already keeps
+/// the sink built, `None` otherwise. The inner `RollingFileSink` already keeps
 /// its appender behind a `Mutex`, so this type is `Send + Sync + 'static` and
 /// can live in Tauri managed state for the app lifetime.
 pub struct FrontendSpanIngestor {
@@ -145,7 +145,7 @@ impl FrontendSpanIngestor {
     /// Write each span as one line to the local frontend-trace file.
     ///
     /// A silent no-op when the sink is `None` (observability disabled or the
-    /// file unavailable). Caps the batch at [`MAX_SPANS_PER_CALL`] — extra
+    /// file unavailable). Caps the batch at `MAX_SPANS_PER_CALL` — extra
     /// spans are dropped rather than written, bounding a flooding frontend.
     pub fn ingest(&self, spans: &[FrontendSpan]) {
         let Some(sink) = &self.sink else {
@@ -243,8 +243,8 @@ fn epoch_millis_to_rfc3339(millis: f64) -> String {
 
 /// Build the frontend-span ingestor for one app boot.
 ///
-/// When `enabled`, opens a [`RollingFileSink`] under `<log_dir>/traces/` with
-/// the [`FRONTEND_TRACES_PREFIX`] filename prefix; on any filesystem error (or
+/// When `enabled`, opens a `RollingFileSink` under `<log_dir>/traces/` with
+/// the `FRONTEND_TRACES_PREFIX` filename prefix; on any filesystem error (or
 /// when disabled) holds `None` so [`FrontendSpanIngestor::ingest`] is a no-op.
 /// Never panics — matches the graceful degradation of the rest of the pipeline.
 #[must_use]

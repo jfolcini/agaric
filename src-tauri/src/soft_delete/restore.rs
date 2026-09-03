@@ -65,7 +65,7 @@ use agaric_store::op_log::OpRecord;
 /// what `materializer::dispatch::invalidations_for_op` produces for a
 /// `restore_block` op (FULL_CACHE_REBUILD_TASKS, incl. `RebuildPageLinkCache`
 /// and `UpdateFtsBlock`) and can never drift from it. See
-/// [`synthesize_restore_op`].
+/// `synthesize_restore_op`.
 pub async fn restore_block(
     pool: &SqlitePool,
     materializer: &Materializer,

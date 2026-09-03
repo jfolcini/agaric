@@ -677,7 +677,7 @@ pub async fn apply_delete_block_via_loro(
 /// both fields into SQL. No sibling-shift on either side (see
 /// projection helper's docstring for the rationale).
 ///
-/// #4112 — the tail runs [`super::sql_only::sweep_move_under_tombstoned_ancestor`]
+/// #4112 — the tail runs `super::sql_only::sweep_move_under_tombstoned_ancestor`
 /// before the tag maintenance: a replayed move can land a LIVE block under a
 /// TOMBSTONED ancestor (concurrent delete-on-A / move-on-B), which is the one
 /// shape the local command path's `deleted_at IS NULL` probes make unreachable
@@ -686,7 +686,7 @@ pub async fn apply_delete_block_via_loro(
 /// divergence, not the cure.
 ///
 /// #4204/#4188 — the tail's OTHER half, the un-sweep
-/// ([`super::sql_only::unsweep_inherited_cohort_after_move`]), is deliberately
+/// (`super::sql_only::unsweep_inherited_cohort_after_move`), is deliberately
 /// NOT called here, and that is a statement about this function rather than a
 /// gap. The un-sweep only ever fires on a subject whose own row is TOMBSTONED
 /// (its tombstone was inherited from a concurrent cascade on its old parent).
@@ -722,7 +722,7 @@ pub async fn apply_delete_block_via_loro(
 /// that semantics
 /// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>).
 /// The canonical statement of the mechanism is on
-/// [`super::sql_only::unsweep_inherited_cohort_after_move`].
+/// `super::sql_only::unsweep_inherited_cohort_after_move`.
 #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,

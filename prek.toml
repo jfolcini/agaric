@@ -2261,14 +2261,17 @@ stages = ["pre-push"]
 # rustdoc HAS that resolver, so this hook is the general version, for free.
 #
 # The sweep that introduced this hook fixed 177 already-broken links across all
-# six crates, so the tree starts clean and this is a ratchet, not a backlog.
+# six crates; a follow-up swept the other three classes the same build reports —
+# 227 `private_intra_doc_links` de-linked to plain code spans (a private target
+# renders as literal text anyway, and a doc comment does not earn a wider API
+# surface), 29 redundant explicit link targets dropped, 2 stray HTML tags
+# code-quoted. All four are denied below and the tree is clean, so this is a
+# ratchet, not a backlog.
 #
-# ONLY `broken_intra_doc_links` is denied — deliberately NOT `-D warnings`.
-# The same build also emits 211 `private_intra_doc_links`, 26
-# `redundant_explicit_link_target` and 3 `unclosed_html_tag` warnings, all
-# pre-existing. Those are separate judgment calls (widening visibility vs.
-# de-linking); denying them here would wire 240 unrelated failures into every
-# push. Add them as separate ratchets if/when each class is swept.
+# Still deliberately NOT `-D warnings`: a toolchain bump must not red a push
+# over a lint nobody has swept. `-D unknown_lints` keeps the named list honest,
+# because a misspelled or upstream-renamed lint is only a warning and would
+# otherwise silently stop being enforced.
 #
 # `--workspace` for the same reason as cargo-clippy above: without it only the
 # root `agaric` package is documented. `--no-deps` keeps it to our six crates.
@@ -2284,13 +2287,13 @@ stages = ["pre-push"]
 # check profile, so this is additive to the clippy hook rather than incremental
 # on it. Pre-push-staged (not pre-commit) for exactly the cargo-clippy reason:
 # it compiles the whole workspace and surfaces problems in untouched files.
-# WHY: broken intra-doc links — standard toolchain lane
+# WHY: unresolvable doc links and doc prose parsed as HTML — standard toolchain lane
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "cargo-doc-links"
-name = "cargo doc (intra-doc links)"
-entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && RUSTDOCFLAGS=\"-D rustdoc::broken_intra_doc_links\" cargo doc --workspace --no-deps'"
+name = "cargo doc (doc links, HTML tags)"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && RUSTDOCFLAGS=\"-D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links -D rustdoc::redundant_explicit_links -D rustdoc::invalid_html_tags -D unknown_lints\" cargo doc --workspace --no-deps'"
 language = "system"
 pass_filenames = false
 types = ["rust"]

@@ -56,7 +56,7 @@ impl LoroEngine {
     /// [`Self::read_block`] pays for a whole [`BlockSnapshot`] to answer it: a
     /// `block_type` scalar, a full `read_text` of the content, a SECOND
     /// `get_meta` for the parent, and an O(K) sibling scan in
-    /// [`Self::child_rank_position`]. Sweeping a delete cohort that way is
+    /// `Self::child_rank_position`. Sweeping a delete cohort that way is
     /// O(N·K) for a question the index answers in O(1) — the same lean-companion
     /// move [`Self::read_block_content`] makes for the edit hot path.
     pub fn contains_block(&self, block_id: &str) -> bool {
@@ -95,17 +95,17 @@ impl LoroEngine {
     /// [`Self::read_block`].
     ///
     /// Why this exists: [`Self::read_block`] derives `position` via
-    /// [`Self::child_rank_position`], whose `children.iter().position(...)` is
+    /// `Self::child_rank_position`, whose `children.iter().position(...)` is
     /// an O(K) scan of the sibling list. Calling it once per block during a
     /// bulk reprojection makes the projection O(N·K) — O(N²) for a flat space
-    /// (K≈N), exactly the pattern [`Self::child_rank_position`]'s docstring
+    /// (K≈N), exactly the pattern `Self::child_rank_position`'s docstring
     /// warns against. Here we build a per-parent `TreeID → 1-based-rank` index
     /// ONCE for each distinct parent touched (each via a single
     /// `tree.children(parent)` pass), then look up every block's rank in O(1).
     /// Total cost is ~O(N + Σ children) ≈ O(N) instead of O(N·K).
     ///
     /// The projected `position` is byte-identical to what
-    /// [`Self::child_rank_position`] produces: both derive the parent via
+    /// `Self::child_rank_position` produces: both derive the parent via
     /// `tree.parent(node)` and rank within the SAME `tree.children(parent)`
     /// order, so the only change is *when* the sibling list is scanned (once
     /// per parent here vs. once per block before).

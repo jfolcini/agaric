@@ -1461,7 +1461,7 @@ pub async fn reproject_block_tags_from_engine(
 /// `deleted_at` in SQL must mirror the clear onto the register too**, or the
 /// next import re-trashes the rows through the `Some(ts)` branch below. There
 /// is exactly one such arm, #4204's un-sweep
-/// ([`crate::apply::sql_only::unsweep_inherited_cohort_after_move`]), and
+/// (`crate::apply::sql_only::unsweep_inherited_cohort_after_move`), and
 /// since #4390 it does mirror — not from where it sits (a move whose subject
 /// is tombstoned is routed to the engine-LESS `apply_move_block_sql_only` by
 /// `resolve_block_space`'s `deleted_at IS NULL` filter) but by threading the

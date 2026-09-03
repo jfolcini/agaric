@@ -88,7 +88,7 @@ pub const BLOCK_ROW_RUNTIME_SELECT: &str = "id, block_type, content, parent_id, 
 /// the same order) as [`BLOCK_ROW_RUNTIME_SELECT`].
 ///
 /// Used by the 2 runtime `sqlx::query_as::<_, BlockRow>(…)` sites in
-/// [`crate::pagination::properties`] that JOIN `blocks b` with
+/// `crate::pagination::properties` that JOIN `blocks b` with
 /// `block_properties bp` (non-reserved key path) or alias `blocks b`
 /// to support the reserved-key column-routing `b.{col}` interpolation
 /// in the WHERE clause. The simple unprefixed const cannot be reused at

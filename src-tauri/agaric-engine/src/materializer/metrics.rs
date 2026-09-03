@@ -20,7 +20,7 @@ pub struct QueueMetrics {
     /// command / sync / recovery / snapshot layers (none of which hold a
     /// `Materializer` reference), we mirror `cached_block_count`'s
     /// stale-tolerant cache shape: recompute the COUNT at most once per
-    /// [`super::coordinator::OP_LOG_COUNT_CACHE_TTL_MS`] and serve the
+    /// `super::coordinator::OP_LOG_COUNT_CACHE_TTL_MS` and serve the
     /// cached value on every poll in between. `total_ops_in_log` is pure
     /// observability, so bounded staleness is acceptable. The companion
     /// timestamp lives in [`Self::cached_op_log_count_at_ms`].
@@ -132,7 +132,7 @@ pub struct QueueMetrics {
     /// of times the retry-queue persistence write itself returned an
     /// error.
     ///
-    /// Each call into [`super::consumer::record_failure_with_retry`]
+    /// Each call into `super::consumer::record_failure_with_retry`
     /// makes up to two `record_failure` attempts (separated by a
     /// 100 ms backoff); both first-attempt and retry-attempt failures
     /// bump this counter. So a single dropped task whose persistence
@@ -203,7 +203,7 @@ pub struct QueueMetrics {
     pub retry_persist_cache_global: AtomicU64,
     /// #2509: count of persistent-enqueue events that reached the **1h
     /// backoff cap** (`attempts >= 4` on the failure ladder, see
-    /// [`super::retry_queue::backoff_delay_for`]). A shed row's 5 min cap
+    /// `super::retry_queue::backoff_delay_for`). A shed row's 5 min cap
     /// (#4208) is not counted: it is not the rung the question below asks
     /// about. This is the counter for issue #2509's measure-item 2 — "is
     /// the 1h-max-backoff path ever the thing that saves a user, vs. the

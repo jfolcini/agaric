@@ -294,7 +294,7 @@ pub async fn find_prior_text_row(
     Ok(row.map(|r| (r.op_type, r.payload)))
 }
 
-/// Text-extracting wrapper over [`find_prior_text_row`], kept for
+/// Text-extracting wrapper over `find_prior_text_row`, kept for
 /// `commands::history::compute_edit_diff_inner` and the #1526 sanity
 /// assertions in the reverse tests.
 pub async fn find_prior_text(

@@ -242,7 +242,7 @@ fn validate_endpoint_id(endpoint_id: &str) -> Result<(), AppError> {
 /// — that key was bound to at pairing. A key with no row is a peer this device has
 /// never paired with, which is the S-1 gate's whole input.
 ///
-/// `endpoint_id` must be the canonical spelling; see [`validate_endpoint_id`].
+/// `endpoint_id` must be the canonical spelling; see `validate_endpoint_id`.
 ///
 /// # Why more than one match is an error rather than a pick
 ///
@@ -977,7 +977,7 @@ const PENDING_PAIRING_TTL_MS: i64 = PAIRING_TIMEOUT.as_millis() as i64;
 
 /// The interactive pairing window (5 minutes).
 ///
-/// Owned here in the store layer because [`PENDING_PAIRING_TTL_MS`] bounds
+/// Owned here in the store layer because `PENDING_PAIRING_TTL_MS` bounds
 /// the pending-pairing marker to the same clock, and the sync-layer
 /// `pairing` module re-exports it (`pub use crate::peer_refs::PAIRING_TIMEOUT;`)
 /// for `crate::pairing::PairingSession::is_expired`. Reusing one value
@@ -1019,7 +1019,7 @@ pub async fn set_pending_pairing(pool: &SqlitePool, expected_proof: &str) -> Res
 /// Whether a pairing is awaiting its first peer connection.
 ///
 /// #1603: the marker is treated as expired (and reads as *not* pending) once
-/// it is older than [`PENDING_PAIRING_TTL_MS`], so an abandoned pairing stops
+/// it is older than `PENDING_PAIRING_TTL_MS`, so an abandoned pairing stops
 /// driving the daemon into pairing mode. An expired marker is cleared lazily
 /// on this read so it does not linger in `app_settings`.
 ///

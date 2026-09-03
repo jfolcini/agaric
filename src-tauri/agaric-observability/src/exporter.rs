@@ -168,7 +168,7 @@ impl std::fmt::Debug for FileSpanExporter {
 /// Build the on-disk span exporter, or `None` if `traces/` is unwritable.
 ///
 /// Creates `<log_dir>/traces/` with a daily `RollingFileAppender` capped at
-/// [`MAX_OTEL_FILES`] retained files. Degrades to `None` (caller skips the
+/// `MAX_OTEL_FILES` retained files. Degrades to `None` (caller skips the
 /// trace pipeline) on any filesystem error — never panics, mirroring
 /// `build_log_file_appender`.
 pub fn build_file_exporter(log_dir: &Path) -> Option<FileSpanExporter> {

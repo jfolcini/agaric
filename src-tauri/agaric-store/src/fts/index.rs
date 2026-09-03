@@ -293,7 +293,7 @@ pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(
 /// remains per-row (because `strip_for_fts_with_maps` processes each block
 /// differently).
 ///
-/// The work is split into chunks of [`FTS_REINDEX_CHUNK`] ids with a
+/// The work is split into chunks of `FTS_REINDEX_CHUNK` ids with a
 /// fresh transaction per chunk so a tag-rename touching tens of thousands of
 /// blocks does not hold a single writer transaction for many seconds. Chunks
 /// commit independently — partial failure of a later chunk leaves earlier
@@ -405,7 +405,7 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
 /// user request (e.g. "rebuild search index"), never incrementally —
 /// single-block updates go through [`update_fts_for_block`] instead.
 ///
-/// D: the rebuild is split into [`FTS_REINDEX_CHUNK`]-sized batches
+/// D: the rebuild is split into `FTS_REINDEX_CHUNK`-sized batches
 /// with a fresh `BEGIN…COMMIT` per chunk. Holding a single writer
 /// transaction for a 100k-block vault used to block all other writers
 /// for several seconds, which is bad for boot UX and worse on Android.
@@ -580,7 +580,7 @@ const FTS_MERGE_PAGES: i64 = 256;
 /// ENTIRE trigram index into one segment — `O(total index size)` while holding
 /// the writer lock, a real cost on a large, frequently-edited vault. This now
 /// issues the incremental `('merge', N)` form, which does at most
-/// [`FTS_MERGE_PAGES`] pages of work per run, bounding each maintenance write.
+/// `FTS_MERGE_PAGES` pages of work per run, bounding each maintenance write.
 ///
 /// A full `'optimize'` remains the right tool for an explicit, user-initiated
 /// maintenance action (one-shot, foreground-acknowledged); it is intentionally

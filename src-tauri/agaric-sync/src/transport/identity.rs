@@ -79,7 +79,7 @@ fn secure_create_options() -> fs::OpenOptions {
 /// one worth failing loudly on.
 ///
 /// # Errors
-/// If the trimmed contents are not exactly [`HEX_LEN`] hex characters.
+/// If the trimmed contents are not exactly `HEX_LEN` hex characters.
 pub fn decode_secret_hex(raw: &str) -> Result<SecretKey, AppError> {
     let trimmed = raw.trim();
     if trimmed.len() != HEX_LEN {
@@ -109,7 +109,7 @@ fn encode_secret_hex(key: &SecretKey) -> String {
 ///
 /// # Errors
 /// If the file cannot be created or read, or if an existing file is not a
-/// [`HEX_LEN`]-character hex string. A malformed file is **not** silently replaced: a
+/// `HEX_LEN`-character hex string. A malformed file is **not** silently replaced: a
 /// new key would present this device to every paired peer as a stranger, and the
 /// recovery a user wants there is "restore the file", not "re-pair everything".
 pub fn get_or_create_endpoint_secret(path: &Path) -> Result<SecretKey, AppError> {

@@ -211,7 +211,7 @@ pub async fn apply_restore_block_sql_only(
 /// cannot drift. The rejection still differs by design: the command path errs,
 /// this sync-replay fallback no-op-warns (aborting would wedge inbound sync;
 /// dropping a self-evidently invalid move is recoverable).
-/// #4390 — returns the ids [`unsweep_inherited_cohort_after_move`] cleared, so
+/// #4390 — returns the ids `unsweep_inherited_cohort_after_move` cleared, so
 /// the caller can mirror the re-derivation onto the per-space engine after the
 /// transaction commits. Empty on every path that did not un-sweep, which is
 /// every path but the tombstoned-INHERITED subject: the cycle skip, a live

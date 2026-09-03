@@ -105,7 +105,7 @@ const RESYNC_TICK: std::time::Duration = std::time::Duration::from_secs(30);
 // ---------------------------------------------------------------------------
 
 /// Owned bundle of the daemon-wide startup state threaded through the
-/// `start` / dormant-waiter / [`daemon_loop`] chain.
+/// `start` / dormant-waiter / `daemon_loop` chain.
 ///
 /// This is the owned counterpart of [`SyncSessionContext`] (which holds
 /// borrowed references for the per-session hot path) plus the `lifecycle`
@@ -118,7 +118,7 @@ const RESYNC_TICK: std::time::Duration = std::time::Duration::from_secs(30);
 /// `shutdown_notify` is deliberately *not* part of this bundle: it is minted
 /// per spawn (each `start*` entry point creates its own `Notify` and keeps a
 /// clone in the returned `SyncDaemon` handle), so it stays a separate
-/// positional argument on [`daemon_loop`].
+/// positional argument on `daemon_loop`.
 pub struct SyncDaemonContext {
     pub pool: SqlitePool,
     pub device_id: String,
@@ -1842,7 +1842,7 @@ fn peer_pulled_from_us_recently(
 /// # `mdns_seen_at`
 ///
 /// When mDNS last resolved this peer, taken from the daemon's discovered map
-/// ([`mdns_last_seen`]). `None` means "no announcement on record" — a peer
+/// (`mdns_last_seen`). `None` means "no announcement on record" — a peer
 /// resolved from a stored `peer_refs.last_address` rather than from the network,
 /// and every direct caller in the tests.
 ///
@@ -1852,7 +1852,7 @@ fn peer_pulled_from_us_recently(
 /// parameter rather than state read off `ctx` because it is per-peer and
 /// per-cycle, like `peer` and `peer_refs`, and because a `None` at a call site
 /// should read as "this path knows nothing about mDNS" rather than silently
-/// meaning it. See [`diagnose_dial_timeout`].
+/// meaning it. See `diagnose_dial_timeout`.
 ///
 /// The `_cancel_guard` (a Drop scope guard, S-11) clears the flag on
 /// Drop — but only when this task actually ran a real session and thus
@@ -2319,7 +2319,7 @@ pub async fn try_sync_with_peer(
 /// Iterate over `peer_ids` calling `sync_fn` for each one in order,
 /// stopping early if any call returns `true` (cancel was observed).
 ///
-/// Extracted from Branch C of [`daemon_loop`] so that tests can drive
+/// Extracted from Branch C of `daemon_loop` so that tests can drive
 /// the break-on-cancel logic through this function rather than replicating
 /// the loop inline. Returns `true` if the round was cancelled early, `false`
 /// if all peers were visited without cancellation.

@@ -91,7 +91,7 @@ pub struct ParseOutput {
     /// markdown export emits between the leading `---` fences, ready to be
     /// stamped onto the imported page block as page properties (mirroring
     /// the export → import round-trip). Internal/reserved keys
-    /// (see [`FRONTMATTER_RESERVED_KEYS`]) are filtered out here so they are
+    /// (see `FRONTMATTER_RESERVED_KEYS`) are filtered out here so they are
     /// never re-imported. Empty when the file has no frontmatter.
     pub frontmatter: Vec<(String, String)>,
     /// For frontmatter keys whose value arrived as a genuine multi-item YAML

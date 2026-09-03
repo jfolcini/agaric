@@ -21,7 +21,7 @@ use agaric_core::error::AppError;
 /// # The definition of `block_tag_inherited`
 ///
 /// This function is the canonical statement of what the table contains, and
-/// every incremental maintainer in [`super::incremental`] must converge on it
+/// every incremental maintainer in `super::incremental` must converge on it
 /// (#3876). A row `(block_id, tag_id, inherited_from)` exists iff:
 ///
 /// * some STRICT ancestor of `block_id` holds `tag_id` directly in

@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 /// #828 — FTS5 snippet() highlight sentinels. PUA codepoints that cannot
-/// occur in user content, so a literal "<mark>" typed into a block is never
+/// occur in user content, so a literal `<mark>` typed into a block is never
 /// mistaken for a highlight boundary. The web UI parser (parseSnippet in
 /// src/components/search/SnippetHighlight.tsx) reads these directly; the MCP
 /// search tool converts them back to <mark>/</mark> so the agent-facing
@@ -56,15 +56,13 @@ pub(crate) const FTS_QUERY_WARN_MS: u128 = 1_000;
 /// Maximum number of results returned from a single search query, regardless
 /// of the client-supplied page limit.  Prevents unbounded result sets.
 ///
-/// Phase 1 — also used by [`search_fts_partitioned`] as the
+/// Phase 1 — also used by `search_fts_partitioned` as the
 /// ceiling on the combined `page_limit + block_limit` fetch.
 ///
 /// BE-2 — re-exported via `crate::fts` so the partitioned IPC
 /// command can validate `page_limit` / `block_limit` against the same
 /// ceiling and **reject** (not silently cap) an over-limit request,
 /// matching the cursor path's `PageRequest::new` contract.
-///
-/// [`search_fts_partitioned`]: super::partitioned::search_fts_partitioned
 // `pub` (widened from `pub(crate)` in #2621, wave S4d) so the relocated
 // app-layer partitioned/cursor tests can bind to the real ceiling; surfaced
 // via the `crate::fts` facade re-export.
@@ -72,7 +70,7 @@ pub const MAX_SEARCH_RESULTS: i64 = 100;
 
 /// Maximum byte length of a raw FTS query string.
 ///
-/// The regex-mode path already rejects patterns over [`MAX_PATTERN_LEN`]
+/// The regex-mode path already rejects patterns over `MAX_PATTERN_LEN`
 /// (1 KiB) up front via `build_regex`; the FTS path had no equivalent
 /// guard, so a pathological multi-megabyte query string was tokenised,
 /// NFC-normalised, sanitised, and bound into a MATCH expression before
@@ -82,7 +80,5 @@ pub const MAX_SEARCH_RESULTS: i64 = 100;
 /// query the search-query DSL emits is a few hundred bytes) while keeping
 /// the up-front work bounded. Measured in bytes (`str::len`) to bound the
 /// allocation work, not in scalar count.
-///
-/// [`MAX_PATTERN_LEN`]: crate::fts::toggle_filter::MAX_PATTERN_LEN
 // `pub` (widened from `pub(crate)` in #2621, wave S4d) — see `MAX_SEARCH_RESULTS`.
 pub const MAX_QUERY_LEN: usize = 4 * 1024;

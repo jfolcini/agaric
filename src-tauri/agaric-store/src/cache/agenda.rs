@@ -353,7 +353,7 @@ async fn apply_sort_merge_rebuild(
 ///
 /// Instead of a full DELETE + INSERT, this function:
 /// 1. Streams the desired state from the same 4 UNION ALL sources
-///    (sorted by `(date, block_id, prio)` — see [`DESIRED_AGENDA_SQL`]).
+///    (sorted by `(date, block_id, prio)` — see `DESIRED_AGENDA_SQL`).
 /// 2. Streams the current cache state (sorted by `(date, block_id)`).
 /// 3. Walks the two streams in lockstep (M-19b sort-merge), batching
 ///    DELETEs and INSERTs in `O(STREAM_BATCH)` chunks.

@@ -752,7 +752,7 @@ pub async fn add_tag(
 /// — without aborting — when the block is missing / soft-deleted, equals
 /// `tag_id` (self-tag), or already carries the tag. The per-block
 /// cross-space / orphan-adoption resolution is shared with the single path
-/// via [`apply_tag_to_block_in_tx`]; a genuine cross-space pairing DOES
+/// via `apply_tag_to_block_in_tx`; a genuine cross-space pairing DOES
 /// abort the whole tx (consistent with the single path's hard rejection —
 /// silently dropping a cross-space target would hide a real data error).
 ///

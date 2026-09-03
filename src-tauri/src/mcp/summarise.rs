@@ -277,7 +277,7 @@ pub fn summarise_journal_for_date(args: &Value, result: &Value) -> String {
 
 /// `list_spaces — N space(s)` (#633). Space names are user-authored
 /// content (like tag names) and never appear in the summary; the
-/// response is a top-level JSON array, so count via [`root_array_len`].
+/// response is a top-level JSON array, so count via `root_array_len`.
 pub fn summarise_list_spaces(_args: &Value, result: &Value) -> String {
     let n = root_array_len(result);
     format!(

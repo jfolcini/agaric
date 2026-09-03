@@ -142,7 +142,7 @@ async fn snapshot_watermark(pool: &SqlitePool) -> i64 {
 /// `op_count` resets to 0 on every save — the column is reserved for
 /// a future "snapshot every N ops" cadence and is currently unused by
 /// the time-driven scheduler. `applied_through_seq` records the apply
-/// cursor the blob reflects (see [`snapshot_watermark`]) so boot can
+/// cursor the blob reflects (see `snapshot_watermark`) so boot can
 /// detect a stale snapshot.
 pub async fn save_snapshot(
     pool: &SqlitePool,

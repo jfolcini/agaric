@@ -706,7 +706,7 @@ export const commands = {
 	/**
 	 *  Tauri command: fire an OS notification for a due / scheduled task.
 	 * 
-	 *  Validates the payload via [`prepare_notification`], then dispatches it
+	 *  Validates the payload via `prepare_notification`, then dispatches it
 	 *  through the platform notification backend. A dispatch failure surfaces as
 	 *  [`AppError::InvalidOperation`]; a blank title surfaces as
 	 *  [`AppError::Validation`].
@@ -792,7 +792,7 @@ export const commands = {
 	 *  Fire-and-forget — the frontend never awaits this.
 	 * 
 	 *  Every `String` / `Option<String>` field is truncated at entry
-	 *  to [`MAX_FRONTEND_LOG_FIELD_BYTES`] (64 KB) so a single oversized
+	 *  to `MAX_FRONTEND_LOG_FIELD_BYTES` (64 KB) so a single oversized
 	 *  payload cannot stall the IPC thread or corrupt the daily log file.
 	 *  Truncation is unconditional — the FE rate-limiter is not in this
 	 *  trust scope (caller of `log_frontend` may be a panic handler that
@@ -1119,7 +1119,7 @@ export const commands = {
 	 *  `tauri_plugin_updater` under Flatpak in the first place, so this is
 	 *  belt-and-suspenders for the (mobile-excluded) desktop boot path.
 	 * 
-	 *  Delegates to [`crate::running_under_flatpak`], the same
+	 *  Delegates to `crate::running_under_flatpak`, the same
 	 *  `/.flatpak-info`-existence check the plugin-registration guard
 	 *  uses, so the two can't drift. Infallible in practice (a filesystem
 	 *  `exists()` check), but returns `Result<bool, AppError>` to match
@@ -1609,7 +1609,7 @@ export type AppError = {
  *  type-level promotion with zero wire drift.
  * 
  *  Because this enum derives `specta::Type` and is referenced by
- *  [`AppErrorSchema`], the generated `bindings.ts` now carries
+ *  `AppErrorSchema`, the generated `bindings.ts` now carries
  *  `kind: AppErrorKind` as a string-literal union instead of the old open
  *  `kind: string` — the frontend's error discrimination
  *  (`isCancellation` / `isPoolBusy` / …) type-checks against it, and the
@@ -1845,17 +1845,17 @@ export type BugReport = {
 	arch: string,
 	device_id: string,
 	/**
-	 *  Last [`RECENT_ERRORS_CAP`] error/warn lines from the recent
+	 *  Last `RECENT_ERRORS_CAP` error/warn lines from the recent
 	 *  `agaric.log.YYYY-MM-DD` files, newest last.
 	 * 
 	 *  #4216: this is a recency window, not a calendar-day one — the walk
 	 *  crosses UTC day boundaries backwards until the cap is full or the
-	 *  bundle's own [`MAX_ROLLED_AGE_DAYS`] retention runs out, so a report
+	 *  bundle's own `MAX_ROLLED_AGE_DAYS` retention runs out, so a report
 	 *  filed minutes after midnight still shows the errors that prompted
-	 *  it. See [`recent_errors_from_log_dir`].
+	 *  it. See `recent_errors_from_log_dir`.
 	 * 
 	 *  #609: ALWAYS redacted through the same pipeline as the ZIP export
-	 *  ([`redact_line_with_redactor`]) — the frontend embeds these lines
+	 *  (`redact_line_with_redactor`) — the frontend embeds these lines
 	 *  verbatim into the prefilled PUBLIC GitHub issue body
 	 *  (`src/lib/bug-report.ts::formatReportBody`), and unlike the ZIP
 	 *  path there is no user-facing redact toggle on the issue-body path.
@@ -3320,7 +3320,7 @@ export type PropertyPredicate =
 /**
  *  #1280 — property value is strictly less than the operand. The
  *  compared column is chosen from the [`PropertyValue`] variant (see
- *  [`property_value_column`]).
+ *  `property_value_column`).
  */
 { type: "Lt"; value: PropertyValue } | 
 /**  #1280 — property value is strictly greater than the operand. */
