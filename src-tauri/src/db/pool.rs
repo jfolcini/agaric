@@ -134,10 +134,9 @@ const MAX_KEPT_BACKUPS: usize = 3;
 /// fresh vault and connecting writes the WAL header, either of which would
 /// defeat the "only back up an existing vault" guards below. Running first means
 /// the file on disk is exactly the user's pre-boot vault. The pending-migration
-/// probe opens only a short-lived READ-ONLY (`SQLITE_OPEN_READONLY`) connection,
-/// which cannot write or checkpoint, so the on-disk `.db` snapshot semantics are
-/// preserved — a read-only connection makes no committed data change, so copying
-/// the main `.db` file (not `-wal`/`-shm`) remains valid.
+/// probe and the snapshot itself each open a short-lived READ-ONLY
+/// (`SQLITE_OPEN_READONLY`) connection and close it before the write pool
+/// connects, so nothing here mutates the vault or outlives the migration.
 ///
 /// Guards — each a silent skip, never an error:
 /// - `:memory:` / in-memory DBs (tests/benches) — no file to copy.
@@ -150,11 +149,14 @@ const MAX_KEPT_BACKUPS: usize = 3;
 /// state), we treat it as PENDING and back up. We never skip a backup when a
 /// migration might run.
 ///
-/// Best-effort by design: a copy failure (permissions, disk full, …) logs a
+/// Best-effort by design: a snapshot failure (permissions, disk full, …) logs a
 /// `warn` and returns — we NEVER abort boot because the safety copy could not be
 /// written. The migration is what must proceed; the backup is a bonus.
 ///
-/// Only the main DB file is copied (not `-wal`/`-shm`).
+/// #3267 — the snapshot is a `VACUUM INTO` ([`snapshot_vault`]), not a file
+/// copy: it is a single self-contained file holding every committed
+/// transaction, including the ones still only in the `-wal`. A vault SQLite
+/// will not open falls back to the raw copy, which is all such a file admits.
 async fn backup_db_before_migration(db_path: &Path) {
     // In-memory pools (tests/benches) never touch disk.
     if db_path.as_os_str() == ":memory:" {
@@ -184,23 +186,73 @@ async fn backup_db_before_migration(db_path: &Path) {
     let mut backup = db_path.as_os_str().to_owned();
     backup.push(format!(".pre-migration-{ts}"));
     let backup = std::path::PathBuf::from(backup);
-    match std::fs::copy(db_path, &backup) {
-        Ok(bytes) => tracing::info!(
+    match snapshot_vault(db_path, &backup).await {
+        Ok(()) => tracing::info!(
             backup = %backup.display(),
-            bytes,
             "pre-migration DB backup created"
         ),
-        // Best-effort: log and PROCEED with the migration; a failed backup must
-        // never block boot.
-        Err(e) => tracing::warn!(
-            error = %e,
-            db = %db_path.display(),
-            "pre-migration DB backup failed; proceeding with migration anyway"
-        ),
+        // #3267 — a vault SQLite cannot open has no logical snapshot to take,
+        // and that is the fail-safe branch above: an unreadable
+        // `_sqlx_migrations` is treated as PENDING precisely so this runs. A
+        // raw copy cannot carry a `-wal` tail, but nothing can read one beside
+        // a main file SQLite rejects, so a byte copy is the only thing left to
+        // keep. `VACUUM INTO` refuses a target that already exists, so a
+        // partial one is removed first.
+        Err(e) => {
+            let _ = std::fs::remove_file(&backup);
+            match std::fs::copy(db_path, &backup) {
+                Ok(bytes) => tracing::warn!(
+                    error = %e,
+                    bytes,
+                    backup = %backup.display(),
+                    "pre-migration snapshot failed; kept a raw copy instead"
+                ),
+                // Best-effort: log and PROCEED with the migration; a failed
+                // backup must never block boot.
+                Err(copy_err) => tracing::warn!(
+                    error = %e,
+                    copy_error = %copy_err,
+                    db = %db_path.display(),
+                    "pre-migration DB backup failed; proceeding with migration anyway"
+                ),
+            }
+        }
     }
 
-    // Bound accumulation regardless of whether the copy above succeeded.
+    // Bound accumulation regardless of whether the snapshot above succeeded.
     prune_old_backups(db_path, MAX_KEPT_BACKUPS);
+}
+
+/// #3267 — snapshot the vault at `db_path` into the new file `backup` with
+/// `VACUUM INTO`.
+///
+/// A raw `std::fs::copy` of the `.db` only captured the state as of the last
+/// autocheckpoint: nothing checkpoints the WAL at shutdown, so a session's
+/// last commits lived only in the `-wal` and were missing from the backup.
+/// `VACUUM INTO` reads through the WAL, so the snapshot holds every committed
+/// transaction, and it is self-contained: restoring it needs no `-wal`.
+///
+/// The source connection is read-only and short-lived: the snapshot is a read
+/// transaction, so the vault is untouched and no connection outlives the
+/// migration that follows.
+async fn snapshot_vault(db_path: &Path, backup: &Path) -> Result<(), sqlx::Error> {
+    use sqlx::sqlite::SqliteConnectOptions;
+    use sqlx::{ConnectOptions, Connection};
+
+    let mut conn = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true)
+        .create_if_missing(false)
+        .connect()
+        .await?;
+    // dynamic-sql: VACUUM is not a preparable statement, so the compile-checked
+    // macro form cannot validate it against the schema.
+    let vacuumed = sqlx::query("VACUUM INTO ?")
+        .bind(backup.to_string_lossy().into_owned())
+        .execute(&mut conn)
+        .await;
+    conn.close().await?;
+    vacuumed.map(|_| ())
 }
 
 /// #3062 — is any embedded migration not yet recorded in the vault's
@@ -218,8 +270,8 @@ async fn backup_db_before_migration(db_path: &Path) {
 /// positively confirmed every embedded version is already applied.
 ///
 /// The probe opens a single READ-ONLY (`SQLITE_OPEN_READONLY`) connection and
-/// closes it immediately. A read-only connection cannot write or checkpoint, so
-/// it does not mutate the vault — the pre-migration `.db` snapshot stays clean.
+/// closes it immediately, so it cannot mutate the vault and no connection
+/// outlives the migration.
 async fn has_pending_migration(db_path: &Path) -> bool {
     use sqlx::sqlite::SqliteConnectOptions;
     use sqlx::{ConnectOptions, Connection};
@@ -581,50 +633,33 @@ mod tests {
             .count()
     }
 
-    /// Migrate `db_path`, then remove the newest `_sqlx_migrations` record so
+    /// Remove the newest `_sqlx_migrations` record from a migrated `pool` so
     /// the embedded migrator has exactly one version that is no longer applied —
-    /// i.e. a genuinely pending migration. The deletion is checkpointed into the
-    /// main `.db` (TRUNCATE) so the file is self-contained.
-    async fn make_migration_pending(db_path: &Path) {
-        let pool = init_pool(db_path).await.unwrap();
+    /// i.e. a genuinely pending migration. Deliberately no checkpoint: the
+    /// deletion may sit in the `-wal`, and the backup must see it there (#3267).
+    async fn make_migration_pending(pool: &SqlitePool) {
         let deleted = sqlx::query(
             "DELETE FROM _sqlx_migrations \
              WHERE version = (SELECT MAX(version) FROM _sqlx_migrations)",
         )
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap()
         .rows_affected();
         assert_eq!(deleted, 1, "expected to un-apply exactly one migration");
-        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        drop(pool);
     }
 
-    /// #3062 — when a migration is genuinely pending, a byte-identical
-    /// timestamped backup of the pre-migration on-disk vault is created.
-    /// Revert-sensitive: removing the `backup_db_before_migration` copy fails.
-    #[tokio::test]
-    async fn backup_created_and_byte_identical_when_migration_pending() {
-        let dir = TempDir::new().unwrap();
-        let db_path = dir.path().join("notes.db");
-        make_migration_pending(&db_path).await;
-        let original = std::fs::read(&db_path).unwrap();
-        assert!(!original.is_empty(), "migrated DB must be non-empty");
-
-        backup_db_before_migration(&db_path).await;
-
-        // Exactly one timestamped backup sibling, byte-identical to the DB.
-        let backups: Vec<_> = std::fs::read_dir(dir.path())
+    /// The single `<db_name>.pre-migration-*` sibling in `dir`.
+    fn single_pre_migration_backup(dir: &Path, db_name: &str) -> std::path::PathBuf {
+        let prefix = format!("{db_name}.pre-migration-");
+        let backups: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
             .filter_map(std::result::Result::ok)
             .map(|e| e.path())
             .filter(|p| {
                 p.file_name()
                     .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("notes.db.pre-migration-"))
+                    .is_some_and(|n| n.starts_with(&prefix))
             })
             .collect();
         assert_eq!(
@@ -632,8 +667,79 @@ mod tests {
             1,
             "exactly one pre-migration backup expected"
         );
-        let backup_bytes = std::fs::read(&backups[0]).unwrap();
-        assert_eq!(backup_bytes, original, "backup must match the original DB");
+        backups.into_iter().next().unwrap()
+    }
+
+    /// Fetch one `i64` from the SQLite file at `path` over a fresh connection,
+    /// so the assertion reads the backup the way a restore would.
+    async fn scalar_from_file(path: &Path, sql: &'static str) -> i64 {
+        use sqlx::ConnectOptions;
+        let mut conn = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(false)
+            .connect()
+            .await
+            .unwrap();
+        sqlx::query_scalar(sql).fetch_one(&mut conn).await.unwrap()
+    }
+
+    /// #3062 — when a migration is genuinely pending, a timestamped backup of
+    /// the pre-migration vault is created and opens as a SQLite file holding the
+    /// vault's content. Not a byte comparison: `VACUUM INTO` rebuilds pages, so
+    /// the backup is a logical snapshot, not a copy of the file (#3267).
+    /// Revert-sensitive: removing the `backup_db_before_migration` snapshot fails.
+    #[tokio::test]
+    async fn backup_created_with_vault_content_when_migration_pending() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("notes.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        make_migration_pending(&pool).await;
+        let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+
+        backup_db_before_migration(&db_path).await;
+
+        let backup = single_pre_migration_backup(dir.path(), "notes.db");
+        let backed_up = scalar_from_file(&backup, "SELECT COUNT(*) FROM _sqlx_migrations").await;
+        assert_eq!(
+            backed_up, applied,
+            "backup must hold the vault's applied-migration records"
+        );
+    }
+
+    /// #3267 — the backup must hold commits that are still only in the `-wal`.
+    /// The app never closes its pools, so a killed process leaves the session's
+    /// last commits uncheckpointed; a raw copy of the `.db` lost them.
+    /// Revert-sensitive: replacing `VACUUM INTO` with `std::fs::copy` fails.
+    #[tokio::test]
+    async fn backup_includes_rows_still_in_hot_wal() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("notes.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        make_migration_pending(&pool).await;
+        sqlx::query("CREATE TABLE wal_probe (id INTEGER PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO wal_probe (id) VALUES (1), (2), (3)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Leak, don't drop: a clean close checkpoints and deletes the WAL,
+        // which is exactly what a killed process never does.
+        std::mem::forget(pool);
+
+        backup_db_before_migration(&db_path).await;
+
+        let backup = single_pre_migration_backup(dir.path(), "notes.db");
+        let rows = scalar_from_file(&backup, "SELECT COUNT(*) FROM wal_probe").await;
+        assert_eq!(
+            rows, 3,
+            "backup must include the rows committed only to the -wal"
+        );
     }
 
     /// #3062 — the core fix: a fully-migrated DB has nothing pending, so NO
