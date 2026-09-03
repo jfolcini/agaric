@@ -204,10 +204,6 @@ tauri-plugin-os = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# #2621 (agaric-sync inversion): async methods on the `ApplyHost` trait object
-# (`src/apply_host.rs`) that the sync layer holds instead of the concrete
-# `Materializer`. Standard async-fn-in-dyn-trait shim.
-async-trait = "0.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 # `thiserror` moved with `error.rs` into `agaric-core` (#2621); `agaric` no
 # longer uses it directly. `similar` likewise moved with `word_diff.rs`.
@@ -228,7 +224,6 @@ base64 = "0.23.0"
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 specta-typescript = "0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
-rustc-hash = "2.1.2"
 # `parking_lot` moved with `loro/registry.rs` into `agaric-engine` (#2621, wave
 # E1) — the `arc_lock` owned-guard sharding lives there now; the app crate no
 # longer references it directly.

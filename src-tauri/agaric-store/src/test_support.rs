@@ -25,14 +25,22 @@ pub const TEST_SPACE_ID: &str = "01TESTSPACE000000000000001";
 /// (dropping it deletes the backing DB file).
 pub async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
-    let db_path = dir.path().join("test.db");
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+    (pool, dir)
+}
+
+/// [`test_pool`] at a caller-chosen path — the same recovery-free stand-in
+/// for the app's `init_pool`, with its signature, so the materializer tests
+/// that moved down with #4502 keep their `init_pool(&db_path)` call shape.
+pub async fn init_pool(
+    db_path: &std::path::Path,
+) -> Result<SqlitePool, agaric_core::error::AppError> {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
-        .connect_with(crate::db::base_connect_options(&db_path))
-        .await
-        .unwrap();
-    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
-    (pool, dir)
+        .connect_with(crate::db::base_connect_options(db_path))
+        .await?;
+    sqlx::migrate!("../migrations").run(&pool).await?;
+    Ok(pool)
 }
 
 /// Insert a block directly into the `blocks` table (bypasses the command

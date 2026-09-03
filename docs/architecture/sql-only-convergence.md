@@ -130,7 +130,7 @@ projected SQL-only during a no-space window — has no node in *any* engine, so
 there is nothing anywhere to diverge.
 
 Two caveats on reading that counter, both written up in full on
-`known_absent_from_engine` in `src-tauri/src/materializer/handlers/apply.rs`:
+`known_absent_from_engine` in `src-tauri/agaric-engine/src/materializer/handlers/apply.rs`:
 
 - The probe asks the SEED's space engine only, so it proves absence from *that*
   engine, not from every engine. A block whose `blocks.space_id` still names

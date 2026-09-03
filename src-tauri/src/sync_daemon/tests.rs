@@ -64,7 +64,7 @@ fn spawn_responder(
             session,
             pool,
             device_id,
-            materializer,
+            std::sync::Arc::new(materializer),
             scheduler,
             event_sink,
             cancel,
@@ -1323,7 +1323,7 @@ async fn run_sync_session_respects_cancel_flag() {
     let mut orch = SyncOrchestrator::new(
         pool.clone(),
         "INITIATOR_DEV".to_string(),
-        materializer.clone(),
+        std::sync::Arc::new(materializer.clone()),
     );
 
     // Set the cancel flag BEFORE calling run_sync_session.
@@ -3211,7 +3211,7 @@ async fn daemon_start_and_shutdown() {
     let daemon = SyncDaemon::start(
         pool.clone(),
         "TEST_DEV".to_string(),
-        mat.clone(),
+        std::sync::Arc::new(mat.clone()),
         scheduler,
         endpoint_secret,
         sink,
@@ -3260,7 +3260,7 @@ async fn daemon_cancel_does_not_trigger_shutdown() {
     let daemon = SyncDaemon::start(
         pool.clone(),
         "TEST_DEV2".to_string(),
-        mat.clone(),
+        std::sync::Arc::new(mat.clone()),
         scheduler,
         endpoint_secret,
         sink,
@@ -3332,7 +3332,7 @@ async fn two_daemons_start_on_different_ports() {
     let d1 = SyncDaemon::start(
         pool1,
         "DEV_A".into(),
-        mat1.clone(),
+        std::sync::Arc::new(mat1.clone()),
         sched1,
         endpoint_secret1,
         sink1,
@@ -3343,7 +3343,7 @@ async fn two_daemons_start_on_different_ports() {
     let d2 = SyncDaemon::start(
         pool2,
         "DEV_B".into(),
-        mat2.clone(),
+        std::sync::Arc::new(mat2.clone()),
         sched2,
         endpoint_secret2,
         sink2,
@@ -3511,7 +3511,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     let daemon = SyncDaemon::start(
         pool.clone(),
         "BRANCH_B_DEV".into(),
-        mat.clone(),
+        std::sync::Arc::new(mat.clone()),
         scheduler.clone(),
         endpoint_secret,
         sink_dyn,
@@ -3598,7 +3598,7 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     let daemon = SyncDaemon::start(
         pool.clone(),
         "BRANCH_B_L61_DEV".into(),
-        mat.clone(),
+        std::sync::Arc::new(mat.clone()),
         scheduler.clone(),
         endpoint_secret,
         sink_dyn,
@@ -3686,7 +3686,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
     let daemon = SyncDaemon::start(
         pool.clone(),
         "BRANCH_C_DEV".into(),
-        mat.clone(),
+        std::sync::Arc::new(mat.clone()),
         scheduler.clone(),
         endpoint_secret,
         sink_dyn,
@@ -4068,7 +4068,7 @@ async fn daemon_branch_b_dials_discovered_unpaired_peer_while_pairing_pending_35
         SyncDaemonContext {
             pool: pool.clone(),
             device_id: "DEV_3533_A".into(),
-            materializer: mat.clone().into(),
+            materializer: std::sync::Arc::new(mat.clone()),
             scheduler: scheduler.clone(),
             endpoint_secret: SecretKey::generate(),
             event_sink: sink_dyn,
@@ -4168,7 +4168,7 @@ async fn daemon_branch_b_ignores_discovered_unpaired_peer_outside_pairing_window
         SyncDaemonContext {
             pool: pool.clone(),
             device_id: "DEV_3533_B".into(),
-            materializer: mat.clone().into(),
+            materializer: std::sync::Arc::new(mat.clone()),
             scheduler: scheduler.clone(),
             endpoint_secret: SecretKey::generate(),
             event_sink: sink_dyn,
@@ -4350,7 +4350,7 @@ async fn start_if_peers_exist_spawns_dormant_when_empty() {
     let daemon = SyncDaemon::start_if_peers_exist(
         pool,
         "DEV_LOCAL".into(),
-        materializer,
+        std::sync::Arc::new(materializer),
         scheduler,
         endpoint_secret,
         event_sink,
@@ -4419,7 +4419,7 @@ async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
     let daemon = SyncDaemon::start_if_peers_exist(
         pool.clone(),
         "DEV_LOCAL".into(),
-        materializer,
+        std::sync::Arc::new(materializer),
         scheduler,
         endpoint_secret,
         event_sink,
@@ -4481,7 +4481,7 @@ async fn start_if_peers_exist_starts_actively_when_peers_present() {
     let daemon = SyncDaemon::start_if_peers_exist(
         pool,
         "DEV_LOCAL".into(),
-        materializer,
+        std::sync::Arc::new(materializer),
         scheduler,
         endpoint_secret,
         event_sink,
@@ -4540,7 +4540,7 @@ async fn dormant_daemon_wakes_on_pair_notification() {
     let daemon = SyncDaemon::start_if_peers_exist(
         pool.clone(),
         "DEV_LOCAL".into(),
-        materializer,
+        std::sync::Arc::new(materializer),
         scheduler.clone(),
         endpoint_secret,
         event_sink,
@@ -4634,7 +4634,7 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     let daemon = SyncDaemon::start_if_peers_exist(
         pool.clone(),
         "DEV_LOCAL".into(),
-        materializer,
+        std::sync::Arc::new(materializer),
         scheduler,
         endpoint_secret,
         event_sink,
@@ -4713,7 +4713,7 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
     let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
         pool: pool.clone(),
         device_id: "DEV_LIFECYCLE_A".into(),
-        materializer: mat.clone().into(),
+        materializer: std::sync::Arc::new(mat.clone()),
         scheduler,
         endpoint_secret,
         event_sink: sink,
@@ -4759,7 +4759,7 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
         pool: pool.clone(),
         device_id: "DEV_LIFECYCLE_B".into(),
-        materializer: mat.clone().into(),
+        materializer: std::sync::Arc::new(mat.clone()),
         scheduler,
         endpoint_secret,
         event_sink: sink,
@@ -5343,10 +5343,18 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     .await;
 
     // ── Session 1: A initiates, B responds (B's state flows to A) ────
-    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
     assert_eq!(
@@ -5366,10 +5374,18 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     );
 
     // ── Session 2: B initiates, A responds (A's state flows to B) ────
-    let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
-    let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
+    let mut init_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
+    let mut resp_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
     pump_full_session_602(&mut init_b, &mut resp_a).await;
 
     assert_eq!(
@@ -5506,10 +5522,18 @@ async fn issue2536_multi_space_delta_sync_completes() {
     );
 
     // ── A initiates, B responds — B streams both spaces to A ─────────
-    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
     assert_eq!(
@@ -5630,10 +5654,18 @@ async fn issue2536_puller_rests_in_streaming_ops_between_loro_messages() {
     .await;
     assert_eq!(state_b.registry.dirty_count(), 2, "two dirty spaces seeded");
 
-    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
 
     // A -> B: HeadExchange.
     let head = init_a.start().await.expect("initiator start");
@@ -5787,9 +5819,12 @@ async fn run_one_real_loopback_session_2129(
     // responder's `establish`.
     let mut client = harness.dial().await;
 
-    let mut init_orch =
-        SyncOrchestrator::new(init_pool.clone(), init_device.into(), init_mat.clone())
-            .with_expected_remote_id(resp_device.into());
+    let mut init_orch = SyncOrchestrator::new(
+        init_pool.clone(),
+        init_device.into(),
+        std::sync::Arc::new(init_mat.clone()),
+    )
+    .with_expected_remote_id(resp_device.into());
     let init_cancel = AtomicBool::new(false);
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
@@ -6715,10 +6750,18 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
     .await;
 
     // ── Bidirectional sync (mirror of #602) ──────────────────────────
-    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
     assert_eq!(
         init_a.session().state,
@@ -6731,10 +6774,18 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
         "session 1 responder must complete"
     );
 
-    let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
-    let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
+    let mut init_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
+    let mut resp_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
     pump_full_session_602(&mut init_b, &mut resp_a).await;
     assert_eq!(
         init_b.session().state,
@@ -6864,10 +6915,18 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
     // ── Interrupted attempt: A initiates, B prepares its stream, but the
     //    wire dies before any of B's messages reach A. ───────────────────
     {
-        let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-            .with_expected_remote_id(DEV_B.into());
-        let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-            .with_expected_remote_id(DEV_A.into());
+        let mut init_a = SyncOrchestrator::new(
+            pool_a.clone(),
+            DEV_A.into(),
+            std::sync::Arc::new(mat_a.clone()),
+        )
+        .with_expected_remote_id(DEV_B.into());
+        let mut resp_b = SyncOrchestrator::new(
+            pool_b.clone(),
+            DEV_B.into(),
+            std::sync::Arc::new(mat_b.clone()),
+        )
+        .with_expected_remote_id(DEV_A.into());
 
         let first = init_a.start().await.expect("initiator start");
         // B ingests A's opening message and may queue a reply + LoroSync
@@ -6901,10 +6960,18 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
     }
 
     // ── Resume: fresh orchestrators, full bidirectional sync. ───────────
-    let mut init_a2 = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b2 = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a2 = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b2 = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a2, &mut resp_b2).await;
     assert_eq!(
         init_a2.session().state,
@@ -6917,10 +6984,18 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
         "resumed A→B responder must complete after the earlier interruption"
     );
 
-    let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
-    let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
+    let mut init_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
+    let mut resp_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
     pump_full_session_602(&mut init_b, &mut resp_a).await;
     assert_eq!(
         init_b.session().state,
@@ -7031,10 +7106,18 @@ async fn issue610_only_the_puller_records_synced_at() {
     .await;
 
     // ── Session: A initiates (pulls from B); B responds (streams) ────
-    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
     assert_eq!(
@@ -7139,10 +7222,18 @@ async fn issue4084_responder_only_device_records_streamed_at() {
 
     let before_ms = agaric_store::db::now_ms();
 
-    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
     assert_eq!(init_a.session().state, SyncState::Complete);
@@ -7249,10 +7340,18 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
     .await;
 
     // ── Session: A initiates; B (empty) responds via SyncComplete ────
-    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
     assert_eq!(
@@ -7354,10 +7453,18 @@ async fn issue4096_empty_stream_short_circuit_records_streamed_at() {
 
     let before_ms = agaric_store::db::now_ms();
 
-    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
-        .with_expected_remote_id(DEV_B.into());
-    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut init_a = SyncOrchestrator::new(
+        pool_a.clone(),
+        DEV_A.into(),
+        std::sync::Arc::new(mat_a.clone()),
+    )
+    .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     pump_full_session_602(&mut init_a, &mut resp_b).await;
 
     assert_eq!(
@@ -7514,8 +7621,12 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
     };
 
     // Case 1: initiator advertises its vv → responder streams an Update.
-    let mut resp = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut resp = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     let out = resp
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![head.clone()],
@@ -7574,8 +7685,12 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
     }
 
     // Case 2: no advertised vv (older peer / fresh space) → full Snapshot.
-    let mut resp2 = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
-        .with_expected_remote_id(DEV_A.into());
+    let mut resp2 = SyncOrchestrator::new(
+        pool_b.clone(),
+        DEV_B.into(),
+        std::sync::Arc::new(mat_b.clone()),
+    )
+    .with_expected_remote_id(DEV_A.into());
     let out2 = resp2
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![head],
@@ -7688,10 +7803,13 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
     // ── Drive the initiator (mirrors `run_sync_session`'s loop) ──────
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
-    let mut init_orch =
-        SyncOrchestrator::new(init_pool.clone(), FRESH_DEV.into(), init_mat.clone())
-            .with_event_sink(init_sink_box)
-            .with_expected_remote_id(RESP_DEV.into());
+    let mut init_orch = SyncOrchestrator::new(
+        init_pool.clone(),
+        FRESH_DEV.into(),
+        std::sync::Arc::new(init_mat.clone()),
+    )
+    .with_event_sink(init_sink_box)
+    .with_expected_remote_id(RESP_DEV.into());
 
     let first = init_orch.start().await.expect("initiator start");
     match &first {
@@ -7920,9 +8038,13 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     //    `run_sync_session` uses ───────────────────────────────────────
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
-    let mut init_orch = SyncOrchestrator::new(init_pool.clone(), INIT_DEV.into(), init_mat.clone())
-        .with_event_sink(init_sink_box)
-        .with_expected_remote_id(RESP_DEV.into());
+    let mut init_orch = SyncOrchestrator::new(
+        init_pool.clone(),
+        INIT_DEV.into(),
+        std::sync::Arc::new(init_mat.clone()),
+    )
+    .with_event_sink(init_sink_box)
+    .with_expected_remote_id(RESP_DEV.into());
 
     let first = init_orch.start().await.expect("initiator start");
     send_sync_message(&mut client.send, &first).await.unwrap();
@@ -8483,7 +8605,7 @@ async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
     let daemon = SyncDaemon::start_if_peers_exist(
         pool.clone(),
         "DEV_LOCAL".into(),
-        materializer,
+        std::sync::Arc::new(materializer),
         scheduler.clone(),
         endpoint_secret,
         event_sink,
@@ -9621,9 +9743,13 @@ async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
 
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
-    let mut init_orch = SyncOrchestrator::new(init_pool.clone(), INIT_DEV.into(), init_mat.clone())
-        .with_event_sink(init_sink_box)
-        .with_expected_remote_id(RESP_DEV.into());
+    let mut init_orch = SyncOrchestrator::new(
+        init_pool.clone(),
+        INIT_DEV.into(),
+        std::sync::Arc::new(init_mat.clone()),
+    )
+    .with_event_sink(init_sink_box)
+    .with_expected_remote_id(RESP_DEV.into());
 
     let first = init_orch.start().await.expect("initiator start");
     send_sync_message(&mut client.send, &first).await.unwrap();

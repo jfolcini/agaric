@@ -74,11 +74,21 @@ parking_lot = { version = "0.12.5", features = ["arc_lock"] }
 tracing = { version = "0.1.44", features = ["attributes"] }
 # `peer_epoch`'s retry backoff (`tokio::time::sleep`) + the periodic-snapshot
 # task's `tokio::time::interval` need tokio's timer in prod. Version mirrors the
-# app crate; `time` is enabled explicitly (the app relies on workspace feature
-# unification to pull it) so the engine builds standalone. The spawner is
-# injected by the caller (see `snapshot::spawn_periodic_snapshot`) so no `rt`
-# runtime coupling leaks into the engine.
-tokio = { version = "1", features = ["time"] }
+# app crate; features are enabled explicitly (the app relies on workspace
+# feature unification to pull them) so the engine builds standalone. The
+# `materializer` (#4502) adds `rt` (its `JoinSet` + the runtime handle the app
+# passes in), `sync` (queue channels / `Notify`), `fs` (the attachment GC walk)
+# and `macros` (`select!`).
+tokio = { version = "1", features = ["time", "rt", "sync", "fs", "macros"] }
+# `materializer::handlers::apply` records each op's apply duration to the OTel
+# histogram. Observability depends only on `agaric-core`, so no cycle.
+agaric-observability = { path = "../agaric-observability", version = "0.1.0" }
+# `materializer::dedup` keys its task set with `FxHashSet`. Version mirrors the
+# app crate.
+rustc-hash = "2.1.2"
+# `materializer::handlers::attachments` names its GC quarantine files with a
+# fresh ULID. Version mirrors the app crate.
+ulid = "3.0.0"
 
 # Reached only through `test-util` (see the feature's comment); a default
 # build never compiles it. Version mirrors the dev-dependency below.
