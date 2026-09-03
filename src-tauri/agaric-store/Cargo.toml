@@ -126,6 +126,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 unsafe_code = "deny"
 
 [lints.clippy]
+too_many_lines = "warn"                     # AGENTS.md item 6; threshold in the workspace clippy.toml (#4639)
 cast_possible_truncation = "warn"
 cast_sign_loss = "warn"
 cast_possible_wrap = "warn"

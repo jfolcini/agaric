@@ -1,3 +1,5 @@
+// Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 //! B1 property tests for [`compute_reverse`] (TEST-PROPTEST-B, #150).
 //!
 //! Three property families, all driven by the shared seeded-DB harness

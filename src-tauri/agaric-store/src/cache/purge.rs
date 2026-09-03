@@ -41,6 +41,7 @@ use sqlx::SqliteConnection;
 /// membership shapes (single-root recursive CTE, multi-root `json_each` CTE,
 /// flat `deleted_at IS NOT NULL` set) — so a runtime `sqlx::query(...)` is
 /// required; the macro form cannot take a runtime-assembled query string.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn purge_block_satellite_caches(
     conn: &mut SqliteConnection,
     cte_prefix: &str,

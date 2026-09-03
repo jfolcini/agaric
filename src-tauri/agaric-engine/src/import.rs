@@ -592,6 +592,7 @@ pub fn guess_attachment_mime(path: &str) -> String {
 /// warning is recorded (mirroring the depth-clamp warning counter).
 ///
 /// `((uuid))` references are converted to plain text.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     let mut blocks: Vec<ParsedBlock> = Vec::new();
     // #682: count property lines that could not be attached to any owning
@@ -1265,6 +1266,7 @@ fn commit_block(
 /// which fail the `key: value` scalar test). Reserved/exporter-managed keys
 /// (see [`FRONTMATTER_RESERVED_KEYS`]) are silently filtered. Duplicate keys
 /// keep the FIRST value and warn.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn parse_frontmatter(
     yaml: &str,
     list_items: &mut std::collections::HashMap<String, Vec<String>>,

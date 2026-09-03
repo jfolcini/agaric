@@ -53,6 +53,7 @@ use crate::loro::shared::LoroState;
 /// dispatched materializer tasks. Validation failures (e.g. a corrupt
 /// `repeat-until` value that can't round-trip through `set_property_in_tx`)
 /// surface to the caller instead of being hidden.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn build_recurrence_sibling_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &LoroState,

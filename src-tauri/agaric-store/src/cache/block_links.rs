@@ -471,6 +471,7 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
 /// `block_links` cannot be (the missing row is the thing being looked up). The
 /// push side lives in the materializer's `ReindexBlockLinks` handler, which
 /// asks that index "who was waiting for this block?" after reindexing it.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn reindex_block_links_conn(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -661,6 +662,7 @@ pub async fn reindex_block_links_conn(
 /// Reads block content and existing links from `read_pool`, computes a diff,
 /// and applies inserts/deletes on `write_pool`.
 /// Used by the materializer when a separate read pool is available.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn reindex_block_links_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,

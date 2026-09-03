@@ -102,6 +102,7 @@ pub struct FtsPartitionedScan {
 /// [`fts_fetch_rows`]: super::fetch::fts_fetch_rows
 /// [`CancellationGuard`]: crate::cancellation::CancellationGuard
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn search_fts_partitioned(
     pool: &SqlitePool,
     query: &str,

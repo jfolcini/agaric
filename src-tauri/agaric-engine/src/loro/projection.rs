@@ -245,6 +245,7 @@ pub async fn project_edit_block_to_sql(
 /// The projection therefore reads the typed value fields off the
 /// payload directly — the engine's post-apply state for a property
 /// equals the payload's value field by construction.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn project_set_property_to_sql(
     conn: &mut SqliteConnection,
     payload: &SetPropertyPayload,
@@ -441,6 +442,7 @@ pub async fn project_purge_block_to_sql(
 ///
 /// Empty `block_ids` ⇒ no-op. Idempotent: re-running with the same ids
 /// deletes nothing the second time (every row is already gone).
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn project_purge_blocks_to_sql(
     conn: &mut SqliteConnection,
     block_ids: &[&str],
@@ -1134,6 +1136,7 @@ pub async fn project_block_full_to_sql(
 /// caches that read `due_date`/`scheduled_date`/`todo_state` are rebuilt
 /// by the inbound-sync cache fan-out
 /// (the app-layer `materializer::Materializer::enqueue_inbound_sync_rebuilds`).
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn reproject_block_properties_from_engine(
     conn: &mut SqliteConnection,
     block_id: &agaric_core::ulid::BlockId,

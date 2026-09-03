@@ -1,3 +1,5 @@
+// Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 //! Themed bench binary: core commands / cache / cold-start / resource /
 //! move-reorder / hash / page-load domain.
 //!

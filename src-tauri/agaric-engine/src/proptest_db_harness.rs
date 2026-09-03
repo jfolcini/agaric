@@ -88,6 +88,8 @@
 //! `materializer::handlers::apply_reproject_proptest`) then stamps a
 //! `deleted_at` that the minted ref matches exactly, so the SQL cohort restore
 //! is a real un-delete rather than a silent no-op.
+// Test harness: exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 
 use proptest::prelude::*;
 use sqlx::SqlitePool;

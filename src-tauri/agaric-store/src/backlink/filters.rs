@@ -122,6 +122,7 @@ pub(crate) fn resolve_filter<'a>(
 /// `PropertyIsEmpty`) scope their SQL query to the candidate set via
 /// `json_each()` instead of scanning the entire `blocks` table.  This
 /// avoids materialising thousands of rows only to intersect them in Rust.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) fn resolve_filter_with_candidates<'a>(
     pool: &'a SqlitePool,
     filter: &'a BacklinkFilter,
@@ -830,6 +831,7 @@ fn compare_op_to_date_predicate(op: &CompareOp, value: &str) -> Option<DatePredi
 /// resolved once via the existing helpers and embedded as a `json_each` id
 /// set rather than correlated per row — recursion / FTS / tag scans must not
 /// run once per candidate source block.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) fn compile_backlink_filter<'a>(
     pool: &'a SqlitePool,
     filter: &'a BacklinkFilter,

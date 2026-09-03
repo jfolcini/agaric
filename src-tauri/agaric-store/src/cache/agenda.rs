@@ -211,6 +211,7 @@ const CURRENT_AGENDA_SQL: &str =
 /// Returns the logical change count (deletes + inserts + source-update
 /// rows), preserving the externally-observable count from the pre-M-19b
 /// `to_delete.len() + to_insert.len() + to_update.len()` formula.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn apply_sort_merge_rebuild(
     desired_conn: &mut sqlx::SqliteConnection,
     current_conn: &mut sqlx::SqliteConnection,

@@ -469,6 +469,7 @@ impl Materializer {
     ///   snapshot task.
     /// - `loro`: per-space Loro engine state the apply path mutates
     ///   (#2249 — threaded explicitly, not process-global).
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn build(
         write_pool: SqlitePool,
         read_pool_for_consumer: Option<SqlitePool>,
@@ -1037,6 +1038,7 @@ impl Materializer {
     /// shed — pre-fix both returned `Ok(())` and a shed was counted (and
     /// leased) as a successful re-enqueue. Callers that don't care remain
     /// source-compatible via `?;`.
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     pub fn try_enqueue_background(
         &self,
         task: MaterializeTask,
@@ -1273,6 +1275,7 @@ impl Materializer {
     /// Collect status, with the sync layer's contribution passed in: the
     /// app's `get_status` command builds the [`SyncStatus`] from
     /// `agaric_sync`, so this module never reads that crate (#4502).
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     pub async fn status_with_sync(&self, sync: SyncStatus) -> StatusInfo {
         let fg_depth = self
             .fg_sender()

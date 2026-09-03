@@ -161,6 +161,7 @@ pub async fn propagate_tag_to_descendants(
 /// restores and no non-content deletes, could carry a dropped row
 /// indefinitely — but per the above that row is inert, not a migration
 /// candidate.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn remove_inherited_tag(
     conn: &mut SqliteConnection,
     block_id: &str,

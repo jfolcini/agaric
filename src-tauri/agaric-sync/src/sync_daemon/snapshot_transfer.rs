@@ -252,6 +252,7 @@ pub fn snapshot_covers_remote_heads(
 /// pre-#2503 responder (production streams Loro snapshots — see
 /// [`try_offer_loro_snapshot_catchup`]).
 #[cfg(any(test, feature = "test-util"))]
+#[allow(clippy::too_many_lines)] // test-only offer path, exempt (AGENTS.md item 6)
 #[tracing::instrument(skip_all, err)]
 pub async fn try_offer_snapshot_catchup(
     send: &mut SendStream,
@@ -777,6 +778,7 @@ fn catchup_peer_identity<'a>(
 // used to be a single `&mut SyncConnection`. Re-bundling them would cost the disjoint
 // field borrows the call sites depend on.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn try_receive_snapshot_catchup(
     send: &mut SendStream,
     recv: &mut RecvStream,
@@ -1204,6 +1206,7 @@ pub async fn try_receive_snapshot_catchup(
 /// bookkeeping write below — not a cue to look somewhere else for one.
 #[tracing::instrument(skip_all, err)]
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn receive_loro_snapshot_catchup(
     _send: &mut SendStream,
     recv: &mut RecvStream,

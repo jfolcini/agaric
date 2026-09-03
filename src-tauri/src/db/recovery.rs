@@ -209,6 +209,7 @@ struct RecoveredBlocksShape {
 /// `block_tags` empty forever post-0088). For crash-retry coverage the
 /// same signal is also persisted as the [`DERIVED_RECOVERY_PENDING_KEY`]
 /// marker row, when the `app_settings` table (migration 0053) exists.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn ensure_blocks_table_exists(
     pool: &SqlitePool,
 ) -> Result<bool, agaric_core::error::AppError> {
@@ -770,6 +771,7 @@ async fn persisted_engine_snapshot_count(
 /// path rebuilds these via its post-projection materializer fan-out, which is
 /// unreachable at `init_pools` time (the materializer does not exist yet). See
 /// the rebuild block at the end of the function body for the rationale.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn reproject_blocks_from_engine(
     pool: &SqlitePool,
 ) -> Result<bool, agaric_core::error::AppError> {
@@ -1259,6 +1261,7 @@ const CASCADE_PURGE: &str = "purge_block cascade";
 
 impl ReplayDiagnostics {
     /// Emit everything this pass observed, exactly once.
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn emit(&self) {
         if self.op_log_missing {
             tracing::warn!("op_log table missing — cannot recover blocks data");
@@ -1876,6 +1879,7 @@ async fn purge_truncated_tails(
 /// post-mortem reader. Everything worth saying is accumulated into
 /// [`ReplayDiagnostics`] and emitted by the caller, for the attempt that
 /// actually committed.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn recover_blocks_from_op_log(
     executor: &mut sqlx::SqliteConnection,
     deleted_at_is_ms: bool,
@@ -2847,6 +2851,7 @@ async fn recover_blocks_from_op_log(
 /// the attachment pass (which is what clears [`DERIVED_RECOVERY_PENDING_KEY`]).
 /// This pass deliberately does NOT clear that marker: a crash between the two
 /// passes must leave the retry signal armed.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
     blocks_recovered_this_boot: bool,
@@ -3454,6 +3459,7 @@ async fn fetch_derived_replay_chunk(
 /// Every arm is idempotent (`INSERT OR IGNORE`, keyed DELETE/UPDATE), so a
 /// re-run against an already-populated `attachments` re-reads and changes
 /// nothing — which is what lets the gate be "the recovery fired" alone.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn recover_attachments_from_op_log(
     pool: &SqlitePool,
 ) -> Result<(), agaric_core::error::AppError> {

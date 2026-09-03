@@ -9,6 +9,7 @@ use super::*;
 // the handler's `Result` and bumps the appropriate counter; the handler
 // itself never needed access. Reintroduce the parameter only when a
 // future code path needs metric mutation from inside the handler.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn handle_foreground_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
@@ -578,6 +579,7 @@ pub(crate) async fn handle_background_task_metered(
     handle_background_task_inner(pool, task, read_pool, app_data_dir, Some(metrics)).await
 }
 
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn handle_background_task_inner(
     pool: &SqlitePool,
     task: &MaterializeTask,

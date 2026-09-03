@@ -1,3 +1,5 @@
+// Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 //! Themed bench binary: read / query / index domain (backlinks, tags,
 //! pagination, graph, FTS, properties, aliases).
 //!

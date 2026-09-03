@@ -354,6 +354,7 @@ fn is_write_contention(err: &AppError) -> bool {
 /// 60 s tick instead of 24 h from now — the cadence a transient
 /// `SQLITE_BUSY` deserves. Rows purged before the contention stay purged:
 /// every batch commits in its own transaction.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn tombstone_purge(
     pool: &SqlitePool,
     device_id: &str,

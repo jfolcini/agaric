@@ -77,6 +77,7 @@ fn log_draft_error(draft_errors: &mut Vec<String>, block_id: &str, e: &AppError,
 /// not exercised in unit tests. These are intentionally defensive and
 /// account for a few of the remaining uncovered lines in coverage reports.
 #[tracing::instrument(skip_all, err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn recover_at_boot(
     pool: &SqlitePool,
     device_id: &str,

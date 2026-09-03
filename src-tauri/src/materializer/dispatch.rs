@@ -1331,6 +1331,7 @@ pub(crate) fn move_same_page_hint(
 /// captured here — it depends on `&Materializer` state and is driven
 /// by [`Materializer::maybe_enqueue_fts_optimize`] after the returned
 /// vec has been enqueued.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) fn invalidations_for_op(
     record: &OpRecord,
     block_type_hint: Option<&str>,

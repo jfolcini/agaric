@@ -72,6 +72,7 @@ use agaric_engine::spaces::{
 /// Any database error is propagated. Bootstrap failure is boot-fatal: the
 /// app cannot honour the "every page belongs to a space" invariant
 /// without completing this step.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn bootstrap_spaces(
     pool: &SqlitePool,
     device_id: &str,

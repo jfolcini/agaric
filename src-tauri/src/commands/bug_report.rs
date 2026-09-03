@@ -1802,6 +1802,7 @@ fn home_dir_string() -> Option<String> {
 /// `redact == true`; pass `&[]` if the value is unknown (e.g. the user
 /// has no paired peers) and the scrub gracefully degrades to a noop.
 #[tracing::instrument(skip(log_dir, home, device_id, peer_device_ids), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn read_logs_for_report_inner(
     log_dir: &Path,
     redact: bool,

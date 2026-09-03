@@ -205,6 +205,7 @@ pub fn validate_create_block_shape(block_type: &str, content: &str) -> Result<()
 // struct would touch ~12 call sites for zero behavioural gain; the tx-scoped
 // writer signature is intentionally flat.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn create_block_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &crate::loro::shared::LoroState,
@@ -527,6 +528,7 @@ pub struct PropertyDeclaration {
 /// `declaration` is `None` when no `property_definitions` row exists for
 /// the key — type/options checks are skipped (custom keys without a
 /// declaration are permissive).
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn validate_property_value(
     payload: &SetPropertyPayload,
     declaration: Option<&PropertyDeclaration>,
@@ -715,6 +717,7 @@ pub async fn set_property_in_tx(
 /// (matching the wrapper's `is_clear` skip) and otherwise the row for `key`
 /// (or `None` when `key` is undeclared — a permissive custom key).
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn set_property_in_tx_with_declaration(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &crate::loro::shared::LoroState,

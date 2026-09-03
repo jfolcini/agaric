@@ -179,6 +179,7 @@ fn validate(input: &str) -> Result<(), AppError> {
 }
 
 /// Cartesian brace expansion. Mirrors the frontend implementation.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
     if !input.contains('{') {
         return Ok(vec![input.to_string()]);

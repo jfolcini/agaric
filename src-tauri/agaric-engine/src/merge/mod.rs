@@ -50,6 +50,7 @@ pub(crate) mod divergence;
 ///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —
 /// the engine dispatch must not break the materializer hot path.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn engine_apply(
     op_id: &str,
     op: &agaric_store::op::OpPayload,

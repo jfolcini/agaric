@@ -95,6 +95,7 @@ use agaric_engine::loro::registry::LoroEngineRegistry;
 /// the condition is visible in logs rather than silent.
 ///
 /// Returns the number of slots successfully replayed (and thereby cleared).
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn replay_sync_inbox(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,

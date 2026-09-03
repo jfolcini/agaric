@@ -420,6 +420,7 @@ pub const DEFAULT_RETENTION_DAYS: u64 = 90;
 /// it verbatim. The phase-3 frontier guard (`seq <= up_to_seqs[device]`)
 /// can legitimately make this number smaller than the pre-flight count.
 #[tracing::instrument(skip(pool), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn compact_op_log(
     pool: &SqlitePool,
     device_id: &str,

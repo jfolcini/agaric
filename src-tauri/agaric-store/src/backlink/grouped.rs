@@ -95,6 +95,7 @@ fn groups_after_cursor<'a>(
 /// it makes the group list reshuffle on every edit and defeats muscle
 /// memory. The frontend mirrors this contract in
 /// `BacklinkGroupRenderer.tsx`.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn eval_backlink_query_grouped(
     pool: &SqlitePool,
     block_id: &str,
@@ -573,6 +574,7 @@ pub async fn eval_backlink_query_grouped(
 ///     post-self-reference-exclusion count (parity with
 ///     `eval_backlink_query_grouped:128`); `filtered_count` is the
 ///     post-filter, post-grouping sum.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn eval_unlinked_references(
     pool: &SqlitePool,
     page_id: &str,

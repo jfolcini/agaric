@@ -79,6 +79,7 @@ struct Row {
 /// - [`AppError::Database`] — the initial candidate SELECT failed. Per-blob /
 ///   per-row failures are logged and skipped, never propagated, so one bad
 ///   group cannot abort the whole pass.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn backfill_attachment_blobs(
     pool: &SqlitePool,
     app_data_dir: &Path,

@@ -1,3 +1,7 @@
+// Test bodies are exempt from the 70-code-line ceiling (AGENTS.md "Patterns
+// caught in review" item 6); production functions over it carry `#[expect]`
+// so the marker expires when the function is split (#4639).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
 //! OpenTelemetry observability for the Agaric backend (issue #2110, M1a + M1b).
 //!
 //! This module turns the `tracing` spans **and** events emitted by backend

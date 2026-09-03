@@ -448,6 +448,7 @@ pub fn first_engine_live_block_sql_deleted(
 /// it reports what was projected, which is exactly what the caller's cache/FTS
 /// fan-out needs. Retention of a kept slot is unbounded by design; see the
 /// "Kept slots are retained without bound" section on [`import_and_project`].
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_remote(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -1116,6 +1117,7 @@ pub enum InboundDeliveryKind {
 // (the durable-tombstone plumbing). Threading them as fields of a struct here
 // would obscure the linear import→project flow for no real benefit.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn import_and_project(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -2212,6 +2214,7 @@ pub struct InboxSlot {
 /// `Ok` no longer means "cleared", so both the batch arm and the per-row
 /// fallback arm below probe `loro_sync_inbox` before counting a slot as
 /// `replayed`.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn replay_inbox_batch(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,

@@ -764,6 +764,7 @@ pub async fn add_tag(
 /// - [`AppError::NotFound`] — `tag_id` does not resolve to a live block
 /// - [`AppError::InvalidOperation`] — `tag_id` is not a `block_type = 'tag'` block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn add_tags_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,

@@ -211,6 +211,7 @@ pub fn is_skippable_non_reversible(err: &AppError) -> bool {
 ///     SQL error from the prior-context prefetch.
 ///
 /// An empty input slice returns `Ok(Vec::new())`.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn compute_reverse_batch(
     pool: &SqlitePool,
     ops: &[OpRecord],

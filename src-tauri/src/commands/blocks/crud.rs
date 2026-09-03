@@ -572,6 +572,7 @@ pub async fn edit_block_inner(
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is already soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn delete_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -838,6 +839,7 @@ pub async fn delete_block_inner(
 /// UPDATE. This is a documented, permanent exception (Stage 3) — leave the
 /// combined cascade as-is.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn delete_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1142,6 +1144,7 @@ pub async fn delete_blocks_by_ids(
 ///
 /// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1299,6 +1302,7 @@ pub async fn move_blocks_to_space(
 /// - [`AppError::NotFound`] — block does not exist
 /// - [`AppError::InvalidOperation`] — block is not deleted, or `deleted_at` timestamp mismatch
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn restore_block_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1835,6 +1839,7 @@ pub async fn purge_block_inner(
 /// across pool connections, so a pure structural heuristic could not be made
 /// collision-safe; for op-backed deletes the op id is authoritative.
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn restore_all_deleted_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2203,6 +2208,7 @@ pub async fn purge_all_deleted_inner(
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
 /// - [`AppError::InvalidOperation`] — an input id names a block that is not soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2520,6 +2526,7 @@ pub async fn restore_blocks_by_ids_inner(
 /// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
 /// - [`AppError::InvalidOperation`] — an input id names a block that is not soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn purge_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,

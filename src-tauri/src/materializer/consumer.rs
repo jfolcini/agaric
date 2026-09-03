@@ -508,6 +508,7 @@ async fn process_foreground_segment(
 // label accessor and adding one is out of this change's scope) — the parent
 // `run_foreground` span plus this span's timing are the debugging hook.
 #[instrument(name = "materializer.process_fg_task", skip_all)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(super) async fn process_single_foreground_task(
     pool: &SqlitePool,
     task: MaterializeTask,
@@ -685,6 +686,7 @@ pub(super) async fn process_single_foreground_task(
     skip_all,
     fields(queue = "background")
 )]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(super) async fn run_background(
     pool: SqlitePool,
     mut rx: mpsc::Receiver<MaterializeTask>,

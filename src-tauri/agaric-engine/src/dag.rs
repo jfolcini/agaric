@@ -408,6 +408,7 @@ pub async fn ingest_replicated_record(
 /// The two callers differ ONLY in `profile` (parent-gap policy +
 /// `is_replicated` stamp) and `origin`; every integrity check below is
 /// identical so the two ingest paths cannot drift.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn ingest_remote_record(
     pool: &SqlitePool,
     record: &OpRecord,

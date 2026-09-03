@@ -187,6 +187,7 @@ async fn reverse_move_preflight(
 /// and `batched_move_undo_group_redo_undo_roundtrip_engine_2274`.) The
 /// single-op call site (`apply_reverse_in_tx`) passes an empty set — the
 /// self-exclusion below is unconditional.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn reverse_move_block(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,
@@ -787,6 +788,7 @@ async fn require_reverse_attachment_bytes(
 /// (#3706 — see [`require_reverse_attachment_bytes`]). Pass
 /// `materializer.app_data_dir().as_deref()`; `None` skips the check, which is
 /// only reachable in a `Materializer` built without a vault root.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_reverse_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,
@@ -1378,6 +1380,7 @@ pub async fn revert_ops_inner(
 ///
 /// Returns `(results, non_reversible_skipped)`. The skip count is always 0
 /// when `skip_non_reversible` is `false` (such a batch errors out instead).
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn revert_ops_in_tx(
     tx: &mut CommandTx,
     pool: &SqlitePool,
@@ -1753,6 +1756,7 @@ async fn revert_ops_in_tx(
 /// timestamp is immutable, so it is not part of the membership decision and
 /// cannot be affected by a concurrent write.
 #[instrument(skip_all, fields(page_id, target_seq), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn restore_page_to_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -1946,6 +1950,7 @@ pub async fn restore_page_to_op_inner(
 /// Queries the page's op history (using recursive CTE), applies OFFSET to
 /// skip `undo_depth` ops, then computes and applies the reverse.
 #[instrument(skip_all, fields(page_id, undo_depth), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn undo_page_op_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2551,6 +2556,7 @@ pub async fn find_undo_group_inner(
 /// passes to `find_undo_group`. An empty group (seed op doesn't exist / page
 /// has no undoable ops) returns `Ok(vec![])` after releasing the write lock.
 #[instrument(skip_all, fields(page_id, depth, window_ms), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn undo_page_group_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -2836,6 +2842,7 @@ pub async fn undo_op_inner(
 /// ride the partial `idx_op_log_reverses` index. `ops` is caller-bounded
 /// by `MAX_REVERT_OPS` and deduplicated, so the missing-ref check is a
 /// straight count comparison resolved to a per-ref `NotFound`.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn verify_undo_targets_in_tx(tx: &mut CommandTx, ops: &[OpRef]) -> Result<(), AppError> {
     let refs_json = serde_json::to_string(
         &ops.iter()

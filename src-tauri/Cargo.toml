@@ -73,6 +73,11 @@ unsafe_code = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
 [lints.clippy]
+# 70-code-line function ceiling (AGENTS.md "Patterns caught in review" item 6);
+# the threshold is `too-many-lines-threshold` in clippy.toml. Existing violators
+# carry `#[expect]`, which fails once the function is split, so the count only
+# goes down (#4639).
+too_many_lines = "warn"
 cast_possible_truncation = "warn"
 cast_sign_loss = "warn"
 cast_possible_wrap = "warn"

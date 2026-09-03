@@ -132,6 +132,7 @@ pub async fn list_page_links_inner_split(
 /// `cap` so the over-cap / truncation behaviour is exercised without
 /// seeding 20K+ rows.
 #[instrument(skip(write_pool, read_pool, tag_ids), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn list_page_links_inner_split_with_cap(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,

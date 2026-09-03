@@ -34,6 +34,7 @@ use agaric_store::op_log::append_local_op_in_tx;
 /// merge or `save_all_engines`. Background cache rebuilds (tags, pages,
 /// FTS, block_links) are still handled separately by
 /// `refresh_caches_for_recovered_drafts`.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(super) async fn recover_single_draft(
     pool: &SqlitePool,
     device_id: &str,

@@ -82,6 +82,7 @@ const POST_FILTER_MAX_WINDOWS: usize = 10;
 /// [`search_fts`]: super::cursor::search_fts
 /// [`fts_fetch_rows`]: super::fetch::fts_fetch_rows
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(in crate::fts) async fn fts_fetch_post_filtered_page<F>(
     pool: &SqlitePool,
     query: &str,

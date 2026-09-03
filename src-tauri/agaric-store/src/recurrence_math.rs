@@ -476,6 +476,7 @@ pub fn validate_repeat_rule_shape(rule: &str) -> Result<(), RepeatRuleProblem> {
 // shape — both callsites pass every field. The shared-helper contract
 // is meant to be the loud signature, not a hidden struct.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn project_block_dates<F>(
     due_date: Option<&str>,
     scheduled_date: Option<&str>,

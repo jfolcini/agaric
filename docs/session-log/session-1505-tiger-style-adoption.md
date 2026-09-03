@@ -25,6 +25,21 @@ a data-loss fix would land. Item 6; sweep and the eventual lint in #4639.
 An earlier brace-counting script reported 953 lines for the recovery
 function; that figure counted comments and was wrong.
 
+The lint landed in the same PR at the maintainer's request, as a ratchet
+rather than after the sweep: `too_many_lines = "warn"` in every member's
+`[lints.clippy]`, the threshold in `src-tauri/clippy.toml`, and each of the 142
+violators carrying `#[expect(clippy::too_many_lines)]`. Under `-D warnings`
+an `expect` that stops firing is an error, so a split cannot leave a stale
+marker and a new function over the line fails outright. Test code is exempt:
+`#![cfg_attr(test, allow(...))]` at the ten crate roots, `#![allow(...)]` at
+the twelve integration-test and bench roots and the four test-util harness
+modules, plus the one test-only offer path in `snapshot_transfer.rs` that the
+`test-util` feature compiles into the library build. Falsified against a copy
+of `recurrence_math.rs` with the workspace build (a single-crate build does
+not compile on its own, tokio features unify only at workspace level):
+removing one marker fails clippy on that function (75/70); adding one to
+`days_in_month` fails `unfulfilled_lint_expectations`; restored, `cmp` clean.
+
 **Release overflow checks.** `overflow-checks = true` in `[profile.release]`.
 Tests always ran with checks on, so the flag only changes shipped builds, and
 with `panic = "abort"` a wrap becomes an abort. No integer-overflow defect

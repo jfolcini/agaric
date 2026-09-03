@@ -34,6 +34,8 @@
 //! intermittently, in ones that do not. [`QuicPair`] holds both endpoints for its own
 //! lifetime, so the connection outlives the fixture exactly as long as the test holds
 //! the pair.
+// Test harness: exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 

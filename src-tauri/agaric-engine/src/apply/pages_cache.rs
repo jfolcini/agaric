@@ -303,6 +303,7 @@ async fn collect_cohort_affected_pages(
 /// recompute runs inline, unchanged — and because the recompute is a pure
 /// function of committed `blocks`/`block_links` state, deferring it produces
 /// identical final counts.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn maintain_pages_cache_counts_after_op(
     conn: &mut sqlx::SqliteConnection,
     pre_state: &PreOpState,
