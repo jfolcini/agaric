@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use super::*;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;

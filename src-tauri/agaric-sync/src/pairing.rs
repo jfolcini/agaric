@@ -165,8 +165,8 @@ const PAIRING_PROOF_DOMAIN: &[u8] = b"agaric-pairing-proof-v1";
 /// [`crate::sync_protocol::SyncMessage::HeadExchange::pairing_proof`] (#855).
 ///
 /// Both devices independently store this value in their pending-pairing marker
-/// when they arm (`crate::commands::sync_cmds::start_pairing_armed_inner`) or
-/// confirm (`crate::commands::sync_cmds::confirm_pairing_inner`) a pairing;
+/// when they arm ([`start_pairing_armed`]) or confirm ([`confirm_pairing`]) a
+/// pairing;
 /// the initiator echoes it in its `HeadExchange`, and the responder compares it
 /// to its own stored value before it TOFU-pins an unpaired device
 /// ([`crate::sync_daemon::server`]).
@@ -385,9 +385,7 @@ pub async fn confirm_pairing(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
     scheduler: &SyncScheduler,
-    _device_id: &str,
     passphrase: String,
-    _remote_device_id: String,
 ) -> Result<(), AppError> {
     // #3463: there is deliberately NO "a local pairing session must exist" guard
     // here, and removing it is part of the fix rather than a relaxation of it.

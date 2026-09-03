@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use super::*;
 use agaric_core::ulid::BlockId;
 use agaric_engine::materializer::Materializer;

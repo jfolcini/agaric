@@ -1,17 +1,13 @@
-#![allow(unused_imports)]
 use super::snapshot_transfer::*;
+use crate::snapshot::apply_snapshot;
 use crate::snapshot::{
     BlockSnapshot, SCHEMA_VERSION, SnapshotData, SnapshotTables, create_snapshot, encode_snapshot,
     get_latest_snapshot,
 };
-use crate::snapshot::{apply_snapshot, get_latest_snapshot_with_frontier};
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::RecordingEventSink;
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
-use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
 use crate::sync_protocol::{DeviceHead, SyncMessage};
-use crate::transport::bulk::BULK_COPY_BYTES;
 use crate::transport::bulk::{recv_bulk, send_bulk};
 use crate::transport::session::{recv_sync_message, send_sync_message};
 use crate::transport::test_support::quic_pair;
@@ -25,9 +21,7 @@ use sqlx::SqlitePool;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use tempfile::TempDir;
-use tokio::io::AsyncWriteExt;
 
 const LOCAL_DEV: &str = "01HZ00000000000000000LOCAL0";
 const REMOTE_DEV: &str = "01HZ0000000000000000REMOTE0";

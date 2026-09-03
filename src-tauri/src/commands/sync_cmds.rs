@@ -158,19 +158,11 @@ pub async fn confirm_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
     scheduler: &SyncScheduler,
-    device_id: &str,
+    _device_id: &str,
     passphrase: String,
-    remote_device_id: String,
+    _remote_device_id: String,
 ) -> Result<(), AppError> {
-    agaric_sync::pairing::confirm_pairing(
-        pool,
-        pairing_state,
-        scheduler,
-        device_id,
-        passphrase,
-        remote_device_id,
-    )
-    .await
+    agaric_sync::pairing::confirm_pairing(pool, pairing_state, scheduler, passphrase).await
 }
 
 /// Cancel an in-progress pairing session.

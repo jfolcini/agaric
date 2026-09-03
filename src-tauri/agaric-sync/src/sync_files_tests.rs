@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::{RecordingEventSink, SyncEvent, SyncEventSink};
 use crate::sync_files::*;
@@ -12,7 +11,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tempfile::TempDir;
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 // ── find_missing_attachments ─────────────────────────────────────────
 

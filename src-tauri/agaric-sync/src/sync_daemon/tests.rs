@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use super::*;
 use crate::mdns;
 use crate::sync_events::RecordingEventSink;
@@ -2402,16 +2401,9 @@ async fn pairing_proof_from_two_device_command_flow_is_admitted_3463() {
     // The joiner's dialog mints a competing passphrase of its own (#3463's root
     // cause), but the user types the host's.
     crate::pairing::start_pairing(&joiner_state, "JOINING_DEV").unwrap();
-    crate::pairing::confirm_pairing(
-        &joiner_pool,
-        &joiner_state,
-        &joiner_sched,
-        "JOINING_DEV",
-        host_passphrase,
-        String::new(),
-    )
-    .await
-    .expect("#3463: the joiner accepts the host's passphrase");
+    crate::pairing::confirm_pairing(&joiner_pool, &joiner_state, &joiner_sched, host_passphrase)
+        .await
+        .expect("#3463: the joiner accepts the host's passphrase");
 
     // What the initiator puts on the wire (`session_state_machine::start`).
     let offered_proof = peer_refs::get_pending_pairing_proof(&joiner_pool)
@@ -10556,21 +10548,14 @@ async fn drive_two_device_pairing_windowed_3507(
     } else {
         format!("{host_passphrase} typo")
     };
-    crate::pairing::confirm_pairing(
-        &joiner_pool,
-        &joiner_slot,
-        &joiner_sched,
-        JOINER_DEV_3507,
-        typed,
-        String::new(),
-    )
-    .await
-    .expect(
-        "#3463/#3469: confirming is a purely local act — it arms a marker with the \
+    crate::pairing::confirm_pairing(&joiner_pool, &joiner_slot, &joiner_sched, typed)
+        .await
+        .expect(
+            "#3463/#3469: confirming is a purely local act — it arms a marker with the \
          proof of whatever was typed and returns Ok even for a mistype. It must NOT \
          compare against this device's own session, and its Ok must never be read \
          as 'paired'",
-    );
+        );
 
     // ── Divergent local edits, through the real foreground pipeline ────
     //
