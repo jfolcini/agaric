@@ -85,12 +85,6 @@
 //   node scripts/file-scheduled-failures.mjs \
 //     --needs-json-file <path to a file holding `${{ toJSON(needs) }}`> \
 //     [--profile deep-checks|workflow-watchdog]   (default: deep-checks)
-//     [--skipped-ok]                (a `skipped` lane is neither failing NOR
-//                                    recovered: it is carried over from the
-//                                    tracked set untouched. Only correct off
-//                                    the `schedule` event, where the
-//                                    schedule-only filer really is skipped.
-//                                    See `carriedOverJobs` — #3960)
 //     [--repo owner/repo]           (default: $GITHUB_REPOSITORY)
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
@@ -270,10 +264,8 @@ export function parseNeeds(text) {
 }
 
 /** True when a lane's job result means "this lane did not do its job". */
-export function isFailing(result, { skippedOk = false } = {}) {
-  if (result === 'success') return false
-  if (result === 'skipped' && skippedOk) return false
-  return true
+export function isFailing(result) {
+  return result !== 'success'
 }
 
 /**
@@ -285,38 +277,8 @@ export function isFailing(result, { skippedOk = false } = {}) {
  * say) has not recovered, and must not re-notify as if it were new. The
  * current result is still rendered — outside the block, in the status table.
  */
-export function failingJobs(lanes, options) {
-  return lanes.filter((l) => isFailing(l.result, options)).map((l) => l.job)
-}
-
-/**
- * #3960 — the lanes a `--skipped-ok` run must CARRY OVER rather than judge.
- *
- * `--skipped-ok` answers "did this lane fail?" with "it never ran, so no".
- * The identical fact answers "did this lane recover?" with "it never ran, so
- * no" — and only the first half used to be encoded. `isFailing` dropped an
- * exempted-`skipped` lane out of `current`, `diffLanes` then read its absence
- * from `current` as a RECOVERY, and `decideAction` closed the issue. So a
- * `workflow_dispatch` reported `file-fuzz-findings` (the one reporter
- * dependency still gated `github.event_name == 'schedule'`, hence `skipped`
- * off the cron) recovered ON THE STRENGTH OF IT NOT HAVING BEEN EXECUTED,
- * and cleared it from the tracked set — reading green until the next Monday.
- *
- * That was harmless only while the dispatch ALSO passed `--dry-run` and wrote
- * nothing; #3716 removed the `--dry-run` and left `--skipped-ok` standing,
- * which is what made the latent half live.
- *
- * So: an exempted-`skipped` lane is neither failing nor recovered. It is
- * carried over from the tracked set unchanged — but only if it was ALREADY
- * tracked (see `diffLanes`): "it did not run" is no more evidence that a lane
- * is broken than that it is fixed, so this must never ADD a lane to the set.
- *
- * Mirrors `isFailing`'s exemption exactly — one result, `skipped`, and only
- * under `skippedOk`. If that exemption ever grows, both must grow together.
- */
-export function carriedOverJobs(lanes, { skippedOk = false } = {}) {
-  if (!skippedOk) return []
-  return lanes.filter((l) => l.result === 'skipped').map((l) => l.job)
+export function failingJobs(lanes) {
+  return lanes.filter((l) => isFailing(l.result)).map((l) => l.job)
 }
 
 // ---------------------------------------------------------------------------
@@ -345,13 +307,12 @@ function markerBlockLines(body) {
  *
  * #4400 widened each line from a bare job id to `job|count|runId` so the
  * consecutive-failure counter survives a re-read, but every OTHER consumer of
- * this function — `diffLanes`, `carriedOverJobs`'s caller, the close path,
- * and a couple dozen pre-#4400 callers — wants exactly the job id and
- * nothing else. Splitting on `|` and taking the first field reads both the
- * new format and a pre-#4400 bare line identically (a bare line has no `|`,
- * so splitting on it is a no-op), which is what keeps this function's
- * contract — and everything built on top of it — unchanged by the format
- * change.
+ * this function — `diffLanes`, the close path, and a couple dozen pre-#4400
+ * callers — wants exactly the job id and nothing else. Splitting on `|` and
+ * taking the first field reads both the new format and a pre-#4400 bare line
+ * identically (a bare line has no `|`, so splitting on it is a no-op), which
+ * is what keeps this function's contract — and everything built on top of it
+ * — unchanged by the format change.
  */
 export function parseKnownLanes(body) {
   return new Set(markerBlockLines(body).map((l) => l.split('|')[0]))
@@ -438,25 +399,15 @@ export function parseKnownStreaks(body) {
   return map
 }
 
-/**
- * Diffs the currently-failing set against the tracked one.
- *
- * `carryOver` (from `carriedOverJobs`) names lanes whose result says nothing
- * either way — they did not run. They are subtracted from `resolvedOnes` and
- * added back into `all`, so the tracked set survives a run that could not
- * observe them. Only lanes ALREADY in `known` are carried: a skipped lane
- * nobody was tracking stays untracked.
- */
-export function diffLanes(current, known, { carryOver = [] } = {}) {
+/** Diffs the currently-failing set against the tracked one. */
+export function diffLanes(current, known) {
   const currentSet = new Set(current)
-  const carried = new Set(carryOver.filter((j) => known.has(j) && !currentSet.has(j)))
   const newOnes = [...currentSet].filter((j) => !known.has(j)).toSorted()
-  const resolvedOnes = [...known].filter((j) => !currentSet.has(j) && !carried.has(j)).toSorted()
+  const resolvedOnes = [...known].filter((j) => !currentSet.has(j)).toSorted()
   return {
     newOnes,
     resolvedOnes,
-    all: [...new Set([...currentSet, ...carried])].toSorted(),
-    carriedOver: [...carried].toSorted(),
+    all: [...currentSet].toSorted(),
   }
 }
 
@@ -792,19 +743,8 @@ export function buildStatusTable(lanes, profile = PROFILES[DEFAULT_PROFILE]) {
   return lines
 }
 
-/**
- * `carriedOver` (#3960) — the tracked ${units} this run could NOT observe.
- *
- * They belong in the marker block (they are still tracked; "it never ran" is
- * not evidence of recovery) but NOT in a sentence that calls them failing:
- * the status table two lines below reports them `skipped`, so a body that
- * listed them under "currently failing" contradicted itself on one screen and
- * asserted a failure nobody observed. The tracked set is unchanged by this —
- * only the prose around it.
- */
 export function buildIssueBody({
   all,
-  carriedOver = [],
   lanes,
   runUrl,
   profile = PROFILES[DEFAULT_PROFILE],
@@ -815,9 +755,6 @@ export function buildIssueBody({
   // thing.
   streaks = new Map(),
 }) {
-  const carried = all.filter((j) => carriedOver.includes(j))
-  const observedFailing = all.filter((j) => !carriedOver.includes(j))
-  const list = (jobs) => jobs.map((j) => `\`${j}\``).join(', ')
   // Lanes with more than one consecutive OBSERVED failure recorded — worth a
   // line even below the escalation threshold, since "how far along" is
   // exactly the fact #3388 had no way to show a reader (its body never
@@ -875,16 +812,6 @@ export function buildIssueBody({
   )
   out.push('')
   out.push(`### Tracked failing ${profile.units} (${all.length})`)
-  if (carried.length > 0) {
-    out.push('')
-    out.push(
-      `Failing as of this run: ${observedFailing.length > 0 ? list(observedFailing) : `_none_`}.`,
-    )
-    out.push('')
-    out.push(
-      `Carried over — did NOT run this run (${list(carried)}), so neither failing nor recovered. A ${profile.unit} that never executed stays tracked until a run can actually observe it; the status table below shows what it really did.`,
-    )
-  }
   if (streaking.length > 0) {
     out.push('')
     out.push(
@@ -967,24 +894,13 @@ export function buildIssueBody({
   return out.join('\n')
 }
 
-/**
- * The line a no-op run prints — the run log's version of the issue body.
- *
- * `all` includes the carried-over lanes, which is right for the TRACKED set
- * and wrong for the word "failing": those lanes only skipped. The body stopped
- * claiming that (see `buildIssueBody`); this is the same claim in the summary,
- * and it gets the same split rather than leaving the `carried over (…)` line
- * printed above to soften a sentence that is still wrong.
- */
-export function buildNoopSummary({ all, carriedOver = [], profile = PROFILES[DEFAULT_PROFILE] }) {
+/** The line a no-op run prints — the run log's version of the issue body. */
+export function buildNoopSummary({ all, profile = PROFILES[DEFAULT_PROFILE] }) {
   if (all.length === 0) {
     return `all ${profile.headline}s healthy — no-op (nothing open that tracks a failing ${profile.unit})`
   }
-  const observedFailing = all.filter((j) => !carriedOver.includes(j))
-  const stillFailing = observedFailing.length > 0 ? observedFailing.join(', ') : 'none'
-  const carriedNote =
-    carriedOver.length > 0 ? `; carried over, did not run: ${carriedOver.join(', ')}` : ''
-  return `no newly-failing ${profile.unit} — no-op (still failing: ${stillFailing}${carriedNote}; tracking issue left untouched)`
+  const stillFailing = all.join(', ')
+  return `no newly-failing ${profile.unit} — no-op (still failing: ${stillFailing}; tracking issue left untouched)`
 }
 
 export function buildFailureComment({
@@ -1115,18 +1031,12 @@ function buildCommentFor(
 }
 
 /**
- * Two independent, optional run-log lines: which lanes only SKIPPED this run
- * (#3960) and which lanes just crossed their escalation threshold (#4400).
- * Neither depends on the other, and folding them into one function (instead
- * of two `if` blocks inline in `main()`) is purely to keep `main()` itself
- * under the repo's cyclomatic-complexity lint budget.
+ * The optional run-log lines about escalation (#4400): which lanes just
+ * crossed their threshold, and which crossings were deferred. Kept out of
+ * `main()` purely to keep it under the repo's cyclomatic-complexity lint
+ * budget.
  */
-function logCarriedOverAndEscalated({ carriedOver, escalated, deferred = [], streaks, profile }) {
-  if (carriedOver.length > 0) {
-    console.log(
-      `carried over (${profile.unit}s that only SKIPPED — neither failing nor recovered, so they stay tracked): ${carriedOver.join(', ')}`,
-    )
-  }
+function logEscalated({ escalated, deferred = [], streaks, profile }) {
   if (escalated.length > 0) {
     console.log(
       `escalating (#4400 — Nth consecutive OBSERVED failure): ${escalated
@@ -1159,7 +1069,7 @@ function gh(args) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { dryRun: false, skippedOk: false }
+  const args = { dryRun: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     switch (a) {
@@ -1169,10 +1079,6 @@ function parseArgs(argv) {
       }
       case '--profile': {
         args.profile = argv[++i]
-        break
-      }
-      case '--skipped-ok': {
-        args.skippedOk = true
         break
       }
       case '--repo': {
@@ -1224,8 +1130,7 @@ export function main(argv = process.argv.slice(2)) {
     )
   }
   const lanes = parseNeeds(readFileSync(args.needsJsonFile, 'utf8'))
-  const current = failingJobs(lanes, { skippedOk: args.skippedOk })
-  const carryOver = carriedOverJobs(lanes, { skippedOk: args.skippedOk })
+  const current = failingJobs(lanes)
 
   console.log(
     `${profile.headline}s: ${lanes.length} total, ${current.length} failing${
@@ -1249,14 +1154,11 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   const known = parseKnownLanes(existingIssue?.body)
-  const { newOnes, resolvedOnes, all, carriedOver } = diffLanes(current, known, { carryOver })
-  // #4400 — the consecutive-observed-failure counter. Fed `current`, not
-  // `all`: a carried-over (skipped) lane must not advance, and it is already
-  // excluded from `current` by `failingJobs`/`isFailing`, so it is left
-  // exactly as `known` had it (see `advanceStreaks`'s `streaks = new
-  // Map(known)` seed). `fallbackRunId` only matters for a caller that never
-  // supplies its own `runId` per lane (deep-checks) — see the function's own
-  // doc comment for why that is safe.
+  const { newOnes, resolvedOnes, all } = diffLanes(current, known)
+  // #4400 — the consecutive-observed-failure counter. Fed this run's observed
+  // failing set; `fallbackRunId` only matters for a caller that never supplies
+  // its own `runId` per lane (deep-checks) — see the function's own doc
+  // comment for why that is safe.
   const laneById = new Map(lanes.map((l) => [l.job, l]))
   const knownStreaks = parseKnownStreaks(existingIssue?.body)
   const { streaks, advanced, escalated } = advanceStreaks({
@@ -1273,14 +1175,6 @@ export function main(argv = process.argv.slice(2)) {
     escalatedOnes: escalated,
     advancedOnes: advanced,
   })
-  // #3987 — `all` is the TRACKED set, which includes lanes that only
-  // SKIPPED and were carried over (see `buildIssueBody`/`buildNoopSummary`
-  // above, #3960). A sentence that calls `all.length` "still failing"
-  // therefore claims a failure nobody observed for those lanes too; the two
-  // run-log streams below made that claim after the issue body itself
-  // stopped making it. `observedFailing` is the same split, used here for
-  // the same reason.
-  const observedFailing = all.filter((j) => !carriedOver.includes(j))
 
   // #4400 — a crossing that this run's verdict will not announce is DEFERRED,
   // not discarded: see `rollBackSuppressedEscalations`. `'notify'` is the only
@@ -1290,8 +1184,7 @@ export function main(argv = process.argv.slice(2)) {
   const deferred = action === 'notify' ? escalated : []
   const persistedStreaks = rollBackSuppressedEscalations(streaks, knownStreaks, deferred)
 
-  logCarriedOverAndEscalated({
-    carriedOver,
+  logEscalated({
     escalated: deferred.length > 0 ? [] : escalated,
     deferred,
     streaks,
@@ -1299,13 +1192,12 @@ export function main(argv = process.argv.slice(2)) {
   })
 
   if (action === 'noop') {
-    console.log(buildNoopSummary({ all, carriedOver, profile }))
+    console.log(buildNoopSummary({ all, profile }))
     return
   }
 
   const body = buildIssueBody({
     all,
-    carriedOver,
     lanes,
     runUrl,
     profile,
@@ -1335,7 +1227,7 @@ export function main(argv = process.argv.slice(2)) {
         : `issue #${existingIssue.number} (${existingIssue.state})`
     console.log(`[dry-run] action=${action} target=${where}`)
     console.log(
-      `[dry-run] newly failing: ${newOnes.length}, recovered: ${resolvedOnes.length}, still failing: ${observedFailing.length}`,
+      `[dry-run] newly failing: ${newOnes.length}, recovered: ${resolvedOnes.length}, still failing: ${all.length}`,
     )
     console.log('[dry-run] --- issue body ---')
     console.log(body)
@@ -1403,7 +1295,7 @@ export function main(argv = process.argv.slice(2)) {
     existingIssue,
     newOnes,
     resolvedOnes,
-    observedFailing,
+    all,
     escalated,
     profile,
   })
@@ -1429,7 +1321,7 @@ function writeNotifyOrSync({
   existingIssue,
   newOnes,
   resolvedOnes,
-  observedFailing,
+  all,
   escalated,
   profile,
 }) {
@@ -1462,7 +1354,7 @@ function writeNotifyOrSync({
   })
   if (!isNotifyClass) {
     console.log(
-      `synced tracking issue #${number} body (${resolvedOnes.length} recovered, ${observedFailing.length} still failing; no comment — a partial recovery or an unescalated repeat is not news)`,
+      `synced tracking issue #${number} body (${resolvedOnes.length} recovered, ${all.length} still failing; no comment — a partial recovery or an unescalated repeat is not news)`,
     )
     return
   }

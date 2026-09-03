@@ -2806,7 +2806,7 @@ jobs:
   # `diffLanes` are idempotent), so a dispatch that finds nothing new no-ops
   # exactly like an unchanged scheduled run (#3716). No lane is gated on the
   # event any more, so a `skipped` lane is a real failure on every
-  # authoritative run and `--skipped-ok` is not passed.
+  # authoritative run.
   # ---------------------------------------------------------------------------
   report-scheduled-failures:
     needs:

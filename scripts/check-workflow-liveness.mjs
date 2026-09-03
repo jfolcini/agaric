@@ -479,9 +479,8 @@ export function classifyWorkflow({
  * WEEKLY, so "the same completed run observed again" and "a genuinely new
  * completed run" must be distinguishable from something sturdier than "the
  * poll happened" — a null here is the explicit "no run to point at", which
- * that counter must hold on rather than either advance or reset from, exactly
- * like `--skipped-ok`'s `carriedOverJobs` treats "it did not run" as neither a
- * failure nor a recovery.
+ * that counter must hold on rather than either advance or reset from: "it did
+ * not run" is neither a failure nor a recovery.
  *
  * #4456 — `buildResults` deliberately does NOT forward this function's return
  * value at all when the verdict is `stale`, even though this function would

@@ -578,6 +578,20 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  *     Removing the gate without adding the dry run trades one bug for a worse
  *     one, so the two are checked as a pair.
  */
+/**
+ * The `run:` block of the filer's own step — the only lines where a
+ * `--dry-run` selected from `CRON_EQUIVALENT` counts. The sentinel also
+ * appears in the job's prose comments, and a comment forty lines up is not
+ * what keeps a dispatch from writing.
+ */
+function filerRunLines(lines) {
+  const start = lines.findIndex((l) => /^\s*run:\s*\|/.test(l))
+  if (start < 0) return []
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => /^\s*-\s+(name|uses):/.test(l))
+  return end < 0 ? rest : rest.slice(0, end)
+}
+
 export function checkFilerPlumbing({ lines, push }) {
   if (!lines) {
     push(
@@ -593,13 +607,14 @@ export function checkFilerPlumbing({ lines, push }) {
       'filer-schedule-gated',
       `the \`${FILER_JOB_ID}\` job is gated on \`github.event_name == 'schedule'\` (${jobIf.trim()}), so a \`workflow_dispatch\` skips it entirely. This lane has no failure mode of its own — it goes red only when \`${JOB_ID}\` fails to hand it a missed.txt — so gating it this way means a fix to \`${JOB_ID}\` cannot be verified end-to-end until the next weekly cron (#3394). Keep the job reachable and put the schedule-only behaviour on the step as \`--dry-run\` instead.`,
     )
-  } else if (
-    !(lines.some((l) => l.includes('--dry-run')) && lines.some((l) => /CRON_EQUIVALENT/.test(l)))
-  ) {
-    push(
-      'filer-dispatch-writes',
-      `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from \`$CRON_EQUIVALENT\`, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-on-schedule go together; this has one without the other.`,
-    )
+  } else {
+    const run = filerRunLines(lines)
+    if (!(run.some((l) => l.includes('--dry-run')) && run.some((l) => /CRON_EQUIVALENT/.test(l)))) {
+      push(
+        'filer-dispatch-writes',
+        `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from \`$CRON_EQUIVALENT\`, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-on-schedule go together; this has one without the other.`,
+      )
+    }
   }
 
   const downloads = []
@@ -1023,6 +1038,16 @@ function selfTestFilerPlumbing(ok, fail) {
   if (writes.includes('filer-dispatch-writes'))
     ok('an ungated filer job that would write on a dispatch is flagged')
   else fail('dispatch-writing filer job is flagged', JSON.stringify(writes))
+
+  // The sentinel in a prose comment above the step, with the `elif` itself
+  // deleted, is the #4645 review's hole: only the run block counts.
+  const commentOnly = kinds([
+    '        # dry-runs unless `CRON_EQUIVALENT` holds; a --dry-run still reads.',
+    ...job({ read: 'mutants-artifact/missed.txt', dryRun: false }),
+  ])
+  if (commentOnly.includes('filer-dispatch-writes'))
+    ok('a sentinel that survives only in a comment above the run block is flagged')
+  else fail('comment-only sentinel is flagged', JSON.stringify(commentOnly))
 }
 
 function runSelfTest() {
