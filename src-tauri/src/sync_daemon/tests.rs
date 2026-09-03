@@ -4225,9 +4225,9 @@ async fn daemon_branch_b_ignores_discovered_unpaired_peer_outside_pairing_window
 /// notification.
 ///
 /// Bounded on both sides, and both bounds carry meaning. It must be *large*
-/// enough to absorb a loaded runner: the wake itself is a `Notify` permit plus
-/// one `should_start_active` query against a temp-file SQLite DB, observed in
-/// the low milliseconds. It must be *far below* `SyncDaemon::DORMANT_POLL_INTERVAL`
+/// enough to absorb a loaded runner: the wake itself is a watch-channel change
+/// notification plus one `should_start_active` query against a temp-file SQLite
+/// DB, observed in the low milliseconds. It must be *far below* `SyncDaemon::DORMANT_POLL_INTERVAL`
 /// (30 s) or a daemon that only ever transitioned on the periodic poll would
 /// also pass, and the notify path — the one `confirm_pairing` depends on, and
 /// the one #3852 suspected on Android — would go untested. 5 s is ~1000× the
