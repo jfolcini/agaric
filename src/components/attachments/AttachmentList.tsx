@@ -143,7 +143,6 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                         if (e.key === 'Enter') {
                           const trimmed = editValue.trim()
                           if (trimmed && trimmed !== attachment.filename) {
-                            // Toasts + logs its own failure; never rejects.
                             void handleRenameAttachment(attachment.id, trimmed)
                           }
                           setEditingId(null)

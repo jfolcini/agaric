@@ -355,7 +355,6 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
             action: {
               label: t('action.undo'),
               onClick: () => {
-                // Toasts + logs its own failure; never rejects.
                 void handleUndoRestore(blockId, captured, isPage, spaceId)
               },
             },

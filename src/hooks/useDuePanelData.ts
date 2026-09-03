@@ -315,7 +315,6 @@ export function useDuePanelData({
       }
     }
 
-    // Body catches and logs every failure, so this cannot reject.
     void fetchOverdue()
     return () => {
       stale = true
@@ -396,7 +395,6 @@ export function useDuePanelData({
       }
     }
 
-    // Body catches and logs every failure, so this cannot reject.
     void fetchUpcoming()
     return () => {
       stale = true
@@ -514,7 +512,6 @@ export function useDuePanelData({
         if (!cancelled) setLoading(false)
       }
     }
-    // Body catches and logs every failure, so this cannot reject.
     void doFetch()
     return () => {
       cancelled = true

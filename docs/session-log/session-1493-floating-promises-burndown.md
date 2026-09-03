@@ -12,11 +12,14 @@ each gets a different fix:
 
 1. **The callee already reports it** — it toasts through `notify`, or calls `reportIpcError`, or its whole body
    is inside `try`/`catch`. There is nothing to add, and the fix is `void` plus one line naming the reporter, so
-   the next reader does not re-derive it. 59 sites.
+   the next reader does not re-derive it. 59 sites. A line that names no reporter — "Body catches and logs every
+   failure, so this cannot reject." — only restates `void`, so those seven carry the `void` and no comment.
 2. **The chain is already terminal, but the wrapper hands its callers a promise anyway** — one site:
    `use-block-dnd.ts:393` ends in a `.catch` that predates this diff, so no rejection ever went unhandled; what
    tripped the lint is that all four callers dropped the promise it returned. The fix is in the function — it
-   returns `void` now — not at the call sites.
+   returns `void` now — not at the call sites, and not the `void` operator on the chain itself: a chain ending in
+   `.catch(handler)` is already handled, as `PageBrowserBatchToolbar.tsx:190` and a dozen bare `.catch` statements
+   elsewhere rely on.
 3. **The promise cannot reject** — `i18n.init` with `options.resources` set: i18next 26.4.0's `dist/esm` settles
    its deferred only through `deferred.resolve(t)`; `deferred.reject` does not appear in the file. A `.catch`
    there is a branch no production change can reach, so `void` with the version-pinned reason is the honest fix.

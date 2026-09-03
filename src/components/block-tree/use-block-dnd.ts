@@ -393,16 +393,9 @@ export function useBlockDnD({
       // Terminal handler: the `.catch` below ends the chain, so callers have
       // nothing left to await or handle.
       const restoreFocusOnSuccess = (label: string, p: Promise<unknown>): void => {
-        void p
-          .then(() => setFocused(blockId))
-          .catch((err: unknown) => {
-            logger.warn(
-              'useBlockDnD',
-              `${label} failed after drag — focus cleared`,
-              { blockId },
-              err,
-            )
-          })
+        p.then(() => setFocused(blockId)).catch((err: unknown) => {
+          logger.warn('useBlockDnD', `${label} failed after drag — focus cleared`, { blockId }, err)
+        })
       }
 
       // #914 — multi-select drag. When the dragged block is one of >1 selection

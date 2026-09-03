@@ -178,7 +178,6 @@ export function useBlockLinkResolve(
         )
       }
     }
-    // Body catches and logs every failure, so this cannot reject.
     void resolveUncachedLinks()
     return () => {
       cancelled = true
