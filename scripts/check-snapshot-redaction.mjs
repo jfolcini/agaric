@@ -151,7 +151,8 @@ function derivationFailure(why) {
 }
 
 /**
- * `<member>/src` for every workspace member, relative to the repo root.
+ * `<member>/src` for every workspace member plus `src-tauri/tests`, relative
+ * to the repo root.
  *
  * @returns {string[]}
  */
@@ -186,6 +187,11 @@ function deriveRustSourceRoots() {
     }
     roots.push(rel)
   }
+  // #4499 phase 0d moved the app crate's suites into integration-test
+  // binaries under `src-tauri/tests/`; a fixture const declared there is as
+  // deliberate as one under `src/`, and a root shaped `<member>/src` cannot
+  // reach it.
+  if (fs.existsSync(path.join(ROOT, 'src-tauri/tests'))) roots.push('src-tauri/tests')
   return roots
 }
 

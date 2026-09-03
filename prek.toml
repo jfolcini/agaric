@@ -1384,10 +1384,11 @@ entry = "node scripts/check-snapshot-redaction.mjs"
 language = "system"
 pass_filenames = false
 # The `.rs` half of the trigger covers EVERY workspace member, not just the
-# app crate (#3465): the fixture allowlist is built from all of them, so a
-# fixture const added in `agaric-sync/src` changes this guard's verdict.
+# app crate (#3465), and the `src-tauri/tests` binaries (#4499): the fixture
+# allowlist is built from all of them, so a fixture const added in
+# `agaric-sync/src` changes this guard's verdict.
 # `Cargo.toml` is a trigger too — the member list is derived from it.
-files = "(\\.snap$|^src-tauri/(src|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs$|^src-tauri/Cargo\\.toml$)"
+files = "(\\.snap$|^src-tauri/(src|tests|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs$|^src-tauri/Cargo\\.toml$)"
 stages = ["pre-commit"]
 
 # Session-log numbering: the number must be free in the MERGE TARGET, not
