@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id, seq FROM op_log WHERE block_id = ? AND op_type = 'create_block' ORDER BY created_at ASC, device_id ASC, seq ASC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "1b364395801c09687d7c63b9ab93b7cfe2610d6535dbc21bb508dec165722643"
+}

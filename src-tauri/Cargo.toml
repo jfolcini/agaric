@@ -209,10 +209,6 @@ tauri-plugin-os = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# #2621 (agaric-sync inversion): async methods on the `ApplyHost` trait object
-# (`src/apply_host.rs`) that the sync layer holds instead of the concrete
-# `Materializer`. Standard async-fn-in-dyn-trait shim.
-async-trait = "0.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 # `thiserror` moved with `error.rs` into `agaric-core` (#2621); `agaric` no
 # longer uses it directly. `similar` likewise moved with `word_diff.rs`.
@@ -233,13 +229,12 @@ base64 = "0.23.0"
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 specta-typescript = "0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
-rustc-hash = "2.1.2"
 # `parking_lot` moved with `loro/registry.rs` into `agaric-engine` (#2621, wave
 # E1) — the `arc_lock` owned-guard sharding lives there now; the app crate no
 # longer references it directly.
 # `similar` moved with `word_diff.rs` into `agaric-core` (#2621).
-zstd = "0.13"
-ciborium = "0.2"
+# `zstd`, `ciborium` and `loro` moved with `recovery/` and the sync test
+# suites into `agaric-sync` (#3120).
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 # #3852 — `log`→`tracing` bridge. Several deps in the sync path (notably
@@ -321,23 +316,6 @@ dirs = { version = "6.0.0", default-features = false }
 # `.github/dependabot.yml` for the guard that stops that recurring.
 rmcp = { version = "3.1", features = ["client"] }
 
-# Phase 1 — Loro CRDT runtime. Hard dep as of Phase 3 day-9
-# (the `loro-shadow` feature gate retired); the engine is the only
-# materializer path.  Caret-1 mirrors what the (now-archived) spike
-# crate pinned (see git tag `pend-09/spike-archive` for
-# `crates/loro-spike/Cargo.toml`); the spike's format-stability finding
-# (kill criterion #4) is the basis for the 1.x pin.  Not part of any
-# coupled dep stack per AGENTS.md §"Coupled Dependency Updates".
-# HELD at 1.13.6 via Cargo.lock + a dependabot `ignore` (#3161). This caret
-# range ALLOWS 1.13.7 — deliberately not tightened to `=1.13.6`, because that
-# still resolves `loro-internal` 1.13.7 transitively, so the lockfile is the
-# real hold either way and a false sense of pinning here would be worse.
-# 1.13.7 makes `find_common_ancestor` quadratic in history at frontier
-# width > 1 (215x at 1000 rounds). Our regression test can no longer detect
-# it — #3187 narrowed it to width 1, dag.rs's fast path. Do not `cargo update`
-# loro without re-measuring at width 2.
-loro = "1.12"
-
 # `xxhash-rust` moved with `loro/engine/mod.rs` into `agaric-engine` (#2621,
 # wave E1) — `peer_id_from_device_id`'s deterministic `xxh3_64` hash lives
 # there now; the app crate no longer references it directly.
@@ -356,10 +334,10 @@ tauri = { version = "2", features = ["test"] }
 # constructors are available to this crate's ~510 test call sites (#2621).
 # Only enabled for test builds; the normal `[dependencies]` entry stays lean.
 agaric-core = { path = "agaric-core", version = "0.1.0", features = ["test-util"] }
-# Re-declare agaric-engine with `test-util` so loro's `reproject_call_spy`
-# counter is visible to the `materializer::handlers::import_scaling_tests`
-# reprojection assertions (#2621, wave E1). Only enabled for test builds; the
-# normal `[dependencies]` entry stays lean.
+# Re-declare agaric-engine with `test-util` so the four `materializer_app_tests`
+# modules reach the engine's handler seams and loro's `reproject_call_spy`
+# counter (#2621 wave E1, #4502). Only enabled for test builds; the normal
+# `[dependencies]` entry stays lean.
 agaric-engine = { path = "agaric-engine", version = "0.1.0", features = ["test-util"] }
 # #2621 Sync-D: re-declare agaric-sync with `test-util` so the app-hosted sync
 # tests can reach the cross-crate test helpers gated behind that feature

@@ -122,10 +122,6 @@ ALLOWLIST_GLOBS = [
     # The CommandTx wrapper's own `begin_immediate_logged` call lives here
     # (the primitive itself is now defined in agaric-store, see below).
     "src-tauri/src/db/**",
-    # The materializer task handlers — dispatching here would self-recurse.
-    "src-tauri/src/materializer/handlers/**",
-    # Startup recovery, before any user edit.
-    "src-tauri/src/recovery/draft_recovery.rs",
     # --- agaric-store — the write-tx primitive + derived-cache writers ------
     # `begin_immediate_logged` is DEFINED here now (#2621); the primitive and
     # its internal `begin_with("BEGIN IMMEDIATE")` live under db/.
@@ -143,10 +139,15 @@ ALLOWLIST_GLOBS = [
     # dir is architecturally raw-tx-legitimate. (draft.rs is NOT allowlisted —
     # its one site carries a per-line marker; see below.)
     "src-tauri/agaric-engine/src/apply/**",
+    # The materializer task handlers (moved here in #4502) — dispatching here
+    # would self-recurse.
+    "src-tauri/agaric-engine/src/materializer/handlers/**",
     # --- agaric-sync — system-level snapshot / transport / remote-apply -----
     # System-level snapshot / compaction — must not dispatch edit tasks.
     "src-tauri/agaric-sync/src/snapshot/create.rs",
     "src-tauri/agaric-sync/src/snapshot/restore.rs",
+    # Startup recovery, before any user edit (moved here in #3120).
+    "src-tauri/agaric-sync/src/recovery/draft_recovery.rs",
     # Transport layer.
     "src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs",
     # apply_remote — remote ops; dispatching would double-fire.
@@ -715,8 +716,9 @@ def run_self_test() -> int:
          True),
         # App-crate sites that did NOT migrate — MUST still match.
         ("src-tauri/src/db/command_tx.rs", True),
-        ("src-tauri/src/materializer/handlers/apply.rs", True),
-        ("src-tauri/src/recovery/draft_recovery.rs", True),
+        ("src-tauri/agaric-engine/src/materializer/handlers/apply.rs", True),
+        ("src-tauri/agaric-sync/src/recovery/draft_recovery.rs", True),
+        ("src-tauri/src/recovery/draft_recovery.rs", False),
         # Dropped globs must NOT match: gcal was removed; cache/fts/snapshot/
         # sync production code left the app crate; and draft.rs is marker-only.
         ("src-tauri/src/gcal_push/connector.rs", False),

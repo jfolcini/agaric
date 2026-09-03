@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM op_log WHERE block_id = ?1 AND op_type IN ('edit_block', 'create_block') AND device_id = ?2 AND seq > ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "490921acfd5c70024bd52d19b093c579c25fe3b26b725008ae9ad47dd5210c67"
+}

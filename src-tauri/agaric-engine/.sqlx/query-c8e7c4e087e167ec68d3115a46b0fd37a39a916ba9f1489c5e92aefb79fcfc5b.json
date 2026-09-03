@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT fs_path as \"fs_path!: String\" FROM attachments",
+  "describe": {
+    "columns": [
+      {
+        "name": "fs_path!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "fs_path"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c8e7c4e087e167ec68d3115a46b0fd37a39a916ba9f1489c5e92aefb79fcfc5b"
+}

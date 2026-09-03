@@ -76,7 +76,7 @@ fn bench_create_snapshot(c: &mut Criterion) {
     for n in [10u64, 100, 1000] {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("snap_create_{n}")));
-        let materializer = Materializer::new(pool.clone());
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
 
         // Seed the DB with n blocks
         rt.block_on(seed_blocks(&pool, &materializer, n as usize));
@@ -122,7 +122,7 @@ fn bench_apply_snapshot(c: &mut Criterion) {
 
         // Create and populate a source DB, then capture a snapshot
         let source_pool = rt.block_on(fresh_pool(&dir, &format!("snap_src_{n}")));
-        let materializer = Materializer::new(source_pool.clone());
+        let materializer = rt.block_on(async { Materializer::new(source_pool.clone()) });
         rt.block_on(seed_blocks(&source_pool, &materializer, n as usize));
         rt.block_on(create_snapshot(&source_pool, DEV_BENCH))
             .unwrap();
@@ -135,7 +135,7 @@ fn bench_apply_snapshot(c: &mut Criterion) {
 
         // Target pool for applying the snapshot
         let target_pool = rt.block_on(fresh_pool(&dir, &format!("snap_tgt_{n}")));
-        let target_mat = Materializer::new(target_pool.clone());
+        let target_mat = rt.block_on(async { Materializer::new(target_pool.clone()) });
 
         group.throughput(Throughput::Elements(n));
         group.bench_with_input(

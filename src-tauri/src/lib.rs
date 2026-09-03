@@ -14,7 +14,6 @@ pub mod appimage_integration;
 // `AGARIC_E2E_SANDBOX`. Nothing else may call `app.path().app_data_dir()`.
 pub mod app_paths;
 pub mod commands;
-pub mod dag;
 pub mod db;
 pub mod deeplink;
 // `import` — the query-free markdown→spec parser lives in `agaric-engine`
@@ -25,32 +24,23 @@ pub mod deeplink;
 pub mod import;
 pub mod lifecycle;
 pub mod maintenance;
-pub mod materializer;
+// #4502: the materializer lives in `agaric-engine`; the app-coupled half of
+// its tests stays here as `materializer_app_tests` (below).
+pub use agaric_engine::materializer;
 pub mod mcp;
-pub mod recovery;
+// #3120: `recovery` lives in `agaric-sync` (it needed nothing above the
+// materializer once #4502 moved that down); the app keeps the path.
+pub use agaric_sync::recovery;
 pub mod recurrence;
-// #2621 Sync-D: `snapshot` production moved into `agaric-sync`; `src/snapshot/
-// mod.rs` is now a shim that re-exports it and hosts the app-coupled tests.
-pub mod snapshot;
 pub mod soft_delete;
 pub mod spaces;
-// #2621 Sync-D: `sync_daemon` production moved into `agaric-sync`; this
-// `pub mod` is now a shim (`src/sync_daemon/mod.rs`) re-exporting it and hosting
-// the app-coupled tests (`tests.rs`, `snapshot_transfer_tests.rs`).
-pub mod sync_daemon;
 // #2621 (agaric-sync split): the Tauri-backed sinks (`TauriEventSink`,
 // `ChannelEventSink`) live here; `sync_events` (the pure event types +
 // `SyncEventSink` trait) moved into `agaric-sync` and is re-exported below.
 pub mod sync_event_sinks;
-// #2621 Sync-D: `sync_files` / `sync_protocol` production moved into
-// `agaric-sync`; each `pub mod` is now a shim re-exporting it and hosting the
-// app-coupled tests. (`sync_net` was the third; it went with the old TCP+TLS
-// transport in the iroh cutover, #3464.)
-pub mod sync_files;
-// #4502: the `ApplyHost` impl and the sync half of `StatusInfo`, kept out of
-// `materializer/` so that module does not depend on `agaric_sync`.
+// #4502: the sync half of `StatusInfo`, kept out of `materializer/` so that
+// module does not depend on `agaric_sync`.
 pub mod sync_host;
-pub mod sync_protocol;
 pub mod ulid;
 
 /// I-Core-7: Single source of truth for the list of Tauri commands
@@ -403,6 +393,10 @@ fn has_directive_for_target(filter: &str, target: &str) -> bool {
 mod bulk_equivalence;
 #[cfg(test)]
 mod integration_tests;
+/// #4502: the materializer tests that need this crate — the command layer,
+/// `CommandTx` + the boot reprojection, and the reconciliation oracle above.
+#[cfg(test)]
+mod materializer_app_tests;
 /// #3345 (programme #3351, theme T3): the reconciliation oracle — rebuild each
 /// covered derived artefact from base tables and diff it against the
 /// incrementally-maintained state. Consumed by
@@ -410,6 +404,8 @@ mod integration_tests;
 /// by its own attachment-lifecycle property test.
 #[cfg(test)]
 mod reconciliation_oracle;
+#[cfg(test)]
+mod sync_app_tests;
 // LoroSync end-to-end integration tests live in
 // `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).
 // #4499 phase 0d: the command suites, the command-integration suites and the
@@ -1056,11 +1052,14 @@ fn build_materializer(
     // later passed into the sync daemon below so its periodic
     // resync tick short-circuits when backgrounded.
     let lifecycle = LifecycleHooks::new();
+    // #4502: `setup` runs outside any tokio runtime, so the materializer
+    // binds its startup tasks to Tauri's stored handle.
     let materializer = Materializer::with_read_pool_and_lifecycle(
         pools.write.clone(),
         pools.read.clone(),
         lifecycle.clone(),
         std::sync::Arc::clone(&loro_state),
+        tauri::async_runtime::handle().inner().clone(),
     );
     // C-3c — register `app_data_dir` so the
     // `CleanupOrphanedAttachments` background task can locate

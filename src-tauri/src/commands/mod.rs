@@ -692,16 +692,7 @@ pub struct PropertyDefinition {
 // Sync pairing & session types
 // ---------------------------------------------------------------------------
 
-/// Response payload returned by [`start_pairing`].
-///
-/// The QR payload + [`PairingInfo`] both carry only the passphrase.
-/// mDNS owns discovery + address resolution end-to-end; there is no
-/// scan-bootstrap path that would need a `host`/`port` here.
-#[derive(Debug, Clone, Serialize, Type)]
-pub struct PairingInfo {
-    pub passphrase: String,
-    pub qr_svg: String,
-}
+pub use agaric_sync::pairing::PairingInfo;
 
 /// Response payload returned by [`start_sync`].
 #[derive(Debug, Clone, Serialize, Type)]

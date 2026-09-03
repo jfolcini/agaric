@@ -75,7 +75,8 @@ n0-error = "1.0"
 n0-future = "0.3"
 
 # Loro CRDT runtime — the sync protocol reads `loro::{VersionVector, PeerID, …}`
-# directly (the wire types + apply path). Caret-1 mirrors the app crate.
+# directly (the wire types + apply path). Caret-1 mirrors agaric-engine, which
+# carries the 1.13.6 hold note.
 loro = "1.12"
 # `ulid::Ulid` for snapshot / file-transfer temp-name minting + id parsing.
 ulid = "3.0.0"
@@ -155,6 +156,10 @@ agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-ut
 # fixture) in place of the app-only `crate::db::init_pool` (same pattern as
 # agaric-engine's dev-deps). Only enabled for test builds.
 agaric-store = { path = "../agaric-store", version = "0.1.0", features = ["test-util"] }
+# #3120: the repatriated suites drive the materializer and boot recovery, and
+# reach the engine's test seams (`test-util`).
+agaric-engine = { path = "../agaric-engine", version = "0.1.0", features = ["test-util"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 # `snapshot::types`' tests pin the serialized shape of every snapshot row type
 # with `insta` snapshot assertions (#3460 — on-disk/on-wire format must not
 # drift silently across a transport migration). Version/features mirror

@@ -708,7 +708,7 @@ def run_self_test() -> int:
         ("src-tauri/src/commands/blocks/crud.rs", False),
         # Property-test modules whose filenames escape the shared globs, the
         # test-util pool helper, and standalone bins MUST be excluded.
-        ("src-tauri/src/dag/proptest_b2.rs", True),
+        ("src-tauri/agaric-sync/src/dag_tests/proptest_b2.rs", True),
         ("src-tauri/agaric-store/src/test_support.rs", True),
         ("src-tauri/diagnostics/src/bin/audit_cross_space_refs.rs", True),
         # The shared test-file globs still apply across all roots.

@@ -415,7 +415,7 @@ impl SyncDaemon {
     pub async fn start_if_peers_exist(
         pool: SqlitePool,
         device_id: String,
-        materializer: impl Into<Arc<dyn ApplyHost>>,
+        materializer: Arc<dyn ApplyHost>,
         scheduler: Arc<SyncScheduler>,
         endpoint_secret: SecretKey,
         event_sink: Arc<dyn SyncEventSink>,
@@ -424,7 +424,7 @@ impl SyncDaemon {
         Self::start_if_peers_exist_with_lifecycle(SyncDaemonContext {
             pool,
             device_id,
-            materializer: materializer.into(),
+            materializer,
             scheduler,
             endpoint_secret,
             event_sink,
@@ -569,7 +569,7 @@ impl SyncDaemon {
     pub async fn start(
         pool: SqlitePool,
         device_id: String,
-        materializer: impl Into<Arc<dyn ApplyHost>>,
+        materializer: Arc<dyn ApplyHost>,
         scheduler: Arc<SyncScheduler>,
         endpoint_secret: SecretKey,
         event_sink: Arc<dyn SyncEventSink>,
@@ -578,7 +578,7 @@ impl SyncDaemon {
         Self::start_with_lifecycle(SyncDaemonContext {
             pool,
             device_id,
-            materializer: materializer.into(),
+            materializer,
             scheduler,
             endpoint_secret,
             event_sink,
@@ -763,3 +763,9 @@ mod peer_lock_key_tests {
         }
     }
 }
+
+// #3120: repatriated from the app crate.
+#[cfg(test)]
+mod snapshot_transfer_tests;
+#[cfg(test)]
+mod tests;

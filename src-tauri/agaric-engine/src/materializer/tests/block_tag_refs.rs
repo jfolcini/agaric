@@ -1,0 +1,585 @@
+use super::*;
+
+// ======================================================================
+// ReindexBlockTagRefs / RebuildBlockTagRefsCache
+// ======================================================================
+
+#[test]
+fn dedup_block_tag_refs_collapses_same_block_id() {
+    let d = dedup_tasks(vec![
+        MaterializeTask::ReindexBlockTagRefs {
+            block_id: "a".into(),
+        },
+        MaterializeTask::ReindexBlockTagRefs {
+            block_id: "b".into(),
+        },
+        MaterializeTask::ReindexBlockTagRefs {
+            block_id: "a".into(),
+        },
+        MaterializeTask::RebuildBlockTagRefsCache,
+        MaterializeTask::ReindexBlockTagRefs {
+            block_id: "c".into(),
+        },
+    ]);
+    assert_eq!(
+        d.len(),
+        4,
+        "dedup should collapse same block_id reindex (a) but keep distinct ones (b, c) and the one RebuildBlockTagRefsCache"
+    );
+}
+
+// ======================================================================
+// #2540: SetBlockPageId — the per-block page_id/space_id backstop must be
+// keyed by block_id, NOT collapsed by discriminant.
+// ======================================================================
+
+#[test]
+fn dedup_set_block_page_id_keeps_distinct_blocks() {
+    // A multi-block paste/import burst enqueues one SetBlockPageId per
+    // non-page create; they reliably co-locate in one background drain.
+    // Before #2540 these fell into the discriminant catch-all, so only the
+    // FIRST block's page_id/space_id backstop survived — every later block
+    // stayed NULL page_id/space_id until an unrelated lifecycle op ran a
+    // full RebuildPageIds. Distinct block_ids must all survive.
+    let d = dedup_tasks(vec![
+        MaterializeTask::SetBlockPageId {
+            block_id: "a".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "b".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "a".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "c".into(),
+        },
+    ]);
+    assert_eq!(
+        d.len(),
+        3,
+        "SetBlockPageId is keyed by block_id: distinct blocks (a, b, c) all \
+         survive; only the exact-block duplicate (second a) collapses"
+    );
+    // The surviving tasks are the three distinct blocks, first occurrence kept.
+    let ids: Vec<&str> = d
+        .iter()
+        .map(|t| match t {
+            MaterializeTask::SetBlockPageId { block_id } => block_id.as_ref(),
+            other => panic!("unexpected task in dedup output: {other:?}"),
+        })
+        .collect();
+    assert_eq!(ids, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn dedup_set_block_page_id_collapses_same_block_id() {
+    let d = dedup_tasks(vec![
+        MaterializeTask::SetBlockPageId {
+            block_id: "X".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "X".into(),
+        },
+        MaterializeTask::SetBlockPageId {
+            block_id: "X".into(),
+        },
+    ]);
+    assert_eq!(
+        d.len(),
+        1,
+        "exact-block duplicate SetBlockPageId collapses to one"
+    );
+}
+
+#[test]
+fn dedup_reindex_block_tag_refs_and_block_links_independent() {
+    // The two tasks share a block_id but are different task types and
+    // must coexist through dedup.
+    let d = dedup_tasks(vec![
+        MaterializeTask::ReindexBlockTagRefs {
+            block_id: "X".into(),
+        },
+        MaterializeTask::ReindexBlockLinks {
+            block_id: "X".into(),
+        },
+        MaterializeTask::ReindexBlockTagRefs {
+            block_id: "X".into(),
+        },
+        MaterializeTask::ReindexBlockLinks {
+            block_id: "X".into(),
+        },
+    ]);
+    assert_eq!(
+        d.len(),
+        2,
+        "links and tag-refs reindex share the block but have distinct dedup buckets"
+    );
+}
+
+#[test]
+fn dedup_rebuild_block_tag_refs_cache_collapses() {
+    let d = dedup_tasks(vec![
+        MaterializeTask::RebuildBlockTagRefsCache,
+        MaterializeTask::RebuildBlockTagRefsCache,
+        MaterializeTask::RebuildBlockTagRefsCache,
+    ]);
+    assert_eq!(
+        d.len(),
+        1,
+        "repeated RebuildBlockTagRefsCache collapses to one via discriminant dedup"
+    );
+}
+
+#[tokio::test]
+async fn handle_bg_reindex_block_tag_refs_runs() {
+    let (pool, _dir) = test_pool().await;
+    // Fresh pool starts with no rows so the handler is a no-op on a
+    // nonexistent block_id — the contract is "must not error".
+    handle_background_task(
+        &pool,
+        &MaterializeTask::ReindexBlockTagRefs {
+            block_id: "01HBTRBLK0000000000000NONE".into(),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_tag_refs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "nonexistent block produces no rows");
+}
+
+#[tokio::test]
+async fn handle_bg_rebuild_block_tag_refs_cache_runs() {
+    let (pool, _dir) = test_pool().await;
+    // Seed a tag + a content block with an inline ref.
+    let tag = "01HBTRTAGHBG00000000000001";
+    let src = "01HBTRBLKHBG00000000000001";
+    insert_block_direct(&pool, tag, "tag", "bg-tag").await;
+    insert_block_direct(&pool, src, "content", &format!("#[{tag}]")).await;
+
+    handle_background_task(
+        &pool,
+        &MaterializeTask::RebuildBlockTagRefsCache,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_tag_refs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "full rebuild via materializer handler must populate the row"
+    );
+}
+
+#[tokio::test]
+async fn handle_bg_reindex_block_tag_refs_split_path() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAGSPL00000000000001";
+    let src = "01HBTRBLKSPL00000000000001";
+    insert_block_direct(&pool, tag, "tag", "spl").await;
+    insert_block_direct(&pool, src, "content", &format!("#[{tag}]")).await;
+
+    handle_background_task(
+        &pool,
+        &MaterializeTask::ReindexBlockTagRefs {
+            block_id: src.into(),
+        },
+        Some(&pool), // same pool used for both read and write
+        None,
+    )
+    .await
+    .unwrap();
+
+    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_tag_refs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "split-pool reindex path produces the same row");
+}
+
+/// #2659: the `ReindexBlockTagRefs` handler must refresh `tags_cache.usage_count`
+/// for the tags whose inline-ref set changed. Before the fix the handler only
+/// rewrote the `block_tag_refs` TABLE, leaving `usage_count` stale on an inline
+/// `#[ULID]` content edit (it was healed only by AddTag/RemoveTag or a full
+/// rebuild). Here: adding an inline ref must bump the tag's count to 1, and
+/// removing it must drop the count back to 0 — both via the scoped
+/// `refresh_tag_usage_count` (#676) the handler now runs for each changed tag.
+#[tokio::test]
+async fn handle_bg_reindex_block_tag_refs_refreshes_usage_count_2659() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG26590000000000001";
+    let src = "01HBTRBLK26590000000000001";
+    insert_block_direct(&pool, tag, "tag", "date/2026-07-17").await;
+    // Content block that references the tag inline via `#[ULID]`.
+    insert_block_direct(&pool, src, "content", &format!("scheduled #[{tag}]")).await;
+
+    // Reindex the source block: it gains the inline ref, so the tag's
+    // usage_count must be recomputed to 1.
+    handle_background_task(
+        &pool,
+        &MaterializeTask::ReindexBlockTagRefs {
+            block_id: src.into(),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let usage: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(tag)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        usage, 1,
+        "gaining an inline #[ULID] ref must refresh the tag's usage_count to 1 (#2659)"
+    );
+
+    // Now rewrite the source content to DROP the inline ref, then reindex
+    // again: the tag lost its only referencing block, so usage_count → 0.
+    sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+        .bind("scheduled (ref removed)")
+        .bind(src)
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_background_task(
+        &pool,
+        &MaterializeTask::ReindexBlockTagRefs {
+            block_id: src.into(),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let usage_after: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(tag)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        usage_after, 0,
+        "losing the inline #[ULID] ref must refresh the tag's usage_count to 0 (#2659)"
+    );
+
+    // The block_tag_refs TABLE itself must also be empty now (unchanged
+    // behaviour — this pins that the count refresh did not disturb it).
+    let ref_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM block_tag_refs WHERE source_id = ? AND tag_id = ?",
+    )
+    .bind(src)
+    .bind(tag)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ref_count, 0,
+        "the inline ref row must be gone after removal"
+    );
+}
+
+/// #2831: the `usage_count` refresh owed by a `ReindexBlockTagRefs` must be a
+/// DURABLE, idempotent obligation — not coupled to the transient reindex diff.
+///
+/// Before the fix, the handler refreshed only the tags whose ref set changed
+/// *this run*. If that refresh was lost (WAL error / crash mid-loop) the task
+/// was re-enqueued, but by then the `block_tag_refs` diff had already
+/// committed, so the retry's diff was EMPTY, the refresh loop ran zero times,
+/// and `usage_count` stayed stale — the retry was a silent no-op.
+///
+/// This test reconstructs that post-crash state (diff committed, `usage_count`
+/// stale, durable obligation seeded exactly as the handler seeds it inside the
+/// diff transaction), proves that a bare `ReindexBlockTagRefs` retry is a
+/// no-op for `usage_count` (empty diff), and then proves the durable
+/// obligation heals it: the sweeper re-enqueues the persisted
+/// `RefreshTagUsageCount`, and after it runs `usage_count` equals the correct
+/// DISTINCT-live-block count and the obligation row is cleared.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reindex_block_tag_refs_usage_count_recovers_via_durable_obligation_2831() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let tag = "01HBTRTAG28310000000000001";
+    let src = "01HBTRBLK28310000000000001";
+    insert_block_direct(&pool, tag, "tag", "recover-2831").await;
+    insert_block_direct(&pool, src, "content", &format!("owes a refresh #[{tag}]")).await;
+
+    // --- Reconstruct the state a FIRST reindex leaves when its usage_count
+    // refresh is LOST after the block_tag_refs diff commits: the ref row is
+    // present (so a retry's diff is empty), usage_count is stale (no cache
+    // row), and the durable RefreshTagUsageCount obligation was seeded INSIDE
+    // the diff transaction (exactly what the handler does). ---
+    sqlx::query!(
+        "INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
+        src,
+        tag,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    {
+        let mut tx = agaric_store::db::begin_immediate_logged(&pool, "test_2831_seed")
+            .await
+            .unwrap();
+        let inserted =
+            crate::materializer::retry_queue::seed_refresh_tag_usage_count_obligation_tx(
+                &mut tx, tag,
+            )
+            .await
+            .unwrap();
+        assert!(inserted, "a fresh durable obligation row must be inserted");
+        tx.commit().await.unwrap();
+        // Mirror the handler's post-commit gauge bump so the consumer's
+        // gauge-gated `clear_on_success` fast-path actually clears the row.
+        mat.metrics().note_retry_row_inserted();
+    }
+
+    // Precondition: usage_count is stale — no tags_cache row yet.
+    let stale = sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+        .bind(tag)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        stale.is_none(),
+        "precondition: usage_count is stale (a refresh is owed but was lost)"
+    );
+
+    // The durable obligation must be present and due for the sweeper.
+    let owed = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
+    )
+    .bind(tag)
+    .bind("RefreshTagUsageCount")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owed, 1,
+        "the durable RefreshTagUsageCount obligation survived"
+    );
+
+    // --- Prove the retry-of-reindex is a NO-OP for usage_count: the ref row
+    // already exists, so the reindex diff is empty and cannot heal the count.
+    // This is the #2831 hole the durable obligation closes. ---
+    let changed = agaric_store::cache::reindex_block_tag_refs(&pool, src)
+        .await
+        .unwrap();
+    assert!(
+        changed.is_empty(),
+        "the retry's reindex diff is empty — reindex alone cannot heal usage_count (#2831)"
+    );
+    let after_reindex =
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(tag)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(
+        after_reindex.is_none(),
+        "reindex retry did NOT heal usage_count — the obligation is the only recovery path"
+    );
+
+    // --- Recovery: the sweeper re-enqueues the persisted obligation onto the
+    // background queue; draining it heals usage_count to the correct count. ---
+    let re_enqueued = crate::materializer::retry_queue::sweep_once(&pool, &pool, &mat)
+        .await
+        .unwrap();
+    assert_eq!(
+        re_enqueued, 1,
+        "the sweeper re-enqueues the durable RefreshTagUsageCount obligation"
+    );
+    mat.flush_background().await.unwrap();
+
+    let healed =
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(tag)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        healed, 1,
+        "the durable obligation drove the refresh to completion: usage_count healed to the \
+         DISTINCT-live-block count (#2831)"
+    );
+
+    // The obligation is cleared on durable success (retry is no longer owed).
+    let remaining = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
+    )
+    .bind(tag)
+    .bind("RefreshTagUsageCount")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "the durable obligation is cleared once the refresh durably succeeds"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_edit_block_enqueues_reindex_block_tag_refs() {
+    // Verifies that the edit_block dispatch arm enqueues
+    // ReindexBlockTagRefs against the block_id in the op payload, and
+    // that the background handler scans the content and populates
+    // block_tag_refs. To avoid a race between the foreground ApplyOp
+    // (which commits the new content) and the background reindex
+    // (which reads it), we seed the new content directly and then
+    // dispatch only the background arm — the same code path that
+    // `dispatch_op` uses once ApplyOp has flushed.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let tag = "01HBTRTAGDSPEDT00000000001";
+    let src = "01HBTRBLKDSPEDT00000000001";
+    insert_block_direct(&pool, tag, "tag", "e").await;
+    insert_block_direct(&pool, src, "content", &format!("edited: #[{tag}]")).await;
+
+    let r = make_op_record(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(src),
+            to_text: format!("edited: #[{tag}]"),
+            prev_edit: None,
+        }),
+    )
+    .await;
+
+    // dispatch_edit_background is the path taken by the command handler
+    // after the op has been durably written and the edit applied.
+    mat.dispatch_edit_background(&r, "content").unwrap();
+    mat.flush_background().await.unwrap();
+
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM block_tag_refs WHERE source_id = ? AND tag_id = ?",
+    )
+    .bind(src)
+    .bind(tag)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "edit_block must enqueue ReindexBlockTagRefs and populate the row"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_create_block_with_inline_ref_populates_row() {
+    // Same race-avoidance rationale as the edit_block test above: seed
+    // the block directly, then verify that the background arm of
+    // create_block dispatch enqueues ReindexBlockTagRefs and the handler
+    // scans content to populate block_tag_refs.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let tag = "01HBTRTAGDSPCR000000000001";
+    let src = "01HBTRBLKDSPCR000000000001";
+    insert_block_direct(&pool, tag, "tag", "c").await;
+    insert_block_direct(
+        &pool,
+        src,
+        "content",
+        &format!("fresh with inline ref: #[{tag}]"),
+    )
+    .await;
+
+    let r = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(src),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            index: None,
+            content: format!("fresh with inline ref: #[{tag}]"),
+        }),
+    )
+    .await;
+
+    mat.dispatch_background(&r).unwrap();
+    mat.flush_background().await.unwrap();
+
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM block_tag_refs WHERE source_id = ? AND tag_id = ?",
+    )
+    .bind(src)
+    .bind(tag)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 1,
+        "create_block with non-empty content must enqueue ReindexBlockTagRefs"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_delete_block_fires_rebuild_block_tag_refs_cache() {
+    // Verifies that a `delete_block` op triggers the full-cache-rebuild
+    // fan-out (including `RebuildBlockTagRefsCache`). We arrange the
+    // world so that the rebuild is *observable*: the source block is
+    // already soft-deleted at the moment the rebuild runs, so its row
+    // in block_tag_refs must disappear after the rebuild scans content.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let tag = "01HBTRTAGDSPDEL00000000001";
+    let src = "01HBTRBLKDSPDEL00000000001";
+    insert_block_direct(&pool, tag, "tag", "d").await;
+    insert_block_direct(&pool, src, "content", &format!("#[{tag}]")).await;
+    // Pre-populate block_tag_refs so we can observe the rebuild clearing
+    // it once the source gets soft-deleted.
+    sqlx::query!(
+        "INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
+        src,
+        tag,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Soft-delete the source directly so the rebuild observes the
+    // deletion regardless of whether the foreground ApplyOp has landed
+    // by the time the background consumer starts.
+    soft_delete_block_direct(&pool, src).await;
+
+    let r = make_op_record(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id(src),
+        }),
+    )
+    .await;
+
+    // Trigger just the background fan-out; we don't need the foreground
+    // ApplyOp for this assertion (the row is already soft-deleted).
+    mat.dispatch_background(&r).unwrap();
+    mat.flush_background().await.unwrap();
+
+    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_tag_refs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "delete_block fires RebuildBlockTagRefsCache which drops rows for soft-deleted sources"
+    );
+}
+
+// `full_cache_rebuild_tasks_has_seven_entries_in_canonical_order`
+// (above, in the section) already asserts that
+// FULL_CACHE_REBUILD_TASKS includes `RebuildBlockTagRefsCache` at slot 6.
+// Keep that single authoritative assertion rather than duplicating it
+// here.

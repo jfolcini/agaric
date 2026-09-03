@@ -82,3 +82,14 @@ pub mod pairing;
 
 /// Snapshot encoding, crash-safe write, RESET apply, and 90-day compaction.
 pub mod snapshot;
+// #3120: boot-time recovery (op-log replay, draft recovery, sync-inbox replay,
+// attachment backfills). It drives the materializer and reads this crate's
+// inbox, quarantine and attachment-file helpers, so it lives here.
+pub mod recovery;
+
+// #3120: the app-coupled suites that used to live in the app crate's shim
+// modules; they need only this crate, the engine and the store.
+#[cfg(test)]
+mod dag_tests;
+#[cfg(test)]
+mod sync_files_tests;

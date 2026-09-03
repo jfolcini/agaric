@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(\n                             SELECT 1 FROM op_log\n                             WHERE op_type IN ('set_property', 'delete_property')\n                               AND block_id = ?\n                               AND json_extract(payload, '$.key') = ?\n                               AND (created_at > ?\n                                    OR (created_at = ?\n                                        AND (seq > ?\n                                             OR (seq = ? AND device_id > ?))))\n                           ) AS \"e!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "e!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "184268174b537528c3b6d197152726a284ac3a299158a45b4557c05b7849c678"
+}

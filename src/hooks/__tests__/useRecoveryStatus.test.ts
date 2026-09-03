@@ -76,7 +76,7 @@ function getListenerCallback(eventName: string): (event: { payload: unknown }) =
 
 describe('event-name constant pinned', () => {
   it('matches the Rust EVENT_RECOVERY_DEGRADED string', () => {
-    // src-tauri/src/recovery/mod.rs hard-codes this — keep both in sync.
+    // src-tauri/agaric-sync/src/recovery/mod.rs hard-codes this — keep both in sync.
     expect(RECOVERY_DEGRADED_EVENT).toBe('recovery:degraded')
   })
 })

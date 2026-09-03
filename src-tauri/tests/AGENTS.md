@@ -9,7 +9,7 @@
 | Unit | `#[cfg(test)] mod tests` in the module, or a sibling `tests.rs` | Single-module logic |
 | Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/tests/command_integration/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
 | Conformance | `src-tauri/tests/command_integration/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
-| Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/src/sync_daemon/tests.rs`, `src-tauri/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer |
+| Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/agaric-sync/src/sync_daemon/tests.rs`, `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer |
 | Bench | `src-tauri/benches/*.rs` (`harness = false`) | Criterion microbenchmarks; weekly CI lane only, see `src-tauri/benches/AGENTS.md` |
 
 ### The three integration-test binaries
@@ -68,10 +68,10 @@ Two classes in this crate:
 2. **Counter-delta tests.** Any test that reads a process-global counter, does its work, reads it again and asserts on the difference. The counter here is `sql_only_fallback::count()` (re-exported as `crate::materializer::sql_only_fallback_count()`), a monotonic `AtomicU64`; the assertion is nearly always `delta == 0`, proving the op took the engine path rather than the SQL-only fallback (#891). A sibling test's fallback event in the same process flips the delta for a test that never touched the fallback. This is a shape, not a module list — find the current readers with:
 
    ```sh
-   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src src-tauri/tests
+   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src src-tauri/tests src-tauri/agaric-engine/src
    ```
 
-   `src-tauri/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
+   `src-tauri/agaric-engine/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
 
 Root `AGENTS.md` states the same rule under "Running tests efficiently" and defers here for the grep; keep the two agreeing. The old rationale (a shared process-global Loro engine registry) was fixed in #2249 — do not reinstate it. When adding a test of either shape, say so in its doc comment.
 

@@ -36,7 +36,7 @@
 //                 `Arc<Atomic…>`, or a file-local alias of one) field of any
 //                 `pub struct <Name>Metrics` ANYWHERE in the scanned tree.
 //                 In this tree that is `QueueMetrics` in
-//                 `src-tauri/src/materializer/metrics.rs` — the
+//                 `src-tauri/agaric-engine/src/materializer/metrics.rs` — the
 //                 materializer's whole counter/gauge surface, what
 //                 `StatusInfo` projects and what the Status view renders —
 //                 but #3349 hard-coded both the struct name and the file,
@@ -279,7 +279,7 @@ const RULES = Object.freeze([
   'unreachable-under-panic-abort',
 ])
 
-const METRICS_FILE_REL = 'src-tauri/src/materializer/metrics.rs'
+const METRICS_FILE_REL = 'src-tauri/agaric-engine/src/materializer/metrics.rs'
 const CARGO_TOML_REL = 'src-tauri/Cargo.toml'
 const BASELINE_REL = 'scripts/metric-firing-baseline.json'
 
@@ -2421,12 +2421,13 @@ function runSelfTest() {
   const METRIC_FILES = Object.freeze([
     'src-tauri/agaric-engine/src/apply/sql_only_fallback.rs',
     'src-tauri/agaric-engine/src/loro/engine/cycle_rejected_metrics.rs',
+    // #4502 moved the materializer (and its counters) into the engine.
+    'src-tauri/agaric-engine/src/materializer/handlers/descendant_fanout_dropped.rs',
+    'src-tauri/agaric-engine/src/materializer/metrics.rs',
     'src-tauri/agaric-engine/src/merge/divergence.rs',
     // #3726 / #3727 audit op-log ingest aggregates.
     'src-tauri/agaric-sync/src/sync_protocol/audit_ingest_metrics.rs',
     'src-tauri/agaric-sync/src/sync_protocol/snapshot_fallback_metrics.rs',
-    'src-tauri/src/materializer/handlers/descendant_fanout_dropped.rs',
-    'src-tauri/src/materializer/metrics.rs',
   ])
   const liveFiles = [...new Set(live.metrics.map((m) => m.file))].toSorted()
   expect(
@@ -2531,7 +2532,7 @@ function runFixtureSelfTest(tmp, expect) {
   let n = 0
   const build = ({ metricsFile, extra = {}, cargo, baseline }) => {
     const root = path.join(tmp, `fx${(n += 1)}`)
-    mkdirSync(path.join(root, 'src-tauri', 'src', 'materializer'), { recursive: true })
+    mkdirSync(path.dirname(path.join(root, METRICS_FILE_REL)), { recursive: true })
     mkdirSync(path.join(root, 'scripts'), { recursive: true })
     writeFileSync(path.join(root, METRICS_FILE_REL), metricsFile)
     writeFileSync(

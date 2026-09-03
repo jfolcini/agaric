@@ -596,14 +596,14 @@ def run_self_test() -> int:
     # standalone bins, must be excluded from the scan; ordinary production
     # files must NOT be. (fixture rel-path, expect_excluded)
     exclusion_cases: list[tuple[str, bool]] = [
-        ("src-tauri/src/materializer/handlers/apply_reproject_proptest.rs",
+        ("src-tauri/src/materializer_app_tests/apply_reproject_proptest.rs",
          True),
-        ("src-tauri/src/dag/proptest_b2.rs", True),
+        ("src-tauri/agaric-sync/src/dag_tests/proptest_b2.rs", True),
         ("src-tauri/src/soft_delete/proptest_b3.rs", True),
         ("src-tauri/agaric-store/src/test_support.rs", True),
         ("src-tauri/diagnostics/src/bin/audit_cross_space_refs.rs", True),
         # Ordinary production files must stay in scope.
-        ("src-tauri/src/materializer/handlers/mod.rs", False),
+        ("src-tauri/agaric-engine/src/materializer/handlers/mod.rs", False),
         ("src-tauri/agaric-store/src/op_log/append.rs", False),
     ]
     for rel, expect_excluded in exclusion_cases:

@@ -486,7 +486,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
@@ -1542,7 +1542,7 @@ jobs:
           cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           # #640: exact toolchain pin — keep in lockstep with
           # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
@@ -1618,10 +1618,16 @@ jobs:
         # job, the #2621 library crates' suites (agaric-core/store/engine)
         # were silently not executing in CI at all, and every module wave
         # showed a phantom coverage drop as its tests left the measured set.
+        # `--workspace` on the REPORT too (#4502): package selection is
+        # per-invocation, and a bare `cargo llvm-cov report` keeps only the
+        # root package's files, so every member crate's lines were missing
+        # from the lcov even though the run above tested them. That is why
+        # each crate extraction (#2621, #4631, #4502) read as a phantom
+        # coverage drop: the moved code left the report, not the tests.
         run: |
           cargo llvm-cov nextest --workspace --profile ci --no-fail-fast \
             --partition count:${{ matrix.shard }}/2 --no-report
-          cargo llvm-cov report --lcov \
+          cargo llvm-cov report --lcov --workspace \
             --output-path coverage-${{ matrix.shard }}.lcov
 
       - name: Cargo test --doc (executable doc-comment examples)

@@ -9,16 +9,13 @@ use agaric_store::db::MAX_SQL_PARAMS;
 /// (d): inventory of cache tables wiped by the RESET path. Each entry is
 /// wiped by the literal statement [`cache_wipe_sql`] pairs with it.
 ///
-/// #3328: `pub` — and re-exported from [`crate::snapshot`] — so this
-/// inventory is checkable from outside the crate. Its counterpart,
-/// `POST_SNAPSHOT_CACHE_REBUILDS` in the app crate's materializer
-/// coordinator, lists the rebuild task that refills each of these tables
-/// after the restore commits; while this list was private nothing could
-/// compare the two, so a new cache table added HERE and forgotten THERE
-/// would truncate on every snapshot catch-up and never rebuild — bit for bit
-/// the #617/#794 failure, which has already shipped once. The app-crate
-/// parity test over the two lists is what closes that, and it needs this to
-/// be public.
+/// #3328: its counterpart, `POST_SNAPSHOT_CACHE_REBUILDS` in the engine's
+/// materializer coordinator, lists the rebuild task that refills each of
+/// these tables after the restore commits. A new cache table added HERE and
+/// forgotten THERE would truncate on every snapshot catch-up and never
+/// rebuild — bit for bit the #617/#794 failure, which has already shipped
+/// once. The `wipe_inventory_tests` parity test below holds the two lists
+/// against each other.
 ///
 /// #2621 (agaric-sync inversion): this list used to pair each table with the
 /// `MaterializeTask` that repopulates it, but naming `MaterializeTask` (an
@@ -53,7 +50,7 @@ use agaric_store::db::MAX_SQL_PARAMS;
 /// `REFERENCES blocks(id) ON DELETE CASCADE`, so the `DELETE FROM blocks` below
 /// wiped it IMPLICITLY — listing it here makes the wipe explicit (idempotent
 /// with the cascade) so a RESET can never leave the links/backlinks UI stale.
-pub const CACHE_TABLES: &[&str] = &[
+const CACHE_TABLES: &[&str] = &[
     "agenda_cache",
     "pages_cache",
     "tags_cache",
@@ -893,6 +890,77 @@ mod tests {
             assert!(
                 seen.insert(*table),
                 "`{table}` appears twice in CACHE_TABLES"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod wipe_inventory_tests {
+    /// #3328 — the snapshot RESET wipe inventory and the post-restore rebuild
+    /// task set must stay in step.
+    ///
+    /// [`CACHE_TABLES`] (the wipe half) and the materializer's
+    /// `POST_SNAPSHOT_CACHE_REBUILDS` (the refill half) live in two crates with no
+    /// mechanical link between them; this crate sees both, so the pairing is
+    /// pinned here (#4502 moved it down from the app crate with the materializer).
+    ///
+    /// What an unpaired edit costs is not hypothetical. Add a derived cache table
+    /// to the wipe list and forget the rebuild task, and `apply_snapshot`
+    /// truncates it and enqueues nothing: every read served from that cache
+    /// returns empty from the restore's COMMIT until some unrelated write happens
+    /// to trigger a full fan-out. That is #617/#794 exactly, and it has already
+    /// shipped once. The existing test that pins the enqueued task count does not
+    /// notice, because an omitted task changes nothing about the tasks that ARE
+    /// enqueued.
+    ///
+    /// The exemption list below is the deliberate, annotated escape hatch — a
+    /// wiped table that genuinely has no rebuild task. Adding to it should be a
+    /// reviewed decision, which is the point of making it a literal in a test
+    /// rather than an absence nobody can see.
+    #[test]
+    fn snapshot_wipe_inventory_and_post_snapshot_rebuilds_agree() {
+        use super::CACHE_TABLES;
+        use agaric_engine::materializer::POST_SNAPSHOT_CACHE_REBUILDS;
+
+        /// Wiped tables with no rebuild task, each for a stated reason.
+        ///
+        /// `projected_agenda_horizon` (#3160) is not a cache but the
+        /// ADVERTISEMENT for `projected_agenda_cache`'s contents. Wiping it is
+        /// what makes the restore honest: absent row means "cache unproven, fall
+        /// back on the fly", which is precisely what a freshly restored device
+        /// should do until `RebuildProjectedAgendaCache` lands. Rebuilding it
+        /// separately would re-advertise a span whose rows do not exist yet.
+        const NO_REBUILD_TASK: &[&str] = &["projected_agenda_horizon"];
+
+        for table in CACHE_TABLES {
+            let has_task = POST_SNAPSHOT_CACHE_REBUILDS
+                .iter()
+                .any(|(rebuilt, _)| rebuilt == table);
+            let exempt = NO_REBUILD_TASK.contains(table);
+            assert!(
+                has_task || exempt,
+                "`{table}` is wiped by the snapshot RESET (agaric_sync CACHE_TABLES) but has no \
+                 entry in POST_SNAPSHOT_CACHE_REBUILDS: after a snapshot catch-up it would stay \
+                 empty until an unrelated write triggers a full fan-out (#617/#794). Add the \
+                 rebuild task, or add the table to NO_REBUILD_TASK above with the reason."
+            );
+            assert!(
+                !(has_task && exempt),
+                "`{table}` is on the NO_REBUILD_TASK exemption list but DOES have a rebuild task; \
+                 drop the stale exemption"
+            );
+        }
+
+        // The other direction: a rebuild task for a table nobody wipes is not a
+        // data-loss bug, but it is dead work on every restore and a sign the two
+        // lists have drifted.
+        for (table, _) in POST_SNAPSHOT_CACHE_REBUILDS {
+            assert!(
+                CACHE_TABLES.contains(table),
+                "`{table}` is rebuilt after a snapshot restore but is not in the RESET wipe \
+                 inventory (agaric_sync CACHE_TABLES); either it is wiped elsewhere and this \
+                 pairing is misleading, or the rebuild is redundant"
             );
         }
     }

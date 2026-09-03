@@ -33,12 +33,7 @@ pub use create::{
     SNAPSHOT_WARN_PAYLOAD_BYTES, SNAPSHOT_WARN_ROW_COUNT, collect_frontier, collect_tables,
     measure_op_log_size,
 };
-// #3328: `CACHE_TABLES` is re-exported alongside the apply entry point so the
-// app crate can hold the wipe inventory against
-// `POST_SNAPSHOT_CACHE_REBUILDS`, the list of tasks that refill those same
-// tables after the restore commits. The two must stay in step; while this was
-// private, nothing could check that.
-pub use restore::{CACHE_TABLES, apply_snapshot};
+pub use restore::apply_snapshot;
 pub use types::{
     AttachmentSnapshot, BlockLinkSnapshot, BlockPropertySnapshot, BlockSnapshot, BlockTagSnapshot,
     PageAliasSnapshot, PropertyDefinitionSnapshot, SnapshotData, SnapshotTables,
@@ -46,3 +41,7 @@ pub use types::{
 // Re-export for tests and internal use
 #[allow(unused_imports)]
 pub use types::{MIN_SCHEMA_VERSION, SCHEMA_VERSION};
+
+// #3120: repatriated from the app crate.
+#[cfg(test)]
+mod tests;

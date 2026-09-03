@@ -19,7 +19,7 @@
 // This makes the convention STRUCTURAL: for every migration file under
 // `src-tauri/migrations/`, it requires at least one test function — in the
 // exact files AGENTS.md names as carrying migration tests
-// (`src-tauri/src/db/tests.rs`, and its `snapshot`/`spaces` siblings) —
+// (`src-tauri/src/db/tests.rs`, its `spaces` sibling, and `agaric-sync`'s `snapshot/tests.rs`) —
 // whose name embeds that migration's zero-padded number the documented way
 // (the literal substring `_<NNNN>_`), i.e. a name the documented nextest
 // filter's `_0[0-9]{3}_` half would actually select. It does NOT run
@@ -115,7 +115,7 @@ const BASELINE_FILE = join(REPO_ROOT, 'src-tauri', 'migrations-test-coverage-bas
 // does) and must not count.
 const TEST_FILES = [
   join(REPO_ROOT, 'src-tauri', 'src', 'db', 'tests.rs'),
-  join(REPO_ROOT, 'src-tauri', 'src', 'snapshot', 'tests.rs'),
+  join(REPO_ROOT, 'src-tauri', 'agaric-sync', 'src', 'snapshot', 'tests.rs'),
   join(REPO_ROOT, 'src-tauri', 'src', 'spaces', 'tests.rs'),
 ]
 

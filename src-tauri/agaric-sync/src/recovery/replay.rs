@@ -1,0 +1,1422 @@
+//! C-2b: boot-time op-log replay for unmaterialized ops.
+//!
+//! On boot, walk `op_log WHERE seq > materialized_through_seq` and
+//! enqueue each record as an `ApplyOp` task on the materializer's
+//! foreground queue. The materializer applies them in order, advancing
+//! the cursor as it goes. If the same crash recurs mid-replay, the next
+//! boot picks up where this one stopped.
+//!
+//! Idempotency: every op handler in `materializer/handlers.rs::apply_op_tx`
+//! already uses `INSERT OR IGNORE` / UPSERT semantics, so re-applying an
+//! op that PARTIALLY succeeded (e.g., the apply landed but the cursor
+//! advance got rolled back by a crash before commit) is a no-op for
+//! primary state. The cursor's `MAX` semantics make the cursor advance
+//! itself idempotent.
+//!
+//! Ordering: ops are walked in `(seq ASC, device_id ASC)` order so a
+//! parent → child causal pair from the same device is always replayed
+//! parent-first. Cross-device causal ordering during replay is best-
+//! effort — the same idempotency guarantees that protect normal sync
+//! ingest also cover replay.
+
+use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
+use std::sync::Arc;
+
+use agaric_core::error::AppError;
+use agaric_engine::materializer::{MaterializeTask, Materializer};
+use agaric_store::op_log::OpRecord;
+
+/// Chunk size for the op_log read pass. Bounded so a multi-thousand-op
+/// replay does not load the entire op log into memory at once. The
+/// foreground queue is drained at the end via a Barrier task, so the
+/// per-chunk depth never exceeds `FOREGROUND_CAPACITY`.
+pub(crate) const REPLAY_CHUNK_SIZE: i64 = 200;
+
+/// #3311 — prefix of the `replay_errors` entries that describe a DEGRADED
+/// end-of-replay reprojection rather than a failed replay.
+///
+/// Entries carrying this prefix arrive on the `Ok` path: every op was
+/// applied and the apply cursor advanced past all of them; only one sibling
+/// group's SQL `position` ranks stayed stale (they heal on that group's next
+/// move/create). They are diagnostics, not a "the materialized view is
+/// behind the op-log" signal — see [`RecoveryReport::replay_failed`], which
+/// filters on exactly this prefix.
+///
+/// [`RecoveryReport::replay_failed`]: crate::recovery::RecoveryReport::replay_failed
+pub(crate) const REPROJECT_DEGRADED_PREFIX: &str = "reproject degraded (";
+
+/// Summary of a single replay pass returned to the caller.
+///
+/// `ops_replayed` counts every `ApplyOp` enqueued onto the foreground
+/// queue. `replay_errors` accumulates non-fatal errors (e.g. a single
+/// op failed to enqueue) — fatal errors propagate via `Result::Err`.
+/// `ops_skipped_idempotent` is reserved for a future per-record
+/// already-applied detection; today it is always zero because
+/// per-record idempotency is handled inside `apply_op_tx` itself
+/// (every handler is `INSERT OR IGNORE` / UPSERT) rather than via a
+/// pre-check from this module.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReplayReport {
+    /// Number of ops enqueued on the foreground queue for replay.
+    pub ops_replayed: u64,
+    /// Reserved for future use (per-record already-applied detection).
+    /// Always 0 today — see module-level docs for rationale.
+    pub ops_skipped_idempotent: u64,
+    /// Non-fatal errors during replay (each entry: `"<context>: <err>"`).
+    pub replay_errors: Vec<String>,
+}
+
+/// Read the current `materialized_through_seq` from the cursor table.
+///
+/// Migration `0040` seeds the row at boot, so this lookup always
+/// returns a value (defaulting to 0 on a fresh install).
+///
+/// # SQL-review H-4 — boot-time sanity check
+///
+/// The cursor advance path (`materializer/handlers.rs::advance_apply_cursor`)
+/// is gated by `MAX(materialized_through_seq, ?)` and only ever bumps the
+/// cursor up to `op_log.seq` values that exist. Therefore the invariant
+/// `cursor <= MAX(op_log.seq)` holds for every successful apply. If at
+/// boot we observe `cursor > MAX(op_log.seq)`, the cursor is in an
+/// impossible state — most likely a hand-edit, a partial restore, or a
+/// rolled-back op_log without a matching rolled-back cursor. Left alone,
+/// the next `replay_unmaterialized_ops` walk would silently do nothing
+/// and any unmaterialized ops would never be applied. Worse, an
+/// adversarially corrupted *under*-shoot value (e.g. 0) would trigger a
+/// full op_log replay at boot — not data loss, but a multi-second
+/// boot-stall.
+///
+/// This function therefore performs one cheap impossible-state check on
+/// the read path: if `cursor > MAX(op_log.seq)` we reset the cursor to
+/// `MAX(op_log.seq)` (or 0 if the log is empty), log a warning, and
+/// return the corrected value. We deliberately do NOT try to detect
+/// under-shoot corruption: there is no surviving "expected cursor"
+/// signal to compare against (the cursor row has no timestamp-of-last-op
+/// field), and `MAX(materialized_through_seq, ?)` per-op idempotency
+/// already prevents an under-shoot from causing incorrect state — only
+/// the wasted boot time.
+///
+/// # Interaction with the #3309 snapshot watermarks (#4020)
+///
+/// Recorded here because the clamp and the watermark refresh landed in the
+/// same PR and neither side said it: this clamp can WALK BACK the
+/// `loro_doc_state.applied_through_seq` watermarks that #3309 exists to keep
+/// fresh. If compaction purges this device's op_log to zero surviving rows,
+/// `max_seq` is 0, so the clamp lands the cursor at 0; `snapshot_watermark`
+/// is `max(cursor - 1, 0)`, so any `save_all_engines` pass firing in that
+/// window writes `applied_through_seq = 0` over a previously-high watermark
+/// for every DIRTY space (the `INSERT OR REPLACE` in that pass is
+/// unconditional — unlike `advance_clean_space_watermarks`, which re-asserts
+/// `applied_through_seq <` precisely to avoid walking a watermark back). A
+/// later boot whose cursor has advanced again then rewinds to 0 and re-fires
+/// the #619 under-rebuild `error!`.
+///
+/// This is deliberately left as-is rather than clamped-with-a-floor, on two
+/// grounds. It is not a regression — the pre-clamp cursor on that same vault
+/// is above `MAX(seq)` and drives the heal into the same rewind — and the
+/// walked-back watermark is an UNDER-claim, never a false one:
+/// `applied_through_seq` asserts only "this blob reflects every op with
+/// `seq <= watermark`", which 0 satisfies trivially. The cost is a wasted
+/// full replay of a log that compaction just proved to be tiny, plus one
+/// spurious `error!`, on a vault that would have paid both anyway.
+async fn read_apply_cursor(pool: &SqlitePool) -> Result<i64, AppError> {
+    let row = sqlx::query!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
+    )
+    .fetch_one(pool)
+    .await?;
+    let cursor = row.seq;
+
+    // SQL-review H-4: sanity-check against MAX(op_log.seq). The op_log
+    // is append-only per AGENTS.md invariant #1, so MAX(seq) is the
+    // strict upper bound for any legitimate cursor value.
+    //
+    // #1538 (scope note): `materialized_through_seq` is a SINGLE GLOBAL
+    // scalar (table `materializer_apply_cursor`, one `id = 1` row, no
+    // `device_id`), while `op_log.seq` is a PER-DEVICE counter (PK
+    // `(device_id, seq)`). `advance_apply_cursor` bumps the global cursor
+    // via `MAX(materialized_through_seq, seq)` for *every* applied op
+    // regardless of device, so the cursor's legitimate ceiling is the
+    // GLOBAL `MAX(seq)` across all devices — which is exactly what we
+    // compare against here. Crucially, this means the ceiling must NOT be
+    // narrowed to a per-device `MAX(seq) WHERE device_id = ?`: with the
+    // current global cursor that would lower the bound below seqs the
+    // cursor legitimately reached on other devices and FALSE-flag a valid
+    // cursor. The per-device fix belongs to the per-device cursor
+    // partitioning (#412), which adds a `device_id` to the cursor row and
+    // a `WHERE device_id = ?` replay walk; only then does a per-device
+    // ceiling become correct. Until #412 lands this check intentionally
+    // assumes a single-device op_log (the multi-device hard-abort guard in
+    // `replay_unmaterialized_ops` enforces that downstream), so it is NOT
+    // multi-device-safe in any sense beyond "the global ceiling is still
+    // the right ceiling for a global cursor".
+    // #2481: `is_replicated = 0` scopes the ceiling to locally-authored ops.
+    // Replicated audit rows (foreign devices) are never applied and never
+    // advance the cursor, so they must not raise the cursor's legitimate
+    // upper bound either.
+    let max_seq: Option<i64> = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
+    )
+    .fetch_one(pool)
+    .await?;
+    let max_seq = max_seq.unwrap_or(0);
+
+    if cursor > max_seq {
+        tracing::warn!(
+            cursor,
+            max_seq,
+            "replay: materializer_apply_cursor exceeds MAX(op_log.seq) — \
+             impossible-state corruption; resetting cursor to MAX(op_log.seq)"
+        );
+        let updated_at = agaric_store::db::now_ms();
+        sqlx::query!(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = ?, \
+                 updated_at = ? \
+             WHERE id = 1",
+            max_seq,
+            updated_at,
+        )
+        .execute(pool)
+        .await?;
+        return Ok(max_seq);
+    }
+
+    Ok(cursor)
+}
+
+/// #619: does rewinding the apply cursor to `reset_to` under-rebuild
+/// because the op-log head below the rewind target was compacted away?
+///
+/// `compact_op_log` deletes rows older than the retention window, so after
+/// at least one compaction the oldest surviving seq is `> 1`. A replay walk
+/// (`seq > reset_to`) is only a genuine rebuild when every op in
+/// `(reset_to, oldest-surviving-seq)` still exists — i.e. when
+/// `reset_to >= oldest_surviving_seq - 1`. Anything lower silently
+/// reconstructs the engines from the surviving tail only.
+///
+/// #851 (per-device floor): `op_log.seq` is a PER-DEVICE counter
+/// (PK `(device_id, seq)`), and `compact_op_log` purges per device. A
+/// GLOBAL `MIN(seq)` therefore false-negatives the floor: if device A was
+/// compacted up to seq 100 but a freshly-paired device B still has its
+/// seq 1, the global `MIN(seq) = 1` makes the check believe nothing was
+/// purged — while device A's head (seqs 1..=99) is gone. The floor must be
+/// evaluated PER DEVICE: a rewind under-rebuilds iff ANY device's oldest
+/// surviving seq sits above `reset_to + 1`, i.e. the binding floor is the
+/// MAX over devices of `MIN(seq)`. (Today the replay walk itself is single
+/// device per the #412 guard, but the detection is the correctness surface
+/// here and must be right ahead of multi-device sync shipping.)
+///
+/// Split out of [`heal_orphaned_apply_cursor`] so the floor predicate is
+/// directly unit-testable without staging a full heal scenario.
+pub(super) async fn compacted_floor_above(
+    pool: &SqlitePool,
+    reset_to: i64,
+) -> Result<bool, AppError> {
+    // Per-device floor: for each device take its oldest surviving seq
+    // (`MIN(seq)`), then take the MAX of those per-device minima. That
+    // largest per-device head is the binding compaction floor — a rewind
+    // below it leaves at least one device's purged head unrecoverable.
+    // #2481: `is_replicated = 0` — the compaction floor is a statement about
+    // this device's OWN authored history (what a cursor rewind can rebuild
+    // from the local Loro engines). Replicated foreign audit rows are never
+    // rebuilt into engine state, so they must not participate in the floor.
+    let floor: Option<i64> = sqlx::query_scalar!(
+        r#"SELECT MAX(device_min) as "floor: i64"
+           FROM (SELECT MIN(seq) AS device_min FROM op_log
+                 WHERE is_replicated = 0 GROUP BY device_id)"#
+    )
+    .fetch_one(pool)
+    .await?;
+    let Some(floor) = floor else {
+        // Empty op_log — nothing to rebuild from, but also nothing was
+        // compacted "above" the target; the caller's `max_seq == 0` guard
+        // bails out before this matters.
+        return Ok(false);
+    };
+    Ok(reset_to < floor - 1)
+}
+
+/// Boot-only self-heal for an orphaned / stale apply cursor.
+///
+/// `loro_doc_state` holds one persisted Loro engine snapshot per space,
+/// rehydrated into the in-memory engines at boot (see `lib.rs`). Two
+/// failure modes leave an engine behind the global apply cursor
+/// (`materializer_apply_cursor.materialized_through_seq`), so the
+/// incremental replay walk (`seq > cursor`) replays nothing into it and
+/// every later edit/move apply fails "loro: block not found":
+///
+///  1. **Missing snapshot** — the table is empty (e.g. the snapshot
+///     scheduler was disabled in 8c2c5ddf) while the cursor advanced; the
+///     engine boots empty. Reset the cursor to 0 → full replay rebuilds it.
+/// 2. **Stale snapshot (C2)** — a snapshot blob reflects ops
+///    only up to its `applied_through_seq` watermark, but a crash let the
+///    cursor run ahead (snapshots are periodic, the cursor is per-op).
+///    Reset the cursor down to `MIN(applied_through_seq)` so replay
+///    re-applies the unmaterialized tail onto the behind engines.
+///
+/// In both cases the op_log is the append-only source of truth and every
+/// apply handler is idempotent (`MAX(materialized_through_seq, ?)` +
+/// `INSERT OR IGNORE/REPLACE` / keyed `UPDATE` projections + in-order
+/// engine re-apply), so re-applying over already-materialized SQL and
+/// already-caught-up engines is safe.
+///
+/// # Rewind target (#3309)
+///
+/// The reset target is the most-stale watermark across all spaces. What
+/// bounds it is `save_all_engines`: since #2201 that pass re-encodes only
+/// DIRTY spaces, but it also advances `applied_through_seq` for every space
+/// it did not re-encode (`snapshot::advance_clean_space_watermarks`) — a
+/// clean engine already reflects every applied op, so the claim is true
+/// without rewriting the blob. Every row therefore tracks the apply cursor
+/// to within roughly one snapshot interval, and so does this `MIN`.
+///
+/// Do NOT "optimise" this to `MAX`, nor narrow it to a per-space subset:
+/// the target must cover the MOST-behind engine, and a rewind that lands
+/// too high leaves that engine short of the cursor — the "loro: block not
+/// found" wedge this heal exists to fix. If clean-space watermarks ever
+/// stop being refreshed, the frozen-`MIN` boot stall of #3309 comes back;
+/// fix that at the source (the persist path), not by narrowing this bound.
+///
+/// # Logging trade-off (#4018)
+///
+/// A gap of exactly one op (`cursor - reset_to == 1`, snapshot present) logs
+/// at `debug` rather than `warn` (see `routine_one_op_rewind` below) because
+/// that is the routine healthy-boot signature. But the same gap is also what
+/// a crash that loses exactly one materialised op produces — the two cases
+/// are indistinguishable from this function's inputs, so the downgrade
+/// silently covers both. The rewind still runs and the state is still fully
+/// repaired either way; this is an accepted logging trade-off (a genuinely
+/// one-op-stale snapshot goes unremarked at boot), not a defect. Anything
+/// wider than one op is still a loud `warn`.
+///
+/// MUST be called at boot only (after snapshot rehydrate, before the
+/// replay walk).
+///
+/// Returns `true` if it reset the cursor.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool, AppError> {
+    let cursor: i64 = sqlx::query_scalar!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
+    )
+    .fetch_one(pool)
+    .await?;
+    if cursor == 0 {
+        return Ok(false);
+    }
+
+    // #2481: locally-authored ops only (see `read_apply_cursor`).
+    let max_seq: i64 = sqlx::query_scalar!(
+        r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#,
+    )
+    .fetch_one(pool)
+    .await?
+    .unwrap_or(0);
+    if max_seq == 0 {
+        return Ok(false);
+    }
+
+    let snapshot_count: i64 =
+        sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM loro_doc_state"#,)
+            .fetch_one(pool)
+            .await?;
+
+    // How far back to rewind the cursor so replay catches every behind
+    // engine up to the materialised frontier.
+    let reset_to: i64 = if snapshot_count == 0 {
+        // No persisted snapshot at all — every engine boots empty; rebuild
+        // the whole op-log.
+        0
+    } else {
+        // Snapshots exist. Each reflects ops only up to its
+        // `applied_through_seq`; the most-stale one bounds what replay must
+        // re-apply. A backfilled/legacy `0` watermark forces a full rebuild
+        // for that space, which is correct — and #3309 makes it genuinely
+        // one-time: the first `save_all_engines` pass after the rebuild
+        // advances that row even if its space is never touched again.
+        let min_watermark: i64 = sqlx::query_scalar!(
+            r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
+        )
+        .fetch_one(pool)
+        .await?;
+        if cursor <= min_watermark {
+            // Every snapshot already covers the cursor — nothing to heal.
+            return Ok(false);
+        }
+        min_watermark
+    };
+
+    // #619: compaction-floor check. `compact_op_log` purges ops below the
+    // retention frontier, so the oldest surviving row is NOT necessarily
+    // seq 1. A `reset_to` below the per-device compaction floor (#851 —
+    // `MAX` over devices of each device's `MIN(seq)`) means the replay walk
+    // (`seq > reset_to`) can only reconstruct the surviving TAIL: blocks
+    // created before the retention window exist in SQL but will be missing
+    // from the rebuilt engines — the exact "loro: block not found" wedge
+    // this heal exists to fix, plus an old-data-loss hazard if the partial
+    // engines are later persisted as authoritative snapshots. We still
+    // rewind (replaying the tail heals strictly more than leaving the
+    // engines empty/stale), but surface the under-rebuild LOUDLY instead of
+    // logging it as a routine heal.
+    if compacted_floor_above(pool, reset_to).await? {
+        tracing::error!(
+            cursor,
+            max_seq,
+            reset_to,
+            snapshot_count,
+            "recovery: engine rebuild target is below the op-log compaction \
+             floor — the op-log head was compacted away, so the rebuilt \
+             engines will only contain the surviving tail. Blocks older than \
+             the retention window remain in SQL but NOT in the Loro engines; \
+             edits to them will fail until a full engine rebuild from a \
+             snapshot/SQL import. (#619)"
+        );
+    }
+
+    // #4018 — level, not behaviour. `snapshot_watermark` is deliberately
+    // `cursor - 1` (a conservative lower bound on what every engine reflects;
+    // see that function), so a PERFECTLY healthy vault always exits with
+    // `MIN(applied_through_seq) == cursor - 1` and every subsequent boot
+    // observes `cursor == MIN + 1` and rewinds by exactly one op. The rewind
+    // itself is right and costs one idempotent re-apply — but announcing it at
+    // `warn` on every healthy boot is the "permanent alarm poisoning" #3309
+    // filed, and it trains the reader to ignore the line that matters. The `1`
+    // here is not a tuning knob: it is the same `- 1` `snapshot_watermark`
+    // subtracts, so a gap of exactly one op is the structural floor, not a
+    // symptom. Anything wider is a genuinely stale snapshot and still warns,
+    // as does the `snapshot_count == 0` full-rebuild path (`reset_to` is 0
+    // there, so the gap is `cursor`, and a cursor of 1 with NO snapshot at all
+    // is a real missing-snapshot rebuild — hence the explicit branch rather
+    // than a bare gap comparison).
+    let routine_one_op_rewind = snapshot_count > 0 && cursor - reset_to == 1;
+    if routine_one_op_rewind {
+        tracing::debug!(
+            cursor,
+            max_seq,
+            reset_to,
+            snapshot_count,
+            "recovery: rewinding the apply cursor by the one op the snapshot \
+             watermark conservatively withholds (`cursor - 1`) — the routine \
+             healthy-boot case, not a stale snapshot (#4018/#3309)"
+        );
+    } else {
+        tracing::warn!(
+            cursor,
+            max_seq,
+            reset_to,
+            snapshot_count,
+            "recovery: apply cursor is ahead of the Loro snapshot watermark \
+             (missing or stale snapshot) — rewinding the cursor so replay \
+             rebuilds the behind engines from the op-log"
+        );
+    }
+    let updated_at = agaric_store::db::now_ms();
+    sqlx::query!(
+        "UPDATE materializer_apply_cursor \
+         SET materialized_through_seq = ?, \
+             updated_at = ? \
+         WHERE id = 1",
+        reset_to,
+        updated_at,
+    )
+    .execute(pool)
+    .await?;
+    Ok(true)
+}
+
+/// Walk `op_log WHERE seq > cursor` and enqueue each row as an
+/// `ApplyOp` task on the materializer's foreground queue.
+///
+/// Returns a [`ReplayReport`] summarising the pass. The function blocks
+/// until every enqueued op has been processed (via a foreground
+/// `Barrier` task), so callers see a fully-drained queue on return.
+///
+/// `pool` is a `SqlitePool` — typically the writer pool, since the
+/// boot sequence runs before reader-pool consumers wake up. Reading
+/// from the writer is fine here: we are pre-UI and have exclusive
+/// access.
+///
+/// No-op when the op log has no rows past the cursor.
+#[tracing::instrument(skip_all, err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
+pub async fn replay_unmaterialized_ops(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+) -> Result<ReplayReport, AppError> {
+    let cursor = read_apply_cursor(pool).await?;
+
+    // #412: the apply cursor is a SINGLE GLOBAL scalar, but `op_log.seq` is a
+    // PER-DEVICE counter (PK `(device_id, seq)`). The `WHERE seq > cursor` walk
+    // below is only sound when the entire op_log belongs to ONE device — with
+    // two devices, device B's low seqs sit `<= cursor` and are silently never
+    // replayed (ops dropped on the floor at boot). Multi-device sync is not yet
+    // shipped (the remote-apply path is test-only and the SyncDaemon is dormant
+    // until a peer is paired), so a multi-device op_log reaching here means
+    // multi-device sync was enabled BEFORE the per-device watermark cursor
+    // landed. The batch-apply path already has a `debug_assert!` for the write
+    // side; this is the release-build guard for the read/replay side — fail
+    // loudly rather than silently diverge. The full fix (a per-device cursor +
+    // `WHERE device_id = ? AND seq > ?` replay) is deferred to when
+    // multi-device sync ships (schema migration, AGENTS.md arch-stability gate).
+    // #2481: `is_replicated = 0` — count only locally-authored devices. A
+    // replicated foreign device's audit rows legitimately live in op_log now
+    // (audit-only replication) but are NEVER replayed, so they must not trip
+    // the #412 single-device guard. This is the isolation boundary that lets
+    // replicated records coexist in op_log without breaking boot replay.
+    let distinct_devices: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(DISTINCT device_id) AS "n!: i64" FROM op_log WHERE is_replicated = 0"#
+    )
+    .fetch_one(pool)
+    .await?;
+    if distinct_devices > 1 {
+        tracing::error!(
+            distinct_devices,
+            "replay: op_log spans multiple devices but the materializer apply \
+             cursor is a single global scalar — replay would silently drop other \
+             devices' ops. The per-device watermark cursor (#412) must land before \
+             multi-device sync is enabled."
+        );
+        return Err(AppError::InvalidOperation(format!(
+            "op_log spans {distinct_devices} devices but the materializer apply \
+             cursor is a single global scalar; per-device cursor partitioning is \
+             required before multi-device replay (backend audit #412)"
+        )));
+    }
+
+    // Count first so we can log the size before kicking off the walk.
+    // The reader pool would be marginally cheaper but the writer pool
+    // is the one we own at boot — see fn-level docs.
+    let total: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM op_log WHERE is_replicated = 0 AND seq > ?"#,
+        cursor,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if total == 0 {
+        tracing::debug!(cursor, "replay: no unmaterialized ops");
+        return Ok(ReplayReport::default());
+    }
+
+    tracing::info!(
+        cursor,
+        ops_to_replay = total,
+        "replay: enqueuing unmaterialized ops on foreground queue"
+    );
+
+    let mut report = ReplayReport::default();
+    let mut last_seen: i64 = cursor;
+
+    // #2295 — the per-space Loro engine state the apply pipeline mutates.
+    // Boot replay drives every op through `apply_op_tx(chunk = None)`, so each
+    // replayed create/move would reproject its whole sibling group INLINE
+    // (O(N²) across a recovery boot). Instead we SUPPRESS the inline
+    // reprojection for the duration of the replay window and reproject each
+    // touched parent ONCE, below, from the engine's FINAL state.
+    let state = materializer.loro_state();
+
+    // #2896 — the EXPLICIT reprojection-deferral sink. This replaces the retired
+    // ambient boot-replay suppression global on `LoroState` + its comment-enforced
+    // quiescence invariant: instead of flipping a process-wide flag, we OWN this
+    // sink here and thread a clone into every op we enqueue (via
+    // `MaterializeTask::ReplayApplyOp`), so each replayed create/move records its
+    // touched `(space_id, parent)` group HERE instead of reprojecting inline.
+    // Any op NOT dispatched by this driver (a concurrent live/remote op) carries
+    // no sink and reprojects inline by construction — it can never inherit this
+    // suppression. Nothing needs to be cleared on the error path: an aborted
+    // replay simply drops the sink, and the next boot re-replays (the apply
+    // cursor only advances on successful apply).
+    let dirty = agaric_engine::apply::kernel::ReplayDirtyParents::new();
+
+    // #2295 — remember the (single, per the #412 guard above) device id so we
+    // can acquire the right per-space engine for the end-of-replay reproject.
+    let mut replay_device_id: Option<String> = None;
+
+    // Walk the op log in seq-ascending chunks. We re-read each chunk
+    // by `seq > last_seen` so the iteration is stateless across chunks
+    // — no offset cursor to drift if a concurrent writer (there is
+    // none at boot, but defence in depth) committed mid-walk.
+    loop {
+        // #2481: `is_replicated = 0` — replay only locally-authored ops.
+        // Replicated audit rows are inert (never applied to state); this
+        // clause is what keeps them from ever being enqueued onto the
+        // materializer.
+        let rows: Vec<OpRecord> = sqlx::query_as!(
+            OpRecord,
+            "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
+             FROM op_log \
+             WHERE is_replicated = 0 AND seq > ? \
+             ORDER BY seq ASC, device_id ASC \
+             LIMIT ?",
+            last_seen,
+            REPLAY_CHUNK_SIZE,
+        )
+        .fetch_all(pool)
+        .await?;
+
+        if rows.is_empty() {
+            break;
+        }
+
+        for record in rows {
+            last_seen = last_seen.max(record.seq);
+            // #2295: capture the device id before the record moves into the
+            // task — the end-of-replay reproject needs it to reach the engine.
+            replay_device_id = Some(record.device_id.clone());
+            // #2896: carry a clone of the replay-owned sink on the task so the
+            // consumer applies this op in `ApplyMode::ReplaySuppressed(dirty)`.
+            let task = MaterializeTask::ReplayApplyOp(Arc::new(record), dirty.clone());
+            match materializer.enqueue_foreground(task).await {
+                Ok(()) => {
+                    report.ops_replayed += 1;
+                }
+                Err(e) => {
+                    // Enqueue failure is non-fatal — log and continue.
+                    // The next boot's replay will re-attempt because
+                    // the cursor only advances on successful apply.
+                    tracing::warn!(
+                        error = %e,
+                        "replay: failed to enqueue ReplayApplyOp — will retry on next boot"
+                    );
+                    report.replay_errors.push(format!("enqueue: {e}"));
+                }
+            }
+        }
+    }
+
+    // Drain the foreground queue via a Barrier so the caller observes
+    // a fully-applied state on return. Without this, recover_at_boot's
+    // step 2 (drafts) could enqueue synthetic edit_block ops that
+    // interleave with the replayed real ops.
+    materializer.flush_foreground().await?;
+
+    // #2295/#2896 — every replayed op has now applied, so the per-space engines
+    // hold FINAL state. Drain the replay-owned sink and reproject each touched
+    // `(space_id, parent)` group ONCE from that final sibling order. No flag to
+    // clear: the sink is local to this driver, so any op that applied without it
+    // (there should be none during boot, but a concurrent applier is now
+    // harmless by construction) already reprojected inline.
+    let dirty = dirty.drain();
+    let mut parents_reprojected = 0usize;
+    if let Some(device_id) = replay_device_id.as_deref() {
+        use agaric_store::space::SpaceId;
+
+        // #2541: per-group failures are LOGGED + RECORDED, never propagated.
+        // The dirty set is already drained and the apply cursor has already
+        // advanced past every replayed op, so a `?` here was unretryable —
+        // one poisoned group aborted the dense reproject for every REMAINING
+        // group (their SQL `position` ranks stayed stale with no later pass
+        // to heal them; no background task rebuilds positions — RebuildPageIds
+        // covers `page_id` only). Instead, each group is attempted
+        // independently and failures land in `report.replay_errors` with the
+        // [`REPROJECT_DEGRADED_PREFIX`] prefix. #3311: that prefix is what
+        // `RecoveryReport::replay_failed` filters on, so a degraded
+        // reprojection no longer raises the user-visible "replay failed"
+        // signal reserved for an aborted replay — it stays a diagnostic.
+        let record_group_error = |errors: &mut Vec<String>,
+                                  space_id: &str,
+                                  parent: Option<&str>,
+                                  stage: &str,
+                                  e: &AppError| {
+            tracing::error!(
+                space_id,
+                parent = parent.unwrap_or("<root>"),
+                stage,
+                error = %e,
+                "replay: end-of-replay dense reproject failed for one sibling \
+                 group — continuing with the remaining groups (#2541); this \
+                 group's SQL positions stay stale until its next move/create"
+            );
+            // #3311: the prefix is the STRUCTURAL marker `replay_failed()`
+            // filters on — it must stay in lockstep with the constant.
+            errors.push(format!(
+                "{REPROJECT_DEGRADED_PREFIX}{space_id}/{}, {stage}): {e}",
+                parent.unwrap_or("<root>")
+            ));
+        };
+
+        // Do ALL engine reads first (the per-space `EngineGuard` is `!Send` and
+        // must not be held across an `.await`): for each dirty group, take the
+        // guard, read the final ordered child ids, drop the guard. Collect the
+        // orderings, THEN run the async reproject loop with no guard held.
+        let mut orderings: Vec<(&String, &Option<String>, Vec<String>)> =
+            Vec::with_capacity(dirty.len());
+        for (space_id, parent) in &dirty {
+            let space = SpaceId::from_trusted(space_id);
+            // `for_space` lazily creates an engine for an absent space; a fresh
+            // engine has no such parent node, so `children_ordered_block_ids`
+            // returns empty and the reproject below is a no-op — the
+            // "skip absent space/engine" behaviour, without a special case.
+            let read: Result<Vec<String>, AppError> = (|| {
+                let mut guard = state.registry.for_space(&space, device_id)?;
+                guard
+                    .engine_mut()
+                    .children_ordered_block_ids(parent.as_deref())
+            })();
+            match read {
+                Ok(ordered) => orderings.push((space_id, parent, ordered)),
+                Err(e) => record_group_error(
+                    &mut report.replay_errors,
+                    space_id,
+                    parent.as_deref(),
+                    "engine read",
+                    &e,
+                ),
+            }
+        }
+
+        match pool.acquire().await {
+            Ok(mut conn) => {
+                for (space_id, parent, ordered) in &orderings {
+                    match agaric_engine::loro::projection::reproject_dense_positions(
+                        &mut conn, ordered,
+                    )
+                    .await
+                    {
+                        Ok(()) => parents_reprojected += 1,
+                        Err(e) => record_group_error(
+                            &mut report.replay_errors,
+                            space_id,
+                            parent.as_deref(),
+                            "sql reproject",
+                            &e,
+                        ),
+                    }
+                }
+            }
+            Err(e) => {
+                // No connection at all — every group is degraded, but the
+                // replay itself (ops applied, cursor advanced) still stands.
+                let e = AppError::from(e);
+                for (space_id, parent, _) in &orderings {
+                    record_group_error(
+                        &mut report.replay_errors,
+                        space_id,
+                        parent.as_deref(),
+                        "acquire conn",
+                        &e,
+                    );
+                }
+            }
+        }
+    }
+
+    tracing::debug!(
+        parents_reprojected,
+        "replay: batched end-of-replay reproject complete (#2295)"
+    );
+
+    tracing::info!(
+        ops_replayed = report.ops_replayed,
+        replay_errors = report.replay_errors.len(),
+        "replay: complete"
+    );
+
+    Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agaric_store::test_support::init_pool;
+    use tempfile::TempDir;
+
+    /// Create a temp-file-backed SQLite pool with migrations applied.
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Thread-safe buffered writer for in-process log capture. Duplicated
+    /// per `tests/AGENTS.md` ("test helper duplication is intentional");
+    /// paired with a current-thread runtime (`#[tokio::test]`) so
+    /// `set_default`'s THREAD-local guard covers every `.await` point.
+    #[derive(Clone, Default)]
+    struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+        type Writer = LogBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// Run the heal with a WARN-and-above subscriber installed and return
+    /// what it emitted. The filter is the point: a line the heal logs at
+    /// `debug!` is invisible here, which is exactly the distinction under
+    /// test.
+    async fn heal_capturing_warns(pool: &SqlitePool) -> (bool, String) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let buf = LogBuf::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(buf.clone())
+                    .with_ansi(false),
+            );
+        let healed = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            heal_orphaned_apply_cursor(pool).await.unwrap()
+        };
+        let out = String::from_utf8_lossy(&buf.0.lock().unwrap()).into_owned();
+        (healed, out)
+    }
+
+    async fn seed_local_ops(pool: &SqlitePool, through: i64) {
+        for seq in 1..=through {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn seed_watermark_row(pool: &SqlitePool, space_id: &str, watermark: i64) {
+        sqlx::query(
+            "INSERT INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES (?, X'00', 0, 0, ?)",
+        )
+        .bind(space_id)
+        .bind(watermark)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn park_cursor(pool: &SqlitePool, cursor: i64) {
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = ?, updated_at = 1767225600000 WHERE id = 1",
+        )
+        .bind(cursor)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// #4018 item 2 / #3309 "permanent alarm poisoning" — the one-op rewind
+    /// every HEALTHY boot performs must not be announced as a stale snapshot.
+    ///
+    /// `snapshot_watermark` is deliberately `cursor - 1`, so a vault that
+    /// exited cleanly always boots with `MIN(applied_through_seq) == cursor - 1`
+    /// and this heal always rewinds by exactly one op. The rewind is correct;
+    /// warning about it on every single boot is what trains an operator to
+    /// ignore the line. Level only — the cursor is still reset either way,
+    /// which is asserted here so the downgrade cannot be mistaken for a skip.
+    #[tokio::test]
+    async fn routine_one_op_rewind_does_not_warn_4018() {
+        let (pool, _dir) = test_pool().await;
+        seed_local_ops(&pool, 5).await;
+        // The clean-exit shape: watermark is exactly `cursor - 1`.
+        seed_watermark_row(&pool, "test-space", 4).await;
+        park_cursor(&pool, 5).await;
+
+        let (healed, out) = heal_capturing_warns(&pool).await;
+
+        assert!(healed, "the rewind itself must still happen");
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 4,
+            "…and must still land on MIN(applied_through_seq)"
+        );
+        assert!(
+            !out.contains("apply cursor is ahead of the Loro snapshot watermark"),
+            "a gap of exactly the one op `snapshot_watermark` withholds is the healthy \
+             steady state, not a stale snapshot — it must not warn on every boot \
+             (#4018/#3309). Captured logs:\n{out}"
+        );
+        assert!(
+            out.is_empty(),
+            "nothing at warn-or-above belongs on a healthy boot. Captured logs:\n{out}"
+        );
+    }
+
+    /// The other side of the split: a gap WIDER than the structural one op is
+    /// a genuinely stale snapshot and must still warn. Without this the
+    /// downgrade above could be "never warn", which is the same alarm
+    /// poisoning in the opposite direction.
+    #[tokio::test]
+    async fn a_stale_snapshot_still_warns_4018() {
+        let (pool, _dir) = test_pool().await;
+        seed_local_ops(&pool, 5).await;
+        // Two ops behind: a crash let the cursor run past the last snapshot.
+        seed_watermark_row(&pool, "test-space", 3).await;
+        park_cursor(&pool, 5).await;
+
+        let (healed, out) = heal_capturing_warns(&pool).await;
+
+        assert!(healed);
+        assert!(
+            out.contains("apply cursor is ahead of the Loro snapshot watermark"),
+            "a two-op gap is a real stale snapshot and must be announced. \
+             Captured logs:\n{out}"
+        );
+    }
+
+    /// …and the boundary the `snapshot_count > 0` conjunct exists for: a
+    /// cursor of 1 with NO snapshot at all is a gap of exactly 1 by
+    /// arithmetic, but it is a genuine missing-snapshot full rebuild, not the
+    /// routine withheld op. A bare gap comparison would silence it.
+    #[tokio::test]
+    async fn a_missing_snapshot_warns_even_at_a_gap_of_one_4018() {
+        let (pool, _dir) = test_pool().await;
+        seed_local_ops(&pool, 1).await;
+        park_cursor(&pool, 1).await;
+
+        let (healed, out) = heal_capturing_warns(&pool).await;
+
+        assert!(healed);
+        assert!(
+            out.contains("apply cursor is ahead of the Loro snapshot watermark"),
+            "no snapshot at all is a full rebuild, whatever the arithmetic gap. \
+             Captured logs:\n{out}"
+        );
+    }
+
+    /// SQL-review H-4: when the cursor row stores a `materialized_through_seq`
+    /// value greater than `MAX(op_log.seq)` (which the apply path
+    /// guarantees can never happen by `MAX(materialized_through_seq, ?)`
+    /// semantics, but could arise from a hand-edit / partial restore /
+    /// rolled-back op_log), `read_apply_cursor` must detect the
+    /// impossible state, log a warning, and reset the cursor down to
+    /// `MAX(op_log.seq)` so the next replay walk does not silently miss
+    /// unmaterialized ops.
+    #[tokio::test]
+    async fn apply_cursor_sanity_resets_when_cursor_exceeds_max_seq() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert 3 op_log rows (seqs 1..=3) directly. We bypass
+        // `append_local_op` because this test is about cursor sanity, not
+        // op-log construction — raw INSERTs with valid column values are
+        // simpler and don't drag in OpPayload fixtures.
+        for seq in 1..=3i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Corrupt the cursor: set it well past MAX(op_log.seq) = 3.
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = ?, \
+                 updated_at = 1767225600000 \
+             WHERE id = 1",
+        )
+        .bind(9999i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Call the function under test.
+        let returned = read_apply_cursor(&pool).await.unwrap();
+        assert_eq!(
+            returned, 3,
+            "read_apply_cursor should clamp an over-shoot cursor down to MAX(op_log.seq)"
+        );
+
+        // The DB row must have been rewritten — otherwise the next boot
+        // would observe the same corruption.
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 3,
+            "materializer_apply_cursor row must be reset to MAX(op_log.seq) on disk, \
+             not just in the return value"
+        );
+    }
+
+    /// Self-heal: when `loro_doc_state` is empty (the persisted Loro
+    /// snapshot is missing) but the apply cursor is non-zero, the
+    /// in-memory engine cannot be rebuilt from the snapshot, so
+    /// `heal_orphaned_apply_cursor` must reset the cursor to 0 — forcing a full
+    /// op-log replay that reconstructs the engine. Regression guard for
+    /// the deleted snapshot scheduler that left `loro_doc_state` empty
+    /// while the cursor advanced, wedging every edit on "block not found".
+    #[tokio::test]
+    async fn apply_cursor_resets_to_zero_when_snapshot_missing() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert 3 op_log rows (seqs 1..=3); leave `loro_doc_state` empty.
+        for seq in 1..=3i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Cursor claims everything is materialized (== MAX(op_log.seq)),
+        // so the over-shoot guard does NOT fire — only the snapshot-empty
+        // guard should.
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 3, \
+                 updated_at = 1767225600000 \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(
+            healed,
+            "heal must reset the cursor when loro_doc_state is empty"
+        );
+
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 0,
+            "materializer_apply_cursor row must be reset to 0 on disk for a full rebuild"
+        );
+    }
+
+    /// A snapshot whose watermark already covers the cursor (the snapshot
+    /// is current) must NOT trigger a reset — the normal incremental replay
+    /// (`seq > cursor`) applies and the cursor is returned as-is.
+    #[tokio::test]
+    async fn apply_cursor_preserved_when_snapshot_current() {
+        let (pool, _dir) = test_pool().await;
+
+        for seq in 1..=3i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Seed a snapshot whose watermark (2) >= the cursor (2): the
+        // snapshot already reflects everything the cursor claims, so the
+        // heal must leave the cursor alone.
+        sqlx::query(
+            "INSERT INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES ('test-space', X'00', 0, 0, 2)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 2, \
+                 updated_at = 1767225600000 \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(
+            !healed,
+            "heal must be a no-op when the snapshot watermark covers the cursor"
+        );
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 2,
+            "cursor must be preserved when the snapshot watermark covers it"
+        );
+    }
+
+    /// /C2 repro: a snapshot that is *present but stale*
+    /// (`applied_through_seq` < cursor — the crash let the cursor run ahead
+    /// of the last periodic snapshot) must rewind the cursor down to the
+    /// watermark so replay re-applies the unmaterialized tail onto the
+    /// behind engine. The old `COUNT(*) > 0` gate left the cursor ahead and
+    /// wedged every later edit on "block not found".
+    #[tokio::test]
+    async fn apply_cursor_rewinds_to_watermark_when_snapshot_stale() {
+        let (pool, _dir) = test_pool().await;
+
+        for seq in 1..=3i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Snapshot reflects ops only through seq 1, but the cursor advanced
+        // to 3 (two ops applied after the last snapshot, then a crash).
+        sqlx::query(
+            "INSERT INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES ('test-space', X'00', 0, 0, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 3, \
+                 updated_at = 1767225600000 \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(healed, "heal must rewind the cursor for a stale snapshot");
+
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 1,
+            "cursor must rewind to the snapshot watermark so replay re-applies seq 2..3"
+        );
+    }
+
+    /// #3309: the multi-space regression. A vault with a space that was used
+    /// once and then went quiescent must NOT make every boot rewind the apply
+    /// cursor to that space's frozen watermark.
+    ///
+    /// End-to-end because the defect spans two modules: the heal's `MIN` is
+    /// correct (it must cover the most-behind engine), and what used to be
+    /// broken was the persist side — since #2201 `save_all_engines` re-encodes
+    /// only DIRTY spaces, so the quiescent row's `applied_through_seq` stayed
+    /// frozen at 1 forever and `MIN` with it. This test runs a real snapshot
+    /// pass (one dirty space, one quiescent row) and then the heal, and pins
+    /// the rewind target to ~one snapshot interval instead of the whole log.
+    #[tokio::test]
+    async fn heal_rewind_target_is_not_pinned_by_a_quiescent_space_3309() {
+        use agaric_engine::loro::registry::LoroEngineRegistry;
+        use agaric_engine::loro::snapshot::save_all_engines;
+        use agaric_store::space::SpaceId;
+
+        const ACTIVE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        const QUIESCENT: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+
+        let (pool, _dir) = test_pool().await;
+
+        for seq in 1..=20i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The quiescent space: persisted long ago at watermark 1, never
+        // touched again, so it never enters the dirty set.
+        sqlx::query(
+            "INSERT INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES (?, X'00', 1767225600000, 0, 1)",
+        )
+        .bind(QUIESCENT)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The user has been working in ACTIVE ever since; the cursor is at 20.
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 20, updated_at = 1767225600000 WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let registry = LoroEngineRegistry::new();
+        let active = SpaceId::from_trusted(ACTIVE);
+        // As at boot: rehydration installs an engine for the quiescent space
+        // too (it just never goes dirty again). Only a space whose blob FAILS
+        // to import is left without one, and that row must keep pinning MIN.
+        registry.install_engine(
+            SpaceId::from_trusted(QUIESCENT),
+            agaric_engine::loro::engine::LoroEngine::with_peer_id("test-device").expect("engine"),
+        );
+        {
+            let mut guard = registry
+                .for_space(&active, "test-device")
+                .expect("for_space");
+            guard
+                .engine_mut()
+                .apply_create_block("BLOCKACT", "content", "in active", None, 0)
+                .expect("create");
+        }
+        let saved = save_all_engines(&pool, &registry).await;
+        assert_eq!(saved, 1, "only the dirty space is re-encoded (#2201)");
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(
+            healed,
+            "the cursor (20) is one op ahead of the pass watermark (19), so the \
+             heal still rewinds by that one op"
+        );
+
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 19,
+            "the rewind target must track the snapshot pass watermark, NOT the \
+             quiescent space's frozen watermark of 1 — otherwise every boot replays \
+             the whole op-log tail (#3309)"
+        );
+    }
+
+    /// #619: the compaction-floor predicate. A "full rebuild" rewind target
+    /// below `MIN(op_log.seq) - 1` means the op-log head was compacted away
+    /// and the replay can only reconstruct the surviving tail.
+    #[tokio::test]
+    async fn compacted_floor_above_detects_purged_op_log_head_619() {
+        let (pool, _dir) = test_pool().await;
+
+        // Empty op_log: nothing was compacted "above" any target.
+        assert!(
+            !compacted_floor_above(&pool, 0).await.unwrap(),
+            "empty op_log must not flag a floor violation"
+        );
+
+        // Simulate a compacted log: seqs 5..=8 survive (1..=4 purged).
+        for seq in 5..=8i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert!(
+            compacted_floor_above(&pool, 0).await.unwrap(),
+            "rewind-to-0 against a compacted log under-rebuilds (#619)"
+        );
+        assert!(
+            compacted_floor_above(&pool, 3).await.unwrap(),
+            "a target below MIN(seq)-1 still misses compacted ops"
+        );
+        assert!(
+            !compacted_floor_above(&pool, 4).await.unwrap(),
+            "target == MIN(seq)-1 covers every surviving op — no violation"
+        );
+        assert!(
+            !compacted_floor_above(&pool, 7).await.unwrap(),
+            "targets above the floor are fine"
+        );
+    }
+
+    /// #851: the compaction floor is PER DEVICE, not global. `op_log.seq` is
+    /// per-device (PK `(device_id, seq)`); `compact_op_log` purges per device.
+    /// A device compacted up to a high head must trip the floor even when
+    /// another device's freshly-paired low seq keeps the GLOBAL `MIN(seq)`
+    /// at 1 (the old global query false-negatived this).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compacted_floor_is_per_device_not_global_851() {
+        let (pool, _dir) = test_pool().await;
+
+        let insert = |dev: &'static str, seq: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO op_log \
+                     (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                     VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+                )
+                .bind(dev)
+                .bind(seq)
+                .bind(format!("{dev}-hash-{seq}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        // Device A was compacted: only seqs 100..=102 survive (1..=99 purged).
+        // Device B is freshly paired: its seqs start at 1 and are intact.
+        for seq in 100..=102i64 {
+            insert("device-A", seq).await;
+        }
+        for seq in 1..=3i64 {
+            insert("device-B", seq).await;
+        }
+
+        // GLOBAL MIN(seq) is 1 (device B). The OLD global check would compute
+        // `reset_to < 1 - 1 = 0` and FALSE-NEGATIVE every non-negative target.
+        // The per-device floor is MAX(MIN over devices) = MIN(seq) of device A
+        // = 100, so the binding floor-minus-one is 99.
+        assert!(
+            compacted_floor_above(&pool, 0).await.unwrap(),
+            "rewind-to-0 must trip the per-device floor (device A head purged) — \
+             the global MIN(seq)=1 must NOT mask it (#851)"
+        );
+        assert!(
+            compacted_floor_above(&pool, 98).await.unwrap(),
+            "a target below device A's MIN(seq)-1 (=99) still misses device A's purged head"
+        );
+        assert!(
+            !compacted_floor_above(&pool, 99).await.unwrap(),
+            "target == device A's MIN(seq)-1 covers every surviving op — no violation"
+        );
+        assert!(
+            !compacted_floor_above(&pool, 200).await.unwrap(),
+            "targets above the floor are fine"
+        );
+    }
+
+    /// #851: a genuinely non-compacted multi-device log (every device's head
+    /// starts at seq 1) must NOT trip the floor — the per-device fix must not
+    /// over-fire on a healthy multi-device op_log.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn per_device_floor_no_false_positive_when_uncompacted_851() {
+        let (pool, _dir) = test_pool().await;
+
+        for (dev, max) in [("device-A", 3i64), ("device-B", 5i64)] {
+            for seq in 1..=max {
+                sqlx::query(
+                    "INSERT INTO op_log \
+                     (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                     VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+                )
+                .bind(dev)
+                .bind(seq)
+                .bind(format!("{dev}-hash-{seq}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+
+        // Every device's MIN(seq) is 1, so MAX(MIN) = 1 and the floor-minus-one
+        // is 0: a full rebuild from 0 is genuine, no violation.
+        assert!(
+            !compacted_floor_above(&pool, 0).await.unwrap(),
+            "an uncompacted multi-device log must not false-positive the floor (#851)"
+        );
+    }
+
+    /// #619: the heal still rewinds on a compacted log (replaying the tail
+    /// heals strictly more than leaving the engines empty) — the floor
+    /// violation is surfaced via `error!`, not by aborting the heal. Pins
+    /// the rewind-still-happens behaviour the loud log documents.
+    #[tokio::test]
+    async fn heal_still_rewinds_when_op_log_head_compacted_619() {
+        let (pool, _dir) = test_pool().await;
+
+        // Compacted log (head purged), empty loro_doc_state, cursor ahead.
+        for seq in 5..=8i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 8, \
+                 updated_at = 1767225600000 \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(healed, "heal must still rewind on a compacted op_log");
+
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 0,
+            "the rewind target is unchanged — the floor violation is a loud \
+             error!, not a behaviour change (#619)"
+        );
+    }
+}

@@ -125,6 +125,18 @@ pub mod dag;
 
 pub mod reverse;
 
+/// The op-log→SQL projection queue (#4502, #4499 phase 2): the `Materializer`
+/// coordinator, its foreground/background consumers, dispatch, dedup, the
+/// persisted retry queue and the queue metrics. Builds on the sibling `apply`
+/// kernel and `loro` engine plus `agaric-store` (db/op/op_log/cache/fts/
+/// tag_inheritance); carries the queue's `sqlx::query!` sites. The app passes
+/// its runtime handle in at construction (its `setup` runs outside any
+/// runtime) and re-exports the module (`pub use agaric_engine::materializer;`)
+/// so every `crate::materializer::…` path resolves unchanged. The tests that
+/// drive the app's command layer, `CommandTx` or the reconciliation oracle
+/// stay app-side as `materializer_app_tests`.
+pub mod materializer;
+
 /// TEST-PROPTEST-B (#150): shared seeded-DB proptest fixture harness —
 /// random valid block trees + op chains over a real pool. Reused by
 /// `tests/reverse_proptest_b1.rs` here and by the app crate's B2-B4

@@ -45,3 +45,9 @@ mod protocol_proptest;
 pub use operations::*;
 pub use session_state_machine::SyncOrchestrator;
 pub use types::*;
+
+// #3120: repatriated from the app crate.
+#[cfg(test)]
+mod loro_sync_tests;
+#[cfg(test)]
+mod tests;

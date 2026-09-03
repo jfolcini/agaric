@@ -1,0 +1,248 @@
+mod consumer;
+mod coordinator;
+mod dedup;
+mod dispatch;
+mod handlers;
+mod metrics;
+pub mod retry_queue;
+#[cfg(test)]
+mod tests;
+use agaric_store::op_log::OpRecord;
+#[cfg(test)]
+use consumer::process_single_foreground_task;
+pub use coordinator::{BackgroundEnqueueOutcome, Materializer};
+// #417/#432: the local command path (commands/blocks/*) maintains
+// `pages_cache.{child_block_count,inbound_link_count}` in-tx for ops that
+// do NOT enqueue a full `RebuildPagesCache` (notably content `create`),
+// reusing the materializer's single source of truth for the two columns
+// rather than duplicating the correlated-subquery SQL.
+#[cfg(test)]
+use dedup::dedup_tasks;
+// #2344: the LOCAL create_block command core
+// (`domain::block_ops::create_block_in_tx`) joined the #2325 apply-path
+// collapse — it now routes through `apply_op_projected`, so the
+// `apply_create_block_via_loro` re-export was dropped from here (the Create arm
+// of `apply_op_tx` and the reproject proptest still reach the helper via its
+// own module path within `handlers`).
+// #2128 test-only: surface the LOCAL SQL purge cascade so the inbound-purge
+// parity test (`sync_protocol::tests`) can build a local-purge oracle DB.
+#[cfg(any(test, feature = "test-util"))]
+pub use handlers::purge_block_sql_cascade;
+// #1257 re-export the simple-op engine helpers so the LOCAL command paths
+// (edit_block / set_property / delete_property / add_tag / remove_tag) can route
+// through the engine IN-TRANSACTION without advancing the apply cursor.
+// #2344: MoveBlock joined the collapse — `move_block_in_tx` now routes through
+// `apply_op_projected` (the FINAL single-op slice), so the
+// `apply_move_block_via_loro` re-export was likewise dropped (the Move arm of
+// `apply_op_tx` and the convergence/reproject proptests still reach the helper
+// via its own module path within `handlers`).
+// #1257 re-export the cohort collectors + the post-commit descendant
+// fan-out so the LOCAL delete / restore command paths (`commands::blocks::crud`)
+// PRE-CAPTURE each root's subtree cohort + space BEFORE the SQL soft-delete (a
+// post-delete `resolve_block_space` returns None — the #1257 phantom) and then
+// drive the captured cohort onto the per-space Loro engine post-commit, using
+// the SAME engine apply the boot-replay / sync `ApplyOp` path uses. The apply
+// cursor is never advanced (boot-replay / `dispatch_op` concern). The
+// `apply_*_via_loro` CASCADE helpers' visibility is also raised to `pub(crate)`
+// (re-exported via `handlers::mod`) to complete the engine-apply surface
+// established and which `merge::engine_apply` mirrors; the multi-root command
+// path drives the engine through the fan-out + `engine_apply` rather than the
+// per-seed in-tx helper (the helper's single-root SQL projection would
+// double-count the multi-root cascade, and a post-cascade call hits dead space
+// resolution — the pre-captured space sidesteps both).
+// #2325/#2250: the AddTag / RemoveTag / SetProperty / DeleteProperty LOCAL
+// command sites no longer call `apply_*_via_loro` directly — they route through
+// `apply_op_projected` — so those four re-exports were dropped from here.
+// #2344: EditBlock joined the collapse — `edit_block_inner` now routes through
+// `apply_op_projected` too, so the `apply_edit_block_via_loro` re-export was
+// likewise dropped (the Edit arm of `apply_op_tx` and the convergence proptest
+// still reach the helper via its own module path within `handlers`).
+// #3834: `dispatch_restore_ancestors` joins the re-export list. Both LOCAL
+// restore command sites (`restore_block_inner`, `restore_blocks_by_ids_inner`)
+// now drive the restored ancestor chain onto the engine themselves post-commit
+// — the `apply_op` replay arm that used to be cited for it never runs for a
+// locally authored op (the local path leaves the apply cursor put).
+// #4285: `reindex_restored_cohort_links` joins it for the same reason — the
+// LOCAL restore paths repair the restored cohort's LINK edges themselves
+// post-commit, because `invalidations_for_op` sees only the seed's id.
+pub use handlers::{
+    collect_delete_cohort, collect_restore_cohort, dispatch_delete_descendants,
+    dispatch_restore_ancestors, dispatch_restore_descendants, reindex_restored_cohort_links,
+};
+// #2325/#2250: the single collapsed apply-projection entry point the LOCAL
+// command sites route through (`advance_cursor = false`).
+pub use handlers::apply_op_projected;
+// #3345/#3296: the reconciliation oracle drives `page_link_cache` maintenance
+// from production's OWN per-op fan-out table rather than from a hand-written
+// list, so a task the dispatcher forgets to enqueue is a task the oracle never
+// runs — which is exactly how a missing invalidation becomes a visible
+// divergence instead of an untested assumption. Test-only: `dispatch` is a
+// private module and nothing outside the materializer reads the table in a
+// production build.
+#[cfg(any(test, feature = "test-util"))]
+pub use dispatch::invalidations_for_op;
+// #3886: the `move_same_page` hint PRODUCER, re-exported unconditionally — the
+// local move command (`commands/blocks/move_ops.rs`) is its production caller.
+// It lives next to `invalidations_for_op`'s `MoveBlock` arm because the
+// condition it encodes (`page_id` unchanged AND a REAL page, so the
+// `COALESCE(page_id, parent_id, id)` roll-up key provably cannot move) is a
+// property of the SKIP, not of the move.
+pub use dispatch::move_same_page_hint;
+// #1993: re-exported test-only so command-level tests can drive the GC pass
+// (delete defers byte reclamation to it). Non-test code reaches it within the
+// materializer module via `handlers::cleanup_orphaned_attachments`.
+#[cfg(any(test, feature = "test-util"))]
+pub use handlers::cleanup_orphaned_attachments;
+// Re-export the two process-global materializer counter accessors
+// so the OTel metrics pipeline (`observability::metrics`) can surface them as
+// observable counters WITHOUT reaching into the private `handlers` module or
+// touching the underlying statics directly. Each is a thin getter over a
+// monotonic `AtomicU64` (relaxed load); the metrics callback reads it on each
+// collection cycle. PII-safe by construction (opaque counts only).
+// `sql_only_fallback_count` is additionally `pub` because the conformance
+// tests will read it from outside the crate once step 2 moves them into an
+// integration binary; its sibling has no caller that moves.
+pub use handlers::descendant_fanout_dropped_count;
+pub use handlers::sql_only_fallback_count;
+pub use metrics::{QueueMetrics, StatusInfo, SyncStatus};
+// #4502: the app crate keeps the materializer tests that drive its command
+// layer, `CommandTx` or the reconciliation oracle (`materializer_app_tests`);
+// they reach the queue handlers through `test-util`.
+#[cfg(any(test, feature = "test-util"))]
+pub use handlers::{
+    GC_RACE_RENDEZVOUS, handle_background_task, handle_background_task_metered,
+    handle_foreground_task,
+};
+// Pinned from `agaric-sync`, which sees both halves of each pair: the snapshot
+// RESET wipe list against the post-restore rebuild set, and the transport
+// receive timeout against the attachment temp-file reap window.
+pub use coordinator::POST_SNAPSHOT_CACHE_REBUILDS;
+pub use handlers::TRANSFER_TEMP_REAP_AFTER;
+use serde::Deserialize;
+use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub enum MaterializeTask {
+    /// I-Materializer-3: the inner `OpRecord` is wrapped in an `Arc`
+    /// so that cloning the task (e.g. for the foreground/background
+    /// retry arms in `consumer.rs`) is a refcount bump rather than a
+    /// deep clone of the record's owned `String` payloads. Pairs with
+    /// The fix on `BatchApplyOps`.
+    ApplyOp(Arc<OpRecord>),
+    /// #2896 — a boot-replay op. Identical to [`ApplyOp`](Self::ApplyOp) in
+    /// every respect (dedup, retry, metrics, cursor advance) EXCEPT that it
+    /// carries the replay-owned reprojection-deferral sink: the consumer applies
+    /// it in `ApplyMode::ReplaySuppressed`, so each replayed create/move records
+    /// its touched sibling group into this sink instead of reprojecting inline.
+    /// The replay driver drains the sink once, after the whole replay flushes,
+    /// to reproject each touched parent ONCE from the engine's final state.
+    ///
+    /// This variant is what makes the suppression mode EXPLICIT (per-op) rather
+    /// than an ambient global: a concurrent live op arrives as a plain `ApplyOp`
+    /// and reprojects inline by construction, so it can never inherit replay
+    /// suppression. A failed replay op that exhausts retries persists as a plain
+    /// `ApplyOp` retry row (the sink is dropped) — a later re-apply outside the
+    /// replay window correctly reprojects inline, matching the prior behaviour.
+    ReplayApplyOp(Arc<OpRecord>, crate::apply::kernel::ReplayDirtyParents),
+    /// The inner `Vec<OpRecord>` is wrapped in an `Arc` so that
+    /// cloning the task (e.g. for the foreground/background retry arms in
+    /// `consumer.rs`) is a refcount bump rather than a deep clone of a
+    /// potentially multi-thousand-op chunk during sync catch-up. Mobile
+    /// (Android) RAM is constrained — the previous shape made every
+    /// retry-prep clone proportional to batch size, even on the common
+    /// no-retry path.
+    BatchApplyOps(Arc<Vec<OpRecord>>),
+    RebuildTagsCache,
+    /// #676: incremental, single-tag refresh of `tags_cache.usage_count`
+    /// after an `add_tag` / `remove_tag` op. Those ops mutate exactly one
+    /// `(block_id, tag_id)` edge, so only the affected tag's `usage_count`
+    /// can change — neither its name nor the set of cached tags can move.
+    /// Recomputing just this one row (via
+    /// `cache::refresh_tag_usage_count`) avoids a full O(vault)
+    /// `RebuildTagsCache` enqueue on every tag click.
+    RefreshTagUsageCount {
+        tag_id: Arc<str>,
+    },
+    RebuildPagesCache,
+    /// #417: full-table recompute of `pages_cache.{inbound_link_count,
+    /// child_block_count}`. Enqueued ONLY on the snapshot/sync RESET path
+    /// (after `RebuildPagesCache` re-inserts the page rows), where the
+    /// wipe leaves both count columns at DEFAULT 0. Ordinary per-op page
+    /// mutations maintain these counts in-tx (sync `ApplyOp` and the local
+    /// command paths) and therefore do NOT enqueue this task — running the
+    /// count UPDATE unconditionally would cost O(pages) correlated
+    /// subqueries on every page edit (#417).
+    RebuildPagesCacheCounts,
+    RebuildAgendaCache,
+    ReindexBlockLinks {
+        block_id: Arc<str>,
+    },
+    /// Incremental reindex of `block_tag_refs` for a single
+    /// block after a content mutation. Mirrors `ReindexBlockLinks`.
+    ReindexBlockTagRefs {
+        block_id: Arc<str>,
+    },
+    UpdateFtsBlock {
+        block_id: Arc<str>,
+    },
+    ReindexFtsReferences {
+        block_id: Arc<str>,
+    },
+    RemoveFtsBlock {
+        block_id: Arc<str>,
+    },
+    RebuildFtsIndex,
+    FtsOptimize,
+    CleanupOrphanedAttachments,
+    RebuildTagInheritanceCache,
+    RebuildProjectedAgendaCache,
+    RebuildPageIds,
+    /// Incremental `page_id` maintenance for a single newly created block.
+    /// The new block has no descendants; its `page_id` is simply its parent's
+    /// `page_id`. Avoids the full O(N) recursive-CTE rebuild on `create_block`.
+    SetBlockPageId {
+        block_id: Arc<str>,
+    },
+    /// Full-vault recompute of `block_tag_refs`. Fires on
+    /// delete / restore / purge and from `apply_snapshot` / boot-time
+    /// "table is empty" fallback.
+    RebuildBlockTagRefsCache,
+    /// Full-vault recompute of `page_link_cache`
+    /// (the page-level roll-up of `block_links`). Fires on delete /
+    /// restore / purge and from `apply_snapshot` / boot-time "table
+    /// is empty" fallback. Per-content-edit invalidation rolls up
+    /// inside the [`MaterializeTask::ReindexBlockLinks`] handler.
+    RebuildPageLinkCache,
+    Barrier(Arc<tokio::sync::Notify>),
+}
+
+const FOREGROUND_CAPACITY: usize = 256;
+const BACKGROUND_CAPACITY: usize = 1024;
+const QUEUE_PRESSURE_NUMERATOR: usize = 3;
+const QUEUE_PRESSURE_DENOMINATOR: usize = 4;
+
+#[derive(Deserialize)]
+struct CreateBlockHint {
+    #[serde(default)]
+    block_id: String,
+    #[serde(default)]
+    block_type: String,
+}
+
+/// #676: minimal projection of an `add_tag` / `remove_tag` payload —
+/// just the `tag_id` needed to scope the incremental
+/// [`MaterializeTask::RefreshTagUsageCount`] enqueue. Both
+/// `AddTagPayload` and `RemoveTagPayload` (op.rs) carry
+/// `{ block_id, tag_id }`; only `tag_id` is read here.
+#[derive(Deserialize)]
+pub(super) struct TagOpHint {
+    #[serde(default)]
+    pub(super) tag_id: String,
+}
+
+// `dispatch::enqueue_background_tasks` reads `block_id` for the
+// edit/delete/restore/purge arms straight from the cached
+// `OpRecord::block_id` sidecar (populated at append-time / sync ingress)
+// rather than re-parsing `record.payload`. `CreateBlockHint` still exists
+// because the `create_block` arm also needs `block_type` (tag vs. page vs.
+// content), which the sidecar doesn't carry.

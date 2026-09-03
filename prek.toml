@@ -79,7 +79,7 @@ hooks = [
     # (`agaric-sync/src/sync_cert.rs`, `src/sync_net/tests.rs`) were dropped in
     # #3510 when the iroh cutover deleted those files; keep this list pruned.
     # WHY: a committed private key is an unrevocable secret leak — #3510
-    { id = "detect-private-key", exclude = "^src-tauri/src/sync_daemon/tests\\.rs$|^SESSION-LOG\\.md$|^docs/session-log/", stages = [
+    { id = "detect-private-key", exclude = "^src-tauri/agaric-sync/src/sync_daemon/tests\\.rs$|^SESSION-LOG\\.md$|^docs/session-log/", stages = [
         "pre-commit",
     ] },
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
@@ -1362,7 +1362,7 @@ name = "Metric-provability guard self-test"
 entry = "node scripts/check-metric-provable.mjs --self-test"
 language = "system"
 pass_filenames = false
-files = "^(scripts/check-metric-provable\\.mjs|src-tauri/src/materializer/metrics\\.rs)$"
+files = "^(scripts/check-metric-provable\\.mjs|src-tauri/agaric-engine/src/materializer/metrics\\.rs)$"
 stages = ["manual"]
 
 # snapshot-redaction: scan every `*.snap` file under `src/` and
@@ -2570,7 +2570,7 @@ pass_filenames = false
 # The guard's OWN source is in the trigger set, like `metric-provable`:
 # editing the scanner without touching a migration must still re-run it
 # against the real tree, or a widening that reddens the repo lands green.
-files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|snapshot|spaces)/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
+files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|spaces)/tests\\.rs|src-tauri/agaric-sync/src/snapshot/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
 stages = ["manual"]
 
 # zizmor-version-pin: the zizmor version zizmor-hook.sh's

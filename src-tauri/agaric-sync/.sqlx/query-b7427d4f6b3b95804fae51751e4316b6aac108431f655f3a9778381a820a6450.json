@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "on_disk_path",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachment_blobs",
+            "name": "on_disk_path"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b7427d4f6b3b95804fae51751e4316b6aac108431f655f3a9778381a820a6450"
+}

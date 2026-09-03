@@ -59,21 +59,17 @@ dependencies = [
  "agaric-store",
  "agaric-sync",
  "aho-corasick",
- "async-trait",
  "base64 0.23.1",
  "blake3",
  "chrono",
- "ciborium",
  "dirs 6.0.0",
  "futures-util",
  "libc",
- "loro",
  "notify-rust",
  "rand 0.10.2",
  "regex",
  "rfd",
  "rmcp",
- "rustc-hash",
  "rustls",
  "serde",
  "serde_json",
@@ -104,7 +100,6 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "url",
- "zstd",
 ]
 
 [[package]]
@@ -130,17 +125,20 @@ name = "agaric-engine"
 version = "0.1.0"
 dependencies = [
  "agaric-core",
+ "agaric-observability",
  "agaric-store",
  "chrono",
  "loro",
  "parking_lot",
  "regex",
+ "rustc-hash",
  "serde",
  "serde_json",
  "specta",
  "sqlx",
  "tokio",
  "tracing",
+ "ulid",
  "xxhash-rust",
 ]
 

@@ -37,7 +37,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
 /** Event name — must mirror `EVENT_RECOVERY_DEGRADED` in
- *  `src-tauri/src/recovery/mod.rs`. */
+ *  `src-tauri/agaric-sync/src/recovery/mod.rs`. */
 export const RECOVERY_DEGRADED_EVENT = 'recovery:degraded'
 
 /** Fixed sonner id so the live event and the mount backfill collapse into

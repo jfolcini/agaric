@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(\n                             SELECT 1 FROM op_log\n                             WHERE op_type IN ('add_tag', 'remove_tag')\n                               AND block_id = ?\n                               AND json_extract(payload, '$.tag_id') = ?\n                               AND (created_at > ?\n                                    OR (created_at = ?\n                                        AND (seq > ?\n                                             OR (seq = ? AND device_id > ?))))\n                           ) AS \"e!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "e!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cab6ce2fadfd21388b85d3f1f3fdafdcb0985a1a6c2617e5355bdf6709512c57"
+}

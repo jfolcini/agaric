@@ -21,9 +21,10 @@ publish = false
 
 [features]
 # `test-util` exposes loro's `projection::reproject_call_spy` invocation counter
-# to downstream crates' test builds. The app crate's
-# `materializer::handlers::import_scaling_tests` enables it (via a dev-dep
-# feature) to assert the deferred-flush reprojection count (#2621, wave E1).
+# and the materializer's handler seams to downstream crates' test builds. The
+# app crate's `materializer_app_tests` modules enable it (via a dev-dep
+# feature); `materializer::handlers::import_scaling_tests`, the spy's original
+# consumer (#2621, wave E1), lives in this crate since #4502.
 # It also compiles `proptest_db_harness` (#4499 phase 1), which the app's
 # B2-B4 proptests and this crate's `tests/reverse_proptest_b1.rs` share, so
 # `proptest` is an optional normal dependency the feature turns on: the lib
@@ -54,7 +55,17 @@ serde = { version = "1", features = ["derive"] }
 # features mirror the app crate exactly for cargo feature-unification.
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # The Loro CRDT crate — `LoroEngine` wraps `LoroDoc`, `Frontiers`, tree/map
-# containers. Version mirrors the app crate exactly.
+# containers. This is the workspace's owning entry since #3120 (the app crate
+# no longer depends on it); agaric-sync mirrors it. Not part of any coupled
+# dep stack per AGENTS.md §"Coupled Dependency Updates".
+# HELD at 1.13.6 via Cargo.lock + a dependabot `ignore` (#3161). This caret
+# range ALLOWS 1.13.7 — deliberately not tightened to `=1.13.6`, because that
+# still resolves `loro-internal` 1.13.7 transitively, so the lockfile is the
+# real hold either way and a false sense of pinning here would be worse.
+# 1.13.7 makes `find_common_ancestor` quadratic in history at frontier
+# width > 1 (215x at 1000 rounds). Our regression test can no longer detect
+# it — #3187 narrowed it to width 1, dag.rs's fast path. Do not `cargo update`
+# loro without re-measuring at width 2.
 loro = "1.12"
 # `loro/engine/mod.rs` derives peer ids + block-content hashes via `xxh3_64`.
 # Version/features mirror the app crate exactly.
@@ -74,11 +85,21 @@ parking_lot = { version = "0.12.5", features = ["arc_lock"] }
 tracing = { version = "0.1.44", features = ["attributes"] }
 # `peer_epoch`'s retry backoff (`tokio::time::sleep`) + the periodic-snapshot
 # task's `tokio::time::interval` need tokio's timer in prod. Version mirrors the
-# app crate; `time` is enabled explicitly (the app relies on workspace feature
-# unification to pull it) so the engine builds standalone. The spawner is
-# injected by the caller (see `snapshot::spawn_periodic_snapshot`) so no `rt`
-# runtime coupling leaks into the engine.
-tokio = { version = "1", features = ["time"] }
+# app crate; features are enabled explicitly (the app relies on workspace
+# feature unification to pull them) so the engine builds standalone. The
+# `materializer` (#4502) adds `rt` (its `JoinSet` + the runtime handle the app
+# passes in), `sync` (queue channels / `Notify`), `fs` (the attachment GC walk)
+# and `macros` (`select!`).
+tokio = { version = "1", features = ["time", "rt", "sync", "fs", "macros"] }
+# `materializer::handlers::apply` records each op's apply duration to the OTel
+# histogram. Observability depends only on `agaric-core`, so no cycle.
+agaric-observability = { path = "../agaric-observability", version = "0.1.0" }
+# `materializer::dedup` keys its task set with `FxHashSet`. Version mirrors the
+# app crate.
+rustc-hash = "2.1.2"
+# `materializer::handlers::attachments` names its GC quarantine files with a
+# fresh ULID. Version mirrors the app crate.
+ulid = "3.0.0"
 
 # Reached only through `test-util` (see the feature's comment); a default
 # build never compiles it. Version mirrors the dev-dependency below.

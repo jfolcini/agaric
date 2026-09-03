@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) as \"n!: i64\" FROM materializer_retry_queue WHERE task_kind = 'ApplyOp:1:dev-621'",
+  "describe": {
+    "columns": [
+      {
+        "name": "n!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3b7bc57f7c27b0b10f2403bcb0c0e837bd7ce88fec4c21bb7ff994cdee3a7974"
+}
