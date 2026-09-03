@@ -70,6 +70,9 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
         // Toasts + logs its own failure (useBlockAttachments); never rejects.
         void handleDeleteAttachment(attachment.id)
         setPendingDeleteId(null)
+        // #4626: unconditional, so a failed delete toasts both an error and
+        // this success. The fix belongs in `useBlockAttachments`, where the
+        // success arm is.
         notify.success(t('attachments.deleted', { name: attachment.filename }))
       } else {
         // First click — show confirmation via toast

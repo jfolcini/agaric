@@ -119,9 +119,7 @@ export function usePollingQuery<T>(
     // state (conflict counts, badges) freshens without the user waiting
     // up to `intervalMs` for the next tick.
     const onVisibilityChange = (): void => {
-      if (typeof document !== 'undefined' && !document.hidden) {
-        void load()
-      }
+      if (!document.hidden) tick()
     }
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', onVisibilityChange)
