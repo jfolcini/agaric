@@ -431,15 +431,13 @@ fn evict_for_new_peer(backoff: &mut HashMap<String, BackoffState>, peer_id: &str
 /// Push a reported failure onto a streak's report memory, evicting the oldest
 /// entry once the set is full.
 ///
-/// Callers must have established that `entry` is not already present —
-/// re-pushing an entry already remembered would consume a slot and evict a
-/// *different* cause the user has been told about, which is the one direction
-/// of eviction that loses information rather than adding noise.
+/// A no-op for an entry already present: re-pushing it would consume a slot and
+/// evict a *different* cause the user has been told about, which is the one
+/// direction of eviction that loses information rather than adding noise.
 fn remember(state: &mut BackoffState, entry: ReportedFailure) {
-    debug_assert!(
-        !state.reported_errors.contains(&entry),
-        "remember() is push-only; a duplicate would evict a distinct cause"
-    );
+    if state.reported_errors.contains(&entry) {
+        return;
+    }
     if state.reported_errors.len() >= MAX_REMEMBERED_REPORTS {
         state.reported_errors.remove(0);
     }
@@ -897,9 +895,7 @@ impl SyncScheduler {
             message: message.to_string(),
             peer_still_serving,
         };
-        if let Some(state) = backoff.get_mut(peer_id)
-            && !state.reported_errors.contains(&entry)
-        {
+        if let Some(state) = backoff.get_mut(peer_id) {
             remember(state, entry);
         }
     }
@@ -1074,6 +1070,49 @@ impl Default for SyncScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #4638: `remember` enforces its own invariant. Re-pushing an entry that
+    /// is already remembered must neither duplicate it nor evict the oldest
+    /// distinct cause, in every build.
+    #[test]
+    fn remembering_a_duplicate_is_a_no_op_not_an_eviction_4638() {
+        let mut state = BackoffState {
+            membership: PeerMembership::Known,
+            next_retry_at: Instant::now(),
+            backoff: MIN_BACKOFF,
+            consecutive_failures: 0,
+            reported_errors: Vec::new(),
+        };
+        let entry = |i: usize| ReportedFailure {
+            message: format!("cause {i}"),
+            peer_still_serving: false,
+        };
+        for i in 0..MAX_REMEMBERED_REPORTS {
+            remember(&mut state, entry(i));
+        }
+
+        remember(&mut state, entry(0));
+
+        assert_eq!(
+            state.reported_errors.len(),
+            MAX_REMEMBERED_REPORTS,
+            "a duplicate must not grow the memory"
+        );
+        assert_eq!(
+            state.reported_errors[0],
+            entry(0),
+            "a duplicate must not evict the oldest distinct cause"
+        );
+        assert_eq!(
+            state
+                .reported_errors
+                .iter()
+                .filter(|e| **e == entry(0))
+                .count(),
+            1,
+            "a duplicate must be remembered exactly once"
+        );
+    }
 
     #[test]
     fn try_lock_peer_succeeds_first_time() {

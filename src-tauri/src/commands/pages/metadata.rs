@@ -511,35 +511,6 @@ impl SortKeyset {
     }
 }
 
-/// Validate a `LastEditedRange` date bound, matching the
-/// legacy Search date contract (`fts::metadata_filter::resolve_date_filter`,
-/// structured `InvalidDateFilter` code the frontend keys on, #2251).
-///
-/// Pages compares the bound string against `op_log.created_at` (full ISO
-/// timestamps), so we accept either a bare calendar date (`YYYY-MM-DD`) OR
-/// a full RFC 3339 timestamp (`YYYY-MM-DDTHH:MM:SSZ`). An empty string or
-/// an otherwise-unparseable value is rejected — an unvalidated malformed
-/// date would otherwise compare-fail every row and silently return zero
-/// results (the bug D15 closes).
-fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
-    if value.trim().is_empty() {
-        return Err(AppError::validation_coded(
-            ValidationCode::InvalidDateFilter,
-            format!("{label} must not be empty"),
-        ));
-    }
-    // Accept a bare calendar date first, then a full RFC 3339 timestamp.
-    if chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok()
-        || chrono::DateTime::parse_from_rfc3339(value).is_ok()
-    {
-        return Ok(());
-    }
-    Err(AppError::validation_coded(
-        ValidationCode::InvalidDateFilter,
-        format!("{label} expected YYYY-MM-DD or RFC 3339, got '{value}'"),
-    ))
-}
-
 /// Phase 3 — compile the compound-filter primitives for the Pages
 /// surface into a single AND-joined SQL fragment plus its ordered binds.
 ///
@@ -591,16 +562,11 @@ fn compile_pages_filters(
         }
     }
 
-    // Validate `LastEdited::Range` date bounds before they
-    // reach SQL. A malformed bound silently compare-fails every row
-    // (zero results); reject it loudly with the `InvalidDateFilter` code.
+    // Validate `LastEdited::Range` date bounds before they reach the
+    // compiler, which panics on a malformed bound (#383).
     for prim in filters {
-        if let FilterPrimitive::LastEdited {
-            spec: agaric_store::filters::LastEditedSpec::Range { start, end },
-        } = prim
-        {
-            validate_last_edited_date("range start", start)?;
-            validate_last_edited_date("range end", end)?;
+        if let FilterPrimitive::LastEdited { spec } = prim {
+            spec.validate()?;
         }
     }
 

@@ -10,6 +10,21 @@ use agaric_store::op_log::append_local_op_in_tx;
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// A malformed id in `block_drafts` or the op log is a validation error, never
+/// a silent no-match that resurrects a stale draft.
+fn check_block_id_shape(block_id: &str) -> Result<(), AppError> {
+    if !block_id.is_empty()
+        && block_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Ok(());
+    }
+    Err(AppError::validation(format!(
+        "block_id must be alphanumeric (ULID format), got: '{block_id}'"
+    )))
+}
+
 /// Process a single draft: returns `Ok(true)` if the draft was recovered
 /// (synthetic op created), `Ok(false)` if it was already flushed, and `Err`
 /// for content over [`agaric_engine::block_ops::MAX_CONTENT_LENGTH`] — the reason is
@@ -117,16 +132,7 @@ pub(super) async fn recover_single_draft(
     // for O(log N) block-scoped lookups instead of json_extract across the
     // full table. block_id is populated on insert by append_local_op_in_tx
     // and insert_remote_op using OpPayload::block_id() / JSON extraction.
-    debug_assert!(
-        !draft.block_id.as_str().is_empty()
-            && draft
-                .block_id
-                .as_str()
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-'),
-        "block_id must be alphanumeric (ULID format), got: '{}'",
-        draft.block_id,
-    );
+    check_block_id_shape(draft.block_id.as_str())?;
     // Normalize to uppercase — BlockId serializes uppercase, but the draft
     // table stores the raw string that may differ in case.
     let bid_upper = draft.block_id.as_str().to_ascii_uppercase();
@@ -259,14 +265,7 @@ pub async fn find_prev_edit(
     block_id: &str,
     device_id: &str,
 ) -> Result<Option<(String, i64)>, AppError> {
-    // Sanity check: block_id is expected to be a ULID (alphanumeric).
-    debug_assert!(
-        !block_id.is_empty()
-            && block_id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-'),
-        "block_id must be alphanumeric (ULID format), got: '{block_id}'",
-    );
+    check_block_id_shape(block_id)?;
     // Normalize to uppercase — BlockId serializes uppercase in JSON payloads.
     let bid_upper = block_id.to_ascii_uppercase();
 

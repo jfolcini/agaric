@@ -643,7 +643,7 @@ impl StructuralFilterBuilder {
         // `value_text/num/date/ref` (untyped); property now matches a SINGLE
         // typed column chosen from the inferred `PropertyValue`, identical to
         // every other surface.
-        debug_assert_eq!(
+        assert_eq!(
             alias, "b",
             "state/due/scheduled/last_edited/property projections emit a \
              hardcoded `b.` alias; the metadata block alias must be `b`"
@@ -745,6 +745,13 @@ mod tests {
 
     const FTS_PREFIX: &str = "\n           AND ";
     const TOGGLE_PREFIX: &str = "\n             AND ";
+
+    #[test]
+    #[should_panic(expected = "metadata block alias must be `b`")]
+    fn non_b_metadata_alias_hard_errors_in_release() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_metadata(&MetadataPredicates::default(), "blk");
+    }
 
     #[test]
     fn parent_fragment_is_byte_identical() {

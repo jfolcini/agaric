@@ -5879,3 +5879,34 @@ async fn head_exchange_refuses_a_display_hostile_head_derived_id_4451() {
         "…and neither must an over-long one"
     );
 }
+
+/// #4638: a file-transfer message reaching the orchestrator is a daemon
+/// dispatch regression (`sync_files` reads them off the wire after
+/// `SyncComplete`). It is refused in every build — same contract as a stray
+/// `SnapshotOffer` — instead of being ignored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_file_transfer_messages_as_unreachable_protocol_state_4638() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
+    let _start = orch.start().await.unwrap();
+
+    let result = orch.handle_message(SyncMessage::FileTransferComplete).await;
+
+    let err = match result {
+        Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
+        other => panic!(
+            "a file-transfer message routed through handle_message must return \
+             AppError::InvalidOperation, got: {other:?}"
+        ),
+    };
+    assert!(
+        err.contains("sync_files"),
+        "error message must point callers at the file-transfer sub-flow, got: {err}"
+    );
+    materializer.shutdown();
+}
