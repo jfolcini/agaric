@@ -144,10 +144,10 @@ ALLOWLIST_GLOBS = [
     "src-tauri/agaric-engine/src/materializer/handlers/**",
     # --- agaric-sync — system-level snapshot / transport / remote-apply -----
     # System-level snapshot / compaction — must not dispatch edit tasks.
-    # Startup recovery, before any user edit (moved here in #3120).
-    "src-tauri/agaric-sync/src/recovery/draft_recovery.rs",
     "src-tauri/agaric-sync/src/snapshot/create.rs",
     "src-tauri/agaric-sync/src/snapshot/restore.rs",
+    # Startup recovery, before any user edit (moved here in #3120).
+    "src-tauri/agaric-sync/src/recovery/draft_recovery.rs",
     # Transport layer.
     "src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs",
     # apply_remote — remote ops; dispatching would double-fire.
