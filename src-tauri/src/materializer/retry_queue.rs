@@ -81,7 +81,9 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 ///
 /// #4208: [`BackoffClass::of`] reads the same marker to put shed rows on a
 /// much shorter re-attempt ladder — a task that never ran is waiting on
-/// capacity, not on a fix.
+/// capacity, not on a fix — and [`lease_entry`] restarts `attempts` at 1
+/// once such a row wins a slot, so the sheds never spend the execution
+/// budget.
 pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task never executed)";
 
 /// Rows one pass fetches, and the loop bound in
@@ -652,7 +654,8 @@ const GIVE_UP_AGE_DAYS: i64 = 7;
 /// task actually running and failing, so dropping it would permanently lose
 /// a task that may have ZERO executions. The moment the task runs and fails
 /// for real, `record_failure` overwrites `last_error` with the execution
-/// error and the trigger arms again. The `age_exceeded` trigger still
+/// error and the trigger arms again, counting from the `attempts = 1` the
+/// lease left (#4208). The `age_exceeded` trigger still
 /// applies unconditionally: it bounds abandonment by wall clock, which a
 /// shed loop should not evade forever.
 fn give_up_reason(row: &DueRow) -> Option<&'static str> {
@@ -789,8 +792,8 @@ pub(crate) async fn clear_on_success(
 ///
 /// The lease interval reuses the existing backoff schedule
 /// ([`backoff_delay_for`]) keyed on the row's *current* `attempts` and
-/// `class` (#4208: a shed row that resolves neither way is stale for at most
-/// 5 minutes, not an hour). The minimum delay in both schedules is 1 minute
+/// `class` (#4208: a shed row's lease is the shed ladder's first rung, a
+/// minute, because its `attempts` restart below). The minimum delay in both schedules is 1 minute
 /// and the re-run's in-memory retry budget is sub-second, so by the time the
 /// row is due again it has resolved: on failure `record_failure` has already
 /// bumped `next_attempt_at` to its own (longer) backoff. The lease is
@@ -800,10 +803,17 @@ pub(crate) async fn clear_on_success(
 /// minute ([`sweep_until_no_progress`]) can dispatch a leased row again while
 /// it is in flight; the handlers are idempotent, so that is wasted work only.
 ///
-/// Unlike `record_failure`, the lease does NOT touch `attempts`,
-/// `last_error`, or `created_at` — it only moves the visibility window so
-/// the same in-flight task is not swept twice. Attempt accumulation and
-/// `created_at` aging are owned exclusively by `record_failure`.
+/// The lease does not touch `last_error` or `created_at`, and leaves a
+/// failure row's `attempts` alone — accumulation is `record_failure`'s. A
+/// shed row's `attempts` restart at 1 (#4208): its last persistence lost a
+/// queue slot, and the slot is won now, so the execution budget
+/// `give_up_reason` counts starts here. Otherwise ten sheds in 41 minutes of
+/// backpressure followed by one real failure would retire the row with no
+/// retry ever made. `attempts` is one counter for both ladders, so a row that
+/// failed for real and was then shed restarts too, and a `record_failure` the
+/// consumer lands between the enqueue and this write is overwritten by it.
+/// Both cost extra retries, never a lost row, and `created_at` still bounds
+/// them by age.
 pub(crate) async fn lease_entry(
     pool: &SqlitePool,
     block_id: &str,
@@ -811,12 +821,16 @@ pub(crate) async fn lease_entry(
     attempts: i64,
     class: BackoffClass,
 ) -> Result<(), AppError> {
+    let restart = class == BackoffClass::Shed;
+    let attempts = if restart { 1 } else { attempts };
     let next_attempt_at =
         crate::db::now_ms() + backoff_delay_for(attempts, class).num_milliseconds();
     sqlx::query!(
-        "UPDATE materializer_retry_queue SET next_attempt_at = ? \
+        "UPDATE materializer_retry_queue \
+         SET next_attempt_at = ?, attempts = CASE WHEN ? THEN 1 ELSE attempts END \
          WHERE block_id = ? AND task_kind = ?",
         next_attempt_at,
+        restart,
         block_id,
         task_kind,
     )
@@ -2485,8 +2499,9 @@ mod tests {
         );
     }
 
-    /// #4208: the sweeper leases a shed row on the shed ladder (5 min at the
-    /// cap), not the failure ladder's hour.
+    /// #4208: the sweeper's lease restarts a shed row at the shed ladder's
+    /// first rung (`attempts = 1`, a minute), not the failure ladder's hour
+    /// for the four sheds it carried.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sweep_once_leases_shed_rows_on_the_shed_ladder_4208() {
         use crate::materializer::Materializer;
@@ -2516,8 +2531,8 @@ mod tests {
         assert_eq!(sweep_once(&pool, &pool, &mat).await.unwrap(), 1);
         let after = crate::db::now_ms();
 
-        let scheduled = sqlx::query_scalar!(
-            "SELECT next_attempt_at FROM materializer_retry_queue \
+        let row = sqlx::query!(
+            "SELECT attempts, next_attempt_at FROM materializer_retry_queue \
              WHERE block_id = ? AND task_kind = ?",
             "BLK_4208_SW",
             "UpdateFtsBlock",
@@ -2526,16 +2541,89 @@ mod tests {
         .await
         .unwrap();
 
-        let delay = backoff_delay_for(4, BackoffClass::Shed).num_milliseconds();
-        assert_eq!(delay, chrono::Duration::minutes(5).num_milliseconds());
+        assert_eq!(row.attempts, 1, "a leased shed row restarts its attempts");
+        let scheduled = row.next_attempt_at;
+        let delay = backoff_delay_for(1, BackoffClass::Shed).num_milliseconds();
+        assert_eq!(delay, chrono::Duration::minutes(1).num_milliseconds());
         assert!(
             scheduled >= before + delay && scheduled <= after + delay,
-            "lease must use the shed ladder: next_attempt_at={scheduled} must be \
-             now + {delay}ms (window [{}, {}]), not the failure ladder's {}ms",
+            "lease must use the shed ladder's first rung: next_attempt_at={scheduled} \
+             must be now + {delay}ms (window [{}, {}]), not the failure ladder's {}ms",
             before + delay,
             after + delay,
             backoff_delay_for(4, BackoffClass::Failure).num_milliseconds(),
         );
+    }
+
+    /// #4208: the shed ladder reaches `MAX_ATTEMPTS` in 41 minutes of
+    /// backpressure, and #2541's exemption only holds while `last_error` is
+    /// still the marker. A row that shed its way to the cap, won a slot, and
+    /// then failed once for real must still have its execution budget.
+    #[tokio::test]
+    async fn lease_restarts_a_shed_row_before_its_first_execution_failure_4208() {
+        let (pool, _dir) = test_pool().await;
+        let metrics = test_metrics();
+        let task = MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_4208_STORM".into(),
+        };
+        let past = crate::db::now_ms() - 5 * 60_000;
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, last_error, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "BLK_4208_STORM",
+            "UpdateFtsBlock",
+            MAX_ATTEMPTS,
+            SHED_LAST_ERROR,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        lease_entry(
+            &pool,
+            "BLK_4208_STORM",
+            "UpdateFtsBlock",
+            MAX_ATTEMPTS,
+            BackoffClass::Shed,
+        )
+        .await
+        .unwrap();
+        record_failure(&pool, &task, "boom", &metrics)
+            .await
+            .unwrap();
+
+        // Make it due so `fetch_due` returns the row `give_up_reason` reads.
+        sqlx::query!(
+            "UPDATE materializer_retry_queue SET next_attempt_at = ? \
+             WHERE block_id = ? AND task_kind = ?",
+            past,
+            "BLK_4208_STORM",
+            "UpdateFtsBlock",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let due = fetch_due(&pool, 10).await.unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(
+            due[0].attempts, 2,
+            "one real failure after the lease's restart"
+        );
+        assert_eq!(due[0].last_error.as_deref(), Some("boom"));
+        assert_eq!(
+            give_up_reason(&due[0]),
+            None,
+            "the sheds must not have spent the execution budget"
+        );
+
+        // Error path: without the restart the same row is retired.
+        let spent = DueRow {
+            attempts: MAX_ATTEMPTS + 1,
+            ..due.into_iter().next().unwrap()
+        };
+        assert_eq!(give_up_reason(&spent), Some("max_attempts"));
     }
 
     #[tokio::test]
