@@ -43,20 +43,3 @@ export async function listPageLinks(
   const tagIds = params.tagIds && params.tagIds.length > 0 ? params.tagIds : null
   return unwrap(await commands.listPageLinks(toSpaceScope(params.spaceId), tagIds))
 }
-
-// The link-metadata wrappers (`fetchLinkMetadata`, `getLinkMetadata`) and the
-// grouped-reference wrappers (`listBacklinksGrouped`, `listUnlinkedReferences`)
-// were removed in #4411 — call `commands.*` directly, unwrap with the helper
-// from `@/lib/app-error`, and build the scope with `toSpaceScope` from
-// `@/lib/space-scope`. The hand-declared `LinkMetadata` type went with them;
-// the generated one lives in `@/lib/bindings`.
-
-// The bug-report wrappers (`collectBugReportMetadata`, `readLogsForReport`)
-// and their `BugReport` / `LogFileEntry` types were removed in #2927 — call
-// `commands.collectBugReportMetadata()` / `commands.readLogsForReport(...)`
-// directly and unwrap with the helper from `@/lib/app-error`. The types live
-// in `@/lib/bindings`.
-
-// ---------------------------------------------------------------------------
-// Spaces (Phase 1)
-// ---------------------------------------------------------------------------
