@@ -205,11 +205,11 @@ pub struct QueueMetrics {
     /// backoff cap** (`attempts >= 4` on the failure ladder, see
     /// [`super::retry_queue::backoff_delay_for`]). A shed row's 5 min cap
     /// (#4208) is not counted: it is not the rung the question below asks
-    /// about. This is the counter for issue #2509's measure-item 2 — "is the 1h-max-backoff path ever the
-    /// thing that saves a user, vs. the next boot doing it anyway?" If this
-    /// stays ~0 in the field, nothing ever escalates past the first couple
-    /// of short retries, and the deep backoff schedule is machinery no
-    /// failure mode actually exercises.
+    /// about. This is the counter for issue #2509's measure-item 2 — "is
+    /// the 1h-max-backoff path ever the thing that saves a user, vs. the
+    /// next boot doing it anyway?" If this stays ~0 in the field, nothing
+    /// ever escalates past the first couple of short retries, and the deep
+    /// backoff schedule is machinery no failure mode actually exercises.
     pub retry_persist_capped: AtomicU64,
 }
 
