@@ -1,0 +1,11 @@
+# Session 1503 — #4208 follow-up: a leased shed row restarts its attempts
+
+The last review round on #4630 (merged as `a8f33894c`) named a failure the shed ladder creates. Sheds increment `attempts` and the shed ladder caps at 5 minutes, so a row reaches `MAX_ATTEMPTS = 10` in 41 minutes of sustained backpressure where the failure ladder needed most of a day. #2541's give-up exemption only holds while `last_error` is still `SHED_LAST_ERROR`, so the first real failure after such a storm overwrote the marker, the next sweep read `attempts >= 10`, and `give_up_reason` retired the row — a stale FTS or link index for that block with no retry ever spent. Pre-existing shape, but #4630 is what brings it inside one import.
+
+The fix is in `lease_entry`, which is where a shed row stops being shed: on a successful re-enqueue of a row on the shed ladder, `attempts` restart at 1 and the lease is the ladder's first rung, a minute. `record_failure` still owns accumulation; the lease writes `attempts` only through a `CASE` on the class the caller passed, so a failure-ladder lease is unchanged and a concurrent `record_failure` on the same key cannot be rewound by a stale snapshot. Restarting in `record_failure` instead, when `last_error` leaves the marker, would have collided with the `pending_retry_rows` gauge, which tells the INSERT branch from the `DO UPDATE` branch by `RETURNING attempts == 1`.
+
+`lease_restarts_a_shed_row_before_its_first_execution_failure_4208` pins the scenario end to end: a row at `MAX_ATTEMPTS` sheds, is leased, fails once for real, and `give_up_reason` on the re-fetched row is `None`, with the `MAX_ATTEMPTS + 1` copy of the same row as the arm that does retire. `sweep_once_leases_shed_rows_on_the_shed_ladder_4208` now asserts the restart and the one-minute lease through the sweeper.
+
+Falsified against a copy, restored, `cmp`-checked. Over `cargo nextest run --workspace --retries 0 -E 'package(agaric) and test(retry_queue)'`, 69 tests: replacing `let restart = class == BackoffClass::Shed` with `let restart = false` left 67 passed and 2 failed, the two tests above; restore compared identical; POST 69 passed. The root `.sqlx` cache gained the four new query entries and lost none.
+
+The architecture doc's "due is not the same as re-offered" sentence was also split in two, the other note from that round.

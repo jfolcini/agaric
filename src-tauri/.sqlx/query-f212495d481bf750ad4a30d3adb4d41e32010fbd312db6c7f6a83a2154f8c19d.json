@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE materializer_retry_queue SET next_attempt_at = ? WHERE block_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "f212495d481bf750ad4a30d3adb4d41e32010fbd312db6c7f6a83a2154f8c19d"
+}
