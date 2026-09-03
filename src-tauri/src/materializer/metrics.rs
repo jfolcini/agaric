@@ -237,7 +237,7 @@ impl QueueMetrics {
     /// `retry_persist_capped` counts only the failure ladder's `attempts >= 4`
     /// rung (the 1 h cap), so measure-item 2 keeps asking about that rung;
     /// a shed row never ran (#4208).
-    pub fn note_persistent_enqueue(
+    pub(crate) fn note_persistent_enqueue(
         &self,
         class: RetryPersistClass,
         attempts: i64,
