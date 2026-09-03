@@ -45,13 +45,25 @@ use agaric_core::ulid::BlockId;
 /// rename for the very block that owned the attachment. The disjunct below
 /// is the one `list_page_history` and `undo_page_op_inner` share, scoped to
 /// this one block instead of a page subtree; see `list_page_history`'s doc
-/// block for why both probes exist. It does NOT follow that block's omission
-/// rule: the gate that hides an orphaned rename there is dropped here,
-/// because this query knows the block it is asking about and the paired-add
-/// probe answers "is this MY attachment" with certainty, where a page
-/// subtree cannot (#4278). An `add → rename → delete` rename is listed on
-/// the owning block's sheet and omitted from the page's; that divergence is
-/// recorded on the page side too.
+/// block for why both probes exist and for the divergence this scoping
+/// creates.
+///
+/// Two of their filters come off here, for one reason: this query names the
+/// block it is asking about, so probe 2's `src_add.block_id = ?1` settles
+/// "is this MY attachment" outright, where a page subtree cannot (#4278).
+/// So the inner `op_type = 'delete_attachment'` gate goes, and so does
+/// `src_add.is_replicated = 0` — a replicated `add_attachment` carries
+/// `block_id` exactly as a local one does (`ingest_remote_op_in_tx`
+/// populates the column from the payload either way), so it proves
+/// ownership just as well.
+///
+/// That second one is what makes #4336 hold on a synced vault, the shape
+/// this app is built for: add an attachment on device A, sync, delete it on
+/// device B. B's live `attachments` row is gone in the delete's own
+/// transaction and B's only paired add arrived by replication, so under the
+/// filter both probes were false and the delete stayed invisible — the
+/// original bug, reachable on the first cross-device delete with no
+/// `compact_op_log` sweep needed first.
 ///
 /// The probes also key on `ol.attachment_id` rather than the sibling's
 /// `json_extract(payload, …)`: the column is indexed
@@ -96,7 +108,6 @@ pub async fn list_block_history(
                      SELECT src_add.attachment_id FROM op_log src_add \
                      WHERE src_add.op_type = 'add_attachment' \
                      AND src_add.block_id = ?1 \
-                     AND src_add.is_replicated = 0 \
                  ) \
              ) \
          ) \
@@ -216,14 +227,17 @@ pub async fn list_block_history(
 /// local delete of a peer-added attachment, with no `compact_op_log` sweep
 /// (a maintenance operation, not a routine one) required first.
 ///
-/// This is deliberate, not a second gap to close: `src_add.is_replicated =
-/// 0` is the same filter the three undo queries carry (see above), and the
-/// omitted row degrades to invisible rather than being attributed to an
-/// arbitrary page. Note that the ORIGINAL argument for this trade — that
-/// dropping the filter would break the byte-identity `undoDeleteOfImpl`'s
-/// index mapping depended on — no longer applies (see #4328 above); what
-/// remains is the weaker but still sufficient one, that this probe cannot
-/// prove ownership of a peer-added attachment without a local paired add.
+/// Still open here, tracked as #4627. The reason this doc used to give —
+/// that the probe cannot prove ownership of a peer-added attachment without
+/// a local paired add — is false: `ingest_remote_op_in_tx` populates
+/// `op_log.block_id` for a replicated row exactly as the local path does,
+/// and attachments are never reparented, so a replicated add identifies its
+/// owner as well as a local one. `list_block_history` dropped the filter on
+/// that basis (#4336). It stays here because `src_add.is_replicated = 0` is
+/// one of the five predicates this query shares with the three undo queries,
+/// so removing it decides whether Ctrl+Z starts offering a peer-added
+/// attachment's delete — a design call for #4627, not a constraint this
+/// query can settle alone.
 ///
 /// Residual divergence NOT closed here, and no longer load-bearing
 /// (#4328): this query has no `is_undo = 0` / `is_replicated = 0` filter
