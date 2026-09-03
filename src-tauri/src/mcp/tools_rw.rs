@@ -614,10 +614,11 @@ async fn handle_set_property(
     let block_id = normalize_ulid_arg(&args.block_id);
     let space_id = normalize_ulid_arg(&args.space_id);
     // #3301 — parse, don't wave through. The schema calls `value_ref` a
-    // "Block ULID reference", but a malformed one used to be stored verbatim:
-    // `validate_ref_property_cross_space` tolerates a target that resolves to
-    // no space, so the tool answered Ok and the agent believed it had linked
-    // a block that does not exist.
+    // "Block ULID reference", but a malformed one used to sail past
+    // `validate_ref_property_cross_space` (an orphan target is not a
+    // cross-space violation) and into the op log and the Loro engine, where
+    // nothing removes it; the SQL projection dropped the row, so the tool
+    // answered Ok for a property that did not exist.
     let value_ref = args
         .value_ref
         .as_deref()

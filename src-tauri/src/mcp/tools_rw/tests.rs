@@ -1643,7 +1643,6 @@ async fn set_property_malformed_value_ref_errors_rather_than_dangling() {
             "value_ref {bad:?} must surface as AppError::Ulid, got {err:?}",
         );
     }
-    settle(&mat).await;
     let stored: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'linked_page'",
     )
