@@ -43,7 +43,7 @@ npm run typecheck:e2e                         # tsc for this directory only
   ```
 
   Red `conformance.test.ts` means the mock diverges: fix `src/lib/tauri-mock/handlers.ts`, never the backend. A divergence unsafe to mirror becomes a `.skip` with a `// DRIFT(#763)` comment plus an issue.
-- Real IPC round-trips: `e2e-tauri/` (`.github/workflows/e2e-tauri-weekly.yml`) and `src-tauri/src/commands/tests/`.
+- Real IPC round-trips: `e2e-tauri/` (`.github/workflows/e2e-tauri-weekly.yml`) and `src-tauri/tests/commands/`.
 - Assert on re-queried settled state, not on which mock call fired — a `setProperty`-was-called assertion once passed while the tag vanished in the real backend.
 
 ## Patterns

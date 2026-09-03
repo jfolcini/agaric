@@ -2265,7 +2265,7 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
 //       untouched.
 //
 // Both behaviours are already exercised end-to-end by tests in
-// `commands/tests/undo_redo_tests.rs`, but those tests cover the
+// `tests/commands/undo_redo_tests.rs`, but those tests cover the
 // full command stack (create_block_inner / edit_block_inner /
 // Materializer). The two tests below pin the same invariants at
 // this module's level using the bare-pool idioms that dominate

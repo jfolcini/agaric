@@ -5,8 +5,9 @@
 //! imports (`SqlitePool`, `AppError`, `op_log`, …) alongside its public API.
 //! From a test binary the crate is external and only `pub` items come through,
 //! so the private half is re-listed here against each name's home crate —
-//! `commands/mod.rs` lines 23-37 and 200-224 are the source of truth to mirror
-//! when either list changes.
+//! `commands/mod.rs`'s two `use` blocks — the crate-private imports at the top
+//! of the file and the `pub use` re-exports below the submodule list — are the
+//! source of truth to mirror when either list changes.
 //!
 //! `allow(unused_imports)`: a prelude is re-exports; a name no longer used by
 //! any suite is dead weight, not a defect, and the lint cannot tell them apart
