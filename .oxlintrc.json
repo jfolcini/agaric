@@ -270,7 +270,7 @@
     // one is at zero — both reference panels reset their page-scoped state with
     // a guarded render-phase adjust instead — so it is promoted to `error` here
     // and cannot regress, while the global level above stays `warn` for the
-    // directories still to be swept. Last in the array so it wins over it.
+    // directories still to be swept.
     {
       "files": ["src/components/backlinks/**/*.ts", "src/components/backlinks/**/*.tsx"],
       "rules": {

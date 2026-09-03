@@ -116,11 +116,10 @@ export function UnlinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
-  // Page-scoped: the panel closes on a page change. A guarded render-phase
-  // adjust, not an effect — `collapsed` gates the fetch size (#3316 item 2), so
-  // an effect's late commit issued the 20-group fetch it exists to avoid (#4407).
-  // Comparing the PREVIOUS pageId forgets; storing the current one would
-  // remember, and A → B → A would reopen the panel.
+  // Page-scoped panel state, reset by a render-phase adjust rather than an
+  // effect, whose late commit fired the 20-group fetch `collapsed` gates
+  // (#3316 item 2, #4407). Comparing the PREVIOUS pageId forgets; storing the
+  // current one would remember, and A → B → A would reopen the panel.
   const [panelForPage, setPanelForPage] = useState(pageId)
   if (panelForPage !== pageId) {
     setPanelForPage(pageId)

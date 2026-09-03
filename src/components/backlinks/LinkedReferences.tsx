@@ -62,11 +62,9 @@ export function LinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
-  // Page-scoped: navigating clears filter, sort and source-page. A guarded
-  // render-phase adjust, not an effect — an effect cleared them a commit late,
-  // so the new page was queried once through the old page's filters (#4407).
-  // Comparing the PREVIOUS pageId forgets; storing the current one would
-  // remember, and A → B → A would bring A's filters back.
+  // Page-scoped filter/sort/source-page, reset by a render-phase adjust rather
+  // than an effect (#4407). Comparing the PREVIOUS pageId forgets; storing the
+  // current one would remember, and A → B → A would bring A's filters back.
   const [filtersForPage, setFiltersForPage] = useState(pageId)
   if (filtersForPage !== pageId) {
     setFiltersForPage(pageId)
