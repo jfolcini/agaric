@@ -213,7 +213,7 @@ Two premises the "just drop it" proposal rests on do not hold for class (1):
 
 #### Instrumentation (measure before removing)
 
-So the retirement decision can be data-driven rather than by-inspection, every persistent enqueue funnels through `record_failure` → `QueueMetrics::note_persistent_enqueue(class, attempts)`, surfacing four `StatusInfo` fields (`src-tauri/src/materializer/metrics.rs`, wired through `Coordinator::status_with_scheduler`):
+So the retirement decision can be data-driven rather than by-inspection, every persistent enqueue funnels through `record_failure` → `QueueMetrics::note_persistent_enqueue(class, attempts, backoff)`, surfacing four `StatusInfo` fields (`src-tauri/src/materializer/metrics.rs`, wired through `Coordinator::status_with_scheduler`):
 
 - `retry_persist_apply_op` — reaches of the **correctness** class. Expected to track boots with a nonempty prior session. A value that scales with restarts *confirms* the class-(2) design rather than indicting it.
 - `retry_persist_cache` — reaches of the **pure-cache** class. **This is the retirement gauge.** If it stays ≈0 outside pool-exhaustion storms, class (1)'s persistent tier is guarding a failure mode that almost never happens.
