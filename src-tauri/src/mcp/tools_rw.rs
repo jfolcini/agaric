@@ -610,12 +610,17 @@ async fn handle_set_property(
             crate::commands::MAX_CONTENT_LENGTH,
         )));
     }
-    // Normalise ULID-shaped IDs to uppercase at the MCP boundary
-    // (block_id is required, value_ref is optional and only meaningful
-    // when the property is a ref-typed value).
+    // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
-    let value_ref = args.value_ref.as_deref().map(normalize_ulid_arg);
     let space_id = normalize_ulid_arg(&args.space_id);
+    // #3301 — a malformed `value_ref` had no downstream backstop, so it was
+    // stored verbatim and the tool answered Ok.
+    let value_ref = args
+        .value_ref
+        .as_deref()
+        .map(BlockId::from_string)
+        .transpose()?
+        .map(BlockId::into_string);
     // Refuse cross-space writes at the MCP boundary. We
     // intentionally do NOT validate `value_ref` against `space_id`: a
     // ref-typed property may legitimately point at a global block
