@@ -60,7 +60,6 @@ dependencies = [
  "agaric-store",
  "agaric-sync",
  "aho-corasick",
- "async-trait",
  "base64 0.23.1",
  "blake3",
  "chrono",
@@ -78,7 +77,6 @@ dependencies = [
  "regex",
  "rfd",
  "rmcp",
- "rustc-hash",
  "rustls",
  "serde",
  "serde_json",
@@ -152,6 +150,7 @@ version = "0.1.0"
 dependencies = [
  "agaric-core",
  "agaric-engine",
+ "agaric-observability",
  "agaric-store",
  "chrono",
  "insta",
@@ -159,6 +158,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "regex",
+ "rustc-hash",
  "serde",
  "serde_json",
  "specta",
@@ -167,6 +167,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "ulid",
  "xxhash-rust",
 ]
 

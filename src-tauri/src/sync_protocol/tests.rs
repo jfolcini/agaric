@@ -611,7 +611,11 @@ async fn orchestrator_start_returns_head_exchange() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let mut orchestrator = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orchestrator = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     let msg = orchestrator.start().await.unwrap();
 
     match msg {
@@ -707,7 +711,11 @@ fn sync_message_serde_roundtrip() {
 async fn orchestrator_handles_error_message() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     let _start = orch.start().await.unwrap();
     let response = orch
@@ -743,8 +751,12 @@ async fn orchestrator_rejects_incompatible_engine_format() {
     let materializer = Materializer::new(pool.clone());
 
     let sink = Arc::new(RecordingEventSink::new());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone())
-        .with_event_sink(Box::new(sink.clone()));
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_event_sink(Box::new(sink.clone()));
 
     // A peer one major engine format ahead of us. The responder must reject it
     // up front rather than letting the bytes reach an import.
@@ -807,7 +819,11 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
     for version in [0, agaric_engine::loro::engine::ENGINE_FORMAT_VERSION] {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
-        let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+        let mut orch = SyncOrchestrator::new(
+            pool,
+            "local-dev".into(),
+            std::sync::Arc::new(materializer.clone()),
+        );
 
         let resp = orch
             .handle_message(SyncMessage::HeadExchange {
@@ -850,7 +866,11 @@ async fn orchestrator_accepts_legacy_and_matching_engine_format() {
 async fn orchestrator_handles_reset_required() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     let _start = orch.start().await.unwrap();
     let response = orch
@@ -892,7 +912,11 @@ async fn orchestrator_loro_sync_undecodable_snapshot_fails_session() {
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // `start()` drives Idle → ExchangingHeads; `LoroSync` is accepted in
     // ExchangingHeads (responder's first post-HeadExchange message).
@@ -940,7 +964,11 @@ async fn orchestrator_loro_sync_undecodable_snapshot_fails_session() {
 async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // Drive to ExchangingHeads so state-validation passes SnapshotOffer
     // through and we hit the handler body (not the terminal-state reject).
@@ -991,7 +1019,11 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // Drive to ExchangingHeads so state-validation passes the message
     // through and we hit the handler body (not the terminal-state reject).
@@ -1043,7 +1075,11 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
 async fn orchestrator_rejects_snapshot_accept_and_reject_i_sync_1() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // Drive to ExchangingHeads so state-validation passes the snapshot
     // control messages through to the dispatch arm.
@@ -1084,7 +1120,11 @@ async fn orchestrator_rejects_snapshot_accept_and_reject_i_sync_1() {
 async fn orchestrator_rejects_messages_in_terminal_state() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // Manually set `state = Complete` to set up the terminal-state
     // precondition. The state validation match in `handle_message`
@@ -1143,7 +1183,11 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
 async fn orchestrator_rejects_sync_complete_in_wrong_state() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // Directly set `state = ApplyingOps` to set up the precondition.
     // `ApplyingOps` is reached mid-import (an inbound LoroSync handler is
@@ -1205,7 +1249,11 @@ async fn orchestrator_rejects_sync_complete_in_wrong_state() {
 async fn orchestrator_rejects_messages_in_failed_terminal_state() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // Put the session into the `Failed` terminal state. The
     // state-validation match reads `self.state` (the source of truth),
@@ -1277,7 +1325,11 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
 async fn orchestrator_accepts_error_in_any_state() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // State is Idle — Error should still be accepted
     let result = orch
@@ -1303,7 +1355,11 @@ async fn orchestrator_accepts_error_in_any_state() {
 async fn orchestrator_rejects_head_exchange_in_streaming_state() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // start() → ExchangingHeads
     let _start = orch.start().await.unwrap();
@@ -1360,7 +1416,11 @@ async fn is_terminal_includes_all_terminal_states() {
     let materializer = Materializer::new(pool.clone());
 
     // Complete → terminal
-    let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     orch.state = SyncState::Complete;
     assert!(orch.is_terminal(), "Complete should be terminal");
     assert!(
@@ -1369,13 +1429,21 @@ async fn is_terminal_includes_all_terminal_states() {
     );
 
     // Failed → terminal
-    let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     orch.state = SyncState::Failed("err".into());
     assert!(orch.is_terminal(), "Failed should be terminal");
     assert!(!orch.is_succeeded(), "Failed should not pass is_succeeded");
 
     // ResetRequired → terminal
-    let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     orch.state = SyncState::ResetRequired;
     assert!(orch.is_terminal(), "ResetRequired should be terminal");
     assert!(
@@ -1391,7 +1459,11 @@ async fn is_terminal_includes_all_terminal_states() {
         SyncState::ApplyingOps,
         SyncState::Merging,
     ] {
-        let mut orch = SyncOrchestrator::new(pool.clone(), "dev".into(), materializer.clone());
+        let mut orch = SyncOrchestrator::new(
+            pool.clone(),
+            "dev".into(),
+            std::sync::Arc::new(materializer.clone()),
+        );
         orch.state = state.clone();
         assert!(!orch.is_terminal(), "{state:?} should NOT be terminal");
     }
@@ -1418,7 +1490,11 @@ async fn failed_state_skips_file_transfer_i_sync_3() {
     // Drive the orchestrator into Failed via a peer-reported Error,
     // mirroring `orchestrator_handles_error_message` but asserting the
     // file-transfer-gate contract specifically.
-    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     let _start = orch.start().await.unwrap();
     let _ = orch
         .handle_message(SyncMessage::Error {
@@ -1446,7 +1522,11 @@ async fn failed_state_skips_file_transfer_i_sync_3() {
     );
 
     // ResetRequired: same contract — terminal, not succeeded.
-    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     orch.state = SyncState::ResetRequired;
     assert!(orch.is_terminal(), "ResetRequired must be terminal");
     assert!(
@@ -1456,7 +1536,11 @@ async fn failed_state_skips_file_transfer_i_sync_3() {
     );
 
     // Complete: the only state that gates file transfer ON.
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     orch.state = SyncState::Complete;
     assert!(orch.is_terminal(), "Complete is terminal");
     assert!(
@@ -1485,8 +1569,12 @@ async fn orchestrator_uses_cert_cn_identity_over_advertised_heads_2481() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone())
-        .with_expected_remote_id("expected-peer".into());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("expected-peer".into());
 
     let _start = orch.start().await.unwrap();
 
@@ -1531,8 +1619,12 @@ async fn orchestrator_accepts_matching_peer_device_id() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone())
-        .with_expected_remote_id("expected-peer".into());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("expected-peer".into());
 
     let _start = orch.start().await.unwrap();
 
@@ -1610,7 +1702,11 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
             .expect("apply_create_block");
     }
 
-    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     let _start = orch.start().await.unwrap();
 
     // Peer advertises ONLY our own device_id — no non-local head, so
@@ -1732,7 +1828,11 @@ async fn issue4096_short_circuit_writes_no_row_when_peer_is_unidentified() {
 
     // Cert-less: no `with_expected_remote_id`, so the ONLY identity source is
     // the advertised heads — and they carry only our own device id below.
-    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     let reply = orch
         .handle_message(SyncMessage::HeadExchange {
@@ -2377,7 +2477,11 @@ fn serde_roundtrip_max_u64_snapshot_offer() {
 async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // start() → ExchangingHeads
     let _start = orch.start().await.unwrap();
@@ -2493,7 +2597,11 @@ async fn handle_message_emits_within_sync_msg_span() {
     // The instrumented span entry is what we assert on: with
     // `FmtSpan::ENTER` the subscriber emits a `new` event carrying the
     // span name the moment the function body begins executing.
-    let mut orch = SyncOrchestrator::new(pool.clone(), "dev-local".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "dev-local".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     let _ = orch
         .handle_message(SyncMessage::HeadExchange {
@@ -2540,8 +2648,12 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let mut orch = SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone())
-        .with_expected_remote_id("remote-dev".into());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("remote-dev".into());
 
     // Simulate a peer that has never originated its own ops — only
     // advertises (local-dev, 0). HeadExchange path proceeds without
@@ -2736,7 +2848,11 @@ async fn loro_sync_orchestrator_rejects_loro_sync_before_head_exchange() {
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // Send LoroSync from Idle state — must fail.
     let result = orch
@@ -3689,7 +3805,11 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
 async fn start_advertises_op_log_replication_capability_2481() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     let msg = orch.start().await.unwrap();
     match msg {
         SyncMessage::HeadExchange {
@@ -3719,7 +3839,11 @@ async fn start_advertises_op_log_replication_capability_2481() {
 async fn start_omits_retired_wire_compression_and_still_accepts_a_peer_sending_it_3543() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     let msg = orch.start().await.unwrap();
     let json = serde_json::to_value(&msg).expect("HeadExchange must serialize");
     assert!(
@@ -3956,7 +4080,11 @@ async fn streamer_appends_op_log_batch_for_capable_peer_2481() {
         .unwrap();
     }
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // The initiator advertises it already holds device-A through seq 1 and is
     // op-log-replication capable → the responder should ship seqs 2 and 3.
@@ -4016,7 +4144,11 @@ async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
         .unwrap();
     }
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     let resp = orch
         .handle_message(SyncMessage::HeadExchange {
@@ -4071,7 +4203,11 @@ async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
     seed_oversized_op_for_2593(&pool).await;
 
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     let resp = orch
         .handle_message(SyncMessage::HeadExchange {
@@ -4123,7 +4259,11 @@ async fn streamer_skips_oversized_op_record_for_chunked_incapable_peer_2593() {
     seed_oversized_op_for_2593(&pool).await;
 
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     let resp = orch
         .handle_message(SyncMessage::HeadExchange {
@@ -4163,7 +4303,11 @@ async fn streamer_rejects_inbound_op_log_batch_2481() {
         .await
         .unwrap();
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "device-A".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-A".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     // Drive the responder to stream (sets `streamed_to_peer`).
     let streamed = orch
@@ -4220,8 +4364,12 @@ async fn initiator_ingests_op_log_batch_as_audit_metadata_2481() {
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool.clone(), "device-B".into(), materializer.clone())
-        .with_expected_remote_id("device-A".into());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "device-B".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("device-A".into());
     // Drive to ExchangingHeads so the streaming-phase message is valid.
     let _ = orch.start().await.unwrap();
 
@@ -4276,8 +4424,12 @@ async fn initiator_skips_corrupt_op_log_record_but_completes_2481() {
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool.clone(), "device-B".into(), materializer.clone())
-        .with_expected_remote_id("device-A".into());
+    let mut orch = SyncOrchestrator::new(
+        pool.clone(),
+        "device-B".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("device-A".into());
     let _ = orch.start().await.unwrap();
 
     let resp = orch
@@ -4307,7 +4459,11 @@ async fn initiator_skips_corrupt_op_log_record_but_completes_2481() {
 async fn op_log_batch_before_handshake_fails_2481() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "device-B".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "device-B".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     // No start() → still Idle.
     let err = orch
         .handle_message(SyncMessage::OpLogBatch {
@@ -4964,9 +5120,13 @@ async fn initiator_events_carry_the_peer_id_from_the_first_event_4085() {
     let materializer = Materializer::new(pool.clone());
 
     let sink = Arc::new(RecordingEventSink::new());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone())
-        .with_expected_remote_id("remote-dev".into())
-        .with_event_sink(Box::new(sink.clone()));
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    )
+    .with_expected_remote_id("remote-dev".into())
+    .with_event_sink(Box::new(sink.clone()));
 
     // `start()` is the initiator's very first act and emits the session's
     // first Progress event — before any inbound message exists.
@@ -5028,7 +5188,11 @@ async fn initiator_events_carry_the_peer_id_from_the_first_event_4085() {
 async fn certless_session_still_resolves_the_peer_from_heads_4085() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
-    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+    let mut orch = SyncOrchestrator::new(
+        pool,
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
 
     orch.handle_message(SyncMessage::HeadExchange {
         heads: vec![DeviceHead {
@@ -5310,8 +5474,11 @@ async fn orchestrator_start_advertises_the_clamped_local_device_name_4298() {
     let materializer = Materializer::new(pool.clone());
 
     // No name published yet: the field must be absent rather than empty.
-    let mut orchestrator =
-        SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    let mut orchestrator = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     match orchestrator.start().await.unwrap() {
         SyncMessage::HeadExchange { device_name, .. } => assert_eq!(
             device_name, None,
@@ -5325,8 +5492,11 @@ async fn orchestrator_start_advertises_the_clamped_local_device_name_4298() {
         .await
         .unwrap();
 
-    let mut orchestrator =
-        SyncOrchestrator::new(pool.clone(), "local-dev".into(), materializer.clone());
+    let mut orchestrator = SyncOrchestrator::new(
+        pool.clone(),
+        "local-dev".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     match orchestrator.start().await.unwrap() {
         SyncMessage::HeadExchange { device_name, .. } => {
             let name = device_name.expect("a published local name must be advertised");
@@ -5435,8 +5605,11 @@ async fn orchestrator_start_states_this_devices_own_id_4380() {
         .await
         .unwrap();
 
-    let mut orchestrator =
-        SyncOrchestrator::new(pool.clone(), "MMMM-local".into(), materializer.clone());
+    let mut orchestrator = SyncOrchestrator::new(
+        pool.clone(),
+        "MMMM-local".into(),
+        std::sync::Arc::new(materializer.clone()),
+    );
     match orchestrator.start().await.unwrap() {
         SyncMessage::HeadExchange {
             sender_device_id,
@@ -5480,7 +5653,11 @@ async fn head_exchange_identifies_the_peer_by_its_stated_id_4380() {
         // No `with_expected_remote_id`: this is the responder's pairing branch,
         // where no bound row exists to resolve the key against and the claim is
         // all there is.
-        let mut orch = SyncOrchestrator::new(pool, "HOST-4380".into(), materializer.clone());
+        let mut orch = SyncOrchestrator::new(
+            pool,
+            "HOST-4380".into(),
+            std::sync::Arc::new(materializer.clone()),
+        );
         orch.handle_message(SyncMessage::HeadExchange {
             // Ordered as `get_local_heads` emits them: `ORDER BY d.device_id`.
             heads: vec![
@@ -5672,7 +5849,11 @@ async fn head_exchange_refuses_a_display_hostile_head_derived_id_4451() {
     async fn identified_by_heads(first_head: &str) -> String {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
-        let mut orch = SyncOrchestrator::new(pool, "HOST-4451".into(), materializer.clone());
+        let mut orch = SyncOrchestrator::new(
+            pool,
+            "HOST-4451".into(),
+            std::sync::Arc::new(materializer.clone()),
+        );
         orch.handle_message(SyncMessage::HeadExchange {
             heads: vec![DeviceHead {
                 device_id: first_head.to_owned(),

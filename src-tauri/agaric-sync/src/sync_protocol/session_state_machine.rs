@@ -229,7 +229,7 @@ impl SyncOrchestrator {
     /// concrete `Materializer` (tests, via `From<Materializer>`) or an
     /// already-erased `Arc<dyn ApplyHost>` (production) — so no call site has
     /// to wrap the coordinator by hand.
-    pub fn new(pool: SqlitePool, device_id: String, host: impl Into<Arc<dyn ApplyHost>>) -> Self {
+    pub fn new(pool: SqlitePool, device_id: String, host: Arc<dyn ApplyHost>) -> Self {
         Self {
             session: SyncSession {
                 state: SyncState::Idle,
@@ -242,7 +242,7 @@ impl SyncOrchestrator {
             },
             pool,
             device_id,
-            host: host.into(),
+            host,
             state: SyncState::Idle,
             pending_loro_messages: VecDeque::new(),
             remote_device_id: None,

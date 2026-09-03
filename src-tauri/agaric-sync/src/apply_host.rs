@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_engine::loro::shared::LoroState;
+use agaric_engine::materializer::Materializer;
 
 /// #2621 (agaric-sync inversion): the narrow apply/materialize surface the sync
 /// layer needs from the app-side `Materializer` coordinator, expressed as a
@@ -59,6 +60,44 @@ pub trait ApplyHost: Send + Sync + std::fmt::Debug {
     /// this is `Option` rather than a required method.
     fn app_data_dir(&self) -> Option<std::path::PathBuf> {
         None
+    }
+}
+
+/// #4502: the production host is the engine's `Materializer`; sync owns the
+/// trait, so the impl lives here and the materializer never sees this crate.
+#[async_trait]
+impl ApplyHost for Materializer {
+    fn loro_state(&self) -> Arc<LoroState> {
+        Arc::clone(Materializer::loro_state(self))
+    }
+
+    async fn enqueue_inbound_sync_rebuilds(
+        &self,
+        changed_blocks: &[BlockId],
+        purged_blocks: &[BlockId],
+    ) -> Result<(), AppError> {
+        Materializer::enqueue_inbound_sync_rebuilds(self, changed_blocks, purged_blocks).await
+    }
+
+    /// #3328: the attachment root, served from the value the app registers
+    /// via `Materializer::set_app_data_dir` — the same `OnceLock` the
+    /// `CleanupOrphanedAttachments` task reads. Sync-received attachments and
+    /// the GC that reconciles them now resolve their directory from one
+    /// place instead of two.
+    ///
+    /// `None` before `set_app_data_dir` runs (and in tests that never call
+    /// it); the sync call sites fall back to deriving the root from the pool
+    /// in that case, which is the pre-#3328 behaviour.
+    fn app_data_dir(&self) -> Option<std::path::PathBuf> {
+        Materializer::app_data_dir(self)
+    }
+
+    async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError> {
+        Materializer::enqueue_post_snapshot_rebuilds(self).await
+    }
+
+    async fn flush(&self) -> Result<(), AppError> {
+        Materializer::flush(self).await
     }
 }
 

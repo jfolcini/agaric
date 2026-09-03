@@ -21,7 +21,9 @@ pub mod deeplink;
 pub mod import;
 pub mod lifecycle;
 pub mod maintenance;
-pub mod materializer;
+// #4502: the materializer lives in `agaric-engine`; the app-coupled half of
+// its tests stays here as `materializer_app_tests` (below).
+pub use agaric_engine::materializer;
 pub mod mcp;
 pub mod recovery;
 pub mod recurrence;
@@ -43,8 +45,8 @@ pub mod sync_event_sinks;
 // app-coupled tests. (`sync_net` was the third; it went with the old TCP+TLS
 // transport in the iroh cutover, #3464.)
 pub mod sync_files;
-// #4502: the `ApplyHost` impl and the sync half of `StatusInfo`, kept out of
-// `materializer/` so that module does not depend on `agaric_sync`.
+// #4502: the sync half of `StatusInfo`, kept out of `materializer/` so that
+// module does not depend on `agaric_sync`.
 pub mod sync_host;
 pub mod sync_protocol;
 pub mod ulid;
@@ -399,6 +401,10 @@ fn has_directive_for_target(filter: &str, target: &str) -> bool {
 mod bulk_equivalence;
 #[cfg(test)]
 mod integration_tests;
+/// #4502: the materializer tests that need this crate — the command layer,
+/// `CommandTx` + the boot reprojection, and the reconciliation oracle above.
+#[cfg(test)]
+mod materializer_app_tests;
 /// #3345 (programme #3351, theme T3): the reconciliation oracle — rebuild each
 /// covered derived artefact from base tables and diff it against the
 /// incrementally-maintained state. Consumed by
@@ -1051,11 +1057,14 @@ fn build_materializer(
     // later passed into the sync daemon below so its periodic
     // resync tick short-circuits when backgrounded.
     let lifecycle = LifecycleHooks::new();
+    // #4502: `setup` runs outside any tokio runtime, so the materializer
+    // binds its startup tasks to Tauri's stored handle.
     let materializer = Materializer::with_read_pool_and_lifecycle(
         pools.write.clone(),
         pools.read.clone(),
         lifecycle.clone(),
         std::sync::Arc::clone(&loro_state),
+        tauri::async_runtime::handle().inner().clone(),
     );
     // C-3c — register `app_data_dir` so the
     // `CleanupOrphanedAttachments` background task can locate

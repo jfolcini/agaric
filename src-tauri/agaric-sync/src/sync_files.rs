@@ -2369,3 +2369,18 @@ mod cancel_poll_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod reap_window_tests {
+    /// The materializer's temp-file reaper must outwait a stalled receive by a
+    /// wide margin, or it deletes a transfer that is still arriving (#4502
+    /// moved the pin here from the materializer, which no longer sees the
+    /// transport).
+    #[test]
+    fn reap_window_is_twenty_receive_timeouts() {
+        assert_eq!(
+            agaric_engine::materializer::TRANSFER_TEMP_REAP_AFTER,
+            crate::transport::RECV_TIMEOUT * 20
+        );
+    }
+}

@@ -1,0 +1,465 @@
+use super::*;
+
+/// Regression: the materializer constructor must not panic when called
+/// outside any Tokio runtime context, because that is exactly the context
+/// Tauri 2's `setup` callback runs in (synchronously on the main thread
+/// before the app loop enters its runtime). Pre-fix, `JoinSet::spawn` in the
+/// four construction-time `Self::spawn_task` calls invoked
+/// `Handle::current()` and the production AppImage panicked at startup with
+/// "there is no reactor running". The test suite did not catch it because
+/// every test runs inside `#[tokio::test]`.
+///
+/// #4502: the fallback is the runtime handle the app passes in, so this is a
+/// plain `#[test]` (NOT `#[tokio::test]`) that builds the pool on a
+/// short-lived `Runtime`, leaves its context, and hands the constructor that
+/// runtime's handle from the thread's bare context — Tauri's setup-time
+/// shape.
+#[test]
+fn materializer_with_read_pool_and_lifecycle_does_not_panic_without_current_runtime() {
+    use tokio::runtime::Runtime;
+
+    let dir = TempDir::new().unwrap();
+    let db_path: PathBuf = dir.path().join("test.db");
+
+    let pool_runtime = Runtime::new().unwrap();
+    let pool = pool_runtime.block_on(async { init_pool(&db_path).await.unwrap() });
+    // After block_on returns, this thread is NOT in any tokio runtime
+    // context. Confirm that to make the test's invariant explicit.
+    assert!(
+        tokio::runtime::Handle::try_current().is_err(),
+        "test precondition: thread must not be in a tokio runtime context",
+    );
+
+    let lifecycle = agaric_core::foreground::LifecycleHooks::new();
+    let mat = Materializer::with_read_pool_and_lifecycle(
+        pool.clone(),
+        pool,
+        lifecycle,
+        std::sync::Arc::new(crate::loro::shared::LoroState::new()),
+        pool_runtime.handle().clone(),
+    );
+
+    // Sanity: shutdown must still work synchronously from a
+    // non-runtime thread.
+    mat.shutdown();
+    // Keep the pool runtime alive until after the materializer is
+    // dropped; otherwise tasks bound to it that hold pool references
+    // would race teardown.
+    drop(pool_runtime);
+}
+
+#[tokio::test]
+async fn metrics_bg() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+        .await
+        .unwrap();
+    mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed),
+        3,
+        "should have processed exactly 2 background tasks plus the flush barrier"
+    );
+}
+#[tokio::test]
+async fn metrics_fg() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let r = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("blk-fg"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: None,
+            index: None,
+            content: "hello".into(),
+        }),
+    )
+    .await;
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(r)))
+        .await
+        .unwrap();
+    mat.flush_foreground().await.unwrap();
+    assert_eq!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "should have processed exactly 1 foreground task plus the flush barrier"
+    );
+}
+#[tokio::test]
+async fn consumer_survives() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+        .await
+        .unwrap();
+    mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+        .await
+        .unwrap();
+    mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+        block_id: "blk-iso".into(),
+    })
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "consumer should survive processing multiple tasks"
+    );
+}
+#[tokio::test]
+async fn flush_fg() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let r = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("blk-flush-fg"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: None,
+            index: None,
+            content: "flush fg".into(),
+        }),
+    )
+    .await;
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(r)))
+        .await
+        .unwrap();
+    mat.flush_foreground().await.unwrap();
+    assert_eq!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "flush_foreground should process exactly 1 task plus the flush barrier"
+    );
+}
+#[tokio::test]
+async fn flush_bg() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+    assert_eq!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "flush_background should process exactly 1 task plus the flush barrier"
+    );
+}
+#[tokio::test]
+async fn flush_both() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let r = make_op_record(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("blk-flush-both"),
+            block_type: "content".into(),
+            parent_id: None,
+            position: None,
+            index: None,
+            content: "flush both".into(),
+        }),
+    )
+    .await;
+    mat.enqueue_foreground(MaterializeTask::ApplyOp(StdArc::new(r)))
+        .await
+        .unwrap();
+    mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+        .await
+        .unwrap();
+    mat.flush().await.unwrap();
+    assert_eq!(
+        mat.metrics().fg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "flush should process exactly 1 foreground task plus the flush barrier"
+    );
+    assert_eq!(
+        mat.metrics().bg_processed.load(AtomicOrdering::Relaxed),
+        2,
+        "flush should process exactly 1 background task plus the flush barrier"
+    );
+}
+
+#[test]
+fn dedup_barrier() {
+    let n1 = Arc::new(tokio::sync::Notify::new());
+    let n2 = Arc::new(tokio::sync::Notify::new());
+    let d = dedup_tasks(vec![
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::Barrier(n1),
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::Barrier(n2),
+    ]);
+    assert_eq!(
+        d.len(),
+        3,
+        "dedup should keep one RebuildTagsCache and both barriers"
+    );
+    assert_eq!(
+        d.iter()
+            .filter(|t| matches!(t, MaterializeTask::Barrier(_)))
+            .count(),
+        2,
+        "barriers should never be deduped"
+    );
+}
+#[test]
+fn dedup_cache() {
+    let d = dedup_tasks(vec![
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::RebuildPagesCache,
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::RebuildAgendaCache,
+        MaterializeTask::RebuildPagesCache,
+        MaterializeTask::RebuildTagsCache,
+    ]);
+    assert_eq!(
+        d.len(),
+        3,
+        "dedup should collapse duplicate cache rebuild tasks"
+    );
+}
+#[test]
+fn dedup_block_links() {
+    let d = dedup_tasks(vec![
+        MaterializeTask::ReindexBlockLinks {
+            block_id: "a".into(),
+        },
+        MaterializeTask::ReindexBlockLinks {
+            block_id: "b".into(),
+        },
+        MaterializeTask::ReindexBlockLinks {
+            block_id: "a".into(),
+        },
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::ReindexBlockLinks {
+            block_id: "c".into(),
+        },
+    ]);
+    assert_eq!(
+        d.len(),
+        4,
+        "dedup should collapse same block_id reindex but keep distinct ones"
+    );
+}
+#[test]
+fn dedup_apply_op() {
+    let r = fake_op_record("create_block", "{}");
+    let d = dedup_tasks(vec![
+        MaterializeTask::ApplyOp(StdArc::new(r.clone())),
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::ApplyOp(StdArc::new(r.clone())),
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::ApplyOp(StdArc::new(r)),
+    ]);
+    assert_eq!(
+        d.len(),
+        4,
+        "dedup should keep all ApplyOp tasks and collapse duplicate cache tasks"
+    );
+    assert_eq!(
+        d.iter()
+            .filter(|t| matches!(t, MaterializeTask::ApplyOp(_)))
+            .count(),
+        3,
+        "ApplyOp tasks should never be deduped"
+    );
+}
+#[test]
+fn dedup_empty() {
+    assert!(
+        dedup_tasks(vec![]).is_empty(),
+        "dedup of empty input should be empty"
+    );
+}
+#[test]
+fn dedup_single() {
+    assert_eq!(
+        dedup_tasks(vec![MaterializeTask::RebuildTagsCache]).len(),
+        1,
+        "dedup of single task should return one task"
+    );
+}
+#[test]
+fn dedup_same_reindex() {
+    assert_eq!(
+        dedup_tasks(vec![
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "same".into()
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "same".into()
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "same".into()
+            }
+        ])
+        .len(),
+        1,
+        "identical reindex tasks should dedup to one"
+    );
+}
+#[test]
+fn dedup_fts_update() {
+    assert_eq!(
+        dedup_tasks(vec![
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "a".into()
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "b".into()
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "a".into()
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "c".into()
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "b".into()
+            }
+        ])
+        .len(),
+        3,
+        "duplicate fts update tasks for same block_id should be collapsed"
+    );
+}
+#[test]
+fn dedup_fts_remove() {
+    assert_eq!(
+        dedup_tasks(vec![
+            MaterializeTask::RemoveFtsBlock {
+                block_id: "x".into()
+            },
+            MaterializeTask::RemoveFtsBlock {
+                block_id: "y".into()
+            },
+            MaterializeTask::RemoveFtsBlock {
+                block_id: "x".into()
+            }
+        ])
+        .len(),
+        2,
+        "duplicate fts remove tasks for same block_id should be collapsed"
+    );
+}
+#[test]
+fn dedup_fts_reindex_ref() {
+    assert_eq!(
+        dedup_tasks(vec![
+            MaterializeTask::ReindexFtsReferences {
+                block_id: "tag-1".into()
+            },
+            MaterializeTask::ReindexFtsReferences {
+                block_id: "tag-2".into()
+            },
+            MaterializeTask::ReindexFtsReferences {
+                block_id: "tag-1".into()
+            }
+        ])
+        .len(),
+        2,
+        "duplicate fts reindex references for same block_id should be collapsed"
+    );
+}
+#[test]
+fn dedup_fts_update_remove() {
+    assert_eq!(
+        dedup_tasks(vec![
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "z".into()
+            },
+            MaterializeTask::RemoveFtsBlock {
+                block_id: "z".into()
+            }
+        ])
+        .len(),
+        2,
+        "update and remove for same block should both be kept as different task types"
+    );
+}
+#[test]
+fn dedup_fts_optimize() {
+    let d = dedup_tasks(vec![
+        MaterializeTask::FtsOptimize,
+        MaterializeTask::RebuildFtsIndex,
+        MaterializeTask::FtsOptimize,
+        MaterializeTask::RebuildFtsIndex,
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::FtsOptimize,
+    ]);
+    assert_eq!(
+        d.len(),
+        3,
+        "duplicate FtsOptimize and RebuildFtsIndex should each collapse to one"
+    );
+}
+#[test]
+fn dedup_hash() {
+    assert_eq!(
+        dedup_tasks(vec![
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "A".into()
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "A".into()
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: "B".into()
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "A".into()
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: "A".into()
+            }
+        ])
+        .len(),
+        3,
+        "dedup should collapse by task type and block_id together"
+    );
+}
+
+/// #2042 ordering guard. In a mixed page+content multi-root lifecycle batch
+/// the content root's lifecycle set carries `RebuildPagesCacheCounts` but NOT
+/// `RebuildPagesCache` (a content block can't change a page row), and may be
+/// enqueued BEFORE a page root's set (which carries both). Under the plain
+/// keep-first rule the count recompute would land ahead of the page-row
+/// rebuild, recomputing a restored page's counts before its `pages_cache` row
+/// is re-inserted and leaving it at 0. `dedup_tasks` must therefore emit the
+/// single `RebuildPagesCacheCounts` AFTER `RebuildPagesCache`.
+#[test]
+fn dedup_emits_pages_cache_counts_after_pages_cache_in_mixed_batch() {
+    use std::mem::discriminant;
+    let counts = discriminant(&MaterializeTask::RebuildPagesCacheCounts);
+    let cache = discriminant(&MaterializeTask::RebuildPagesCache);
+    // Content root first (Counts, no Cache), then a page root (Cache + Counts).
+    let out = dedup_tasks(vec![
+        MaterializeTask::RebuildTagsCache,
+        MaterializeTask::RebuildPagesCacheCounts, // content set — would dedup first
+        MaterializeTask::RebuildPageLinkCache,
+        MaterializeTask::RebuildPagesCache,       // page set
+        MaterializeTask::RebuildPagesCacheCounts, // page set
+    ]);
+    assert_eq!(
+        out.iter().filter(|t| discriminant(*t) == counts).count(),
+        1,
+        "RebuildPagesCacheCounts must collapse to exactly one; got {out:?}",
+    );
+    let counts_idx = out.iter().position(|t| discriminant(t) == counts).unwrap();
+    let cache_idx = out.iter().position(|t| discriminant(t) == cache).unwrap();
+    assert!(
+        counts_idx > cache_idx,
+        "RebuildPagesCacheCounts (idx {counts_idx}) must run AFTER RebuildPagesCache \
+         (idx {cache_idx}) so a restored page's row exists before its counts recompute; got {out:?}",
+    );
+}

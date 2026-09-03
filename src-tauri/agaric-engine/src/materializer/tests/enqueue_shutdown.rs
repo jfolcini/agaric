@@ -1,0 +1,618 @@
+use super::*;
+
+#[tokio::test]
+async fn enqueue_foreground_any() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    assert!(
+        mat.enqueue_foreground(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "should enqueue foreground task successfully"
+    );
+}
+#[tokio::test]
+async fn enqueue_background_all() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "should enqueue RebuildTagsCache in background"
+    );
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildPagesCache)
+            .await
+            .is_ok(),
+        "should enqueue RebuildPagesCache in background"
+    );
+    assert!(
+        mat.enqueue_background(MaterializeTask::ReindexBlockLinks {
+            block_id: "blk-x".into()
+        })
+        .await
+        .is_ok(),
+        "should enqueue ReindexBlockLinks in background"
+    );
+}
+#[tokio::test]
+async fn try_enqueue_background_drops_when_full() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    for _ in 0..2000 {
+        assert!(
+            mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+                .is_ok(),
+            "try_enqueue should accept tasks when not full"
+        );
+    }
+}
+
+/// The `try_enqueue_background` Full-arm must increment
+/// `metrics.bg_dropped` so sustained backpressure is visible in
+/// `StatusInfo`.  Without the increment, dropped cache-rebuild
+/// fan-outs are an invisible degradation.
+///
+/// Single-threaded `#[tokio::test]` runtime guarantees the bg
+/// consumer cannot drain during the sync `try_send` loop, so the
+/// bounded channel fills at `BACKGROUND_CAPACITY` and every
+/// subsequent send lands in the Full arm.
+#[tokio::test]
+async fn try_enqueue_background_full_arm_increments_bg_dropped() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    // Channel capacity is 1024 — push more than that without yielding
+    // so the consumer never runs and the Full arm is exercised
+    // deterministically.  We push 2x capacity to give the increment
+    // ~1024 chances to fire.
+    for _ in 0..2048 {
+        // Each call returns `Ok(())` regardless of whether it landed
+        // or was shed — the helper preserves the `Ok` return for
+        // back-compat.  We assert via the metric instead.
+        let _ = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+    }
+
+    let dropped = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert!(
+        dropped > 0,
+        "bg_dropped must increment when try_enqueue_background sheds tasks under backpressure, got {dropped}"
+    );
+
+    // Stop the consumer cleanly so the test runtime can drain.
+    mat.shutdown();
+}
+
+/// The cache-rebuild fan-out path
+/// (`enqueue_full_cache_rebuild`, used by `delete_block` /
+/// `restore_block` / `purge_block`) is the specific code path called
+/// out in the recommendation.  When the bg queue is saturated, every
+/// fan-out task shed by the helper must tick `bg_dropped` so the
+/// "agenda missing entries until something else is edited" symptom is
+/// observable.
+#[tokio::test]
+async fn enqueue_full_cache_rebuild_under_backpressure_increments_bg_dropped() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    // Fill the bg queue to capacity first so the cache-rebuild fan-out
+    // arrives at a queue that is already full.
+    for _ in 0..2048 {
+        let _ = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+    }
+    let baseline = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert!(
+        baseline > 0,
+        "precondition: backpressure must already have ticked bg_dropped, got {baseline}"
+    );
+
+    // Drive a synthetic delete_block fan-out via the same dispatch entry
+    // point a real op uses. #2935: the argument-less global rebuild set
+    // (`FULL_CACHE_REBUILD_TASKS`, 9 tasks) is now armed on a trailing
+    // debounce instead of enqueued inline, so `dispatch_background` itself
+    // only sheds the inline per-block `RemoveFtsBlock`; fire the pending
+    // debounced fan-out synchronously so the global set also hits the
+    // saturated queue. Every one of the 9 globals + 1 `RemoveFtsBlock`
+    // should be shed and counted.
+    let record = fake_op_record("delete_block", r#"{"block_id":"BLK-DEL"}"#);
+    let _ = mat.dispatch_background(&record);
+    mat.fire_pending_lifecycle_rebuild();
+
+    let after = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert!(
+        after >= baseline + 7,
+        "the delete_block cache-rebuild fan-out must add at least 7 drops under saturation (baseline={baseline}, after={after})"
+    );
+
+    mat.shutdown();
+}
+
+/// Fill the bounded background channel to capacity with `filler`, then offer
+/// `shed` to the full channel and assert it lands in the Full arm.
+///
+/// `filler` MUST have a different retry-queue key (`block_id` + `task_kind`)
+/// from `shed`. Both invariants below are #3482:
+///
+/// **One shed, not a thousand.** The old shape pushed `2 * BACKGROUND_CAPACITY`
+/// tasks, so ~1024 of them hit the Full arm and each spawned its own
+/// fire-and-forget `record_failure` UPSERT. The test's own observation SELECT
+/// then queued behind that pile on the shared 5-connection pool: instrumented
+/// under load, the row's `attempts` was 1020-1024 by the time the first SELECT
+/// could see it, up to 13 s after the pushes. Against the 2 s deadline the
+/// test used, that is a bet on SQLite write throughput, not an assertion about
+/// the shed path. Exactly one shed means exactly one write to wait for.
+///
+/// **The filler must not be able to delete the evidence.** The bg consumer
+/// calls `retry_queue::clear_on_success` after every task it completes
+/// durably (`consumer.rs`), DELETEing that task's retry row. The old tests
+/// filled the queue with the very task they then shed, so 1024 queued copies
+/// of it were racing to delete the row the assertion needed: instrumented,
+/// the row was observed present and then gone one statement later. A shed
+/// task by definition never entered the queue, so with a disjoint filler
+/// nothing in flight can clear its key and the row is stable from the moment
+/// the persist commits — the assertion window is open-ended instead of being
+/// squeezed from both sides by the scheduler.
+///
+/// The capacity walk is exact rather than "push plenty": the current-thread
+/// `#[tokio::test]` runtime cannot schedule the consumer inside this fully
+/// synchronous loop, so the channel can only fill. The per-push assert is a
+/// tripwire for the day that stops being true, not a timing assumption.
+fn fill_bg_queue_then_shed(
+    mat: &Materializer,
+    mut filler: impl FnMut() -> MaterializeTask,
+    shed: MaterializeTask,
+) {
+    for i in 0..BACKGROUND_CAPACITY {
+        let outcome = mat
+            .try_enqueue_background(filler())
+            .expect("bg queue must be open");
+        assert_eq!(
+            outcome,
+            BackgroundEnqueueOutcome::Enqueued,
+            "bg channel shed filler task {i} before reaching its BACKGROUND_CAPACITY of \
+             {BACKGROUND_CAPACITY} — the queue is smaller than this test believes"
+        );
+    }
+    let outcome = mat
+        .try_enqueue_background(shed)
+        .expect("bg queue must be open");
+    assert_eq!(
+        outcome,
+        BackgroundEnqueueOutcome::Shed,
+        "the task offered to a channel already holding BACKGROUND_CAPACITY items must hit \
+         the Full arm — something drained the queue and this test no longer controls it"
+    );
+}
+
+/// When the bg queue is full and a global cache rebuild
+/// (`RebuildTagsCache`) is dispatched, three things must happen:
+///   1. The task is shed (queue stays full, no panic).
+///   2. `bg_dropped_global` ticks (separate from `bg_dropped` so
+///      operators can distinguish a per-block reindex backlog from a
+///      global-cache freshness gap).
+///   3. The task is persisted to `materializer_retry_queue` under the
+///      `'__GLOBAL__'` sentinel so the sweeper picks it up later.
+#[tokio::test]
+async fn test_global_task_dropped_on_queue_full() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Fill with a PER-BLOCK task and shed the global one, so the queued
+    // filler cannot `clear_on_success` the `__GLOBAL__/RebuildPagesCache`
+    // row this test asserts on — see `fill_bg_queue_then_shed`.
+    let filler_block: std::sync::Arc<str> = std::sync::Arc::from("BLK-QUEUE-FILLER");
+    fill_bg_queue_then_shed(
+        &mat,
+        || MaterializeTask::UpdateFtsBlock {
+            block_id: filler_block.clone(),
+        },
+        MaterializeTask::RebuildPagesCache,
+    );
+
+    let global_drops = mat
+        .metrics()
+        .bg_dropped_global
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        global_drops, 1,
+        "bg_dropped_global must increment once per global task shed under saturation, got {global_drops}"
+    );
+
+    // The persistence side-effect happens via spawn_task. Await it on a
+    // real completion edge (#3482) rather than polling the table against a
+    // wall-clock deadline; once the gate drains, the UPSERT has committed
+    // and one un-retried SELECT is authoritative.
+    mat.wait_for_pending_shed_persists().await;
+
+    let row = sqlx::query!(
+        "SELECT block_id, task_kind FROM materializer_retry_queue \
+         WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildPagesCache'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        row.is_some(),
+        "dropped global RebuildPagesCache must be persisted to \
+         materializer_retry_queue under '__GLOBAL__'"
+    );
+
+    mat.shutdown();
+}
+
+/// Audit #423: a PER-BLOCK reindex task (`UpdateFtsBlock`) shed when the
+/// background queue is saturated must ALSO be persisted to
+/// `materializer_retry_queue` — keyed by its real `block_id`, not the
+/// `'__GLOBAL__'` sentinel. Before the fix, only global rebuilds were
+/// persisted on the saturation path, so a shed per-block task left that
+/// block's FTS / link / tag-ref index stale until its next edit, with no
+/// self-healing (the consumer failure path never runs for tasks shed at
+/// enqueue). `bg_dropped_global` must NOT tick for a per-block task.
+#[tokio::test]
+async fn test_per_block_task_dropped_on_queue_full() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let global_before = mat
+        .metrics()
+        .bg_dropped_global
+        .load(AtomicOrdering::Relaxed);
+
+    // Fill with a GLOBAL cache rebuild and shed the per-block reindex, so
+    // the queued filler cannot `clear_on_success` the
+    // `BLK-FTS-SAT/UpdateFtsBlock` row this test asserts on — see
+    // `fill_bg_queue_then_shed`.
+    let block_id: std::sync::Arc<str> = std::sync::Arc::from("BLK-FTS-SAT");
+    fill_bg_queue_then_shed(
+        &mat,
+        || MaterializeTask::RebuildTagsCache,
+        MaterializeTask::UpdateFtsBlock {
+            block_id: block_id.clone(),
+        },
+    );
+
+    let dropped = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        dropped, 1,
+        "bg_dropped must increment once per per-block task shed under saturation, got {dropped}"
+    );
+
+    // The persistence happens via spawn_task. #3482: await the spawned
+    // write on a real completion edge instead of polling the table against
+    // a wall-clock deadline — the drain gate is signalled by the RAII guard
+    // the shed path moves into the spawned future, so when it returns the
+    // UPSERT has committed and one SELECT settles the question.
+    mat.wait_for_pending_shed_persists().await;
+
+    let row = sqlx::query!(
+        "SELECT block_id, task_kind FROM materializer_retry_queue \
+         WHERE block_id = 'BLK-FTS-SAT' AND task_kind = 'UpdateFtsBlock'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        row.is_some(),
+        "audit #423: dropped per-block UpdateFtsBlock must be persisted to \
+         materializer_retry_queue keyed by its block_id"
+    );
+
+    // A per-block drop must not be miscounted as a global-cache drop.
+    let global_after = mat
+        .metrics()
+        .bg_dropped_global
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        global_before, global_after,
+        "bg_dropped_global must not tick for a per-block task drop"
+    );
+
+    mat.shutdown();
+}
+
+/// A persisted global `RebuildAgendaCache` row whose
+/// `next_attempt_at` is already in the past must be re-enqueued by
+/// `sweep_once` and the row deleted from `materializer_retry_queue`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_global_task_re_enqueued_after_backoff() {
+    use crate::materializer::retry_queue;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Plant a global retry row with an already-past next_attempt_at,
+    // simulating "the backoff window expired".
+    let past = agaric_store::db::now_ms() - 2 * 60_000;
+    sqlx::query!(
+        "INSERT INTO materializer_retry_queue \
+             (block_id, task_kind, attempts, next_attempt_at) \
+         VALUES (?, ?, ?, ?)",
+        "__GLOBAL__",
+        "RebuildAgendaCache",
+        1_i64,
+        past,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // #2187: the row was planted via raw SQL, bypassing `record_failure`, so
+    // the incremental pending-retry gauge is still 0. Seed it from the real
+    // COUNT (mirrors the production boot seed in `spawn_sweeper`) or the
+    // consumer's `clear_on_success` fast-path would correctly SKIP the DELETE
+    // and the row would never clear.
+    let seeded = retry_queue::pending_count(&pool).await.unwrap();
+    mat.metrics().seed_pending_retry_rows(seeded);
+
+    let n = retry_queue::sweep_once(&pool, &pool, &mat).await.unwrap();
+    assert_eq!(
+        n, 1,
+        "the due global rebuild row must be re-enqueued by the sweeper"
+    );
+
+    // Issue #378: the sweeper now LEASES the row instead of deleting it
+    // on enqueue — the row is cleared only once the re-enqueued task
+    // completes durably and the consumer calls `clear_on_success`. The
+    // live background consumer (spawned by `Materializer::new`) drains
+    // the re-enqueued `RebuildAgendaCache`, which succeeds on the empty
+    // test DB, so the row is cleared asynchronously. Poll for the
+    // confirmed-success clear instead of asserting an immediate delete.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"n!: i64\" FROM materializer_retry_queue \
+             WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildAgendaCache'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if remaining == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() <= deadline,
+            "issue #378: swept row must be cleared after the re-enqueued \
+             task completes durably; row never cleared"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    mat.shutdown();
+}
+
+#[tokio::test]
+async fn try_enqueue_after_shutdown_err() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    mat.shutdown();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+            .is_err(),
+        "try_enqueue should fail after shutdown"
+    );
+}
+#[tokio::test]
+async fn shutdown_stops_consumers() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_ok(),
+        "should enqueue before shutdown"
+    );
+    mat.flush_background().await.unwrap();
+    mat.shutdown();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        mat.enqueue_background(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_err(),
+        "enqueue should fail after shutdown"
+    );
+}
+#[tokio::test]
+async fn shutdown_when_full() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+    for _ in 0..2000 {
+        let _ = mat.try_enqueue_background(MaterializeTask::RebuildTagsCache);
+    }
+    mat.shutdown();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
+            .is_err(),
+        "try_enqueue should fail after shutdown when full"
+    );
+    assert!(
+        mat.enqueue_foreground(MaterializeTask::RebuildTagsCache)
+            .await
+            .is_err(),
+        "foreground enqueue should fail after shutdown when full"
+    );
+}
+
+/// Regression test: a long-running future spawned via the
+/// materializer's tracked spawn helper must be aborted when
+/// `shutdown()` is called, not allowed to outlive the shutdown
+/// signal.
+///
+/// Pre-fix, fire-and-forget `tokio::spawn` calls produced no abort
+/// handle — an in-progress FTS rebuild (or any other multi-second
+/// future) kept running while the surrounding tear-down sequence
+/// closed the writer pool, producing writer-pool errors and a slow /
+/// hung exit.
+///
+/// We assert via a `Drop` guard inside the task body: when the task
+/// is aborted, its frame is dropped, which sets the flag. We poll
+/// the flag with a 1s budget, well under the 60s sleep it would
+/// otherwise have to wait out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_aborts_in_flight_tasks_m12() {
+    use std::sync::atomic::AtomicBool;
+
+    struct DropFlag(StdArc<AtomicBool>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, AtomicOrdering::Release);
+        }
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool);
+
+    let dropped = StdArc::new(AtomicBool::new(false));
+    let flag = dropped.clone();
+    Materializer::spawn_task(&mat.tasks, &mat.runtime, async move {
+        let _guard = DropFlag(flag);
+        // Far longer than the test's bounded wait — if the future
+        // were not aborted, the test would hang and fail.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    });
+
+    // Yield once so the spawned task gets onto a worker and reaches
+    // its first `.await`. Without this the abort below would race
+    // with task scheduling and the Drop assertion below could observe
+    // the guard before the task ever runs (still a pass, but for the
+    // wrong reason).
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !dropped.load(AtomicOrdering::Acquire),
+        "task should still be running before shutdown",
+    );
+
+    let start = std::time::Instant::now();
+    mat.shutdown();
+
+    // Poll the drop flag until the abort propagates. 1s budget is
+    // generous on a multi-thread runtime; in practice this resolves
+    // in <10 ms.
+    while !dropped.load(AtomicOrdering::Acquire) {
+        assert!(
+            start.elapsed() <= Duration::from_secs(1),
+            "shutdown() must abort in-flight tasks within 1s"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// #665: `shutdown()` must cancel an in-flight *handler attempt* running
+/// inside [`super::super::consumer::retry_with_backoff`], not just the
+/// consumer loop that awaits it.
+///
+/// Pre-fix, each attempt ran via a bare `tokio::task::spawn` that was
+/// merely `.await`ed; aborting the awaiting consumer task (the only thing
+/// The JoinSet tracked) detached the spawned attempt, which kept
+/// running against the (closing) writer pool. That is the exact
+/// Writer-pool-closed / slow-exit symptom the contract claims to
+/// prevent.
+///
+/// The fix wraps each attempt's `JoinHandle` in an abort-on-drop guard,
+/// so cancelling the awaiting task also cancels the in-flight attempt.
+///
+/// This test reproduces the path directly: it spawns a `retry_with_backoff`
+/// Loop onto the tracked JoinSet (exactly how the foreground /
+/// background consumer loops are spawned). The handler attempt signals it
+/// has started, holds a `Drop` guard, then blocks forever. We confirm the
+/// attempt is actually running (no DB write yet, guard not dropped), call
+/// `shutdown()` (→ `abort_all`), then assert the attempt's frame is
+/// dropped — i.e. the in-flight attempt was cancelled rather than detached.
+/// Pre-fix this would hang past the bounded wait and fail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_cancels_in_flight_retry_attempt_665() {
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::Notify;
+
+    /// Set on drop — proves the attempt frame was torn down (cancelled),
+    /// not left detached and running.
+    struct DropFlag(StdArc<AtomicBool>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, AtomicOrdering::Release);
+        }
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Coordination between the test and the in-flight handler attempt.
+    let started = StdArc::new(Notify::new()); // attempt -> test: "I'm running"
+    let block = StdArc::new(Notify::new()); // test -> attempt: never fired
+    let attempt_dropped = StdArc::new(AtomicBool::new(false));
+    // Sentinel so we can prove the attempt did NOT run to completion
+    // against the pool after shutdown (the writer-pool-closed symptom).
+    let attempt_completed = StdArc::new(AtomicBool::new(false));
+
+    let started_h = started.clone();
+    let block_h = block.clone();
+    let drop_flag = attempt_dropped.clone();
+    let completed_h = attempt_completed.clone();
+
+    // Spawn the retry loop onto the SAME tracked JoinSet the real
+    // consumers use, so `shutdown()`'s `abort_all` cancels it the way it
+    // cancels `run_foreground` / `run_background`.
+    Materializer::spawn_task(&mat.tasks, &mat.runtime, async move {
+        let _ = super::super::consumer::retry_with_backoff(
+            "test-665",
+            0, // no retries — keep the single attempt blocked in-flight
+            |_| Duration::from_millis(0),
+            move || {
+                let started = started_h.clone();
+                let block = block_h.clone();
+                let drop_flag = drop_flag.clone();
+                let completed = completed_h.clone();
+                async move {
+                    // RAII guard: dropped iff the attempt frame is torn
+                    // down (cancellation) — never reached on the
+                    // never-fired wait below unless the task is aborted.
+                    let _guard = DropFlag(drop_flag);
+                    started.notify_one();
+                    // Blocks forever; only cancellation (abort) can end it.
+                    block.notified().await;
+                    // Only reached if the attempt is allowed to complete —
+                    // it must NOT be, post-shutdown.
+                    completed.store(true, AtomicOrdering::Release);
+                    Ok(())
+                }
+            },
+        )
+        .await;
+    });
+
+    // Wait until the attempt is genuinely in-flight (past its spawn and
+    // blocked on `block.notified()`).
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .expect("in-flight retry attempt should start within 2s");
+    assert!(
+        !attempt_dropped.load(AtomicOrdering::Acquire),
+        "attempt frame must still be alive before shutdown",
+    );
+    assert!(
+        !attempt_completed.load(AtomicOrdering::Acquire),
+        "attempt must still be blocked (not completed) before shutdown",
+    );
+
+    let start = std::time::Instant::now();
+    mat.shutdown();
+
+    // The abort must propagate THROUGH the abort-on-drop guard into the
+    // in-flight attempt: its frame is dropped, setting the flag. 1s is
+    // generous on a multi-thread runtime; in practice <10 ms.
+    while !attempt_dropped.load(AtomicOrdering::Acquire) {
+        assert!(
+            start.elapsed() <= Duration::from_secs(1),
+            "#665: shutdown() must cancel the in-flight retry attempt, \
+             not detach it — attempt frame was never dropped within 1s"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // And it was cancelled, not run to completion against the pool.
+    assert!(
+        !attempt_completed.load(AtomicOrdering::Acquire),
+        "#665: the in-flight attempt must be aborted, not allowed to finish \
+         its work against the closing pool after shutdown",
+    );
+}

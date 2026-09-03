@@ -71,7 +71,7 @@ Two classes in this crate:
    grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src src-tauri/tests
    ```
 
-   `src-tauri/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
+   `src-tauri/agaric-engine/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
 
 Root `AGENTS.md` states the same rule under "Running tests efficiently" and defers here for the grep; keep the two agreeing. The old rationale (a shared process-global Loro engine registry) was fixed in #2249 — do not reinstate it. When adding a test of either shape, say so in its doc comment.
 
