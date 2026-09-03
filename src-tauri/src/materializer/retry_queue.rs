@@ -86,7 +86,7 @@ pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task neve
 
 /// Rows one `sweep_once` fetches, and the loop bound in
 /// [`sweep_until_no_progress`].
-const SWEEP_BATCH_LIMIT: usize = 64;
+const SWEEP_BATCH_LIMIT: u32 = 64;
 
 /// #2831: `last_error` marker for a `RefreshTagUsageCount` row that was
 /// *pre-seeded* by the `ReindexBlockTagRefs` handler (as a durable refresh
@@ -790,20 +790,16 @@ pub(crate) async fn clear_on_success(
 ///
 /// The lease interval reuses the existing backoff schedule
 /// ([`backoff_delay_for`]) keyed on the row's *current* `attempts` and
-/// `class` (#4208: a shed row leases on the short ladder, so an enqueue that
-/// then resolves neither way — a shutdown before the re-run committed — costs
-/// at most 5 minutes of staleness instead of an hour). The minimum delay in
-/// both schedules is 1 minute, and the re-run's in-memory retry budget is
-/// sub-second, so by the time the row is due again it has resolved: on
-/// failure `record_failure` has already bumped `next_attempt_at` to its own
-/// (longer) backoff. The lease is therefore a lower bound: a subsequent
-/// `record_failure` UPSERT overwrites it with the attempts-appropriate delay,
-/// and a subsequent `clear_on_success` deletes the row outright. One tick's
-/// drain ([`sweep_until_no_progress`]) can run past a minute, so a row leased
-/// in an early pass may come due in a later pass of the same tick and be
-/// dispatched again while still in flight. The handlers are idempotent, so
-/// that costs wasted work, not correctness — up to the pass cap times the
-/// batch (512 × 64 re-applies) in a tick that never runs out of due rows.
+/// `class` (#4208: a shed row that resolves neither way is stale for at most
+/// 5 minutes, not an hour). The minimum delay in both schedules is 1 minute
+/// and the re-run's in-memory retry budget is sub-second, so by the time the
+/// row is due again it has resolved: on failure `record_failure` has already
+/// bumped `next_attempt_at` to its own (longer) backoff. The lease is
+/// therefore a lower bound: a subsequent `record_failure` UPSERT overwrites
+/// it with the attempts-appropriate delay, and a subsequent
+/// `clear_on_success` deletes the row outright. A tick that drains past a
+/// minute ([`sweep_until_no_progress`]) can dispatch a leased row again while
+/// it is in flight; the handlers are idempotent, so that is wasted work only.
 ///
 /// Unlike `record_failure`, the lease does NOT touch `attempts`,
 /// `last_error`, or `created_at` — it only moves the visibility window so
@@ -1042,9 +1038,7 @@ async fn sweep_once_counted(
     write_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
 ) -> Result<SweepCounts, AppError> {
-    let limit =
-        i64::try_from(SWEEP_BATCH_LIMIT).expect("the batch limit is a small positive constant");
-    let due = fetch_due(read_pool, limit).await?;
+    let due = fetch_due(read_pool, i64::from(SWEEP_BATCH_LIMIT)).await?;
     let mut re_enqueued = 0usize;
     // Counted rather than `advanced` directly: the three arms that leave a
     // row on its original `next_attempt_at` are enumerable, the arms that
@@ -1878,32 +1872,13 @@ async fn try_reenqueue_apply_op(
     Ok(ApplyOpSweepDisposition::Enqueued)
 }
 
-/// #4208 — drain the due backlog in one tick, instead of one batch per tick.
+/// #4208: drain the due backlog in one tick; one 64-row batch per 60 s tick
+/// left an import's shed rows stale for hours.
 ///
-/// A large import offers far more background work than the drain can take and
-/// the surplus is shed into this queue at enqueue time; one 64-row batch per
-/// 60 s tick retires tens of thousands of those rows in hours, and the derived
-/// state (FTS, link graphs, page ids) is stale for all of it.
-///
-/// Continue only while a pass ADVANCED a full batch — every row it fetched was
-/// either leased (`lease_entry` pushed `next_attempt_at` forward) or retired
-/// (deleted), so the next `fetch_due` cannot return any of them again. A
-/// shorter pass left a row where it was: `fetch_due` orders by
-/// `next_attempt_at ASC`, so a shed row (whose `record_failure` the shed path
-/// spawns fire-and-forget, and which `sweep_once` deliberately does not lease,
-/// #2541) or an `Err` row keeps the oldest timestamp and comes straight back at
-/// the head of the next batch, to be shed again.
-///
-/// Counting only `re_enqueued` undercounts twice over — a mixed enqueue/shed
-/// batch, and a batch of pure retirements — and either would keep the
-/// per-tick ceiling; `docs/session-log/session-1494-…` has the cases.
-///
-/// `MAX_SWEEPS_PER_TICK` bounds one tick's wall clock so `spawn_sweeper` keeps
-/// reaching its `shutdown_flag` check; the condition above is what stops the
-/// loop. The drain changes who waits: a large persisted-`ApplyOp` backlog now
-/// holds `enqueue_foreground`'s 256-slot channel for the whole tick, so a user
-/// command's foreground enqueue queues behind it. Accepted — FIFO over
-/// sub-millisecond handlers, and those ops must be applied regardless (#621).
+/// Continue only while a pass advanced a full batch: a shorter pass left a
+/// row (shed, or `Err`) on its original `next_attempt_at`, and `fetch_due`
+/// would hand that row straight back. `MAX_SWEEPS_PER_TICK` keeps
+/// `spawn_sweeper` reaching its `shutdown_flag` check.
 async fn sweep_until_no_progress(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
@@ -1914,7 +1889,7 @@ async fn sweep_until_no_progress(
     for _ in 0..MAX_SWEEPS_PER_TICK {
         let counts = sweep_once_counted(read_pool, write_pool, materializer).await?;
         total += counts.re_enqueued;
-        if counts.advanced < SWEEP_BATCH_LIMIT {
+        if counts.advanced < SWEEP_BATCH_LIMIT as usize {
             break;
         }
     }
@@ -2507,12 +2482,8 @@ mod tests {
         );
     }
 
-    /// #4208: the sweeper's enqueue-time lease reads the row's own marker, so
-    /// a shed row that IS re-enqueued is deferred by the shed ladder (5 min at
-    /// the cap) rather than parked for the failure ladder's hour — the window
-    /// that matters when the re-run resolves neither way (a shutdown before
-    /// it committed), because `fetch_due` will not look at the row again until
-    /// it expires.
+    /// #4208: the sweeper leases a shed row on the shed ladder (5 min at the
+    /// cap), not the failure ladder's hour.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sweep_once_leases_shed_rows_on_the_shed_ladder_4208() {
         use crate::materializer::Materializer;
@@ -2816,14 +2787,9 @@ mod tests {
         mat.shutdown();
     }
 
-    /// #4208 — one tick must retire the whole due backlog, not one 64-row
-    /// batch. An import sheds tens of thousands of rows at enqueue time, and
-    /// at a batch per 60 s tick the derived state stays stale for hours; the
-    /// shorter shed ladder does nothing about that, because the ceiling is the
-    /// sweep batch, not the backoff.
-    ///
-    /// `sweep_once` alone is asserted in the same test so the pair is pinned:
-    /// the improvement is the loop, not a bigger batch.
+    /// #4208: one tick retires the whole due backlog, not one 64-row batch.
+    /// `sweep_once` alone is asserted too, so the improvement is pinned to the
+    /// loop and not to a bigger batch.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sweep_until_no_progress_retires_more_than_one_batch_4208() {
         use crate::materializer::Materializer;
@@ -2864,17 +2830,9 @@ mod tests {
         mat.shutdown();
     }
 
-    /// #4208 — a pass that only RETIRES rows is still forward progress.
-    ///
-    /// The retirement arms (give-up, unknown `task_kind`, the five superseded
-    /// -`ApplyOp` gates) delete the row and dispatch nothing, so a batch of 64
-    /// of them re-enqueues 0. Stopping the tick there would cap retirement at
-    /// one batch per 60 s — the ceiling `sweep_until_no_progress` exists to
-    /// remove — for exactly the backlog most likely to be large, since a
-    /// compaction or a burst of superseding edits retires rows wholesale.
-    ///
-    /// Unknown `task_kind` is the cheapest of the arms to seed: no op_log
-    /// rows, no ordering setup.
+    /// #4208: a pass that only retires rows is still progress; stopping on
+    /// `re_enqueued == 0` would cap retirement at one batch per tick. Unknown
+    /// `task_kind` is the cheapest retirement arm to seed.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sweep_until_no_progress_drains_a_retire_only_backlog_4208() {
         use crate::materializer::Materializer;
@@ -2916,25 +2874,10 @@ mod tests {
         mat.shutdown();
     }
 
-    /// #4208 — a pass that sheds must END the tick, not just a pass that
-    /// enqueues nothing.
-    ///
-    /// `sweep_once` deliberately does not `lease_entry` a shed row (#2541):
-    /// the shed path's `record_failure` is spawned fire-and-forget, so when
-    /// `sweep_once` returns the row still holds its original
-    /// `next_attempt_at`. `fetch_due` orders by `next_attempt_at ASC`, so it
-    /// comes straight back at the head of the next batch and sheds again,
-    /// inflating `attempts` and spawning another write.
-    ///
-    /// A `re_enqueued == 0` stop does not catch this: a batch that mixes rows
-    /// which enqueue with rows which shed is positive and still re-grinds the
-    /// shed ones. Only "the pass filled a batch", i.e. every fetched row was
-    /// leased forward, rules it out.
-    ///
-    /// Determinism: `force_shed_after` drives the Full arm directly. The
-    /// established idiom for a genuinely saturated channel takes the writer
-    /// hostage, which would also block the `lease_entry` the enqueueing half
-    /// of this batch needs — the two cannot hold at once.
+    /// #4208: a pass that sheds ends the tick. A shed row is not leased
+    /// (#2541), so the next `fetch_due` would hand it straight back to be shed
+    /// again. `force_shed_after` drives the Full arm directly because the
+    /// saturated-channel idiom holds the writer that `lease_entry` needs.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sweep_until_no_progress_stops_on_a_shedding_pass_4208() {
         use crate::materializer::Materializer;
@@ -2974,18 +2917,10 @@ mod tests {
 
         mat.wait_for_pending_shed_persists().await;
 
-        // The load-bearing assertion, and it is deliberately about a row the
-        // FIRST batch never reached. Asserting on a row inside that batch
-        // does not discriminate: whether it is shed a second time depends on
-        // whether its spawned `record_failure` committed before the next
-        // `fetch_due`, which on an idle test writer it usually has. (Written
-        // that way first, the mutation below came back FLAKY, not red.)
-        //
-        // Row 65 has no such race. Pass 1 fetches rows 0..=63, so it is
-        // untouched by it. A second pass fetches it either way — with the
-        // sheds committed the window is 64..=127, without them 4..=67, and
-        // 65 is in both. So: attempts 1 means the tick stopped on the
-        // partial pass; 2 means it swept again.
+        // Row 65 is outside the first batch (0..=63) and inside any second
+        // batch whether or not the sheds' spawned `record_failure` has
+        // committed (64..=127 or 4..=67); a row inside the first batch races
+        // that commit and made the mutated loop flaky, not red.
         let attempts: i64 =
             sqlx::query_scalar("SELECT attempts FROM materializer_retry_queue WHERE block_id = ?")
                 .bind("BLK_4208_S0065")
