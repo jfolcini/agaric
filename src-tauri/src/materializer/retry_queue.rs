@@ -790,15 +790,17 @@ pub(crate) async fn clear_on_success(
 /// `class` (#4208: a shed row leases on the short ladder, so an enqueue that
 /// then resolves neither way — a shutdown before the re-run committed — costs
 /// at most 5 minutes of staleness instead of an hour). The minimum delay in
-/// both schedules is 1 minute, which equals the
-/// sweeper's tick interval (`spawn_sweeper`, 60 s), so a leased row is
-/// never visible to the very next sweep tick — by which time the
-/// re-run's in-memory retry budget (sub-second) has long since resolved
-/// and, on failure, `record_failure` has already bumped `next_attempt_at`
-/// to its own (longer) backoff. The lease is therefore a lower bound: a
-/// subsequent `record_failure` UPSERT overwrites it with the
-/// attempts-appropriate delay, and a subsequent `clear_on_success`
-/// deletes the row outright.
+/// both schedules is 1 minute, and the re-run's in-memory retry budget is
+/// sub-second, so by the time the row is due again it has resolved: on
+/// failure `record_failure` has already bumped `next_attempt_at` to its own
+/// (longer) backoff. The lease is therefore a lower bound: a subsequent
+/// `record_failure` UPSERT overwrites it with the attempts-appropriate delay,
+/// and a subsequent `clear_on_success` deletes the row outright. One tick's
+/// drain ([`sweep_until_no_progress`]) can run past a minute, so a row leased
+/// in an early pass may come due in a later pass of the same tick and be
+/// dispatched again while still in flight; that is bounded by the drain's
+/// pass cap and the handlers are idempotent, so it costs wasted work, not
+/// correctness.
 ///
 /// Unlike `record_failure`, the lease does NOT touch `attempts`,
 /// `last_error`, or `created_at` — it only moves the visibility window so
@@ -1001,13 +1003,6 @@ pub(crate) fn task_from_row(row: &DueRow) -> Option<MaterializeTask> {
 /// arguments.
 ///
 /// Returns the number of rows re-enqueued.
-// #647: the retry sweeper is the documented worst-case path (a stuck retry
-// row, the 1-hour cache-staleness ceiling) — yet it had no span. This span
-// covers a full sweep cycle and records how many rows it re-enqueued on the
-// way out (`ret` via `err`/return is the natural place; the count is small
-// and non-sensitive). `skip_all` (#632): pools + the Materializer handle
-// carry no PII but are not useful in a log line either.
-#[instrument(name = "materializer.sweep_once", skip_all, err)]
 pub async fn sweep_once(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
@@ -1031,6 +1026,14 @@ struct SweepCounts {
     advanced: usize,
 }
 
+// #647: the retry sweeper is the documented worst-case path (a stuck retry
+// row, the 1-hour cache-staleness ceiling) — yet it had no span. This span
+// covers one sweep pass; it sits on the counted body rather than on
+// [`sweep_once`] because the sweeper (`spawn_sweeper` →
+// `sweep_until_no_progress`) calls this one, and a span on a wrapper only
+// tests call is never emitted in a shipped build. `skip_all` (#632): pools +
+// the Materializer handle carry no PII but are not useful in a log line either.
+#[instrument(name = "materializer.sweep_once", skip_all, err)]
 async fn sweep_once_counted(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
