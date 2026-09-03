@@ -109,11 +109,11 @@ pub use apply::apply_op_projected;
 pub use loro_apply::purge_block_sql_cascade;
 #[cfg(test)]
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
-// #2831: `handle_background_task` (unmetered) is test-only in a non-test lib
-// build now that the consumer routes through `handle_background_task_metered`.
-pub use task_handlers::{
-    handle_background_task, handle_background_task_metered, handle_foreground_task,
-};
+pub use task_handlers::{handle_background_task_metered, handle_foreground_task};
+// #2831: `handle_background_task` (unmetered) is test-only now that the
+// consumer routes through `handle_background_task_metered`.
+#[cfg(any(test, feature = "test-util"))]
+pub use task_handlers::handle_background_task;
 // #4502: the app-coupled materializer tests reach the per-op apply glue and
 // the temp-reap window's sync-side pin through these.
 pub use apply::apply_op;
