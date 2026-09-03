@@ -948,10 +948,11 @@ mod screen_inbound_blob_tests {
         );
     }
 
-    /// Reddens if a blob whose metadata will not decode stops falling back to
-    /// `InboundBlobScreen::default()` — no fork, no slot-delete condition.
+    /// Reddens only if undecodable bytes make `screen_inbound_blob` panic
+    /// instead of taking its decode-failure return; the two tests above
+    /// pin what a decodable blob yields.
     #[test]
-    fn screen_inbound_blob_undecodable_blob_is_default_3443() {
+    fn screen_inbound_blob_undecodable_blob_does_not_panic_3443() {
         let screen = LoroEngine::new().screen_inbound_blob(b"not a loro blob");
         assert_eq!(screen.declared_end_vv, Vec::<(PeerID, Counter)>::new());
     }
