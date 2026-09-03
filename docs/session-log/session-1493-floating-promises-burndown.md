@@ -38,4 +38,4 @@ Two pre-existing defects surfaced while reading and are **not** fixed here, sinc
 `PagePropertyTable` omits `usePropertySave`'s `logTag` where `BlockPropertyDrawer` supplies it, so a failed
 page-property save toasts but writes no structured log; and `AttachmentList.tsx:71` fires a success toast
 unconditionally after `void handleDeleteAttachment(...)`, so a failed delete shows an error and a success toast
-together.
+together (#4626 — the fix belongs in `useBlockAttachments`, where the success arm is).
