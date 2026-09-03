@@ -347,25 +347,17 @@ mod tests {
     async fn cache_miss_triggers_http_fetch() {
         let (pool, _dir) = test_pool().await;
 
-        // No cached entry exists. Call with a host that cannot resolve so the
-        // HTTP fetch fails, proving the function attempted a network call.
-        // Not a loopback address: the SSRF guard's loopback allowance is
-        // `cfg(test)` in `agaric-store`, which this binary does not see.
-        let result = fetch_link_metadata_inner(
-            &pool,
-            &pool,
-            "http://nonexistent.invalid/nonexistent".to_string(),
-        )
-        .await;
+        // No cached entry exists. A private literal IP is refused by the SSRF
+        // guard before any socket opens, so reaching that error proves the
+        // fetch was attempted without touching DNS or the network.
+        let result =
+            fetch_link_metadata_inner(&pool, &pool, "http://10.0.0.1/nonexistent".to_string())
+                .await;
 
-        assert!(
-            result.is_err(),
-            "should error because HTTP fetch to unreachable URL fails"
-        );
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("Network error") || err_msg.contains("error"),
-            "error should mention network/fetch failure, got: {err_msg}"
+            err_msg.contains("SSRF guard"),
+            "the fetch must reach the SSRF guard, got: {err_msg}"
         );
     }
 
@@ -376,7 +368,7 @@ mod tests {
         // Insert metadata that is 8 days old (stale by the 7-day threshold).
         let eight_days_ago = crate::db::now_ms() - 8 * 86_400_000;
         let meta = LinkMetadata {
-            url: "http://stale.invalid/stale-entry".to_string(),
+            url: "http://10.0.0.1/stale-entry".to_string(),
             title: Some("Stale Title".to_string()),
             favicon_url: None,
             description: None,
@@ -386,15 +378,15 @@ mod tests {
         };
         link_metadata::upsert(&pool, &meta).await.unwrap();
 
-        // The stale entry should cause a refetch attempt, which will fail
-        // because the URL is unreachable.
+        // The stale entry must trigger a refetch, which the SSRF guard refuses.
         let result =
-            fetch_link_metadata_inner(&pool, &pool, "http://stale.invalid/stale-entry".to_string())
+            fetch_link_metadata_inner(&pool, &pool, "http://10.0.0.1/stale-entry".to_string())
                 .await;
 
+        let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            result.is_err(),
-            "stale cache should trigger HTTP refetch (which fails for unreachable URL)"
+            err_msg.contains("SSRF guard"),
+            "a stale row must reach the refetch, got: {err_msg}"
         );
     }
 
@@ -506,22 +498,22 @@ mod tests {
     async fn cache_miss_consults_read_pool_then_attempts_write() {
         // No cache row exists. The inner function should: (1) consult the
         // read pool — returning None — then (2) attempt the HTTP fetch and
-        // upsert via the write pool. We use an unreachable URL so the HTTP
-        // fetch fails, but that proves the read-pool lookup happened
-        // first (it would have returned cached data if any existed) and
-        // that the function correctly proceeded past the read step.
+        // upsert via the write pool. The SSRF guard refuses the private IP,
+        // which proves the read-pool lookup returned None and the function
+        // proceeded past the read step.
         let (pools, _dir) = test_pools_split().await;
 
         let result = fetch_link_metadata_inner(
             &pools.read,
             &pools.write,
-            "http://split.invalid/split-miss".to_string(),
+            "http://10.0.0.1/split-miss".to_string(),
         )
         .await;
 
+        let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            result.is_err(),
-            "cache miss with unreachable URL should error after the read-pool lookup returns None"
+            err_msg.contains("SSRF guard"),
+            "a cache miss must reach the fetch after the read-pool lookup, got: {err_msg}"
         );
 
         // The write pool must remain functional after the failed call —
