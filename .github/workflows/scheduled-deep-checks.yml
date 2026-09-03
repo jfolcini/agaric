@@ -990,7 +990,13 @@ jobs:
         # Scope, test-tool (nextest), and timeouts come from
         # `src-tauri/.cargo/mutants.toml`.
         # `--in-place` avoids the default copy-to-tmp (faster; the runner is
-        # ephemeral). Never gate here: surviving mutants are triage signal
+        # ephemeral). Safe HERE and not on a dev box: an interrupted
+        # `--in-place` run can leave a mutant written into a TRACKED source
+        # file, and a mutant a proptest catches makes proptest write a
+        # `<pkg>/proptest-regressions/<mod>.txt` seed that only fails under
+        # that mutant — both tracked, so .gitignore will not save you.
+        # Reproduce a survivor locally without `--in-place`, or in a
+        # throwaway worktree. Never gate here: surviving mutants are triage signal
         # (the *zero-coverage guard* step below — deliberately OUTSIDE this
         # `|| true` — is what catches a false-green baseline timeout; see
         # its comment for the #3057 story).
