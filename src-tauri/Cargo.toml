@@ -379,8 +379,6 @@ insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
-# HTTP mocking for OAuth token endpoint tests.
-wiremock = "0.6"
 
 # #2621 Sync-D: the Android WiFi-multicast-lock JNI bridge
 # (`sync_daemon/android_multicast.rs`) moved to `agaric-sync`, taking its
