@@ -184,21 +184,12 @@ async fn find_prior_property(
 #[cfg(test)]
 mod tests_m64 {
     use super::*;
-    use crate::db::init_pool;
     use agaric_core::ulid::BlockId;
     use agaric_store::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
     use agaric_store::op_log::{OpRecord, append_local_op_at};
-    use std::path::PathBuf;
-    use tempfile::TempDir;
+    use agaric_store::test_support::test_pool;
 
     const TEST_DEVICE: &str = "test-device";
-
-    async fn test_pool() -> (SqlitePool, TempDir) {
-        let dir = TempDir::new().unwrap();
-        let db_path: PathBuf = dir.path().join("test.db");
-        let pool = init_pool(&db_path).await.unwrap();
-        (pool, dir)
-    }
 
     async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: i64) -> OpRecord {
         append_local_op_at(pool, TEST_DEVICE, payload, ts)

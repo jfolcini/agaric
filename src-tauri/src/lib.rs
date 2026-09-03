@@ -20,13 +20,11 @@ pub mod deeplink;
 // the framework-free engine crate.
 pub mod import;
 pub mod lifecycle;
-pub mod link_metadata;
 pub mod maintenance;
 pub mod materializer;
 pub mod mcp;
 pub mod recovery;
 pub mod recurrence;
-pub mod reverse;
 // #2621 Sync-D: `snapshot` production moved into `agaric-sync`; `src/snapshot/
 // mod.rs` is now a shim that re-exports it and hosts the app-coupled tests.
 pub mod snapshot;
@@ -400,10 +398,10 @@ mod bulk_equivalence;
 mod integration_tests;
 /// TEST-PROPTEST-B (#150): shared seeded-DB proptest fixture harness —
 /// random valid block trees + op chains over a real pool. Reused by the
-/// Tier-B property tests (`reverse::proptest` for B1; materializer / sync
-/// for B2-B4).
-#[cfg(test)]
-mod proptest_db_harness;
+/// Tier-B property tests (`tests/app_tests/reverse_proptest_b1.rs` for B1;
+/// materializer / sync for B2-B4), hence `test-util` rather than `cfg(test)`.
+#[cfg(any(test, feature = "test-util"))]
+pub mod proptest_db_harness;
 /// #3345 (programme #3351, theme T3): the reconciliation oracle — rebuild each
 /// covered derived artefact from base tables and diff it against the
 /// incrementally-maintained state. Consumed by
@@ -1293,7 +1291,7 @@ fn spawn_boot_maintenance(
         let materializer_handle = materializer.clone();
         tauri::async_runtime::spawn(async move {
             // Clean up stale link metadata entries (>30 days, non-auth).
-            match crate::link_metadata::cleanup_stale(&write_pool, 30).await {
+            match agaric_store::link_metadata::cleanup_stale(&write_pool, 30).await {
                 Ok(deleted) => {
                     if deleted > 0 {
                         tracing::info!(deleted, "cleaned up stale link metadata entries");

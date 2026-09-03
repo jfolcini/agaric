@@ -131,7 +131,7 @@ ci-smoke = []
 # the moved suites and the two remaining in-lib test modules both use) to that
 # set, which is why the feature now pulls `tempfile` — the same shape as
 # `agaric-store`'s `test-util = ["dep:tempfile"]` for its `test_support`.
-test-util = ["dep:tempfile"]
+test-util = ["dep:tempfile", "dep:proptest"]
 # #645 — the `diagnostics` feature (formerly built the
 # `audit_cross_space_refs` / `op_log_histogram` bins) is retired: those
 # bins moved to the `agaric-diagnostics` workspace member, so the feature
@@ -171,6 +171,10 @@ agaric-sync = { path = "agaric-sync", version = "0.1.0" }
 # `cargo build` neither compiles nor links it; the `[dev-dependencies]` entry
 # below stays for the test targets' own direct use.
 tempfile = { version = "3.27.0", optional = true }
+# #4499 phase 1 — same shape for `proptest`: `proptest_db_harness` is a
+# `test-util` module now that the B1 suite links the lib from
+# `tests/app_tests/reverse_proptest_b1.rs`.
+proptest = { version = "1.11.0", optional = true }
 # agaric-observability — OpenTelemetry trace/log/metric pipelines (#2878). The
 # `observability` module + its heavy OTel dep tree moved into this leaf crate;
 # re-exported below via `pub use agaric_observability as observability;` so
@@ -272,19 +276,6 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 sha2 = "0.11"
 rand = "0.10"
 tracing-appender = "0.2.4"
-# Align `reqwest 0.13` to the repo's rustls-everywhere
-# posture (same TLS stack as `tokio-tungstenite` / `tokio-rustls` / sqlx on
-# rustls).  `rustls` in reqwest 0.13 pulls `rustls-platform-verifier` which
-# uses the OS's native trust roots (matches the `rustls-tls-native-roots`
-# feature in `tokio-tungstenite`).  `json` is used by `gcal_push::api`;
-# `http2` keeps parity with reqwest's default bundle minus native-tls.
-# `default-features = false` prevents the `native-tls` transitive crate
-# from being pulled via `system-proxy` / `charset` at link time.
-# Note: reqwest 0.13's `default-tls = ["rustls"]` (it changed from 0.12
-# which defaulted to native-tls), so disabling defaults and re-selecting
-# `rustls` yields a single rustls stack — binary size drops by the
-# `native-tls-crate` slice.
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "http2", "charset"] }
 tauri-plugin-process = "2.3.1"
 
 # `tauri-plugin-deep-link` enables OS-level URL routing for the

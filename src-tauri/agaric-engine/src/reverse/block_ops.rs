@@ -2,9 +2,9 @@
 
 use sqlx::SqlitePool;
 
-use crate::db::ReadPool;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
+use agaric_store::db::ReadPool;
 use agaric_store::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     RestoreBlockPayload,
@@ -421,21 +421,12 @@ mod tests_m63 {
     //! (migration 0030) and uppercase-normalize the bound parameter so
     //! lookups remain case-insensitive against AGENTS.md invariant #8.
     use super::*;
-    use crate::db::init_pool;
     use agaric_core::ulid::BlockId;
     use agaric_store::op::{CreateBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload};
     use agaric_store::op_log::append_local_op_at;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
+    use agaric_store::test_support::test_pool;
 
     const TEST_DEVICE: &str = "test-device";
-
-    async fn test_pool() -> (SqlitePool, TempDir) {
-        let dir = TempDir::new().unwrap();
-        let db_path: PathBuf = dir.path().join("test.db");
-        let pool = init_pool(&db_path).await.unwrap();
-        (pool, dir)
-    }
 
     /// Happy path: with two distinct blocks each carrying their own
     /// create + edit history, `find_prior_text` for block A must return

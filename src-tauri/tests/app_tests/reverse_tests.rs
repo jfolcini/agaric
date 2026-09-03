@@ -1,8 +1,10 @@
-use super::*;
-use crate::db::init_pool;
+use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
+use agaric_engine::reverse::*;
+use agaric_lib::db::init_pool;
 use agaric_store::op::*;
 use agaric_store::op_log::append_local_op_at;
+use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -60,7 +62,7 @@ async fn append_replicated_op(
     agaric_sync::sync_protocol::insert_replicated_op(pool, &transfer)
         .await
         .expect("replicated audit op must ingest");
-    agaric_store::op_log::get_op_by_seq(&crate::db::ReadPool(pool.clone()), device_id, seq)
+    agaric_store::op_log::get_op_by_seq(&agaric_lib::db::ReadPool(pool.clone()), device_id, seq)
         .await
         .expect("replicated op must be readable")
 }
@@ -899,7 +901,7 @@ async fn reverse_edit_block_without_prior_returns_non_reversible_3645() {
         "#3645: expected NonReversible {{ op_type: \"edit_block\" }}, got {err:?}"
     );
     assert!(
-        crate::reverse::is_skippable_non_reversible(&err),
+        agaric_engine::reverse::is_skippable_non_reversible(&err),
         "#3645: the per-op kernel must emit the SAME skippable kind the batch \
          kernel emits for this input, got {err:?}"
     );
@@ -1922,7 +1924,7 @@ async fn snapshot_attachments(pool: &SqlitePool) -> Vec<AttachmentRow> {
 /// green.)
 #[tokio::test]
 async fn create_block_apply_then_reverse_leaves_tombstone_i_lifecycle_3() {
-    use crate::materializer::Materializer;
+    use agaric_lib::materializer::Materializer;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -1981,7 +1983,7 @@ async fn create_block_apply_then_reverse_leaves_tombstone_i_lifecycle_3() {
 /// `RemoveTag` → post-reverse must equal pre-state (no row).
 #[tokio::test]
 async fn add_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
-    use crate::materializer::Materializer;
+    use agaric_lib::materializer::Materializer;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -2041,7 +2043,7 @@ async fn add_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
 /// restored verbatim.
 #[tokio::test]
 async fn remove_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
-    use crate::materializer::Materializer;
+    use agaric_lib::materializer::Materializer;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -2106,7 +2108,7 @@ async fn remove_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
 /// `attachments` table returns to empty.
 #[tokio::test]
 async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
-    use crate::materializer::Materializer;
+    use agaric_lib::materializer::Materializer;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -2176,7 +2178,7 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     // enforced. The dispatched tasks are background fire-and-forget;
     // we don't await them here because this test only asserts the
     // op-log shape, not cache state.
-    let mat = crate::materializer::Materializer::new(pool.clone());
+    let mat = agaric_lib::materializer::Materializer::new(pool.clone());
 
     // Seed a block in the `blocks` table so cascade_soft_delete /
     // restore_block have a target. Direct SQL mirrors the inline
@@ -2194,14 +2196,14 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
 
     // Step 1: cascade_soft_delete records the original `deleted_at_a`.
     let (deleted_at_a, _count_a) =
-        crate::soft_delete::cascade_soft_delete(&pool, &mat, TEST_DEVICE, block_id)
+        agaric_lib::soft_delete::cascade_soft_delete(&pool, &mat, TEST_DEVICE, block_id)
             .await
             .unwrap();
 
     // Step 2: restore so the block is alive again, then append a
     // RestoreBlock op carrying `deleted_at_a` so we have a record to
     // feed into compute_reverse.
-    crate::soft_delete::restore_block(&pool, &mat, block_id, deleted_at_a)
+    agaric_lib::soft_delete::restore_block(&pool, &mat, block_id, deleted_at_a)
         .await
         .unwrap();
     let restore_rec = append_op(
@@ -2232,7 +2234,7 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     // Step 4: apply the reverse — equivalent to what the redo path
     // does in production — and capture the new `deleted_at_b`.
     let (deleted_at_b, _count_b) =
-        crate::soft_delete::cascade_soft_delete(&pool, &mat, TEST_DEVICE, block_id)
+        agaric_lib::soft_delete::cascade_soft_delete(&pool, &mat, TEST_DEVICE, block_id)
             .await
             .unwrap();
 
@@ -2281,8 +2283,8 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
 /// order.
 #[tokio::test]
 async fn revert_ops_returns_results_newest_first_by_created_at_desc_seq_desc() {
-    use crate::commands::revert_ops_inner;
-    use crate::materializer::Materializer;
+    use agaric_lib::commands::revert_ops_inner;
+    use agaric_lib::materializer::Materializer;
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -2368,8 +2370,8 @@ async fn revert_ops_returns_results_newest_first_by_created_at_desc_seq_desc() {
 /// original row untouched.
 #[tokio::test]
 async fn revert_ops_appends_reverse_op_without_mutating_original() {
-    use crate::commands::revert_ops_inner;
-    use crate::materializer::Materializer;
+    use agaric_lib::commands::revert_ops_inner;
+    use agaric_lib::materializer::Materializer;
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -2450,8 +2452,8 @@ async fn revert_ops_appends_reverse_op_without_mutating_original() {
 /// front, ahead of the first query.
 #[tokio::test]
 async fn revert_ops_rejects_batch_over_max_revert_ops_c5() {
-    use crate::commands::revert_ops_inner;
-    use crate::materializer::Materializer;
+    use agaric_lib::commands::revert_ops_inner;
+    use agaric_lib::materializer::Materializer;
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -2488,7 +2490,7 @@ async fn revert_ops_rejects_batch_over_max_revert_ops_c5() {
 ///   * `legacy` is produced by the per-op `compute_reverse` loop.
 #[tokio::test]
 async fn compute_reverse_batch_matches_per_op_loop() {
-    use crate::reverse::{compute_reverse_batch, get_op_records_batch};
+    use agaric_engine::reverse::{compute_reverse_batch, get_op_records_batch};
 
     let (pool, _dir) = test_pool().await;
 
@@ -3089,7 +3091,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
 /// `compute_reverse` oracle for this case.
 #[tokio::test]
 async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
-    use crate::reverse::{compute_reverse_batch, get_op_records_batch};
+    use agaric_engine::reverse::{compute_reverse_batch, get_op_records_batch};
 
     let (pool, _dir) = test_pool().await;
 
@@ -3177,7 +3179,7 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
 /// the bind cap while results remain aligned to input order.
 #[tokio::test]
 async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
-    use crate::reverse::{compute_reverse_batch, get_op_records_batch};
+    use agaric_engine::reverse::{compute_reverse_batch, get_op_records_batch};
 
     let (pool, _dir) = test_pool().await;
 
@@ -3500,8 +3502,8 @@ async fn compute_reverse_set_property_skips_replicated_prior_2549() {
 /// `revert_ops` command uses.
 #[tokio::test]
 async fn revert_ops_restores_local_content_over_replicated_prior_2549() {
-    use crate::commands::revert_ops_inner;
-    use crate::materializer::Materializer;
+    use agaric_lib::commands::revert_ops_inner;
+    use agaric_lib::materializer::Materializer;
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -3596,8 +3598,8 @@ async fn revert_ops_restores_local_content_over_replicated_prior_2549() {
 /// error before any reverse is applied.
 #[tokio::test]
 async fn revert_ops_rejects_replicated_target_2549() {
-    use crate::commands::revert_ops_inner;
-    use crate::materializer::Materializer;
+    use agaric_lib::commands::revert_ops_inner;
+    use agaric_lib::materializer::Materializer;
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -3765,7 +3767,7 @@ async fn find_prev_edit_in_tx_stamps_replicated_causal_predecessor_3644() {
     .await;
 
     let mut conn = pool.acquire().await.unwrap();
-    let prev = crate::commands::blocks::crud::find_prev_edit_in_tx(&mut conn, blk_id.as_str())
+    let prev = agaric_lib::commands::blocks::find_prev_edit_in_tx(&mut conn, blk_id.as_str())
         .await
         .unwrap();
     assert_eq!(
@@ -3798,7 +3800,7 @@ async fn find_prev_edit_in_tx_stamps_replicated_causal_predecessor_3644() {
 /// survive.
 #[tokio::test]
 async fn batch_reverse_edit_without_prior_is_skippable_not_fatal_3280() {
-    use crate::reverse::{
+    use agaric_engine::reverse::{
         compute_reverse_batch, get_op_records_batch, is_skippable_non_reversible,
     };
 
@@ -3953,10 +3955,10 @@ async fn reverse_anchor_both_kernels(pool: &SqlitePool) -> OpPayload {
         device_id: TIE_ANCHOR.to_string(),
         seq: 1,
     }];
-    let records = crate::reverse::get_op_records_batch(pool, &refs)
+    let records = agaric_engine::reverse::get_op_records_batch(pool, &refs)
         .await
         .unwrap();
-    let batched = crate::reverse::compute_reverse_batch(pool, &records)
+    let batched = agaric_engine::reverse::compute_reverse_batch(pool, &records)
         .await
         .expect("batch kernel must not fail at batch level")
         .pop()

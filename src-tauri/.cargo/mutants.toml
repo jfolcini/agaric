@@ -47,20 +47,20 @@
 
 # Only mutate the invariant core (#649: op, op_log, reverse, loro/engine).
 #
-# #3386: three of these four globs live in `agaric-store` / `agaric-engine`,
-# where the #2621 arch waves (S2, S3b-ii, E1) moved them out of the `agaric`
-# package. cargo-mutants only generates mutants in the packages it is told to
-# examine, and this workspace's root manifest is itself a package with no
-# `default-members`, so a bare `cargo mutants` examines ONLY `agaric` — those
-# three globs then match nothing and the surface silently collapses to
-# `src/reverse/**` (137 of 607 mutants). The lane therefore names its packages
+# #3386: all four globs live in `agaric-store` / `agaric-engine`, where the
+# #2621 arch waves (S2, S3b-ii, E1) and #4499 phase 1 (`reverse/`) moved them
+# out of the `agaric` package. cargo-mutants only generates mutants in the
+# packages it is told to examine, and this workspace's root manifest is itself
+# a package with no `default-members`, so a bare `cargo mutants` examines ONLY
+# `agaric` — every glob then matches nothing and the surface silently
+# collapses to zero. The lane therefore names its packages
 # explicitly — since #3393 one shard-matrix job per `(package, shard)`, passing
 # `-p` — and `scripts/check-mutants-scope.mjs` fails if any glob here resolves
 # outside the union of that matrix's `package` column.
 examine_globs = [
     "agaric-store/src/op.rs",
     "agaric-store/src/op_log/**",
-    "src/reverse/**",
+    "agaric-engine/src/reverse/**",
     "agaric-engine/src/loro/engine/**",
 ]
 

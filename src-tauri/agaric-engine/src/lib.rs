@@ -118,3 +118,5 @@ pub mod spaces;
 /// CTE oracles app-side and re-exports the rest at `crate::dag::…` so every
 /// existing call site resolves unchanged.
 pub mod dag;
+
+pub mod reverse;
