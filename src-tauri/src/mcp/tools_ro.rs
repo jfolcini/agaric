@@ -63,7 +63,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
-use super::handler_utils::{normalize_ulid_arg, parse_args, parse_block_id_arg, to_tool_result};
+use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
 use super::registry::{
     TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS,
     TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_SEARCH,
@@ -77,6 +77,7 @@ use crate::commands::{
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -1008,26 +1009,24 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
     // #699 — bound the input vectors before they reach SQL.
     validate_search_term_budget(&args)?;
-    // Normalise ULID-shaped IDs (parent, each tag, and space) at the
-    // MCP boundary so a lowercase ULID matches the canonical uppercase store.
-    // #3301 — and *parse* them, like `space_id` below: a malformed or
-    // truncated id must error rather than bind a string that matches
-    // nothing, which would make an agent wrongly conclude no block carries
-    // that tag. This runs after `validate_search_term_budget` so an
-    // oversized vector still gets its own actionable message.
+    // #3301 — PARSE the ULID-shaped ids, as `space_id` has always done: a
+    // malformed or truncated one must error rather than bind a string that
+    // matches nothing, which an agent reads as "no block carries that tag"
+    // and does not retry. No normalise step ahead of this — `canonical_ulid`
+    // compares against the uppercased input, so `from_string` already accepts
+    // any case. Runs after `validate_search_term_budget` so an oversized
+    // vector still gets its own actionable message.
     let parent_id = args
         .parent_id
         .as_deref()
-        .map(parse_block_id_arg)
+        .map(|s| BlockId::from_string(s).map(BlockId::into_string))
         .transpose()?;
     let tag_ids = args
         .tag_ids
-        .map(|v| {
-            v.iter()
-                .map(|s| parse_block_id_arg(s))
-                .collect::<Result<Vec<String>, AppError>>()
-        })
-        .transpose()?;
+        .unwrap_or_default()
+        .iter()
+        .map(|s| BlockId::from_string(s).map(BlockId::into_string))
+        .collect::<Result<Vec<String>, AppError>>()?;
     // Fold the optional structured `filter` arg into the
     // `SearchFilter` passed to `search_blocks_inner`. Omitting `filter`
     // Preserves the pre-existing contract (no metadata / glob / toggle
@@ -1048,7 +1047,7 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         limit,
         crate::commands::SearchFilter {
             parent_id,
-            tag_ids: tag_ids.unwrap_or_default(),
+            tag_ids,
             // #2248 c — `SearchFilter` now carries a `SpaceScope`. The MCP
             // `search` tool is always space-scoped, so wrap the (required)
             // arg as `Active`.
@@ -1124,7 +1123,7 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     };
     let resp = list_backlinks_grouped_inner(
         pool,
-        agaric_core::ulid::BlockId::from(block_id),
+        BlockId::from(block_id),
         None,
         None,
         args.cursor,

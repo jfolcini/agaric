@@ -26,7 +26,6 @@ use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
 use agaric_core::error::AppError;
-use agaric_core::ulid::BlockId;
 
 /// Convert a serde-json deserialization error into an
 /// [`AppError::Validation`] with the tool name embedded. Used for every
@@ -92,16 +91,6 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
     } else {
         s.to_owned()
     }
-}
-
-/// PARSE an agent-supplied block id, as the strictly-validated `space_id` has
-/// always done (#2956). [`normalize_ulid_arg`] alone passes a malformed id
-/// through, which binds a string matching nothing and answers an empty result
-/// — an agent reads that as "no such block" and does not retry. It is not
-/// needed ahead of this: `canonical_ulid` compares against the uppercased
-/// input, so `from_string` already accepts any case.
-pub(crate) fn parse_block_id_arg(s: &str) -> Result<String, AppError> {
-    BlockId::from_string(s).map(BlockId::into_string)
 }
 
 /// Validate that `block_id`'s owning page lives in
