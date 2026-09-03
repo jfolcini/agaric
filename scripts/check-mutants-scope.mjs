@@ -429,12 +429,6 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   const writeDir = outputDirFor(invocation.argv)
   const [from, to] = invocation.span
 
-  // A prefix test is NOT a path test. cargo-mutants renames the previous run's
-  // directory to `mutants.out.old` (it is in .gitignore for exactly that
-  // reason), and `'mutants.out.old/missed.txt'.startsWith('mutants.out')` is
-  // true — so a bare `startsWith` waves through a reader pointed at LAST
-  // week's results, which is a silent-staleness bug of the same family this
-  // guard exists to catch. Require a path-segment boundary.
   checkReaders({ lines, writeDir, skipSpan: [from, to], jobId: `\`${JOB_ID}\``, push })
 
   // The artifact steps are collected rather than checked inline, because the

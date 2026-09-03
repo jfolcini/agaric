@@ -822,13 +822,17 @@ jobs:
         # capacity is floor((MUTANTS_WALL_BUDGET - baseline) / one viable
         # mutant), both measured on this 4-vCPU runner, and a package's shard
         # count is the smallest n whose largest round-robin slice,
-        # ceil(generated/n), fits that capacity. The measurements and the
-        # arithmetic are in
+        # ceil(generated/n), fits that capacity with a mutant to spare. The
+        # spare one is the point: a slice sized at exactly capacity truncates
+        # on any suite growth, and a truncated shard still records a Success
+        # baseline, so it counts as usable and its untested survivors go
+        # missing from `missed.txt` without anything going red (#3364). The
+        # measurements and the arithmetic are in
         # `docs/session-log/session-1486-mutants-shard-matrix.md`; the results:
         #
-        #   agaric         183 mutants,  7/shard → 27 shards
-        #   agaric-store   125 mutants, 44/shard →  3 shards
-        #   agaric-engine  383 mutants, 44/shard →  9 shards
+        #   agaric         183 mutants,  6/shard → 31 shards  (cap 7)
+        #   agaric-store   125 mutants, 42/shard →  3 shards  (cap 44)
+        #   agaric-engine  383 mutants, 43/shard →  9 shards  (cap 44)
         #
         # `agaric-engine` is the one package whose per-mutant cost was not
         # measured; it is sized on `agaric-store`'s measured cost, the nearest
@@ -842,33 +846,37 @@ jobs:
         # nobody tests — indistinguishable downstream from a smaller package.
         # `scripts/check-mutants-scope.mjs` checks both.
         include:
-          - { package: agaric, shard: 0, shards: 27 }
-          - { package: agaric, shard: 1, shards: 27 }
-          - { package: agaric, shard: 2, shards: 27 }
-          - { package: agaric, shard: 3, shards: 27 }
-          - { package: agaric, shard: 4, shards: 27 }
-          - { package: agaric, shard: 5, shards: 27 }
-          - { package: agaric, shard: 6, shards: 27 }
-          - { package: agaric, shard: 7, shards: 27 }
-          - { package: agaric, shard: 8, shards: 27 }
-          - { package: agaric, shard: 9, shards: 27 }
-          - { package: agaric, shard: 10, shards: 27 }
-          - { package: agaric, shard: 11, shards: 27 }
-          - { package: agaric, shard: 12, shards: 27 }
-          - { package: agaric, shard: 13, shards: 27 }
-          - { package: agaric, shard: 14, shards: 27 }
-          - { package: agaric, shard: 15, shards: 27 }
-          - { package: agaric, shard: 16, shards: 27 }
-          - { package: agaric, shard: 17, shards: 27 }
-          - { package: agaric, shard: 18, shards: 27 }
-          - { package: agaric, shard: 19, shards: 27 }
-          - { package: agaric, shard: 20, shards: 27 }
-          - { package: agaric, shard: 21, shards: 27 }
-          - { package: agaric, shard: 22, shards: 27 }
-          - { package: agaric, shard: 23, shards: 27 }
-          - { package: agaric, shard: 24, shards: 27 }
-          - { package: agaric, shard: 25, shards: 27 }
-          - { package: agaric, shard: 26, shards: 27 }
+          - { package: agaric, shard: 0, shards: 31 }
+          - { package: agaric, shard: 1, shards: 31 }
+          - { package: agaric, shard: 2, shards: 31 }
+          - { package: agaric, shard: 3, shards: 31 }
+          - { package: agaric, shard: 4, shards: 31 }
+          - { package: agaric, shard: 5, shards: 31 }
+          - { package: agaric, shard: 6, shards: 31 }
+          - { package: agaric, shard: 7, shards: 31 }
+          - { package: agaric, shard: 8, shards: 31 }
+          - { package: agaric, shard: 9, shards: 31 }
+          - { package: agaric, shard: 10, shards: 31 }
+          - { package: agaric, shard: 11, shards: 31 }
+          - { package: agaric, shard: 12, shards: 31 }
+          - { package: agaric, shard: 13, shards: 31 }
+          - { package: agaric, shard: 14, shards: 31 }
+          - { package: agaric, shard: 15, shards: 31 }
+          - { package: agaric, shard: 16, shards: 31 }
+          - { package: agaric, shard: 17, shards: 31 }
+          - { package: agaric, shard: 18, shards: 31 }
+          - { package: agaric, shard: 19, shards: 31 }
+          - { package: agaric, shard: 20, shards: 31 }
+          - { package: agaric, shard: 21, shards: 31 }
+          - { package: agaric, shard: 22, shards: 31 }
+          - { package: agaric, shard: 23, shards: 31 }
+          - { package: agaric, shard: 24, shards: 31 }
+          - { package: agaric, shard: 25, shards: 31 }
+          - { package: agaric, shard: 26, shards: 31 }
+          - { package: agaric, shard: 27, shards: 31 }
+          - { package: agaric, shard: 28, shards: 31 }
+          - { package: agaric, shard: 29, shards: 31 }
+          - { package: agaric, shard: 30, shards: 31 }
           - { package: agaric-store, shard: 0, shards: 3 }
           - { package: agaric-store, shard: 1, shards: 3 }
           - { package: agaric-store, shard: 2, shards: 3 }
