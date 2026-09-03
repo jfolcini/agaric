@@ -47,6 +47,14 @@
 //      a week — and, given it is reachable, must pass `--dry-run` off the
 //      schedule so a smoke run cannot rewrite the real tracking issue.
 //
+//   5. #3393 sharded the lane: it now runs one matrix job per
+//      `{ package, shard, shards }` and passes `-p "$PACKAGE" --shard k/n`.
+//      That makes the matrix column the statement of scope — checked here as
+//      such — and adds one silent mode of its own: shard indices that do not
+//      cover `0..n-1` leave a slice of a package's mutants untested every
+//      week, and nothing downstream can see it, because a missing shard drops
+//      its mutants out of the summary's tested count AND its generated count.
+//
 // All of it is checked here, statically, with no cargo invocation, so the
 // hook is cheap enough to run on every commit that touches the config, the
 // workflow, or the invariant-core sources it names.
@@ -62,9 +70,10 @@
 //   node scripts/check-mutants-scope.mjs
 //   node scripts/check-mutants-scope.mjs --root <dir>
 //   node scripts/check-mutants-scope.mjs --self-test
+//   node scripts/check-mutants-scope.mjs --shard-count
 //
 // Exit: 0 = scope is live and the plumbing lines up, 1 = at least one
-//       problem, 2 = bad usage / self-test failure.
+//       problem, 2 = bad usage / self-test / --shard-count failure.
 
 import { existsSync, globSync, readFileSync, realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -85,6 +94,14 @@ const WORKFLOW_PATH = '.github/workflows/scheduled-deep-checks.yml'
 const JOB_ID = 'mutants'
 /** The downstream consumer of `JOB_ID`'s artifact — see header note 4. */
 const FILER_JOB_ID = 'file-mutation-survivors'
+/**
+ * Since #3393 `JOB_ID` is a matrix and uploads one artifact PER SHARD; this
+ * job is what reassembles them into the single `ARTIFACT_NAME` the filer
+ * downloads. It is therefore the producer half of that handoff, and checking
+ * only `JOB_ID`'s uploads would leave it unguarded — the #3386/#3387 shape,
+ * where the guard stays green and the filer reds a week later.
+ */
+const MERGE_JOB_ID = 'mutants-merge'
 /** The artifact name the two jobs hand off through. */
 const ARTIFACT_NAME = 'mutants-out'
 
@@ -173,12 +190,63 @@ function readWorkspace(root) {
 }
 
 /**
+ * The lane's shard matrix (#3393), one `{ package, shard, shards }` per job.
+ * Flow-style one entry per line, which is what makes them greppable and what
+ * this matcher expects.
+ */
+export function matrixShards(lines) {
+  const entry = /^\s*-\s*\{\s*package:\s*([\w.-]+),\s*shard:\s*(\d+),\s*shards:\s*(\d+)\s*\}\s*$/
+  return lines.flatMap((l) => {
+    const m = entry.exec(l)
+    return m ? [{ package: m[1], shard: Number(m[2]), shards: Number(m[3]) }] : []
+  })
+}
+
+/**
+ * Each package's shard indices must be exactly `0..shards-1` for ONE value of
+ * `shards`. cargo-mutants divides a package's mutants by the denominator each
+ * shard is given and tests only its own index ("all shards must be run with
+ * the same arguments and the same sharding denominator, or the results will
+ * be meaningless"), so a missing index is a slice nobody ever tests — and
+ * downstream that is indistinguishable from a package with fewer mutants,
+ * because the missing shard drops out of BOTH sides of the summary's
+ * tested-of-generated ratio.
+ */
+export function checkShardMatrix({ entries, push }) {
+  const byPackage = new Map()
+  for (const e of entries) byPackage.set(e.package, [...(byPackage.get(e.package) ?? []), e])
+  for (const [pkg, es] of byPackage) {
+    const n = es[0].shards
+    // Not deduped, and `es.length === n` rather than `indices.length`: a
+    // duplicate is the archetypal edit to a hand-maintained matrix (bump
+    // `shards`, paste a line, forget to bump its `shard`), and it masks the
+    // gap it creates. `[0, 0, 1]` fails the positional test at i = 1; a
+    // deduped `[0, 1]` would pass it, because `every` iterates only the
+    // elements that exist and never notices the array is short.
+    const indices = es.map((e) => e.shard).toSorted((a, b) => a - b)
+    const complete =
+      es.every((e) => e.shards === n) && es.length === n && indices.every((v, i) => v === i)
+    if (!complete) {
+      push(
+        'shard-matrix-incomplete',
+        `the shard matrix for '${pkg}' declares shards=${[...new Set(es.map((e) => e.shards))].join('/')} but its entries are ${JSON.stringify(indices)}; they must be exactly 0..n-1 for one n. Any other shape leaves a slice of that package's mutants untested every week, and the summary cannot show it — a missing shard removes its mutants from the tested count AND the generated count.`,
+      )
+    }
+  }
+}
+
+/**
  * Which packages the lane's invocation generates mutants in, expressed as
  * member directory prefixes. `undefined` means "cannot be determined", which
  * is itself reported: an invocation whose package selection this guard cannot
  * model is one whose scope nobody is checking.
+ *
+ * `matrixPackages` covers the sharded shape (#3393): the invocation passes
+ * `-p "$PACKAGE"`, so the packages the LANE examines are the union of its
+ * matrix column, not the one this job happens to run. An unresolvable
+ * variable yields `undefined` — the guard reports rather than guesses.
  */
-export function examinedPackageDirs(argv, workspace) {
+export function examinedPackageDirs(argv, workspace, matrixPackages = []) {
   if (argv.includes('--workspace')) return workspace.members
   const explicit = []
   for (let i = 0; i < argv.length; i++) {
@@ -186,7 +254,10 @@ export function examinedPackageDirs(argv, workspace) {
     const eq = /^--package=(.+)$/.exec(argv[i])
     if (eq) explicit.push(eq[1])
   }
-  if (explicit.length > 0) return explicit.map((p) => (p === 'agaric' ? '.' : p))
+  const sharded = explicit.some((p) => /^"?\$\{?PACKAGE\}?"?$/.test(p))
+  if (sharded && matrixPackages.length === 0) return undefined
+  const selected = sharded ? matrixPackages : explicit
+  if (selected.length > 0) return selected.map((p) => (p === 'agaric' ? '.' : p))
   // No selection at all: cargo's default members. We only model the shape this
   // repo actually has (root manifest is a package, no `default-members` key →
   // the root package alone).
@@ -281,6 +352,81 @@ function checkGlobReachability({ root, globs, excludes, examinedDirs, workspace,
 }
 
 /**
+ * Every `actions/upload-artifact` step in one job, as `{step, name, path}`.
+ *
+ * Both plumbing checks need this, and they used to scan for it separately with
+ * subtly different regexes — two things to keep correct where one will do. The
+ * one subtlety worth stating: `name:` is BOTH the step name and the artifact
+ * name, at different indentation, so they are told apart by the list dash and
+ * not by value. A step legitimately called "Upload merged mutants report" must
+ * not read as an artifact of that name.
+ */
+function uploadsIn(lines) {
+  const uploads = []
+  let step = '<unnamed step>'
+  let current
+  for (const line of lines) {
+    const stepName = /^\s*-\s+name:\s*(.+?)\s*$/.exec(line)
+    if (/^\s*-\s+(name|uses):/.test(line)) current = undefined
+    if (stepName) step = `step '${stepName[1]}'`
+    if (/uses:\s*actions\/upload-artifact/.test(line)) {
+      current = { step, name: undefined, path: undefined }
+      uploads.push(current)
+      continue
+    }
+    if (!current) continue
+    // `(.+?)`, not `(\S+)`: the per-shard name interpolates
+    // `${{ matrix.package }}`, whose braces contain spaces. Dropping it would
+    // leave the one name `pattern:` has to agree with unreadable.
+    const artifactName = /^\s+name:\s*(.+?)\s*$/.exec(line)
+    if (artifactName && current.name === undefined) current.name = artifactName[1]
+    const pathLine = /^\s+path:\s*(\S+)\s*$/.exec(line)
+    if (pathLine && current.path === undefined) current.path = pathLine[1]
+  }
+  return uploads
+}
+
+/** `path:` as cargo-mutants' output dir names it: no `src-tauri/`, no trailing slash. */
+const normalizeUploadPath = (path) => path?.replace(/^src-tauri\//, '').replace(/\/$/, '')
+
+/**
+ * Every `mutants.out`-ish path a job's steps READ, checked against where
+ * cargo-mutants actually writes. A reader one level short of the real files —
+ * or one run behind, since `mutants.out.old` is the PREVIOUS run — reports
+ * zero coverage and zero survivors however healthy the run was (#3386).
+ *
+ * `skipSpan` is the `cargo mutants` invocation's own lines, whose flags name
+ * the directory rather than read it; pass `[-1, -1]` for a job without one.
+ */
+function checkReaders({ lines, writeDir, skipSpan, jobId, push }) {
+  const [from, to] = skipSpan
+  // A prefix test is NOT a path test: `'mutants.out.old/missed.txt'
+  // .startsWith('mutants.out')` is true, so a bare `startsWith` waves through
+  // a reader pointed at last week's results. Require a segment boundary.
+  const under = (ref) => ref === writeDir || ref.startsWith(`${writeDir}/`)
+  let step = '<unnamed step>'
+  for (let i = 0; i < lines.length; i++) {
+    const stepName = /^\s*-\s+name:\s*(.+?)\s*$/.exec(lines[i])
+    if (stepName) step = `step '${stepName[1]}'`
+    if (i >= from && i <= to) continue
+    // `name:` is a step name or an ARTIFACT name, and `pattern:` is an
+    // artifact-name GLOB (`mutants-out-*`) — none of the three is a path.
+    // Scanning them would flag the artifact this lane deliberately calls
+    // `mutants-out` as a reader pointed one level short.
+    const refs = /^\s*-?\s*(name|pattern):\s*/.test(lines[i])
+      ? []
+      : new Set(lines[i].match(/mutants[-.]out[^\s"'`)]*/g) ?? [])
+    for (const ref of refs) {
+      if (under(ref)) continue
+      push(
+        'output-path-mismatch',
+        `${jobId} ${step} reads '${ref}', but cargo-mutants writes to '${writeDir}' (\`--output DIR\` creates DIR/mutants.out, it does not USE DIR; \`${writeDir}.old\` is the PREVIOUS run). A step reading one level short of — or one run behind — the real files reports zero coverage and zero survivors however healthy the run was.`,
+      )
+    }
+  }
+}
+
+/**
  * Every path the lane's own steps read must be where cargo-mutants writes.
  * `-o/--output DIR` creates `DIR/mutants.out`, so a reader pointed at `DIR`
  * finds nothing however healthy the run was.
@@ -289,13 +435,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   const writeDir = outputDirFor(invocation.argv)
   const [from, to] = invocation.span
 
-  // A prefix test is NOT a path test. cargo-mutants renames the previous run's
-  // directory to `mutants.out.old` (it is in .gitignore for exactly that
-  // reason), and `'mutants.out.old/missed.txt'.startsWith('mutants.out')` is
-  // true — so a bare `startsWith` waves through a reader pointed at LAST
-  // week's results, which is a silent-staleness bug of the same family this
-  // guard exists to catch. Require a path-segment boundary.
-  const under = (ref) => ref === writeDir || ref.startsWith(`${writeDir}/`)
+  checkReaders({ lines, writeDir, skipSpan: [from, to], jobId: `\`${JOB_ID}\``, push })
 
   // The artifact steps are collected rather than checked inline, because the
   // interesting failures are ABSENCES: a `path:` that no longer mentions
@@ -303,40 +443,12 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   // used to slip through, since the inline check only ran on a `path:` that
   // already looked roughly right — a guard that validates a value only when
   // it is nearly correct cannot fail on the cases that matter.
-  const uploads = []
-  let step = '<unnamed step>'
-  let currentUpload
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*-\s+(name|uses):/.test(lines[i])) currentUpload = undefined
-    const stepName = /^\s*-\s+name:\s*(.+?)\s*$/.exec(lines[i])
-    if (stepName) step = `step '${stepName[1]}'`
-    if (/uses:\s*actions\/upload-artifact/.test(lines[i])) {
-      currentUpload = { step, path: undefined }
-      uploads.push(currentUpload)
-    }
-    const pathLine = /^\s*path:\s*(\S+)\s*$/.exec(lines[i])
-    if (pathLine && currentUpload && currentUpload.path === undefined) {
-      currentUpload.path = pathLine[1]
-    }
-    if (i >= from && i <= to) continue
-    // `name:` values are step names and the upload-artifact ARTIFACT name —
-    // never paths. Scanning them would flag `name: mutants-out` as a reader.
-    const refs = /^\s*-?\s*name:\s*/.test(lines[i])
-      ? []
-      : new Set(lines[i].match(/mutants[-.]out[^\s"'`)]*/g) ?? [])
-    for (const ref of refs) {
-      if (under(ref)) continue
-      push(
-        'output-path-mismatch',
-        `${step} reads '${ref}', but cargo-mutants writes to '${writeDir}' (\`--output DIR\` creates DIR/mutants.out, it does not USE DIR; \`${writeDir}.old\` is the PREVIOUS run). A step reading one level short of — or one run behind — the real files reports zero coverage and zero survivors however healthy the run was.`,
-      )
-    }
-  }
+  const uploads = uploadsIn(lines)
 
   if (uploads.length === 0) {
     push(
       'artifact-upload-missing',
-      `the \`${JOB_ID}\` job uploads no artifact at all (no \`actions/upload-artifact\` step). \`file-mutation-survivors --require-rust\` downloads that artifact and throws when missed.txt is not in it, so the survivor-filing job goes red with a message about the filer rather than about this job (#3387).`,
+      `the \`${JOB_ID}\` job uploads no artifact at all (no \`actions/upload-artifact\` step). Since #3393 it uploads one per shard for \`${MERGE_JOB_ID}\` to reassemble into the \`${ARTIFACT_NAME}\` that \`file-mutation-survivors --require-rust\` downloads, so with none of them the merge has nothing to merge and the filer throws on an absent missed.txt — red on the filer, with a message about the filer rather than about this job (#3387).`,
     )
   }
   for (const upload of uploads) {
@@ -347,12 +459,96 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
       )
       continue
     }
-    if (upload.path.replace(/^src-tauri\//, '').replace(/\/$/, '') !== writeDir) {
+    if (normalizeUploadPath(upload.path) !== writeDir) {
       push(
         'artifact-path-mismatch',
         `${upload.step} uploads '${upload.path}', but the artifact must be cargo-mutants' output directory ITSELF ('${WORKSPACE_DIR}/${writeDir}'). \`file-mutation-survivors\` reads missed.txt flat off the artifact root; uploading a parent directory buries it one level down and the filer's --require-rust throws (#3387).`,
       )
     }
+  }
+}
+
+/**
+ * The shard artifact name and the glob `MERGE_JOB_ID` downloads it by are a
+ * pair nothing else relates: `JOB_ID` names its upload and `MERGE_JOB_ID`
+ * globs `pattern:`, in two jobs 40 lines apart. Rename either alone and the
+ * merge downloads zero artifacts while every check here, the self-test and the
+ * vitest suite stay green — it reds a week later as `merged=0`, one cron after
+ * the survivors went unfiled (#3364).
+ */
+function checkShardPattern({ lines, shardLines, push }) {
+  if (!shardLines) return
+  const pattern = lines.map((l) => /^\s+pattern:\s*(\S+)\s*$/.exec(l)?.[1]).find(Boolean)
+  if (pattern === undefined) {
+    push(
+      'merge-download-pattern-missing',
+      `the \`${MERGE_JOB_ID}\` job has no \`pattern:\`, so it downloads by exact name — but \`${JOB_ID}\` uploads one artifact PER SHARD, and no single name covers them. The merge would reassemble nothing.`,
+    )
+    return
+  }
+  const glob = new RegExp(
+    `^${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replaceAll('\\*', '.*')}$`,
+  )
+  const names = uploadsIn(shardLines)
+    .map((u) => u.name)
+    .filter((n) => n !== undefined)
+  if (names.length > 0 && !names.some((n) => glob.test(n))) {
+    push(
+      'shard-artifact-pattern-mismatch',
+      `\`${MERGE_JOB_ID}\` downloads \`pattern: ${pattern}\`, which matches none of the artifact names \`${JOB_ID}\` uploads (${names.map((n) => `'${n}'`).join(', ')}). The merge would download zero shards and exit \`merged=0\`, a week after the survivors it should have filed.`,
+    )
+  }
+}
+
+/**
+ * The producer of `ARTIFACT_NAME` (#3393). Before sharding, `JOB_ID` uploaded
+ * it directly and `checkOutputPlumbing` covered it. Now `JOB_ID` uploads
+ * `mutants-out-<package>-<shard>` and `MERGE_JOB_ID` produces the single
+ * artifact the filer names — so without this, renaming or re-pathing THAT
+ * upload leaves every check green and reds `FILER_JOB_ID` on the next cron,
+ * a week later, with a message about the filer.
+ *
+ * `writeDir` is cargo-mutants' own output directory name, which the merge
+ * reassembles into and must upload as-is: the filer reads `missed.txt` flat
+ * off the artifact root, so uploading a parent buries it one level down.
+ */
+export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
+  if (!lines) {
+    push(
+      'merge-job-missing',
+      `no \`${MERGE_JOB_ID}\` job in ${WORKFLOW_PATH}. Since #3393 the \`${JOB_ID}\` matrix uploads one artifact per shard and nothing else produces \`${ARTIFACT_NAME}\`, so \`${FILER_JOB_ID}\` would download an artifact that no job writes (#3387).`,
+    )
+    return
+  }
+
+  // The merge job READS `mutants.out/...` too — it reassembles into that
+  // directory and the summary step renders from it. Guarding only its upload
+  // would leave a drifted reader here showing up as a wrong summary rather
+  // than a red, which is the #3386 shape one job over.
+  checkReaders({
+    lines,
+    writeDir,
+    skipSpan: [-1, -1],
+    jobId: `\`${MERGE_JOB_ID}\``,
+    push,
+  })
+
+  checkShardPattern({ lines, shardLines, push })
+
+  const upload = uploadsIn(lines).find((u) => u.name === ARTIFACT_NAME)
+
+  if (upload === undefined) {
+    push(
+      'merge-upload-missing',
+      `the \`${MERGE_JOB_ID}\` job uploads no artifact named \`${ARTIFACT_NAME}\`. That is the name \`${FILER_JOB_ID}\` downloads, and since #3393 no other job produces it: with \`--require-rust\` the filer throws every run, and without it it reports "no rust survivors" and clears every tracked one (#3364).`,
+    )
+    return
+  }
+  if (normalizeUploadPath(upload.path) !== writeDir) {
+    push(
+      'merge-upload-path-mismatch',
+      `the \`${MERGE_JOB_ID}\` job uploads \`${ARTIFACT_NAME}\` from '${upload.path ?? '<no path:>'}', but the merge reassembles the shards into '${writeDir}'. \`${FILER_JOB_ID}\` reads missed.txt flat off the artifact root, so any other directory buries it and \`--require-rust\` throws (#3387).`,
+    )
   }
 }
 
@@ -503,11 +699,23 @@ export function analyzeMutantsScope({ root, overrideArgv }) {
     )
   }
 
-  const examinedDirs = invocation ? examinedPackageDirs(invocation.argv, workspace) : undefined
+  // #3393: the sharded lane passes `-p "$PACKAGE"`, so the packages it
+  // examines are its matrix column — and only when the job actually maps that
+  // shell variable to it. Without the mapping the token names something this
+  // guard cannot see, and `examinedPackageDirs` reports instead of guessing.
+  const shardEntries = lines ? matrixShards(lines) : []
+  const mapsMatrixPackage =
+    lines?.some((l) => /^\s*PACKAGE:\s*\$\{\{\s*matrix\.package\s*\}\}\s*$/.test(l)) ?? false
+  const matrixPackages = mapsMatrixPackage ? [...new Set(shardEntries.map((e) => e.package))] : []
+  if (shardEntries.length > 0) checkShardMatrix({ entries: shardEntries, push })
+
+  const examinedDirs = invocation
+    ? examinedPackageDirs(invocation.argv, workspace, matrixPackages)
+    : undefined
   if (invocation && examinedDirs === undefined) {
     push(
       'package-selection-unknown',
-      `cannot determine which packages the lane examines from its \`cargo mutants\` invocation. Pass \`--workspace\` or an explicit \`-p\`, so the scope is stated rather than inherited from cargo's default-member rules.`,
+      `cannot determine which packages the lane examines from its \`cargo mutants\` invocation. Pass \`--workspace\`, an explicit \`-p\`, or \`-p "$PACKAGE"\` with \`PACKAGE: \${{ matrix.package }}\` and a shard matrix, so the scope is stated rather than inherited from cargo's default-member rules.`,
     )
   }
 
@@ -517,6 +725,14 @@ export function analyzeMutantsScope({ root, overrideArgv }) {
   // self-test's `scripts/` case) already reports `no-invocation`, and piling a
   // second "the filer job is missing" on top of that would be noise.
   if (workflow) checkFilerPlumbing({ lines: jobLines(workflow, FILER_JOB_ID), push })
+  if (workflow && invocation) {
+    checkMergeProducer({
+      lines: jobLines(workflow, MERGE_JOB_ID),
+      shardLines: lines,
+      writeDir: outputDirFor(invocation.argv),
+      push,
+    })
+  }
 
   return { problems, globs, matched, examinedDirs: examinedDirs ?? [] }
 }
@@ -538,6 +754,32 @@ function main(root = REPO_ROOT) {
   console.log(
     `mutants scope OK: ${globs.length} examine_glob(s) resolve to ${matched} mutable file(s) inside the examined package(s) [${where}], and every step reads where cargo-mutants writes`,
   )
+}
+
+/**
+ * Prints how many shard jobs the matrix declares (#3393). `mutants-merge`
+ * compares the shards that actually uploaded against this number and refuses
+ * to publish a short merge; it reads the number from here rather than
+ * repeating it, because two copies of a shard total is precisely the drift
+ * this guard exists to catch.
+ *
+ * Fails closed: a workflow, job or matrix this cannot read exits 2 with
+ * nothing on stdout, so the caller reds rather than comparing against a 0 that
+ * every merge trivially clears.
+ */
+function printShardCount(root = REPO_ROOT) {
+  const workflowAbs = resolve(root, WORKFLOW_PATH)
+  const lines = existsSync(workflowAbs)
+    ? jobLines(readFileSync(workflowAbs, 'utf8'), JOB_ID)
+    : undefined
+  const entries = lines ? matrixShards(lines) : []
+  if (entries.length === 0) {
+    console.error(
+      `--shard-count: no shard matrix in the \`${JOB_ID}\` job of ${WORKFLOW_PATH}. The caller compares the shards that uploaded against this number, so printing a count nobody read would let a short merge publish (#3393).`,
+    )
+    process.exit(2)
+  }
+  console.log(entries.length)
 }
 
 // ---------------------------------------------------------------------------
@@ -637,6 +879,81 @@ function selfTestPlumbing(ok, fail) {
   const deleted = kinds(job('outcomes=mutants.out/outcomes.json', []))
   if (deleted.includes('artifact-upload-missing')) ok('a deleted upload-artifact step is flagged')
   else fail('missing upload step is flagged', JSON.stringify(deleted))
+}
+
+/**
+ * The merge-producer checks (#3393). Sharding moved the `mutants-out` upload
+ * out of `JOB_ID` and into `MERGE_JOB_ID`; all three of these fired GREEN in
+ * between, which is the whole reason the check exists.
+ */
+function selfTestMergeProducer(ok, fail) {
+  const kinds = (lines, shardLines) => {
+    const found = []
+    checkMergeProducer({
+      lines,
+      shardLines,
+      writeDir: 'mutants.out',
+      push: (kind) => found.push(kind),
+    })
+    return found
+  }
+  const job = ({ name = ARTIFACT_NAME, path = 'mutants.out/' } = {}) => [
+    `  ${MERGE_JOB_ID}:`,
+    '    steps:',
+    '      - name: Upload merged mutants report',
+    '        uses: actions/upload-artifact@0000',
+    '        with:',
+    `          name: ${name}`,
+    ...(path === undefined ? [] : [`          path: ${path}`]),
+  ]
+
+  const clean = kinds(job())
+  if (clean.length === 0) ok('a correctly plumbed merge upload reports no problem')
+  else fail('clean merge upload is clean', JSON.stringify(clean))
+
+  // The step name must not be mistaken for the artifact name: this job's step
+  // is literally called "Upload merged mutants report".
+  const renamed = kinds(job({ name: 'mutants-merged' }))
+  if (renamed.includes('merge-upload-missing'))
+    ok('a merged artifact renamed away from mutants-out is flagged')
+  else fail('renamed merged artifact is flagged', JSON.stringify(renamed))
+
+  const parent = kinds(job({ path: '.' }))
+  if (parent.includes('merge-upload-path-mismatch'))
+    ok('a merged artifact uploaded from a parent directory is flagged')
+  else fail('merged artifact parent path is flagged', JSON.stringify(parent))
+
+  const gone = kinds(undefined)
+  if (gone.includes('merge-job-missing')) ok('a deleted mutants-merge job is flagged')
+  else fail('missing merge job is flagged', JSON.stringify(gone))
+
+  // The shard name / download glob pair, which lives in two jobs and which
+  // nothing else relates.
+  const withPattern = (pattern) => [...job(), `          pattern: ${pattern}`]
+  const shards = (name) => [
+    `  ${JOB_ID}:`,
+    '    steps:',
+    '      - name: Upload shard results',
+    '        uses: actions/upload-artifact@0000',
+    '        with:',
+    `          name: ${name}`,
+    '          path: src-tauri/mutants.out/',
+  ]
+  const interpolated = 'mutants-out-${{ matrix.package }}-${{ matrix.shard }}'
+
+  const paired = kinds(withPattern('mutants-out-*'), shards(interpolated))
+  if (paired.length === 0) ok('a shard name the merge pattern globs reports no problem')
+  else fail('matching shard name is clean', JSON.stringify(paired))
+
+  const drifted = kinds(withPattern('mutants-out-*'), shards('shard-${{ matrix.shard }}'))
+  if (drifted.includes('shard-artifact-pattern-mismatch'))
+    ok('a shard artifact renamed out from under the merge pattern is flagged')
+  else fail('drifted shard name is flagged', JSON.stringify(drifted))
+
+  const unglobbed = kinds(job(), shards(interpolated))
+  if (unglobbed.includes('merge-download-pattern-missing'))
+    ok('a merge that downloads by exact name rather than a glob is flagged')
+  else fail('missing download pattern is flagged', JSON.stringify(unglobbed))
 }
 
 /**
@@ -759,9 +1076,67 @@ function runSelfTest() {
     ok('dropping --workspace flags all three moved-out globs (the #2621 drift)')
   else fail('moved-out globs are flagged', JSON.stringify(drifted.problems.map((p) => p.kind)))
 
+  // 3b. #3393, the sharded shape: `-p "$PACKAGE"` names the matrix column, so
+  //     the lane's scope is the UNION of that column — and is unknown, not
+  //     assumed, when nothing maps the variable to it.
+  const SHARDED = [
+    '        include:',
+    '          - { package: agaric, shard: 0, shards: 2 }',
+    '          - { package: agaric, shard: 1, shards: 2 }',
+    '          - { package: agaric-store, shard: 0, shards: 1 }',
+    '          PACKAGE: ${{ matrix.package }}',
+  ]
+  const entries = matrixShards(SHARDED)
+  const sharded = examinedPackageDirs(['cargo', 'mutants', '--in-place', '-p', '"$PACKAGE"'], ws, [
+    ...new Set(entries.map((e) => e.package)),
+  ])
+  if (
+    entries.length === 3 &&
+    insideAny('agaric-store/src/op.rs', sharded, MEMBERS) &&
+    insideAny('src/reverse/batch.rs', sharded, MEMBERS) &&
+    examinedPackageDirs(['cargo', 'mutants', '-p', '"$PACKAGE"'], ws, []) === undefined
+  )
+    ok('a shard matrix resolves `-p "$PACKAGE"` to its column, and nothing else does')
+  else fail('sharded package selection', JSON.stringify({ entries, sharded }))
+
+  // 3c. …and a matrix missing one of its own shard indices is flagged: that
+  //     slice is never tested and the summary cannot show it.
+  const gaps = []
+  checkShardMatrix({
+    entries: [
+      { package: 'agaric', shard: 0, shards: 2 },
+      { package: 'agaric-store', shard: 0, shards: 1 },
+    ],
+    push: (kind) => gaps.push(kind),
+  })
+  // 3d. …as is a DUPLICATE that masks a gap — the same entry count, every
+  //     `shards` agreeing, and one index pasted twice in place of the last.
+  //     Deduping before the positional test would call this complete.
+  const dupes = []
+  checkShardMatrix({
+    entries: [
+      { package: 'agaric', shard: 0, shards: 3 },
+      { package: 'agaric', shard: 1, shards: 3 },
+      { package: 'agaric', shard: 1, shards: 3 },
+    ],
+    push: (kind) => dupes.push(kind),
+  })
+  const whole = []
+  checkShardMatrix({ entries, push: (kind) => whole.push(kind) })
+  if (
+    gaps.length === 1 &&
+    gaps[0] === 'shard-matrix-incomplete' &&
+    dupes.length === 1 &&
+    dupes[0] === 'shard-matrix-incomplete' &&
+    whole.length === 0
+  )
+    ok('a shard matrix missing an index, or duplicating one, is flagged; a complete one is not')
+  else fail('shard matrix completeness', JSON.stringify({ gaps, dupes, whole }))
+
   selfTestReaders(ok, fail)
   selfTestPlumbing(ok, fail)
   selfTestFilerPlumbing(ok, fail)
+  selfTestMergeProducer(ok, fail)
 
   // 5. End-to-end on a root with no config at all → config-missing.
   const empty = analyzeMutantsScope({ root: resolve(REPO_ROOT, 'scripts') })
@@ -782,17 +1157,23 @@ const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   const argv = process.argv.slice(2)
-  if (argv.includes('--self-test')) {
+  // `--root <dir>` resolves against a different root so the gating vitest test
+  // can assert the NON-ZERO exits end-to-end. A guard whose failure path is
+  // never executed is decoration.
+  const rootAt = argv.indexOf('--root')
+  const root = rootAt < 0 ? REPO_ROOT : argv[rootAt + 1]
+  const rest = rootAt < 0 ? argv : argv.toSpliced(rootAt, 2)
+  if (rootAt >= 0 && root === undefined) {
+    console.error('--root needs a directory')
+    process.exit(2)
+  } else if (rest.includes('--self-test')) {
     runSelfTest()
-  } else if (argv[0] === '--root' && argv.length === 2) {
-    // Resolve against a different root so the gating vitest test can assert
-    // the NON-ZERO exit end-to-end. A guard whose failure path is never
-    // executed is decoration.
-    main(argv[1])
-  } else if (argv.length > 0) {
-    console.error(`unknown argument: ${argv[0]}`)
+  } else if (rest[0] === '--shard-count' && rest.length === 1) {
+    printShardCount(root)
+  } else if (rest.length > 0) {
+    console.error(`unknown argument: ${rest[0]}`)
     process.exit(2)
   } else {
-    main()
+    main(root)
   }
 }

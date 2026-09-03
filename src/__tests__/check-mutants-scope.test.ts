@@ -32,6 +32,25 @@ describe('check-mutants-scope.mjs', () => {
     expect(out).toContain('dropping --workspace flags all three moved-out globs')
   })
 
+  it('--shard-count reports the matrix total, and fails closed without a matrix', () => {
+    // `mutants-merge` compares the shards that uploaded against this number
+    // and refuses to publish a short merge (#3393). Printing a 0 that every
+    // merge trivially clears would be worse than printing nothing, so a root
+    // with no workflow must exit non-zero with empty stdout.
+    const count = execFileSync('node', [SCRIPT, '--shard-count'], { encoding: 'utf8' }).trim()
+    expect(count).toMatch(/^[1-9]\d*$/)
+
+    const empty = mkdtempSync(join(tmpdir(), 'mutants-scope-'))
+    const { status, stdout, stderr } = spawnSync(
+      'node',
+      [SCRIPT, '--shard-count', '--root', empty],
+      { encoding: 'utf8' },
+    )
+    expect(status).toBe(2)
+    expect(stdout).toBe('')
+    expect(stderr).toContain('no shard matrix')
+  })
+
   it('exits non-zero when the config is not where cargo-mutants reads it', () => {
     // End-to-end proof that the failure path is reachable: run the guard
     // against an empty root, where `src-tauri/.cargo/mutants.toml` — the one
