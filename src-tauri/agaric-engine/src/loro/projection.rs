@@ -126,11 +126,11 @@ pub async fn project_create_block_to_sql(
 /// the import-scaling tests assert the deferred flush reprojects each touched
 /// parent ONCE per chunk instead of once per imported block.
 ///
-/// Exposed via the `test-util` feature (not just `#[cfg(test)]`) because its
-/// consumer — the app crate's `materializer::handlers::import_scaling_tests`
-/// — is a downstream crate whose test build sees `agaric-engine` as a normal
-/// (non-`cfg(test)`) dependency, so a `#[cfg(test)]` gate would hide it
-/// (#2621, wave E1).
+/// Exposed via the `test-util` feature (not just `#[cfg(test)]`) because the
+/// app crate's `materializer_app_tests` are a downstream crate whose test
+/// build sees `agaric-engine` as a normal (non-`cfg(test)`) dependency, so a
+/// `#[cfg(test)]` gate would hide it (#2621, wave E1). The import-scaling
+/// tests themselves live in this crate since #4502.
 #[cfg(any(test, feature = "test-util"))]
 pub mod reproject_call_spy {
     use std::sync::atomic::{AtomicUsize, Ordering};
