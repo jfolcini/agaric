@@ -18,13 +18,15 @@ use super::*;
 ///
 /// Behavior:
 /// - **No draft for `block_id`** — no-op, returns `Ok(())`.
-/// - **H-12b: oversized content** (`stored.content.len() > MAX_CONTENT_LENGTH`)
-///   — returns [`AppError::Validation`]; the draft row is **kept** (the tx
-///   rolls back on early-return) so the user can edit it down. Never silently
-///   truncated.
 /// - **H-12a: target block missing or soft-deleted** — drops the orphan
 ///   draft (same tx), logs a `warn`, returns `Ok(())`. Avoids leaking
 ///   orphan `edit_block` ops into the append-only log.
+/// - **H-12b: oversized content** (`stored.content.len() > MAX_CONTENT_LENGTH`)
+///   — returns [`AppError::Validation`]; the draft row is **kept** (the tx
+///   rolls back on early-return) so the user can edit it down. Never silently
+///   truncated. Checked after H-12a and supersession, as in
+///   [`flush_all_drafts_inner`], so an oversized draft that is also orphaned
+///   or superseded is reaped rather than erroring on every flush.
 /// - **Happy path** — appends one `edit_block` op and deletes the draft row
 ///   atomically.
 #[instrument(skip(pool, device_id, materializer), err)]
@@ -62,17 +64,7 @@ pub async fn flush_draft_inner(
     let draft_anchor_seq = draft_row.draft_anchor_seq;
     let draft_anchor_device = draft_row.draft_anchor_device;
 
-    // 2. H-12b: enforce MAX_CONTENT_LENGTH. Returning Err here drops `tx`
-    //    without commit, so the row stays — the user can edit it down.
-    if content.len() > super::MAX_CONTENT_LENGTH {
-        return Err(AppError::validation(format!(
-            "draft content {} exceeds maximum {}",
-            content.len(),
-            super::MAX_CONTENT_LENGTH,
-        )));
-    }
-
-    // 3. H-12a: verify the target block exists and is not soft-deleted.
+    // 2. H-12a: verify the target block exists and is not soft-deleted.
     //    If absent, drop the orphan draft inside the same tx and bail.
     //    Also read `block_type` so the post-commit dispatch below can use
     //    the block-type-aware `enqueue_edit_background` (matching
@@ -95,7 +87,7 @@ pub async fn flush_draft_inner(
     };
     let block_type = target.block_type;
 
-    // 3b. #2651 — SUPERSESSION GUARD (mirrors
+    // 2b. #2651 — SUPERSESSION GUARD (mirrors
     //    `recovery::draft_recovery::recover_single_draft`). Unlike boot
     //    draft-recovery, the flush path previously had NO supersession check:
     //    a stale stored draft flushed AFTER a newer `edit_block`/`create_block`
@@ -132,6 +124,19 @@ pub async fn flush_draft_inner(
             "flush_draft: draft superseded by a newer edit; dropped stale draft"
         );
         return Ok(());
+    }
+
+    // 3. H-12b: enforce MAX_CONTENT_LENGTH. Returning Err here drops `tx`
+    //    without commit, so the row stays — the user can edit it down.
+    //    Last of the three guards, matching `flush_all_drafts_inner`: an
+    //    oversized draft whose block is gone or superseded is reaped above
+    //    rather than erroring forever on a row nothing can flush.
+    if content.len() > super::MAX_CONTENT_LENGTH {
+        return Err(AppError::validation(format!(
+            "draft content {} exceeds maximum {}",
+            content.len(),
+            super::MAX_CONTENT_LENGTH,
+        )));
     }
 
     // 4. prev_edit lookup (same logic as edit_block_inner) inside the tx.
@@ -185,44 +190,40 @@ pub struct FlushAllDraftsResult {
 /// transaction. The materializer fires per-block cache tasks once the
 /// outer commit succeeds.
 ///
-/// # Atomicity contract — all-or-nothing
+/// # Failure contract — skip the offender, flush the rest
 ///
-/// This is a **deliberate change** from `flush_draft_inner`'s per-call
-/// semantics. The single tx covers every draft, so:
+/// A draft this loop knows it cannot flush is skipped, not propagated:
+/// the batch commits the others and the skipped row stays in
+/// `block_drafts` for the next flush. Only an unanticipated error (a
+/// `prev_edit` lookup failure, an op-log append or `block_drafts` DELETE
+/// error) escapes the loop, and the single tx then rolls the whole batch
+/// back — no drafts flushed, no op_log rows appended.
+/// The frontend caller (boot recovery, `useAppBootRecovery`) treats any
+/// error as "log warn, continue boot", and a user-driven `flush_draft` on
+/// one block still succeeds alone.
 ///
-/// - If **any** draft's flush errors (e.g. an oversized-content
-///   `AppError::Validation`, a `prev_edit` lookup failure, a
-///   `block_drafts` DELETE error), the entire transaction rolls back —
-///   **no** drafts are flushed and **no** op_log rows are appended.
-/// - The frontend caller (boot recovery, `useAppBootRecovery`) treats
-///   any error as "log warn, continue boot"; the next user-driven
-///   `flush_draft` on a specific block is unaffected and can still
-///   succeed in isolation.
-///
-/// The alternative — savepoint-per-draft for partial recovery — was
-/// Considered and rejected per the audit: this command only
-/// fires at boot with a small N of orphans, and a savepoint loop would
-/// re-introduce the per-draft round-trip cost the consolidation is
-/// designed to eliminate.
+/// Savepoint-per-draft was considered and rejected: this command fires at
+/// boot with a small N, and a savepoint loop re-introduces the per-draft
+/// round-trip the consolidation exists to eliminate.
 ///
 /// # Per-draft behaviour
 ///
 /// Mirrors [`flush_draft_inner`] modulo the surrounding tx:
 ///
-/// - **H-12b: oversized content** — propagates `AppError::Validation`,
-///   which rolls back the entire batch. The user can edit the offender
-///   down and the next boot retries.
 /// - **H-12a: target block missing or soft-deleted** — the orphan draft
 ///   row is deleted in the same tx with a `warn` log, and the loop
 ///   continues to the next draft. No op_log row is appended for the
 ///   orphan.
+/// - **H-12b: oversized content** — logged at `warn` and skipped, with
+///   the draft row left in place for the reason given at that arm in the
+///   body. No other draft is affected.
 /// - **Happy path** — appends one `edit_block` op (with a `prev_edit`
 ///   chained from the most-recent `edit_block`/`create_block` for that
 ///   block) and deletes the draft row.
 ///
-/// Returns the number of draft rows processed (= number of drafts that
-/// existed when the tx opened — the H-12a branch still counts toward
-/// `flushed` because the draft row itself was consumed).
+/// Returns the number of draft rows consumed — flushed, dropped as an
+/// orphan (H-12a) or dropped as stale. A skipped oversized row is not
+/// consumed and does not count.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn flush_all_drafts_inner(
     pool: &SqlitePool,
@@ -279,18 +280,6 @@ pub async fn flush_all_drafts_inner(
         let draft_anchor_seq = row.draft_anchor_seq;
         let draft_anchor_device = row.draft_anchor_device;
 
-        // H-12b: enforce MAX_CONTENT_LENGTH. Returning Err here drops
-        // `tx` without commit, so every draft row stays — the user can
-        // edit the offender down and retry on next boot. All-or-nothing
-        // by design (see doc comment).
-        if content.len() > super::MAX_CONTENT_LENGTH {
-            return Err(AppError::validation(format!(
-                "draft content {} exceeds maximum {}",
-                content.len(),
-                super::MAX_CONTENT_LENGTH,
-            )));
-        }
-
         // H-12a: verify the target block exists and is not soft-deleted.
         // If absent, drop the orphan draft inside the same tx and skip
         // the op append — same shape as `flush_draft_inner` modulo the
@@ -339,6 +328,21 @@ pub async fn flush_all_drafts_inner(
                 "flush_all_drafts: draft superseded by a newer edit; dropped stale draft"
             );
             flushed += 1;
+            continue;
+        }
+
+        // H-12b: enforce MAX_CONTENT_LENGTH. Skip the offender so the rest
+        // of the batch still flushes (#3262). The row is KEPT, unlike the
+        // H-12a orphan above — not to preserve the text, which nothing reads
+        // back, but so a row we failed to process is never silently dropped
+        // (#2540). The next keystroke overwrites it.
+        if content.len() > super::MAX_CONTENT_LENGTH {
+            tracing::warn!(
+                block_id = %block_id,
+                content_len = content.len(),
+                max = super::MAX_CONTENT_LENGTH,
+                "flush_all_drafts: draft content exceeds the maximum; skipped, row kept"
+            );
             continue;
         }
 
@@ -396,7 +400,7 @@ pub async fn flush_draft(ctx: State<'_, WriteCtx>, block_id: BlockId) -> Result<
 
 /// Tauri command: flush every draft in a single `BEGIN IMMEDIATE` tx.
 /// Delegates to [`flush_all_drafts_inner`]. See that function's doc
-/// comment for the all-or-nothing atomicity contract.
+/// comment for the skip-the-offender failure contract.
 #[tauri::command]
 #[specta::specta]
 pub async fn flush_all_drafts(ctx: State<'_, WriteCtx>) -> Result<FlushAllDraftsResult, AppError> {
@@ -582,6 +586,43 @@ mod tests_h12 {
             count_edit_block_ops(&pool, LIVE_BLOCK).await,
             0,
             "no edit_block op must be appended on oversized rejection",
+        );
+        mat.shutdown();
+    }
+
+    /// The other arm of the reorder: H-12b now runs AFTER H-12a, so an
+    /// oversized draft whose target is soft-deleted is reaped like any other
+    /// orphan instead of erroring on every flush forever. Its sibling above
+    /// pins that a LIVE oversized draft still errors and still survives.
+    #[tokio::test]
+    async fn flush_draft_reaps_an_oversized_draft_whose_target_is_soft_deleted() {
+        let (pool, _dir) = test_pool().await;
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        insert_soft_deleted_block(&pool, DEAD_BLOCK).await;
+
+        let oversized = "x".repeat(super::super::MAX_CONTENT_LENGTH + 1);
+        sqlx::query(
+            "INSERT OR REPLACE INTO block_drafts (block_id, content, updated_at) \
+             VALUES (?, ?, 1735689600000)",
+        )
+        .bind(DEAD_BLOCK)
+        .bind(&oversized)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        flush_draft_inner(&pool, DEVICE, BlockId::test_id(DEAD_BLOCK), &mat)
+            .await
+            .expect("an orphaned oversized draft must be reaped, not error forever");
+
+        assert!(
+            !draft_exists(&pool, DEAD_BLOCK).await,
+            "the orphan draft must be dropped even though it is oversized",
+        );
+        assert_eq!(
+            count_edit_block_ops(&pool, DEAD_BLOCK).await,
+            0,
+            "no edit_block op must target a soft-deleted block",
         );
         mat.shutdown();
     }

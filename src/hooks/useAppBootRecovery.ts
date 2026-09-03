@@ -7,10 +7,10 @@
  *
  * 1. Orphan-draft flush — `flushAllDrafts()` consolidates every
  *    pending draft left behind by a previous crash into a single
- * IPC + single `BEGIN IMMEDIATE` tx. Failures
- *    log a warn and let boot continue; the backend's all-or-nothing
- *    semantics mean a single bad draft rolls back the whole batch
- *    (the next user-driven `flushDraft` retries on demand).
+ *    IPC + single `BEGIN IMMEDIATE` tx. A draft the backend refuses
+ *    (oversized content) is skipped and stays in `block_drafts`; the
+ *    rest of the batch still lands. Failures log a warn and let boot
+ *    continue (the next user-driven `flushDraft` retries on demand).
  * 2. Priority-levels load — read the `priority` property
  *    definition's `options` JSON and hydrate the shared
  *    `setPriorityLevels` cache so badge colours / sort / filter

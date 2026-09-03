@@ -11,7 +11,9 @@ use agaric_store::op_log::append_local_op_in_tx;
 // ---------------------------------------------------------------------------
 
 /// Process a single draft: returns `Ok(true)` if the draft was recovered
-/// (synthetic op created), `Ok(false)` if it was already flushed.
+/// (synthetic op created), `Ok(false)` if it was already flushed, and `Err`
+/// for content over [`crate::commands::MAX_CONTENT_LENGTH`] — the reason is
+/// at that check (#3262).
 ///
 /// When recovering, both the op_log append and the `blocks.content` update
 /// are wrapped in a single IMMEDIATE transaction — mirroring the production
@@ -145,6 +147,21 @@ pub(super) async fn recover_single_draft(
     let matching_ops = row;
 
     if matching_ops == 0 {
+        // #3262: never append an over-cap op. `edit_block_inner` and the flush
+        // paths reject this content, so recovery must not smuggle it into the
+        // op log and on to peers. This LOSES that text, deliberately: recovery
+        // was the one path that persisted an over-cap paste, so such a draft
+        // used to survive a boot and no longer does. The `block_drafts` row
+        // stays — the #2540 invariant — but nothing reads one back. `Err`, not
+        // `Ok(false)`, because the caller deletes the row on either `Ok`.
+        if draft.content.len() > crate::commands::MAX_CONTENT_LENGTH {
+            return Err(AppError::validation(format!(
+                "draft content {} exceeds maximum {}",
+                draft.content.len(),
+                crate::commands::MAX_CONTENT_LENGTH,
+            )));
+        }
+
         // Draft was NOT flushed — recover it.
         let prev_edit = find_prev_edit(pool, draft.block_id.as_str(), device_id).await?;
 
