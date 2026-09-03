@@ -18,6 +18,8 @@ mod immutability;
 mod origin;
 mod payload;
 mod read;
+mod resolve_prev_edit;
+mod undo_redo_append;
 
 pub(super) use crate::db::ReadPool;
 pub(super) use crate::op::*;

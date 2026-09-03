@@ -664,3 +664,61 @@ mod read_blocks_bulk_tests {
         assert!(e.apply_edit_via_diff_splice("missing", "x").is_err());
     }
 }
+
+#[cfg(test)]
+mod membership_and_rank_contract_tests {
+    //! #3443: contract pins for the read-back getters whose only coverage
+    //! lived in the app crate — membership and dense rank.
+    use super::{AppError, LoroEngine};
+
+    /// Reddens if `contains_block` stops tracking the index — a constant
+    /// verdict, or a soft-delete that drops the node the way a purge does.
+    #[test]
+    fn contains_block_tracks_index_membership_3443() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("A", "page", "a", None, 0).unwrap();
+        e.apply_create_block_at("B", "leaf", "b", Some("A"), 0)
+            .unwrap();
+
+        assert!(e.contains_block("A"));
+        assert!(e.contains_block("B"));
+        assert!(!e.contains_block("ghost"));
+
+        e.apply_delete_block("B", "2026-01-01T00:00:00Z").unwrap();
+        assert!(e.read_deleted("B").unwrap());
+        assert!(e.contains_block("B"));
+
+        e.apply_purge_block("B").unwrap();
+        assert!(!e.contains_block("B"));
+        assert!(e.contains_block("A"));
+    }
+
+    /// Reddens if `read_position` stops returning the dense 1-based rank in
+    /// current sibling order, or stops rejecting an unknown block.
+    #[test]
+    fn read_position_is_dense_rank_3443() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "p", None, 0).unwrap();
+        for (i, id) in ["C0", "C1", "C2"].iter().enumerate() {
+            e.apply_create_block_at(id, "leaf", "c", Some("P"), i)
+                .unwrap();
+        }
+
+        assert_eq!(e.read_position("P").unwrap(), 1);
+        assert_eq!(e.read_position("C0").unwrap(), 1);
+        assert_eq!(e.read_position("C1").unwrap(), 2);
+        assert_eq!(e.read_position("C2").unwrap(), 3);
+
+        e.apply_move_block_to("C2", Some("P"), 0).unwrap();
+        assert_eq!(e.read_position("C2").unwrap(), 1);
+        assert_eq!(e.read_position("C0").unwrap(), 2);
+        assert_eq!(e.read_position("C1").unwrap(), 3);
+
+        let err = e.read_position("ghost").unwrap_err();
+        assert!(matches!(err, AppError::Validation { code: None, .. }));
+        assert_eq!(
+            err.to_string(),
+            "Validation error: loro: read position: block ghost not found"
+        );
+    }
+}
