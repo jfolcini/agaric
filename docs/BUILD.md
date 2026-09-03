@@ -91,6 +91,8 @@ These local hooks are **optional**: if you cannot install them, open your PR any
 
 `.mcp.json` wires an optional MCP server, **code-review-graph**, that exposes a symbol/dependency graph for fast, structural code navigation (used in place of ad-hoc `grep`/file-reads when available). It is launched on demand by [`uv`](https://docs.astral.sh/uv/)'s `uvx` runner, which fetches the package from PyPI on first run — so enabling it means installing `uv` and nothing else. It is a navigation aid for MCP-capable clients, not a build or test prerequisite; if `uvx` is absent the server simply does not start.
 
+That first-run PyPI fetch does not fit Claude Code's default 30 s MCP connect budget when it races a fresh sandbox's `npm ci` and apt install, so `.claude/settings.json` sets `MCP_TIMEOUT=120000`. A missing `uvx` still fails fast — the raised budget only covers a slow cold start.
+
 ## Development
 
 ```bash
