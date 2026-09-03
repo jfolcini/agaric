@@ -4856,6 +4856,23 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
         "filtering the block sheet by delete_attachment must return the delete"
     );
 
+    // The rename reaches the list through the OTHER probe (a live `attachments`
+    // row, not the paired add), so pinning only the delete would leave half the
+    // fix uncovered.
+    let renames = list_block_history(
+        &pool,
+        &BlockId::test_id("BH_ATT_CH"),
+        Some("rename_attachment"),
+        &page,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        renames.items.len(),
+        1,
+        "filtering the block sheet by rename_attachment must return the rename"
+    );
+
     // The disjunct resolves ONE owning block, not the whole page: a sibling
     // must not inherit its neighbour's attachment ops.
     let sibling = list_block_history(&pool, &BlockId::test_id("BH_ATT_SB"), None, &page)
