@@ -6,5 +6,7 @@
 //! still in-lib `#[cfg(test)]` modules that consume it, so moving it out would
 //! fork the fixture in two. It is reachable from the test binaries as
 //! `agaric_lib::commands::tests::common` via the `test-util` feature.
+// Test harness: exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 
 pub mod common;

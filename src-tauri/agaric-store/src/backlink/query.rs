@@ -210,6 +210,7 @@ async fn count_filtered_backlinks(
 /// Created-sort path: single SQL with keyset on `b.id`, optional
 /// `json_each` filter intersection, projects full BlockRow columns —
 /// no separate fetch step.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn eval_created_sort_keyset(
     pool: &SqlitePool,
     block_id: &str,
@@ -336,6 +337,7 @@ async fn eval_created_sort_keyset(
 ///
 /// `block_links` is unique per `(source_id, target_id)` (PK, migration 0072),
 /// so each source block yields exactly one row — no `DISTINCT` needed.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn eval_property_sort_keyset(
     pool: &SqlitePool,
     block_id: &str,

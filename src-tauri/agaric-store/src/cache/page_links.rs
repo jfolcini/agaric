@@ -269,6 +269,7 @@ pub async fn reindex_page_link_cache_for_block(
 /// `block_links` and `blocks` — so running it for extra keys is idempotent and
 /// converges on exactly the rows [`rebuild_page_link_cache`] would produce for
 /// them.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn recompute_rows_for_rollup_key(
     conn: &mut sqlx::SqliteConnection,
     source_page: &str,

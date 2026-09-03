@@ -181,6 +181,7 @@ pub async fn ingest_replicated_batch_with_fault(
     ingest_replicated_batch_inner(pool, records, local_device_id, remote_device_id, fault).await
 }
 
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn ingest_replicated_batch_inner(
     pool: &SqlitePool,
     records: &[OpTransfer],

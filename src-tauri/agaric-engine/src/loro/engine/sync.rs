@@ -434,6 +434,7 @@ impl LoroEngine {
     /// delete the durable inbox slot until the post-import `oplog_vv()`
     /// demonstrably reached it (`agaric-sync`'s `replay_inbox_batch`). Decoded
     /// exactly once, here, where the metadata already is.
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     pub fn gate_replay_blobs(&self, blobs: &[&[u8]]) -> Vec<ReplayBlobGate> {
         // Cumulative reachability base — see fn docs.
         let mut base: std::collections::HashMap<PeerID, Counter> = self

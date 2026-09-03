@@ -1,3 +1,7 @@
+// Test bodies are exempt from the 70-code-line ceiling (AGENTS.md "Patterns
+// caught in review" item 6); production functions over it carry `#[expect]`
+// so the marker expires when the function is split (#4639).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
 // #3847 — `JNI_OnLoad`, exported from this crate's `cdylib` (`libagaric_lib.so`)
 // so the Android JavaVM + Application context are installed before any Rust
 // code runs. Must live in the cdylib root crate; see the module docs.
@@ -737,6 +741,7 @@ fn init_log_bridge(max_level: tracing_log::log::LevelFilter) {
 ///
 /// Must run with the OS-correct `app_data_dir` so the on-disk log files and
 /// the "Open logs folder" action resolve to the same path on every platform.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path::Path) {
     use tauri::Manager;
     use tracing_subscriber::EnvFilter;
@@ -1260,6 +1265,7 @@ fn surface_recovery_status<R: tauri::Runtime>(
 /// (link-metadata GC, FTS / `block_tag_refs` gating) is created first, then
 /// `RebuildPageIds` / `CleanupOrphanedAttachments` are enqueued, then caches
 /// for recovered drafts are refreshed synchronously.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn spawn_boot_maintenance(
     pools: &db::DbPools,
     materializer: &materializer::Materializer,
@@ -1411,6 +1417,7 @@ fn spawn_boot_maintenance(
 ///
 /// Each task receives an `Arc<AtomicBool>` shutdown flag that is never set
 /// (#703) — the flags exist only to keep the spawn signatures stable.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn spawn_background_tasks(
     pools: &db::DbPools,
     device_id: &str,
@@ -2219,6 +2226,7 @@ fn show_fatal_error_dialog(title: &str, body: &str) {
 // path dependency) calls `run()`.
 #[cfg(not(fuzzing))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn run() {
     // #1058: most boot-wiring imports moved into the focused helper
     // functions above `run`. `WritePool` is still referenced by the

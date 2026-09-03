@@ -123,6 +123,7 @@ pub const REGEX_PRE_FILTER_CAP: i64 = 1000;
 /// ([`regex_mode_query`]) based on `toggles.is_regex`, then applies
 /// the post-FTS filter when any non-regex toggle is on.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn search_with_toggles(
     pool: &SqlitePool,
     query: &str,
@@ -306,6 +307,7 @@ fn truncate_row_content(rows: &mut [SearchBlockRow], snippet_len: Option<usize>)
 /// returning [`AppError::Cancelled`] when the signal fires — the exact
 /// outcome the FTS path returns.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn search_with_toggles_partitioned(
     pool: &SqlitePool,
     query: &str,
@@ -694,6 +696,7 @@ pub(crate) fn byte_to_utf16_offsets(
 /// side. The caller passes `Some("page")` for the pages partition,
 /// `None` for the unrestricted set.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn regex_mode_query(
     pool: &SqlitePool,
     query: &str,

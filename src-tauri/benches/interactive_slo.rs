@@ -1,3 +1,5 @@
+// Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 // Bench helpers cast small loop indices between usize/i64 freely.
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_precision_loss)]

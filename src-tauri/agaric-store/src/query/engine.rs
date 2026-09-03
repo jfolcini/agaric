@@ -557,6 +557,7 @@ fn map_fts_error(e: sqlx::Error) -> AppError {
 
 /// Compile and run an advanced query.
 #[tracing::instrument(skip_all, err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn compile_and_run(
     pool: &SqlitePool,
     request: AdvancedQueryRequest,
@@ -1320,6 +1321,7 @@ struct GroupMemberRow {
 /// Run the grouped path: bucket the matched rows by `spec`'s dimension,
 /// paginate over GROUPS (keyset on `gcount DESC, gkey ASC`), and attach a
 /// bounded per-group member preview.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn run_grouped(
     pool: &SqlitePool,
     spec: &GroupSpec,

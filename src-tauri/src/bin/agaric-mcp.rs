@@ -1,3 +1,7 @@
+// Test bodies are exempt from the 70-code-line ceiling (AGENTS.md "Patterns
+// caught in review" item 6); production functions over it carry `#[expect]`
+// so the marker expires when the function is split (#4639).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
 //! `agaric-mcp` — stdio ↔ socket bridge for external MCP agents.
 //!
 //! MCP clients (Claude Desktop, Claude Code, Cursor, Continue, …)

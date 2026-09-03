@@ -229,6 +229,7 @@ enum ValuePart {
 /// Parse a single value part: `{...}` (one outer brace layer stripped),
 /// `"..."`, a bare number, or a bare identifier (→ [`ValuePart::Macro`],
 /// since `@string` expansion is unsupported).
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn parse_value_part(
     chars: &[char],
     pos: &mut usize,
@@ -329,6 +330,7 @@ fn parse_value_part(
 
 /// Parse a BibTeX file into entries + warnings. See the module docs for the
 /// exact supported subset.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn parse_bibtex(content: &str) -> Result<BibParseOutput, AppError> {
     let chars: Vec<char> = content.chars().collect();
     let len = chars.len();
@@ -888,6 +890,7 @@ const CSL_KNOWN_KEYS: &[&str] = &[
 ];
 
 /// Parse a CSL-JSON array (or single object) into entries + warnings.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub fn parse_csl_json(content: &str) -> Result<BibParseOutput, AppError> {
     let value: serde_json::Value = serde_json::from_str(content)
         .map_err(|e| AppError::validation(format!("invalid CSL-JSON: {e}")))?;

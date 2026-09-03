@@ -254,6 +254,7 @@ async fn declare_bib_property_defs(
 /// of complete reference pages; imports of ≤ one chunk keep whole-file
 /// atomicity.
 #[instrument(skip(pool, device_id, materializer, content), fields(space = %space_id), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn import_bibliography_inner(
     pool: &SqlitePool,
     device_id: &str,

@@ -609,6 +609,7 @@ pub async fn local_blob_path_if_present(
 ///
 /// The healthy case still costs exactly one statement: the `INSERT OR IGNORE`
 /// runs first and, when it claims the mapping, nothing else executes.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn register_received_blob(
     pool: &SqlitePool,
     app_data_dir: &Path,
@@ -1336,6 +1337,7 @@ pub async fn write_attachment_streaming(
 /// because the per-chunk inner loop is in a private helper and the
 /// granularity at the file boundary already lets a multi-gigabyte
 /// transfer be aborted before the *next* file starts.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn receive_request_and_send_files(
     send: &mut SendStream,
     recv: &mut RecvStream,
@@ -1656,6 +1658,7 @@ async fn recv_message_polling_cancel(
 /// warning on the sender side; the next sync cycle re-attempts the
 /// missing files. The wire format is unchanged (no new message
 /// variants).
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn request_and_receive_files(
     send: &mut SendStream,
     recv: &mut RecvStream,

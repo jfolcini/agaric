@@ -428,6 +428,7 @@ pub(crate) fn peer_is_bound_to_another_key(
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn handle_incoming_sync_inner(
     mut session: InboundSession,
     pool: sqlx::SqlitePool,

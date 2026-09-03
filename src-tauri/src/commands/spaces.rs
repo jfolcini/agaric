@@ -169,6 +169,7 @@ pub async fn list_spaces_registry_inner(pool: &SqlitePool) -> Result<Vec<McpSpac
 /// - Other [`AppError`] variants propagated from
 ///   [`create_block_in_tx`] / [`set_property_in_tx`].
 #[instrument(skip(pool, materializer, content), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn create_page_in_space_inner(
     pool: &SqlitePool,
     device_id: &str,

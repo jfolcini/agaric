@@ -201,6 +201,7 @@ fn cache_wipe_sql(table: &str) -> Option<&'static str> {
 /// the peer's on the next loro-sync merge; an empty engine instead imports
 /// the peer's full CRDT state cleanly on the next session.
 #[tracing::instrument(skip_all, err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_snapshot<R: std::io::Read>(
     pool: &SqlitePool,
     host: &dyn ApplyHost,

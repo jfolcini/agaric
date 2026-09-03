@@ -73,6 +73,7 @@ use super::*;
 /// call, the ordering key is insertion-stable (#400), and dense ranking is a
 /// pure function of that final order. When `None` (single-op / LOCAL command
 /// path) we reproject inline immediately, unchanged.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_create_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
@@ -451,6 +452,7 @@ pub async fn apply_set_property_via_loro(
 /// Per the pre-existing engine-vs-SQL contract, the engine seed is not rolled
 /// back if the caller's tx aborts; the seeded nodes are harmless/idempotent and
 /// self-correct on retry. We do NOT try to make it transactional.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn hydrate_page_subtree_into_engine(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
@@ -721,6 +723,7 @@ pub async fn apply_delete_block_via_loro(
 /// (<https://github.com/jfolcini/agaric/issues/4204#issuecomment-5420988056>).
 /// The canonical statement of the mechanism is on
 /// [`super::sql_only::unsweep_inherited_cohort_after_move`].
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_move_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
@@ -1130,6 +1133,7 @@ pub async fn apply_purge_block_via_loro(
 // `pub(crate)` (was `pub(super)`): the #2128 inbound-purge parity test in
 // `sync_protocol::tests` drives this LOCAL cascade against an oracle DB to
 // assert remote-purge SQL == local-purge SQL across every derived table.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn purge_block_sql_cascade(
     conn: &mut sqlx::SqliteConnection,
     p: &PurgeBlockPayload,

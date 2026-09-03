@@ -73,6 +73,11 @@ unsafe_code = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
 [lints.clippy]
+# 70-code-line function ceiling (AGENTS.md "Patterns caught in review" item 6);
+# the threshold is `too-many-lines-threshold` in clippy.toml. Existing violators
+# carry `#[expect]`, which fails once the function is split, so the count only
+# goes down (#4639).
+too_many_lines = "warn"
 cast_possible_truncation = "warn"
 cast_sign_loss = "warn"
 cast_possible_wrap = "warn"
@@ -427,6 +432,10 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 debug = false
+# A silent wrap in seq or position arithmetic is data corruption; with
+# `panic = "abort"` it is an abort instead. Tests (dev profile) always ran
+# with checks on, so release now matches them.
+overflow-checks = true
 # `panic = "abort"` shrinks the binary 5-10% (drops the unwind tables) and
 # shaves a small amount of cold-start cost. This manifest is the workspace
 # root, so the setting reaches every crate in every shipped build. What it

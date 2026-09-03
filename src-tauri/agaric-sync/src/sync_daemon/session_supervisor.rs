@@ -165,6 +165,7 @@ pub struct SyncDaemonContext {
 /// deleting it turned nothing red. Production always passes an empty map; the
 /// only caller that passes a non-empty one is `SyncDaemon::start_with_lifecycle_seeded`,
 /// which is gated behind the `test-util` feature.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(crate) async fn daemon_loop(
     ctx: SyncDaemonContext,
     shutdown_notify: Arc<Notify>,
@@ -1876,6 +1877,7 @@ fn peer_pulled_from_us_recently(
     skip_all,
     fields(peer = %peer.device_id)
 )]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn try_sync_with_peer(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
@@ -2370,6 +2372,7 @@ where
 // borrows work: `&mut side.send` and `&mut side.recv` are disjoint *field* borrows, which
 // a wrapper with two accessors could not hand out simultaneously.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn run_sync_session(
     orch: &mut SyncOrchestrator,
     send: &mut SendStream,

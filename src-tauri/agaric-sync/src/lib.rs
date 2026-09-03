@@ -1,3 +1,7 @@
+// Test bodies are exempt from the 70-code-line ceiling (AGENTS.md "Patterns
+// caught in review" item 6); production functions over it carry `#[expect]`
+// so the marker expires when the function is split (#4639).
+#![cfg_attr(test, allow(clippy::too_many_lines))]
 //! agaric-sync — the peer-to-peer sync layer of the layered `agaric` workspace
 //! (#2621).
 //!

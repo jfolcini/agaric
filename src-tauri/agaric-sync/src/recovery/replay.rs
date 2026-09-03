@@ -295,6 +295,7 @@ pub(super) async fn compacted_floor_above(
 /// replay walk).
 ///
 /// Returns `true` if it reset the cursor.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool, AppError> {
     let cursor: i64 = sqlx::query_scalar!(
         r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
@@ -438,6 +439,7 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
 ///
 /// No-op when the op log has no rows past the cursor.
 #[tracing::instrument(skip_all, err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn replay_unmaterialized_ops(
     pool: &SqlitePool,
     materializer: &Materializer,

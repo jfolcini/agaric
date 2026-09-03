@@ -559,6 +559,7 @@ impl SyncOrchestrator {
         name = "sync_msg",
         fields(state = ?self.state, msg = ?std::mem::discriminant(&msg)),
     )]
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     pub async fn handle_message(
         &mut self,
         msg: SyncMessage,
@@ -1433,6 +1434,7 @@ impl SyncOrchestrator {
     /// least one space is registered) or `ExchangingHeads` →
     /// `Complete` (empty-stream short-circuit).
     #[tracing::instrument(skip_all, err)]
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     async fn head_exchange_outgoing_loro(
         &mut self,
         peer_vvs: &[crate::sync_protocol::types::SpaceVersionVector],

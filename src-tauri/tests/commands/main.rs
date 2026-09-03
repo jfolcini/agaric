@@ -1,3 +1,5 @@
+// Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 //! Domain command tests (#4499 phase 0d) — one integration-test binary for the
 //! 25 per-domain suites that used to live in `src/commands/tests/`.
 //!

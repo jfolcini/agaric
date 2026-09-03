@@ -575,6 +575,7 @@ fn tool_desc_get_page() -> ToolDescription {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn tool_desc_search() -> ToolDescription {
     ToolDescription {
         name: TOOL_SEARCH.to_string(),
@@ -908,6 +909,7 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
     to_tool_result(&resp)
 }
 
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn validate_search_term_budget(args: &SearchArgs) -> Result<(), AppError> {
     let f = args.filter.as_ref();
     let total = args.tag_ids.as_ref().map_or(0, Vec::len)

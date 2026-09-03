@@ -97,6 +97,7 @@ use agaric_core::error::AppError;
 /// the `filter_value` routing here (and the reserved/non-reserved SQL
 /// branches) must grow the corresponding columns.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn query_by_property(
     pool: &SqlitePool,
     key: &str,

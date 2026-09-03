@@ -132,6 +132,7 @@ fn validate_new_attachment(
 /// private ensures renderer callers can never supply an arbitrary app-data
 /// path while preserving the existing transaction, op-log, and dedup queries.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn persist_attachment(
     pool: &SqlitePool,
     device_id: &str,

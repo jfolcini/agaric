@@ -420,6 +420,7 @@ pub async fn pages_without_space(
 /// of the three Path A sub-phases enumerated in the plan body. Phases
 /// 2 (enforcement wiring) and 3 (cross-space severance migration) are
 /// downstream of this step.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn migrate_orphan_tags_to_space(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,

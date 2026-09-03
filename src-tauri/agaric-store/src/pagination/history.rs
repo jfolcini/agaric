@@ -250,6 +250,7 @@ pub async fn list_block_history(
 /// unbounded and harmless. Keep it that way: a new consumer of this list
 /// must address ops by `(device_id, seq)` — both are on `HistoryEntry` —
 /// and never by position.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn list_page_history(
     pool: &SqlitePool,
     page_id: &str,

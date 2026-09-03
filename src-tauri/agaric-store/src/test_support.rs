@@ -11,6 +11,8 @@
 //! migrations applied — the same working pattern the op_log tests use
 //! (`op_log/tests/mod.rs`). A real file + WAL journalling is load-bearing for
 //! the cross-connection snapshot semantics the moved DB tests rely on.
+// Test harness: exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;

@@ -30,6 +30,7 @@ use super::*;
 /// - **Happy path** — appends one `edit_block` op and deletes the draft row
 ///   atomically.
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn flush_draft_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -225,6 +226,7 @@ pub struct FlushAllDraftsResult {
 /// orphan (H-12a) or dropped as stale. A skipped oversized row is not
 /// consumed and does not count.
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn flush_all_drafts_inner(
     pool: &SqlitePool,
     device_id: &str,

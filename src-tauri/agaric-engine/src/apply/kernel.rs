@@ -508,6 +508,7 @@ pub async fn apply_op_tx(
 /// non-replay applier can never inherit replay suppression (the #2896 soundness
 /// fix that retired the ambient boot-replay suppression global).
 #[tracing::instrument(skip(conn, record, chunk, state, mode), fields(seq = record.seq), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn apply_op_tx_with_mode(
     conn: &mut sqlx::SqliteConnection,
     record: &OpRecord,

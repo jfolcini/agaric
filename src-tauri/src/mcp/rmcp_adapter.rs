@@ -301,6 +301,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
     ///
     /// `agent_name` must already be sanitised (`sanitize_agent_name`) — the
     /// trait method does that at the trust boundary before calling here.
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     async fn dispatch_tool_call(
         &self,
         name: String,

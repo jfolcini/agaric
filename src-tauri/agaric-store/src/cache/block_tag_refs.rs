@@ -74,6 +74,7 @@ pub async fn reindex_block_tag_refs(
 /// #2831 recoverability hole: a *retry's* diff is empty, so a diff-coupled
 /// refresh would silently no-op). The empty-diff case performs no writes
 /// and returns an empty vec.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn reindex_block_tag_refs_in_tx(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
@@ -237,6 +238,7 @@ pub async fn reindex_block_tag_refs_split(
 /// `RetryKind::RefreshTagUsageCount` obligation atomically with the diff.
 /// Mirrors [`reindex_block_tag_refs_in_tx`] for the read/write-split pool
 /// configuration. Same contract otherwise as [`reindex_block_tag_refs_split`].
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn reindex_block_tag_refs_split_in_tx(
     write_conn: &mut sqlx::SqliteConnection,
     read_pool: &SqlitePool,

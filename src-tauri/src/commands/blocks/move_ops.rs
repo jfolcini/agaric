@@ -477,6 +477,7 @@ pub async fn move_block(
 /// Returns one [`MoveResponse`] per moved root, in input order (1:1 with
 /// `block_ids`), carrying its new `parent_id` + provisional `position`.
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn move_blocks_batch_inner(
     pool: &SqlitePool,
     device_id: &str,

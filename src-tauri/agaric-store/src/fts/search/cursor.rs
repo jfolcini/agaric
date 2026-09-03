@@ -46,6 +46,7 @@ use super::sanitizer::sanitize_fts_query;
 /// versions of this module used the default `unicode61` tokenizer, which
 /// split CJK incorrectly; the trigram switch is what fixes that.
 #[allow(clippy::too_many_arguments)] //  added include/exclude path glob params; refactor to a struct lives in .
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn search_fts(
     pool: &SqlitePool,
     query: &str,

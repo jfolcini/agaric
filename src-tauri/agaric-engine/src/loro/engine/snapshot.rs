@@ -321,6 +321,7 @@ impl LoroEngine {
     /// the `doc.import*` call is payload-agnostic: the diff capture, the
     /// no-op short-circuit, the legacy-migration fallback and the changed /
     /// purged / tag-scope resolution all read post-import engine state.
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn import_payload_with_changed_purged_tagscope(
         &mut self,
         payload: ImportPayload<'_>,

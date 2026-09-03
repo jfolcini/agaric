@@ -709,6 +709,7 @@ fn frontmatter_row_value(prop: &FrontmatterRow, ref_titles: &HashMap<String, Str
 /// - [`AppError::Validation`] — `page_id` does not refer to a `page` block
 /// - [`AppError::NotFound`] — block not found
 #[instrument(skip(pool), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn export_page_markdown_inner(
     pool: &SqlitePool,
     page_id: &str,
@@ -1895,6 +1896,7 @@ pub async fn import_markdown_inner(
     err
 )]
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn import_markdown_with_progress(
     pool: &SqlitePool,
     device_id: &str,
@@ -2225,6 +2227,7 @@ struct ImportCtx<'a> {
 /// #1432 — apply the leading YAML frontmatter as page-level properties. Returns
 /// the (possibly moved-through) transaction and the updated `properties_set`
 /// counter.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn apply_frontmatter_properties(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -2467,6 +2470,7 @@ async fn apply_frontmatter_properties(
 /// resolved-link map used by the block loop, and the deferred same-document
 /// block/heading-anchor maps resolved in the post-commit anchor phase.
 #[allow(clippy::type_complexity)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn resolve_inbound_page_links(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -2806,6 +2810,7 @@ async fn resolve_inbound_page_links(
 /// to `#[ULID]` refs (resolve-or-create), returning the transaction plus the
 /// per-pass tag state reused by the block loop and the frontmatter-tag pass.
 #[allow(clippy::type_complexity)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn resolve_inbound_tags(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -2978,6 +2983,7 @@ async fn resolve_inbound_tags(
 
 /// #2722 — apply page-level frontmatter `tags:` as real `block_tags`
 /// associations, reusing the inline-tag pre-pass state. Returns the transaction.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn apply_frontmatter_tags(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -3138,6 +3144,7 @@ async fn apply_frontmatter_tags(
 /// attachment refs consumed by the post-commit phases. Consumes `tx` (it commits
 /// the final chunk).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn insert_blocks(
     ctx: &mut ImportCtx<'_>,
     mut tx: CommandTx,
@@ -3506,6 +3513,7 @@ async fn insert_blocks(
 /// heading-anchor wiki-links to real `((block ULID))` refs (with the #1282
 /// page-link fallback). Warn-and-continue only; never aborts the durable import.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn resolve_anchor_links(
     ctx: &mut ImportCtx<'_>,
     parse_output: &import::ParseOutput,
@@ -3737,6 +3745,7 @@ async fn resolve_anchor_links(
 /// #1925 — post-commit attachment ingest + content rewrite. Takes ownership of
 /// `vault_files` so single-attempt files' bytes can be moved out. Warn-and-
 /// continue only; never aborts the durable import.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn ingest_attachments(
     ctx: &mut ImportCtx<'_>,
     mut vault_files: Vec<VaultFile>,

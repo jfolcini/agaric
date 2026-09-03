@@ -1210,6 +1210,7 @@ fn property_value_predicate_sql(
 /// invariant #3 / AGENTS.md cursor pagination).
 #[instrument(skip(pool, property_filters, tag_filters), err)]
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn filtered_blocks_query_inner(
     pool: &SqlitePool,
     property_filters: Vec<PropertyFilter>,

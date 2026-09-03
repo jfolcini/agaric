@@ -1,3 +1,5 @@
+// Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 //! Phase 0 day-10 — paired SQL read benchmark.
 //!
 //! Day-7's `read_path_bench` (in the now-archived loro-spike crate; see

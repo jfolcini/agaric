@@ -123,6 +123,7 @@ pub async fn journal_for_date_inner(
 ///
 /// - [`AppError::Validation`] — `date` is not `YYYY-MM-DD`, or `space_id`
 ///   does not refer to a live space block (`is_space = 'true'`).
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn resolve_or_create_journal_page(
     pool: &SqlitePool,
     device_id: &str,

@@ -169,7 +169,9 @@ Components past ~500 lines: extract hooks first, then presentational sub-compone
 2. Multi-op sequences that must be atomic use `_in_tx` variants or `BEGIN IMMEDIATE`, with a test.
 3. Batch by `json_each()`, never N+1. Bulk inserts are chunked multi-row `INSERT … VALUES` under `MAX_SQL_PARAMS`.
 4. `total_count` is the post-filter count.
-5. No side effects inside `debug_assert!`; release builds compile the body out.
+5. An invariant on a write or sync path is `assert!` or `return Err`, active in every build; a violation that only shows in release is silent data corruption (#412, #3726). `debug_assert!` only where the check is measured as hot (`hash.rs`, #1600), and never with side effects, because release builds compile the body out. Sweep: #4638.
+6. A function stays under 70 code lines (`clippy::too_many_lines`, threshold in `src-tauri/clippy.toml`). Existing violators carry `#[expect(clippy::too_many_lines)]`, which fails the build once the function is split, so the count only goes down; test and bench code is exempt at the crate root. Sweep: #4639.
+7. Release builds keep `overflow-checks` on, so a wrap aborts instead of corrupting. Arithmetic on a value decoded from a peer or a file uses `checked_*` and returns `AppError::Validation`; intended wrap says `wrapping_*`. Sweep: #4640.
 
 ## TypeScript Bindings (specta)
 

@@ -1,3 +1,5 @@
+// Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_engine::reverse::*;

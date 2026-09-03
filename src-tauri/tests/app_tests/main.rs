@@ -1,3 +1,5 @@
+// Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
+#![allow(clippy::too_many_lines)]
 //! Crate-root app tests (#4499 phase 0d) — one integration-test binary for the
 //! five `*_app_tests.rs` suites that used to be `#[cfg(test)] mod`s in
 //! `src/lib.rs`, plus the reverse tests that need the app's `Materializer`

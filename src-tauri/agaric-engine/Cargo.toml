@@ -142,6 +142,7 @@ agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-ut
 unsafe_code = "deny"
 
 [lints.clippy]
+too_many_lines = "warn"                     # AGENTS.md item 6; threshold in the workspace clippy.toml (#4639)
 cast_possible_truncation = "warn"
 cast_sign_loss = "warn"
 cast_possible_wrap = "warn"

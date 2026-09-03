@@ -108,6 +108,7 @@ fn prefix_has_like_metachars(prefix: &str) -> bool {
 /// (`b.id = bt.block_id`), NOT on the *tag* block (`tc.tag_id`). The
 /// cache-rebuild contract in `crate::cache::rebuild_tags_cache`
 /// owns the upstream filter set; this query trusts it.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn resolve_tag_prefix_leaves(
     pool: &SqlitePool,
     prefix: &str,

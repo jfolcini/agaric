@@ -1038,6 +1038,7 @@ struct SweepCounts {
 /// writes) to match the "background tasks use split read/write pools"
 /// pattern documented in AGENTS.md. Tests pass the same pool for both
 /// arguments.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn sweep_once_counted(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
@@ -1569,6 +1570,7 @@ fn payload_string_field(payload: &str, field: &str) -> Option<String> {
 /// deterministic chain root among rows that are supposed to be a unique
 /// `create_block`, not resolving a last-writer-wins conflict — so it is
 /// left alone here and is out of scope for this rewrite.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 async fn try_reenqueue_apply_op(
     read_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,

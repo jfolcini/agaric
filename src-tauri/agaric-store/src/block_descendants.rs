@@ -767,6 +767,7 @@ pub async fn restore_deleted_ancestor_chain(
 /// `&mut **tx` from their existing `CommandTx` / `Transaction`). Opens no
 /// transaction of its own — it runs inside the caller's IMMEDIATE tx,
 /// preserving the #110 raw-write-tx convention.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn rederive_page_and_space_ids(
     conn: &mut sqlx::SqliteConnection,
     root: &str,

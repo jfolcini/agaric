@@ -112,6 +112,7 @@ pub struct ChannelEventSink {
 }
 
 impl SyncEventSink for ChannelEventSink {
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn on_sync_event(&self, event: SyncEvent) {
         // Phase 2 — Progress events go to the channel ONLY. The
         // inner sink's `sync:progress` `app.emit` from Phase 1 has no

@@ -241,6 +241,7 @@ pub async fn set_property_inner(
 /// next-occurrence sibling. Either every step commits, or every step
 /// rolls back.
 #[instrument(skip(pool, device_id, materializer), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn set_todo_state_inner(
     pool: &SqlitePool,
     device_id: &str,
@@ -665,6 +666,7 @@ const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
 /// IMMEDIATE tx, so a Pages-browser multi-select over `repeat`-carrying pages
 /// leaves a diagnostic in the daily log instead of nothing.
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 pub async fn set_property_batch_inner(
     pool: &SqlitePool,
     device_id: &str,

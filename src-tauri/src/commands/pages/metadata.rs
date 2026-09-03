@@ -395,6 +395,7 @@ impl SortKeyset {
     /// positional binding stays aligned regardless of how many filter
     /// binds preceded it. With no filters, `base = 1` reproduces the old
     /// `?2 ..` numbering exactly.
+    #[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
     fn apply<'a>(
         self,
         sql: &mut String,
@@ -570,6 +571,7 @@ fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
 ///    AND-joined (exclude) into ONE multi-`?` fragment built from
 ///    per-pattern `PagesProjection::compile_path_glob` sub-selects, so the
 ///    Pages surface now shares Search's `LOWER(title) GLOB ?` dialect.
+#[expect(clippy::too_many_lines, reason = "#4639: split before growing")]
 fn compile_pages_filters(
     filters: &[FilterPrimitive],
 ) -> Result<(String, Vec<SqlBind<'static>>), AppError> {
