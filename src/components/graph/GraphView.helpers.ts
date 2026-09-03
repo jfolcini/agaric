@@ -7,10 +7,13 @@
  * testable without hauling d3 types around.
  */
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { GraphEdge, GraphFetchResult, GraphNode } from '@/lib/graph-types'
 import { t } from '@/lib/i18n'
+import { toSpaceScope } from '@/lib/space-scope'
 import type { PageHeading } from '@/lib/tauri'
-import { listAllPagesInSpace, listPageLinks, listTemplatePageIdsInSpace } from '@/lib/tauri'
+import { listAllPagesInSpace, listTemplatePageIdsInSpace } from '@/lib/tauri'
 
 // Re-export the graph data types from their leaf home (`@/lib/graph-types`,
 // #761) so existing `from '@/components/graph/GraphView.helpers'` import sites keep working.
@@ -101,7 +104,7 @@ export async function fetchGraphData(
   const linksTagIds: string[] | null = tagFilterIds.length > 0 ? [...tagFilterIds] : null
   const [pages, linksResponse, templateIdList] = await Promise.all([
     fetchPages(tagFilterIds, spaceId),
-    listPageLinks({ spaceId, tagIds: linksTagIds }),
+    commands.listPageLinks(toSpaceScope(spaceId), linksTagIds).then(unwrap),
     listTemplatePageIdsInSpace(spaceId),
   ])
 

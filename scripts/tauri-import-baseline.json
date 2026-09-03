@@ -12,7 +12,6 @@
   "src/components/backlinks/UnlinkedReferences.tsx",
   "src/components/common/CommandPalette.tsx",
   "src/components/editor/BlockPropertyDrawer.tsx",
-  "src/components/editor/EditableBlock.tsx",
   "src/components/editor/useImageProperties.ts",
   "src/components/graph/GraphView.helpers.ts",
   "src/components/history/HistoryPanel.tsx",

@@ -25,7 +25,6 @@ import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import { addAttachmentWithBytes } from '@/lib/tauri'
 import { runUnmountFlush } from '@/lib/unmount-flush'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
@@ -192,12 +191,14 @@ async function processFileAttachments(
       : undefined
     try {
       const bytes = await readFileBytes(file)
-      const row = await addAttachmentWithBytes({
-        blockId,
-        filename: info.filename,
-        mimeType: info.mimeType,
-        bytes,
-      })
+      const row = unwrap(
+        await commands.addAttachmentWithBytes(
+          blockId,
+          info.filename,
+          info.mimeType,
+          Array.from(bytes),
+        ),
+      )
       if (progressToastId !== undefined) notify.dismiss(progressToastId)
       // #1434 — an image becomes an INLINE image node referencing the attachment
       // by id, but only while THIS block's editor is the mounted one (so the

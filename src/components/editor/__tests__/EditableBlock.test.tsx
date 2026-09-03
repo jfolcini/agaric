@@ -106,20 +106,16 @@ const mockFlushDraft = vi.fn().mockResolvedValue({ status: 'ok', data: null })
 // #3278 — persistUnmount's checkbox branch calls `commands.setTodoState`.
 const mockSetTodoState = vi.fn().mockResolvedValue({ status: 'ok', data: { todo_state: 'TODO' } })
 const mockAddAttachmentWithBytes = vi.fn().mockResolvedValue({
-  id: 'ATT_1',
-  block_id: 'BLK_1',
-  filename: 'test.png',
-  mime_type: 'image/png',
-  size_bytes: 7,
-  fs_path: 'attachments/ATT_1',
-  created_at: '2024-01-01T00:00:00Z',
-})
-vi.mock('@/lib/tauri', async () => {
-  const actual = await vi.importActual('@/lib/tauri')
-  return {
-    ...actual,
-    addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
-  }
+  status: 'ok',
+  data: {
+    id: 'ATT_1',
+    block_id: 'BLK_1',
+    filename: 'test.png',
+    mime_type: 'image/png',
+    size_bytes: 7,
+    fs_path: 'attachments/ATT_1',
+    created_at: '2024-01-01T00:00:00Z',
+  },
 })
 
 vi.mock('@/lib/bindings', async () => {
@@ -132,6 +128,7 @@ vi.mock('@/lib/bindings', async () => {
       deleteDraft: (...args: unknown[]) => mockDeleteDraft(...args),
       flushDraft: (...args: unknown[]) => mockFlushDraft(...args),
       setTodoState: (...args: unknown[]) => mockSetTodoState(...args),
+      addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
     },
   }
 })
@@ -1942,14 +1939,14 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
-        blockId: 'BLK_1',
-        filename: 'test.png',
-        mimeType: 'image/png',
-        bytes: expect.any(Uint8Array),
-      })
-      const arg = mockAddAttachmentWithBytes.mock.calls[0]?.[0] as { bytes: Uint8Array }
-      expect(Array.from(arg.bytes)).toEqual(CONTENT_BYTES)
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
+        'BLK_1',
+        'test.png',
+        'image/png',
+        expect.any(Array),
+      )
+      const arg = mockAddAttachmentWithBytes.mock.calls[0]?.[3] as number[]
+      expect(arg).toEqual(CONTENT_BYTES)
     })
 
     it('shows success toast after file drop', async () => {
@@ -2019,12 +2016,12 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
-        blockId: 'BLK_1',
-        filename: 'test.png',
-        mimeType: 'image/png',
-        bytes: expect.any(Uint8Array),
-      })
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
+        'BLK_1',
+        'test.png',
+        'image/png',
+        expect.any(Array),
+      )
       expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining('attach file'))
     })
 
@@ -2047,12 +2044,12 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
-        blockId: 'BLK_1',
-        filename: 'screenshot.png',
-        mimeType: 'image/png',
-        bytes: expect.any(Uint8Array),
-      })
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
+        'BLK_1',
+        'screenshot.png',
+        'image/png',
+        expect.any(Array),
+      )
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('screenshot.png'))
     })
 
@@ -2123,24 +2120,24 @@ describe('EditableBlock', () => {
       })
 
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(3)
-      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
-        blockId: 'BLK_1',
-        filename: 'photo.jpg',
-        mimeType: 'image/jpeg',
-        bytes: expect.any(Uint8Array),
-      })
-      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
-        blockId: 'BLK_1',
-        filename: 'notes.pdf',
-        mimeType: 'application/pdf',
-        bytes: expect.any(Uint8Array),
-      })
-      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
-        blockId: 'BLK_1',
-        filename: 'data.csv',
-        mimeType: 'text/csv',
-        bytes: expect.any(Uint8Array),
-      })
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
+        'BLK_1',
+        'photo.jpg',
+        'image/jpeg',
+        expect.any(Array),
+      )
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
+        'BLK_1',
+        'notes.pdf',
+        'application/pdf',
+        expect.any(Array),
+      )
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
+        'BLK_1',
+        'data.csv',
+        'text/csv',
+        expect.any(Array),
+      )
       expect(mockToastSuccess).toHaveBeenCalledTimes(3)
     })
 
@@ -2165,12 +2162,12 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
-        blockId: 'BLK_1',
-        filename: specialName,
-        mimeType: 'application/pdf',
-        bytes: expect.any(Uint8Array),
-      })
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
+        'BLK_1',
+        specialName,
+        'application/pdf',
+        expect.any(Array),
+      )
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining(specialName))
       expect(mockToastError).not.toHaveBeenCalled()
     })
