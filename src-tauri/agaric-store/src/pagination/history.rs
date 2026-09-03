@@ -45,7 +45,13 @@ use agaric_core::ulid::BlockId;
 /// rename for the very block that owned the attachment. The disjunct below
 /// is the one `list_page_history` and `undo_page_op_inner` share, scoped to
 /// this one block instead of a page subtree; see `list_page_history`'s doc
-/// block for why both probes exist and which rows they deliberately omit.
+/// block for why both probes exist. It does NOT follow that block's omission
+/// rule: the gate that hides an orphaned rename there is dropped here,
+/// because this query knows the block it is asking about and the paired-add
+/// probe answers "is this MY attachment" with certainty, where a page
+/// subtree cannot (#4278). An `add → rename → delete` rename is listed on
+/// the owning block's sheet and omitted from the page's; that divergence is
+/// recorded on the page side too.
 ///
 /// It is NOT byte-identical to the sibling's, and deliberately. The page
 /// version correlates each candidate row against `json_extract(payload, …)`,
@@ -184,6 +190,15 @@ pub async fn list_block_history(
 ///     stops a future consumer from re-introducing a positional mapping
 ///     (which is what #4247/#4277/#4328 each were). If you break it,
 ///     break it deliberately and say so here.
+///
+/// Broken deliberately once, by #4336, and only in `list_block_history`:
+/// that query drops the inner `op_type = 'delete_attachment'` gate, so an
+/// `add → rename → delete` sequence leaves the rename listed on the owning
+/// block's sheet while this one still omits it. The block sheet knows which
+/// block it is asking about, so the paired-add probe answers "is this MY
+/// attachment" with certainty; a page subtree does not, which is what
+/// #4278 narrowed the probe for. Same op, two sheets, two answers, and the
+/// asymmetry is the point.
 ///
 /// Known caveat, tracked as option 1 in #4247/#4278: if `compact_op_log`
 /// has reclaimed the paired `add_attachment`, the owning page is NOT
