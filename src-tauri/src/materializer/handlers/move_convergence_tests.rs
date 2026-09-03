@@ -611,7 +611,7 @@ async fn move_cycle_rejected_consistently_across_arms() {
 // These pin the unified `apply_op_tx` Move-arm maintenance
 // (`maintain_pages_cache_counts_after_op`'s `PreOpState::Move`):
 //   * (fix b) `space_id` is re-derived for the moved subtree via the SHARED
-//     `block_cleanup::rederive_page_and_space_ids` helper — the old
+//     `agaric_store::block_descendants::rederive_page_and_space_ids` helper — the old
 //     page_id-only reparent did NO `space_id` maintenance, so a cross-space
 //     move left `space_id` stale until the background rebuild ran;
 //   * (fix a) the moved subtree's outbound-link TARGET pages are added to the

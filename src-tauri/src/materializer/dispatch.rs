@@ -1856,7 +1856,7 @@ pub(crate) fn invalidations_for_op(
             // already re-derives `page_id` AND `space_id` for the moved root
             // and its entire subtree — soft-deleted descendants included since
             // #3919 — SYNCHRONOUSLY, in-transaction,
-            // via `commands::block_cleanup::rederive_page_and_space_ids`
+            // via `agaric_store::block_descendants::rederive_page_and_space_ids`
             // (called from `commands/blocks/move_ops.rs`, `history.rs`, and
             // the undo path). No block outside the moved subtree can change
             // `page_id` as a result of a move, so the vault-wide rebuild was
