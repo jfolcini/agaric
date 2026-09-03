@@ -2570,7 +2570,7 @@ pass_filenames = false
 # The guard's OWN source is in the trigger set, like `metric-provable`:
 # editing the scanner without touching a migration must still re-run it
 # against the real tree, or a widening that reddens the repo lands green.
-files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|snapshot|spaces)/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
+files = "^(src-tauri/migrations/.*\\.sql|src-tauri/src/(db|spaces)/tests\\.rs|src-tauri/agaric-sync/src/snapshot/tests\\.rs|src-tauri/migrations-test-coverage-baseline\\.txt|scripts/check-migration-test-coverage\\.mjs)$"
 stages = ["manual"]
 
 # zizmor-version-pin: the zizmor version zizmor-hook.sh's

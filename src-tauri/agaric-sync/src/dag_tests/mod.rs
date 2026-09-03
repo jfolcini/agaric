@@ -1,37 +1,13 @@
-//! DAG traversal primitives for the op log.
+//! CTE oracles for the engine's op-log DAG primitives, and the tests that
+//! pair them against the production path (`tests.rs`, `proptest_b2.rs`).
 //!
-//! ## #2621 inversion — core lives in `agaric-engine`
-//!
-//! The edit-chain / merge primitives over the op_log now live in
-//! [`agaric_engine::dag`]: hash-verified remote-op ingest
-//! ([`agaric_engine::dag::insert_remote_op`] + the audit-only [`agaric_engine::dag::ingest_replicated_record`]
-//! entry), multi-parent merge-op creation ([`agaric_engine::dag::append_merge_op`]), the
-//! recursive-CTE edit-chain walker ([`agaric_engine::dag::walk_edit_chain`] / [`agaric_engine::dag::WalkOutcome`] /
-//! [`agaric_engine::dag::MAX_LCA_STEPS`]), Lowest-Common-Ancestor ([`agaric_engine::dag::find_lca`]), [`agaric_engine::dag::text_at`],
-//! [`agaric_engine::dag::get_block_edit_heads`], [`agaric_engine::dag::has_merge_for_heads`], and the read-side
-//! [`agaric_engine::dag::parse_parent_seqs_canonical`]. They build only on `agaric-store`
-//! (`op` / `op_log` / `db`) and `agaric-core` (`hash` / `error`).
-//!
-//! This module keeps the two app-coupled pieces the engine cannot own:
-//!
-//! * [`crate::sync_protocol::insert_replicated_op`] — the wire-typed shim that decodes a
-//!   [`crate::sync_protocol::types::OpTransfer`] (extracting the
-//!   transfer-carried `origin`, which `OpRecord` does not surface) and calls
-//!   the engine's [`agaric_engine::dag::ingest_replicated_record`] core. `sync_protocol` is an
-//!   app-level module, so this thin adapter stays here while the verification
-//!   core descends.
-//! * The `#[cfg(test)]` CTE-oracle reference implementations
-//!   (`extract_prev_edit`, `fetch_prev_edit_oracle`,
-//!   `walk_edit_chain_oracle`, `find_lca_oracle` — `#[cfg(test)]`, so they
-//!   are absent from the doc graph and cannot be linked) and the test modules
-//!   (`dag/tests.rs`, `dag/proptest_b2.rs`). A `#[cfg(test)]` item in the
-//!   engine crate is not visible to this crate's test build, so the oracles
-//!   and the tests that pair them against the production CTE path live here,
-//!   calling into the engine's `pub` surface.
+//! The reference implementations (`extract_prev_edit`,
+//! `fetch_prev_edit_oracle`, `walk_edit_chain_oracle`, `find_lca_oracle`)
+//! walk one `get_op_by_seq` per step; the tests run them alongside
+//! [`agaric_engine::dag::walk_edit_chain`] / [`agaric_engine::dag::find_lca`]
+//! on the same fixture and assert identical outputs. They sit in this crate,
+//! not the engine, because the tests also need `insert_replicated_op` (#3120).
 
-// Engine DAG symbols pulled in only for the `#[cfg(test)]` CTE oracles and the
-// test modules below; production call sites reference `agaric_engine::dag::…`
-// directly (#2897).
 use agaric_engine::dag::{
     MAX_LCA_STEPS, WalkOutcome, append_merge_op, find_lca, get_block_edit_heads,
     has_merge_for_heads, insert_remote_op, parse_parent_seqs_canonical, text_at, walk_edit_chain,
@@ -41,43 +17,9 @@ use std::collections::HashSet;
 
 use sqlx::SqlitePool;
 
-// #2621 Sync-D: `insert_replicated_op` (the only non-test consumer of `AppError`
-// here) moved to `agaric-sync`; the remaining users are the `#[cfg(test)]` CTE
-// oracles below, so the import is test-gated to avoid an unused-import warning.
 use agaric_core::error::AppError;
 
-/// #2481 phase 1 — ingest a replicated op record as append-only, hash-verified
-/// **audit metadata**.
-///
-/// This is the app-level wire adapter for audit-only op-log replication
-/// (`SyncMessage::OpLogBatch`). It decodes the [`crate::sync_protocol::types::OpTransfer`]
-/// — threading the transfer-carried `origin` through explicitly, since
-/// `OpRecord::from` drops it — then delegates to the engine core
-/// [`agaric_engine::dag::ingest_replicated_record`], which reuses [`agaric_engine::dag::insert_remote_op`]'s exact
-/// verification recipe (blake3 hash check, NUL-rejection gate, `SetProperty`
-/// domain validation, idempotent `INSERT OR IGNORE` on `(device_id, seq)`,
-/// divergence probe) under the audit parent-gap policy: an unresolved
-/// `parent_seqs` pointer lands with a `warn!` breadcrumb instead of being
-/// rejected, the row is stamped `is_replicated = 1`, and `origin` is preserved
-/// verbatim.
-///
-/// The stored record is **never applied to state**: state flows exclusively
-/// through Loro CRDT sync. The `is_replicated = 1` stamp keeps the row out of
-/// boot replay (`recovery::replay`), the materializer apply pipeline, and the
-/// apply-cursor bookkeeping — see migration 0099.
-// #2621 Sync-D: `insert_replicated_op` moved DOWN into `agaric-sync`
-// (`sync_protocol::operations`) — it decodes an `OpTransfer` (now an
-// `agaric-sync` type) and calls the engine core `ingest_replicated_record`, so
-// it sits naturally at the sync layer. Re-exported here so every
-// `crate::sync_protocol::insert_replicated_op` call site (incl. `dag/tests.rs`) resolves
-// unchanged.
 use crate::sync_protocol::insert_replicated_op;
-
-// ---------------------------------------------------------------------------
-// `#[cfg(test)]` CTE oracles — reference implementations paired against the
-// engine's production CTE path in `dag/tests.rs`. Kept app-side because a
-// `#[cfg(test)]` item in `agaric-engine` is invisible to this crate's tests.
-// ---------------------------------------------------------------------------
 
 /// Oracle: extract the `prev_edit` pointer from an op record's payload.
 ///

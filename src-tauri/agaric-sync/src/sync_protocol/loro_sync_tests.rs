@@ -1,4 +1,3 @@
-#![allow(unused_imports)]
 use super::loro_sync::*;
 use super::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 use agaric_core::error::AppError;
@@ -6,7 +5,6 @@ use agaric_engine::loro::engine::LoroEngine;
 use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_store::space::SpaceId;
 use agaric_store::test_support::init_pool;
-use loro::VersionVector;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
