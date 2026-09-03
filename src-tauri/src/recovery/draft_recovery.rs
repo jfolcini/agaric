@@ -14,10 +14,15 @@ use agaric_store::op_log::append_local_op_in_tx;
 /// (synthetic op created), `Ok(false)` if it was already flushed.
 ///
 /// A draft whose content exceeds [`crate::commands::MAX_CONTENT_LENGTH`]
-/// returns `Err` (#3262): `recover_at_boot` deletes the `block_drafts` row on
-/// either `Ok`, and that text — for a block that still exists — is only stored
-/// there, so `Err` is the one return that keeps it. Boot logs the failure and
-/// carries on with the other drafts.
+/// returns `Err` (#3262). This LOSES that text, and deliberately: until now
+/// recovery was the one path that persisted an over-cap paste — it appended
+/// the op and wrote `blocks.content` — so such a draft used to survive a boot
+/// and no longer does. Nothing reads a `block_drafts` row back, so the row
+/// this keeps is the #2540 invariant, not the user's data. Keeping content
+/// the flush paths reject out of the append-only log and off the wire is
+/// worth that. `Err` rather than `Ok(false)` because `recover_at_boot` deletes
+/// the row on either `Ok`; boot logs the failure and carries on with the
+/// other drafts.
 ///
 /// When recovering, both the op_log append and the `blocks.content` update
 /// are wrapped in a single IMMEDIATE transaction — mirroring the production

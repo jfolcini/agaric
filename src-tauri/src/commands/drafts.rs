@@ -207,9 +207,8 @@ pub struct FlushAllDraftsResult {
 /// Mirrors [`flush_draft_inner`] modulo the surrounding tx:
 ///
 /// - **H-12b: oversized content** — logged at `warn` and skipped, with
-///   the draft row left in place. Unlike H-12a the target block still
-///   exists, so the row is the only stored copy of that text; no other
-///   draft is affected.
+///   the draft row left in place for the reason given at that arm in the
+///   body. No other draft is affected.
 /// - **H-12a: target block missing or soft-deleted** — the orphan draft
 ///   row is deleted in the same tx with a `warn` log, and the loop
 ///   continues to the next draft. No op_log row is appended for the
