@@ -13,7 +13,7 @@ pub struct QueueMetrics {
     /// #385: rate-limited cache of `SELECT COUNT(*) FROM op_log`, surfaced
     /// as `StatusInfo::total_ops_in_log`.
     ///
-    /// `status_with_scheduler` is polled every ~5s while the Status view is
+    /// `status_with_sync` is polled every ~5s while the Status view is
     /// open; the underlying COUNT is an O(rows) index scan that grows with
     /// the (append-only, compaction-trimmed) op log. Rather than thread a
     /// live counter through every op_log INSERT/DELETE site across the
@@ -348,6 +348,21 @@ impl Default for QueueMetrics {
     }
 }
 
+/// What the sync layer contributes to [`StatusInfo`]. The app's `get_status`
+/// command builds it from `agaric_sync` and passes it to
+/// `Materializer::status_with_sync`, so the materializer never reads the sync
+/// crate (#4502). `Default` is the no-sync case: tests, and no scheduler.
+#[derive(Debug, Clone, Default)]
+pub struct SyncStatus {
+    pub peer_failure_counts: Vec<(String, u32)>,
+    pub snapshot_fallback_count: u64,
+    pub snapshot_fallback_last: Option<agaric_core::sync_status::SnapshotFallbackLast>,
+    pub audit_ingest_deferred: u64,
+    pub audit_ingest_stalls: u64,
+    pub audit_ingest_out_of_order: u64,
+    pub audit_ingest_last_stall: Option<agaric_core::sync_status::AuditIngestStall>,
+}
+
 /// Snapshot of materializer + sync observability fields exposed to the
 /// frontend via `get_status`. Fields are added additively so existing
 /// specta-derived TS bindings keep compiling.
@@ -528,8 +543,7 @@ pub struct StatusInfo {
     /// recurring fallback pattern without scraping per-session log lines.
     /// Sourced from
     /// `sync_protocol::snapshot_fallback_metrics::last`.
-    pub snapshot_fallback_last:
-        Option<agaric_sync::sync_protocol::snapshot_fallback_metrics::SnapshotFallbackLast>,
+    pub snapshot_fallback_last: Option<agaric_core::sync_status::SnapshotFallbackLast>,
     /// #3727: process-global count of replicated audit op records left for the
     /// peer to re-ship because a transient DB failure hit their device's chain
     /// (`BatchIngestOutcome::deferred`, summed over every pull session).
@@ -561,6 +575,5 @@ pub struct StatusInfo {
     /// happened in this process. `consecutive` is the field that separates a
     /// passing busy writer from a device whose audit history is frozen.
     /// Sourced from `sync_protocol::audit_ingest_metrics::last`.
-    pub audit_ingest_last_stall:
-        Option<agaric_sync::sync_protocol::audit_ingest_metrics::AuditIngestStall>,
+    pub audit_ingest_last_stall: Option<agaric_core::sync_status::AuditIngestStall>,
 }

@@ -106,7 +106,7 @@ pub use handlers::cleanup_orphaned_attachments;
 // integration binary; its sibling has no caller that moves.
 pub(crate) use handlers::descendant_fanout_dropped_count;
 pub use handlers::sql_only_fallback_count;
-pub use metrics::{QueueMetrics, StatusInfo};
+pub use metrics::{QueueMetrics, StatusInfo, SyncStatus};
 use serde::Deserialize;
 use std::sync::Arc;
 

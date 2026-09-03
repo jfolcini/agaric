@@ -120,29 +120,10 @@ struct StallRun {
     stall: AuditIngestStall,
 }
 
-/// Snapshot of the most recent audit-ingest stall. Surfaced (cloned) through
-/// `StatusInfo::audit_ingest_last_stall`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
-pub struct AuditIngestStall {
-    /// Monotonic ordinal of this stall within the process — equal to
-    /// [`stalls`] at the moment it was recorded. Lets an operator tell apart
-    /// "a new stall happened" from "the same stale record is being re-read".
-    pub occurrence: u64,
-    /// Remote device / peer that shipped the batch.
-    pub remote_device_id: String,
-    /// The op-log device whose chain stalled (usually *not* the peer that
-    /// shipped it — frontiers propagate transitively).
-    pub op_device_id: String,
-    /// The `seq` that faulted. Everything above it in that device's chain was
-    /// deferred.
-    pub op_seq: i64,
-    /// How many consecutive batches this device has now stalled without making
-    /// progress. `1` is an ordinary busy writer; a value at or above
-    /// [`PERSISTENT_STALL_BATCHES`] is the #3727 permanent-stall condition.
-    pub consecutive: u32,
-    /// The classified-as-transient error, rendered.
-    pub error: String,
-}
+/// The record `StatusInfo::audit_ingest_last_stall` carries. Defined in
+/// `agaric-core` (#4502) so the materializer's status type does not depend on
+/// this crate.
+pub use agaric_core::sync_status::AuditIngestStall;
 
 /// Record that a device's chain stalled on a transient ingest failure, and
 /// return how many consecutive batches it has now stalled for.

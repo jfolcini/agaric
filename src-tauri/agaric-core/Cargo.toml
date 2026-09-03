@@ -53,6 +53,10 @@ ulid = "3.0.0"
 # `time::now_rfc3339` — RFC-3339 wall-clock timestamp formatting. Version +
 # features pinned to match ../Cargo.toml for feature unification.
 chrono = { version = "0.4.44", features = ["serde"] }
+# `foreground::LifecycleHooks` — the foreground/background wake pair the sync
+# daemon and the materializer gate periodic work on; here since #4502 so the
+# materializer does not depend on the sync crate. `sync` only.
+tokio = { version = "1", features = ["sync"] }
 
 [dev-dependencies]
 # Needed by the moved unit tests: `error.rs` uses `#[tokio::test]`,
