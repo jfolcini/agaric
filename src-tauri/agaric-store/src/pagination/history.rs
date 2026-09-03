@@ -92,7 +92,7 @@ pub async fn list_block_history(
                  ol.op_type IN ('delete_attachment', 'rename_attachment') \
                  AND ol.attachment_id IN ( \
                      SELECT a.id FROM attachments a WHERE a.block_id = ?1 \
-                     UNION \
+                     UNION ALL \
                      SELECT src_add.attachment_id FROM op_log src_add \
                      WHERE src_add.op_type = 'add_attachment' \
                      AND src_add.block_id = ?1 \
