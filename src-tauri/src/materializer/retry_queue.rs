@@ -3604,7 +3604,7 @@ mod tests {
 
         // A due row with attempts = 1: the old buggy lease would set
         // `next_attempt_at = now + backoff(1) = +1 min`, while the shed
-        // path's record_failure escalates to attempts = 2 → +5 min. The gap
+        // path's record_failure escalates to attempts = 2 → +2 min on the shed ladder. The gap
         // makes a rewind observable.
         let now = crate::db::now_ms();
         let past = now - 5 * 60_000;
