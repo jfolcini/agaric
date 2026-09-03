@@ -15,10 +15,10 @@
 /// `agaric-core` (`error::AppError`).
 pub mod device;
 
-/// Foreground/background gating primitive (`LifecycleHooks`) shared across the
-/// sync / materializer / app layers. Query-free; depends only on `tokio`'s
-/// `Notify`.
-pub mod foreground;
+/// Foreground/background gating primitive (`LifecycleHooks`). In `agaric-core`
+/// since #4502 so the materializer can gate on it without depending on this
+/// crate; re-exported so `crate::foreground::…` paths resolve unchanged.
+pub use agaric_core::foreground;
 
 /// Wire-protocol tunables (frame sizes, batch payload caps, handshake / connect
 /// timeouts) shared across the sync stack. Pure constants; no dependencies.

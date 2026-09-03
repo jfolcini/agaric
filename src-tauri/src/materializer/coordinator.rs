@@ -1,13 +1,13 @@
 //! Materializer struct, constructors, and public API.
 
 use super::consumer;
-use super::metrics::{QueueMetrics, StatusInfo};
+use super::metrics::{QueueMetrics, StatusInfo, SyncStatus};
 use super::{
     BACKGROUND_CAPACITY, FOREGROUND_CAPACITY, MaterializeTask, QUEUE_PRESSURE_DENOMINATOR,
     QUEUE_PRESSURE_NUMERATOR,
 };
 use agaric_core::error::AppError;
-use agaric_sync::foreground::LifecycleHooks;
+use agaric_core::foreground::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1267,19 +1267,13 @@ impl Materializer {
     }
 
     pub async fn status(&self) -> StatusInfo {
-        self.status_with_scheduler::<agaric_sync::sync_scheduler::SyncScheduler>(None)
-            .await
+        self.status_with_sync(SyncStatus::default()).await
     }
 
-    /// Collect status with optional sync-scheduler failure counts.
-    ///
-    /// Decoupling the scheduler from the materializer keeps the command
-    /// handler in charge of wiring them together; legacy callers that
-    /// don't care about sync peer health still receive an empty vector.
-    pub async fn status_with_scheduler<S: SchedulerLike>(
-        &self,
-        scheduler: Option<&S>,
-    ) -> StatusInfo {
+    /// Collect status, with the sync layer's contribution passed in: the
+    /// app's `get_status` command builds the [`SyncStatus`] from
+    /// `agaric_sync`, so this module never reads that crate (#4502).
+    pub async fn status_with_sync(&self, sync: SyncStatus) -> StatusInfo {
         let fg_depth = self
             .fg_sender()
             .map_or(0, |tx| FOREGROUND_CAPACITY - tx.capacity());
@@ -1335,10 +1329,6 @@ impl Materializer {
                 })
                 .ok();
 
-        let sync_peer_failure_counts = scheduler
-            .map(SchedulerLike::failure_counts_snapshot)
-            .unwrap_or_default();
-
         StatusInfo {
             foreground_queue_depth: fg_depth,
             background_queue_depth: bg_depth,
@@ -1369,7 +1359,7 @@ impl Materializer {
             last_materialize_at,
             time_since_last_materialize_secs,
             total_ops_in_log,
-            sync_peer_failure_counts,
+            sync_peer_failure_counts: sync.peer_failure_counts,
             retry_queue_pending,
             // #2509: surface the persistent-enqueue-by-class + backoff-tier
             // counters so "is the durable retry tier earning its keep?" is
@@ -1387,21 +1377,14 @@ impl Materializer {
             // #2031: surface the descendant fan-out divergence counter
             // (process-global, monotonic) through the status endpoint.
             descendant_fanout_dropped: super::handlers::descendant_fanout_dropped::count(),
-            // #1319: surface the cross-session sync snapshot-fallback
-            // aggregate (process-global, monotonic count + last occurrence)
-            // through the status endpoint.
-            snapshot_fallback_count: agaric_sync::sync_protocol::snapshot_fallback_metrics::count(),
-            snapshot_fallback_last: agaric_sync::sync_protocol::snapshot_fallback_metrics::last(),
-            // #3726 / #3727: surface the audit op-log ingest aggregates
-            // (process-global, monotonic) through the status endpoint, so a
-            // device whose replicated history has silently stopped advancing is
-            // answerable here rather than only from per-record `warn!` lines.
-            audit_ingest_deferred:
-                agaric_sync::sync_protocol::audit_ingest_metrics::deferred_records(),
-            audit_ingest_stalls: agaric_sync::sync_protocol::audit_ingest_metrics::stalls(),
-            audit_ingest_out_of_order:
-                agaric_sync::sync_protocol::audit_ingest_metrics::out_of_order_records(),
-            audit_ingest_last_stall: agaric_sync::sync_protocol::audit_ingest_metrics::last(),
+            // #1319, #3726, #3727: the sync-side aggregates, read by the app's
+            // `get_status` command and passed in.
+            snapshot_fallback_count: sync.snapshot_fallback_count,
+            snapshot_fallback_last: sync.snapshot_fallback_last,
+            audit_ingest_deferred: sync.audit_ingest_deferred,
+            audit_ingest_stalls: sync.audit_ingest_stalls,
+            audit_ingest_out_of_order: sync.audit_ingest_out_of_order,
+            audit_ingest_last_stall: sync.audit_ingest_last_stall,
         }
     }
 }
@@ -1446,34 +1429,11 @@ pub(super) const POST_SNAPSHOT_CACHE_REBUILDS: &[(&str, MaterializeTask)] = &[
     ("page_link_cache", MaterializeTask::RebuildPageLinkCache),
 ];
 
-#[async_trait::async_trait]
-impl agaric_sync::apply_host::ApplyHost for Materializer {
-    fn loro_state(&self) -> Arc<agaric_engine::loro::shared::LoroState> {
-        std::sync::Arc::clone(self.loro_state())
-    }
-
-    async fn enqueue_inbound_sync_rebuilds(
-        &self,
-        changed_blocks: &[agaric_core::ulid::BlockId],
-        purged_blocks: &[agaric_core::ulid::BlockId],
-    ) -> Result<(), AppError> {
-        Materializer::enqueue_inbound_sync_rebuilds(self, changed_blocks, purged_blocks).await
-    }
-
-    /// #3328: the attachment root, served from the value `lib.rs` registers
-    /// via [`Materializer::set_app_data_dir`] — the same `OnceLock` the
-    /// `CleanupOrphanedAttachments` task reads. Sync-received attachments and
-    /// the GC that reconciles them now resolve their directory from one
-    /// place instead of two.
-    ///
-    /// `None` before `set_app_data_dir` runs (and in tests that never call
-    /// it); the sync call sites fall back to deriving the root from the pool
-    /// in that case, which is the pre-#3328 behaviour.
-    fn app_data_dir(&self) -> Option<PathBuf> {
-        Materializer::app_data_dir(self)
-    }
-
-    async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError> {
+impl Materializer {
+    /// The cache-rebuild set a snapshot restore owes, enqueued by the sync
+    /// daemon through `ApplyHost::enqueue_post_snapshot_rebuilds` after the
+    /// restore commits (the app's `sync_host` module implements the trait).
+    pub async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError> {
         // #2621: this is the enqueue block moved out of `snapshot::restore`
         // (RESET path). It enqueues the full cache-rebuild set after a
         // snapshot apply commits. Behaviour-preserving: same tasks, same
@@ -1534,33 +1494,5 @@ impl agaric_sync::apply_host::ApplyHost for Materializer {
             );
         }
         Ok(())
-    }
-
-    async fn flush(&self) -> Result<(), AppError> {
-        Materializer::flush(self).await
-    }
-}
-
-/// #2621 (agaric-sync inversion): lets the sync layer's constructors accept a
-/// `Materializer` (tests) or an already-erased `Arc<dyn ApplyHost>`
-/// (production) uniformly via `impl Into<Arc<dyn ApplyHost>>`, wrapping the
-/// concrete coordinator exactly once with no double indirection.
-impl From<Materializer> for Arc<dyn agaric_sync::apply_host::ApplyHost> {
-    fn from(materializer: Materializer) -> Self {
-        Arc::new(materializer)
-    }
-}
-
-/// Abstraction over `sync_scheduler::SyncScheduler` so
-/// [`Materializer::status_with_scheduler`] can be called from tests without
-/// pulling in the real scheduler or from command handlers that have a
-/// `State<Arc<SyncScheduler>>` on hand.
-pub trait SchedulerLike {
-    fn failure_counts_snapshot(&self) -> Vec<(String, u32)>;
-}
-
-impl SchedulerLike for agaric_sync::sync_scheduler::SyncScheduler {
-    fn failure_counts_snapshot(&self) -> Vec<(String, u32)> {
-        self.failure_counts()
     }
 }

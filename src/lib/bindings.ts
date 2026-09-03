@@ -1649,7 +1649,7 @@ export type AttachmentRow = {
 export type AuditIngestStall = {
 	/**
 	 *  Monotonic ordinal of this stall within the process — equal to
-	 *  [`stalls`] at the moment it was recorded. Lets an operator tell apart
+	 *  `stalls` at the moment it was recorded. Lets an operator tell apart
 	 *  "a new stall happened" from "the same stale record is being re-read".
 	 */
 	occurrence: number,
@@ -1668,7 +1668,7 @@ export type AuditIngestStall = {
 	/**
 	 *  How many consecutive batches this device has now stalled without making
 	 *  progress. `1` is an ordinary busy writer; a value at or above
-	 *  [`PERSISTENT_STALL_BATCHES`] is the #3727 permanent-stall condition.
+	 *  `PERSISTENT_STALL_BATCHES` is the #3727 permanent-stall condition.
 	 */
 	consecutive: number,
 	/**  The classified-as-transient error, rendered. */
@@ -3835,7 +3835,7 @@ export type SetPropertyArgs = {
 export type SnapshotFallbackLast = {
 	/**
 	 *  Monotonic ordinal of this occurrence within the process — equal to
-	 *  [`count`] at the moment it was recorded. Lets an operator tell apart
+	 *  `count` at the moment it was recorded. Lets an operator tell apart
 	 *  "the count moved" from "the same stale `reason` is being re-read".
 	 */
 	occurrence: number,

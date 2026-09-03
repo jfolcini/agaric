@@ -115,7 +115,13 @@ pub async fn get_status_inner(
     materializer: &Materializer,
     scheduler: Option<&SyncScheduler>,
 ) -> StatusInfo {
-    materializer.status_with_scheduler(scheduler).await
+    materializer
+        .status_with_sync(
+            scheduler
+                .map(crate::sync_host::sync_status)
+                .unwrap_or_default(),
+        )
+        .await
 }
 
 // ---------------------------------------------------------------------------

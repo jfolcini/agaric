@@ -67,15 +67,16 @@ const TRANSFER_TEMP_HEX_LEN: usize = 32;
 /// sync.) So we age-gate instead.
 ///
 /// The bound comes from the protocol, not from taste. Every receive on the
-/// file-transfer path is wrapped in `transport::RECV_TIMEOUT`, so an in-flight
+/// file-transfer path is wrapped in `transport::RECV_TIMEOUT` (180 s), so an in-flight
 /// temp cannot go longer than that without a frame arriving (which retouches
 /// its mtime) or the transfer erroring out and `Drop` unlinking it. A live
 /// temp's mtime is therefore always younger than `RECV_TIMEOUT`. Twenty times
 /// that is the margin for a slow or coarse-granularity filesystem clock, and
 /// costs only that a crash-stranded temp is reclaimed by a later pass rather
-/// than the very next one.
-const TRANSFER_TEMP_REAP_AFTER: std::time::Duration =
-    std::time::Duration::from_secs(agaric_sync::transport::RECV_TIMEOUT.as_secs() * 20);
+/// than the very next one. The sync crate owns the timeout and this module no
+/// longer reads it (#4502); `reap_window_is_twenty_receive_timeouts` pins the
+/// two together.
+const TRANSFER_TEMP_REAP_AFTER: std::time::Duration = std::time::Duration::from_secs(180 * 20);
 
 /// Does this file name have the in-flight-transfer temp shape?
 ///
@@ -794,4 +795,15 @@ pub async fn cleanup_orphaned_attachments(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod reap_window_tests {
+    #[test]
+    fn reap_window_is_twenty_receive_timeouts() {
+        assert_eq!(
+            super::TRANSFER_TEMP_REAP_AFTER,
+            agaric_sync::transport::RECV_TIMEOUT * 20
+        );
+    }
 }

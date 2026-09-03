@@ -43,6 +43,9 @@ pub mod sync_event_sinks;
 // app-coupled tests. (`sync_net` was the third; it went with the old TCP+TLS
 // transport in the iroh cutover, #3464.)
 pub mod sync_files;
+// #4502: the `ApplyHost` impl and the sync half of `StatusInfo`, kept out of
+// `materializer/` so that module does not depend on `agaric_sync`.
+pub mod sync_host;
 pub mod sync_protocol;
 pub mod ulid;
 

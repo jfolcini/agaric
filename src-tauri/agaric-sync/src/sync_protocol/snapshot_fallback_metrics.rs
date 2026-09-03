@@ -34,22 +34,10 @@ static SNAPSHOT_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 /// — one per fallback decision); reads happen only on the cold status path.
 static SNAPSHOT_FALLBACK_LAST: Mutex<Option<SnapshotFallbackLast>> = Mutex::new(None);
 
-/// Snapshot of the most recent sync snapshot-fallback occurrence. Surfaced
-/// (cloned) through `StatusInfo::snapshot_fallback_last`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
-pub struct SnapshotFallbackLast {
-    /// Monotonic ordinal of this occurrence within the process — equal to
-    /// [`count`] at the moment it was recorded. Lets an operator tell apart
-    /// "the count moved" from "the same stale `reason` is being re-read".
-    pub occurrence: u64,
-    /// Remote device / peer id whose `from_vv` could not be reached.
-    pub peer_id: String,
-    /// Per-space scope of the rejected update.
-    pub space_id: String,
-    /// Human-readable diagnostic from `classify_from_vv_reachability`
-    /// (carries the offending `peer={peer_id} counter>=…` detail).
-    pub reason: String,
-}
+/// The record `StatusInfo::snapshot_fallback_last` carries. Defined in
+/// `agaric-core` (#4502) so the materializer's status type does not depend on
+/// this crate.
+pub use agaric_core::sync_status::SnapshotFallbackLast;
 
 /// Record that a sync update fell back to snapshot catch-up because the
 /// peer's `from_vv` was unreachable. Increments the process-global counter,
