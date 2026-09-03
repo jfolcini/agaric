@@ -84,7 +84,7 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 /// capacity, not on a fix.
 pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task never executed)";
 
-/// Rows one `sweep_once` fetches, and the loop bound in
+/// Rows one pass fetches, and the loop bound in
 /// [`sweep_until_no_progress`].
 const SWEEP_BATCH_LIMIT: u32 = 64;
 
@@ -1899,7 +1899,7 @@ async fn sweep_until_no_progress(
 /// Spawn a long-lived task that drains the retry queue every 60 seconds
 /// ([`sweep_until_no_progress`]) and exits when `shutdown_flag` is set.
 ///
-/// I-Materializer-1: takes both pools so `sweep_once` can route SELECTs
+/// I-Materializer-1: takes both pools so `sweep_until_no_progress` can route SELECTs
 /// to the reader pool and DELETEs to the writer pool, mirroring the
 /// `cache::*_split` helpers used elsewhere in the materializer.
 ///
