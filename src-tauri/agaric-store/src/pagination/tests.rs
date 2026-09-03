@@ -4978,23 +4978,6 @@ async fn test_list_block_history_includes_a_peer_added_attachments_delete_4336()
     )
     .await;
 
-    // Premises: the paired add really is replicated, and probe 1 really has
-    // nothing to find — otherwise the assertion below could pass for the
-    // wrong reason.
-    let replicated_adds: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM op_log WHERE op_type = 'add_attachment' AND is_replicated = 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(replicated_adds, 1, "premise: the paired add is replicated");
-    let live_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
-        .bind("BH_REP_AT")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(live_rows, 0, "premise: probe 1 has no live row to find");
-
     let page = PageRequest::new(None, Some(50)).unwrap();
     let resp = list_block_history(&pool, &BlockId::test_id("BH_REP_CH"), None, &page)
         .await

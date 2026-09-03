@@ -48,14 +48,10 @@ use agaric_core::ulid::BlockId;
 /// block for why both probes exist and for the divergence this scoping
 /// creates.
 ///
-/// Two of their filters come off here, for one reason: this query names the
-/// block it is asking about, so probe 2's `src_add.block_id = ?1` settles
-/// "is this MY attachment" outright, where a page subtree cannot (#4278).
-/// So the inner `op_type = 'delete_attachment'` gate goes, and so does
-/// `src_add.is_replicated = 0` — a replicated `add_attachment` carries
-/// `block_id` exactly as a local one does (`ingest_remote_op_in_tx`
-/// populates the column from the payload either way), so it proves
-/// ownership just as well.
+/// Two of their filters come off here: the inner `op_type =
+/// 'delete_attachment'` gate (#4336) and `src_add.is_replicated = 0`
+/// (#4620). `list_page_history`'s doc block has the reason both can go and
+/// the asymmetry that leaves between the two sheets.
 ///
 /// The probes also key on `ol.attachment_id` rather than the sibling's
 /// `json_extract(payload, …)`: the column is indexed
