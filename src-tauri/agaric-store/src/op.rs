@@ -424,10 +424,8 @@ impl OpPayload {
 
     /// Returns the `attachment_id` from the inner payload, if present.
     ///
-    /// Only [`AddAttachment`](OpPayload::AddAttachment) and
-    /// [`DeleteAttachment`](OpPayload::DeleteAttachment) carry an
-    /// `attachment_id`; every other variant identifies its target by
-    /// `block_id` and returns `None` here.
+    /// The three attachment variants carry an `attachment_id`; every other
+    /// variant identifies its target by `block_id` and returns `None` here.
     ///
     /// Used by `op_log::append_local_op_in_tx`, `dag::append_merge_op`,
     /// and `dag::insert_remote_op` to populate the indexed

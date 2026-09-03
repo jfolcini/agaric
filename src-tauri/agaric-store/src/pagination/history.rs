@@ -36,6 +36,28 @@ use agaric_core::ulid::BlockId;
 /// change introduces seq `0` as a per-device sentinel op, this default
 /// would silently treat it as already-seen — switch `cursor_seq` to
 /// `Option<i64>` and bind it directly at that point.
+///
+/// # Attachment ops (#4336)
+///
+/// `delete_attachment` and `rename_attachment` carry no `block_id`, so
+/// `op_log.block_id` is NULL on those rows and a bare `block_id = ?1` never
+/// matched them — the per-block History sheet omitted the delete and the
+/// rename for the very block that owned the attachment. The disjunct below
+/// is the one `list_page_history` and `undo_page_op_inner` share, scoped to
+/// this one block instead of a page subtree; see `list_page_history`'s doc
+/// block for why both probes exist. It does NOT follow that block's omission
+/// rule: the gate that hides an orphaned rename there is dropped here,
+/// because this query knows the block it is asking about and the paired-add
+/// probe answers "is this MY attachment" with certainty, where a page
+/// subtree cannot (#4278). An `add → rename → delete` rename is listed on
+/// the owning block's sheet and omitted from the page's; that divergence is
+/// recorded on the page side too.
+///
+/// The probes also key on `ol.attachment_id` rather than the sibling's
+/// `json_extract(payload, …)`: the column is indexed
+/// (`idx_op_log_attachment_id`, migration 0064) and the JSON path is not.
+/// A page affords the scan because `LIMIT 51` short-circuits early; a single
+/// block rarely has 51 ops.
 pub async fn list_block_history(
     pool: &SqlitePool,
     block_id: &BlockId,
@@ -61,14 +83,27 @@ pub async fn list_block_history(
 
     let rows = sqlx::query_as!(
         HistoryEntry,
-        "SELECT device_id, seq, op_type, payload, created_at, \
-                is_replicated AS \"is_replicated!: bool\" \
-         FROM op_log \
-         WHERE block_id = ?1 \
-           AND (?6 IS NULL OR op_type = ?6) \
-           AND (?2 IS NULL OR (\
-                seq < ?3 OR (seq = ?3 AND device_id < ?5))) \
-         ORDER BY seq DESC, device_id DESC \
+        "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, \
+                ol.is_replicated AS \"is_replicated!: bool\" \
+         FROM op_log ol \
+         WHERE ( \
+             ol.block_id = ?1 \
+             OR ( \
+                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
+                 AND ol.attachment_id IN ( \
+                     SELECT a.id FROM attachments a WHERE a.block_id = ?1 \
+                     UNION ALL \
+                     SELECT src_add.attachment_id FROM op_log src_add \
+                     WHERE src_add.op_type = 'add_attachment' \
+                     AND src_add.block_id = ?1 \
+                     AND src_add.is_replicated = 0 \
+                 ) \
+             ) \
+         ) \
+           AND (?6 IS NULL OR ol.op_type = ?6) \
+           AND (?2 IS NULL OR ( \
+                ol.seq < ?3 OR (ol.seq = ?3 AND ol.device_id < ?5))) \
+         ORDER BY ol.seq DESC, ol.device_id DESC \
          LIMIT ?4",
         block_id,         // ?1
         cursor_flag,      // ?2
@@ -151,6 +186,15 @@ pub async fn list_block_history(
 ///     stops a future consumer from re-introducing a positional mapping
 ///     (which is what #4247/#4277/#4328 each were). If you break it,
 ///     break it deliberately and say so here.
+///
+/// Broken deliberately once, by #4336, and only in `list_block_history`:
+/// that query drops the inner `op_type = 'delete_attachment'` gate, so an
+/// `add → rename → delete` sequence leaves the rename listed on the owning
+/// block's sheet while this one still omits it. The block sheet knows which
+/// block it is asking about, so the paired-add probe answers "is this MY
+/// attachment" with certainty; a page subtree does not, which is what
+/// #4278 narrowed the probe for. Same op, two sheets, two answers, and the
+/// asymmetry is the point.
 ///
 /// Known caveat, tracked as option 1 in #4247/#4278: if `compact_op_log`
 /// has reclaimed the paired `add_attachment`, the owning page is NOT

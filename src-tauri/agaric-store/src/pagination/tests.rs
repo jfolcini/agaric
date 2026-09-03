@@ -4669,6 +4669,242 @@ async fn test_list_page_history_omits_orphaned_attachment_ops_4277() {
     );
 }
 
+/// #4336 acceptance, the block-scoped sibling of
+/// `test_list_page_history_includes_attachment_ops_4277`: the per-block
+/// History sheet must list the `delete_attachment` and `rename_attachment`
+/// of the block that owned the attachment, and must NOT attribute them to a
+/// sibling block on the same page.
+///
+/// RED against the pre-fix `WHERE block_id = ?1`, which returns 5 of the 7
+/// ops — `op_log.block_id` is NULL on both attachment rows.
+#[tokio::test]
+async fn test_list_block_history_includes_attachment_ops_4336() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "BH_ATT_PG", "page", "attachment page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "BH_ATT_CH",
+        "content",
+        "owner",
+        Some("BH_ATT_PG"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "BH_ATT_SB",
+        "content",
+        "sibling",
+        Some("BH_ATT_PG"),
+        Some(2),
+    )
+    .await;
+
+    // The renamed attachment still has its live row; the deleted one does
+    // NOT (`delete_attachment_inner` hard-DELETEs it in the same
+    // transaction that appends the op), so only the paired `add_attachment`
+    // op-log row can resolve its owning block.
+    insert_attachment_row(&pool, "BH_ATT_REN", "BH_ATT_CH", "renamed.png").await;
+
+    let create = r#"{"block_id":"BH_ATT_CH","block_type":"content","content":"owner"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        create,
+        "2025-01-01T00:00:00Z",
+    )
+    .await;
+
+    let add_del = r#"{"attachment_id":"BH_ATT_DEL","block_id":"BH_ATT_CH","mime_type":"image/png","filename":"gone.png","size_bytes":1,"fs_path":"attachments/gone.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        2,
+        "add_attachment",
+        add_del,
+        "2025-01-02T00:00:00Z",
+        "BH_ATT_DEL",
+    )
+    .await;
+
+    let add_ren = r#"{"attachment_id":"BH_ATT_REN","block_id":"BH_ATT_CH","mime_type":"image/png","filename":"before.png","size_bytes":1,"fs_path":"attachments/BH_ATT_REN.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "add_attachment",
+        add_ren,
+        "2025-01-03T00:00:00Z",
+        "BH_ATT_REN",
+    )
+    .await;
+
+    let edit = r#"{"block_id":"BH_ATT_CH","to_text":"owner v2"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        4,
+        "edit_block",
+        edit,
+        "2025-01-04T00:00:00Z",
+    )
+    .await;
+
+    // block_id absent from BOTH payloads — the production shape.
+    let rename = r#"{"attachment_id":"BH_ATT_REN","old_filename":"before.png","new_filename":"renamed.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        5,
+        "rename_attachment",
+        rename,
+        "2025-01-05T00:00:00Z",
+        "BH_ATT_REN",
+    )
+    .await;
+
+    // A rename of the attachment that is deleted next. Once the row is gone
+    // only the paired `add_attachment` op can resolve its owning block —
+    // the same probe the delete below needs, which the pre-#4336 shape
+    // reached for a delete and not for a rename.
+    let rename_gone =
+        r#"{"attachment_id":"BH_ATT_DEL","old_filename":"was.png","new_filename":"gone.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        6,
+        "rename_attachment",
+        rename_gone,
+        "2025-01-06T00:00:00Z",
+        "BH_ATT_DEL",
+    )
+    .await;
+
+    let delete =
+        r#"{"attachment_id":"BH_ATT_DEL","fs_path":"attachments/gone.png","filename":"gone.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        7,
+        "delete_attachment",
+        delete,
+        "2025-01-07T00:00:00Z",
+        "BH_ATT_DEL",
+    )
+    .await;
+
+    let edit2 = r#"{"block_id":"BH_ATT_CH","to_text":"owner v3"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        8,
+        "edit_block",
+        edit2,
+        "2025-01-08T00:00:00Z",
+    )
+    .await;
+
+    // The sibling's own op, so its history is non-empty and the
+    // no-mis-attribution assertion below is not vacuous.
+    let create_sib = r#"{"block_id":"BH_ATT_SB","block_type":"content","content":"sibling"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        9,
+        "create_block",
+        create_sib,
+        "2025-01-09T00:00:00Z",
+    )
+    .await;
+
+    // Premise guards: every attachment op has a NULL indexed block_id,
+    // and the deleted attachment has no live row.
+    let null_block_ids: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM op_log WHERE block_id IS NULL \
+         AND op_type IN ('delete_attachment', 'rename_attachment')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        null_block_ids, 3,
+        "premise: every attachment op must carry a NULL op_log.block_id"
+    );
+    let live_deleted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
+        .bind("BH_ATT_DEL")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        live_deleted, 0,
+        "premise: the deleted attachment must have no live row"
+    );
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = list_block_history(&pool, &BlockId::test_id("BH_ATT_CH"), None, &page)
+        .await
+        .unwrap();
+
+    let seqs: Vec<i64> = resp.items.iter().map(|e| e.seq).collect();
+    let op_types: Vec<&str> = resp.items.iter().map(|e| e.op_type.as_str()).collect();
+    assert_eq!(
+        seqs,
+        vec![8, 7, 6, 5, 4, 3, 2, 1],
+        "every op on the owning block must be listed newest-first, attachment ops included; \
+         got op_types {op_types:?}"
+    );
+
+    // The sheet's op-type dropdown offers these types; before the fix
+    // selecting either always yielded an empty list.
+    let deletes = list_block_history(
+        &pool,
+        &BlockId::test_id("BH_ATT_CH"),
+        Some("delete_attachment"),
+        &page,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        deletes.items.len(),
+        1,
+        "filtering the block sheet by delete_attachment must return the delete"
+    );
+
+    // Two renames, one per probe: BH_ATT_REN through the live `attachments`
+    // row, BH_ATT_DEL through its paired add op after the row was hard-deleted.
+    // Pinning only the first would leave half the disjunct uncovered.
+    let renames = list_block_history(
+        &pool,
+        &BlockId::test_id("BH_ATT_CH"),
+        Some("rename_attachment"),
+        &page,
+    )
+    .await
+    .unwrap();
+    let rename_seqs: Vec<i64> = renames.items.iter().map(|e| e.seq).collect();
+    assert_eq!(
+        rename_seqs,
+        vec![6, 5],
+        "filtering by rename_attachment must return the rename of the live \
+         attachment AND the rename of the one since deleted"
+    );
+
+    // The disjunct resolves ONE owning block, not the whole page: a sibling
+    // must not inherit its neighbour's attachment ops.
+    let sibling = list_block_history(&pool, &BlockId::test_id("BH_ATT_SB"), None, &page)
+        .await
+        .unwrap();
+    let sibling_seqs: Vec<i64> = sibling.items.iter().map(|e| e.seq).collect();
+    assert_eq!(
+        sibling_seqs,
+        vec![9],
+        "a sibling block must see only its own op, never the owner's attachment ops"
+    );
+}
+
 // ====================================================================
 // #476 L2 — list_page_history device_id tiebreaker
 // ====================================================================
