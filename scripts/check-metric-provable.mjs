@@ -2532,7 +2532,6 @@ function runFixtureSelfTest(tmp, expect) {
   let n = 0
   const build = ({ metricsFile, extra = {}, cargo, baseline }) => {
     const root = path.join(tmp, `fx${(n += 1)}`)
-    mkdirSync(path.join(root, 'src-tauri', 'src', 'materializer'), { recursive: true })
     mkdirSync(path.dirname(path.join(root, METRICS_FILE_REL)), { recursive: true })
     mkdirSync(path.join(root, 'scripts'), { recursive: true })
     writeFileSync(path.join(root, METRICS_FILE_REL), metricsFile)
