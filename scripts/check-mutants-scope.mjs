@@ -217,17 +217,19 @@ export function checkShardMatrix({ entries, push }) {
   for (const e of entries) byPackage.set(e.package, [...(byPackage.get(e.package) ?? []), e])
   for (const [pkg, es] of byPackage) {
     const n = es[0].shards
-    const indices = [...new Set(es.map((e) => e.shard))].toSorted((a, b) => a - b)
-    // `es.length === n`, not `indices.length === n`: a duplicated entry keeps
-    // the index set complete while `--shard-count` (which counts entries)
-    // returns one more than the merge can ever assemble, so the filer would
-    // dry-run for good.
+    // Not deduped, and `es.length === n` rather than `indices.length`: a
+    // duplicate is the archetypal edit to a hand-maintained matrix (bump
+    // `shards`, paste a line, forget to bump its `shard`), and it masks the
+    // gap it creates. `[0, 0, 1]` fails the positional test at i = 1; a
+    // deduped `[0, 1]` would pass it, because `every` iterates only the
+    // elements that exist and never notices the array is short.
+    const indices = es.map((e) => e.shard).toSorted((a, b) => a - b)
     const complete =
       es.every((e) => e.shards === n) && es.length === n && indices.every((v, i) => v === i)
     if (!complete) {
       push(
         'shard-matrix-incomplete',
-        `the shard matrix for '${pkg}' declares shards=${[...new Set(es.map((e) => e.shards))].join('/')} but its entries are ${JSON.stringify(es.map((e) => e.shard).toSorted((a, b) => a - b))}; they must be exactly 0..n-1 for one n. Any other shape leaves a slice of that package's mutants untested every week, and the summary cannot show it — a missing shard removes its mutants from the tested count AND the generated count.`,
+        `the shard matrix for '${pkg}' declares shards=${[...new Set(es.map((e) => e.shards))].join('/')} but its entries are ${JSON.stringify(indices)}; they must be exactly 0..n-1 for one n. Any other shape leaves a slice of that package's mutants untested every week, and the summary cannot show it — a missing shard removes its mutants from the tested count AND the generated count.`,
       )
     }
   }
@@ -1107,11 +1109,29 @@ function runSelfTest() {
     ],
     push: (kind) => gaps.push(kind),
   })
+  // 3d. …as is a DUPLICATE that masks a gap — the same entry count, every
+  //     `shards` agreeing, and one index pasted twice in place of the last.
+  //     Deduping before the positional test would call this complete.
+  const dupes = []
+  checkShardMatrix({
+    entries: [
+      { package: 'agaric', shard: 0, shards: 3 },
+      { package: 'agaric', shard: 1, shards: 3 },
+      { package: 'agaric', shard: 1, shards: 3 },
+    ],
+    push: (kind) => dupes.push(kind),
+  })
   const whole = []
   checkShardMatrix({ entries, push: (kind) => whole.push(kind) })
-  if (gaps.length === 1 && gaps[0] === 'shard-matrix-incomplete' && whole.length === 0)
-    ok('a shard matrix missing an index is flagged, a complete one is not')
-  else fail('shard matrix completeness', JSON.stringify({ gaps, whole }))
+  if (
+    gaps.length === 1 &&
+    gaps[0] === 'shard-matrix-incomplete' &&
+    dupes.length === 1 &&
+    dupes[0] === 'shard-matrix-incomplete' &&
+    whole.length === 0
+  )
+    ok('a shard matrix missing an index, or duplicating one, is flagged; a complete one is not')
+  else fail('shard matrix completeness', JSON.stringify({ gaps, dupes, whole }))
 
   selfTestReaders(ok, fail)
   selfTestPlumbing(ok, fail)

@@ -834,10 +834,11 @@ jobs:
         #   agaric-store   125 mutants, 42/shard →  3 shards  (cap 44)
         #   agaric-engine  383 mutants, 32/shard → 12 shards  (cap 44, est.)
         #
-        # `agaric-engine` gets 12 rather than the 9 the rule allows, because
-        # its capacity is borrowed from `agaric-store` rather than measured —
-        # session log ¶ "A later round re-sized". Its PARTIAL notices on the
-        # first crons are what settle that estimate.
+        # `agaric-engine` gets 12 rather than the 9 the rule allows: its
+        # capacity is borrowed from `agaric-store`, and one mutant of slack
+        # only means something on a measured cost. Nine hold to ~119 s/mutant
+        # against a borrowed 117 s; twelve to ~159 s. Its PARTIAL notices on
+        # the first crons are what settle the estimate.
         #
         # `shards` is the denominator every shard of that package must agree on
         # (cargo-mutants: "all shards must be run with the same arguments and
@@ -1011,26 +1012,15 @@ jobs:
         # completion) followed by a baseline TEST phase that blew the old
         # 300s `--timeout`, aborting the whole run with `total_mutants: 0`
         # while `cargo mutants ... || true` still exited 0 (false-green).
-        # Fix, in order of what we changed:
-        #   1. `--timeout` (MUTANTS_TIMEOUT) 300 → 900: ~3x headroom over
-        #      the observed baseline test-phase failure point. We did NOT
-        #      also narrow `.cargo/mutants.toml`'s test scope — nextest is already
-        #      the full, real test arbiter for the invariant core, and
-        #      trimming it to "make the baseline faster" would weaken the
-        #      very coverage signal mutation testing exists to measure.
-        #      Raising the timeout is the honest fix; narrowing scope is not.
-        #   2. New `--build-timeout` (MUTANTS_BUILD_TIMEOUT, 600s): the build
-        #      itself was never the observed failure (it has no default cap
-        #      at all), but a bad mutant CAN make rustc const-eval loop
-        #      indefinitely with no cap to stop it — 600s gives ~1.9x
-        #      headroom over the observed ~322s baseline build without
-        #      letting one hung mutant silently eat the job's 120-minute
-        #      budget.
-        # Both were sized against a WORKSPACE baseline. Since #3393 a shard is
-        # `-p "$PACKAGE"`, so the phase `--timeout` applies to is ONE package's
-        # suite: 473 s for `agaric` (1.90x under the 900 s), 87 s for
-        # `agaric-store`. `agaric`'s grows every week and is still what bites
-        # first, now across 31 shards at once.
+        # Hence `--timeout` 900 and a `--build-timeout` of 600: sized for
+        # headroom, not to make the baseline fit. Narrowing
+        # `.cargo/mutants.toml`'s test scope would have been the cheaper fix
+        # and would have weakened the coverage signal this lane exists to
+        # measure. Both were sized against a WORKSPACE baseline; since #3393
+        # a shard is `-p "$PACKAGE"`, so the phase `--timeout` applies to is
+        # ONE package's suite — 473 s for `agaric` (1.90x under the 900 s),
+        # 87 s for `agaric-store`. `agaric`'s grows every week and is still
+        # what bites first, now across 31 shards at once.
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
         # can't expand into the shell as code (zizmor template-injection);
         # the matrix values ride the same way for the same reason.
