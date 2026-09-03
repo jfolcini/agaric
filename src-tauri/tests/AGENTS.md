@@ -68,7 +68,7 @@ Two classes in this crate:
 2. **Counter-delta tests.** Any test that reads a process-global counter, does its work, reads it again and asserts on the difference. The counter here is `sql_only_fallback::count()` (re-exported as `crate::materializer::sql_only_fallback_count()`), a monotonic `AtomicU64`; the assertion is nearly always `delta == 0`, proving the op took the engine path rather than the SQL-only fallback (#891). A sibling test's fallback event in the same process flips the delta for a test that never touched the fallback. This is a shape, not a module list — find the current readers with:
 
    ```sh
-   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src
+   grep -rnE 'sql_only_fallback(::count|_count)\(\)' src-tauri/src src-tauri/tests
    ```
 
    `src-tauri/src/materializer/coordinator.rs` is the production reader, not a hazard. The mechanism is documented in `src-tauri/agaric-engine/src/loro/shared.rs`.
@@ -141,7 +141,7 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));   // typed
 
 ## Snapshot testing (insta)
 
-Snapshots live in a `snapshots/` directory beside the tests (`src-tauri/src/commands/tests/snapshots/`, `src-tauri/src/mcp/tools_ro/snapshots/`, `src-tauri/agaric-store/src/snapshots/`, …). File name: `agaric_lib__<module>__tests__<test_name>.snap` for app-crate modules, `agaric_store__…` for `agaric-store`. A new snapshot-testing module gets its own sibling `snapshots/`.
+Snapshots live in a `snapshots/` directory beside the tests (`src-tauri/tests/commands/snapshots/`, `src-tauri/src/mcp/tools_ro/snapshots/`, `src-tauri/agaric-store/src/snapshots/`, …). File name: `agaric_lib__<module>__tests__<test_name>.snap` for in-lib app-crate modules, `commands__snapshot_tests__<test_name>.snap` for the `tests/commands/` binary, `agaric_store__…` for `agaric-store`. A new snapshot-testing module gets its own sibling `snapshots/`.
 
 Redact non-deterministic fields:
 

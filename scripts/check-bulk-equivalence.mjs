@@ -169,8 +169,8 @@ const APP_SRC_DIR = path.join(TAURI_DIR, 'src')
 const BASELINE_FILE = path.join(ROOT, 'scripts', 'bulk-equivalence-baseline.json')
 
 /**
- * Every Rust source root in the workspace: the app crate plus every sibling
- * crate under `src-tauri/`. DISCOVERED, never hardcoded — a crate added
+ * Every Rust source root in the workspace: the app crate, its integration
+ * tests, and every sibling crate under `src-tauri/`. DISCOVERED, never hardcoded — a crate added
  * tomorrow is in scope tomorrow. Returned sorted so output order is stable.
  *
  * @param {string} tauriDir
@@ -179,6 +179,9 @@ const BASELINE_FILE = path.join(ROOT, 'scripts', 'bulk-equivalence-baseline.json
 export function sourceRoots(tauriDir) {
   const roots = []
   if (fs.existsSync(path.join(tauriDir, 'src'))) roots.push(path.join(tauriDir, 'src'))
+  // #4499: the app crate's suites are integration binaries under
+  // `src-tauri/tests/`, and a `covered` entry's equivalence test lives there.
+  if (fs.existsSync(path.join(tauriDir, 'tests'))) roots.push(path.join(tauriDir, 'tests'))
   if (!fs.existsSync(tauriDir)) return roots
   for (const entry of fs
     .readdirSync(tauriDir, { withFileTypes: true })

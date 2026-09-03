@@ -1,6 +1,6 @@
 //! DB-backed integration tests for the search toggle row.
 //!
-//! Co-locates with the other `commands/tests/*` files so the existing
+//! Co-locates with the other `tests/commands/*` files so the existing
 //! `test_pool` helper is in scope; mirrors the pattern set by
 //! `glob_filter_tests` and `search_blocks_struct_tests`
 //! .
