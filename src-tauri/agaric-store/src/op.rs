@@ -426,10 +426,6 @@ impl OpPayload {
     ///
     /// The three attachment variants carry an `attachment_id`; every other
     /// variant identifies its target by `block_id` and returns `None` here.
-    /// `RenameAttachment` is one of the three:
-    /// `pagination::list_block_history` resolves a rename of an attachment
-    /// that was later deleted through this column alone, since the delete
-    /// hard-DELETEs the `attachments` row in the same transaction.
     ///
     /// Used by `op_log::append_local_op_in_tx`, `dag::append_merge_op`,
     /// and `dag::insert_remote_op` to populate the indexed
