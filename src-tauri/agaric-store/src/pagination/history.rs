@@ -45,17 +45,17 @@ use agaric_core::ulid::BlockId;
 /// rename for the very block that owned the attachment. The disjunct below
 /// is the one `list_page_history` and `undo_page_op_inner` share, scoped to
 /// this one block instead of a page subtree; see `list_page_history`'s doc
-/// block for why both probes exist, why they must stay byte-identical, and
-/// which rows they deliberately still omit.
+/// block for why both probes exist and which rows they deliberately omit.
 ///
-/// The cost trade differs from the page sheet's, so do not read it across:
-/// a page accumulates enough matching ops for `LIMIT 51` to short-circuit,
-/// a single block rarely does, so this walks op_log in `seq` order instead
-/// of seeking `idx_op_log_block_id`, and so grows with total vault history
-/// rather than with the block. Unmeasured: the sibling's timings are for a
-/// different plan (`idx_op_log_created`) and do not transfer. Taken
-/// deliberately anyway — the sheet is user-opened, and omitting a block's
-/// own attachment ops is the worse failure.
+/// It is NOT byte-identical to the sibling's, and deliberately. The page
+/// version correlates each candidate row against `json_extract(payload, …)`,
+/// which no index can serve, and pays for it with a `LIMIT 51` that a page's
+/// op count short-circuits early; a single block rarely has 51 ops, so the
+/// same shape here would be a full `op_log` walk on every sheet open. The
+/// candidate set for ONE block is two indexed seeks, so this asks
+/// `ol.attachment_id IN (…)` instead — `OpPayload::attachment_id` populates
+/// that column for all three attachment op types (`op.rs`), and
+/// `idx_op_log_attachment_id` (migration 0064) covers it.
 pub async fn list_block_history(
     pool: &SqlitePool,
     block_id: &BlockId,
@@ -88,22 +88,13 @@ pub async fn list_block_history(
              ol.block_id = ?1 \
              OR ( \
                  ol.op_type IN ('delete_attachment', 'rename_attachment') \
-                 AND ( \
-                     EXISTS ( \
-                         SELECT 1 FROM attachments a \
-                         WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
-                         AND a.block_id = ?1 \
-                     ) \
-                     OR ( \
-                         ol.op_type = 'delete_attachment' \
-                         AND EXISTS ( \
-                             SELECT 1 FROM op_log src_add \
-                             WHERE src_add.op_type = 'add_attachment' \
-                             AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                             AND src_add.is_replicated = 0 \
-                             AND src_add.block_id = ?1 \
-                         ) \
-                     ) \
+                 AND ol.attachment_id IN ( \
+                     SELECT a.id FROM attachments a WHERE a.block_id = ?1 \
+                     UNION \
+                     SELECT src_add.attachment_id FROM op_log src_add \
+                     WHERE src_add.op_type = 'add_attachment' \
+                     AND src_add.block_id = ?1 \
+                     AND src_add.is_replicated = 0 \
                  ) \
              ) \
          ) \

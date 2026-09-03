@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, ol.is_replicated AS \"is_replicated!: bool\" FROM op_log ol WHERE ( ol.block_id = ?1 OR ( ol.op_type IN ('delete_attachment', 'rename_attachment') AND ( EXISTS ( SELECT 1 FROM attachments a WHERE a.id = json_extract(ol.payload, '$.attachment_id') AND a.block_id = ?1 ) OR ( ol.op_type = 'delete_attachment' AND EXISTS ( SELECT 1 FROM op_log src_add WHERE src_add.op_type = 'add_attachment' AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') AND src_add.is_replicated = 0 AND src_add.block_id = ?1 ) ) ) ) ) AND (?6 IS NULL OR ol.op_type = ?6) AND (?2 IS NULL OR ( ol.seq < ?3 OR (ol.seq = ?3 AND ol.device_id < ?5))) ORDER BY ol.seq DESC, ol.device_id DESC LIMIT ?4",
+  "query": "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at, ol.is_replicated AS \"is_replicated!: bool\" FROM op_log ol WHERE ( ol.block_id = ?1 OR ( ol.op_type IN ('delete_attachment', 'rename_attachment') AND ol.attachment_id IN ( SELECT a.id FROM attachments a WHERE a.block_id = ?1 UNION SELECT src_add.attachment_id FROM op_log src_add WHERE src_add.op_type = 'add_attachment' AND src_add.block_id = ?1 AND src_add.is_replicated = 0 ) ) ) AND (?6 IS NULL OR ol.op_type = ?6) AND (?2 IS NULL OR ( ol.seq < ?3 OR (ol.seq = ?3 AND ol.device_id < ?5))) ORDER BY ol.seq DESC, ol.device_id DESC LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -82,5 +82,5 @@
       false
     ]
   },
-  "hash": "b7df57740ca6e066cf2e498ae70ab0c205223c1911f20093af9cdc82bdaf65c0"
+  "hash": "b239abf4e77e1f9bee6f1516196c270198e4f2bd10f365adcabcaae4d2cef875"
 }

@@ -4766,15 +4766,32 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
     )
     .await;
 
+    // A rename of the attachment that is deleted next. Once the row is gone
+    // only the paired `add_attachment` op can resolve its owning block —
+    // the same probe the delete below needs, which the pre-#4336 shape
+    // reached for a delete and not for a rename.
+    let rename_gone =
+        r#"{"attachment_id":"BH_ATT_DEL","old_filename":"was.png","new_filename":"gone.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        6,
+        "rename_attachment",
+        rename_gone,
+        "2025-01-06T00:00:00Z",
+        "BH_ATT_DEL",
+    )
+    .await;
+
     let delete =
         r#"{"attachment_id":"BH_ATT_DEL","fs_path":"attachments/gone.png","filename":"gone.png"}"#;
     insert_attachment_op_log_entry(
         &pool,
         "device-1",
-        6,
+        7,
         "delete_attachment",
         delete,
-        "2025-01-06T00:00:00Z",
+        "2025-01-07T00:00:00Z",
         "BH_ATT_DEL",
     )
     .await;
@@ -4783,10 +4800,10 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
     insert_op_log_entry(
         &pool,
         "device-1",
-        7,
+        8,
         "edit_block",
         edit2,
-        "2025-01-07T00:00:00Z",
+        "2025-01-08T00:00:00Z",
     )
     .await;
 
@@ -4796,14 +4813,14 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
     insert_op_log_entry(
         &pool,
         "device-1",
-        8,
+        9,
         "create_block",
         create_sib,
-        "2025-01-08T00:00:00Z",
+        "2025-01-09T00:00:00Z",
     )
     .await;
 
-    // Premise guards: the two attachment ops have a NULL indexed block_id,
+    // Premise guards: every attachment op has a NULL indexed block_id,
     // and the deleted attachment has no live row.
     let null_block_ids: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM op_log WHERE block_id IS NULL \
@@ -4813,8 +4830,8 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
     .await
     .unwrap();
     assert_eq!(
-        null_block_ids, 2,
-        "premise: both attachment ops must carry a NULL op_log.block_id"
+        null_block_ids, 3,
+        "premise: every attachment op must carry a NULL op_log.block_id"
     );
     let live_deleted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
         .bind("BH_ATT_DEL")
@@ -4835,7 +4852,7 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
     let op_types: Vec<&str> = resp.items.iter().map(|e| e.op_type.as_str()).collect();
     assert_eq!(
         seqs,
-        vec![7, 6, 5, 4, 3, 2, 1],
+        vec![8, 7, 6, 5, 4, 3, 2, 1],
         "every op on the owning block must be listed newest-first, attachment ops included; \
          got op_types {op_types:?}"
     );
@@ -4856,9 +4873,9 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
         "filtering the block sheet by delete_attachment must return the delete"
     );
 
-    // The rename reaches the list through the OTHER probe (a live `attachments`
-    // row, not the paired add), so pinning only the delete would leave half the
-    // fix uncovered.
+    // Two renames, one per probe: BH_ATT_REN through the live `attachments`
+    // row, BH_ATT_DEL through its paired add op after the row was hard-deleted.
+    // Pinning only the first would leave half the disjunct uncovered.
     let renames = list_block_history(
         &pool,
         &BlockId::test_id("BH_ATT_CH"),
@@ -4867,10 +4884,12 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
     )
     .await
     .unwrap();
+    let rename_seqs: Vec<i64> = renames.items.iter().map(|e| e.seq).collect();
     assert_eq!(
-        renames.items.len(),
-        1,
-        "filtering the block sheet by rename_attachment must return the rename"
+        rename_seqs,
+        vec![6, 5],
+        "filtering by rename_attachment must return the rename of the live \
+         attachment AND the rename of the one since deleted"
     );
 
     // The disjunct resolves ONE owning block, not the whole page: a sibling
@@ -4881,7 +4900,7 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
     let sibling_seqs: Vec<i64> = sibling.items.iter().map(|e| e.seq).collect();
     assert_eq!(
         sibling_seqs,
-        vec![8],
+        vec![9],
         "a sibling block must see only its own op, never the owner's attachment ops"
     );
 }
