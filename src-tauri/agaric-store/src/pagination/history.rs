@@ -45,13 +45,16 @@ use agaric_core::ulid::BlockId;
 /// rename for the very block that owned the attachment. The disjunct below
 /// is the one `list_page_history` and `undo_page_op_inner` share, scoped to
 /// this one block instead of a page subtree; see `list_page_history`'s doc
-/// block for why both probes exist. It does NOT follow that block's omission
-/// rule: the gate that hides an orphaned rename there is dropped here,
-/// because this query knows the block it is asking about and the paired-add
-/// probe answers "is this MY attachment" with certainty, where a page
-/// subtree cannot (#4278). An `add → rename → delete` rename is listed on
-/// the owning block's sheet and omitted from the page's; that divergence is
-/// recorded on the page side too.
+/// block for why both probes exist and for the divergence this scoping
+/// creates.
+///
+/// Two of their filters come off here, for two different reasons: the inner
+/// `op_type = 'delete_attachment'` gate (#4336) because this query names the
+/// block it is asking about, and `src_add.is_replicated = 0` (#4620) because
+/// a replicated `add_attachment` carries `block_id` exactly as a local one
+/// does. `list_page_history`'s doc block has the asymmetry that leaves
+/// between the two sheets, and its #4627 paragraph has why the page side
+/// keeps `is_replicated` regardless.
 ///
 /// The probes also key on `ol.attachment_id` rather than the sibling's
 /// `json_extract(payload, …)`: the column is indexed
@@ -96,7 +99,6 @@ pub async fn list_block_history(
                      SELECT src_add.attachment_id FROM op_log src_add \
                      WHERE src_add.op_type = 'add_attachment' \
                      AND src_add.block_id = ?1 \
-                     AND src_add.is_replicated = 0 \
                  ) \
              ) \
          ) \
@@ -187,14 +189,17 @@ pub async fn list_block_history(
 ///     (which is what #4247/#4277/#4328 each were). If you break it,
 ///     break it deliberately and say so here.
 ///
-/// Broken deliberately once, by #4336, and only in `list_block_history`:
-/// that query drops the inner `op_type = 'delete_attachment'` gate, so an
-/// `add → rename → delete` sequence leaves the rename listed on the owning
-/// block's sheet while this one still omits it. The block sheet knows which
-/// block it is asking about, so the paired-add probe answers "is this MY
-/// attachment" with certainty; a page subtree does not, which is what
-/// #4278 narrowed the probe for. Same op, two sheets, two answers, and the
-/// asymmetry is the point.
+/// Broken deliberately in `list_block_history`, in the inner
+/// `op_type = 'delete_attachment'` gate here and in `src_add.is_replicated
+/// = 0` below, for two unrelated reasons.
+///
+/// It drops the gate (#4336) because
+/// that query names the block it is asking about, so its paired-add probe
+/// settles "is this MY attachment" where a page subtree cannot (#4278); an
+/// `add → rename → delete` sequence therefore leaves the rename listed on
+/// the owning block's sheet while this one still omits it.
+///
+/// Same op, two sheets, two answers, and the asymmetry is the point.
 ///
 /// Known caveat, tracked as option 1 in #4247/#4278: if `compact_op_log`
 /// has reclaimed the paired `add_attachment`, the owning page is NOT
@@ -216,14 +221,13 @@ pub async fn list_block_history(
 /// local delete of a peer-added attachment, with no `compact_op_log` sweep
 /// (a maintenance operation, not a routine one) required first.
 ///
-/// This is deliberate, not a second gap to close: `src_add.is_replicated =
-/// 0` is the same filter the three undo queries carry (see above), and the
-/// omitted row degrades to invisible rather than being attributed to an
-/// arbitrary page. Note that the ORIGINAL argument for this trade — that
-/// dropping the filter would break the byte-identity `undoDeleteOfImpl`'s
-/// index mapping depended on — no longer applies (see #4328 above); what
-/// remains is the weaker but still sufficient one, that this probe cannot
-/// prove ownership of a peer-added attachment without a local paired add.
+/// Still open here, tracked as #4627, and the second of the two divergences
+/// above: `list_block_history` drops `src_add.is_replicated = 0` (#4620),
+/// this query keeps it. Not because the ownership argument differs — it
+/// does not — but because the predicate is one of five this query shares
+/// with the three undo queries, so removing it decides whether Ctrl+Z
+/// starts offering a peer-added attachment's delete. A design call, not a
+/// constraint this query can settle alone.
 ///
 /// Residual divergence NOT closed here, and no longer load-bearing
 /// (#4328): this query has no `is_undo = 0` / `is_replicated = 0` filter

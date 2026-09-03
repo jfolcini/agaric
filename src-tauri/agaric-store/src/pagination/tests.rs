@@ -4905,6 +4905,93 @@ async fn test_list_block_history_includes_attachment_ops_4336() {
     );
 }
 
+/// #4336 on a synced vault, which is the shape this app is built for: add an
+/// attachment on device A, sync, delete it on device B. On B the live
+/// `attachments` row goes in the delete's own transaction and the only paired
+/// `add_attachment` carries `is_replicated = 1`, so probe 2's old
+/// `src_add.is_replicated = 0` made both probes false and the delete vanished
+/// from the owning block's sheet — the original bug, reachable on the first
+/// cross-device delete with no `compact_op_log` sweep first.
+///
+/// The sibling test above seeds every add with `is_replicated = 0`; without
+/// this one, half of the probe stays unpinned and reinstating the filter goes
+/// unnoticed.
+#[tokio::test]
+async fn test_list_block_history_includes_a_peer_added_attachments_delete_4336() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "BH_REP_PG", "page", "peer page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "BH_REP_CH",
+        "content",
+        "owner",
+        Some("BH_REP_PG"),
+        Some(1),
+    )
+    .await;
+
+    let create = r#"{"block_id":"BH_REP_CH","block_type":"content","content":"owner"}"#;
+    insert_op_log_entry(
+        &pool,
+        "device-1",
+        1,
+        "create_block",
+        create,
+        "2025-02-01T00:00:00Z",
+    )
+    .await;
+
+    // Device A's add, arrived here by replication. `ingest_remote_op_in_tx`
+    // populates `block_id` from the payload for a replicated row exactly as
+    // the local path does, which is why it can still resolve the owner.
+    let add = r#"{"attachment_id":"BH_REP_AT","block_id":"BH_REP_CH","mime_type":"image/png","filename":"peer.png","size_bytes":1,"fs_path":"attachments/peer.png"}"#;
+    sqlx::query(
+        "INSERT INTO op_log \
+             (device_id, seq, hash, op_type, payload, created_at, block_id, attachment_id, is_replicated) \
+         VALUES (?, ?, ?, ?, ?, ?, json_extract(?, '$.block_id'), ?, 1)",
+    )
+    .bind("device-A")
+    .bind(2_i64)
+    .bind("test-hash-placeholder")
+    .bind("add_attachment")
+    .bind(add)
+    .bind(1_738_368_000_000_i64)
+    .bind(add)
+    .bind("BH_REP_AT")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The local delete. No live `attachments` row is ever inserted: on this
+    // device the attachment only ever existed as a replicated op.
+    let delete =
+        r#"{"attachment_id":"BH_REP_AT","fs_path":"attachments/peer.png","filename":"peer.png"}"#;
+    insert_attachment_op_log_entry(
+        &pool,
+        "device-1",
+        3,
+        "delete_attachment",
+        delete,
+        "2025-02-03T00:00:00Z",
+        "BH_REP_AT",
+    )
+    .await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = list_block_history(&pool, &BlockId::test_id("BH_REP_CH"), None, &page)
+        .await
+        .unwrap();
+    let seqs: Vec<i64> = resp.items.iter().map(|e| e.seq).collect();
+    // Seq 2 is the replicated add itself: it carries `block_id`, so the first
+    // disjunct lists it whatever probe 2 does. Seq 3 is the one at stake.
+    assert_eq!(
+        seqs,
+        vec![3, 2, 1],
+        "the delete of a peer-added attachment must appear on the owning block's sheet"
+    );
+}
+
 // ====================================================================
 // #476 L2 — list_page_history device_id tiebreaker
 // ====================================================================

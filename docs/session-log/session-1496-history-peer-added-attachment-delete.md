@@ -1,0 +1,13 @@
+# Session 1496 — the block history sheet still hid a peer-added attachment's delete
+
+#4620 shipped the two probes that resolve an attachment op's owning block, and session 1487 said the second one keeps `src_add.is_replicated = 0` because the probe cannot prove ownership of a peer-added attachment without a local paired add. That reason is false, and this session removes the filter from the block-side query on the strength of checking it.
+
+`ingest_remote_op_in_tx` (`agaric-store/src/op_log/append.rs:421`) runs `extract_indexed_ids_from_payload` and writes `op_log.block_id` for a replicated row exactly as the local append path does. Attachments are never reparented, so a replicated `add_attachment` identifies its owner as well as a local one does. With the filter in place, the shape this app is built for stayed broken: add an attachment on device A, sync, delete it on device B. On B the live `attachments` row goes in the delete's own transaction, so probe 1 finds nothing; the only paired add carries `is_replicated = 1`, so probe 2 rejected it; both probes false, and the delete vanished from the owning block's sheet with no `compact_op_log` sweep needed to trigger it.
+
+The page-side query keeps the filter, tracked as #4627. Not because the reason above holds there — it does not — but because `src_add.is_replicated = 0` is one of five predicates that query shares with the three undo queries, so removing it decides whether Ctrl+Z starts offering a peer-added attachment's delete. That is a design call, not something the query can settle alone. Both doc blocks now say this instead of the ownership story.
+
+`test_list_block_history_includes_a_peer_added_attachments_delete_4336` seeds a replicated `add_attachment` from `device-A` with no live `attachments` row, then a local `delete_attachment`. It expects `[3, 2, 1]`, not `[3, 1]`: the replicated add carries `block_id`, so the query's first disjunct lists it whatever probe 2 does. The first draft asserted `[3, 1]` and went red on its own baseline; the sibling test above it seeds every add with `is_replicated = 0`, so without this one half of the probe stayed unpinned.
+
+Falsified against a copy: baseline `cargo nextest run --workspace -E 'package(agaric-store) and test(list_block_history)'` → 11 passed. Reinstating `AND src_add.is_replicated = 0` → 10 passed, 1 failed, the new test alone, `left: [2, 1] right: [3, 2, 1]`. Restored, `cmp` identical.
+
+The SQL text changed, so all four `.sqlx` caches move with it (invariant 6): `query-627b6039…` out, `query-640d88a7…` in, byte-identical in root, `agaric-engine`, `agaric-store` and `agaric-sync`.
