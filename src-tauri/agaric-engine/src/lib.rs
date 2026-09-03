@@ -120,3 +120,10 @@ pub mod spaces;
 pub mod dag;
 
 pub mod reverse;
+
+/// TEST-PROPTEST-B (#150): shared seeded-DB proptest fixture harness —
+/// random valid block trees + op chains over a real pool. Reused by
+/// `tests/reverse_proptest_b1.rs` here and by the app crate's B2-B4
+/// proptests, hence `test-util` rather than `cfg(test)`.
+#[cfg(any(test, feature = "test-util"))]
+pub mod proptest_db_harness;

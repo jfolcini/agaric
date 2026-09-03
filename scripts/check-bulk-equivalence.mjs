@@ -190,6 +190,10 @@ export function sourceRoots(tauriDir) {
     if (!entry.isDirectory() || entry.name === 'src') continue
     const src = path.join(tauriDir, entry.name, 'src')
     if (fs.existsSync(src)) roots.push(src)
+    // A member's own integration binaries (`agaric-engine/tests/` holds the
+    // `compute_reverse_batch` oracle since #4499 phase 1).
+    const tests = path.join(tauriDir, entry.name, 'tests')
+    if (fs.existsSync(tests)) roots.push(tests)
   }
   return roots
 }

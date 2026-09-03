@@ -151,6 +151,7 @@ name = "agaric-engine"
 version = "0.1.0"
 dependencies = [
  "agaric-core",
+ "agaric-engine",
  "agaric-store",
  "chrono",
  "insta",

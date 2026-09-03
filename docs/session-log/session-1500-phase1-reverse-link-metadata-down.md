@@ -18,13 +18,21 @@ call them from outside now. The three in-file test modules that built their
 own pool through the app's `init_pool` use the store's `test_support::test_pool`
 instead, which is what the loro tests did when they moved (#2621).
 
-`reverse/tests.rs` and `reverse/proptest_b1.rs` reach the app's `Materializer`,
-`revert_ops_inner` and `proptest_db_harness`, so they cannot follow the code
-down. They join the `app_tests` integration binary phase 0d created. Two seams
-widen for that, the same way the phase 0d ones did: `proptest_db_harness` is a
-`test-util` module (its own `#![cfg(test)]` goes; the feature pulls `proptest`
-as an optional normal dependency, the `tempfile` shape) and
-`commands::blocks::find_prev_edit_in_tx` is `pub` for the #3644 stamping test.
+`reverse/tests.rs` splits. The mutants lane runs each package's own tests
+against its mutants (`-p`), so the suite that kills the 183 `reverse/**`
+mutants has to live in the engine: 57 of its 68 tests need only a pool and
+`append_local_op_at` and become `agaric-engine/tests/reverse_tests.rs`, with
+the replicated-op seeder calling `dag::ingest_replicated_record` directly
+(the sync crate's `insert_replicated_op` is a wrapper over it, and the engine
+cannot name the sync crate). The eleven that reach the app's `Materializer`,
+`revert_ops_inner` or `soft_delete` stay in the `app_tests` binary phase 0d
+created; `commands::blocks::find_prev_edit_in_tx` is `pub` for the #3644
+stamping test among them. `reverse/proptest_b1.rs` follows the code as
+`agaric-engine/tests/reverse_proptest_b1.rs`, and `proptest_db_harness` moves
+to the engine with it as a `test-util` module (the feature pulls `proptest` as
+an optional normal dependency, the `tempfile` shape; the engine gains the
+self dev-dependency the app and store already use). The app's B2-B4
+proptests import it from the engine.
 
 `reqwest` moves from the app crate's manifest to the store's with its
 rustls-posture comment; the app has no other user. `url` stays in both

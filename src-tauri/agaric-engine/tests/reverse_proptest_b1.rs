@@ -1,7 +1,7 @@
 //! B1 property tests for [`compute_reverse`] (TEST-PROPTEST-B, #150).
 //!
 //! Three property families, all driven by the shared seeded-DB harness
-//! (`agaric_lib::proptest_db_harness`):
+//! (`agaric_engine::proptest_db_harness`):
 //!
 //! 1. **Inverse law** — for each reversible op `O` in a randomly generated
 //!    valid op chain, appending `compute_reverse(O)` returns the
@@ -36,28 +36,19 @@
 //! deeper search is wanted locally.
 
 use agaric_core::error::AppError;
-use agaric_engine::reverse::*;
-use agaric_lib::db::init_pool;
-use agaric_lib::proptest_db_harness::{
+use agaric_engine::proptest_db_harness::{
     AppliedChain, HARNESS_DEVICE, observe_prior_position, observe_prior_property,
     observe_prior_text, op_chain_strategy, seed_chain,
 };
+use agaric_engine::reverse::*;
 use agaric_store::op::{OpPayload, OpType};
+use agaric_store::test_support::test_pool;
 use proptest::prelude::*;
 use sqlx::SqlitePool;
-use std::path::PathBuf;
-use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 const B1_CASES: u32 = 64;
 const CHAIN_LEN: std::ops::RangeInclusive<usize> = 1..=24;
-
-async fn test_pool() -> (SqlitePool, TempDir) {
-    let dir = TempDir::new().unwrap();
-    let db_path: PathBuf = dir.path().join("test.db");
-    let pool = init_pool(&db_path).await.unwrap();
-    (pool, dir)
-}
 
 // ---------------------------------------------------------------------------
 // Property 1 — inverse law.

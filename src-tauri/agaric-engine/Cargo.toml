@@ -24,7 +24,11 @@ publish = false
 # to downstream crates' test builds. The app crate's
 # `materializer::handlers::import_scaling_tests` enables it (via a dev-dep
 # feature) to assert the deferred-flush reprojection count (#2621, wave E1).
-test-util = []
+# It also compiles `proptest_db_harness` (#4499 phase 1), which the app's
+# B2-B4 proptests and this crate's `tests/reverse_proptest_b1.rs` share, so
+# `proptest` is an optional normal dependency the feature turns on: the lib
+# rlib a test binary links is built without this package's dev-dependencies.
+test-util = ["dep:proptest"]
 
 [dependencies]
 # Versions/features mirror the app crate's `[dependencies]` so cargo's feature
@@ -76,7 +80,16 @@ tracing = { version = "0.1.44", features = ["attributes"] }
 # runtime coupling leaks into the engine.
 tokio = { version = "1", features = ["time"] }
 
+# Reached only through `test-util` (see the feature's comment); a default
+# build never compiles it. Version mirrors the dev-dependency below.
+proptest = { version = "1.11.0", optional = true }
+
 [dev-dependencies]
+# The integration binaries under `tests/` link this crate's lib as an external
+# crate, so the `test-util` seams (`proptest_db_harness`) are reached the way
+# the app and store crates do it: a dev-dependency on ourselves with the
+# feature on. Dev-dependency features never leak into a normal build.
+agaric-engine = { path = ".", version = "0.1.0", features = ["test-util"] }
 # The moved loro tests use `#[tokio::test]` (single- + multi-thread flavors).
 # Version/features mirror the app crate's `[dev-dependencies]` exactly.
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }

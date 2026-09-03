@@ -49,7 +49,7 @@ tokio = { version = "1", features = ["sync", "net"] }
 # which defaulted to native-tls), so disabling defaults and re-selecting
 # `rustls` yields a single rustls stack — binary size drops by the
 # `native-tls-crate` slice.
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "http2", "charset"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "charset"] }
 # `link_metadata` parses and classifies hosts via `url::Url`.
 url = "2"
 # `db` — pool structs wrap sqlx pools; the acquire/begin helpers use sqlx types.

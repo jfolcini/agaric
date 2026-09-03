@@ -129,7 +129,7 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));   // typed
 - Every assertion carries a message.
 - Exact counts: `assert_eq!(count, 5)`, never `assert!(count >= 1)` — inequality hides duplicate-result and missing-filter bugs.
 - Every command tests nonexistent ID → `NotFound`, deleted block → `NotFound`, invalid input → `Validation`.
-- State-changing ops verify the op log: count, `op_type`, payload, hash chain. The log is append-only; reverse ops (`src-tauri/tests/app_tests/reverse_tests.rs`) are appended, never mutate existing records. Non-reversible ops return `AppError::NonReversible`, not a panic.
+- State-changing ops verify the op log: count, `op_type`, payload, hash chain. The log is append-only; reverse ops (`src-tauri/agaric-engine/tests/reverse_tests.rs`) are appended, never mutate existing records. Non-reversible ops return `AppError::NonReversible`, not a panic.
 - Recursive-CTE tests verify `is_conflict = 0` and `depth < 100` (root `AGENTS.md` invariant #9).
 
 ### Determinism

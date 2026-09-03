@@ -396,12 +396,6 @@ fn has_directive_for_target(filter: &str, target: &str) -> bool {
 mod bulk_equivalence;
 #[cfg(test)]
 mod integration_tests;
-/// TEST-PROPTEST-B (#150): shared seeded-DB proptest fixture harness —
-/// random valid block trees + op chains over a real pool. Reused by the
-/// Tier-B property tests (`tests/app_tests/reverse_proptest_b1.rs` for B1;
-/// materializer / sync for B2-B4), hence `test-util` rather than `cfg(test)`.
-#[cfg(any(test, feature = "test-util"))]
-pub mod proptest_db_harness;
 /// #3345 (programme #3351, theme T3): the reconciliation oracle — rebuild each
 /// covered derived artefact from base tables and diff it against the
 /// incrementally-maintained state. Consumed by
