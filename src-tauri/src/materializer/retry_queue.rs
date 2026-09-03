@@ -802,9 +802,9 @@ pub(crate) async fn clear_on_success(
 /// and a subsequent `clear_on_success` deletes the row outright. One tick's
 /// drain ([`sweep_until_no_progress`]) can run past a minute, so a row leased
 /// in an early pass may come due in a later pass of the same tick and be
-/// dispatched again while still in flight; that is bounded by the drain's
-/// pass cap and the handlers are idempotent, so it costs wasted work, not
-/// correctness.
+/// dispatched again while still in flight. The handlers are idempotent, so
+/// that costs wasted work, not correctness — up to the pass cap times the
+/// batch (512 × 64 re-applies) in a tick that never runs out of due rows.
 ///
 /// Unlike `record_failure`, the lease does NOT touch `attempts`,
 /// `last_error`, or `created_at` — it only moves the visibility window so
@@ -1896,26 +1896,16 @@ async fn try_reenqueue_apply_op(
 /// #2541) or an `Err` row keeps the oldest timestamp and comes straight back at
 /// the head of the next batch, to be shed again.
 ///
-/// Neither weaker condition works. `re_enqueued == 0` misses a batch mixing
-/// `ApplyOp` rows — which go to the foreground queue and enqueue fine — with
-/// background rows that shed: positive, and still re-grinding the shed ones.
-/// A full batch of `re_enqueued` misses the retirement arms, which dispatch
-/// nothing and would cap a backlog of superseded or unknown-kind rows at one
-/// batch per tick — the ceiling this function exists to remove.
+/// Counting only `re_enqueued` undercounts twice over — a mixed enqueue/shed
+/// batch, and a batch of pure retirements — and either would keep the
+/// per-tick ceiling; `docs/session-log/session-1494-…` has the cases.
 ///
-/// `MAX_SWEEPS_PER_TICK` is not a spin guard; the condition above is. It
-/// bounds one tick's wall clock so `spawn_sweeper` keeps reaching its
-/// `shutdown_flag` check: the loop itself has none, and a vault with a
-/// six-figure backlog would otherwise hold shutdown for minutes.
-///
-/// It changes who waits, deliberately. Persisted `ApplyOp` rows dispatch
-/// through `enqueue_foreground`, whose `send` blocks on a full 256-slot
-/// channel, and one tick may now offer 512 batches where it offered one — so
-/// a large persisted-`ApplyOp` backlog keeps that channel busy for the whole
-/// drain and a user command's foreground enqueue waits behind it, instead of
-/// finding the queue idle between ticks. Accepted: the wait is FIFO over
-/// sub-millisecond handlers, bounded by the same 512, and those ops are
-/// unmaterialized primary state that has to be applied regardless (#621).
+/// `MAX_SWEEPS_PER_TICK` bounds one tick's wall clock so `spawn_sweeper` keeps
+/// reaching its `shutdown_flag` check; the condition above is what stops the
+/// loop. The drain changes who waits: a large persisted-`ApplyOp` backlog now
+/// holds `enqueue_foreground`'s 256-slot channel for the whole tick, so a user
+/// command's foreground enqueue queues behind it. Accepted — FIFO over
+/// sub-millisecond handlers, and those ops must be applied regardless (#621).
 async fn sweep_until_no_progress(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
