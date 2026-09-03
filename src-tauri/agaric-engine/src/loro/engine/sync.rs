@@ -872,3 +872,88 @@ pub enum ReplayBlobGate {
     /// #1054 — the blob is update-shaped and its causal base is unreachable.
     Unreachable(String),
 }
+
+#[cfg(test)]
+mod screen_inbound_blob_tests {
+    //! #3443: contract pins for the one-decode inbound screen (#3213) that
+    //! `sync_protocol::loro_sync::apply_remote` reads its fork verdict and its
+    //! slot-delete condition off.
+    use super::{Counter, LoroEngine, PeerID, VersionVector};
+
+    fn own_counter(e: &LoroEngine) -> Counter {
+        VersionVector::decode(&e.version_vector())
+            .unwrap()
+            .get(&e.peer_id())
+            .copied()
+            .unwrap()
+    }
+
+    /// Reddens if the screen stops reporting the blob's declared end frontier,
+    /// or starts forking a blob another peer minted while we hold ops of our
+    /// own.
+    #[test]
+    fn screen_inbound_blob_reports_declared_frontier_and_no_fork_3443() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
+        // b mints an op of its own first: at a zero own-counter the fork guard
+        // short-circuits, so a `None` verdict would prove nothing.
+        b.apply_create_block_at("BB", "leaf", "b", None, 0).unwrap();
+        a.apply_create_block_at("AA", "page", "a", None, 0).unwrap();
+        a.apply_create_block_at("AB", "leaf", "a", Some("AA"), 0)
+            .unwrap();
+        let update = a.export_update_since(&b.version_vector()).unwrap();
+        let declared = vec![(a.peer_id(), own_counter(&a))];
+
+        let screen = b.screen_inbound_blob(&update);
+        assert_eq!(screen.fork, None);
+        assert_eq!(screen.declared_end_vv, declared);
+
+        // Boot replay re-screens a slot whose ops the doc already holds (#535),
+        // so the same bytes must still declare the same frontier.
+        b.import(&update).unwrap();
+        let again = b.screen_inbound_blob(&update);
+        assert_eq!(again.fork, None);
+        assert_eq!(again.declared_end_vv, declared);
+    }
+
+    /// Reddens if the screen stops applying the #792 fork rule to a blob that
+    /// carries our own peer id beyond the counter this doc holds, or misreports
+    /// either counter in the reason the caller logs.
+    #[test]
+    fn screen_inbound_blob_flags_own_peer_fork_3443() {
+        let mut forked = LoroEngine::with_peer_id("DEV-OWN").unwrap();
+        for i in 0..3usize {
+            forked
+                .apply_create_block_at(&format!("F{i}"), "leaf", "f", None, i)
+                .unwrap();
+        }
+        let blob = forked.export_snapshot().unwrap();
+
+        let mut local = LoroEngine::with_peer_id("DEV-OWN").unwrap();
+        local
+            .apply_create_block_at("L0", "leaf", "l", None, 0)
+            .unwrap();
+
+        let own = local.peer_id();
+        let blob_counter = own_counter(&forked);
+        let local_counter = own_counter(&local);
+        assert_eq!(
+            local.screen_inbound_blob(&blob).fork,
+            Some(format!(
+                "(peer,counter) fork detected for own peer id {own} (#792): inbound blob \
+                 carries our ops through counter {blob_counter} but this doc only holds \
+                 {local_counter} — a pre-epoch snapshot RESET reused the deterministic \
+                 peer id; importing would corrupt causal state. Snapshot catch-up required."
+            ))
+        );
+    }
+
+    /// Reddens if a blob whose metadata will not decode stops falling back to
+    /// `InboundBlobScreen::default()` — no fork, no slot-delete condition.
+    #[test]
+    fn screen_inbound_blob_undecodable_blob_is_default_3443() {
+        let screen = LoroEngine::new().screen_inbound_blob(b"not a loro blob");
+        assert_eq!(screen.fork, None);
+        assert_eq!(screen.declared_end_vv, Vec::<(PeerID, Counter)>::new());
+    }
+}

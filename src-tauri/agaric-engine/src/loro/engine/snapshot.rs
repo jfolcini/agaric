@@ -2188,3 +2188,40 @@ mod parent_id_ancestor_tests {
         assert_eq!(ids(&e.ancestors_outside(&["NOPE", "CC"])), vec!["AA", "BB"]);
     }
 }
+
+#[cfg(test)]
+mod live_blocks_preorder_tests {
+    //! #3443: contract pins for the recovery-replay full enumeration
+    //! (`db/recovery.rs`), whose only coverage lived in the app crate.
+    use super::LoroEngine;
+
+    fn ids(e: &LoroEngine) -> Vec<String> {
+        e.live_blocks_preorder()
+            .iter()
+            .map(|b| b.as_str().to_string())
+            .collect()
+    }
+
+    /// Reddens if the enumeration stops being parent-before-child pre-order in
+    /// sibling order (roots included), drops a soft-deleted block, or keeps a
+    /// purged subtree.
+    #[test]
+    fn live_blocks_preorder_enumerates_every_unpurged_block_in_preorder_3443() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("A", "page", "a", None, 0).unwrap();
+        e.apply_create_block_at("B", "leaf", "b", Some("A"), 0)
+            .unwrap();
+        e.apply_create_block_at("C", "leaf", "c", Some("A"), 1)
+            .unwrap();
+        e.apply_create_block_at("D", "leaf", "d", Some("B"), 0)
+            .unwrap();
+        e.apply_create_block_at("E", "page", "e", None, 1).unwrap();
+        assert_eq!(ids(&e), vec!["A", "B", "D", "C", "E"]);
+
+        e.apply_delete_block("C", "2026-01-01T00:00:00Z").unwrap();
+        assert_eq!(ids(&e), vec!["A", "B", "D", "C", "E"]);
+
+        e.apply_purge_block("B").unwrap();
+        assert_eq!(ids(&e), vec!["A", "C", "E"]);
+    }
+}
