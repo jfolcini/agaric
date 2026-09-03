@@ -600,8 +600,9 @@ pub async fn record_failure(
 /// I-Materializer-2: visibility tightened from `pub` to `pub(crate)` to
 /// match the sibling helpers in this module (`record_failure`,
 /// `fetch_due`, `clear_entry`, `task_from_row`, `RetryKind`). Only
-/// `sweep_once` and `spawn_sweeper` retain `pub` because they are the
-/// documented integration points for the rest of the crate. The
+/// `spawn_sweeper` retains `pub` as the module's integration point; since
+/// #4208 it drives `sweep_until_no_progress`, so `sweep_once` is `pub` only
+/// as the single-pass primitive the drain tests pin. The
 /// `cfg_attr(not(test), allow(dead_code))` keeps lib-only builds quiet
 /// while preserving the function for the planned `StatusInfo` wiring;
 /// it is exercised by the unit tests in this module.
@@ -1903,6 +1904,15 @@ async fn try_reenqueue_apply_op(
 /// bounds one tick's wall clock so `spawn_sweeper` keeps reaching its
 /// `shutdown_flag` check: the loop itself has none, and a vault with a
 /// six-figure backlog would otherwise hold shutdown for minutes.
+///
+/// It changes who waits, deliberately. Persisted `ApplyOp` rows dispatch
+/// through `enqueue_foreground`, whose `send` blocks on a full 256-slot
+/// channel, and one tick may now offer 512 batches where it offered one — so
+/// a large persisted-`ApplyOp` backlog keeps that channel busy for the whole
+/// drain and a user command's foreground enqueue waits behind it, instead of
+/// finding the queue idle between ticks. Accepted: the wait is FIFO over
+/// sub-millisecond handlers, bounded by the same 512, and those ops are
+/// unmaterialized primary state that has to be applied regardless (#621).
 async fn sweep_until_no_progress(
     read_pool: &SqlitePool,
     write_pool: &SqlitePool,
