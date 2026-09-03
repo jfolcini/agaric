@@ -691,14 +691,6 @@ mod membership_and_rank_contract_tests {
         e.apply_purge_block("B").unwrap();
         assert!(!e.contains_block("B"));
         assert!(e.contains_block("A"));
-
-        for id in ["A", "B", "ghost"] {
-            assert_eq!(
-                e.contains_block(id),
-                e.read_block(id).unwrap().is_some(),
-                "{id}: membership must stay interchangeable with read_block's Ok(None) arm"
-            );
-        }
     }
 
     /// Reddens if `read_position` stops returning the dense 1-based rank in

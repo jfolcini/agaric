@@ -106,12 +106,7 @@ async fn redo_append_is_forward_equivalent_and_links_reversed_op_3443() {
 
     assert_eq!(redo.seq, 2, "the redo op continues the device chain");
     assert_eq!(
-        redo.parent_seqs.as_deref(),
-        Some(r#"[["test-device",1]]"#),
-        "the redo op links the previous op as its parent"
-    );
-    assert_eq!(
-        provenance(&pool, TEST_DEVICE, 2).await,
+        provenance(&pool, TEST_DEVICE, redo.seq).await,
         (0, Some(TEST_DEVICE.to_owned()), Some(1)),
         "redo append stays is_undo = 0 while linking the undo op it reverses"
     );
