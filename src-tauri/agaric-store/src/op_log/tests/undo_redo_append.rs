@@ -111,55 +111,8 @@ async fn redo_append_is_forward_equivalent_and_links_reversed_op_3443() {
         "the redo op links the previous op as its parent"
     );
     assert_eq!(
-        redo.hash,
-        compute_op_hash(
-            TEST_DEVICE,
-            2,
-            redo.parent_seqs.as_deref(),
-            &redo.op_type,
-            &redo.payload,
-        ),
-        "the stored hash must chain over the parent link"
-    );
-    assert_eq!(
         provenance(&pool, TEST_DEVICE, 2).await,
         (0, Some(TEST_DEVICE.to_owned()), Some(1)),
         "redo append stays is_undo = 0 while linking the undo op it reverses"
-    );
-}
-
-/// Reddens if the redo append stops validating its `SetProperty` payload and
-/// returns an appended op for a value-less property instead of an error.
-#[tokio::test]
-async fn redo_append_rejects_valueless_set_property_3443() {
-    let (pool, _dir) = test_pool().await;
-
-    let reverses = OpRef {
-        device_id: TEST_DEVICE.into(),
-        seq: 1,
-    };
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    let err = append_local_redo_op_in_tx(
-        &mut tx,
-        TEST_DEVICE,
-        OpPayload::SetProperty(SetPropertyPayload {
-            block_id: BlockId::test_id("BLK-VAL"),
-            key: "status".into(),
-            value_text: None,
-            value_num: None,
-            value_date: None,
-            value_ref: None,
-            value_bool: None,
-        }),
-        FIXED_TS,
-        &reverses,
-    )
-    .await
-    .unwrap_err();
-    tx.rollback().await.unwrap();
-
-    assert!(
-        matches!(err, AppError::Validation { .. }),
-        "a value-less non-reserved SetProperty must be rejected, got: {err:?}"
     );
 }

@@ -730,29 +730,18 @@ mod membership_and_rank_contract_tests {
         );
     }
 
-    /// Reddens if `children_ordered_block_ids` stops returning the full
-    /// post-insert sibling order, the root forest for `None`, or the empty
-    /// vector for a parent the engine does not hold.
+    /// Reddens if `children_ordered_block_ids` stops returning the root
+    /// forest for `None` or the empty vector for a parent the engine does
+    /// not hold; the sibling order itself is pinned in `merge/apply.rs`.
     #[test]
-    fn children_ordered_block_ids_is_full_sibling_order_3443() {
+    fn children_ordered_block_ids_root_forest_and_unknown_parent_3443() {
         let mut e = LoroEngine::new();
         e.apply_create_block_at("P", "page", "p", None, 0).unwrap();
-        for (i, id) in ["C0", "C1", "C2"].iter().enumerate() {
-            e.apply_create_block_at(id, "leaf", "c", Some("P"), i)
-                .unwrap();
-        }
-        assert_eq!(
-            e.children_ordered_block_ids(Some("P")).unwrap(),
-            vec!["C0", "C1", "C2"]
-        );
+        e.apply_create_block_at("Q", "page", "q", None, 1).unwrap();
+        e.apply_create_block_at("C0", "leaf", "c", Some("P"), 0)
+            .unwrap();
 
-        e.apply_move_block_to("C2", Some("P"), 0).unwrap();
-        assert_eq!(
-            e.children_ordered_block_ids(Some("P")).unwrap(),
-            vec!["C2", "C0", "C1"]
-        );
-
-        assert_eq!(e.children_ordered_block_ids(None).unwrap(), vec!["P"]);
+        assert_eq!(e.children_ordered_block_ids(None).unwrap(), vec!["P", "Q"]);
         assert_eq!(
             e.children_ordered_block_ids(Some("ghost")).unwrap(),
             Vec::<String>::new()

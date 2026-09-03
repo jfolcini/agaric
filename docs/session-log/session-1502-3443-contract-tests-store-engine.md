@@ -4,16 +4,16 @@ Goal: the first slice of #3443 as narrowed on 2026-09-02. `cargo mutants -p agar
 
 ## What shipped
 
-Thirteen tests, every one shown red under a named mutation of the method it pins before it was kept.
+Twelve tests, every one shown red under a named mutation of the method it pins before it was kept.
 
 `agaric-store`, new files under `op_log/tests/`:
 
-- `undo_redo_append.rs`: `append_local_undo_op_in_tx` stamps `is_undo = 1` and the reversed op's foreign `(device, seq)`; `append_local_redo_op_in_tx` stamps `is_undo = 0`, links the reversed op, and chains `parent_seqs` and the recomputed hash like a plain append; a redo of a valueless `set_property` is refused with `AppError::Validation`.
+- `undo_redo_append.rs`: `append_local_undo_op_in_tx` stamps `is_undo = 1` and the reversed op's foreign `(device, seq)`; `append_local_redo_op_in_tx` stamps `is_undo = 0`, links the reversed op, and chains `parent_seqs` like a plain append.
 - `resolve_prev_edit.rs`: `resolve_prev_edit_target` returns the op the pointer names, `None` for a `(device, seq)` that does not exist (the device predicate is pinned, not just the seq), and resolves a replicated audit row. The last one is the deliberate absence of an `is_replicated` predicate; the app-crate fixture at `src/reverse/tests.rs:2879` only pins parity between the batched and single-op copies, so adding the predicate to both would leave it green.
 
 `agaric-engine`, inline test modules:
 
-- `loro/engine/reads.rs`: `contains_block` follows index membership (true after create and after soft delete, false for an unknown id and after purge, and equal to `read_block(id)?.is_some()` at every step); `read_position` is the dense sibling rank before and after a move, with the exact `Validation` error for an unknown block; `children_ordered_block_ids` returns the full sibling order after inserts and a move, the root forest for `None`, and an empty vector for an unknown parent.
+- `loro/engine/reads.rs`: `contains_block` follows index membership (true after create and after soft delete, false for an unknown id and after purge, and equal to `read_block(id)?.is_some()` at every step); `read_position` is the dense sibling rank before and after a move, with the exact `Validation` error for an unknown block; `children_ordered_block_ids` returns the root forest for `None` and an empty vector for an unknown parent; the sibling order was already pinned in-crate by `merge/apply.rs`.
 - `loro/engine/snapshot.rs`: `live_blocks_preorder` enumerates every unpurged block depth-first in sibling order across two roots, keeps a soft-deleted block, and drops a purged subtree.
 - `loro/engine/sync.rs`: `screen_inbound_blob` reports the exporter's declared frontier with no fork on a fresh update and again on redelivery of the same bytes, reports the full own-peer fork message on a divergent lineage under the same peer id, and returns `InboundBlobScreen::default()` for bytes that are not a Loro blob.
 
@@ -26,6 +26,7 @@ Not added: `OpPayload::attachment_id` already has the `_3452` pair in `op_log/te
 - The undo append test compared against a second pool's plain append; the hash-equality half was structurally true (`compute_op_hash` has no provenance input) and the chain half duplicated `append.rs::second_op_references_first_as_parent`. Cut to the provenance triple with a foreign `reverses` ref and the `seq` it reads.
 - A rollback test asserting the op log untouched was deleted: the `_in_tx` signature makes the assertion unreachable, and its `seq` assertions were duplicates.
 - A trailing `count == 0` after an explicit rollback was vacuous and was cut.
+- The PR reviewer cut two more duplicates: the valueless `set_property` redo test (the validation runs in the shared append and `op.rs` already pins it) and the redo hash recomputation (same shape as `tests/hash.rs`; `parent_seqs` carries the load), and narrowed the sibling-order test to its two new arms.
 
 ## Verified
 
