@@ -1065,15 +1065,15 @@ function runSelfTest() {
   else fail('--workspace package selection', JSON.stringify(all))
 
   // 4. End-to-end: the REAL config, analysed against an invocation with no
-  //    `--workspace`, must report all three moved-out globs. This is the
-  //    guard's whole reason to exist, exercised through `analyzeMutantsScope`
-  //    rather than its helpers.
+  //    `--workspace`, must report all four moved-out globs (op.rs, op_log/**,
+  //    reverse/** and loro/engine/**). This is the guard's whole reason to
+  //    exist, exercised through `analyzeMutantsScope` rather than its helpers.
   const drifted = analyzeMutantsScope({
     root: REPO_ROOT,
     overrideArgv: ['cargo', 'mutants', '--in-place'],
   })
-  if (drifted.problems.filter((p) => p.kind === 'glob-outside-examined-packages').length === 3)
-    ok('dropping --workspace flags all three moved-out globs (the #2621 drift)')
+  if (drifted.problems.filter((p) => p.kind === 'glob-outside-examined-packages').length === 4)
+    ok('dropping --workspace flags all four moved-out globs (the #2621 drift)')
   else fail('moved-out globs are flagged', JSON.stringify(drifted.problems.map((p) => p.kind)))
 
   // 3b. #3393, the sharded shape: `-p "$PACKAGE"` names the matrix column, so
