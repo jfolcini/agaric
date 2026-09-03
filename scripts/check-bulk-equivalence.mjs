@@ -171,7 +171,8 @@ const BASELINE_FILE = path.join(ROOT, 'scripts', 'bulk-equivalence-baseline.json
 /**
  * Every Rust source root in the workspace: the app crate, its integration
  * tests, and every sibling crate under `src-tauri/`. DISCOVERED, never hardcoded — a crate added
- * tomorrow is in scope tomorrow. Returned sorted so output order is stable.
+ * tomorrow is in scope tomorrow. App roots first, then the sibling crates in name order, so
+ * output order is stable.
  *
  * @param {string} tauriDir
  * @returns {string[]}
