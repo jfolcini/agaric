@@ -5449,12 +5449,12 @@ async fn apply_snapshot_clears_projected_agenda_horizon_3160() {
 // ===========================================================================
 
 /// #793 regression: `apply_snapshot` wipes the CRDT sidecar but left
-/// `log_snapshots` intact — pre-reset local snapshots remained offerable
-/// via `get_latest_snapshot`, so `try_offer_snapshot_catchup` could serve
-/// The PRE-RESET vault to a device still on the old lineage (only
-/// checks seq coverage of the requester's heads, which the old snapshot
-/// trivially satisfies). A post-reset device has nothing valid to offer
-/// until it snapshots its new state.
+/// `log_snapshots` intact, so rows describing the PRE-RESET lineage
+/// survived the reset. #3487 deleted the wire path that could re-ship
+/// them, but the rows still mislead two local readers: `dag::find_lca`
+/// reads any `status = 'complete'` row as "compaction has occurred", and
+/// `compact_op_log` takes the latest as its retention floor. This pins
+/// the wipe against both.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_snapshot_clears_stale_log_snapshots_793() {
     let (pool, _dir) = test_pool().await;

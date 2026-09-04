@@ -357,9 +357,10 @@ state-reset decisions are made from Loro VVs:
 Both funnel into the single `ResetRequired` → snapshot-catch-up recovery
 path. #2502 retired the previous op-log-`(device_id, seq)` reset lookup
 entirely (it conflated the audit cursor with state causality and produced
-the #602 forever-backoff bug); `heads` retains its two surviving,
-non-decision jobs — remote-device identification and the defensive
-`snapshot_covers_remote_heads` covering check in the snapshot sub-flow.
+the #602 forever-backoff bug); `heads` retains one surviving,
+non-decision job — remote-device identification. The defensive
+`snapshot_covers_remote_heads` covering check went with the legacy CBOR
+sub-flow in #3487.
 
 **Persisted per-peer version vectors (`peer_refs.loro_vv_bytes`, #2502).**
 On session completion the streamer persists the peer's advertised

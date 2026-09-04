@@ -660,8 +660,9 @@ fn decode_snapshot_with_zstd_streaming_decoder_does_not_buffer_full_decompressed
 }
 
 /// #2696 — the boot-time sweep must remove stale
-/// `snapshot-recv-*.tmp` orphans (left by a process that died before
-/// `SnapshotTempFile::Drop` ran) while leaving every non-matching
+/// `snapshot-recv-*.tmp` orphans (left by a pre-#3487 process that died
+/// mid-receive; that path is gone, so no NEW orphan can appear, but an
+/// upgraded vault can still hold one at 256 MB) while leaving every non-matching
 /// entry untouched: unrelated files, a `snapshot-recv-*` name without
 /// the `.tmp` suffix, and a directory that happens to match the
 /// pattern.

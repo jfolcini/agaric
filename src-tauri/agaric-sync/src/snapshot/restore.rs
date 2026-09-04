@@ -168,12 +168,12 @@ fn cache_wipe_sql(table: &str) -> Option<&'static str> {
 ///   would then hold the cursor above freshly minted seqs and the H-4 boot
 ///   clamp is the only thing that would ever correct it.
 /// - `log_snapshots` — wiped (#793). Local snapshots taken before the RESET
-///   describe the pre-reset lineage; left in place,
-///   `try_offer_snapshot_catchup` would keep serving them via
-///   `get_latest_snapshot`, and a third device still on the OLD lineage
-///   Passes the covering check — so this device could re-ship the
-///   pre-reset vault AFTER itself moving to the new lineage. A post-reset
-///   device has nothing valid to offer until it snapshots its new state.
+///   describe the pre-reset lineage, and #3487 removed the wire path that
+///   used to re-ship them. The wipe still earns its keep for two LOCAL
+///   readers: `dag::find_lca` treats any `status = 'complete'` row as proof
+///   that compaction has occurred and changes its error reporting on that,
+///   and `compact_op_log` takes the latest such row as its retention floor.
+///   A row describing a dead lineage would mislead both.
 /// - `app_settings['loro.peer_id_epoch']` — **bumped, not wiped** (#792).
 ///   Post-reset engines restart op counters at 0; reusing the old
 ///   deterministic PeerID would fork the (peer, counter) space against this
@@ -329,15 +329,11 @@ pub async fn apply_snapshot<R: std::io::Read>(
         .execute(&mut *tx)
         .await?;
     // #793: stale local snapshots must die with the lineage they describe.
-    // `try_offer_snapshot_catchup` serves `get_latest_snapshot` to any
-    // Behind peer, and the covering check only compares the
-    // requester's heads against the snapshot's `up_to_seqs` — a third
-    // device still on the OLD lineage is "covered" by a pre-reset
-    // snapshot, so leaving these rows in place lets this device re-ship
-    // the pre-reset vault after it has itself moved to the new lineage.
-    // Wiped in the SAME tx as the core swap: a rollback keeps the old
-    // snapshots offerable alongside the old data (consistent), a commit
-    // leaves nothing to offer until this device snapshots the new state.
+    // #3487 deleted the wire path that used to serve them, but two local
+    // readers remain: `dag::find_lca` reads any `status = 'complete'` row as
+    // "compaction has occurred" and reports errors differently, and
+    // `compact_op_log` takes the latest one as its retention floor. Leaving a
+    // pre-reset row would misinform both about a lineage this device just left.
     sqlx::query!("DELETE FROM log_snapshots")
         .execute(&mut *tx)
         .await?;

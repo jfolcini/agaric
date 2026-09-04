@@ -219,9 +219,9 @@ pub async fn collect_tables(conn: &mut SqliteConnection) -> Result<SnapshotTable
 /// This is **deliberate, not a bug**: peers treat `up_to_hash` as opaque
 /// (it's never compared between devices for equality), and the **real
 /// causal anchor is `up_to_seqs`** — a per-device-id `MAX(seq)` map that
-/// behaves like a vector clock and is what `try_offer_snapshot_catchup`
-/// actually consults to decide whether a snapshot covers a remote's
-/// frontier.
+/// behaves like a vector clock. It used to be what `try_offer_snapshot_catchup`
+/// consulted to decide whether a snapshot covered a remote's frontier; #3487
+/// deleted that, and `compact_op_log`'s retention floor is now its only reader.
 ///
 /// If you find yourself reaching for "let's make `up_to_hash` deterministic
 /// across devices" (e.g., hash the snapshot bytes themselves rather than
