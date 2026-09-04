@@ -942,6 +942,24 @@ jobs:
         if: needs.detect-changes.outputs.backend == 'true'
         run: prek run --all-files --hook-stage pre-push cargo-clippy
 
+      - name: Run cargo doc link/HTML-tag denies (backend PRs)
+        # cargo-doc-links is staged `pre-push` in prek.toml, so the
+        # pre-commit-stage `prek run --all-files` above never executes it.
+        # Until #4665 it denied only `broken_intra_doc_links` and the weekly
+        # `full-suite` lane was enough; that PR swept the other three classes
+        # to zero and denied them, and a ratchet nobody re-checks for a week is
+        # how #4662's private link reached `main` green. Promoted here for the
+        # same reason clippy is, and gated the same way on backend == 'true'.
+        #
+        # Unlike knip below, routing through prek is NOT a silent skip: this
+        # hook has knip's shape (`pass_filenames = false` + a `types` filter)
+        # but resolves to a non-empty set under --all-files, exactly as
+        # cargo-clippy above does. Verified both ways before adding this step —
+        # the selector reports Passed on a clean tree, and Failed (exit 1) with
+        # one `[`private_item`]` link reintroduced.
+        if: needs.detect-changes.outputs.backend == 'true'
+        run: prek run --all-files --hook-stage pre-push cargo-doc-links
+
       - name: Cargo check the fuzz targets (backend PRs)
         # `src-tauri/fuzz` is its own workspace, so `--workspace` clippy never
         # compiles it and a fuzz target that no longer builds surfaced only in
