@@ -495,6 +495,34 @@ overflow-checks = true
 # build per platform; not worth it on a 5-10% binary-size delta).
 panic = "abort"
 
+# #4677 — the profile the workspace's TESTS run under when the point is release
+# SEMANTICS: `debug_assertions` OFF and `overflow-checks` ON, i.e. exactly the
+# code a shipped binary keeps and the checks it emits. That is what makes an
+# `assert!` promotion (#4638) or an arithmetic audit (#4640) verifiable rather
+# than asserted.
+#
+# `[profile.release]` itself CANNOT run them. `panic = "abort"` makes cargo
+# build every dependency twice — once abort for the lib, once unwind for the
+# test harness — and this crate's `agaric` self dev-dependency (#4499) puts
+# both builds in the same graph, so a test target links an abort-built
+# `agaric_lib` against an unwind-built `agaric_store` and the mismatch surfaces
+# as a thousand-plus `expected X, found X` errors on identically-named types.
+#
+# `panic = "unwind"` is therefore the whole point of this profile, and it is
+# also the only way `#[should_panic]` runs at all: under abort a tripped
+# invariant is a SIGABRT no harness can catch.
+#
+# LTO and codegen-units are relaxed deliberately. This profile exists to check
+# which code the compiler KEEPS and which checks it EMITS; neither depends on
+# how the result is then optimised, and inheriting `codegen-units = 1` costs
+# ~50 minutes a run to prove nothing. Do NOT use it to validate a shipped
+# binary — `[profile.release]` is the only thing that ships.
+[profile.release-test]
+inherits = "release"
+panic = "unwind"
+lto = false
+codegen-units = 16
+
 # Dev-build link-time trim (PEND-37, local dev speed). The link step is the
 # long pole of incremental compiles on this graph (see docs/BUILD.md §"Speed
 # up Rust builds" — 200K LOC + the Tauri/sqlx/Loro/OTel/rustls/reqwest tree);
