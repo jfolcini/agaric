@@ -391,11 +391,13 @@ updates:
       # ordinary one-user-two-devices shape, so it is reachable in production.
       #
       # This ignore is now a second line of defence, not the whole hold:
-      # `agaric-engine` and `agaric-sync` pin `loro = "=1.13.6"` AND
-      # `loro-internal = "=1.13.6"`, so cargo refuses the bad resolution. Both
-      # pins are needed — loro 1.13.6 requires only `loro-internal = "^1.13.6"`,
-      # so pinning the facade alone lets the crate the regression lives in
-      # float. It keeps dependabot from opening the PR at all.
+      # `agaric-engine` pins BOTH `loro = "=1.13.6"` and
+      # `loro-internal = "=1.13.6"` (`agaric-sync` pins `loro` only — one
+      # exact pin anywhere in the workspace governs the resolution), so cargo
+      # refuses the bad resolution. The second pin is the load-bearing one:
+      # loro 1.13.6 requires only `loro-internal = "^1.13.6"`, so pinning the
+      # facade alone lets the crate the regression lives in float. This entry
+      # keeps dependabot from opening the PR at all.
       #
       # Our own regression test cannot catch a lift — #3187 narrowed the
       # frontier to width 1, which hits dag.rs's `left.len() <= 1 &&
