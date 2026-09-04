@@ -3664,9 +3664,10 @@ function selfTestSuppressedChildLinks({ check, drive, parentWith }) {
   const parentEdit = calls.findLast((c) => c.sub === 'edit')
   const recorded = parseChildLinks(parentEdit?.body ?? '')
   check(
-    // The new area is filed and the parent edited; #202 is neither viewed nor
-    // closed. A `view` would mean the close plan was still being executed.
-    seq === 'list,create,edit' && !calls.some((c) => c.target === '202'),
+    // The new area is filed and the parent edited, and that is the WHOLE call
+    // set — no `view` and no `close`, either of which would mean the close
+    // plan was still being executed against #202.
+    seq === 'list,create,edit',
     "a short frontend run files the new area but leaves the vanished area's child alone",
     `gh sequence was: ${seq || '(no gh calls at all)'}`,
   )
