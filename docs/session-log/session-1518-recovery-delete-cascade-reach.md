@@ -77,13 +77,26 @@ kernel=Some(None) recovery=Some(Some(1788489724780))
 two interpreters. `restore_ancestor_divergence_is_pinned` passed unchanged with the extra op in
 the shared corpus.
 
-After the change, falsified against a `cp` backup by flipping both `Active` sites back to
-`Standard`: all three new or retargeted tests reddened. Restored, `cmp`-verified byte-identical,
-`grep -c 'CascadeReach::Active)'` → 2.
+Falsified twice, each time against a `cp` backup and restored `cmp`-verified byte-identical.
+First, flipping both `Active` sites back to `Standard`: all three new or retargeted tests
+reddened. Then, after review round 2 replaced the copied CTE bodies with `concat!()` over the
+store's macros, pointing `ACTIVE_WALK` at `descendants_cte_standard!()` instead:
+`recover_move_sweep_stops_at_a_tombstoned_child` and
+`delete_cascade_reach_past_a_tombstoned_child_agrees_with_kernel` both reddened, which is what
+proves the macro actually carries the Active filter.
 
-`cargo nextest run --workspace`: **6346 passed**, 0 failed. `-p agaric`: 2529 passed.
-`cohort_cascade_drift_guard` (3 passed) walks `../src` and saw the new `ACTIVE_WALK` arm, so the
-depth cap is still guarded on both branches. clippy and fmt clean.
+`cargo nextest run --workspace`: **6346 passed**, 0 failed. After the `concat!()` swap, the
+recovery + guard selection: 194 passed, and the seven load-bearing guards run by name: 7 passed.
+clippy and fmt clean.
+
+**On the depth-cap guard, precisely.** An earlier draft of this log said
+`cohort_cascade_drift_guard` "walks `../src` and saw the new `ACTIVE_WALK` arm". That was true of
+the first implementation and is **false of what merged**: after the `concat!()` swap `recovery.rs`
+contains zero `JOIN descendants d ON b.parent_id = d.id` occurrences, so the guard's per-file count
+for it is 0/0 and the literal `d.depth < 100` is pinned in the store macros instead, by
+`macro_variants_pin_canonical_filters`. What running the guard established is narrower and still
+worth having: the swap did not drop the workspace below the guard's own `total_arms >= 5` sanity
+floor, which is the assertion that would have caught the anchor regex silently disabling itself.
 
 No `sqlx::query!` was touched — every statement here is the runtime `sqlx::query` form, so the
 four `.sqlx/` caches did not move.

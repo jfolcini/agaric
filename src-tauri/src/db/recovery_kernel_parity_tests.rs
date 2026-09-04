@@ -873,13 +873,10 @@ async fn restore_ancestor_divergence_is_pinned() {
 /// cohort.
 ///
 /// Why the two answers are not interchangeable, and why recovery is the side
-/// that moved: on the disaster path `reproject_blocks_from_engine` (Pass C)
-/// drives every block through R9's live-under-tombstone sweep. A `NULL` there
-/// is `(sql None, ancestor Some(CHILD, ts_child))`, so the sweep fires and
-/// stamps the nearest tombstoned ancestor's `ts_child` — the converged-tree
-/// answer the repo adopted in #4188/#4204. A stamp of `ts_parent` is
-/// `(sql Some, ancestor Some)`, which the resurrection guard leaves alone: the
-/// wider reach CEMENTS the wrong cohort past the only healer in the boot path.
+/// that moved, is stated once on `db::recovery::CascadeReach::Active`. In this
+/// fixture's terms: `NULL` lets R9's Pass C sweep give GRANDCHILD `ts_child`,
+/// the nearest tombstoned ancestor's cohort; a stamp of `ts_parent` is what
+/// the resurrection guard then refuses to correct.
 ///
 /// Non-vacuous: before the fix recovery returned `Some(Some(ts_parent))` here
 /// while the kernel returned `Some(None)`.

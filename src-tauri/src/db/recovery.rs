@@ -1542,7 +1542,7 @@ const CASCADE_COHORT_DDL: &str = "CREATE TEMP TABLE IF NOT EXISTS recovery_casca
 /// REACH, and it is a different question from the outer `WHERE` each caller
 /// puts on its own DML — the reach decides which rows are candidates at all,
 /// the predicate decides which candidates are written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum CascadeReach {
     /// Descend through EVERY child regardless of `deleted_at` — the
     /// [`descendants_cte_standard`](agaric_store::descendants_cte_standard)
@@ -1556,6 +1556,23 @@ enum CascadeReach {
     /// `project_delete_block_to_sql` walks. The two arms that write LIVE rows,
     /// `delete_block` and the move sweep, stop at a tombstoned child, so a live
     /// block BELOW one keeps its `NULL`.
+    ///
+    /// WHY the `NULL` matters, stated once for both arms and both their tests:
+    /// on the disaster path `reproject_blocks_from_engine` (Pass C) drives every
+    /// block through R9's live-under-tombstone sweep. A `NULL` reads there as
+    /// `(sql None, ancestor Some)`, so the sweep fires and stamps the NEAREST
+    /// tombstoned ancestor's cohort — the converged-tree answer of #4188/#4204,
+    /// where `deleted_at` is a function of the tree and not of replay order. A
+    /// row this op stamped instead reads as `(sql Some, ancestor Some)`, which
+    /// the resurrection guard leaves alone. So the wider `Standard` reach did
+    /// not merely over-stamp: it CEMENTED the wrong cohort past the only healer
+    /// in the boot path.
+    ///
+    /// The two arms must also carry the SAME reach as each other. They are the
+    /// two replay orders of one op pair — `{Move(B → P), Delete(P)}` lands in
+    /// the delete arm, `{Delete(P), Move(B → P)}` in the sweep — so a split
+    /// between them is exactly the replay-order divergence #4187 exists to
+    /// remove.
     Active,
 }
 
@@ -2600,27 +2617,12 @@ async fn recover_blocks_from_op_log(
                     // already-trashed descendant's original cohort, exactly as
                     // it does there.
                     //
-                    // REACH (#4233): `CascadeReach::Active`, the same reach
-                    // the engine's `project_delete_block_to_sql` walks — the
-                    // walk STOPS at an already-tombstoned child instead of
-                    // descending through it. A live block below a tombstone
-                    // therefore keeps its `NULL`, which is what lets R9's
-                    // Pass C sweep stamp it with the NEAREST tombstoned
-                    // ancestor's cohort — `deleted_at` is a function of the
-                    // converged tree, not of replay order (#4188/#4204). The
-                    // wider standard reach shut that healer out: a row it
-                    // stamped reads as `(sql Some, ancestor Some)`, which the
-                    // resurrection guard leaves alone, cementing this op's
-                    // timestamp instead of the ancestor's.
-                    // This arm and the `delete_block` arm below move TOGETHER
-                    // and must keep the same reach: they are the two ways the
-                    // same op pair can be replayed (`{Move(B → P), Delete(P)}`
-                    // lands in the delete arm, `{Delete(P), Move(B → P)}`
-                    // here), and a reach split between them is precisely the
-                    // replay-order divergence #4187 exists to remove.
-                    // The residual gap to the engine is depth only: that walk
-                    // is depth-UNBOUNDED (R27 re-anchoring), this one stops at
-                    // the depth-100 cap and REPORTS the truncation (#4232).
+                    // REACH (#4233): `CascadeReach::Active` — see the variant's
+                    // doc for why, and why this arm and the `delete_block` arm
+                    // below must carry the SAME reach. The residual gap to the
+                    // engine is depth only: its walk is unbounded (R27
+                    // re-anchoring), this one stops at the depth-100 cap and
+                    // REPORTS the truncation (#4232).
                     // #4232/#4289: the sweep's own reach, answered off the
                     // SAME walk the UPDATE below is keyed on — one enumeration
                     // per swept move, not two.
@@ -2661,18 +2663,12 @@ async fn recover_blocks_from_op_log(
                 // production). The `deleted_at IS NULL` guard preserves an
                 // already-deleted descendant's original cohort timestamp.
                 //
-                // REACH (#4233): `CascadeReach::Active` — the walk STOPS at a
-                // tombstoned child, exactly as the engine's
-                // `project_delete_block_to_sql` does. The guard alone was not
-                // enough: it prunes the WRITE, while the walk kept descending,
-                // so a LIVE block under a tombstoned child was still reached
-                // and stamped with THIS op's timestamp. That row then reads as
-                // `(sql Some, ancestor Some)` to R9's Pass C resurrection
-                // guard, which leaves it alone — cementing a cohort the
-                // converged-tree rule (#4188/#4204) says should be the nearest
-                // tombstoned ancestor's. Left `NULL`, the same sweep stamps it
-                // correctly. The move sweep above carries the same reach for
-                // the same reason, and the two move together (#4187).
+                // REACH (#4233): `CascadeReach::Active` — see the variant's doc.
+                // The `deleted_at IS NULL` guard above was not enough on its
+                // own: it prunes the WRITE, while the walk kept descending, so
+                // a LIVE block under a tombstoned child was still reached and
+                // stamped. The move sweep above carries the same reach, and the
+                // two move together (#4187).
                 //
                 // #618: encode per era — INTEGER epoch-ms once 0080 has run
                 // (any later rebuild re-run copies `deleted_at` RAW into a
