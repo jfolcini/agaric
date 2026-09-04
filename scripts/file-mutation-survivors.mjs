@@ -35,11 +35,16 @@
 //
 // Usage (from the repo root or anywhere — paths are resolved as given):
 //   node scripts/file-mutation-survivors.mjs \
-//     --rust-missed <path to cargo-mutants missed.txt> \
-//     --frontend-dir <dir to search recursively for Stryker mutation.json> \
-//     [--require-rust]              (#3364: FAIL if missed.txt is absent)
-//     [--require-frontend]          (#3364: FAIL if the frontend dir holds no
-//                                    mutation.json at all)
+//     --lane rust|frontend          (REQUIRED: which lane's tracking issue this
+//                                    run owns. Each lane has its own; without
+//                                    this the script would have to guess which
+//                                    one to rewrite.)
+//     --rust-missed <path to cargo-mutants missed.txt>        (--lane rust)
+//     --frontend-dir <dir to search recursively for Stryker mutation.json>
+//                                                             (--lane frontend)
+//     [--require-input]             (#3364: FAIL if THIS lane's input is
+//                                    absent. Says nothing about the other
+//                                    lane, which this run does not read.)
 //     [--children]                  (also open/update/close ONE child issue per
 //                                    AREA — see § Parent/child below)
 //     [--max-children N]            (blast-radius cap on child CREATES in a
@@ -69,14 +74,15 @@
 //
 // #3364: visibility of a lane failure is NOT the same as integrity of this
 // script's state. The lane going red does not stop this job — it runs under
-// `if: always()` — so a dead lane still contributes `[]`, and if the other
-// lane contributes one new survivor the rewritten body DELETES the dead
-// lane's survivors from the marker block (the filer's only cross-run memory)
-// and re-reports them as "new" next week. `--require-rust` /
-// `--require-frontend`, which the workflow now passes, turn a MISSING lane
-// input into a hard error so it stays distinguishable from an EMPTY one. The
-// resulting red filer job is itself reported by #3359's
-// `report-scheduled-failures`, which `needs:` this job.
+// `if: always()` — so a dead lane still contributes `[]`.
+//
+// That USED to be able to delete the other lane's survivors, because one body
+// held both. It cannot now: each lane owns its own issue and a run reads only
+// its own lane's input, so a dead lane can only ever empty ITS OWN block. That
+// is still wrong, and `--require-input` still turns a MISSING input into a
+// hard error so it stays distinguishable from an EMPTY one — the blast radius
+// is just one lane instead of two. The resulting red filer job is itself
+// reported by #3359's `report-scheduled-failures`, which `needs:` this job.
 //
 // Issue-body shape (#3245/#3257): the body carries exactly ONE deduped
 // survivor list — the machine-readable marker block. Per-run deltas ("new
@@ -196,8 +202,7 @@
 // Note the premise re-anchoring shares with the survivor block: it reads the
 // OBSERVED set, so a lane that silently contributed nothing would drop that
 // lane's accepted entries along with its survivors. That is the #3364 hazard
-// exactly, and `--require-rust` / `--require-frontend` are its guard for both
-// blocks.
+// exactly, and `--require-input` is its guard for both blocks.
 //
 // Exit codes: 0 on success (including the no-op case), 1 on a real error
 // (bad args, a `gh` call failing).
@@ -218,7 +223,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-// One PARENT PER LANE, keyed by the tag every survivor id already carries.
+// One PARENT PER LANE, selected by `--lane`.
 //
 // A single parent spanning both lanes made every partial run dangerous: the
 // body is one set, so rewriting it from the lane that ran deletes the lane
@@ -232,13 +237,15 @@ import { join, resolve } from 'node:path'
 // Stable titles: the ONLY thing the find-or-file logic matches on. Never
 // rename an existing issue with one of these — the script would stop finding
 // it and file a duplicate.
+//
+// Keyed by `--lane`, not by the `[lane]` tag ids carry. An earlier draft held
+// the tag here too, to filter a mixed id set; `main` reads only the lane's own
+// input now, so nothing ever needed it.
 export const LANES = {
   rust: {
-    tag: '[rust]',
     title: 'Mutation testing: rust survivor triage (auto-filed, do not rename)',
   },
   frontend: {
-    tag: '[frontend]',
     title: 'Mutation testing: frontend survivor triage (auto-filed, do not rename)',
   },
 }
@@ -1261,6 +1268,20 @@ export function buildChildBody({
   accepted = [],
   runUrl,
 }) {
+  // A child filed BEFORE its lane parent exists has no number, so the title is
+  // the only reference it can carry — and rendering `"undefined"` into a real
+  // filed issue is worse than failing. That is not hypothetical: it is the
+  // state every lane is in on its first run, which is the next real run until
+  // the #3142 partition lands.
+  // `!parentNumber`, not `=== undefined`: the ternary below is falsy-based, so
+  // issue 0 — which the `--known-body-file` stub uses as a placeholder — takes
+  // the title branch too. Checking only for `undefined` left the exact case
+  // the render mishandles outside the guard, and so outside every test.
+  if (!parentNumber && !parentTitle) {
+    throw new Error(
+      'buildChildBody needs `parentTitle` when there is no `parentNumber`: the child would otherwise be filed saying `Parent: "undefined"`.',
+    )
+  }
   const parentRef = parentNumber ? `#${parentNumber}` : `"${parentTitle}"`
   const { survived, noCoverage } = partitionByOutcome(members)
   // The two kinds of close read identically from the outside — no findings
@@ -1712,7 +1733,7 @@ function applyChildActions({ actions, repo, runUrl, firstSeen, parentNumber, par
         const created = createChild(
           repo,
           title,
-          buildChildBody({ ...a, firstSeen, parentNumber, runUrl }),
+          buildChildBody({ ...a, firstSeen, parentNumber, parentTitle, runUrl }),
         )
         links.set(a.area, created)
         console.log(`  child #${created} filed for ${a.area} (${a.members.length} finding(s))`)
@@ -2897,6 +2918,37 @@ function selfTestChildPlanning({ check, survivor }) {
       !small.includes('do not fit') && small.includes(survivor(1)),
       'a small child body is not truncated',
       small,
+    )
+
+    // THE FIRST RUN OF A LANE. `findTrackingIssue` returns null, so there is
+    // no parent NUMBER and the title is the only reference the child can
+    // carry. Review caught the `create` call site not passing it, which
+    // rendered a literal `Parent: "undefined"` into a real filed issue — and
+    // that is the state every lane is in on its first run, i.e. the next real
+    // run. Before the split this could not happen: the fallback was a module
+    // constant. Both halves are pinned: it must THROW rather than render the
+    // string, and it must render the lane's own title when given one.
+    let threw = null
+    try {
+      buildChildBody({ area: FE, members: [survivor(1)], parentNumber: undefined })
+    } catch (err) {
+      threw = err
+    }
+    check(
+      threw !== null && /needs `parentTitle`/.test(threw.message),
+      'a child with no parent number refuses to render `Parent: "undefined"`',
+      threw ? threw.message : 'did not throw',
+    )
+    const firstRun = buildChildBody({
+      area: FE,
+      members: [survivor(1)],
+      parentNumber: undefined,
+      parentTitle: LANES.frontend.title,
+    })
+    check(
+      firstRun.includes(`Parent: "${LANES.frontend.title}"`) && !firstRun.includes('undefined'),
+      "a child filed before its lane parent exists names that lane's parent by title",
+      firstRun.split('\n').find((l) => l.startsWith('Parent:')) ?? '(no Parent line)',
     )
   }
 }

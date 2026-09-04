@@ -160,9 +160,15 @@ env:
   # branch's lane health is not the repository's) or a changed input (a
   # shortened budget can report a still-broken lane as recovered, and a lane
   # subset reports the lanes it did not run as skipped) is a smoke run: the
-  # writers still perform every read and `--dry-run` the `gh` writes. The
-  # three steps read this one value instead of re-deriving it; every declared
-  # input appears in it, at its declared default.
+  # writers still perform every read and `--dry-run` the `gh` writes. Every
+  # declared input appears in it, at its declared default.
+  #
+  # TWO of the three writers read this value directly. `file-mutation-survivors`
+  # derives a narrower `LANE_AUTHORITATIVE` from it: since its tracking issue
+  # was split per lane, `lanes == 'all'` is no longer part of ITS authority,
+  # because a lane subset is complete data about every issue it writes. The
+  # clause is still right for the other two, whose trackers span the whole run.
+  # See that job for the full reasoning.
   CRON_EQUIVALENT: >-
     ${{ github.event_name == 'schedule'
       || (github.ref == 'refs/heads/main'
@@ -1156,7 +1162,7 @@ jobs:
         # `src-tauri/mutants-out/mutants.out/`, while the guard, the summary
         # and the `file-mutation-survivors` filer all read `mutants-out/…`.
         # Every one of them was reading a path that never existed (#3386),
-        # which is why `--require-rust` in the filer (#3387) could never see a
+        # which is why `--require-input` in the filer (#3387) could never see a
         # `missed.txt`. The default location, `src-tauri/mutants.out/`, is
         # what the steps below read.
         #
@@ -1367,7 +1373,7 @@ jobs:
             echo "expected=$expected"
           } >> "$GITHUB_OUTPUT"
           if [ "$merged" -eq 0 ]; then
-            echo "::error::no shard produced usable results (${#outcomes[@]} of $expected uploaded an outcomes.json, none of them with a successful baseline). Nothing to merge; the filer's \`--require-rust\` will red rather than read an empty missed.txt as 'no rust survivors' (#3364)."
+            echo "::error::no shard produced usable results (${#outcomes[@]} of $expected uploaded an outcomes.json, none of them with a successful baseline). Nothing to merge; the filer's \`--require-input\` will red rather than read an empty missed.txt as 'no rust survivors' (#3364)."
             exit 1
           fi
           if [ "$merged" -lt "$expected" ]; then
@@ -1641,25 +1647,30 @@ jobs:
           path: mutation-artifact
 
       - name: File or update the single mutation-survivor tracking issue
-        # `--require-rust` / `--require-frontend` (#3364): a lane that produced
-        # NO data must not be read as "that lane has no survivors". Without
-        # them, a dead frontend lane contributes `[]`, and one new rust
-        # survivor is enough to rewrite the issue body from the rust half
-        # alone — DELETING every frontend survivor from the marker block,
-        # which is this filer's only cross-run memory, and re-reporting them
-        # as "new" the following week. #3330's liveness guard makes the LANE
-        # red but does not stop this job, which runs under `if: always()`.
+        # `--require-input` (#3364): a lane that produced NO data must not be
+        # read as "that lane has no survivors" — an absent artifact would
+        # otherwise empty that lane's marker block, this filer's only
+        # cross-run memory, and re-report every entry as "new" the following
+        # week. #3330's liveness guard makes the LANE red but does not stop
+        # this job, which runs under `if: always()`.
+        #
+        # The flag is now PER LANE, and so is the blast radius: since the
+        # split each invocation reads only its own lane's input and writes
+        # only its own lane's issue, so a dead rust artifact can no longer
+        # take the frontend lane's survivors with it. That cross-lane
+        # deletion is what the old `--require-rust` / `--require-frontend`
+        # pair existed to make loud.
         #
         # This deliberately turns a dead lane into a RED filer job rather than
         # a skipped one (`needs.<lane>.result == 'success'` would skip it):
         # `report-scheduled-failures` below `needs:` this job, so the failure
         # is reported through the ordinary path instead of vanishing as a skip.
         #
-        # `--dry-run` unless `CRON_EQUIVALENT` (workflow `env`) holds. The dry
+        # `--dry-run` unless `LANE_AUTHORITATIVE` (below) holds. The dry
         # run still performs every read — including the real `gh issue list`
         # lookup (only `--known-body-file` stubs that out, and this never
-        # passes it) — and only skips the `gh issue edit` / `gh issue comment`
-        # writes.
+        # passes it) — and only skips the `gh issue edit` / `close` / `reopen`
+        # writes. There are no comment writes: this job never comments.
         #
         # `--children`: the rolling parent is the notification, not the
         # worktop. Measured 2026-08-09, it carried 261 survivors across 9
@@ -1675,7 +1686,7 @@ jobs:
         # `--dry-run` ALSO on a short merge (#3393 review): with 21 shards the
         # realistic failure is a handful of dead ones, and their survivors are
         # then absent from `missed.txt` — present-and-shorter, which
-        # `--require-rust` cannot tell from real data. Rewriting the body from
+        # `--require-input` cannot tell from real data. Rewriting the body from
         # that set would report them resolved, drop them from the marker block
         # and re-report them as new next week (#3364). Dry-run performs every
         # read and skips only the `gh` writes, so a short week still renders

@@ -37,7 +37,7 @@
 //      `missed.txt` FLAT off the download directory. Two independent values
 //      have to agree for that to work — the download step's `path:` and the
 //      filer's `--rust-missed` argument — and nothing checked they did. When
-//      they disagree, `--require-rust` throws and the RED lands on the filer
+//      they disagree, `--require-input` throws and the RED lands on the filer
 //      lane with a message about the filer, while the `mutants` lane it is
 //      actually reporting on stays green (run 30794686024, 2026-08-03, is
 //      what that looks like). Checked here because it is the same plumbing,
@@ -448,7 +448,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
   if (uploads.length === 0) {
     push(
       'artifact-upload-missing',
-      `the \`${JOB_ID}\` job uploads no artifact at all (no \`actions/upload-artifact\` step). Since #3393 it uploads one per shard for \`${MERGE_JOB_ID}\` to reassemble into the \`${ARTIFACT_NAME}\` that \`file-mutation-survivors --require-rust\` downloads, so with none of them the merge has nothing to merge and the filer throws on an absent missed.txt — red on the filer, with a message about the filer rather than about this job (#3387).`,
+      `the \`${JOB_ID}\` job uploads no artifact at all (no \`actions/upload-artifact\` step). Since #3393 it uploads one per shard for \`${MERGE_JOB_ID}\` to reassemble into the \`${ARTIFACT_NAME}\` that \`file-mutation-survivors --require-input\` downloads, so with none of them the merge has nothing to merge and the filer throws on an absent missed.txt — red on the filer, with a message about the filer rather than about this job (#3387).`,
     )
   }
   for (const upload of uploads) {
@@ -462,7 +462,7 @@ export function checkOutputPlumbing({ lines, invocation, push }) {
     if (normalizeUploadPath(upload.path) !== writeDir) {
       push(
         'artifact-path-mismatch',
-        `${upload.step} uploads '${upload.path}', but the artifact must be cargo-mutants' output directory ITSELF ('${WORKSPACE_DIR}/${writeDir}'). \`file-mutation-survivors\` reads missed.txt flat off the artifact root; uploading a parent directory buries it one level down and the filer's --require-rust throws (#3387).`,
+        `${upload.step} uploads '${upload.path}', but the artifact must be cargo-mutants' output directory ITSELF ('${WORKSPACE_DIR}/${writeDir}'). \`file-mutation-survivors\` reads missed.txt flat off the artifact root; uploading a parent directory buries it one level down and the filer's --require-input throws (#3387).`,
       )
     }
   }
@@ -540,14 +540,14 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
   if (upload === undefined) {
     push(
       'merge-upload-missing',
-      `the \`${MERGE_JOB_ID}\` job uploads no artifact named \`${ARTIFACT_NAME}\`. That is the name \`${FILER_JOB_ID}\` downloads, and since #3393 no other job produces it: with \`--require-rust\` the filer throws every run, and without it it reports "no rust survivors" and clears every tracked one (#3364).`,
+      `the \`${MERGE_JOB_ID}\` job uploads no artifact named \`${ARTIFACT_NAME}\`. That is the name \`${FILER_JOB_ID}\` downloads, and since #3393 no other job produces it: with \`--require-input\` the filer throws every run, and without it it reports "no rust survivors" and clears every tracked one (#3364).`,
     )
     return
   }
   if (normalizeUploadPath(upload.path) !== writeDir) {
     push(
       'merge-upload-path-mismatch',
-      `the \`${MERGE_JOB_ID}\` job uploads \`${ARTIFACT_NAME}\` from '${upload.path ?? '<no path:>'}', but the merge reassembles the shards into '${writeDir}'. \`${FILER_JOB_ID}\` reads missed.txt flat off the artifact root, so any other directory buries it and \`--require-rust\` throws (#3387).`,
+      `the \`${MERGE_JOB_ID}\` job uploads \`${ARTIFACT_NAME}\` from '${upload.path ?? '<no path:>'}', but the merge reassembles the shards into '${writeDir}'. \`${FILER_JOB_ID}\` reads missed.txt flat off the artifact root, so any other directory buries it and \`--require-input\` throws (#3387).`,
     )
   }
 }
@@ -557,7 +557,7 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  * downloads this lane's artifact and reads `missed.txt` FLAT off the download
  * directory, so the download step's `path:` and the filer's `--rust-missed`
  * argument are two independent values that must agree. Nothing checked that
- * they did, and when they disagree the symptom is misleading: `--require-rust`
+ * they did, and when they disagree the symptom is misleading: `--require-input`
  * throws, the FILER lane goes red with a message about the filer, and the
  * `mutants` lane it reports on stays green.
  *
@@ -650,7 +650,7 @@ export function checkFilerPlumbing({ lines, push }) {
   if (!download) {
     push(
       'filer-download-missing',
-      `the \`${FILER_JOB_ID}\` job downloads no \`${ARTIFACT_NAME}\` artifact, so it can never see this lane's survivors. With \`--require-rust\` it throws every run; without it, it silently reports "no rust survivors" and deletes every tracked one (#3364).`,
+      `the \`${FILER_JOB_ID}\` job downloads no \`${ARTIFACT_NAME}\` artifact, so it can never see this lane's survivors. With \`--require-input\` it throws every run; without it, it silently reports "no rust survivors" and deletes every tracked one (#3364).`,
     )
     return
   }
@@ -666,7 +666,7 @@ export function checkFilerPlumbing({ lines, push }) {
   if (read === undefined) {
     push(
       'filer-input-missing',
-      `the \`${FILER_JOB_ID}\` job passes no \`--rust-missed\`, so the rust half of the survivor set is dropped without \`--require-rust\` ever being able to notice (#3364).`,
+      `the \`${FILER_JOB_ID}\` job passes no \`--rust-missed\`, so the rust half of the survivor set is dropped without \`--require-input\` ever being able to notice (#3364).`,
     )
     return
   }
@@ -674,7 +674,7 @@ export function checkFilerPlumbing({ lines, push }) {
   if (read !== expected) {
     push(
       'filer-input-mismatch',
-      `the \`${FILER_JOB_ID}\` job downloads \`${ARTIFACT_NAME}\` into '${download.path}' but reads \`--rust-missed ${read}\`; the artifact is cargo-mutants' output directory itself, so missed.txt sits flat at '${expected}'. A mismatch makes \`--require-rust\` throw and reds the FILER lane with a message about the filer, while the \`${JOB_ID}\` lane it reports on stays green (#3387/#3394).`,
+      `the \`${FILER_JOB_ID}\` job downloads \`${ARTIFACT_NAME}\` into '${download.path}' but reads \`--rust-missed ${read}\`; the artifact is cargo-mutants' output directory itself, so missed.txt sits flat at '${expected}'. A mismatch makes \`--require-input\` throw and reds the FILER lane with a message about the filer, while the \`${JOB_ID}\` lane it reports on stays green (#3387/#3394).`,
     )
   }
 }
