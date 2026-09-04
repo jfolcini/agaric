@@ -473,6 +473,36 @@ export async function computeDefaultMaxChildren() {
 
 export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
 
+/**
+ * How many Stryker `mutation.json` reports a COMPLETE frontend run produces —
+ * one per enrolled module, from the same `stryker.modules.mjs` that
+ * `computeDefaultMaxChildren` reads.
+ *
+ * Used to gate the CLOSE, and only the close. The rust lane already refuses
+ * to write from a partial set: a merge that reassembled fewer than its 21
+ * shards forces `--dry-run`. The frontend lane has no such signal, and
+ * `--require-input` passes on a SINGLE report, so a Stryker run that lost a
+ * module's report rewrites the frontend issue from partial data.
+ *
+ * That rewrite is pre-existing (#3364 — the marker block is the only
+ * cross-run memory) and is deliberately left alone here. What this PR adds is
+ * the OUTCOME: the parent now closes when its set empties, so a partial run
+ * could close the issue outright, and a closed issue is one nobody re-reads.
+ * Gating the close is the whole of the new risk; widening `--require-input`
+ * would be a different, pre-existing fix wearing this PR's clothes.
+ *
+ * `undefined` when the count could not be derived, in which case the close is
+ * not gated rather than being gated on an invented threshold.
+ */
+export const EXPECTED_FRONTEND_REPORTS = await (async () => {
+  try {
+    const { MODULE_NAMES } = await import('../stryker.modules.mjs')
+    return Array.isArray(MODULE_NAMES) && MODULE_NAMES.length > 0 ? MODULE_NAMES.length : undefined
+  } catch {
+    return undefined
+  }
+})()
+
 // #3257 — a GitHub issue body maxes out at 65536 characters; past that
 // `gh issue edit` 422s, node exits non-zero, and this weekly non-gating job
 // goes red and STAYS red, because the following week recomputes the same
@@ -500,9 +530,18 @@ export const DEFAULT_MAX_CHILDREN = await computeDefaultMaxChildren()
 // designed outcome, not a bug to be patched by raising this number; the fix is
 // a per-outcome cap or a spill-to-child strategy. Comment bodies used to
 // truncate instead, holding no state; the CI job no longer comments at all.
-// CHILD bodies still truncate, and still may: a child carries no marker
-// block, so it is a projection of the parent's state rather than state
-// itself. The parent body is the one render that must never lose a line.
+// CHILD bodies truncate their FINDING lists, and may: a child carries no
+// marker block, so it is a projection of the parent's state rather than
+// state itself. The parent body is the one render that must never lose a
+// line.
+//
+// One gap, stated rather than fixed: the accepted-equivalent note a close
+// writes goes into the child's HEAD, which the truncation path does not cut
+// — an area holding roughly 700+ accepted ids would 422 `gh issue edit` on
+// close. `buildChildCloseComment` used to clamp exactly that list, and went
+// with the other comment builders. Today's whole accepted set is 155 across
+// every area, so this is a claim being half-true rather than a live failure;
+// fixing it now would be engineering for a case 4x away.
 export const MAX_BODY_CHARS = 60_000
 
 // ---------------------------------------------------------------------------
@@ -2094,7 +2133,23 @@ export function main(argv = process.argv.slice(2)) {
   // SAME run. It usually does — the last survivor resolving also closes its
   // area's child — but "usually" leaves the issue open forever in every case
   // where it does not, and a quiet week is precisely when nobody looks.
-  const needsClose = all.length === 0 && existingIssue !== null && existingIssue.state !== 'CLOSED'
+  // …and gated on the lane's input looking COMPLETE, not merely present.
+  // `--require-input` only proves the frontend lane produced something; a run
+  // that lost a module's report empties that module's share of the set, and
+  // closing on that is the one NEW way this PR could lose an issue. The
+  // rewrite-from-partial-data underneath is pre-existing (#3364) and left
+  // alone: widening `--require-input` would be a different fix wearing this
+  // PR's clothes. The rust lane needs no equivalent — a short merge already
+  // forces `--dry-run`, so it never reaches a write at all.
+  const frontendComplete =
+    args.lane !== 'frontend' ||
+    EXPECTED_FRONTEND_REPORTS === undefined ||
+    frontendReportCount(args.frontendDir ?? '') >= EXPECTED_FRONTEND_REPORTS
+  const needsClose =
+    all.length === 0 &&
+    existingIssue !== null &&
+    existingIssue.state !== 'CLOSED' &&
+    frontendComplete
   const willWrite = newOnes.length > 0 || childWork.length > 0 || needsClose
   announceReanchoring({ stale, willWrite, dryRun: args.dryRun })
 
@@ -2163,16 +2218,14 @@ export function main(argv = process.argv.slice(2)) {
 }
 
 /**
- * The parent write. Split from `main` both for its cyclomatic complexity and
- * because it now has two callers' worth of policy in it: a run with NEW
- * survivors notifies (reopen; there is no comment — this job only edits
- * bodies), while a run that only had CHILD work
- * to do — an area resolved, a child adopted — syncs the body silently. That is
- * the same "an edit is state, a comment is news" split the sibling reporter's
- * `sync` branch makes, and it is what keeps the child bookkeeping from turning
- * every quiet week into a notification.
- */
-/**
+ * The parent write. Split from `main` for its cyclomatic complexity, and
+ * because it carries three branches' worth of policy: a run with NEW
+ * survivors reopens a closed issue, a run with only CHILD work syncs the body
+ * silently, and a run whose lane has emptied closes it. Reopening is the only
+ * notification left — this job never comments — so the "quiet week writes
+ * nothing" rule that keeps child bookkeeping from becoming a weekly
+ * notification now rests entirely on the sync branch being silent.
+ *
  * Close when there is nothing left to act on; reopen when something new
  * arises. The children have always done this; the parent only ever reopened,
  * so a lane that got to zero left its parent standing with an empty survivor
@@ -2601,7 +2654,7 @@ function selfTestGroupingAndRanking({ ok, fail, survivor }) {
 function selfTestLaneInputGuards({ ok, fail, survivor }) {
   // Tracked by the fixture body below and NOT present in `fullDir`, so the
   // lane observes nothing and the issue's set empties.
-  const STALE_ONLY_ID = survivor(4242)
+  const STALE_ONLY_ID = '[rust] agaric-store/src/op.rs:4242:9: replace x with ()'
   // 8. #3364 — a MISSING lane input must be distinguishable from an EMPTY
   //    one. First, the damage the guards prevent, demonstrated on the pure
   //    functions: a dead frontend lane contributes `[]`, and one new rust
@@ -2762,12 +2815,16 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
         ].join('\n'),
         'utf8',
       )
+      // The RUST lane, deliberately: an empty-but-present missed.txt is a
+      // complete run that found nothing, so the close is not gated. The
+      // frontend equivalent is the case immediately below, which must NOT
+      // close.
       const { out, err } = captureMain([
         '--dry-run',
         '--lane',
-        'frontend',
-        '--frontend-dir',
-        fullDir,
+        'rust',
+        '--rust-missed',
+        missed,
         '--known-body-file',
         trackedBody,
       ])
@@ -2783,6 +2840,43 @@ function selfTestLaneInputGuards({ ok, fail, survivor }) {
         fail(
           'a lane whose last finding is gone closes, with no child work to trigger it',
           problems.join('; '),
+        )
+
+      // THE SAME STATE, ON A SHORT FRONTEND REPORT SET. `fullDir` holds ONE
+      // module's mutation.json while a complete run writes one per module, so
+      // the emptied set is an artifact of the missing reports, not a lane that
+      // got clean. Rewriting from partial data is pre-existing (#3364); what
+      // this PR added is that the same partial data could CLOSE the issue,
+      // which is the one outcome nobody re-reads. It must not.
+      const feTracked = join(root, 'close-only-frontend-body.md')
+      writeFileSync(
+        feTracked,
+        [
+          'Tracking issue.',
+          '',
+          MARKER_START,
+          '```',
+          `2026-08-01\t${survivor(4242)}`,
+          '```',
+          MARKER_END,
+        ].join('\n'),
+        'utf8',
+      )
+      const short = captureMain([
+        '--dry-run',
+        '--lane',
+        'frontend',
+        '--frontend-dir',
+        fullDir,
+        '--known-body-file',
+        feTracked,
+      ])
+      if (!/would CLOSE issue/.test(short.out))
+        ok('a short frontend report set does not close the lane issue')
+      else
+        fail(
+          'a short frontend report set does not close the lane issue',
+          `EXPECTED_FRONTEND_REPORTS=${EXPECTED_FRONTEND_REPORTS}; out=${short.out.slice(0, 200)}`,
         )
     }
   }

@@ -575,14 +575,12 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  *     rewrites the real tracking issue — the #2947 rule the schedule gate
  *     used to enforce.
  *
- *     Two envs qualify. `CRON_EQUIVALENT` is the workflow-wide one: the cron
- *     and its default-input `main` dispatch. `LANE_AUTHORITATIVE` is the
- *     per-lane one this job uses since the tracking issue was split per lane:
- *     it keeps every clause of `CRON_EQUIVALENT` except `lanes == 'all'`,
- *     because each lane now writes its OWN issue and a lane subset is
- *     therefore complete data about everything this job touches. Accepting
- *     only `CRON_EQUIVALENT` would force the filer to dry-run on exactly the
- *     single-lane re-run the `lanes` input exists to make cheap.
+ *     The env is `LANE_AUTHORITATIVE`: the workflow-wide `CRON_EQUIVALENT`
+ *     minus its `lanes == 'all'` clause, because each lane now writes its OWN
+ *     issue and a lane subset is therefore complete data about everything
+ *     this job touches. Requiring `CRON_EQUIVALENT` here would force the
+ *     filer to dry-run on exactly the single-lane re-run the `lanes` input
+ *     exists to make cheap.
  *
  *     What is NOT relaxed: the `--dry-run` must still be selected from one of
  *     those two names. A bare `--dry-run`, or one keyed off something else,
@@ -621,11 +619,15 @@ export function checkFilerPlumbing({ lines, push }) {
     )
   } else {
     const run = filerRunLines(lines)
-    const AUTHORITY_ENV = /CRON_EQUIVALENT|LANE_AUTHORITATIVE/
+    // `LANE_AUTHORITATIVE` only. This guard's single subject is the mutation
+    // filer, which since the per-lane split does not read `CRON_EQUIVALENT`
+    // at all — accepting it too left an alternative with no caller, i.e. one
+    // more spelling that could silently satisfy the check.
+    const AUTHORITY_ENV = /LANE_AUTHORITATIVE/
     if (!(run.some((l) => l.includes('--dry-run')) && run.some((l) => AUTHORITY_ENV.test(l)))) {
       push(
         'filer-dispatch-writes',
-        `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from an authority env (\`$CRON_EQUIVALENT\` or the per-lane \`$LANE_AUTHORITATIVE\`), so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-when-authoritative go together; this has one without the other.`,
+        `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from the per-lane \`$LANE_AUTHORITATIVE\` env, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-when-authoritative go together; this has one without the other.`,
       )
     }
   }
@@ -1009,7 +1011,7 @@ function selfTestFilerPlumbing(ok, fail) {
     '        run: |',
     '          extra=()',
     ...(dryRun
-      ? ['          if [ "$CRON_EQUIVALENT" != \'true\' ]; then extra=(--dry-run); fi']
+      ? ['          if [ "$LANE_AUTHORITATIVE" != \'true\' ]; then extra=(--dry-run); fi']
       : []),
     ...(read === undefined ? [] : [`          node x.mjs --rust-missed ${read} "\${extra[@]}"`]),
   ]
@@ -1055,7 +1057,7 @@ function selfTestFilerPlumbing(ok, fail) {
   // The sentinel in a prose comment above the step, with the `elif` itself
   // deleted, is the #4645 review's hole: only the run block counts.
   const commentOnly = kinds([
-    '        # dry-runs unless `CRON_EQUIVALENT` holds; a --dry-run still reads.',
+    '        # dry-runs unless `LANE_AUTHORITATIVE` holds; a --dry-run still reads.',
     ...job({ read: 'mutants-artifact/missed.txt', dryRun: false }),
   ])
   if (commentOnly.includes('filer-dispatch-writes'))
