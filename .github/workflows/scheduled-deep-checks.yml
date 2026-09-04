@@ -116,6 +116,16 @@ on:
         required: false
         type: boolean
         default: false
+      lanes:
+        description: >-
+          Which lanes to run: `all`, or a comma-separated subset of
+          clippy-clean, bench-smoke, bench-slo, mutants, mutants-frontend,
+          fuzz, type-aware-lint, full-suite. Re-running one lane after a fix
+          costs that lane instead of the whole ~4 h matrix. Any subset makes
+          the run a smoke run (see `CRON_EQUIVALENT`), because the tracking
+          issues span lanes and a partial set must not rewrite them.
+        required: false
+        default: 'all'
 
 permissions:
   contents: read
@@ -148,18 +158,97 @@ env:
   # at its declared default, which tests exactly what the cron tests and so
   # writes for real. Any other ref (the tracking issues are repo-wide; a
   # branch's lane health is not the repository's) or a changed input (a
-  # shortened budget can report a still-broken lane as recovered) is a smoke
-  # run: the writers still perform every read and `--dry-run` the `gh`
-  # writes. The three steps read this one value instead of re-deriving it;
-  # every declared input appears in it, at its declared default.
+  # shortened budget can report a still-broken lane as recovered, and a lane
+  # subset reports the lanes it did not run as skipped) is a smoke run: the
+  # writers still perform every read and `--dry-run` the `gh` writes. The
+  # three steps read this one value instead of re-deriving it; every declared
+  # input appears in it, at its declared default.
   CRON_EQUIVALENT: >-
     ${{ github.event_name == 'schedule'
       || (github.ref == 'refs/heads/main'
           && (github.event.inputs.mutants_timeout || '900') == '900'
           && (github.event.inputs.fuzz_seconds || '300') == '300'
-          && (github.event.inputs.slo_include_problem || 'false') == 'false') }}
+          && (github.event.inputs.slo_include_problem || 'false') == 'false'
+          && (github.event.inputs.lanes || 'all') == 'all') }}
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # select-lanes — resolves the `lanes` input into one boolean per lane.
+  #
+  # A job-level `if:` cannot read workflow `env`, so the choice is this job or
+  # the same parse repeated in eight `if:` expressions. Once, here, because the
+  # naive spelling is wrong in a way that reads fine: `contains(lanes,
+  # 'mutants')` is ALSO true for `mutants-frontend`, so asking for the frontend
+  # lane alone would silently start the 21-shard rust matrix. Matching is
+  # therefore space-anchored against a whole-word list.
+  #
+  # Fails CLOSED on an unknown name. A typo would otherwise select no lane at
+  # all: every lane `skipped`, which `file-scheduled-failures.mjs` reads as
+  # failing (`isFailing` is `result !== 'success'`), so the run would report
+  # eight broken lanes instead of one bad argument.
+  # ---------------------------------------------------------------------------
+  select-lanes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      clippy_clean: ${{ steps.pick.outputs.clippy_clean }}
+      bench_smoke: ${{ steps.pick.outputs.bench_smoke }}
+      bench_slo: ${{ steps.pick.outputs.bench_slo }}
+      mutants: ${{ steps.pick.outputs.mutants }}
+      mutants_frontend: ${{ steps.pick.outputs.mutants_frontend }}
+      fuzz: ${{ steps.pick.outputs.fuzz }}
+      type_aware_lint: ${{ steps.pick.outputs.type_aware_lint }}
+      full_suite: ${{ steps.pick.outputs.full_suite }}
+    steps:
+      - name: Resolve the lane selection
+        id: pick
+        env:
+          # Rides via `env:`, not inline `${{ }}`, per zizmor
+          # template-injection: this is attacker-controllable in the sense
+          # that anything a dispatch input carries reaches the shell.
+          LANES: ${{ github.event.inputs.lanes || 'all' }}
+        run: |
+          set -euo pipefail
+          known='clippy-clean bench-smoke bench-slo mutants mutants-frontend fuzz type-aware-lint full-suite'
+          sel=$(printf '%s' "$LANES" | tr ',' ' ' | tr -s '[:space:]' ' ' \
+                | sed 's/^ //; s/ $//')
+          # Not `sel=all`: `github.event.inputs.lanes || 'all'` already covers
+          # unset and empty, so the only inputs reaching here are
+          # whitespace/comma-only ones — `lanes=' '`, `lanes=','` — and those
+          # are typos. Erroring beats both silent readings: `sel=all` runs the
+          # full ~4 h matrix, and simply falling through selects NOTHING (an
+          # empty list makes the loop below iterate zero times, so the
+          # unknown-lane branch never fires — measured, not assumed).
+          if [ -z "$sel" ]; then
+            echo "::error::lanes is empty after normalising '$LANES'. Use 'all' or a comma-separated subset of: $known"
+            exit 1
+          fi
+          if [ "$sel" = all ]; then
+            sel="$known"
+          else
+            for name in $sel; do
+              case " $known " in
+                *" $name "*) ;;
+                *)
+                  echo "::error::unknown lane '$name'. Known lanes: $known. Use 'all' or a comma-separated subset."
+                  exit 1
+                  ;;
+              esac
+            done
+          fi
+          # Output KEYS underscore the lane name: a hyphenated job id in
+          # `needs.<id>` is proven here (`needs.mutants-merge.outputs.…`),
+          # a hyphenated OUTPUT name is not, and `a.b-c` has a second
+          # reading as subtraction. Same convention as `shards_merged`.
+          for name in $known; do
+            key=${name//-/_}
+            case " $sel " in
+              *" $name "*) echo "$key=true" >> "$GITHUB_OUTPUT" ;;
+              *) echo "$key=false" >> "$GITHUB_OUTPUT" ;;
+            esac
+          done
+          echo "Lanes selected: $sel" >> "$GITHUB_STEP_SUMMARY"
+
   # ---------------------------------------------------------------------------
   # clippy-clean — cache-busting full-workspace clippy. The per-PR clippy hook
   # restores the Swatinem rust-cache, which never re-lints already-compiled,
@@ -171,6 +260,8 @@ jobs:
   # ambushing the next unrelated Rust PR.
   # ---------------------------------------------------------------------------
   clippy-clean:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.clippy_clean == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -253,6 +344,8 @@ jobs:
   # separate `bench-slo` job below, immune to a smoke timeout.
   # ---------------------------------------------------------------------------
   bench-smoke:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.bench_smoke == 'true'
     runs-on: ubuntu-24.04
     # Per-shard budget. The heavy 100K-seed benches cluster in the odd shards
     # (deterministic `index % 4` split): shards 0/2 smoke in ~1 min, but shard 1
@@ -578,6 +671,8 @@ jobs:
   # cache/counterfactual probes (#2508 / #2585).
   # ---------------------------------------------------------------------------
   bench-slo:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.bench_slo == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -826,6 +921,8 @@ jobs:
   # failure (this lane is not a required check and is never gated).
   # ---------------------------------------------------------------------------
   mutants:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.mutants == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -1176,11 +1273,13 @@ jobs:
   # reader about shards would have been the larger change.
   # ---------------------------------------------------------------------------
   mutants-merge:
-    needs: mutants
+    needs: [mutants, select-lanes]
     # `always()`: a dead shard must not take the surviving 20 shards' results
     # with it. A SHORT merge is published for the same reason and reported as
     # a warning — see the merge step, which also puts the filer in dry-run.
-    if: always()
+    # The lane clause is what `always()` would otherwise defeat: without it a
+    # run that deselects `mutants` would still merge, over zero shards.
+    if: always() && needs.select-lanes.outputs.mutants == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Read by `file-mutation-survivors` below, which must not rewrite the
@@ -1394,6 +1493,8 @@ jobs:
   # 271+ unrelated component tests otherwise).
   # ---------------------------------------------------------------------------
   mutants-frontend:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.mutants_frontend == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -1499,8 +1600,20 @@ jobs:
   file-mutation-survivors:
     # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
     # is the merged one, and `mutants` is now 21 shard jobs.
-    needs: [mutants-merge, mutants-frontend]
-    if: always()
+    needs: [mutants-merge, mutants-frontend, select-lanes]
+    # BOTH mutants lanes, not either: the step below passes `--require-rust`
+    # AND `--require-frontend` unconditionally, and `assertLaneInputsPresent`
+    # throws on a missing one. Under `||`, a `lanes=mutants` run reached this
+    # job with no `mutation-frontend-report` to download and exited 1 — a red
+    # run for a mutants lane that was green, in exactly the re-run-one-lane
+    # case the `lanes` input exists to serve.
+    #
+    # `&&` costs nothing: any subset dry-runs (`CRON_EQUIVALENT` is false for
+    # one), so the job can only ever do something useful when both lanes ran.
+    # `lanes=mutants,mutants-frontend` still reaches it and still dry-runs,
+    # which keeps the #3364 rule intact — the tracking issue spans both lanes,
+    # so rewriting it from one lane's data deletes the other's.
+    if: always() && needs.select-lanes.outputs.mutants == 'true' && needs.select-lanes.outputs.mutants_frontend == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1606,6 +1719,8 @@ jobs:
   # a longer campaign still runs out-of-band. Non-blocking.
   # ---------------------------------------------------------------------------
   fuzz:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.fuzz == 'true'
     runs-on: ubuntu-24.04
     # 155, not 60. The arithmetic, written out because review showed an earlier
     # figure had less headroom than its own comment implied — N is the derived
@@ -2308,8 +2423,8 @@ jobs:
   # tweak exercises the whole path and never touches the real tracking issue.
   # ---------------------------------------------------------------------------
   file-fuzz-findings:
-    needs: [fuzz]
-    if: always()
+    needs: [fuzz, select-lanes]
+    if: always() && needs.select-lanes.outputs.fuzz == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -2411,6 +2526,8 @@ jobs:
   # produced, so the burn-down cannot make this lane lie.
   # ---------------------------------------------------------------------------
   type-aware-lint:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.type_aware_lint == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -2500,6 +2617,8 @@ jobs:
   # test runs. Not a required check — a maintainer triages any failure.
   # ---------------------------------------------------------------------------
   full-suite:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.full_suite == 'true'
     runs-on: ubuntu-24.04
     # The slow exhaustive lane: cold-ish compile + the full prek suite (both
     # stages) + full vitest + full playwright + full nextest + doc-tests.
@@ -2818,10 +2937,18 @@ jobs:
   # `diffLanes` are idempotent), so a dispatch that finds nothing new no-ops
   # exactly like an unchanged scheduled run (#3716). No lane is gated on the
   # event any more, so a `skipped` lane is a real failure on every
-  # authoritative run.
+  # authoritative run — which the `lanes` input preserves rather than breaks:
+  # selecting a subset skips lanes, and selecting a subset is exactly what
+  # makes `CRON_EQUIVALENT` false, so such a run is never authoritative.
   # ---------------------------------------------------------------------------
   report-scheduled-failures:
     needs:
+      # `select-lanes` included so the comment above stays true, and for a
+      # concrete failure: if it dies for an infra reason on the cron, all
+      # eleven lanes skip and this reporter — authoritative, since `lanes`
+      # defaults to `all` — would file eleven broken lanes without naming
+      # the one job that actually failed.
+      - select-lanes
       - clippy-clean
       - bench-smoke
       - bench-slo
