@@ -571,16 +571,28 @@ export function checkMergeProducer({ lines, shardLines, writeDir, push }) {
  *     #3394 kept listing this lane as failing for a week after #3392 fixed its
  *     upstream.
  *   * …and BECAUSE it is reachable from a dispatch, the step must select
- *     `--dry-run` unless `CRON_EQUIVALENT` (the workflow-level env that names
- *     the cron and its default-input `main` dispatch) holds. Otherwise a
- *     smoke run rewrites the real tracking issue — the #2947 rule the
- *     schedule gate used to enforce.
+ *     `--dry-run` unless a named AUTHORITY env holds. Otherwise a smoke run
+ *     rewrites the real tracking issue — the #2947 rule the schedule gate
+ *     used to enforce.
+ *
+ *     Two envs qualify. `CRON_EQUIVALENT` is the workflow-wide one: the cron
+ *     and its default-input `main` dispatch. `LANE_AUTHORITATIVE` is the
+ *     per-lane one this job uses since the tracking issue was split per lane:
+ *     it keeps every clause of `CRON_EQUIVALENT` except `lanes == 'all'`,
+ *     because each lane now writes its OWN issue and a lane subset is
+ *     therefore complete data about everything this job touches. Accepting
+ *     only `CRON_EQUIVALENT` would force the filer to dry-run on exactly the
+ *     single-lane re-run the `lanes` input exists to make cheap.
+ *
+ *     What is NOT relaxed: the `--dry-run` must still be selected from one of
+ *     those two names. A bare `--dry-run`, or one keyed off something else,
+ *     still fails here.
  *     Removing the gate without adding the dry run trades one bug for a worse
  *     one, so the two are checked as a pair.
  */
 /**
  * The `run:` block of the filer's own step — the only lines where a
- * `--dry-run` selected from `CRON_EQUIVALENT` counts. The sentinel also
+ * `--dry-run` selected from an authority env counts. The sentinel also
  * appears in the job's prose comments, and a comment forty lines up is not
  * what keeps a dispatch from writing.
  */
@@ -609,10 +621,11 @@ export function checkFilerPlumbing({ lines, push }) {
     )
   } else {
     const run = filerRunLines(lines)
-    if (!(run.some((l) => l.includes('--dry-run')) && run.some((l) => /CRON_EQUIVALENT/.test(l)))) {
+    const AUTHORITY_ENV = /CRON_EQUIVALENT|LANE_AUTHORITATIVE/
+    if (!(run.some((l) => l.includes('--dry-run')) && run.some((l) => AUTHORITY_ENV.test(l)))) {
       push(
         'filer-dispatch-writes',
-        `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from \`$CRON_EQUIVALENT\`, so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-on-schedule go together; this has one without the other.`,
+        `the \`${FILER_JOB_ID}\` job runs on every event but never selects \`--dry-run\` from an authority env (\`$CRON_EQUIVALENT\` or the per-lane \`$LANE_AUTHORITATIVE\`), so a \`workflow_dispatch\` smoke run would file/update the REAL mutation-survivor tracking issue (#2947). Reachable-on-dispatch and writes-only-when-authoritative go together; this has one without the other.`,
       )
     }
   }

@@ -1685,6 +1685,25 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RAN_RUST: ${{ needs.select-lanes.outputs.mutants }}
           RAN_FRONTEND: ${{ needs.select-lanes.outputs.mutants_frontend }}
+          # PER-LANE authority, deliberately not `CRON_EQUIVALENT`.
+          #
+          # That value folds in `lanes == 'all'` because the fuzz and
+          # scheduled-failure trackers span the WHOLE run: a subset there
+          # really is partial data about what they report. Since the split
+          # this filer is not — each lane writes its OWN issue and cannot see
+          # the other's, so a lane subset is complete data about every issue
+          # this job touches. Without this the split would be pointless: a
+          # `lanes=mutants-frontend` re-run would reach the filer and then
+          # write nothing.
+          #
+          # Every OTHER clause of `CRON_EQUIVALENT` is kept — the ref, and the
+          # one declared input that changes what the mutants lane measures.
+          # `fuzz_seconds` and `slo_include_problem` cannot affect either
+          # mutation lane, so they are not part of this lane's authority.
+          LANE_AUTHORITATIVE: >-
+            ${{ github.event_name == 'schedule'
+              || (github.ref == 'refs/heads/main'
+                  && (github.event.inputs.mutants_timeout || '900') == '900') }}
           SHORT_MERGE: >-
             ${{ needs.mutants-merge.outputs.shards_merged == ''
               || needs.mutants-merge.outputs.shards_merged
@@ -1692,11 +1711,18 @@ jobs:
         run: |
           set -euo pipefail
           extra=()
+          if [ "$LANE_AUTHORITATIVE" != 'true' ]; then
+            extra=(--dry-run)
+          fi
+          # SHORT_MERGE is a RUST signal — it reports how many of the 21
+          # cargo-mutants shards made it into the merged artifact — so since
+          # the split it must gate the rust invocation ONLY. Applying it to
+          # both would let a dead rust shard silently stop the frontend lane
+          # from writing its own, entirely unaffected, issue.
+          rust_extra=("${extra[@]}")
           if [ "$SHORT_MERGE" = 'true' ]; then
-            echo "::warning::running --dry-run: mutants-merge reported a short merge, so the tracking issue is not rewritten from a partial survivor set (#3364). See the merge job's warning for the shard counts."
-            extra=(--dry-run)
-          elif [ "$CRON_EQUIVALENT" != 'true' ]; then
-            extra=(--dry-run)
+            echo "::warning::running --dry-run for the RUST lane: mutants-merge reported a short merge, so the rust tracking issue is not rewritten from a partial survivor set (#3364). See the merge job's warning for the shard counts."
+            rust_extra=(--dry-run)
           fi
           # ONE INVOCATION PER LANE (#3364 superseded): each lane has its own
           # tracking issue, so a lane that did not run is simply not filed for
@@ -1708,7 +1734,7 @@ jobs:
               --rust-missed mutants-artifact/missed.txt \
               --require-input \
               --children \
-              "${extra[@]}"
+              "${rust_extra[@]}"
           fi
           if [ "$RAN_FRONTEND" = 'true' ]; then
             node scripts/file-mutation-survivors.mjs \
