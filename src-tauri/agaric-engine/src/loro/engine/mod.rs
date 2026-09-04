@@ -540,13 +540,6 @@ impl LoroEngine {
     pub fn peer_id(&self) -> PeerID {
         self.doc.peer_id()
     }
-
-    /// Explicit `commit()` flush.  All `apply_*` methods commit
-    /// internally per SPIKE-REPORT.md §4.5; this is exposed for
-    /// debug/test paths that want to bracket an explicit transaction.
-    pub fn commit(&mut self) {
-        self.doc.commit();
-    }
 }
 
 // -----------------------------------------------------------------

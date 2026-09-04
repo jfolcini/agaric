@@ -667,16 +667,6 @@ impl LoroEngine {
             };
             let mut chain: Vec<agaric_core::ulid::BlockId> = Vec::new();
             let mut cur = node;
-            // #4111: `hops` is a belt-and-braces DEPTH cap, not the cycle guard.
-            // Termination is guaranteed by `visited` below — a repeated node
-            // breaks the loop on its second insert, so even a cyclic
-            // `A→B→A` stops after two hops. This counter would need a
-            // million-deep ancestor chain (a million DISTINCT blocks) to fire,
-            // and it is kept only to match `tree_depth_of` / `has_ancestor_in`.
-            // Do not read it as making the `visited` break redundant: deleting
-            // that break would remove the real guard and keep the decorative
-            // one.
-            let mut hops = 0usize;
             while let Some(TreeParentId::Node(p)) = tree.parent(cur) {
                 let parent_block_id = match tree
                     .get_meta(p)
@@ -709,7 +699,8 @@ impl LoroEngine {
                 };
                 // Already walked by an earlier chain ⇒ so were all of ITS
                 // ancestors, and both are already in `out` ahead of us. THIS is
-                // what makes the walk terminate (see the `hops` note above).
+                // what makes the walk terminate: a cyclic `A→B→A` stops on the
+                // second insert, so this walk needs no depth cap of its own.
                 if !visited.insert(parent_block_id.clone()) {
                     break;
                 }
@@ -717,10 +708,6 @@ impl LoroEngine {
                     chain.push(agaric_core::ulid::BlockId::from_trusted(&parent_block_id));
                 }
                 cur = p;
-                hops += 1;
-                if hops > 1_000_000 {
-                    break;
-                }
             }
             chain.reverse();
             out.extend(chain);
