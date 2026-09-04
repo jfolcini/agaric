@@ -1593,9 +1593,8 @@ export function buildIssueBody({
   state.push('```')
   state.push(MARKER_END)
   // Part of STATE, not of the presentational sections: it is bounded by the
-  // area count (one short line each, capped by this lane's LANE_MAX_CHILDREN)
-  // and it is the primary dedup record, so the clamp ladder below must never
-  // drop it.
+  // area count, one short line each, and it is the primary dedup record, so
+  // the clamp ladder below must never drop it.
   state.push(...renderChildBlock(childLinks))
   // #4173 — STATE too, for the same reason and with the same consequence: it
   // is the filer's memory of what triage has already ruled equivalent, so the
