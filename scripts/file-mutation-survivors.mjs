@@ -1304,7 +1304,7 @@ export function decideChildActions({
       `refusing to open ${creates} child issues in one run (cap: ${maxChildren}). ${
         maxChildrenIsFallback
           ? `The area universe could not be derived, so DEFAULT_MAX_CHILDREN fell back to FALLBACK_MAX_CHILDREN = ${DEFAULT_MAX_CHILDREN}`
-          : `the cap is the running lane's derived area universe (both lanes together are ${DEFAULT_MAX_CHILDREN})`
+          : `the cap is a derived area universe — one lane's when \`main\` sets it (${LANE_MAX_CHILDREN.frontend} frontend / ${LANE_MAX_CHILDREN.rust} rust), both lanes' ${DEFAULT_MAX_CHILDREN} on this function's own default`
       }, so a batch this large means survivorArea() is fragmenting rather than grouping — check the survivor id shapes before raising --max-children.`,
     )
   }
@@ -1336,17 +1336,13 @@ export function buildChildBody({
   // A child filed BEFORE its lane parent exists has no number, so the title is
   // the only reference it can carry — and rendering `"undefined"` into a real
   // filed issue is worse than failing. That is not hypothetical: it is the
-  // state every lane is in on its first run, which is the next real run until
-  // the #3142 partition lands.
-  // `!parentNumber`, not `=== undefined`: the ternary below is falsy-based, so
-  // issue 0 — which the `--known-body-file` stub uses as a placeholder — takes
-  // the title branch too. Checking only for `undefined` left the exact case
-  // the render mishandles outside the guard, and so outside every test.
-  if (!parentNumber && !parentTitle) {
-    throw new Error(
-      'buildChildBody needs `parentTitle` when there is no `parentNumber`: the child would otherwise be filed saying `Parent: "undefined"`.',
-    )
-  }
+  // state every lane is in on its first run.
+  //
+  // No throw guards it. All three `applyChildActions` call sites pass
+  // `parentTitle: args.title`, so the both-absent case is unreachable, and a
+  // guard for an unreachable state needs a test that pins the unreachable
+  // state — the shape AGENTS.md calls out. What actually protects this is the
+  // call sites: reverting the `create` one reddens three bootstrap tests.
   const parentRef = parentNumber ? `#${parentNumber}` : `"${parentTitle}"`
   const { survived, noCoverage } = partitionByOutcome(members)
   // The two kinds of close read identically from the outside — no findings
@@ -3156,19 +3152,11 @@ function selfTestChildPlanning({ check, survivor }) {
     // rendered a literal `Parent: "undefined"` into a real filed issue — and
     // that is the state every lane is in on its first run, i.e. the next real
     // run. Before the split this could not happen: the fallback was a module
-    // constant. Both halves are pinned: it must THROW rather than render the
-    // string, and it must render the lane's own title when given one.
-    let threw = null
-    try {
-      buildChildBody({ area: FE, members: [survivor(1)], parentNumber: undefined })
-    } catch (err) {
-      threw = err
-    }
-    check(
-      threw !== null && /needs `parentTitle`/.test(threw.message),
-      'a child with no parent number refuses to render `Parent: "undefined"`',
-      threw ? threw.message : 'did not throw',
-    )
+    // constant. What is pinned is the render: given the lane's title it must
+    // name that title. The both-absent case is NOT pinned — every production
+    // call site passes `parentTitle`, so a guard for it would need a test for
+    // an unreachable state. The `create` call site is covered where it
+    // matters: reverting it reddens three bootstrap tests.
     const firstRun = buildChildBody({
       area: FE,
       members: [survivor(1)],
@@ -3324,6 +3312,18 @@ function selfTestChildGh({ check }) {
           .join(' | ') === [childIssueTitle(OP), childIssueTitle(REV)].toSorted().join(' | '),
       'bootstrap files one child per area, under the derived titles',
       created.map((c) => c.title).join(' | '),
+    )
+    // …and each names its LANE's parent. On a bootstrap there is no parent
+    // NUMBER (the stub's issue is 0, which the ref ternary treats as absent),
+    // so the title is the only reference the child can carry — and the
+    // `create` call site was the one that did not pass it, filing
+    // `Parent: "undefined"` into a real issue. This is what covers that:
+    // reverting the fix reddens this assertion. It replaces an earlier
+    // `buildChildBody` throw, which pinned a state no call site can reach.
+    check(
+      created.every((c) => (c.body ?? '').includes(`Parent: "${LANES.rust.title}"`)),
+      "a bootstrapped child names its lane's parent by title, not `undefined`",
+      created.map((c) => (c.body ?? '').split('\n')[2] ?? '(no body)').join(' | '),
     )
     check(
       recorded.get(OP) === 101 && recorded.get(REV) === 102,
