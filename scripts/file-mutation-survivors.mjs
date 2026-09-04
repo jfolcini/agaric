@@ -2307,7 +2307,7 @@ export function main(argv = process.argv.slice(2)) {
     acceptedOn,
     reanchored,
   })
-  writeParent({ existingIssue, repo, title: args.title, body, newOnes, childWork })
+  writeParent({ existingIssue, repo, title: args.title, body, newOnes, childWork, all })
 }
 
 /**
@@ -2319,7 +2319,19 @@ export function main(argv = process.argv.slice(2)) {
  * `sync` branch makes, and it is what keeps the child bookkeeping from turning
  * every quiet week into a notification.
  */
-function writeParent({ existingIssue, repo, title, body, newOnes, childWork }) {
+/**
+ * Close when there is nothing left to act on; reopen when something new
+ * arises. The children have always done this; the parent only ever reopened,
+ * so a lane that got to zero left its parent standing with an empty survivor
+ * block — indistinguishable, at a glance, from a lane nobody had triaged.
+ *
+ * "Nothing to act on" is `all.length === 0`: every tracked finding is gone or
+ * accepted-equivalent. Accepted entries deliberately do NOT keep it open —
+ * they are recorded, unkillable and not work — which is the same rule the
+ * child close already uses, and why that close writes the not-an-all-clear
+ * note into its body first.
+ */
+function writeParent({ existingIssue, repo, title, body, newOnes, childWork, all }) {
   if (existingIssue === null) {
     withTempFile(body, (bodyFile) => {
       const labelArgs = TRACKING_ISSUE_LABELS.flatMap((l) => ['--label', l])
@@ -2342,6 +2354,13 @@ function writeParent({ existingIssue, repo, title, body, newOnes, childWork }) {
   const number = String(existingIssue.number)
   if (newOnes.length === 0) {
     withTempFile(body, (f) => gh(['issue', 'edit', number, '--repo', repo, '--body-file', f]))
+    // Body first, then close: the body is the record of WHY it closed, and a
+    // close that raced ahead of it would leave the old survivor list showing.
+    if (all.length === 0 && existingIssue.state !== 'CLOSED') {
+      gh(['issue', 'close', number, '--repo', repo])
+      console.log(`closed tracking issue #${number} — nothing left to act on in this lane`)
+      return
+    }
     console.log(
       `synced tracking issue #${number} body (${childWork.length} child action(s); no new findings)`,
     )
@@ -3316,7 +3335,15 @@ function selfTestChildGh({ check }) {
     const seq = calls.map((c) => c.sub).join(',')
     const closeBody = calls.find((c) => c.sub === 'edit' && c.target === '101')?.body ?? ''
     check(
-      seq === 'view,edit,close,edit' &&
+      // ...,edit,close: the PARENT closes too, because this lane now has
+      // nothing left to act on. The child close is the first `close` (target
+      // 101), the parent's is the second — asserted by target below so the
+      // two cannot be confused for one repeated call.
+      seq === 'view,edit,close,edit,close' &&
+        calls
+          .filter((c) => c.sub === 'close')
+          .map((c) => c.target)
+          .join(',') === '101,0' &&
         closeBody.includes(OP) &&
         // This area really was cleaned up — the missed.txt is empty and
         // nothing is accepted — so the child body must carry NO
@@ -3490,7 +3517,10 @@ function selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP }) {
     const closeBody = calls.find((c) => c.sub === 'edit' && c.target === '101')?.body ?? ''
     const parentEdit = calls.findLast((c) => c.sub === 'edit')
     check(
-      seq === 'view,edit,close,edit' &&
+      // Same trailing parent close as 11e: an area whose every finding is
+      // accepted-equivalent leaves nothing to act on, so the lane's parent
+      // closes — and the child body says why it is not an all-clear.
+      seq === 'view,edit,close,edit,close' &&
         closeBody.includes('not an all-clear') &&
         closeBody.includes('Accepted as equivalent (1)') &&
         closeBody.includes(opId),
