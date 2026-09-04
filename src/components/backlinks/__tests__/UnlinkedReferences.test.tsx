@@ -855,6 +855,45 @@ describe('UnlinkedReferences', () => {
     expect(screen.getByText('visible block')).toBeInTheDocument()
   })
 
+  // #4407 — the per-group collapse overrides are cleared when the query
+  // identity changes, so a group the user collapsed on one page does not come
+  // back collapsed on the next. Groups default to expanded, so the override is
+  // the only thing that can hide `P1` here, and the same `P1` appears in both
+  // responses precisely so a surviving override would still apply.
+  it('clears per-group collapse overrides when the query identity changes', async () => {
+    const user = userEvent.setup()
+    const respFor = (content: string) => ({
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    })
+    mockedListUnlinked.mockResolvedValue(respFor('page 1 mention'))
+
+    const { rerender } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
+
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    expect(await screen.findByText('page 1 mention')).toBeInTheDocument()
+
+    // Collapse the group, so an override for `P1` exists.
+    await user.click(screen.getByText('Page One (1)'))
+    expect(screen.queryByText('page 1 mention')).not.toBeInTheDocument()
+
+    mockedListUnlinked.mockResolvedValue(respFor('page 2 mention'))
+    rerender(
+      <TooltipProvider>
+        <UnlinkedReferences pageId="PAGE2" pageTitle="Other Page" />
+      </TooltipProvider>,
+    )
+
+    // Re-open the panel (the page change collapsed it) — `P1` is expanded again
+    // because the override was dropped with the old query identity.
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    expect(await screen.findByText('page 2 mention')).toBeInTheDocument()
+  })
+
   // Bonus: singular count label
   it('shows singular label for 1 reference', async () => {
     const user = userEvent.setup()

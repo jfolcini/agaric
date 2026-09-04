@@ -118,3 +118,56 @@ test.describe('Unlinked references — link this occurrence', () => {
     ).toBeVisible()
   })
 })
+
+/**
+ * E2E — the page-scoped reset survives the React Compiler (#4407).
+ *
+ * `UnlinkedReferences` closes its panel when `pageId` changes. That reset
+ * moved from `useEffect(…, [pageId])` to a guarded render-phase adjust, and
+ * `docs/architecture/frontend.md` is explicit that a
+ * `react(set-state-in-effect)` sweep cannot be validated by vitest: the unit
+ * suite runs with the compiler off (`vite.config.ts` — `!process.env.VITEST`),
+ * so only a compiled build exercises the memoised path this rewrite lives on.
+ *
+ * The panel stays mounted across navigation, so the reset is the only thing
+ * closing it. Going away and BACK is what distinguishes the two candidate
+ * implementations: comparing the previous pageId forgets on every change,
+ * while storing the current one would remember, and returning to a page
+ * would reopen the panel the user left open. The final expand keeps the
+ * assertion honest — the rows are there to be shown, the panel is shut.
+ */
+test.describe('Unlinked references — page-scoped panel reset', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('the panel closes again after navigating away and back', async ({ page }) => {
+    await openPage(page, 'Meetings')
+    await addBlock(page, 'Getting Started has more onboarding tips for new teammates.')
+    await openPage(page, 'Getting Started')
+
+    const unlinked = page.getByTestId('unlinked-references')
+    const row = unlinked
+      .locator('.unlinked-reference-item')
+      .filter({ hasText: 'Getting Started has more onboarding tips' })
+
+    await expect(unlinked).toBeVisible()
+    await unlinked.locator('.unlinked-references-header').click()
+    await expect(row).toBeVisible()
+
+    // Both pages are recents by now, so `openPage`'s `getByText(title,
+    // {exact})` would strict-mode collide with the Pages-browser row — the
+    // same reason the spec above goes through the chip.
+    const recents = page.getByTestId('quick-access-bar')
+    await recents.getByRole('button', { name: 'Meetings', exact: true }).click()
+    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+    await recents.getByRole('button', { name: 'Getting Started', exact: true }).click()
+    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+
+    await expect(unlinked).toBeVisible()
+    await expect(row).toHaveCount(0)
+
+    await unlinked.locator('.unlinked-references-header').click()
+    await expect(row).toBeVisible()
+  })
+})

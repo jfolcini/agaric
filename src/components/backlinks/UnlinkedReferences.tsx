@@ -116,6 +116,16 @@ export function UnlinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
+  // Page-scoped panel state, reset by a render-phase adjust rather than an
+  // effect, whose late commit fired the 20-group fetch `collapsed` gates
+  // (#3316 item 2, #4407). Comparing the PREVIOUS pageId forgets; storing the
+  // current one would remember, and A → B → A would reopen the panel.
+  const [panelForPage, setPanelForPage] = useState(pageId)
+  if (panelForPage !== pageId) {
+    setPanelForPage(pageId)
+    setCollapsed(true)
+  }
+
   // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
   // TanStack `useInfiniteQuery` (see `useUnlinkedReferences`). TanStack owns the
   // page list, cursor, loading and error state; this is a read-only surface with
@@ -175,22 +185,21 @@ export function UnlinkedReferences({
     }
   }, [isError, t])
 
-  // Reset per-group expand state when the query identity changes. The old load
-  // effect did `setExpandedGroups({})` on pageId/query change. Groups default to
-  // expanded (`expandedGroups[page_id] ?? true` + `CollapsibleGroupList
-  // defaultExpanded`), so there is no ≤5/i<3 seeding — just clear overrides.
+  // Groups default to expanded (`expandedGroups[page_id] ?? true` +
+  // `CollapsibleGroupList defaultExpanded`), so a reset clears overrides rather
+  // than seeding them.
   const queryIdentity = useMemo(
     () => JSON.stringify([currentSpaceId, pageId, filters, sort]),
     [currentSpaceId, pageId, filters, sort],
   )
-  useEffect(() => {
+  // Query-scoped, same adjust as `collapsed` above: an effect cleared these a
+  // commit after the new query's groups had rendered under the old query's
+  // overrides (#4407).
+  const [overridesForIdentity, setOverridesForIdentity] = useState(queryIdentity)
+  if (overridesForIdentity !== queryIdentity) {
+    setOverridesForIdentity(queryIdentity)
     setExpandedGroups({})
-  }, [queryIdentity])
-
-  // Reset collapsed state when pageId changes
-  useEffect(() => {
-    setCollapsed(true)
-  }, [pageId])
+  }
 
   // Load tags on mount (B-6: cancellation flag avoids React 19
   // strict-mode "state update on unmounted component" warnings on rapid

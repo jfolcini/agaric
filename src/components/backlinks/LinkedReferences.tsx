@@ -62,6 +62,18 @@ export function LinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
+  // Page-scoped filter/sort/source-page, reset by a render-phase adjust rather
+  // than an effect (#4407). Comparing the PREVIOUS pageId forgets; storing the
+  // current one would remember, and A → B → A would bring A's filters back.
+  const [filtersForPage, setFiltersForPage] = useState(pageId)
+  if (filtersForPage !== pageId) {
+    setFiltersForPage(pageId)
+    setFilters([])
+    setSort(null)
+    setSourcePageIncluded([])
+    setSourcePageExcluded([])
+  }
+
   // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
   // TanStack `useInfiniteQuery` (see `useBacklinkGroups`). TanStack owns the
   // page list, cursor, loading and error state; `invalidationKey` sits in the
@@ -185,16 +197,6 @@ export function LinkedReferences({
       cancelled = true
     }
   }, [t])
-
-  // Reset filter state when navigating to a different page
-  // Uses functional updaters to avoid no-op state updates on initial mount
-  // (which would needlessly change the query key and trigger a duplicate fetch).
-  useEffect(() => {
-    setFilters((prev) => (prev.length > 0 ? [] : prev))
-    setSort((prev) => (prev !== null ? null : prev))
-    setSourcePageIncluded((prev) => (prev.length > 0 ? [] : prev))
-    setSourcePageExcluded((prev) => (prev.length > 0 ? [] : prev))
-  }, [pageId])
 
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => !prev)
