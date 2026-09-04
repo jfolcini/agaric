@@ -67,6 +67,20 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => mockListen(...args),
 }))
 
+// #4037 — a stand-in scanner whose payload each test sets, so the QR-payload
+// compatibility tests can hand `handleQrScan` an exact byte string. The real
+// component needs a camera; nothing else in this file enters scan mode, so the
+// mock is inert everywhere except the compatibility suite at the end.
+const { scannedPayload } = vi.hoisted(() => ({ scannedPayload: { current: '' } }))
+
+vi.mock('@/components/peers/QrScanner', () => ({
+  QrScanner: ({ onScan }: { onScan: (data: string) => void }) => (
+    <button type="button" data-testid="mock-qr-scan" onClick={() => onScan(scannedPayload.current)}>
+      Mock Scan
+    </button>
+  ),
+}))
+
 // Mock react-qr-code — no longer used by the component, but keep mock to avoid import errors
 vi.mock('react-qr-code', () => ({
   default: ({ value, ...props }: { value: string; [key: string]: unknown }) => (
@@ -3261,6 +3275,89 @@ describe('PairingDialog', () => {
       const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
       await screen.findByText('Pair Device')
       await screen.findByTestId('pairing-network-blocked')
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // #4037 — the pairing QR payload gained `endpoint_id` and an `addrs` array
+  // alongside `v` and `passphrase`, and the version tag went to 2.
+  //
+  // The scanner is the compatibility boundary and it is crossed in both
+  // directions by real device pairs: a phone on an older build scans a v2 code
+  // off a freshly-updated desktop, and a freshly-updated phone scans a v1 code
+  // off a desktop that has not updated (or off any device with no bound
+  // endpoint to advertise, which still emits the v1 shape by design).
+  //
+  // The parser survives both because it reads `passphrase` and ignores
+  // everything else — it does not check `v`, which is exactly what makes the
+  // new fields additive. That was true before this change and is untested;
+  // these pin it, because the next person to "tighten" the parser by
+  // validating `v` would break every joiner that is one release behind.
+  describe('QR payload compatibility (#4037)', () => {
+    async function scan(user: ReturnType<typeof userEvent.setup>, payload: string) {
+      scannedPayload.current = payload
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await selectJoinerRole(user)
+      await user.click(await screen.findByRole('button', { name: /Scan QR Code/i }))
+      await user.click(await screen.findByTestId('mock-qr-scan'))
+      await user.click(await screen.findByRole('button', { name: /Type Passphrase/i }))
+    }
+
+    function expectWordsFilled() {
+      expect(screen.getByLabelText('Passphrase word 1')).toHaveValue('alpha')
+      expect(screen.getByLabelText('Passphrase word 2')).toHaveValue('bravo')
+      expect(screen.getByLabelText('Passphrase word 3')).toHaveValue('charlie')
+      expect(screen.getByLabelText('Passphrase word 4')).toHaveValue('delta')
+    }
+
+    beforeEach(() => {
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        cancel_pairing: undefined,
+      })
+    })
+
+    // v2 → older joiner. The extra keys must not derail the passphrase.
+    it('reads the passphrase out of a v2 payload carrying an endpoint and addresses', async () => {
+      const user = userEvent.setup()
+      await scan(
+        user,
+        JSON.stringify({
+          v: 2,
+          passphrase: 'alpha bravo charlie delta',
+          endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+          addrs: ['192.168.1.42:59553', '10.0.0.7:59553'],
+        }),
+      )
+      expectWordsFilled()
+    })
+
+    // v1 → newer joiner. Nothing may become required.
+    it('reads the passphrase out of a v1 payload with no endpoint or addresses', async () => {
+      const user = userEvent.setup()
+      await scan(user, JSON.stringify({ v: 1, passphrase: 'alpha bravo charlie delta' }))
+      expectWordsFilled()
+    })
+
+    // The third shape the parser has always accepted, and the one with no `v`
+    // at all — so "the parser does not depend on the version tag" is asserted
+    // rather than assumed.
+    it('still accepts a bare passphrase string that is not JSON', async () => {
+      const user = userEvent.setup()
+      await scan(user, 'alpha bravo charlie delta')
+      expectWordsFilled()
+    })
+
+    it('the scan view is accessible', async () => {
+      const user = userEvent.setup()
+      scannedPayload.current = ''
+      const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await selectJoinerRole(user)
+      await user.click(await screen.findByRole('button', { name: /Scan QR Code/i }))
+      await screen.findByTestId('mock-qr-scan')
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()

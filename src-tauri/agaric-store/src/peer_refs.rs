@@ -952,8 +952,8 @@ pub async fn update_loro_vv_bytes_in_tx(
 /// is expected" marker.
 ///
 /// Set by `confirm_pairing` when the FE supplies no remote device_id (the QR
-/// carries only the passphrase; mDNS + TOFU establish the real peer on the
-/// first connection). Honored by
+/// carries a passphrase and an endpoint, never a device id; mDNS + TOFU
+/// establish the real peer on the first connection). Honored by
 /// `sync_daemon::SyncDaemon::should_start_active` so the dormant
 /// daemon wakes to *accept* that first inbound connection, and cleared once a
 /// real peer exists. This replaces the old hack of writing a junk

@@ -3064,9 +3064,10 @@ export type PageWithMetadataRow = {
 /**
  *  Response payload returned by [`start_pairing`].
  * 
- *  The QR payload + [`PairingInfo`] both carry only the passphrase.
- *  mDNS owns discovery + address resolution end-to-end; there is no
- *  scan-bootstrap path that would need a `host`/`port` here.
+ *  [`PairingInfo`] itself carries only the passphrase and the rendered QR.
+ *  Where this device is reachable rides inside the QR payload (#4037), not as
+ *  a field here: the joiner learns it by scanning, and a user typing the four
+ *  words has no address to type alongside them.
  */
 export type PairingInfo = {
 	passphrase: string,

@@ -138,7 +138,11 @@ pub fn start_pairing_inner(
     pairing_state: &Mutex<Option<PairingSession>>,
     device_id: &str,
 ) -> Result<PairingInfo, AppError> {
-    agaric_sync::pairing::start_pairing(pairing_state, device_id)
+    // `None`: this variant does not arm the pairing window, so it never wakes a
+    // dormant daemon and has nothing to resolve an address from. Its QR is the
+    // passphrase-only shape (#4037). The command the frontend actually calls is
+    // `start_pairing_armed_inner`.
+    agaric_sync::pairing::start_pairing(pairing_state, device_id, None)
 }
 
 /// Start pairing AND arm the pairing window; see
