@@ -310,6 +310,7 @@ pub(crate) async fn daemon_loop(
     //     is indistinguishable from a sleeping device) a QR candidate that leads
     //     nowhere is refused in under a millisecond, not a dial budget.
     scheduler.publish_local_endpoint(crate::sync_scheduler::LocalEndpointAdvert {
+        device_id: device_id.clone(),
         endpoint_id: endpoint_id.to_string(),
         addrs: service.addr().ip_addrs().copied().collect(),
     });
@@ -549,7 +550,12 @@ pub(crate) async fn daemon_loop(
                 let pairing_pending = peer_refs::is_pending_pairing(&pool)
                     .await
                     .unwrap_or(false);
-                let round = peers_for_change_round(&refs, &discovered, pairing_pending);
+                // #4037: the QR the user scanned is a discovery source of its
+                // own, and on a LAN where multicast never arrives it is the
+                // only one — `discovered` is empty there by construction.
+                let scanned = scheduler.scanned_peer();
+                let round =
+                    peers_for_change_round(&refs, &discovered, pairing_pending, scanned.as_ref());
                 let mut join_set = tokio::task::JoinSet::new();
                 for peer in round {
                     // Each spawned task owns clones of the shared state.

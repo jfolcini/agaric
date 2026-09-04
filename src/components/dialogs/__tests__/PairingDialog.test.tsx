@@ -472,6 +472,7 @@ describe('PairingDialog', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
         passphrase: 'echo foxtrot golf hotel',
         remoteDeviceId: '',
+        scannedPeer: null,
       })
     })
     // #3463 (review): unlike the old chooser, opening the dialog now DOES
@@ -993,6 +994,7 @@ describe('PairingDialog', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
         passphrase: 'echo foxtrot golf hotel',
         remoteDeviceId: '',
+        scannedPeer: null,
       })
     })
   })
@@ -3349,6 +3351,132 @@ describe('PairingDialog', () => {
       const user = userEvent.setup()
       await scan(user, 'alpha bravo charlie delta')
       expectWordsFilled()
+    })
+
+    // #4037 — the joiner side of the payload. The v2 fields are not decoration:
+    // they are what `confirm_pairing` seeds the daemon's dial with, and until
+    // this pass-through existed every host paid a denser QR for a capability
+    // nothing consumed.
+    //
+    // These assert the IPC argument rather than a re-queried effect (the
+    // convention in `src/__tests__/AGENTS.md`) because there is no durable
+    // effect to re-query: the candidate's whole life on the backend is an
+    // in-memory scheduler slot the daemon's next round reads, and the mock
+    // backend models no daemon. The durable half is asserted in Rust
+    // (`confirm_pairing_publishes_the_scanned_host_for_the_next_round`,
+    // `daemon_branch_b_dials_the_scanned_host_with_an_empty_discovered_map_4037`);
+    // what is left for this side is that the fields reach the command at all.
+    async function scanThenPair(user: ReturnType<typeof userEvent.setup>, payload: string) {
+      await scan(user, payload)
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+    }
+
+    it('hands the v2 host on to confirm_pairing so the daemon can dial it', async () => {
+      const user = userEvent.setup()
+      await scanThenPair(
+        user,
+        JSON.stringify({
+          v: 2,
+          passphrase: 'alpha bravo charlie delta',
+          device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+          endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+          addrs: ['192.168.1.42:59553', '10.0.0.7:59553'],
+        }),
+      )
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          remoteDeviceId: '',
+          scannedPeer: {
+            device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+            endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+            addrs: ['192.168.1.42:59553', '10.0.0.7:59553'],
+          },
+        })
+      })
+    })
+
+    // A v1 code carries no host, and a v1 code is what any device with no bound
+    // endpoint still emits. `null` must reach the backend, not a half-filled
+    // object it would have to refuse.
+    it('sends a null host for a v1 payload that names none', async () => {
+      const user = userEvent.setup()
+      await scanThenPair(user, JSON.stringify({ v: 1, passphrase: 'alpha bravo charlie delta' }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          remoteDeviceId: '',
+          scannedPeer: null,
+        })
+      })
+    })
+
+    // A camera can read a code partially, and a future payload may carry these
+    // keys with other types. Either way the passphrase — the only field pairing
+    // truly needs — must survive, and the host must be dropped whole rather
+    // than sent half-built.
+    it('drops a half-formed host but keeps the passphrase', async () => {
+      const user = userEvent.setup()
+      await scanThenPair(
+        user,
+        JSON.stringify({
+          v: 2,
+          passphrase: 'alpha bravo charlie delta',
+          device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+          endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+          addrs: [42],
+        }),
+      )
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          remoteDeviceId: '',
+          scannedPeer: null,
+        })
+      })
+    })
+
+    // The rejection path for the scan flow. It surfaces the same error banner a
+    // typed pair does — but the assertion that earns this test its place is the
+    // second one: the scanned host SURVIVES the failure, so a retry does not
+    // send the user back to the camera. `scannedPeerRef` is deliberately not
+    // cleared in `onError`; the QR on screen is still the one being paired
+    // with, and a rejected proof says nothing about where the host is.
+    it('keeps the scanned host for a retry after the backend rejects a pair', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'confirm_pairing') throw new Error('invalid passphrase')
+        return undefined
+      })
+      const host = {
+        device_id: 'b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f',
+        endpoint_id: '8n7prc4b3ns4c9m4tvbjjqp62aiiff5v5rss3f2mmn2yg7q7bg9a',
+        addrs: ['192.168.1.42:59553'],
+      }
+
+      await scanThenPair(
+        user,
+        JSON.stringify({ v: 2, passphrase: 'alpha bravo charlie delta', ...host }),
+      )
+
+      const errorEl = await screen.findByRole('alert')
+      expect(errorEl).toHaveTextContent(/Pairing failed:.*invalid passphrase/i)
+
+      mockedInvoke.mockClear()
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('confirm_pairing', {
+          passphrase: 'alpha bravo charlie delta',
+          remoteDeviceId: '',
+          scannedPeer: host,
+        })
+      })
     })
 
     it('the scan view is accessible', async () => {

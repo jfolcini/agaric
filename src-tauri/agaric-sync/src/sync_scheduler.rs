@@ -35,6 +35,7 @@ use agaric_store::peer_refs::PeerRef;
 use rand::RngExt;
 use tokio::sync::{Mutex, watch};
 
+use crate::mdns::DiscoveredPeer;
 use crate::sync_events::SyncEventSink;
 
 /// #2621 (agaric-sync split): a factory that wraps a base sync-event sink with
@@ -144,16 +145,35 @@ pub struct SyncScheduler {
     /// daemon, so the QR's address is published a moment after the command
     /// that needs it starts running. See [`Self::await_local_endpoint`].
     local_endpoint: watch::Sender<Option<LocalEndpointAdvert>>,
+
+    /// The peer a scanned pairing QR named, if one has been scanned this
+    /// process (#4037).
+    ///
+    /// An alternative *discovery source*, not an alternative dial path: the
+    /// daemon folds it into the same round `peers_for_change_round` composes
+    /// from mDNS, and `try_sync_with_peer` cannot tell where the candidate came
+    /// from. It sits on the scheduler for the same reason `local_endpoint`
+    /// does — the scheduler is the one thing `confirm_pairing` and
+    /// `daemon_loop` both already hold.
+    scanned_peer: watch::Sender<Option<DiscoveredPeer>>,
 }
 
-/// Where a peer can dial this device, as the pairing QR advertises it (#4037).
+/// Where a peer can dial this device, and who it will reach, as the pairing QR
+/// advertises it (#4037).
 ///
-/// Both fields are read back from the bound endpoint, never derived
-/// independently: an advertised key nobody is listening on, or a port nothing
-/// is bound to, costs the peer a dial and tells it nothing — the same reason
-/// `SyncService::endpoint_id`'s docs give for the mDNS announce.
+/// The same three values the mDNS TXT record carries, for the same reason: a
+/// joiner needs all three to open a session. `endpoint_id` and `addrs` are read
+/// back from the bound endpoint, never derived independently — an advertised
+/// key nobody is listening on, or a port nothing is bound to, costs the peer a
+/// dial and tells it nothing (the reason `SyncService::endpoint_id`'s docs give
+/// for the mDNS announce). `device_id` rides along because a dial is only half
+/// of what the joiner needs: the session is keyed on the peer's device id, and
+/// a QR-dialled peer has no announcement to read one from. Publishing all three
+/// together is what keeps the QR from naming a device the daemon is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalEndpointAdvert {
+    /// This device's own id — the `peer_refs.peer_id` the joiner will bind.
+    pub device_id: String,
     /// The `EndpointId` a peer dials, rendered as iroh renders it.
     pub endpoint_id: String,
     /// Every socket the endpoint is bound to. All of them, because iroh races
@@ -593,6 +613,7 @@ impl SyncScheduler {
             debounce_window: DEFAULT_DEBOUNCE,
             resync_interval: DEFAULT_RESYNC,
             local_endpoint: watch::Sender::new(None),
+            scanned_peer: watch::Sender::new(None),
         }
     }
 
@@ -1054,6 +1075,62 @@ impl SyncScheduler {
         })
         .await;
         waited.ok().flatten()
+    }
+
+    /// Record the peer a pairing QR named, so the next change round dials it
+    /// even if multicast never delivers an announcement (#4037).
+    ///
+    /// Overwrites: a second scan replaces the first, because the QR on screen
+    /// is the one the user is pairing with.
+    pub fn publish_scanned_peer(&self, peer: DiscoveredPeer) {
+        self.scanned_peer.send_replace(Some(peer));
+    }
+
+    /// The peer a scanned pairing QR named, if any.
+    ///
+    /// Read once per change round rather than consumed, so a candidate stays
+    /// available across the retries a pairing window allows. It is only ever
+    /// *used* while a pairing is pending (see
+    /// [`crate::sync_daemon::peers_for_change_round`]), which is
+    /// what keeps a scan from an abandoned attempt inert.
+    #[must_use]
+    pub fn scanned_peer(&self) -> Option<DiscoveredPeer> {
+        self.scanned_peer.borrow().clone()
+    }
+
+    /// How many changes have been signalled. The caller's high-water mark for
+    /// [`Self::wait_for_change_after`].
+    #[must_use]
+    pub fn change_count(&self) -> u64 {
+        *self.change_count.borrow()
+    }
+
+    /// Wait until the change counter moves past `seen`, and return where it
+    /// got to — an undebounced wake that does **not** mark the change served.
+    ///
+    /// For the dormant waiter only. That waiter is not a sync round: it runs
+    /// one `should_start_active` query and either starts the daemon or goes
+    /// back to sleep, so coalescing buys it nothing and cost the pairing dialog
+    /// a full [`Self::debounce_window`] before the QUIC endpoint was even
+    /// bound. Leaving `debounced_through` alone is the other half: the wake
+    /// that started the daemon is still owed to Branch B, the branch that turns
+    /// a pairing act into a dial.
+    ///
+    /// Level-triggered on the counter rather than edge-triggered on the
+    /// channel, for #4025's reason — a wake must be *observed*, not consumed.
+    /// The caller's `seen` is what makes it so: a change that lands between two
+    /// calls is still ahead of `seen` when the next one starts, so it is not
+    /// missed, and a change already counted does not re-fire and spin.
+    pub async fn wait_for_change_after(&self, seen: u64) -> u64 {
+        let mut changes = self.change_count.subscribe();
+        let mut count = *changes.borrow_and_update();
+        while count <= seen {
+            // `self` owns the sender, so `changed()` cannot fail while this
+            // borrow is alive.
+            let _ = changes.changed().await;
+            count = *changes.borrow_and_update();
+        }
+        count
     }
 
     /// Wait for a debounced change signal.  Returns after `debounce_window`
@@ -2397,10 +2474,87 @@ mod tests {
         );
     }
 
+    // -- The raw change wake, and the scanned-peer slot (#4037) --------------
+
+    /// An undebounced wake does NOT consume the change, and is not missed when
+    /// it lands before the wait starts.
+    ///
+    /// Three claims, and each is a real failure the dormant waiter has had:
+    ///
+    /// 1. A change signalled *before* the wait begins still resolves it. An
+    ///    edge-triggered `Receiver::changed()` sleeps through that one, which
+    ///    is #4025's defect and is what a first draft of this reintroduced.
+    /// 2. The change is still owed to `wait_for_debounced_change`, i.e. to
+    ///    Branch B — the branch that turns a pairing act into a dial. The
+    ///    waiter's old `wait_for_debounced_change` consumed it, so the freshly
+    ///    started `daemon_loop` parked waiting for a second change that a quiet
+    ///    device need never produce.
+    /// 3. Passing the returned high-water mark back does not re-fire, or a
+    ///    dormant waiter that stays dormant would spin on one change forever.
+    #[tokio::test]
+    async fn an_undebounced_wake_is_not_missed_and_leaves_the_change_owed() {
+        let sched =
+            SyncScheduler::with_intervals(Duration::from_millis(10), Duration::from_secs(60));
+        let seen = sched.change_count();
+
+        // (1) The notify lands first; the wait must still see it.
+        sched.notify_change();
+        let now_at =
+            tokio::time::timeout(Duration::from_secs(5), sched.wait_for_change_after(seen))
+                .await
+                .expect("a change signalled before the wait began must still resolve it");
+        assert_eq!(now_at, seen + 1);
+
+        // (3) …and does not re-fire once the caller has caught up.
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(500),
+                sched.wait_for_change_after(now_at)
+            )
+            .await
+            .is_err(),
+            "a caught-up waiter must park, or the dormant loop spins on one change"
+        );
+
+        // (2) The change is still owed to Branch B.
+        tokio::time::timeout(Duration::from_secs(5), sched.wait_for_debounced_change())
+            .await
+            .expect(
+                "the wake the dormant waiter observed must still reach Branch B — \
+                 consuming it there is what left a first-ever pair with nothing \
+                 to dial",
+            );
+    }
+
+    /// The scanned-host slot: what goes in comes out, and nothing is there
+    /// until a scan puts it there.
+    #[test]
+    fn the_scanned_peer_slot_holds_what_confirm_pairing_publishes() {
+        let sched = SyncScheduler::new();
+        assert!(
+            sched.scanned_peer().is_none(),
+            "a device that has scanned nothing must offer the daemon nothing"
+        );
+
+        let peer = DiscoveredPeer {
+            device_id: "b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f".into(),
+            endpoint_id: Some(crate::mdns::test_endpoint_id("QR_HOST_4037")),
+            addresses: vec![std::net::IpAddr::from([192, 168, 1, 42])],
+            port: 59553,
+        };
+        sched.publish_scanned_peer(peer.clone());
+        assert_eq!(
+            sched.scanned_peer(),
+            Some(peer),
+            "the daemon must read back exactly the host the QR named"
+        );
+    }
+
     // -- The local-endpoint slot (#4037) -------------------------------------
 
     fn test_advert() -> LocalEndpointAdvert {
         LocalEndpointAdvert {
+            device_id: "b7f0d0f4-4d9a-4a1e-9f0b-2f6a1c3d4e5f".into(),
             endpoint_id: crate::mdns::test_endpoint_id("QR_HOST_4037").to_string(),
             addrs: vec![
                 "192.168.1.42:59553"

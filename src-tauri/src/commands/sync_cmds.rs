@@ -12,7 +12,7 @@ use crate::db::{ReadPool, WritePool};
 use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
 use agaric_sync::device::DeviceId;
-use agaric_sync::pairing::{PairingSession, lock_pairing_state};
+use agaric_sync::pairing::{PairingSession, ScannedPeerCandidate, lock_pairing_state};
 use agaric_sync::sync_events::{
     BindExposureStatus, BindExposureStatusState, MdnsStatus, MdnsStatusState, OsNetworkBlockStatus,
 };
@@ -142,7 +142,7 @@ pub fn start_pairing_inner(
     // dormant daemon and has nothing to resolve an address from. Its QR is the
     // passphrase-only shape (#4037). The command the frontend actually calls is
     // `start_pairing_armed_inner`.
-    agaric_sync::pairing::start_pairing(pairing_state, device_id, None)
+    agaric_sync::pairing::start_pairing(pairing_state, device_id)
 }
 
 /// Start pairing AND arm the pairing window; see
@@ -163,8 +163,9 @@ pub async fn confirm_pairing_inner(
     pairing_state: &Mutex<Option<PairingSession>>,
     scheduler: &SyncScheduler,
     passphrase: String,
+    scanned: Option<ScannedPeerCandidate>,
 ) -> Result<(), AppError> {
-    agaric_sync::pairing::confirm_pairing(pool, pairing_state, scheduler, passphrase).await
+    agaric_sync::pairing::confirm_pairing(pool, pairing_state, scheduler, passphrase, scanned).await
 }
 
 /// Cancel an in-progress pairing session.
@@ -479,13 +480,22 @@ pub async fn confirm_pairing(
     // Part of the IPC shape (`bindings.ts`), not of the pairing: since #3463
     // the joiner learns the host's id from the pairing proof, not from here.
     _remote_device_id: String,
+    // #4037: the host a scanned QR named, or `None` when the passphrase was
+    // typed. A candidate to race mDNS with, never a substitute for it.
+    scanned_peer: Option<ScannedPeerCandidate>,
     pool: State<'_, WritePool>,
     pairing_state: State<'_, PairingState>,
     scheduler: State<'_, Arc<SyncScheduler>>,
 ) -> Result<(), AppError> {
-    confirm_pairing_inner(&pool.0, &pairing_state.0, &scheduler, passphrase)
-        .await
-        .map_err(sanitize_internal_error)
+    confirm_pairing_inner(
+        &pool.0,
+        &pairing_state.0,
+        &scheduler,
+        passphrase,
+        scanned_peer,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: cancel an in-progress pairing session.

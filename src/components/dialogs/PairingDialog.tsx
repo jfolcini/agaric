@@ -57,7 +57,7 @@ import { useScreenWakeLock } from '@/hooks/useScreenWakeLock'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
-import type { PairingInfo, PeerRef } from '@/lib/bindings'
+import type { PairingInfo, PeerRef, ScannedPeerCandidate } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { notify } from '@/lib/notify'
@@ -222,6 +222,15 @@ export function PairingDialog({
   // wait begins. Scopes poll results to the attempt they are judged against;
   // see `PolledPeerRefs` for why the baseline alone is not enough.
   const waitSessionRef = useRef(0)
+  // #4037 — the host a scanned v2 QR named, held from the scan until the user
+  // presses Pair (they get to review the words first, so the two are separate
+  // acts). `null` for a typed passphrase, a v1 QR, or a bare-string QR: the
+  // backend races this against mDNS and never depends on it.
+  //
+  // A ref rather than state because nothing renders it, and it is cleared in
+  // `resetRoleState` so a scan from one attempt cannot ride along into the
+  // next.
+  const scannedPeerRef = useRef<ScannedPeerCandidate | null>(null)
 
   // Clear any pending paste-focus timer on unmount so we never touch a
   // detached DOM node after the dialog closes.
@@ -742,7 +751,7 @@ export function PairingDialog({
       // but "is this queued?" was answerable only by reading every call site,
       // and a second one added later would have got no queueing with no test
       // to notice — the symptom is a rare ordering race, not a failure.
-      await pairingMutations.confirm(passphrase, '')
+      await pairingMutations.confirm(passphrase, '', scannedPeerRef.current)
       syncSetState('idle')
       // #3469 (review) — take the "peers we already had" baseline HERE,
       // from an authoritative read at the moment the proof is armed, not
@@ -822,10 +831,35 @@ export function PairingDialog({
     (data: string) => {
       // QR data may be JSON with a passphrase field or a plain passphrase string
       let passphrase = data
+      scannedPeerRef.current = null
       try {
         const obj = JSON.parse(data)
         if (obj && typeof obj.passphrase === 'string') {
           passphrase = obj.passphrase
+        }
+        // #4037 — the v2 fields, read structurally rather than off `v`: the
+        // parser has never checked the version tag, and starting now would
+        // reject a payload from a device one release ahead. A payload missing
+        // any of the three (a v1 code, or a host with no bound endpoint) leaves
+        // the candidate null and the pair falls back to mDNS, which is what it
+        // always used.
+        //
+        // Nothing here is validated beyond its JSON type. The strings came off
+        // a camera and the backend refuses the ones it cannot dial
+        // (`ScannedPeerCandidate::into_discovered`); a second, weaker copy of
+        // that check here would only be a place for the two to disagree.
+        if (
+          obj &&
+          typeof obj.device_id === 'string' &&
+          typeof obj.endpoint_id === 'string' &&
+          Array.isArray(obj.addrs) &&
+          obj.addrs.every((a: unknown) => typeof a === 'string')
+        ) {
+          scannedPeerRef.current = {
+            device_id: obj.device_id,
+            endpoint_id: obj.endpoint_id,
+            addrs: obj.addrs,
+          }
         }
       } catch {
         // Not JSON — use raw text as passphrase
@@ -860,6 +894,7 @@ export function PairingDialog({
     setEntryMode('manual')
     setJoinerPhase('entry')
     setWaitCountdown(null)
+    scannedPeerRef.current = null
   }, [])
 
   // #3610 (review) — explicit-Cancel's own cancelPairing call. Mirrors
