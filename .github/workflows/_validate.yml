@@ -760,7 +760,7 @@ jobs:
       # cargo (sqruff/typos/taplo run standalone binaries), and all must run on
       # every non-docs PR — so they are installed regardless of the backend flag.
       - name: Install prek + non-Rust lint tools via prebuilt binaries
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           # sqruff pinned: unpinned resolves to latest via cargo-binstall's
           # from-source fallback, and sqruff >=0.39 requires rustc 1.96 while
@@ -802,7 +802,7 @@ jobs:
         # tag bump or a tool-version pin change. cargo-nextest lives on
         # the cargo-tests job (the only consumer); this job needs the
         # lint/audit set.
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           tool: cargo-deny,cargo-machete,cargo-audit
 
@@ -1226,7 +1226,7 @@ jobs:
         # Only the tools the reduced doc-hook set needs — no cargo-deny /
         # sqruff / zizmor / taplo / cargo-audit (those gate code, which a
         # docs-only diff does not touch).
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           # prek/typos-cli pinned (#3742) — must match `pinned_version_for`
           # in scripts/setup-hooks.sh and the other tool: lists in this repo.
@@ -1618,7 +1618,7 @@ jobs:
         # don't have to swap runners. Output is lcov (industry standard,
         # consumable by Codecov / coveralls / VSCode coverage gutters) plus
         # a JSON summary the step below renders as a markdown table.
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           tool: cargo-nextest,cargo-llvm-cov
 
@@ -1856,7 +1856,7 @@ jobs:
       - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
         # nextest is the test runner for the UDS smoke test below. Prebuilt
         # binary via taiki-e/install-action keeps cold-cache cost tiny.
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           tool: cargo-nextest
 
